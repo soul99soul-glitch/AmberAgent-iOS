@@ -40,6 +40,51 @@ struct NovelProjectWorkspaceView: View {
     }
 
     var body: some View {
+        Group {
+            if scenePhase == .background {
+                // The generation pipeline owns its background lifetime. Avoid
+                // invalidating the full workspace while streamed updates continue.
+                AmberTheme.background
+                    .ignoresSafeArea()
+            } else {
+                workspaceSurface
+            }
+        }
+        .onAppear {
+            if !hasCompletedInitialNavigation {
+                hasCompletedInitialNavigation = true
+            }
+            restoreComposerDraft(for: currentComposerDraftOwner)
+        }
+        .onChange(of: currentComposerDraftOwner) { previousOwner, owner in
+            if loadedComposerDraftOwner == previousOwner {
+                saveLoadedComposerDraft()
+            }
+            restoreComposerDraft(for: owner)
+            if hasCompletedInitialNavigation {
+                viewModel.scheduleAutomaticStateSyncIfNeeded()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                saveLoadedComposerDraft()
+                return
+            }
+            guard phase == .active,
+                  hasCompletedInitialNavigation,
+                  hasLoadedRoutedProject else { return }
+            viewModel.scheduleAutomaticStateSyncIfNeeded()
+        }
+        .onDisappear {
+            saveLoadedComposerDraft()
+            sheetTransitionTask?.cancel()
+            sheetTransitionTask = nil
+            sheetTransitionToken = nil
+            sessionViewModel.detachConsumer()
+        }
+    }
+
+    private var workspaceSurface: some View {
         VStack(spacing: 0) {
             if hasCompletedInitialNavigation && hasLoadedRoutedProject {
                 // Keep tab chrome inside the same canvas as content. `safeAreaBar`
@@ -120,38 +165,6 @@ struct NovelProjectWorkspaceView: View {
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
-        }
-        .onAppear {
-            if !hasCompletedInitialNavigation {
-                hasCompletedInitialNavigation = true
-            }
-            restoreComposerDraft(for: currentComposerDraftOwner)
-        }
-        .onChange(of: currentComposerDraftOwner) { previousOwner, owner in
-            if loadedComposerDraftOwner == previousOwner {
-                saveLoadedComposerDraft()
-            }
-            restoreComposerDraft(for: owner)
-            if hasCompletedInitialNavigation {
-                viewModel.scheduleAutomaticStateSyncIfNeeded()
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .background {
-                saveLoadedComposerDraft()
-                return
-            }
-            guard phase == .active,
-                  hasCompletedInitialNavigation,
-                  hasLoadedRoutedProject else { return }
-            viewModel.scheduleAutomaticStateSyncIfNeeded()
-        }
-        .onDisappear {
-            saveLoadedComposerDraft()
-            sheetTransitionTask?.cancel()
-            sheetTransitionTask = nil
-            sheetTransitionToken = nil
-            sessionViewModel.detachConsumer()
         }
     }
 

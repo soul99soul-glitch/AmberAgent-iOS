@@ -664,7 +664,7 @@ final class NovelSessionReplayTests: XCTestCase {
         XCTAssertTrue(beforePersist.rows.last?.isTransient == true)
     }
 
-    func testStreamingTailFreezeDoesNotHoldWhileFollowingOrTerminal() {
+    func testStreamingTailFreezeReleasesForBottomButDefersOffscreenTerminal() {
         XCTAssertFalse(
             NovelSessionStreamingTailFreezePolicy.shouldHoldFrozenSnapshot(
                 isFollowingBottom: true,
@@ -673,13 +673,13 @@ final class NovelSessionReplayTests: XCTestCase {
             ),
             "Watching the live tail must not freeze remaining text."
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             NovelSessionStreamingTailFreezePolicy.shouldHoldFrozenSnapshot(
                 isFollowingBottom: false,
                 isTerminalPresenting: true,
                 renderPolicyWouldSuspend: true
             ),
-            "Completed drain / 审批卡 must not stay on a mid-stream freeze."
+            "Completion must not force an off-screen Markdown backlog into one layout pass."
         )
         XCTAssertTrue(
             NovelSessionStreamingTailFreezePolicy.shouldHoldFrozenSnapshot(

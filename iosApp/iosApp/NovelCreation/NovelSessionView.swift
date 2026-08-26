@@ -80,14 +80,15 @@ enum NovelSessionBottomProximityPolicy {
 }
 
 enum NovelSessionStreamingTailFreezePolicy {
-    /// Freeze is only for off-screen *streaming* cost. Following the live tail,
-    /// or draining a completed turn (full text + 审批卡), must keep updating.
+    /// Freeze defers off-screen Markdown work. Completion does not make an
+    /// off-screen row visible; the real visibility callback (or bottom follow)
+    /// releases the snapshot when the user can actually see the terminal row.
     static func shouldHoldFrozenSnapshot(
         isFollowingBottom: Bool,
-        isTerminalPresenting: Bool,
+        isTerminalPresenting _: Bool,
         renderPolicyWouldSuspend: Bool
     ) -> Bool {
-        !isFollowingBottom && !isTerminalPresenting && renderPolicyWouldSuspend
+        !isFollowingBottom && renderPolicyWouldSuspend
     }
 }
 
@@ -1645,16 +1646,14 @@ struct NovelSessionView: View {
                     isVisible: nil
                 )
                 suspendedStreamingTailRow = nil
-            } else if viewModel.isTerminalPresenting, suspendedStreamingTailRow != nil {
-                // Complete arrived: drop the mid-stream freeze so remaining text
-                // and the approval card can publish on this same row.
-                releaseSuspendedStreamingTail()
             }
         } else if oldValue.activeTailID != nil {
-            // Tail retired: durable terminal (full text + 审批卡) must replace any
-            // frozen streaming snapshot. Clearing only when the snapshot was already
-            // nil left a stale freeze overlaying the completed row until relaunch.
-            releaseSuspendedStreamingTail(resetIdentity: true)
+            // Keep an off-screen snapshot deferred across retirement. Its sticky
+            // visibility identity releases it when the user scrolls to the row;
+            // rows that were already live can drop the tracking identity now.
+            if suspendedStreamingTailRow == nil {
+                releaseSuspendedStreamingTail(resetIdentity: true)
+            }
         }
         // 无条件吸收:贴底与否不改变「已渲染的行不得中途被窗口踢出」这条不变量。
         // 口径必须与 `startIndex` 一致——那里用的是 **historicalRows**。若用含活动
@@ -1808,11 +1807,8 @@ struct NovelSessionView: View {
         case .setBottomButton:
             break
         case .scheduleTerminalQuietSettle(let token, let delay):
-            // driver 激活时不再 arm 视图层 0.4s 定时器：driver 的
-            // generationTerminated 自带 settle + 静默交还 + idle 近底重锚，
-            // 视图层定时器再触发一次 quietSettle 只会造成双定时器竞争。
-            // fallback 模式（driver 未激活）保留原定时 settle。
-            guard !isNativeScrollDriverActive else { break }
+            // Native driver 只收口 UIKit 滚动状态；这枚 token 定时器负责让
+            // SwiftUI followState 退出 settlingTerminal，两个状态都必须闭环。
             terminalSettleTask?.cancel()
             terminalSettleTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(delay))
@@ -1939,7 +1935,7 @@ struct NovelSessionView: View {
         let messageID = row.id.description
         // Tall bubbles / onDisappear during identity churn report off-screen while
         // the user is still watching the bottom. Do not freeze in those cases.
-        let treatAsVisible = isVisible || isFollowingBottom || viewModel.isTerminalPresenting
+        let treatAsVisible = isVisible || isFollowingBottom
         streamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState(
             messageID: messageID,
             isVisible: treatAsVisible
