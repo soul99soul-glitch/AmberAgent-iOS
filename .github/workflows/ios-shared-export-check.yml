@@ -4,13 +4,13 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'shared/**'
-      - 'ai-core/**'
-      - 'ai-provider-openai/**'
-      - 'ai-provider-claude/**'
-      - 'core/**'
-      - 'feature/**'
-      - 'iosApp/iosApp/**/*.swift'
+      - '**/*.kt'
+      - '**/*.kts'
+      - 'gradle/**'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'native/**'
+      - 'iosApp/**'
       - 'scripts/check_shared_export_reachability.py'
       - '.github/workflows/ios-shared-export-check.yml'
 
