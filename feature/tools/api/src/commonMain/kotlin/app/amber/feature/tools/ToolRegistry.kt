@@ -605,9 +605,8 @@ private fun Tool.speculativeBlockReason(
 }
 
 private fun Tool.outputBudgetChars(): Int = when (name) {
-    // 262_144 = FILE_READ_HARD_MAX_CHARS in WorkspaceTools.kt (kept in :app
-    // as an internal const). Inlined here so :feature:tools:api can compute
-    // budgets without depending on the heavy WorkspaceTools module.
+    // Keep the file-read payload below the provider/tool-result budget while
+    // allowing the full 262,144-character read limit plus envelope overhead.
     "file_read" -> 262_144 + 2_048
     // Screenshots inline their base64 image in the Text payload (Image parts
     // are silently dropped by every provider's tool-result serializer). A

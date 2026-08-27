@@ -1,10 +1,9 @@
 import Foundation
 
-/// [MiniApp MVP] iOS port of Android's `MiniAppHtmlValidator`
-/// (app/src/main/java/app/amber/feature/miniapp/MiniAppHtmlValidator.kt).
+/// iOS-owned security validator for generated MiniApp HTML.
 ///
 /// Validates generated MiniApp HTML before it is loaded into the WKWebView
-/// runner. Same rule set as Android so the security posture is equivalent:
+/// runner. The rule set enforces the product's MiniApp security contract:
 /// reject external scripts, non-https images, dangerous browser APIs (eval,
 /// dynamic import, XHR, WebSocket, storage, geo/media/clipboard), and
 /// iframe/object/embed/form elements. Allow inline `<script>` (the MiniApp's
@@ -14,8 +13,7 @@ import Foundation
 /// generated HTML could exfiltrate data or reach the network directly.
 enum MiniAppHtmlValidator {
 
-    /// Max HTML size, matching Android's MINI_APP_MAX_HTML_BYTES = 768 * 1024
-    /// (app/src/main/java/app/amber/feature/miniapp/MiniAppModels.kt:6).
+    /// Maximum accepted generated HTML payload.
     static let maxHtmlBytes = 768 * 1024
 
     struct ValidationError: Error, LocalizedError {
@@ -61,7 +59,7 @@ enum MiniAppHtmlValidator {
     private static let unquotedImageResourcePattern = ##"<\s*(img|source)\b[^>]*\b(src|srcset)\s*=\s*([^\s"'=<>`]+)"##
 
     /// Validate `html`. Throws `ValidationError` if any rule is violated.
-    /// Mirrors Android's `MiniAppHtmlValidator.validate` exactly.
+    /// Applies the canonical iOS MiniApp validation contract.
     static func validate(_ html: String) throws {
         let sizeBytes = html.utf8.count
         if sizeBytes > maxHtmlBytes {
@@ -114,4 +112,3 @@ private extension String {
         lowercased().hasPrefix("data:image/") || lowercased().hasPrefix("https://")
     }
 }
-

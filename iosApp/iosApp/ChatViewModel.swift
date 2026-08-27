@@ -3404,7 +3404,7 @@ final class ChatViewModel {
 
         // Real Android parity: read generation params from the current Assistant
         // + Model instead of hardcoding temperature=0.7/topP=nil/maxTokens=nil.
-        // Mirrors GenerationHandler.kt:453-468 + resolveSessionDefaults.
+        // Uses the shared generation defaults contract plus resolveSessionDefaults.
         let snapshot = sharedSettings.snapshot
         let assistant = snapshot.getCurrentAssistant()
         let currentModel = snapshot.getCurrentChatModel()
@@ -3573,7 +3573,7 @@ final class ChatViewModel {
         lastAssembledToolExposureBridge = exposureBridge
         // Real params: temperature/topP from Assistant, maxTokens from
         // resolveSessionDefaults (Assistant → group default), reasoningLevel
-        // resolved, custom headers/bodies merged. Mirrors GenerationHandler.
+        // resolved, custom headers/bodies merged for the iOS generation runtime.
         let resolvedReasoningLevel = modelAbilities.contains(.reasoning) ? resolved.reasoningLevel : ReasoningLevel.off
         return TextGenerationParams(
             model: model,

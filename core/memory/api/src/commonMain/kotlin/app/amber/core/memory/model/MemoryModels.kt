@@ -5,8 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
-// MemoryScope and MemoryKind moved to app.amber.core.model.MemoryEnums so
-// :core:model can be physically extracted without pulling memory subsystem.
+// Keep the public memory enums in the shared core model package so consumers do
+// not need the rest of the memory subsystem.
 typealias MemoryScope = app.amber.core.model.MemoryScope
 typealias MemoryKind = app.amber.core.model.MemoryKind
 

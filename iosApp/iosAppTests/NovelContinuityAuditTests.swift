@@ -115,7 +115,7 @@ final class NovelContinuityAuditTests: XCTestCase {
 
         let harness = try await makeHarness(
             fixture: fixture,
-            scripts: [script(consistentJSON)],
+            scripts: [script(candidateScopedIssuesJSON)],
             model: resolvedModel
         )
         let report = try await harness.creation.auditContinuityIncludingCandidate(
@@ -127,6 +127,15 @@ final class NovelContinuityAuditTests: XCTestCase {
 
         XCTAssertEqual(report.scannedChapterCount, 4)
         XCTAssertEqual(report.chunkCount, 1)
+        XCTAssertEqual(report.issues.map(\.id), ["chunk-0-issue-candidate"])
+        let candidateIssue = try XCTUnwrap(report.issues.first)
+        XCTAssertTrue(
+            candidateIssue.references.contains { $0.chapterOrdinal == 4 }
+        )
+        XCTAssertEqual(
+            NovelGhostwriteContinuityGate.blockingIssueSummaries(in: report),
+            [candidateIssue.summary]
+        )
         let requests = await harness.adapter.requests
         XCTAssertEqual(requests.count, 1)
         let user = try XCTUnwrap(requests[0].messages.first { $0.role == .user }?.content)
@@ -869,6 +878,53 @@ final class NovelContinuityAuditTests: XCTestCase {
     private var consistentJSON: String {
         """
         {"schemaVersion": 1, "consistent": true, "issues": []}
+        """
+    }
+
+    private var candidateScopedIssuesJSON: String {
+        """
+        {
+          "schemaVersion": 1,
+          "consistent": false,
+          "issues": [
+            {
+              "id": "issue-old-manuscript",
+              "category": "identityDrift",
+              "severity": "blocking",
+              "summary": "第一章已经相识，第三章却再次写成初见。",
+              "references": [
+                {
+                  "chapterOrdinal": 1,
+                  "chapterTitle": "渡口",
+                  "evidence": "林岸在渡口第一次见到苏未晚，两个人交换了姓名"
+                },
+                {
+                  "chapterOrdinal": 3,
+                  "chapterTitle": "茶馆",
+                  "evidence": "两人都说这是初次见面，谁也不认得谁"
+                }
+              ]
+            },
+            {
+              "id": "issue-candidate",
+              "category": "contradiction",
+              "severity": "blocking",
+              "summary": "第一章只见过一次，候选章却写成第三次到访。",
+              "references": [
+                {
+                  "chapterOrdinal": 1,
+                  "chapterTitle": "渡口",
+                  "evidence": "林岸在渡口第一次见到苏未晚"
+                },
+                {
+                  "chapterOrdinal": 4,
+                  "chapterTitle": "候选下一章",
+                  "evidence": "林岸第三次来到渡口"
+                }
+              ]
+            }
+          ]
+        }
         """
     }
 

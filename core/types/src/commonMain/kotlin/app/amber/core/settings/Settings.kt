@@ -43,10 +43,8 @@ import kotlinx.serialization.Transient
 import kotlin.uuid.Uuid
 
 
-// Default theme id seeded into freshly-initialized Settings. Must match
-// AmberAgentClashThemePreset.id in :app feature/ui/theme/presets — pinned
-// as a string here so PreferencesStore stays free of the Compose-flavored
-// PresetThemes registry.
+// Stable default theme id seeded into freshly initialized Settings. It remains
+// a string so the shared settings model has no dependency on a UI theme registry.
 const val DEFAULT_PRESET_THEME_ID = "amberagent_clash"
 
 

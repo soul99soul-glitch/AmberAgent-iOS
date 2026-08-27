@@ -12,9 +12,8 @@ import Foundation
 // This generalizes the ad-hoc single-tool-per-round loop that `ChatViewModel`
 // hard-codes for the chat surface (maxToolResumeCount, messagesByFinishingToolCall,
 // pendingXxxToolCall). SubAgent, Deep Read, and a more robust chat tool flow
-// all build on it. It mirrors Android's `GenerationHandler.generateText` +
-// `AgentToolDispatcher.executeBatch` semantics (multi-turn, batch-execute,
-// approval pause) while reusing the existing KMP message/part mechanics that
+// all build on it. It implements Amber's multi-turn model/tool semantics —
+// batch execution and approval pauses — while reusing KMP message/part mechanics that
 // already work on iOS.
 //
 // No KMP changes: `UIMessagePart.Tool`, `UIMessage`, `MessageChunk`,

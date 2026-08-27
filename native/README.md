@@ -1,20 +1,26 @@
-# Rust Native Components (amber-agent spike)
+# Rust Native Components
 
-Cargo workspace housing 3 Rust crates that compile to Android `.so` libraries
-via JNI bindings, replacing CPU-heavy JVM components.
+Cargo workspace for AmberAgent's parsers, transformers, crypto, and tokenizer.
+The `amber-ffi` crate exposes those capabilities through the
+`AmberNative.xcframework` consumed by the iOS/KMP build; component crates may
+also retain JNI bindings for other consumers.
 
 ## Layout
 
 ```
 native/
 ├── Cargo.toml                    workspace manifest
-├── office-parsers/               docx + pptx extraction (replaces JVM XmlPullParser)
-├── markdown-parser/              pulldown-cmark + packed binary AST (alternative to JetBrains markdown)
-└── highlight-parser/             tree-sitter + 14 grammars (replaces QuickJS+Prism)
+├── amber-ffi/                    stable C ABI exported to Apple platforms
+├── office-parsers/               document extraction
+├── markdown-parser/              pulldown-cmark + packed binary AST
+├── highlight-parser/             tree-sitter syntax highlighting
+├── tokenizer/                    model token counting
+├── sync-crypto/                  encrypted sync primitives
+├── regex-transformer/            rule-based text transformations
+├── reader-extractor/             readable-content extraction
+├── ...                           additional shared native components
+└── build-xcframework.sh          device/simulator XCFramework builder
 ```
-
-See `docs/RUST_NATIVE_SPIKE_PLAN.md` at repo root for full spike plan,
-acceptance criteria, JNI boundary spec, and packed binary formats.
 
 ## Local development
 
@@ -32,27 +38,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-## Android cross-build
-
-Driven by Gradle via the [mozilla/rust-android-gradle](https://github.com/mozilla/rust-android-gradle)
-plugin. The plugin runs `cargo-ndk` for each Android ABI and stages the
-resulting `.so` files into the consumer module's `jniLibs/` directory.
+## Apple framework build
 
 ```bash
-# From repo root — assumes Rust toolchain + Android NDK + targets installed
-./gradlew :document:cargoBuild           # Component #1
-./gradlew :app:cargoBuild                # Component #2
-./gradlew :highlight:cargoBuild          # Component #3
-```
+# Build native device and simulator slices.
+./native/build-xcframework.sh
 
-See `docs/RUST_NATIVE_SPIKE_PLAN.md` §2.1/§2.3 for one-time setup.
+# Link the framework into the KMP simulator artifact.
+./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
+```
 
 ## Hard constraints
 
-- **No std/heap-only blowups**: Every JNI call must work with O(input size) memory.
-- **Panic-catch at FFI boundary**: Never unwind across JNI; catch in `lib.rs` entry.
-- **JVM fallback preserved**: The Kotlin adapter falls back to existing JVM
-  implementation if native load fails or returns error. This is non-negotiable
-  during spike — see SPIKE_PLAN.md §6.
-- **Output equivalence**: Each component must produce output indistinguishable
-  from its JVM counterpart for the corpus in `native/<component>/tests/corpus/`.
+- **Bounded memory**: Native calls must work with O(input size) memory.
+- **Panic containment**: Never unwind across the C ABI boundary.
+- **Output stability**: Each component must preserve the checked-in golden
+  corpus in `native/<component>/tests/corpus/`.

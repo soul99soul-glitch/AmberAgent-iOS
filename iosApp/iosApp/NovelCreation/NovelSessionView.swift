@@ -1,6 +1,13 @@
 import SwiftUI
 import UIKit
 
+private struct NovelGhostwriteRevisionRequest: Identifiable {
+    let id = UUID()
+    let recommendedBrief: String
+    let detail: String?
+    let strategies: [NovelGhostwriteRevisionStrategy]
+}
+
 enum NovelComposerIntent: String, CaseIterable, Identifiable {
     case discuss
     case continueProse
@@ -161,6 +168,7 @@ struct NovelSessionView: View {
     @State private var composerBarHeight: CGFloat = 0
     @State private var isInputFocused = false
     @State private var isContextPanelPresented = false
+    @State private var ghostwriteRevisionRequest: NovelGhostwriteRevisionRequest?
     @State private var pendingRecoveryAbandonTransactionIDs: [NovelPendingOperationID] = []
     @State private var recoveryAbandonTask: Task<Void, Never>?
     @State private var pendingUndo: NovelPendingCommittedUndo?
@@ -269,6 +277,21 @@ struct NovelSessionView: View {
         }
         .onChange(of: followGeneration) { _, enabled in
             scrollDriver.setAutomaticFollowEnabled(enabled)
+        }
+        .sheet(item: $ghostwriteRevisionRequest) { request in
+            NovelGhostwriteRevisionSheet(
+                recommendedBrief: request.recommendedBrief,
+                detail: request.detail,
+                strategies: request.strategies,
+                onCancel: { ghostwriteRevisionRequest = nil },
+                onStart: { brief in
+                    let started = viewModel.startGhostwriteRevision(brief: brief)
+                    if started {
+                        ghostwriteRevisionRequest = nil
+                    }
+                    return started
+                }
+            )
         }
         .confirmationDialog(
             pendingUndo?.kind == .polish ? "撤销这次润色？" : "撤销这次收录？",
@@ -1007,8 +1030,8 @@ struct NovelSessionView: View {
         }
     }
 
-    /// 主界面代笔状态条：状态 + 详情 + 暂停/继续。复用会话 VM 既有入口，
-    /// 不引入新状态；继续键沿用与面板一致的 `canStartGhostwriteChapter` 门。
+    /// 主界面代笔状态条：状态 + 详情 + 暂停/处理/继续。润修仍复用既有事务，
+    /// 继续键沿用与面板一致的 `canStartGhostwriteChapter` 门。
     private func ghostwriteStatusBar(_ progress: NovelGhostwriteProgress) -> some View {
         let blocker: String? = {
             guard !viewModel.isGhostwriting,
@@ -1050,7 +1073,11 @@ struct NovelSessionView: View {
                     .contentShape(Rectangle())
                 } else if progress.shouldContinueSameBatch {
                     Button(ghostwriteStatusBarContinueTitle(progress)) {
-                        _ = viewModel.continueGhostwriteChapter()
+                        if progress.pauseReason == .blockingContinuity {
+                            presentContinuityRepairOptions(progress)
+                        } else {
+                            _ = viewModel.continueGhostwriteChapter()
+                        }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
@@ -1079,10 +1106,25 @@ struct NovelSessionView: View {
         case .continuityAuditIncomplete: return "再检查"
         case .syncFailed: return "继续同步"
         case .healBudgetExhausted: return "继续"
-        case .blockingContinuity: return "继续"
+        case .blockingContinuity: return "处理硬伤"
         default:
             return progress.mustRewriteCandidateOnResume ? "重写" : "继续"
         }
+    }
+
+    private func presentContinuityRepairOptions(_ progress: NovelGhostwriteProgress) {
+        let receipt = progress.lastFailureReceipt
+        let recommendedBrief = receipt?.recommendedRevisionBrief()
+            ?? progress.detailMessage
+            ?? NovelGhostwritePauseReason.blockingContinuity.displayMessage
+        let detail = receipt?.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        ghostwriteRevisionRequest = NovelGhostwriteRevisionRequest(
+            recommendedBrief: recommendedBrief,
+            detail: detail?.isEmpty == false ? detail : progress.detailMessage,
+            strategies: NovelGhostwriteRevisionStrategy.continuityOptions(
+                recommendedBrief: recommendedBrief
+            )
+        )
     }
 
     private func quickStartRecovery(

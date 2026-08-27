@@ -1,13 +1,10 @@
 package app.amber.core.native
 
 /**
- * JVM/Android actual for [AmberNativeBridge].
+ * JVM actual for [AmberNativeBridge].
  *
- * All functions return stub values. The Android app uses its own JNI bridge
- * objects (SyncCryptoNative, RegexTransformerNative, etc.) directly from
- * the `:app` module. This actual exists solely so the KMP module compiles
- * on JVM. When the Android-side consumers migrate to depend on this module,
- * these stubs will delegate to the existing JNI bridges.
+ * This placeholder keeps JVM tests and metadata compilation available while
+ * Apple targets use the native C ABI implementation.
  */
 actual object AmberNativeBridge {
 

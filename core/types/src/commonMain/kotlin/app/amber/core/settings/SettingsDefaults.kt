@@ -5,15 +5,8 @@ package app.amber.core.settings
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.ProviderSetting
 
-// Pure-Kotlin seed/consistency passes copied from
-// core/settings/src/main/.../prefs/SettingsAggregator.kt (applyBackfillAndSeed /
-// applyCrossDomainConsistency / withMigratedMemoryDreamLegacy). The originals are
-// pure Kotlin but live in the Android-only :core:settings module; copying them
-// here into the KMP :core:types module exposes them to the iOS app via the Shared
-// framework (:core:types is already in shared/build.gradle.kts export list) so
-// iOS can build a real seeded Settings snapshot WITHOUT depending on the Android
-// DataStore layer. The originals in :core:settings are intentionally left
-// untouched (Android path is unchanged); these are the shared iOS-facing copies.
+// Pure-Kotlin seed and consistency passes exposed through Shared.framework so
+// iOS can build a seeded Settings snapshot without a platform storage layer.
 //
 // Every type/constant these functions touch already lives in commonMain:
 // Settings, DEFAULT_PROVIDERS, DEFAULT_TTS_PROVIDERS, DEFAULT_ASSISTANTS,
@@ -26,8 +19,7 @@ import app.amber.ai.provider.ProviderSetting
 /**
  * Phase 2 — per-load backfill / seed / branding.
  *
- * Mirrors SettingsAggregator.applyBackfillAndSeed in :core:settings. Applies the
- * same provider metadata sync, image-model seeding, assistant backfill, routing
+ * Applies provider metadata sync, image-model seeding, assistant backfill, routing
  * quick-message seeding, TTS provider backfill, and AmberAgent branding to a
  * Settings instance. Used by [IosSettingsDefaults] to produce a real seeded
  * Settings snapshot for the iOS app.
@@ -126,7 +118,6 @@ public fun applyBackfillAndSeedShared(it: Settings): Settings {
 /**
  * Phase 3 — cross-domain consistency.
  *
- * Mirrors SettingsAggregator.applyCrossDomainConsistency in :core:settings.
  * Dedups providers/models/assistants/ttsProviders/modeInjections/lorebooks/
  * quickMessages, filters stale references and favoriteModels, and re-applies the
  * reader-path search cleanups. Used by [IosSettingsDefaults] to finalize the

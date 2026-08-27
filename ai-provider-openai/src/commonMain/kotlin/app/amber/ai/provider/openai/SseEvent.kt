@@ -24,9 +24,8 @@ import kotlinx.serialization.json.contentOrNull
 /**
  * Represents events in an SSE connection.
  *
- * Adapted from `common/src/main/java/app/amber/common/http/SSE.kt` for the KMP
- * OpenAI provider. HTTP failures carry a typed status so callers can distinguish
- * them from a transport interruption.
+ * HTTP failures carry a typed status so callers can distinguish them from a
+ * transport interruption.
  */
 sealed class SseEvent {
     data object Open : SseEvent()

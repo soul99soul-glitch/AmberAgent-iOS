@@ -50,11 +50,10 @@ targets:
         excludes:
           - NovelCreation/AGENTS.md
       - path: SharedWatch
-      # Deep Read editorial reader fonts — reference the already-tracked Android
-      # font assets (no duplicate binary in the repo); bundled as app resources.
-      - path: ../app/src/main/res/font/noto_serif_sc.otf
+      # Deep Read editorial reader fonts owned by the iOS app and bundled as resources.
+      - path: Resources/Fonts/noto_serif_sc.otf
         buildPhase: resources
-      - path: ../app/src/main/res/font/jetbrains_mono.ttf
+      - path: Resources/Fonts/jetbrains_mono.ttf
         buildPhase: resources
     preBuildScripts:
       - name: Build Shared KMP Framework
@@ -240,9 +239,9 @@ targets:
         excludes:
           - NovelCreation/AGENTS.md
       - path: SharedWatch
-      - path: ../app/src/main/res/font/noto_serif_sc.otf
+      - path: Resources/Fonts/noto_serif_sc.otf
         buildPhase: resources
-      - path: ../app/src/main/res/font/jetbrains_mono.ttf
+      - path: Resources/Fonts/jetbrains_mono.ttf
         buildPhase: resources
       - path: IshRuntimeResources/fs
         buildPhase: resources

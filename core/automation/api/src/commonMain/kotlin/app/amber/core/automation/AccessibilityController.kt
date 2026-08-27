@@ -18,14 +18,11 @@ data class Rect(
 }
 
 /**
- * AccessibilityServiceController surface used by ScreenAutomationTools
- * (lifted out of `:app/.../AmberAccessibilityService.kt`). The full Service
- * class continues to live in :app — Android `AccessibilityService` extension
- * requires the manifest namespace + can't easily move. This interface
- * captures only the methods downstream tools call on the running service.
+ * Platform-neutral accessibility surface used by screen automation tools.
+ * Host integrations implement only the operations downstream tools need.
  *
  * Active-instance lookup is provided by [getActiveAccessibilityController],
- * which routes through the in-process global the Service writes on connect.
+ * which routes through the in-process global published by the host integration.
  */
 interface AccessibilityController {
 
@@ -63,9 +60,7 @@ data class AccessibilityTextMatch(
 )
 
 /**
- * Holder for the in-process Service instance. The :app-side
- * AmberAccessibilityService writes `activeController = this` on
- * `onServiceConnected()` and clears it in `onUnbind()`. Tools call
+ * Holder for the active in-process host integration. Tools call
  * [getActiveAccessibilityController] to reach the live instance.
  */
 object AccessibilityActive {

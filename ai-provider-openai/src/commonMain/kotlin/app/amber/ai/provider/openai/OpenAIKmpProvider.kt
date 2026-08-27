@@ -71,11 +71,9 @@ import kotlin.uuid.Uuid
  * [ProviderSetting.OpenAI], supporting text streaming / generation and model
  * listing over the `/chat/completions` and `/models` endpoints.
  *
- * Mirrors the JSON shaping/parsing logic of the Android-only
- * `ChatCompletionsAPI` (`:ai` module) but is engine-agnostic (no `java.net`,
- * no OkHttp, no Android-only utils) so it compiles and runs on iOS via the
- * Ktor Darwin engine. Host-specific sampling/reasoning quirks are intentionally
- * omitted — this is a baseline OpenAI-compatible implementation.
+ * Its JSON shaping and parsing are engine-agnostic so it compiles and runs on
+ * iOS via the Ktor Darwin engine. Host-specific sampling/reasoning quirks are
+ * intentionally omitted from this baseline OpenAI-compatible implementation.
  */
 /// Responses API 的 `incomplete_details.reason`:输出写满了调用方设定的上限。
 /// 这是正常终态而非失败,见 `throwIfResponsesTerminalFailure`。
@@ -615,7 +613,7 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         configureAuth(providerSetting, params.customHeaders)
     }
 
-    // ---- safe JsonElement accessors (avoid a dependency on :common helpers) ----
+    // ---- safe JsonElement accessors ----
 
     private fun JsonObject.str(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
@@ -628,8 +626,8 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
     // ========================================================================
     // OpenAI Responses API (`/responses`) support.
     //
-    // Faithful, engine-agnostic port of the Android-only `ResponseAPI`
-    // (`:ai` module). Routed when [usesOpenAIResponsesApi] is true
+    // Engine-agnostic Responses API implementation. Routed when
+    // [usesOpenAIResponsesApi] is true
     // (`useResponseApi`, or Muse Spark which OpenCode/Meta only serve on
     // `/responses`); the `/chat/completions` path above is untouched. Platform deps removed:
     //  - host parsing uses a pure-Kotlin extractor (no java.net.URL)

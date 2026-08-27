@@ -1111,9 +1111,11 @@ struct NovelWritingContextSheet: View {
             Text("已收录的章节会留在正文里。未写完的章会停掉，下次代笔算新的一批。")
         }
         .sheet(isPresented: $isPresentingGhostwriteRevision) {
-            let receipt = session.ghostwriteProgress?.lastFailureReceipt
+            let progress = session.ghostwriteProgress
+            let receipt = progress?.lastFailureReceipt
+            let recommendedBrief = receipt?.recommendedRevisionBrief() ?? ""
             NovelGhostwriteRevisionSheet(
-                recommendedBrief: receipt?.recommendedRevisionBrief() ?? "",
+                recommendedBrief: recommendedBrief,
                 // 中断摘要用审稿意见，不把离页/重启元信息塞进「原因」。
                 detail: {
                     let summary = receipt?.summary.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1126,6 +1128,11 @@ struct NovelWritingContextSheet: View {
                     }
                     return nil
                 }(),
+                strategies: progress?.pauseReason == .blockingContinuity
+                    ? NovelGhostwriteRevisionStrategy.continuityOptions(
+                        recommendedBrief: recommendedBrief
+                    )
+                    : [],
                 onCancel: { isPresentingGhostwriteRevision = false },
                 onStart: { brief in
                     let started = session.startGhostwriteRevision(brief: brief)
@@ -1358,18 +1365,20 @@ struct NovelWritingContextSheet: View {
                                 .contentShape(Rectangle())
                                 .disabled(!session.canStartGhostwriteChapter)
 
-                                Button {
-                                    _ = session.continueGhostwriteChapter()
-                                } label: {
-                                    Text(continueGhostwriteButtonTitle)
-                                        .lineLimit(1)
-                                        .minimumScaleFactor(0.8)
-                                        .frame(maxWidth: .infinity, minHeight: 44)
+                                if session.ghostwriteProgress?.pauseReason != .blockingContinuity {
+                                    Button {
+                                        _ = session.continueGhostwriteChapter()
+                                    } label: {
+                                        Text(continueGhostwriteButtonTitle)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.8)
+                                            .frame(maxWidth: .infinity, minHeight: 44)
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.regular)
+                                    .contentShape(Rectangle())
+                                    .disabled(!session.canStartGhostwriteChapter)
                                 }
-                                .buttonStyle(.bordered)
-                                .controlSize(.regular)
-                                .contentShape(Rectangle())
-                                .disabled(!session.canStartGhostwriteChapter)
                             } else {
                                 Button {
                                     _ = session.continueGhostwriteChapter()
@@ -1840,6 +1849,10 @@ struct NovelWritingContextSheet: View {
     private func performToolbarGhostwriteAction() {
         if session.isGhostwriting {
             session.pauseGhostwrite()
+            return
+        }
+        if session.ghostwriteProgress?.pauseReason == .blockingContinuity {
+            isPresentingGhostwriteRevision = true
             return
         }
         if shouldShowContinueGhostwrite
@@ -2497,18 +2510,58 @@ struct NovelWritingContextSheet: View {
     }
 }
 
-/// 代笔质量门失败后的人工润修确认面：预填审稿 brief，可改后开写。
+struct NovelGhostwriteRevisionStrategy: Identifiable, Equatable {
+    let id: String
+    let title: String
+    let detail: String
+    let brief: String
+    let isDefault: Bool
+
+    static func continuityOptions(recommendedBrief: String) -> [Self] {
+        let trimmed = recommendedBrief.trimmingCharacters(in: .whitespacesAndNewlines)
+        let base = trimmed.isEmpty
+            ? "修正审稿指出的前后矛盾，保留与既有正文一致的事实。"
+            : trimmed
+        return [
+            Self(
+                id: "minimal",
+                title: "按审稿意见最小修复",
+                detail: "保留可用段落，只修改已经确认的冲突。",
+                brief: base,
+                isDefault: true
+            ),
+            Self(
+                id: "explain",
+                title: "保留差异并补足解释",
+                detail: "不推翻既有事实，在本章补清称谓、时间或制度差异的原因。",
+                brief: base + "\n\n处理方向：尽量保留现有差异，通过本章补充清楚、可信的解释消除矛盾。",
+                isDefault: false
+            ),
+            Self(
+                id: "rewrite",
+                title: "重写冲突桥段",
+                detail: "允许重写相关段落，以既有正文和本章计划为准重新衔接。",
+                brief: base + "\n\n处理方向：允许重写引发冲突的相关桥段，以既有正文和本章计划为准重新建立因果。",
+                isDefault: false
+            ),
+        ]
+    }
+}
+
+/// 代笔质量门失败后的人工润修确认面：预填审稿 brief，可选处理方向并编辑后开写。
 struct NovelGhostwriteRevisionSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     let recommendedBrief: String
     /// 展示给用户的中断摘要（优先审稿意见，不含离页/重启元信息）。
     let detail: String?
+    let strategies: [NovelGhostwriteRevisionStrategy]
     let onCancel: () -> Void
     /// 返回是否已开始；false 时 sheet 留在原地并显示错误。
     let onStart: (String) -> Bool
 
     @State private var brief: String
+    @State private var selectedStrategyID: String?
     @State private var hasCustomized = false
     @State private var startError: String?
     @State private var revisionFieldBank = NovelIMEFieldBank()
@@ -2516,17 +2569,21 @@ struct NovelGhostwriteRevisionSheet: View {
     init(
         recommendedBrief: String,
         detail: String?,
+        strategies: [NovelGhostwriteRevisionStrategy] = [],
         onCancel: @escaping () -> Void,
         onStart: @escaping (String) -> Bool
     ) {
         self.recommendedBrief = recommendedBrief
         self.detail = detail
+        self.strategies = strategies
         self.onCancel = onCancel
         self.onStart = onStart
-        _brief = State(initialValue: recommendedBrief)
+        _brief = State(initialValue: strategies.first?.brief ?? recommendedBrief)
+        _selectedStrategyID = State(initialValue: strategies.first?.id)
     }
 
     var body: some View {
+        let defaultBrief = strategies.first(where: \.isDefault)?.brief ?? recommendedBrief
         NavigationStack {
             Form {
                 if let detail, !detail.isEmpty {
@@ -2553,6 +2610,62 @@ struct NovelGhostwriteRevisionSheet: View {
                     }
                 }
 
+                if !strategies.isEmpty {
+                    Section {
+                        ForEach(strategies) { strategy in
+                            Button {
+                                revisionFieldBank.commitAll()
+                                selectedStrategyID = strategy.id
+                                brief = strategy.brief
+                                startError = nil
+                            } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Image(systemName: selectedStrategyID == strategy.id
+                                        ? "checkmark.circle.fill"
+                                        : "circle")
+                                        .foregroundStyle(selectedStrategyID == strategy.id
+                                            ? AmberTheme.accent
+                                            : AmberTheme.muted)
+                                        .accessibilityHidden(true)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 6) {
+                                            Text(strategy.title)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(AmberTheme.foreground)
+                                            if strategy.isDefault {
+                                                Text("默认")
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(AmberTheme.accent)
+                                            }
+                                        }
+                                        Text(strategy.detail)
+                                            .font(.caption)
+                                            .foregroundStyle(AmberTheme.muted)
+                                            .multilineTextAlignment(.leading)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .frame(minHeight: 44)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(
+                                strategy.isDefault ? "\(strategy.title)，默认方案" : strategy.title
+                            )
+                            .accessibilityValue(
+                                "\(selectedStrategyID == strategy.id ? "已选择" : "未选择")，\(strategy.detail)"
+                            )
+                            .accessibilityAddTraits(
+                                selectedStrategyID == strategy.id ? .isSelected : []
+                            )
+                        }
+                    } header: {
+                        Text("选择处理方向")
+                    } footer: {
+                        Text("以下为通用处理方向，可按本次审稿意见选择并继续编辑；确认开始前不会改动候选稿或正文。")
+                    }
+                }
+
                 Section {
                     NovelIMETextEditor(
                         text: $brief,
@@ -2562,14 +2675,19 @@ struct NovelGhostwriteRevisionSheet: View {
                         bank: revisionFieldBank
                     )
                     .frame(minHeight: 160)
-                    .onChange(of: brief) { _, _ in
-                        hasCustomized = true
+                    .onChange(of: brief) { _, newValue in
+                        hasCustomized = newValue != defaultBrief
+                        if let selectedStrategyID,
+                           strategies.first(where: { $0.id == selectedStrategyID })?.brief != newValue {
+                            self.selectedStrategyID = nil
+                        }
                         startError = nil
                     }
-                    if hasCustomized, brief != recommendedBrief {
-                        Button("重置为推荐") {
+                    if hasCustomized, brief != defaultBrief {
+                        Button("重置为默认") {
                             NovelTextInputCommitter.perform(fieldBank: revisionFieldBank) {
-                                brief = recommendedBrief
+                                brief = defaultBrief
+                                selectedStrategyID = strategies.first(where: \.isDefault)?.id
                                 hasCustomized = false
                             }
                         }

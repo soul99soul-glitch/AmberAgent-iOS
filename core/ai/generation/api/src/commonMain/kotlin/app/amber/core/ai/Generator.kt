@@ -16,15 +16,9 @@ import app.amber.ai.ui.UIMessage
 import kotlin.uuid.Uuid
 
 /**
- * Generation interface lifted out of `class GenerationHandler` in `:app` for
- * cascade decoupling (Phase D cascade T4.2). Consumers (subagent, board,
- * chat impl, DeepRead) now depend on this api module instead of the heavy
- * concrete class.
- *
- * The `:app` side declares `class GenerationHandler(...) : Generator` and
- * supplies the actual implementation (~1200 LOC with Memory / ProviderManager
- * / ConversationRepository deps). This api module owns nothing but the
- * type signatures + the streaming wire-format data classes.
+ * Platform-neutral generation façade. Shared consumers depend on this API while
+ * each product runtime owns orchestration, provider selection, persistence, and
+ * tool execution. This module contains only signatures and streaming wire types.
  */
 interface Generator {
 

@@ -29,7 +29,8 @@ extension DefaultNovelCreation {
         return try await runPreparedContinuityAudit(
             prepared,
             projectID: projectID,
-            branchID: branchID
+            branchID: branchID,
+            candidateChapterID: nil
         )
     }
 
@@ -39,16 +40,19 @@ extension DefaultNovelCreation {
         candidateID: NovelCandidateID,
         maxPriorManuscriptChapters: Int?
     ) async throws -> NovelContinuityAuditReport {
+        let candidateChapterID = NovelChapterID()
         let prepared = try await prepareContinuityAuditIncludingCandidate(
             projectID: projectID,
             branchID: branchID,
             candidateID: candidateID,
-            maxPriorManuscriptChapters: maxPriorManuscriptChapters
+            maxPriorManuscriptChapters: maxPriorManuscriptChapters,
+            candidateChapterID: candidateChapterID
         )
         return try await runPreparedContinuityAudit(
             prepared,
             projectID: projectID,
-            branchID: branchID
+            branchID: branchID,
+            candidateChapterID: candidateChapterID
         )
     }
 }
@@ -67,7 +71,8 @@ private extension DefaultNovelCreation {
     func runPreparedContinuityAudit(
         _ prepared: PreparedContinuityAudit,
         projectID: NovelProjectID,
-        branchID: NovelBranchID
+        branchID: NovelBranchID,
+        candidateChapterID: NovelChapterID?
     ) async throws -> NovelContinuityAuditReport {
         let executor = NovelStructuredModelExecutor(modelRunner: modelRunner)
         let promptVersion = NovelPromptCatalog.template(for: .continuityAuditV1).version
@@ -90,7 +95,15 @@ private extension DefaultNovelCreation {
                     chunkIndex: chunk.index,
                     chapters: prepared.chapters
                 )
-                issues.append(contentsOf: mapped.issues)
+                // 候选收录前的软门只排除「旧章-旧章」的阻断级问题：
+                // 它们应留给全书审计，否则重写候选仍会陷入同一硬伤循环。
+                let scopedIssues = mapped.issues.filter { issue in
+                    guard let candidateChapterID, issue.severity == .blocking else {
+                        return true
+                    }
+                    return issue.references.contains { $0.chapterID == candidateChapterID }
+                }
+                issues.append(contentsOf: scopedIssues)
                 droppedIssueCount += mapped.droppedCount
             } catch is CancellationError {
                 throw CancellationError()
@@ -231,7 +244,8 @@ private extension DefaultNovelCreation {
         projectID: NovelProjectID,
         branchID: NovelBranchID,
         candidateID: NovelCandidateID,
-        maxPriorManuscriptChapters: Int?
+        maxPriorManuscriptChapters: Int?,
+        candidateChapterID: NovelChapterID
     ) async throws -> PreparedContinuityAudit {
         let loaded = try await loadContinuityAuditContext(
             projectID: projectID,
@@ -263,7 +277,7 @@ private extension DefaultNovelCreation {
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var chapters = manuscriptChapters
         chapters.append(NovelContinuityAuditChapter(
-            chapterID: NovelChapterID(),
+            chapterID: candidateChapterID,
             ordinal: loaded.branch.workingChapterSelections.count + 1,
             title: placement.isEmpty ? "候选下一章" : placement,
             content: candidate.content

@@ -4,9 +4,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 /**
- * Memory classification enums — extracted from core.memory.model.MemoryModels
- * so :core:model can be physically extracted as a standalone Gradle module
- * without pulling in the full memory subsystem.
+ * Shared memory classification enums kept separate from runtime memory models
+ * so lightweight consumers do not pull in the full memory subsystem.
  *
  * Wire names are STABLE — persisted in user DataStore as @SerialName strings.
  * Adding new variants is fine; renaming or removing breaks user data.

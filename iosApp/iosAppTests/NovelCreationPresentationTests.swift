@@ -803,6 +803,14 @@ final class NovelCreationPresentationTests: XCTestCase {
         XCTAssertEqual(
             NovelGhostwriteSheetChrome.trailingActionTitle(
                 isGhostwriting: false,
+                pauseReason: .blockingContinuity,
+                shouldContinueSameBatch: true
+            ),
+            "处理"
+        )
+        XCTAssertEqual(
+            NovelGhostwriteSheetChrome.trailingActionTitle(
+                isGhostwriting: false,
                 pauseReason: .batchCompleted,
                 shouldContinueSameBatch: false
             ),

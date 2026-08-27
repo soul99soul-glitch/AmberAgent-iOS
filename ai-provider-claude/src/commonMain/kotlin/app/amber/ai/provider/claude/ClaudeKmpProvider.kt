@@ -65,11 +65,10 @@ private const val ANTHROPIC_VERSION = "2023-06-01"
  * [ProviderSetting.Claude], supporting text streaming / generation and model
  * listing over the `/messages` (SSE) and `/models` endpoints.
  *
- * Mirrors the JSON shaping/parsing logic of the Android-only `ClaudeProvider`
- * (`:ai` module) but is engine-agnostic (no `java.net`, no OkHttp, no
- * Android-only utils) so it compiles and runs on iOS via the Ktor Darwin engine.
+ * Its JSON shaping and parsing are engine-agnostic so it compiles and runs on
+ * iOS via the Ktor Darwin engine.
  *
- * Differences vs the Android original (intentional, KMP baseline):
+ * Intentional KMP baseline constraints:
  *  - No multi-key rotation (KeyRoulette): uses `providerSetting.apiKey` directly,
  *    matching the OpenAI KMP provider convention.
  *  - No image content blocks yet: `UIMessagePart.Image` -> null (skipped), same

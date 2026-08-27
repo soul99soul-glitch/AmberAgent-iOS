@@ -1469,6 +1469,20 @@ final class NovelCollaborationModeTests: XCTestCase {
         XCTAssertFalse(progress.boardStepSummary.contains("将再检"))
     }
 
+    func testBlockingContinuityOffersThreeEditableRepairDirections() {
+        let recommended = "审稿意见：第 30 章与第 34 章称谓冲突。"
+        let options = NovelGhostwriteRevisionStrategy.continuityOptions(
+            recommendedBrief: recommended
+        )
+
+        XCTAssertEqual(options.count, 3)
+        XCTAssertEqual(Set(options.map(\.id)).count, 3)
+        XCTAssertTrue(options[0].isDefault)
+        XCTAssertEqual(options[0].brief, recommended)
+        XCTAssertTrue(options[1].brief.contains("补充清楚、可信的解释"))
+        XCTAssertTrue(options[2].brief.contains("重新建立因果"))
+    }
+
     func testSilentRerunOnlyWhenChunksFailed() {
         // 规则恢复入口条件：仅 failedChunk 触发静默再扫；blocking 干净报告不进入。
         XCTAssertTrue(NovelGhostwriteContinuityGate.shouldSilentRerunIncomplete(failedChunkCount: 1, alreadyReran: 0))

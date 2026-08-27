@@ -1250,6 +1250,7 @@ enum NovelGhostwriteSheetChrome {
     ) -> String {
         if isGhostwriting { return "暂停" }
         if pauseReason == .planProposedForNewBatch { return "确认" }
+        if pauseReason == .blockingContinuity { return "处理" }
         if shouldContinueSameBatch { return "继续" }
         if pauseReason == .batchCompleted || pauseReason == .chapterCompleted {
             return "下一批"
