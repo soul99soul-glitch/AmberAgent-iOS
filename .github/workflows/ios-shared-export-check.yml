@@ -4,23 +4,18 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'apps/ios/shared/**'
-      - 'apps/ios/ai-core/**'
-      - 'apps/ios/ai-provider-openai/**'
-      - 'apps/ios/ai-provider-claude/**'
-      - 'apps/ios/core/**'
-      - 'apps/ios/feature/**'
-      - 'apps/ios/iosApp/iosApp/**/*.swift'
-      - 'apps/ios/scripts/check_shared_export_reachability.py'
+      - 'shared/**'
+      - 'ai-core/**'
+      - 'ai-provider-openai/**'
+      - 'ai-provider-claude/**'
       - 'core/**'
+      - 'feature/**'
+      - 'iosApp/iosApp/**/*.swift'
+      - 'scripts/check_shared_export_reachability.py'
       - '.github/workflows/ios-shared-export-check.yml'
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    working-directory: apps/ios
 
 jobs:
   shared-export-check:
@@ -40,7 +35,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-ios-gradle-${{ hashFiles('apps/ios/**/*.gradle*', 'apps/ios/**/gradle-wrapper.properties') }}
+          key: ${{ runner.os }}-ios-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
 
       - name: Build Shared framework
         run: |
