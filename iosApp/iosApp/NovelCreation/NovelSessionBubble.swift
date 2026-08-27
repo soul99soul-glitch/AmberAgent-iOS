@@ -473,7 +473,13 @@ private struct NovelAskUserCard: View {
     @State private var imeBank = NovelIMEFieldBank()
 
     var body: some View {
-        if presentation.prompt.chapterRevision != nil {
+        if presentation.prompt.ghostwritePlan != nil {
+            NovelGhostwritePlanCard(
+                presentation: presentation,
+                blocker: blocker,
+                onSubmit: onSubmit
+            )
+        } else if presentation.prompt.chapterRevision != nil {
             NovelChapterRevisionCard(
                 presentation: presentation,
                 blocker: blocker,
@@ -635,6 +641,189 @@ private struct NovelAskUserCard: View {
                 }
             }
         )
+    }
+}
+
+private struct NovelGhostwritePlanCard: View {
+    let presentation: NovelAskUserPresentation
+    let blocker: NovelSessionActionBlocker?
+    let onSubmit: (String) -> Void
+
+    @State private var selectedChapterCount: Int
+
+    init(
+        presentation: NovelAskUserPresentation,
+        blocker: NovelSessionActionBlocker?,
+        onSubmit: @escaping (String) -> Void
+    ) {
+        self.presentation = presentation
+        self.blocker = blocker
+        self.onSubmit = onSubmit
+        _selectedChapterCount = State(initialValue: NovelGhostwriteBatch.clamp(
+            presentation.prompt.ghostwritePlan?.suggestedChapterCount
+                ?? NovelGhostwriteBatch.minChapterCount
+        ))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(statusTitle, systemImage: statusSymbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(statusColor)
+
+            if let proposal = presentation.prompt.ghostwritePlan {
+                Text(presentation.prompt.question)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let reason = proposal.reason, !reason.isEmpty {
+                    Text(reason)
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if !proposal.outlinePlacement.isEmpty {
+                    planTextSection(title: "剧情位置", text: proposal.outlinePlacement)
+                }
+                planTextSection(title: "本章目标与冲突", text: proposal.goalAndConflict)
+                planListSection(title: "本章必须发生", items: proposal.mustHappen)
+                if !proposal.mustNotHappen.isEmpty {
+                    planListSection(title: "本章不要发生", items: proposal.mustNotHappen)
+                }
+                if !proposal.endingHook.isEmpty {
+                    planTextSection(title: "章末钩子", text: proposal.endingHook)
+                }
+                if !proposal.visibleFacts.isEmpty {
+                    planListSection(title: "视角可知事实", items: proposal.visibleFacts)
+                }
+                planListSection(title: "后续剧情参考", items: proposal.upcomingArc)
+            }
+
+            if let response = presentation.response {
+                Text(response.answer)
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.foreground2)
+            } else {
+                chapterCountControl
+
+                if let blocker {
+                    Text(blocker.displayName)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.foreground2)
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        onSubmit(NovelGhostwritePlanApproval.rejectOption)
+                    } label: {
+                        Text(NovelGhostwritePlanApproval.rejectOption)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.bordered)
+                    .contentShape(Rectangle())
+
+                    Button {
+                        onSubmit(NovelGhostwritePlanApproval.approvedAnswer(
+                            chapterCount: selectedChapterCount
+                        ))
+                    } label: {
+                        Text("开始写 \(selectedChapterCount) 章")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .contentShape(Rectangle())
+                }
+                .disabled(blocker != nil)
+            }
+        }
+        .padding(16)
+        .amberGlass(cornerRadius: 18, interactive: false)
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AmberTheme.accent.opacity(0.18), lineWidth: 0.75)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var chapterCountControl: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("这批代笔")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                Text("完成一章后会按后续剧情参考继续规划")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.foreground2)
+            }
+            Spacer(minLength: 8)
+            Text("\(selectedChapterCount) 章")
+                .font(.subheadline.monospacedDigit().weight(.semibold))
+                .foregroundStyle(AmberTheme.accent)
+            Stepper(
+                "代笔章数",
+                value: $selectedChapterCount,
+                in: NovelGhostwriteBatch.minChapterCount...NovelGhostwriteBatch.maxChapterCount
+            )
+            .labelsHidden()
+            .accessibilityLabel("代笔章数")
+            .accessibilityValue("\(selectedChapterCount) 章")
+        }
+        .padding(12)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func planTextSection(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(AmberTheme.foreground)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func planListSection(title: String, items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                Text("• \(item)")
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var statusTitle: String {
+        guard let answer = presentation.response?.answer else { return "代笔计划审批" }
+        if let count = NovelGhostwritePlanApproval.approvedChapterCount(from: answer) {
+            return "已开始代笔 \(count) 章"
+        }
+        if answer == NovelGhostwritePlanApproval.rejectOption { return "已暂不开始" }
+        return "已回答"
+    }
+
+    private var statusSymbol: String {
+        guard let answer = presentation.response?.answer else { return "list.clipboard" }
+        if NovelGhostwritePlanApproval.approvedChapterCount(from: answer) != nil {
+            return "checkmark.circle.fill"
+        }
+        if answer == NovelGhostwritePlanApproval.rejectOption { return "pause.circle.fill" }
+        return "questionmark.circle.fill"
+    }
+
+    private var statusColor: Color {
+        guard let answer = presentation.response?.answer else { return AmberTheme.accent }
+        if NovelGhostwritePlanApproval.approvedChapterCount(from: answer) != nil {
+            return AmberTheme.accentGreen
+        }
+        return AmberTheme.foreground2
     }
 }
 

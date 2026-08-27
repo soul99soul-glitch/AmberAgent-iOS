@@ -121,6 +121,31 @@ class NovelProjectToolDeclarationsTest {
     }
 
     @Test
+    fun prepareGhostwriteDeclarationRequiresApprovalAndChapterSelection() {
+        val tool = createNovelPrepareGhostwriteToolDeclaration()
+        assertEquals("novel_prepare_ghostwrite", tool.name)
+        assertTrue(tool.needsApproval)
+        assertFalse(tool.allowsAutoApproval)
+
+        val params = tool.parameters()
+        assertIs<InputSchema.Obj>(params)
+        assertTrue("upcoming_arc" in params.required.orEmpty())
+        assertTrue("suggested_chapter_count" in params.required.orEmpty())
+        assertEquals(
+            1,
+            params.properties["suggested_chapter_count"]!!.jsonObject["minimum"]!!
+                .jsonPrimitive.content.toInt()
+        )
+        assertEquals(
+            10,
+            params.properties["suggested_chapter_count"]!!.jsonObject["maximum"]!!
+                .jsonPrimitive.content.toInt()
+        )
+        assertTrue("approval" in tool.description)
+        assertTrue("1-10" in tool.description)
+    }
+
+    @Test
     fun setChapterTitleDeclarationPinsTitleAndOptionalSelectors() {
         val tool = createNovelSetChapterTitleToolDeclaration()
         assertEquals("novel_set_chapter_title", tool.name)
@@ -232,6 +257,7 @@ class NovelProjectToolDeclarationsTest {
             "novel_clear_upcoming_arc",
             "novel_revise_material",
             "novel_propose_chapter_plan",
+            "novel_prepare_ghostwrite",
             "novel_set_chapter_title",
             "novel_list_chapters",
             "novel_read_chapter",

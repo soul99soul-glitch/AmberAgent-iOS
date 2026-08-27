@@ -1098,6 +1098,24 @@ final class NovelSessionViewModel {
         }
         answeringAskUserMessageID = promptMessageID
         defer { answeringAskUserMessageID = nil }
+        if let proposal = prompt.ghostwritePlan {
+            let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let chapterCount = NovelGhostwritePlanApproval.approvedChapterCount(from: trimmed) {
+                guard await applyGhostwritePlanApproval(
+                    proposal,
+                    targetChapterCount: chapterCount
+                ) else { return false }
+                locallyResolvedAskUser[promptMessageID] = NovelAskUserResponse(
+                    promptMessageID: promptMessageID,
+                    answer: trimmed
+                )
+                operationErrorMessage = nil
+                return true
+            } else if trimmed != NovelGhostwritePlanApproval.rejectOption {
+                operationErrorMessage = "请选择代笔章数后开始，或暂不开始。"
+                return false
+            }
+        }
         if let revision = prompt.chapterRevision {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed == NovelChapterRevisionApproval.approveOption {
@@ -1190,6 +1208,80 @@ final class NovelSessionViewModel {
             inputBudgetTokens: 16_000
         )
         return await start(draft)
+    }
+
+    private func applyGhostwritePlanApproval(
+        _ proposal: NovelGhostwritePlanProposal,
+        targetChapterCount: Int
+    ) async -> Bool {
+        guard let binding,
+              binding.projectID == proposal.projectID,
+              binding.branchID == proposal.branchID,
+              workspace.selectedProjectID == proposal.projectID,
+              workspace.selectedBranchID == proposal.branchID,
+              let project = workspace.projectSnapshot,
+              let branch = project.branches.first(where: { $0.id == proposal.branchID }) else {
+            operationErrorMessage = "这张代笔计划不属于当前项目，请重新发起讨论。"
+            return false
+        }
+        guard !isGhostwriting, !isRunning else {
+            operationErrorMessage = "当前已有生成在进行，请结束后再确认代笔计划。"
+            return false
+        }
+        guard branch.headRevision == proposal.expectedHeadRevision,
+              branch.workingRevision == proposal.expectedWorkingRevision else {
+            operationErrorMessage = "当前正文已经变化，请基于最新内容重新讨论代笔计划。"
+            return false
+        }
+        let currentPlan = project.chapterPlan(for: proposal.branchID)
+        if let currentPlan {
+            let matchesOriginal = currentPlan.id == proposal.planID
+                && currentPlan.contentDigest == proposal.expectedCurrentPlanDigest
+            let matchesApprovedRetry = currentPlan.id == proposal.planID
+                && currentPlan.contentDigest == proposal.proposedPlanDigest
+            guard matchesOriginal || matchesApprovedRetry else {
+                operationErrorMessage = "本章计划已经变化，请重新发起讨论。"
+                return false
+            }
+        } else if proposal.expectedCurrentPlanDigest != nil {
+            operationErrorMessage = "原本章计划已经被清除，请重新发起讨论。"
+            return false
+        }
+        let readinessIssues = workspace.ghostwriteReadinessIssues(requireChapterPlan: false)
+        guard readinessIssues.isEmpty else {
+            operationErrorMessage = readinessIssues.map(\.displayName).joined(separator: "；")
+            return false
+        }
+
+        let planSaved = await workspace.upsertChapterPlan(
+            planID: proposal.planID,
+            status: .confirmed,
+            outlinePlacement: proposal.outlinePlacement,
+            goalAndConflict: proposal.goalAndConflict,
+            mustHappen: proposal.mustHappen,
+            mustNotHappen: proposal.mustNotHappen,
+            endingHook: proposal.endingHook,
+            visibleFacts: proposal.visibleFacts
+        )
+        guard planSaved else {
+            operationErrorMessage = workspace.errorMessage ?? "本章计划保存失败，请重试。"
+            return false
+        }
+        let arcSaved = await workspace.upsertUpcomingArc(beats: proposal.upcomingArc)
+        guard arcSaved else {
+            operationErrorMessage = workspace.errorMessage ?? "后续剧情参考保存失败，请重试。"
+            return false
+        }
+        if workspace.projectSnapshot?.project.collaborationMode != .ghostwrite {
+            let modeSaved = await workspace.setCollaborationMode(.ghostwrite)
+            guard modeSaved else {
+                operationErrorMessage = workspace.errorMessage ?? "未能切入代笔模式，请重试。"
+                return false
+            }
+        }
+        reconcileComposerIntent()
+        ghostwriteTargetChapterCount = NovelGhostwriteBatch.clamp(targetChapterCount)
+        return startGhostwriteChapter(targetChapterCount: ghostwriteTargetChapterCount)
     }
 
     private func applyChapterRevision(_ proposal: NovelChapterRevisionProposal) async -> Bool {

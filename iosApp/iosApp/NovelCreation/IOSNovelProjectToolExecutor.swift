@@ -30,6 +30,7 @@ final class IOSNovelProjectToolExecutor: IOSToolExecutor {
         "novel_clear_upcoming_arc",
         "novel_revise_material",
         "novel_propose_chapter_plan",
+        "novel_prepare_ghostwrite",
         "novel_set_chapter_title",
         "novel_list_chapters",
         "novel_read_chapter",
@@ -72,6 +73,8 @@ final class IOSNovelProjectToolExecutor: IOSToolExecutor {
             return await reviseMaterial(arguments)
         case "novel_propose_chapter_plan":
             return await proposeChapterPlan(arguments)
+        case "novel_prepare_ghostwrite":
+            return await prepareGhostwrite(arguments)
         case "novel_set_chapter_title":
             return await setChapterTitle(arguments)
         case "novel_list_chapters":
@@ -356,6 +359,117 @@ final class IOSNovelProjectToolExecutor: IOSToolExecutor {
         return .filled(
             "已保存本章计划草稿（\(placementText)）。草稿需在「项目控制」面板人工确认后才可用于代笔。"
         )
+    }
+
+    private func prepareGhostwrite(_ arguments: String) async -> IOSAgentToolOutcome {
+        switch await ghostwritePlanApprovalPrompt(from: arguments) {
+        case .failure(let issue):
+            return .failed(issue.message)
+        case .success:
+            return .needsApproval("等待作者确认剧情计划与代笔章数")
+        }
+    }
+
+    func ghostwritePlanApprovalPrompt(
+        from arguments: String
+    ) async -> Result<NovelAskUserPrompt, NovelProjectToolIssue> {
+        guard let args: PrepareGhostwriteArguments = decode(arguments) else {
+            return .failure(.init(
+                "novel_prepare_ghostwrite 参数无效：需要完整本章计划、upcoming_arc 和 suggested_chapter_count。"
+            ))
+        }
+        let placement = args.outline_placement.trimmingCharacters(in: .whitespacesAndNewlines)
+        let goal = args.goal_and_conflict.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mustHappen = args.must_happen.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let mustNotHappen = args.must_not_happen.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let visibleFacts = args.visible_facts.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let upcomingArc = args.upcoming_arc.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !goal.isEmpty, !mustHappen.isEmpty, mustHappen.allSatisfy({ !$0.isEmpty }) else {
+            return .failure(.init("代笔计划需要非空的 goal_and_conflict 和至少一条 must_happen。"))
+        }
+        guard placement.count <= 500,
+              goal.count <= 8_000,
+              args.ending_hook.count <= 4_000,
+              mustHappen.count <= 32,
+              mustNotHappen.count <= 32,
+              visibleFacts.count <= 32 else {
+            return .failure(.init("代笔计划字段过长或条目过多，请精简后重试。"))
+        }
+        guard !upcomingArc.isEmpty,
+              upcomingArc.count <= NovelUpcomingArcRecord.maxBeats,
+              upcomingArc.allSatisfy({
+                  !$0.isEmpty && $0.count <= NovelUpcomingArcRecord.maxBeatCharacterCount
+              }) else {
+            return .failure(.init(
+                "upcoming_arc 需要 1–\(NovelUpcomingArcRecord.maxBeats) 条非空节拍，每条最多 \(NovelUpcomingArcRecord.maxBeatCharacterCount) 字。"
+            ))
+        }
+        guard args.suggested_chapter_count == NovelGhostwriteBatch.clamp(
+            args.suggested_chapter_count
+        ) else {
+            return .failure(.init(
+                "suggested_chapter_count 必须在 \(NovelGhostwriteBatch.minChapterCount)–\(NovelGhostwriteBatch.maxChapterCount) 之间。"
+            ))
+        }
+        guard let snapshot = await loadSnapshot() else {
+            return .failure(.init("当前小说项目不可用，无法准备代笔审批。"))
+        }
+        if let reason = await ghostwriteBlockReason(snapshot: snapshot) {
+            return .failure(.init(reason))
+        }
+        let readinessIssues = NovelGhostwriteReadiness.issues(
+            materials: snapshot.materials,
+            materialRevisions: snapshot.materialRevisions,
+            branches: snapshot.branches,
+            pendingOperations: snapshot.pendingOperations,
+            polishTransactions: snapshot.polishTransactions,
+            activeRuns: snapshot.activeRuns,
+            chapterPlans: snapshot.chapterPlans,
+            stateSnapshots: snapshot.stateSnapshots,
+            mainBranchID: snapshot.project.mainBranchID,
+            branchID: branchID,
+            requireChapterPlan: false
+        ).filter { $0 != .activeRun }
+        guard readinessIssues.isEmpty else {
+            return .failure(.init(
+                "还不能开始代笔：" + readinessIssues.map(\.displayName).joined(separator: "；")
+            ))
+        }
+        guard let branch = snapshot.branches.first(where: { $0.id == branchID }) else {
+            return .failure(.init("当前分支不可用，无法准备代笔审批。"))
+        }
+        let existingPlan = snapshot.chapterPlan(for: branchID)
+        let reason = args.reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let proposal = NovelGhostwritePlanProposal(
+            projectID: projectID,
+            branchID: branchID,
+            planID: existingPlan?.id ?? NovelChapterPlanID(),
+            expectedHeadRevision: branch.headRevision,
+            expectedWorkingRevision: branch.workingRevision,
+            expectedCurrentPlanDigest: existingPlan?.contentDigest,
+            outlinePlacement: placement,
+            goalAndConflict: goal,
+            mustHappen: mustHappen,
+            mustNotHappen: mustNotHappen,
+            endingHook: args.ending_hook.trimmingCharacters(in: .whitespacesAndNewlines),
+            visibleFacts: visibleFacts,
+            upcomingArc: upcomingArc,
+            suggestedChapterCount: args.suggested_chapter_count,
+            reason: reason?.isEmpty == true ? nil : reason
+        )
+        return .success(NovelAskUserPrompt(
+            question: "按这份剧情计划开始代笔？你可以先选择这批写几章。",
+            options: NovelGhostwritePlanApproval.options,
+            ghostwritePlan: proposal
+        ))
     }
 
     private func setChapterTitle(_ arguments: String) async -> IOSAgentToolOutcome {
@@ -1202,6 +1316,18 @@ private struct ProposeChapterPlanArguments: Decodable {
     let must_not_happen: [String]
     let ending_hook: String
     let visible_facts: [String]
+}
+
+private struct PrepareGhostwriteArguments: Decodable {
+    let outline_placement: String
+    let goal_and_conflict: String
+    let must_happen: [String]
+    let must_not_happen: [String]
+    let ending_hook: String
+    let visible_facts: [String]
+    let upcoming_arc: [String]
+    let suggested_chapter_count: Int
+    let reason: String?
 }
 
 private struct SetChapterTitleArguments: Decodable {

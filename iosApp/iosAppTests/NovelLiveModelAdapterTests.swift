@@ -11,6 +11,7 @@ private let novelDiscussionProjectToolNames: [String] = [
     "novel_clear_upcoming_arc",
     "novel_revise_material",
     "novel_propose_chapter_plan",
+    "novel_prepare_ghostwrite",
     "novel_set_chapter_title",
     "novel_list_chapters",
     "novel_read_chapter",

@@ -803,9 +803,10 @@ extension NovelGenerationReducer {
             prompt.manuscriptRevert != nil,
             prompt.manuscriptDelete != nil,
             prompt.workspacePlot != nil,
+            prompt.ghostwritePlan != nil,
         ].filter({ $0 }).count > 1 {
             throw NovelError.invalidInput(
-                "Ask User cannot combine chapter revision, manuscript revert, manuscript delete, and plot write."
+                "Ask User cannot combine chapter revision, manuscript revert, manuscript delete, plot write, and ghostwrite plan."
             )
         }
         if let revision = prompt.chapterRevision {
@@ -855,6 +856,40 @@ extension NovelGenerationReducer {
             guard !plot.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   !plot.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw NovelError.invalidInput("Plot write approval is missing path or body.")
+            }
+            return
+        }
+        if let proposal = prompt.ghostwritePlan {
+            guard prompt.options == NovelGhostwritePlanApproval.options else {
+                throw NovelError.invalidInput("Ghostwrite plan approval must use the fixed confirm/reject options.")
+            }
+            let placement = proposal.outlinePlacement.trimmingCharacters(in: .whitespacesAndNewlines)
+            let goal = proposal.goalAndConflict.trimmingCharacters(in: .whitespacesAndNewlines)
+            let mustHappen = NovelChapterPlanRecord.normalizedLines(proposal.mustHappen)
+            guard placement.count <= 500,
+                  !goal.isEmpty,
+                  goal.count <= 8_000,
+                  proposal.endingHook.count <= 4_000,
+                  !mustHappen.isEmpty,
+                  proposal.mustHappen.count <= 32,
+                  proposal.mustNotHappen.count <= 32,
+                  proposal.visibleFacts.count <= 32 else {
+                throw NovelError.invalidInput("Ghostwrite plan approval has invalid chapter-plan fields.")
+            }
+            let upcomingArc = proposal.upcomingArc.map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard !upcomingArc.isEmpty,
+                  upcomingArc.count <= NovelUpcomingArcRecord.maxBeats,
+                  upcomingArc.allSatisfy({
+                      !$0.isEmpty && $0.count <= NovelUpcomingArcRecord.maxBeatCharacterCount
+                  }) else {
+                throw NovelError.invalidInput("Ghostwrite plan approval has invalid upcoming-arc beats.")
+            }
+            guard proposal.suggestedChapterCount == NovelGhostwriteBatch.clamp(
+                proposal.suggestedChapterCount
+            ), proposal.expectedHeadRevision >= 0, proposal.expectedWorkingRevision >= 0 else {
+                throw NovelError.invalidInput("Ghostwrite plan approval has invalid batch or revision data.")
             }
             return
         }

@@ -153,6 +153,21 @@ fun createNovelProposeChapterPlanToolDeclaration(): Tool = Tool(
     execute = { emptyList() }
 )
 
+fun createNovelPrepareGhostwriteToolDeclaration(): Tool = Tool(
+    name = "novel_prepare_ghostwrite",
+    description = """
+        Prepare the agreed chapter plan and upcoming-arc reference for ghostwriting. Use this only
+        after the discussion has reached a concrete direction and the author is ready to review it.
+        The host shows an approval card with the full plan and a 1-10 chapter selector; nothing is
+        written and ghostwriting does not start until the author approves. Do not use ask_user to
+        ask whether to start after calling this tool. `must_happen` and `upcoming_arc` must be non-empty.
+    """.trimIndent(),
+    parameters = { novelPrepareGhostwriteParameters() },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
 fun createNovelSetChapterTitleToolDeclaration(): Tool = Tool(
     name = "novel_set_chapter_title",
     description = """
@@ -2537,6 +2552,63 @@ private fun novelProposeChapterPlanParameters(): InputSchema = InputSchema.Obj(
     required = listOf(
         "outline_placement", "goal_and_conflict", "must_happen",
         "must_not_happen", "ending_hook", "visible_facts"
+    )
+)
+
+private fun novelPrepareGhostwriteParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("outline_placement", buildJsonObject {
+            put("type", "string")
+            put("description", "Short placement note such as \"第 3 章 · 中段转折\"")
+        })
+        put("goal_and_conflict", buildJsonObject {
+            put("type", "string")
+            put("description", "The chapter's goal and conflict (required, non-empty)")
+        })
+        put("must_happen", buildJsonObject {
+            put("type", "array")
+            put("description", "Beat items that must happen in the first chapter; at least one")
+            put("items", buildJsonObject { put("type", "string") })
+            put("minItems", 1)
+            put("maxItems", 32)
+        })
+        put("must_not_happen", buildJsonObject {
+            put("type", "array")
+            put("description", "Beat items that must not happen in the first chapter; may be empty")
+            put("items", buildJsonObject { put("type", "string") })
+            put("maxItems", 32)
+        })
+        put("ending_hook", buildJsonObject {
+            put("type", "string")
+            put("description", "The first chapter's ending hook; may be an empty string")
+        })
+        put("visible_facts", buildJsonObject {
+            put("type", "array")
+            put("description", "Facts the POV is allowed to know in the first chapter; may be empty")
+            put("items", buildJsonObject { put("type", "string") })
+            put("maxItems", 32)
+        })
+        put("upcoming_arc", buildJsonObject {
+            put("type", "array")
+            put("description", "1-8 short soft-direction beats for the chapters after the first")
+            put("items", buildJsonObject { put("type", "string") })
+            put("minItems", 1)
+            put("maxItems", 8)
+        })
+        put("suggested_chapter_count", buildJsonObject {
+            put("type", "integer")
+            put("description", "Suggested batch size; the author can change it on the approval card")
+            put("minimum", 1)
+            put("maximum", 10)
+        })
+        put("reason", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional short summary of why this direction fits the discussion")
+        })
+    },
+    required = listOf(
+        "outline_placement", "goal_and_conflict", "must_happen", "must_not_happen",
+        "ending_hook", "visible_facts", "upcoming_arc", "suggested_chapter_count"
     )
 )
 

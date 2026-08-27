@@ -1289,6 +1289,29 @@ extension NovelLiveModelAdapter {
                     }
                     return
                 }
+                if let approval = result.pendingApproval,
+                   approval.toolName == "novel_prepare_ghostwrite" {
+                    guard let projectExecutor = executorMap["novel_prepare_ghostwrite"]
+                            as? IOSNovelProjectToolExecutor else {
+                        callbacks.onFailure(failure(
+                            code: "discussion_ghostwrite_plan_unavailable",
+                            message: "当前讨论无法准备代笔审批，请重试。",
+                            isRetryable: true
+                        ))
+                        return
+                    }
+                    switch await projectExecutor.ghostwritePlanApprovalPrompt(from: approval.arguments) {
+                    case .success(let prompt):
+                        callbacks.onAskUser(prompt, joinedAssistantText(in: result.messages))
+                    case .failure(let issue):
+                        callbacks.onFailure(failure(
+                            code: "discussion_ghostwrite_plan_invalid",
+                            message: issue.message,
+                            isRetryable: true
+                        ))
+                    }
+                    return
+                }
                 if result.pendingApproval != nil {
                     callbacks.onFailure(failure(
                         code: "discussion_tool_approval_required",
@@ -1397,6 +1420,7 @@ private extension NovelLiveModelAdapter {
                     ToolKt.createNovelClearUpcomingArcToolDeclaration(),
                     ToolKt.createNovelReviseMaterialToolDeclaration(),
                     ToolKt.createNovelProposeChapterPlanToolDeclaration(),
+                    ToolKt.createNovelPrepareGhostwriteToolDeclaration(),
                     ToolKt.createNovelSetChapterTitleToolDeclaration(),
                     ToolKt.createNovelListChaptersToolDeclaration(),
                     ToolKt.createNovelReadChapterToolDeclaration(),

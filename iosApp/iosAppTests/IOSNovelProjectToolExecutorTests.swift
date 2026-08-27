@@ -805,6 +805,58 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
         XCTAssertEqual(snapshot.chapterPlan(for: harness.branchID)?.status, .draft)
     }
 
+    func testPrepareGhostwriteBuildsApprovalWithoutMutatingProject() async throws {
+        let harness = try await makeHarness()
+        defer { try? FileManager.default.removeItem(at: harness.root) }
+
+        for (kind, title, content) in [
+            ("masterOutline", "总纲", "主角必须夺回信物。"),
+            ("character", "林晚", "冷静的调查员。"),
+            ("writingRequirements", "写作要求", "第三人称，节奏紧凑。"),
+        ] {
+            guard case .filled = await harness.execute("novel_revise_material", jsonArgs([
+                "kind": kind, "title": title, "content": content,
+            ])) else {
+                return XCTFail("准备代笔测试资料失败：\(kind)")
+            }
+        }
+
+        let arguments = jsonArgs([
+            "outline_placement": "第 3 章 · 中段转折",
+            "goal_and_conflict": "林晚潜入档案馆夺回证据",
+            "must_happen": ["林晚拿到被篡改的卷宗"],
+            "must_not_happen": ["幕后主使立刻现身"],
+            "ending_hook": "卷宗上的签名来自失踪多年的父亲",
+            "visible_facts": ["林晚只知道卷宗被替换过"],
+            "upcoming_arc": ["追查签名来源", "父亲的旧同僚开始阻挠"],
+            "suggested_chapter_count": 3,
+            "reason": "这条线承接刚才确认的父女矛盾",
+        ])
+        guard case .needsApproval = await harness.execute(
+            "novel_prepare_ghostwrite",
+            arguments
+        ) else {
+            return XCTFail("准备代笔工具必须停在审批门")
+        }
+
+        let prompt: NovelAskUserPrompt
+        switch await harness.executor.ghostwritePlanApprovalPrompt(from: arguments) {
+        case .failure(let issue):
+            return XCTFail(issue.message)
+        case .success(let value):
+            prompt = value
+        }
+        XCTAssertEqual(prompt.options, NovelGhostwritePlanApproval.options)
+        XCTAssertEqual(prompt.ghostwritePlan?.suggestedChapterCount, 3)
+        XCTAssertEqual(prompt.ghostwritePlan?.upcomingArc, ["追查签名来源", "父亲的旧同僚开始阻挠"])
+        XCTAssertEqual(prompt.ghostwritePlan?.mustHappen, ["林晚拿到被篡改的卷宗"])
+
+        let snapshot = try await harness.snapshot()
+        XCTAssertNil(snapshot.chapterPlan(for: harness.branchID), "审批前不得保存计划")
+        XCTAssertNil(snapshot.upcomingArc(for: harness.branchID), "审批前不得保存后续剧情")
+        XCTAssertEqual(snapshot.project.collaborationMode, .cocreation)
+    }
+
     // MARK: - Invalid arguments
 
     func testInvalidArgumentsFailWithExplanationAndLeaveDocumentUntouched() async throws {
@@ -828,6 +880,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
                 "outline_placement": "x", "goal_and_conflict": "   ", "must_happen": [],
                 "must_not_happen": [], "ending_hook": "", "visible_facts": [],
             ]), "不能为空"),
+            ("novel_prepare_ghostwrite", "{}", "完整本章计划"),
             ("novel_revise_chapter", "{}", "start_paragraph"),
             ("novel_revise_chapter", jsonArgs([
                 "start_paragraph": 1, "end_paragraph": 1, "new_text": "   ",

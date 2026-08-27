@@ -423,6 +423,8 @@ struct NovelAskUserPrompt: Codable, Equatable, Sendable {
     let manuscriptDelete: NovelManuscriptDeleteProposal?
     /// Present only for `novel_workspace_write` of plot files.
     let workspacePlot: NovelWorkspacePlotProposal?
+    /// Present only for `novel_prepare_ghostwrite` approval cards.
+    let ghostwritePlan: NovelGhostwritePlanProposal?
 
     init(
         question: String,
@@ -430,7 +432,8 @@ struct NovelAskUserPrompt: Codable, Equatable, Sendable {
         chapterRevision: NovelChapterRevisionProposal? = nil,
         manuscriptRevert: NovelManuscriptRevertProposal? = nil,
         manuscriptDelete: NovelManuscriptDeleteProposal? = nil,
-        workspacePlot: NovelWorkspacePlotProposal? = nil
+        workspacePlot: NovelWorkspacePlotProposal? = nil,
+        ghostwritePlan: NovelGhostwritePlanProposal? = nil
     ) {
         self.question = question
         self.options = options
@@ -438,6 +441,64 @@ struct NovelAskUserPrompt: Codable, Equatable, Sendable {
         self.manuscriptRevert = manuscriptRevert
         self.manuscriptDelete = manuscriptDelete
         self.workspacePlot = workspacePlot
+        self.ghostwritePlan = ghostwritePlan
+    }
+}
+
+enum NovelGhostwritePlanApproval {
+    static let approveOption = "开始代笔"
+    static let rejectOption = "暂不开始"
+    static let options = [approveOption, rejectOption]
+    private static let approvedPrefix = "开始代笔 · "
+    private static let approvedSuffix = " 章"
+
+    static func approvedAnswer(chapterCount: Int) -> String {
+        "\(approvedPrefix)\(NovelGhostwriteBatch.clamp(chapterCount))\(approvedSuffix)"
+    }
+
+    static func approvedChapterCount(from answer: String) -> Int? {
+        let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix(approvedPrefix), trimmed.hasSuffix(approvedSuffix) else {
+            return nil
+        }
+        let start = trimmed.index(trimmed.startIndex, offsetBy: approvedPrefix.count)
+        let end = trimmed.index(trimmed.endIndex, offsetBy: -approvedSuffix.count)
+        guard start < end, let count = Int(trimmed[start..<end]) else { return nil }
+        guard count == NovelGhostwriteBatch.clamp(count) else { return nil }
+        return count
+    }
+}
+
+struct NovelGhostwritePlanProposal: Codable, Equatable, Sendable {
+    let projectID: NovelProjectID
+    let branchID: NovelBranchID
+    let planID: NovelChapterPlanID
+    let expectedHeadRevision: Int64
+    let expectedWorkingRevision: Int64
+    let expectedCurrentPlanDigest: String?
+    let outlinePlacement: String
+    let goalAndConflict: String
+    let mustHappen: [String]
+    let mustNotHappen: [String]
+    let endingHook: String
+    let visibleFacts: [String]
+    let upcomingArc: [String]
+    let suggestedChapterCount: Int
+    let reason: String?
+
+    var proposedPlanDigest: String {
+        let must = NovelChapterPlanRecord.normalizedLines(mustHappen).joined(separator: "\n")
+        let mustNot = NovelChapterPlanRecord.normalizedLines(mustNotHappen).joined(separator: "\n")
+        let visible = NovelChapterPlanRecord.normalizedLines(visibleFacts).joined(separator: "\n")
+        let payload = [
+            outlinePlacement.trimmingCharacters(in: .whitespacesAndNewlines),
+            goalAndConflict.trimmingCharacters(in: .whitespacesAndNewlines),
+            must,
+            mustNot,
+            endingHook.trimmingCharacters(in: .whitespacesAndNewlines),
+            visible,
+        ].joined(separator: "\n---\n")
+        return NovelChapterPlanRecord.digest(forCanonicalPayload: payload)
     }
 }
 

@@ -700,6 +700,88 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(harness.session.durableMessages[3].content, "那就先强化他保护家人的选择。")
     }
 
+    func testGhostwritePlanApprovalPersistsPlanAndStartsSelectedBatch() async throws {
+        var document = try NovelTestFixtures.document()
+        for (kind, title, content) in [
+            (NovelMaterialKind.masterOutline, "总纲", "主角必须夺回信物。"),
+            (.character, "林晚", "冷静的调查员。"),
+            (.writingRequirements, "写作要求", "第三人称，节奏紧凑。"),
+        ] {
+            document = try NovelReducer.apply(.reviseMaterial(NovelReviseMaterialCommand(
+                context: NovelTestFixtures.context(configRevision: document.project.configRevision),
+                projectID: document.project.id,
+                materialID: NovelMaterialID(),
+                revisionID: NovelMaterialRevisionID(),
+                kind: kind,
+                title: title,
+                content: content,
+                tags: [],
+                injectionMode: .always
+            )), to: document).document
+        }
+        let branch = document.branches[0]
+        let proposal = NovelGhostwritePlanProposal(
+            projectID: document.project.id,
+            branchID: branch.id,
+            planID: NovelChapterPlanID(),
+            expectedHeadRevision: branch.headRevision,
+            expectedWorkingRevision: branch.workingRevision,
+            expectedCurrentPlanDigest: nil,
+            outlinePlacement: "第 1 章 · 开场",
+            goalAndConflict: "林晚潜入档案馆夺回证据",
+            mustHappen: ["林晚拿到被篡改的卷宗"],
+            mustNotHappen: ["幕后主使立刻现身"],
+            endingHook: "卷宗上出现父亲的签名",
+            visibleFacts: ["林晚只知道卷宗被替换过"],
+            upcomingArc: ["追查签名来源", "父亲旧同僚开始阻挠"],
+            suggestedChapterCount: 3,
+            reason: "承接刚才确认的父女矛盾"
+        )
+        let prompt = NovelAskUserPrompt(
+            question: "按这份剧情计划开始代笔？你可以先选择这批写几章。",
+            options: NovelGhostwritePlanApproval.options,
+            ghostwritePlan: proposal
+        )
+        let harness = try await makeHarness(
+            document: document,
+            scripts: [
+                NovelModelScript(steps: [.askUser(prompt, preface: "剧情方向已经收拢。")]),
+                NovelModelScript(steps: [.pause]),
+            ]
+        )
+        harness.session.mode = .discussPlan
+
+        let discussionStarted = await harness.session.send(text: "就按刚才讨论的方向写")
+        XCTAssertTrue(discussionStarted)
+        let didAsk = await eventually {
+            !harness.session.isRunning &&
+                harness.session.durableMessages.last?.interaction == .askUser(prompt)
+        }
+        XCTAssertTrue(didAsk)
+        let promptMessage = try XCTUnwrap(harness.session.durableMessages.last)
+
+        let approved = await harness.session.answerAskUser(
+            promptMessageID: promptMessage.id,
+            answer: NovelGhostwritePlanApproval.approvedAnswer(chapterCount: 4)
+        )
+        XCTAssertTrue(approved, harness.session.operationErrorMessage ?? "审批后未能启动代笔")
+        let started = await eventually {
+            harness.session.ghostwriteProgress?.targetChapterCount == 4 &&
+                harness.session.isGhostwriting
+        }
+        XCTAssertTrue(started)
+        XCTAssertEqual(harness.workspace.projectSnapshot?.project.collaborationMode, .ghostwrite)
+        XCTAssertEqual(
+            harness.workspace.projectSnapshot?.confirmedChapterPlan(for: branch.id)?.goalAndConflict,
+            proposal.goalAndConflict
+        )
+        XCTAssertEqual(
+            harness.workspace.projectSnapshot?.upcomingArc(for: branch.id)?.beats,
+            proposal.upcomingArc
+        )
+        harness.session.pauseGhostwrite()
+    }
+
     func testStaleManuscriptDeleteApprovalDoesNotDeleteChapter() async throws {
         let fixture = try documentWithChapter()
         let branch = fixture.document.branches[0]
