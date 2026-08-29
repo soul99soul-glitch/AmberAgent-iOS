@@ -223,12 +223,14 @@ final class IOSOrchestrationToolTests: XCTestCase {
             execJavaScriptEnabled: true,
             webSearchEnabled: false
         )
+        let providerSetting = makeProviderSetting()
+        let params = makeParams()
 
         let result = parseJSON(await service.execute(
             toolName: "spawn_agent",
             arguments: spawnArguments(taskName: "research", message: "调研房价", forkTurns: "all"),
-            providerSetting: makeProviderSetting(),
-            params: makeParams(),
+            providerSetting: providerSetting,
+            params: params,
             runId: "parent-run-1",
             executionPolicy: executionPolicy
         ))
@@ -270,7 +272,19 @@ final class IOSOrchestrationToolTests: XCTestCase {
 
         // 子 run 已记账，且能从 Chat descriptor 的可恢复集合查到。
         let runs = try await db.agentRuntimeDao().listRecoverable(descriptorIds: ["chat"])
-        XCTAssertTrue(runs.contains { $0.conversationId == childHex && $0.status == "running" })
+        let childRun = try XCTUnwrap(
+            runs.first { $0.conversationId == childHex && $0.status == "running" }
+        )
+        XCTAssertEqual(childRun.providerId, providerSetting.id.description())
+        XCTAssertEqual(childRun.modelId, params.model.modelId)
+        XCTAssertNil(childRun.promptVersion)
+        XCTAssertEqual(
+            childRun.toolCatalogVersion,
+            chatInputDigest(
+                for: IosRunRequestSnapshotJsonBridge.shared.encodeToolCatalog(tools: params.tools)
+            )
+        )
+        XCTAssertEqual(childRun.capabilitySnapshot, executionPolicy.encodedJSON)
     }
 
     // MARK: - M3: spawn/followup 的 handoff fullToolNames 取桥全目录

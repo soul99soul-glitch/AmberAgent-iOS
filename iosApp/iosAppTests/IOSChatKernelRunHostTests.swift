@@ -93,11 +93,13 @@ final class IOSChatKernelRunHostTests: XCTestCase {
     private func makeHarness(
         exposedToolNames: [String] = [],
         searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport(),
-        chatMaxToolResumeCount: Int? = nil
+        chatMaxToolResumeCount: Int? = nil,
+        seedMessages: [UIMessage]? = nil
     ) -> IOSChatForegroundHarness {
         // Host 不驱动 CGC;harness 的 rounds 剧本留空(dispatch 不启动)。
         IOSChatForegroundHarness(
             exposedToolNames: exposedToolNames,
+            seedMessages: seedMessages,
             searchTransport: searchTransport,
             chatMaxToolResumeCount: chatMaxToolResumeCount
         )
@@ -218,6 +220,27 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertEqual(provider.callCount, 1)
     }
 
+    func testTerminalCASFailureReleasesLocalOwnerAndSuppressesExternalCompletion() async {
+        let harness = makeHarness()
+        harness.failRunTerminals = true
+        var terminalReported = false
+        harness.bindings.onRunTerminal = { _, _, _ in terminalReported = true }
+        let host = makeHost(
+            harness: harness,
+            provider: HostScriptedProvider(rounds: [textRound("完成")])
+        )
+
+        start(host, harness: harness)
+        let attempted = await waitForCondition { harness.runTerminalRecordAttempts == 1 }
+
+        XCTAssertTrue(attempted)
+        XCTAssertFalse(host.isRunning, "provider 已结束时不得把前台 owner 卡成僵尸")
+        XCTAssertFalse(harness.isLoading)
+        XCTAssertFalse(terminalReported, "durable 终态失败时不得发布外部完成")
+        XCTAssertEqual(harness.terminalSteerAutoContinue, [false])
+        XCTAssertNil(harness.log.terminalStatus())
+    }
+
     // MARK: - 审批暂停/恢复
 
     /// 暂停纪律(CG-C pauseForApproval :3798-3873):markRunAwaitingPermission
@@ -295,6 +318,28 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertEqual(harness.messages.last?.toText(), "已记录")
     }
 
+    func testSearchApprovalTerminalFailureStopsBeforeNextProviderRound() async {
+        let harness = makeHarness()
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("tc-1", "search_web", #"{"query":"amber"}"#),
+            textRound("不应到达"),
+        ])
+        let host = makeHost(harness: harness, provider: provider)
+        start(host, harness: harness)
+
+        let approval = await harness.waitForPendingSearchApproval()
+        XCTAssertNotNil(approval)
+        harness.ledger.failTerminals = true
+        host.approvePendingSearchTool()
+
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, AgentRunStatus.recoveryPending.wireName)
+        let idleAfterFailure = await waitForHostIdle(host)
+        XCTAssertTrue(idleAfterFailure)
+        XCTAssertEqual(provider.callCount, 1, "工具终态写失败后不得请求下一轮模型")
+        XCTAssertNotEqual(harness.messages.last?.toText(), "不应到达")
+    }
+
     // MARK: - 取消
 
     /// 审批等待中取消(CG-C cancel 尾 :1501-1581):填充未决工具、清卡、
@@ -340,62 +385,17 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
     // MARK: - B2 流式投影
 
-    /// 剧本化流式 provider:按间隔投递 delta chunk 后 onComplete——真实驱动
-    /// 引擎 streamStep 的累加器与 provisional 快照钩子。间隔必须大于 Host 的
-    /// 投影节流窗口,测试才能在终端前观察到中间态气泡。
-    private final class HostScriptedStreamingProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
-        struct Stream {
-            let chunks: [MessageChunk]
-            let intervalNanos: UInt64
-        }
-
-        private let lock = NSLock()
-        private var streams: [Stream]
-        private(set) var callCount = 0
-
-        init(streams: [Stream]) { self.streams = streams }
-
-        func generateText(
-            providerSetting: ProviderSetting,
-            messages: [UIMessage],
-            params: TextGenerationParams
-        ) async throws -> MessageChunk {
-            F.chunk(with: F.assistantText("stop"), finishReason: "stop")
-        }
-
-        func streamText(
-            providerSetting: ProviderSetting,
-            messages: [UIMessage],
-            params: TextGenerationParams,
-            onChunk: @escaping @Sendable (MessageChunk) -> Void,
-            onComplete: @escaping @Sendable () -> Void,
-            onError: @escaping @Sendable (KotlinThrowable) -> Void
-        ) -> Kotlinx_coroutines_coreJob? {
-            let stream = lock.withLock { () -> Stream in
-                callCount += 1
-                return streams.isEmpty
-                    ? Stream(chunks: [F.streamChunk(delta: F.assistantText("stop"))], intervalNanos: 0)
-                    : streams.removeFirst()
-            }
-            Task {
-                for chunk in stream.chunks {
-                    if stream.intervalNanos > 0 {
-                        try? await Task.sleep(nanoseconds: stream.intervalNanos)
-                    }
-                    onChunk(chunk)
-                }
-                onComplete()
-            }
-            return nil
-        }
-    }
-
     /// provisional 投影:首片 delta 后、终端前气泡上屏且随增量生长;终态
     /// 消息与 provisional 同 id 原地替换(无重挂/闪烁),streamDelta revision 落账。
     func testStreamingProvisionalBubbleProjection() async {
-        let harness = makeHarness()
-        let provider = HostScriptedStreamingProvider(streams: [
-            HostScriptedStreamingProvider.Stream(
+        let priorAssistant = F.assistantText("上一轮").applyingGenerationDurationMs(1_200)
+        let harness = makeHarness(seedMessages: [
+            F.userMessage("第一轮"),
+            priorAssistant,
+            F.userMessage("继续"),
+        ])
+        let provider = IOSChatScriptedStreamingProvider(streams: [
+            IOSChatScriptedStreamingProvider.Stream(
                 chunks: [
                     F.streamChunk(delta: F.assistantText("你")),
                     F.streamChunk(delta: F.assistantText("好，世界")),
@@ -412,6 +412,12 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             return text.contains("你") && !text.contains("好")
         }
         XCTAssertTrue(appeared, "首片 delta 必须投影为 provisional 气泡(终态前可见)")
+        XCTAssertEqual(
+            harness.messages.first(where: { $0.role == MessageRole.assistant })?
+                .usage?.generationDurationMs,
+            0,
+            "新 assistant 轮开始时必须清掉上一轮的时长展示"
+        )
         let provisionalId = harness.messages.last?.id.toHexDashString()
 
         let terminal = await harness.waitForTerminal()
@@ -424,11 +430,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             provisionalId,
             "终态消息必须与 provisional 气泡同 id(引擎终态快照即累加器本体)"
         )
-        XCTAssertEqual(
-            harness.messages.filter { $0.role == MessageRole.assistant }.count,
-            1,
-            "provisional → 权威是原地替换,不得多长一条"
-        )
+        XCTAssertEqual(harness.messages.filter { $0.role == MessageRole.assistant }.count, 2)
         XCTAssertTrue(harness.revisions.contains(.streamDelta), "投影必须打 streamDelta revision")
     }
 
@@ -440,8 +442,8 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         harness.bindings.recordMemoryUsage = { ids, force in
             usageRecords.append((ids, force))
         }
-        let provider = HostScriptedStreamingProvider(streams: [
-            HostScriptedStreamingProvider.Stream(
+        let provider = IOSChatScriptedStreamingProvider(streams: [
+            IOSChatScriptedStreamingProvider.Stream(
                 chunks: [
                     F.streamChunk(delta: F.assistantText(#"可见<amber-mem-cite>{"ids":[7]}</amber-mem-cite>"#)),
                 ],
@@ -724,7 +726,43 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         })
     }
 
-    func testDirectImageCancelClosesStartedTransactionWithoutWaitingForExecutor() async {
+    func testDirectImageTerminalFailureDoesNotPublishExecutorResult() async {
+        let harness = makeHarness()
+        harness.ledger.failTerminals = true
+        let host = makeHost(harness: harness, provider: HostScriptedProvider(rounds: []))
+        let runtime = host.toolRuntimeForTesting
+        host.imageToolExecutionOverrideForTesting = { toolCall, messages in
+            runtime.messagesByFinishingToolCall(
+                toolCall,
+                outputText: #"{"ok":true,"status":"completed"}"#,
+                in: messages
+            )
+        }
+
+        host.runImageTool(
+            input: #"{"prompt":"make it brighter","source_image_url":"file:///tmp/source.png"}"#,
+            conversationId: harness.conversationId,
+            modelDisplayName: "image-test"
+        )
+
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, AgentRunStatus.recoveryPending.wireName)
+        let idleAfterFailure = await waitForHostIdle(host)
+        XCTAssertTrue(idleAfterFailure)
+        let imageOutput = harness.messages
+            .flatMap(\.parts)
+            .compactMap { $0 as? UIMessagePart.Tool }
+            .first { $0.toolName == "generate_image" }?
+            .output
+            .compactMap { ($0 as? UIMessagePart.Text)?.text }
+            .joined() ?? ""
+        XCTAssertFalse(
+            imageOutput.contains(#""ok":true"#),
+            "账本终态失败时不得发布执行器真实结果"
+        )
+    }
+
+    func testDirectImageSystemInterruptionClosesStartedTransactionWithoutWaitingForExecutor() async {
         let harness = makeHarness()
         let host = makeHost(harness: harness, provider: HostScriptedProvider(rounds: []))
         let executionGate = ImageExecutionGate()
@@ -746,16 +784,25 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         }
         XCTAssertTrue(didStartExecution)
 
-        host.cancel()
+        host.cancel(cause: .backgroundInterruption)
 
         let terminal = await harness.waitForTerminal()
-        XCTAssertEqual(terminal, AgentRunStatus.cancelled.wireName)
+        XCTAssertEqual(terminal, AgentRunStatus.interrupted.wireName)
         XCTAssertFalse(host.isRunning)
         XCTAssertTrue(harness.ledger.recoveryTransitions.contains(.init(
             expected: .started,
             state: .outcomeUnknown,
             outcome: "cancelled_during_execution"
         )))
+        let imageOutput = harness.messages
+            .flatMap(\.parts)
+            .compactMap { $0 as? UIMessagePart.Tool }
+            .first { $0.toolName == "generate_image" }?
+            .output
+            .compactMap { ($0 as? UIMessagePart.Text)?.text }
+            .joined() ?? ""
+        XCTAssertTrue(imageOutput.contains("Generation interrupted by the system."))
+        XCTAssertFalse(imageOutput.contains("User cancelled."))
 
         executionGate.released = true
     }

@@ -555,7 +555,7 @@ private actor IOSExecNestedRecordingLedger: IOSAgentRunLedgering {
         runId: String,
         toolCallId: String,
         outcome: String
-    ) async {
+    ) async -> Bool {
         await recordToolCallFinished(
             runId: runId, toolCallId: toolCallId, outcome: outcome,
             artifactId: nil, artifactVersion: nil, outcomeKind: nil, errorCode: nil, sourceRef: nil
@@ -571,8 +571,9 @@ private actor IOSExecNestedRecordingLedger: IOSAgentRunLedgering {
         outcomeKind: String? = nil,
         errorCode: String? = nil,
         sourceRef: String? = nil
-    ) async {
+    ) async -> Bool {
         finished.append((runId, toolCallId, outcome))
+        return true
     }
 
     func recordApprovalDenied(

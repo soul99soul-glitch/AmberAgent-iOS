@@ -58,6 +58,76 @@ final class IOSDurableRunStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.conversationId, "conversation")
     }
 
+    func testTerminalSettlementAcceptsExactReplayAndRejectsConflict() async throws {
+        let db = makeDatabase()
+        let store = IOSDurableRunStore(dao: db.agentRuntimeDao())
+        let runId = "terminal-replay-\(UUID().uuidString)"
+        _ = try await store.startChatRun(
+            runId: runId,
+            startedAt: 100,
+            inputDigest: "digest",
+            conversationId: "conversation"
+        )
+
+        let firstSettlement = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: runId,
+            to: .interrupted,
+            inputSnapshotRef: "snapshot-a",
+            detail: "background_interruption",
+            at: 200
+        )
+        XCTAssertTrue(firstSettlement)
+        let replaySettlement = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: runId,
+            to: .interrupted,
+            inputSnapshotRef: "snapshot-a",
+            detail: "background_interruption",
+            at: 300
+        )
+        XCTAssertTrue(replaySettlement)
+        let conflictingSnapshot = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: runId,
+            to: .interrupted,
+            inputSnapshotRef: "snapshot-b",
+            detail: "background_interruption",
+            at: 350
+        )
+        XCTAssertFalse(conflictingSnapshot)
+        let conflictingReason = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: runId,
+            to: .interrupted,
+            detail: "user_cancelled",
+            at: 400
+        )
+        XCTAssertFalse(conflictingReason)
+        let conflictingStatus = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: runId,
+            to: .completed,
+            at: 500
+        )
+        XCTAssertFalse(conflictingStatus)
+
+        let recoveryRunId = "nonterminal-replay-\(UUID().uuidString)"
+        _ = try await store.startChatRun(
+            runId: recoveryRunId,
+            startedAt: 100,
+            inputDigest: "digest",
+            conversationId: "conversation"
+        )
+        let firstRecoveryMark = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: recoveryRunId,
+            to: .recoveryPending,
+            at: 600
+        )
+        XCTAssertTrue(firstRecoveryMark)
+        let replayedRecoveryMark = try await store.transitionFromAnyActiveOrMatchingState(
+            runId: recoveryRunId,
+            to: .recoveryPending,
+            at: 700
+        )
+        XCTAssertFalse(replayedRecoveryMark)
+    }
+
     func testRecoveryPendingRemainsActiveUntilCASSettlement() async throws {
         let db = makeDatabase()
         let store = IOSDurableRunStore(dao: db.agentRuntimeDao())

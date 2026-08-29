@@ -69,6 +69,8 @@ enum IOSRecipeRunError: Error, Equatable, Sendable {
     case outputResolution(outputName: String, reason: String)
 }
 
+struct IOSRecipeToolTerminalPersistenceError: Error, Sendable {}
+
 enum IOSRecipeRunOutcome: Equatable {
     /// All steps completed and every output binding resolved.
     case succeeded(outputs: [String: IOSRecipeJSONValue], completedSteps: [String])
@@ -298,38 +300,44 @@ struct IOSRecipeRunner: Sendable {
             }
         }
 
+        let output: String
         do {
-            let output = try await executeStepWithTimeout(step, argsJSON: argsJSON)
-            if let ledger {
-                await ledger.recordToolCallFinished(
-                    runId: runId,
-                    toolCallId: toolCallId,
-                    outcome: "completed",
-                    artifactId: "recipe__\(plan.recipeName)",
-                    artifactVersion: plan.recipeVersion,
-                    outcomeKind: "success",
-                    errorCode: nil,
-                    sourceRef: executionId
-                )
-            }
-            return output
+            output = try await executeStepWithTimeout(step, argsJSON: argsJSON)
         } catch let error as IOSRecipeRunError {
-            await recordFinished(
+            let didFinish = await recordFinished(
                 plan: plan, executionId: executionId, toolCallId: toolCallId, step: step,
                 outcome: "failed", outcomeKind: "error",
                 errorCode: Self.errorCode(for: error),
             )
+            guard didFinish else { throw IOSRecipeToolTerminalPersistenceError() }
             throw error
         } catch {
             let runError = IOSRecipeRunError.stepFailed(
                 stepId: step.id, tool: step.tool, message: error.localizedDescription
             )
-            await recordFinished(
+            let didFinish = await recordFinished(
                 plan: plan, executionId: executionId, toolCallId: toolCallId, step: step,
                 outcome: "failed", outcomeKind: "error", errorCode: "step_failed",
             )
+            guard didFinish else { throw IOSRecipeToolTerminalPersistenceError() }
             throw runError
         }
+        if let ledger {
+            let didFinish = await ledger.recordToolCallFinished(
+                runId: runId,
+                toolCallId: toolCallId,
+                outcome: "completed",
+                artifactId: "recipe__\(plan.recipeName)",
+                artifactVersion: plan.recipeVersion,
+                outcomeKind: "success",
+                errorCode: nil,
+                sourceRef: executionId
+            )
+            guard didFinish else {
+                throw IOSRecipeToolTerminalPersistenceError()
+            }
+        }
+        return output
     }
 
     /// Resolves the plan's outputs after every step completed: each output is
@@ -486,6 +494,7 @@ struct IOSRecipeRunner: Sendable {
         }
     }
 
+    @discardableResult
     private func recordFinished(
         plan: IOSRecipeExecutionPlan,
         executionId: String,
@@ -494,9 +503,9 @@ struct IOSRecipeRunner: Sendable {
         outcome: String,
         outcomeKind: String,
         errorCode: String?
-    ) async {
-        guard let ledger else { return }
-        await ledger.recordToolCallFinished(
+    ) async -> Bool {
+        guard let ledger else { return true }
+        return await ledger.recordToolCallFinished(
             runId: runId,
             toolCallId: toolCallId,
             outcome: outcome,

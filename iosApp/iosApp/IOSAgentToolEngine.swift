@@ -41,6 +41,10 @@ public enum IOSAgentToolOutcome: Sendable {
     case denied(String)
     /// Tool failed to execute. Output is an honest failure string.
     case failed(String)
+    /// A nested durable transaction could not record its terminal after the
+    /// underlying side effect returned. The engine must not publish output or
+    /// request another provider round.
+    case durabilityFailure(String)
 }
 
 /// A single tool executor. The engine routes a pending `UIMessagePart.Tool`
@@ -331,6 +335,10 @@ public struct IOSAgentToolEngineResult: Sendable {
     /// can map this to their normal failure terminal instead of parsing the
     /// compatibility transcript message appended below.
     public let providerFailureMessage: String?
+    /// Durable tool-terminal write failure. The executor may already have
+    /// produced a side effect, so callers must stop and keep the run
+    /// recoverable instead of treating this as an ordinary provider failure.
+    public let durabilityFailureMessage: String?
     /// Whether the provider terminated because its output budget was exhausted.
     /// This remains distinct from transport/provider failures even though both
     /// keep `providerFailureMessage` for the existing user-facing message.
@@ -350,6 +358,7 @@ public struct IOSAgentToolEngineResult: Sendable {
         pendingApproval: IOSPendingToolApproval?,
         hitStepLimit: Bool,
         providerFailureMessage: String? = nil,
+        durabilityFailureMessage: String? = nil,
         hitOutputLimit: Bool = false,
         wasCancelled: Bool = false,
         guardStopped: Bool = false
@@ -359,6 +368,7 @@ public struct IOSAgentToolEngineResult: Sendable {
         self.pendingApproval = pendingApproval
         self.hitStepLimit = hitStepLimit
         self.providerFailureMessage = providerFailureMessage
+        self.durabilityFailureMessage = durabilityFailureMessage
         self.hitOutputLimit = hitOutputLimit
         self.wasCancelled = wasCancelled
         self.guardStopped = guardStopped
@@ -652,6 +662,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     /// 开销;48ms 与 CGC 的 streamSnapshotFlushDelayNanos 同一发布节拍,
     /// 快照成本与前台现状同阶(不是逐 chunk)。
     private static let assistantSnapshotPublishInterval: Duration = .milliseconds(48)
+    private static let toolTerminalLedgerFailureMessage = "tool result ledger write failed"
 
     private enum PreparedStepMode {
         case grokWeb
@@ -1115,6 +1126,15 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         )
         working = preExistingResult.messages
         onMessagesUpdated?(working)
+        if let durabilityFailure = preExistingResult.durabilityFailureMessage {
+            return IOSAgentToolEngineResult(
+                messages: working,
+                stepsExecuted: 0,
+                pendingApproval: nil,
+                hitStepLimit: false,
+                durabilityFailureMessage: durabilityFailure
+            )
+        }
         if preExistingResult.wasCancelled {
             return IOSAgentToolEngineResult(
                 messages: working,
@@ -1345,6 +1365,17 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 resolveUnexposedToolCall: resolveUnexposedToolCall,
                 onToolExecutionStarted: onToolExecutionStarted
             )
+            if let durabilityFailure = batchResult.durabilityFailureMessage {
+                working = applyToolOutputs(batchResult.outputs, to: working)
+                onMessagesUpdated?(working)
+                return IOSAgentToolEngineResult(
+                    messages: working,
+                    stepsExecuted: steps + 1,
+                    pendingApproval: nil,
+                    hitStepLimit: false,
+                    durabilityFailureMessage: durabilityFailure
+                )
+            }
             if batchResult.wasCancelled {
                 working = applyToolOutputs(batchResult.outputs, to: working)
                 onMessagesUpdated?(working)
@@ -1452,6 +1483,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             pendingApproval: result.pendingApproval,
             hitStepLimit: result.hitStepLimit,
             providerFailureMessage: result.providerFailureMessage,
+            durabilityFailureMessage: result.durabilityFailureMessage,
             hitOutputLimit: result.hitOutputLimit,
             wasCancelled: result.wasCancelled,
             guardStopped: result.guardStopped
@@ -1461,15 +1493,24 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     /// Executes only the pending tool calls already present in `messages`.
     /// Used by direct image-edit background handoff where no follow-up model
     /// turn should be requested after the tool result is filled.
-    public func executePreExistingToolsOnly(messages: [UIMessage]) async -> [UIMessage] {
+    public func executePreExistingToolsOnly(messages: [UIMessage]) async -> IOSAgentToolEngineResult {
         // Standalone entry point (bypasses `run()`), so it needs its own
         // fresh, local guard — same "never carried across runs" rule as `run`.
         var loopGuard = IOSToolLoopGuard()
-        return await executePreExistingPendingTools(
+        let result = await executePreExistingPendingTools(
             in: messages,
             loopGuard: &loopGuard,
             onToolExecutionStarted: nil
-        ).messages
+        )
+        return IOSAgentToolEngineResult(
+            messages: result.messages,
+            stepsExecuted: 0,
+            pendingApproval: result.pendingApproval,
+            hitStepLimit: false,
+            durabilityFailureMessage: result.durabilityFailureMessage,
+            wasCancelled: result.wasCancelled,
+            guardStopped: result.guardStopped
+        )
     }
 
     // MARK: - Internals
@@ -1518,6 +1559,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let pendingApproval: IOSPendingToolApproval?
         let guardStopped: Bool
         let wasCancelled: Bool
+        let durabilityFailureMessage: String?
     }
 
     private func executePreExistingPendingTools(
@@ -1542,7 +1584,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 messages: messages,
                 pendingApproval: nil,
                 guardStopped: false,
-                wasCancelled: false
+                wasCancelled: false,
+                durabilityFailureMessage: nil
             )
         }
         let batchResult = await executeBatch(
@@ -1558,7 +1601,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             messages: applyToolOutputs(batchResult.outputs, to: messages),
             pendingApproval: batchResult.pendingApproval,
             guardStopped: batchResult.guardStopped,
-            wasCancelled: batchResult.wasCancelled
+            wasCancelled: batchResult.wasCancelled,
+            durabilityFailureMessage: batchResult.durabilityFailureMessage
         )
     }
 
@@ -1575,6 +1619,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         /// The task was cancelled after durable setup but before the next
         /// executor could begin, so no further tool/model work should start.
         let wasCancelled: Bool
+        /// The executor returned, but its durable terminal transaction could
+        /// not be committed. The current tool output stays unfilled and the
+        /// caller must keep the run recoverable instead of requesting another
+        /// provider round or declaring completion.
+        let durabilityFailureMessage: String?
     }
 
     private func executeBatch(
@@ -1714,18 +1763,23 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 cancelledBeforeExecution = Task.isCancelled
             }
             if cancelledBeforeExecution {
+                var durabilityFailureMessage: String?
                 if let ledger, let ledgerRunId {
-                    await ledger.recordToolCallFinished(
+                    let didRecordTerminal = await ledger.recordToolCallFinished(
                         runId: ledgerRunId,
                         toolCallId: tool.toolCallId,
                         outcome: "cancelled_before_execution"
                     )
+                    if !didRecordTerminal {
+                        durabilityFailureMessage = Self.toolTerminalLedgerFailureMessage
+                    }
                 }
                 return BatchExecutionResult(
                     outputs: outputs,
                     pendingApproval: nil,
                     guardStopped: false,
-                    wasCancelled: true
+                    wasCancelled: durabilityFailureMessage == nil,
+                    durabilityFailureMessage: durabilityFailureMessage
                 )
             }
             if let executor {
@@ -1760,20 +1814,38 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             case .failed(let reason):
                 outcome = "failed"
                 resultParts = [UIMessagePart.Text(text: "{\"error\":\"\(sanitized(reason))\"}", metadata: nil)]
+            case .durabilityFailure(let reason):
+                return BatchExecutionResult(
+                    outputs: outputs,
+                    pendingApproval: nil,
+                    guardStopped: false,
+                    wasCancelled: false,
+                    durabilityFailureMessage: reason
+                )
             }
             if let ledger, let ledgerRunId {
+                let didRecordTerminal: Bool
                 if let resultParts {
-                    await ledger.recordToolCallTerminal(
+                    didRecordTerminal = await ledger.recordToolCallTerminal(
                         runId: ledgerRunId,
                         toolCallId: tool.toolCallId,
                         outcome: outcome,
                         resultPayload: Self.encodeToolOutput(resultParts)
                     )
                 } else {
-                    await ledger.recordToolCallFinished(
+                    didRecordTerminal = await ledger.recordToolCallFinished(
                         runId: ledgerRunId,
                         toolCallId: tool.toolCallId,
                         outcome: outcome
+                    )
+                }
+                guard didRecordTerminal else {
+                    return BatchExecutionResult(
+                        outputs: outputs,
+                        pendingApproval: nil,
+                        guardStopped: false,
+                        wasCancelled: false,
+                        durabilityFailureMessage: Self.toolTerminalLedgerFailureMessage
                     )
                 }
             }
@@ -1791,7 +1863,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             outputs: outputs,
             pendingApproval: firstApproval,
             guardStopped: guardStopped,
-            wasCancelled: false
+            wasCancelled: false,
+            durabilityFailureMessage: nil
         )
     }
 

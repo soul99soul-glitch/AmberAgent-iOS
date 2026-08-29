@@ -164,11 +164,12 @@ public protocol IOSAgentRunLedgering: Sendable {
         effectClass: IOSToolEffectClass
     ) async -> Bool
 
+    @discardableResult
     func recordToolCallFinished(
         runId: String,
         toolCallId: String,
         outcome: String
-    ) async
+    ) async -> Bool
 
     /// Evolution contract (§15 Phase 0): finished/terminal tool events may
     /// carry optional artifact identity, a structured outcome and a source
@@ -176,6 +177,7 @@ public protocol IOSAgentRunLedgering: Sendable {
     /// pre-contract call sites compile unchanged; the new keys are OPTIONAL —
     /// rows written without them (and old rows already in the table) still
     /// decode (acceptance 4).
+    @discardableResult
     func recordToolCallFinished(
         runId: String,
         toolCallId: String,
@@ -185,7 +187,7 @@ public protocol IOSAgentRunLedgering: Sendable {
         outcomeKind: String?,
         errorCode: String?,
         sourceRef: String?
-    ) async
+    ) async -> Bool
 
     /// Explicit `approval_denied` ledger event (§11.1 evidence source):
     /// a user denied an approval card for this tool call. The event's
@@ -198,12 +200,13 @@ public protocol IOSAgentRunLedgering: Sendable {
         capabilityId: String?
     ) async
 
+    @discardableResult
     func recordToolCallTerminal(
         runId: String,
         toolCallId: String,
         outcome: String,
         resultPayload: String?
-    ) async
+    ) async -> Bool
 
     func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]?
 
@@ -242,12 +245,13 @@ extension IOSAgentRunLedgering {
         .ready
     }
 
+    @discardableResult
     func recordToolCallTerminal(
         runId: String,
         toolCallId: String,
         outcome: String,
         resultPayload: String?
-    ) async {
+    ) async -> Bool {
         await recordToolCallFinished(runId: runId, toolCallId: toolCallId, outcome: outcome)
     }
 
@@ -468,11 +472,12 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
     /// Pre-contract overload: delegates to the full evolution-contract form
     /// with every optional key nil, so old callers write exactly the payload
     /// they always did (`{"toolCallId":…,"outcome":…}`).
+    @discardableResult
     func recordToolCallFinished(
         runId: String,
         toolCallId: String,
         outcome: String
-    ) async {
+    ) async -> Bool {
         await recordToolCallFinished(
             runId: runId,
             toolCallId: toolCallId,
@@ -485,6 +490,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         )
     }
 
+    @discardableResult
     func recordToolCallFinished(
         runId: String,
         toolCallId: String,
@@ -494,7 +500,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         outcomeKind: String? = nil,
         errorCode: String? = nil,
         sourceRef: String? = nil
-    ) async {
+    ) async -> Bool {
         var fields: [String: String] = [
             "toolCallId": toolCallId,
             "outcome": outcome,
@@ -507,7 +513,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         if let outcomeKind { fields["outcomeKind"] = outcomeKind }
         if let errorCode { fields["errorCode"] = errorCode }
         if let sourceRef { fields["sourceRef"] = sourceRef }
-        await finishToolTransaction(
+        return await finishToolTransaction(
             runId: runId,
             toolCallId: toolCallId,
             outcome: outcome,
@@ -516,12 +522,13 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         )
     }
 
+    @discardableResult
     func recordToolCallTerminal(
         runId: String,
         toolCallId: String,
         outcome: String,
         resultPayload: String?
-    ) async {
+    ) async -> Bool {
         await finishToolTransaction(
             runId: runId,
             toolCallId: toolCallId,
@@ -537,7 +544,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         outcome: String,
         resultPayload: String?,
         fields: [String: String]
-    ) async {
+    ) async -> Bool {
         if await toolTransaction(runId: runId, toolCallId: toolCallId) == nil {
             let ok = await append(
                 runId: runId,
@@ -546,7 +553,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
             if !ok {
                 print("[AmberChat] non-executed tool terminal ledger write failed run=\(runId) toolCallId=\(toolCallId) outcome=\(outcome)")
             }
-            return
+            return ok
         }
         let nextState: IOSToolTransactionState = outcome == "paused_for_approval" ? .waitingUser : .finished
         let transitioned = await transitionToolTransaction(
@@ -558,8 +565,14 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
             resultPayload: resultPayload
         )
         guard transitioned else {
+            if let current = await toolTransaction(runId: runId, toolCallId: toolCallId),
+               current.state == nextState,
+               current.outcome == outcome,
+               current.resultPayload == resultPayload {
+                return true
+            }
             print("[AmberChat] tool transaction finish CAS failed run=\(runId) toolCallId=\(toolCallId) outcome=\(outcome)")
-            return
+            return false
         }
         let payload = Self.jsonPayload(fields)
         // The attempt either produced an outcome or was definitively stopped
@@ -583,6 +596,7 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         if !ok {
             print("[AmberChat] tool_call_finished ledger write failed run=\(runId) toolCallId=\(toolCallId) outcome=\(outcome)")
         }
+        return true
     }
 
     func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]? {

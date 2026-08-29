@@ -3429,11 +3429,21 @@ final class ChatViewModel {
                     conversationId: conversationId
                 )
             } else {
-                return try await runStore.transitionFromAnyActive(
+                let didRecord = try await runStore.transitionFromAnyActiveOrMatchingState(
                     runId: runId,
                     to: status,
-                    detail: status == .interrupted ? "user_cancelled" : nil
+                    detail: status == .interrupted ? "background_interruption" : nil
                 )
+                if !didRecord {
+                    conversationStore?.publishUserVisibleError(
+                        IOSUserVisibleError(
+                            title: "运行状态记录失败",
+                            message: "运行终态发生冲突，任务已保留等待恢复。",
+                            severity: .error
+                        )
+                    )
+                }
+                return didRecord
             }
         } catch {
             // agent_run 是强杀恢复（applyToolCallLedgerRecovery）依赖的账本，

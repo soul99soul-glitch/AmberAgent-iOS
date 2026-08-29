@@ -122,89 +122,81 @@ enum IOSChatForegroundFixtures {
     }
 }
 
-/// UI replay tests feed bounded prefix snapshots, matching the Kernel projection's
-/// observable contract without retaining the deleted foreground Coordinator pacer.
-struct IOSChatStreamSnapshotStep {
-    let snapshot: [UIMessage]
-    let isCaughtUp: Bool
+/// Scripted network stream used by Host integration tests. Chunk boundaries are
+/// test inputs; presentation cadence still comes from the real Engine/Host path.
+final class IOSChatScriptedStreamingProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
+    struct Stream {
+        let chunks: [MessageChunk]
+        let intervalNanos: UInt64
+    }
+
+    private let lock = NSLock()
+    private var streams: [Stream]
+    private(set) var callCount = 0
+
+    init(streams: [Stream]) { self.streams = streams }
+
+    func generateText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams
+    ) async throws -> MessageChunk {
+        IOSChatForegroundFixtures.chunk(
+            with: IOSChatForegroundFixtures.assistantText("stop"),
+            finishReason: "stop"
+        )
+    }
+
+    func streamText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams,
+        onChunk: @escaping @Sendable (MessageChunk) -> Void,
+        onComplete: @escaping @Sendable () -> Void,
+        onError: @escaping @Sendable (KotlinThrowable) -> Void
+    ) -> Kotlinx_coroutines_coreJob? {
+        let stream = lock.withLock { () -> Stream in
+            callCount += 1
+            return streams.isEmpty
+                ? Stream(
+                    chunks: [IOSChatForegroundFixtures.streamChunk(
+                        delta: IOSChatForegroundFixtures.assistantText("stop")
+                    )],
+                    intervalNanos: 0
+                )
+                : streams.removeFirst()
+        }
+        Task {
+            for chunk in stream.chunks {
+                if stream.intervalNanos > 0 {
+                    try? await Task.sleep(nanoseconds: stream.intervalNanos)
+                }
+                onChunk(chunk)
+            }
+            onComplete()
+        }
+        return nil
+    }
 }
 
-enum IOSChatStreamSnapshotStepper {
-    static func step(current: [UIMessage], target: [UIMessage]) -> IOSChatStreamSnapshotStep {
-        guard let targetAssistant = target.last,
-              targetAssistant.role == MessageRole.assistant else {
-            return IOSChatStreamSnapshotStep(snapshot: target, isCaughtUp: true)
-        }
+/// Splits scripted provider input into bounded network deltas. This does not
+/// model presentation pacing; the real Engine/Host path owns that cadence.
+func iosChatScriptedTextDeltas(_ text: String, chunkCount: Int) -> [String] {
+    let characters = Array(text)
+    guard !characters.isEmpty else { return [] }
+    let chunkSize = max(1, (characters.count + max(1, chunkCount) - 1) / max(1, chunkCount))
+    return stride(from: 0, to: characters.count, by: chunkSize).map { start in
+        String(characters[start..<min(start + chunkSize, characters.count)])
+    }
+}
 
-        let currentAssistant: UIMessage?
-        let currentPrefix: ArraySlice<UIMessage>
-        if current.count == target.count,
-           let last = current.last,
-           last.role == MessageRole.assistant,
-           last.id == targetAssistant.id {
-            currentAssistant = last
-            currentPrefix = current.dropLast()
-        } else if current.count + 1 == target.count {
-            currentAssistant = nil
-            currentPrefix = current[...]
-        } else {
-            return IOSChatStreamSnapshotStep(snapshot: target, isCaughtUp: true)
-        }
-
-        let targetPrefix = target.dropLast()
-        guard currentPrefix.count == targetPrefix.count,
-              zip(currentPrefix, targetPrefix).allSatisfy({ $0.id == $1.id }) else {
-            return IOSChatStreamSnapshotStep(snapshot: target, isCaughtUp: true)
-        }
-
-        let currentParts = currentAssistant?.parts ?? []
-        var backlog = 0
-        for (index, targetPart) in targetAssistant.parts.enumerated() {
-            guard let targetText = targetPart as? UIMessagePart.Text else { continue }
-            let currentCount = (index < currentParts.count ? currentParts[index] as? UIMessagePart.Text : nil)?
-                .text.count ?? 0
-            backlog += max(0, targetText.text.count - currentCount)
-        }
-        var remainingBudget = StreamPresentationPacingPolicy.textAdvance(backlogCount: backlog)
-        var caughtUp = true
-        var parts: [UIMessagePart] = []
-        parts.reserveCapacity(targetAssistant.parts.count)
-
-        for (index, targetPart) in targetAssistant.parts.enumerated() {
-            guard let targetText = targetPart as? UIMessagePart.Text else {
-                parts.append(targetPart)
-                continue
-            }
-            let currentText = (index < currentParts.count ? currentParts[index] as? UIMessagePart.Text : nil)?
-                .text ?? ""
-            guard targetText.text.hasPrefix(currentText) else {
-                return IOSChatStreamSnapshotStep(snapshot: target, isCaughtUp: true)
-            }
-            let suffix = targetText.text.dropFirst(currentText.count)
-            let advance = min(remainingBudget, suffix.count)
-            remainingBudget -= advance
-            if advance < suffix.count { caughtUp = false }
-            parts.append(UIMessagePart.Text(
-                text: currentText + suffix.prefix(advance),
-                metadata: targetText.metadata
-            ))
-        }
-
-        let assistant = UIMessage(
-            id: targetAssistant.id,
-            role: targetAssistant.role,
-            parts: parts,
-            annotations: targetAssistant.annotations,
-            createdAt: targetAssistant.createdAt,
-            finishedAt: caughtUp ? targetAssistant.finishedAt : currentAssistant?.finishedAt,
-            modelId: targetAssistant.modelId,
-            usage: caughtUp ? targetAssistant.usage : currentAssistant?.usage,
-            translation: targetAssistant.translation
-        )
-        return IOSChatStreamSnapshotStep(
-            snapshot: Array(targetPrefix) + [assistant],
-            isCaughtUp: caughtUp
-        )
+/// Fixed cumulative prefixes for renderer-only replay tests. Production-path
+/// cadence tests must drive `ChatKernelRunHost` instead.
+func iosChatScriptedTextPrefixes(_ text: String, chunkCount: Int) -> [String] {
+    var cumulative = ""
+    return iosChatScriptedTextDeltas(text, chunkCount: chunkCount).map { delta in
+        cumulative += delta
+        return cumulative
     }
 }
 
@@ -225,6 +217,8 @@ final class IOSRunEventLogLedger: IOSAgentRunLedgering, @unchecked Sendable {
     private var recordedRecoveryTransitions: [RecoveryTransition] = []
     /// 强制 Started 写失败,验证 I-1 fail-closed(账本写不成 → 工具绝不执行)。
     var failStarts = false
+    /// 强制执行后终态写失败，验证结果不得进入会话或下一轮 provider。
+    var failTerminals = false
     var preparationResult = IOSToolTransactionPreparation.ready
 
     var recoveryTransitions: [RecoveryTransition] {
@@ -259,9 +253,10 @@ final class IOSRunEventLogLedger: IOSAgentRunLedgering, @unchecked Sendable {
         return true
     }
 
-    func recordToolCallFinished(runId: String, toolCallId: String, outcome: String) async {
+    func recordToolCallFinished(runId: String, toolCallId: String, outcome: String) async -> Bool {
         let name = lock.withLock { toolNamesByCallId[toolCallId] ?? toolCallId }
         log.append(.toolCallFinished(tool: name, outcome: outcome))
+        return !failTerminals
     }
 
     func recordToolCallFinished(
@@ -273,9 +268,10 @@ final class IOSRunEventLogLedger: IOSAgentRunLedgering, @unchecked Sendable {
         outcomeKind: String?,
         errorCode: String?,
         sourceRef: String?
-    ) async {
+    ) async -> Bool {
         let name = lock.withLock { toolNamesByCallId[toolCallId] ?? toolCallId }
         log.append(.toolCallFinished(tool: name, outcome: outcome))
+        return !failTerminals
     }
 
     func recordApprovalDenied(
@@ -356,6 +352,8 @@ final class IOSChatForegroundHarness {
     private(set) var revisions: [ChatMessageUpdateReason] = []
     private(set) var persistedSnapshots: [[UIMessage]] = []
     private(set) var isLoading = false
+    var onMessagesChanged: (([UIMessage]) -> Void)?
+    var onRevision: ((ChatMessageUpdateReason, CGFloat) -> Void)?
 
     // Host 生命周期测试只需要搜索审批卡。
     private(set) var pendingSearchApproval: SearchToolApprovalRequest?
@@ -366,6 +364,8 @@ final class IOSChatForegroundHarness {
     /// recordRun 捕获的 runId。
     private(set) var capturedRunId: String?
     private(set) var capturedRunProtocolContext: AgentRunProtocolContext?
+    var failRunTerminals = false
+    private(set) var runTerminalRecordAttempts = 0
 
     /// - parameter toolNames: 全目录声明名单(经 `ToolKt.iosToolDeclarations`)。
     ///   默认 = 生产全目录(75 个声明,越过 40 的 lazy 阈值),resident 工具自动
@@ -432,8 +432,14 @@ final class IOSChatForegroundHarness {
         // 绑定全部录制进共享日志;主 actor 状态经 weak self 写回。
         var bindings = ChatGenerationBindings(
             getMessages: { [weak self] in self?.messages ?? [] },
-            setMessages: { [weak self] in self?.messages = $0 },
-            bumpMessageRevision: { [weak self] reason, _ in self?.revisions.append(reason) },
+            setMessages: { [weak self] messages in
+                self?.messages = messages
+                self?.onMessagesChanged?(messages)
+            },
+            bumpMessageRevision: { [weak self] reason, lagAllowance in
+                self?.revisions.append(reason)
+                self?.onRevision?(reason, lagAllowance)
+            },
             setIsLoading: { [weak self] in self?.isLoading = $0 },
             setPendingMemoryApproval: { _ in },
             setPendingSearchApproval: { [weak self] in
@@ -459,7 +465,10 @@ final class IOSChatForegroundHarness {
                     self?.capturedRunProtocolContext = protocolContext
                     log.append(.runStarted)
                 } else if status == .completed || status == .failed
-                            || status == .cancelled || status == .interrupted {
+                            || status == .cancelled || status == .interrupted
+                            || status == .recoveryPending {
+                    self?.runTerminalRecordAttempts += 1
+                    if self?.failRunTerminals == true { return false }
                     log.append(.runTerminal(status: status.wireName))
                 }
                 return true

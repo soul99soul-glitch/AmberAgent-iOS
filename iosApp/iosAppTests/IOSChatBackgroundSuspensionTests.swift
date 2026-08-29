@@ -23,13 +23,25 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
     }
 
     @MainActor
-    func testColdStartSweepRemovesPersistedOwnerWithoutSubmittingAnotherRequest() {
+    func testColdStartSweepRemovesPersistedOwnerWithoutSubmittingAnotherRequest() async throws {
         let requestId = "\(Bundle.main.bundleIdentifier ?? "app.amber.ios").chat.stale-run"
         UserDefaults.standard.set([requestId: "stale-run"], forKey: taskMapKey)
+        _ = try await IOSDurableRunStore().startChatRun(
+            runId: "stale-run",
+            startedAt: 1,
+            inputDigest: "stale-run",
+            conversationId: nil
+        )
 
         let coordinator = IOSChatBackgroundGenerationCoordinator.shared
         coordinator.finalizeStalePersistedJobsIfNeeded()
         coordinator.finalizeStalePersistedJobsIfNeeded()
+
+        let deadline = Date().addingTimeInterval(5)
+        while UserDefaults.standard.dictionary(forKey: taskMapKey)?[requestId] != nil,
+              Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
 
         XCTAssertTrue(
             UserDefaults.standard
@@ -63,6 +75,13 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         cancel: (IOSChatBackgroundGenerationCoordinator, IOSChatBackgroundHandoff) -> Bool
     ) async {
         let coordinator = IOSChatBackgroundGenerationCoordinator.shared
+        let didStart = try? await IOSDurableRunStore().startChatRun(
+            runId: fixture.handoff.runId,
+            startedAt: fixture.handoff.startedAt,
+            inputDigest: fixture.handoff.inputDigest,
+            conversationId: fixture.handoff.conversationId.toHexDashString()
+        )
+        XCTAssertEqual(didStart, true)
         XCTAssertTrue(coordinator.persistDurableResponseCheckpointForTesting(fixture.handoff))
         let requestId = UserDefaults.standard
             .dictionary(forKey: taskMapKey)?

@@ -1021,7 +1021,16 @@ final class IOSThreadOrchestrationToolService {
             runId: runId,
             conversationId: targetHex,
             startedAt: now,
-            inputDigest: inputDigest
+            inputDigest: inputDigest,
+            protocolContext: AgentRunProtocolContext(
+                providerId: providerSetting.id.description(),
+                modelId: params.model.modelId,
+                promptVersion: nil,
+                toolCatalogVersion: chatInputDigest(
+                    for: IosRunRequestSnapshotJsonBridge.shared.encodeToolCatalog(tools: params.tools)
+                ),
+                capabilitySnapshot: executionPolicy?.encodedJSON
+            )
         ) else {
             return nil
         }
@@ -1348,14 +1357,16 @@ final class IOSThreadOrchestrationToolService {
         runId: String,
         conversationId: String,
         startedAt: Int64,
-        inputDigest: String
+        inputDigest: String,
+        protocolContext: AgentRunProtocolContext
     ) async -> Bool {
         let store = IOSDurableRunStore(dao: agentRuntimeDao)
         return (try? await store.startChatRun(
             runId: runId,
             startedAt: startedAt,
             inputDigest: inputDigest,
-            conversationId: conversationId
+            conversationId: conversationId,
+            protocolContext: protocolContext
         )) == true
     }
 

@@ -14,8 +14,7 @@ import java.nio.file.Files
  * P1-c: thread_edge 存储契约（jvmTest + Room 真实 JVM 驱动）。
  *
  * 覆盖：insert/查询（edgeFor/childrenOf）；setStatus；descendants 内存递归
- * （传递子级、跨代稳定序）；v2 → v5 迁移保全（agent_run + mailbox_envelope
- * 行原样保留、thread_edge 表可用）。
+ * （传递子级、跨代稳定序）；v2/v3/v4 → v5 迁移保全。
  */
 class ThreadEdgeDaoTest {
 
@@ -173,6 +172,140 @@ class ThreadEdgeDaoTest {
         )
     }
 
+    @Test
+    fun migrationFromV3PreservesRowsAndAddsProtocolAndToolTransactionFields() = runTest {
+        val path = Files.createTempFile("agent-runtime-migration-v3", ".db")
+        Files.delete(path)
+        val absolutePath = path.toAbsolutePath().toString()
+        createProductionDatabaseAtVersion(absolutePath, version = 3)
+
+        val db = Room.databaseBuilder<AgentRuntimeDatabase>(name = absolutePath)
+            .setDriver(BundledSQLiteDriver())
+            .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+            .build()
+        val dao = db.agentRuntimeDao()
+
+        val completed = dao.getRun("run-v2-prod")
+        assertEquals("completed", completed?.status)
+        assertEquals("legacy_terminal", completed?.terminalReason)
+        assertNull(completed?.providerId)
+        assertNull(completed?.modelId)
+        assertNull(completed?.promptVersion)
+        assertNull(completed?.toolCatalogVersion)
+        assertNull(completed?.capabilitySnapshot)
+        assertEquals("waiting_user", dao.getRun("run-v2-waiting")?.status)
+        assertEquals("resumable", dao.getRun("run-v2-recovery")?.status)
+
+        val event = dao.listEventsForRun("run-v2-prod").single()
+        assertEquals("event-v3-prod", event.eventId)
+        assertEquals("{\"source\":\"v3\"}", event.payload)
+        assertNull(event.turnId)
+        assertNull(event.stepId)
+        assertNull(event.toolCallId)
+
+        assertToolTransactionTableWritable(dao, runId = "run-v2-prod", toolCallId = "tool-v3")
+    }
+
+    @Test
+    fun migrationFromV4PreservesProtocolEventFieldsAndAddsToolTransactions() = runTest {
+        val path = Files.createTempFile("agent-runtime-migration-v4", ".db")
+        Files.delete(path)
+        val absolutePath = path.toAbsolutePath().toString()
+        createProductionDatabaseAtVersion(absolutePath, version = 4)
+
+        val db = Room.databaseBuilder<AgentRuntimeDatabase>(name = absolutePath)
+            .setDriver(BundledSQLiteDriver())
+            .addMigrations(MIGRATION_4_5)
+            .build()
+        val dao = db.agentRuntimeDao()
+
+        val run = dao.getRun("run-v2-prod")
+        assertEquals("provider-v4", run?.providerId)
+        assertEquals("model-v4", run?.modelId)
+        assertEquals("prompt-v4", run?.promptVersion)
+        assertEquals("catalog-v4", run?.toolCatalogVersion)
+        assertEquals("{\"vision\":true}", run?.capabilitySnapshot)
+
+        val event = dao.listEventsForRun("run-v2-prod").single()
+        assertEquals("event-v4-prod", event.eventId)
+        assertEquals("turn-v4", event.turnId)
+        assertEquals("step-v4", event.stepId)
+        assertEquals("call-v4", event.toolCallId)
+
+        assertToolTransactionTableWritable(dao, runId = "run-v2-prod", toolCallId = "tool-v4")
+    }
+
+    private suspend fun assertToolTransactionTableWritable(
+        dao: AgentRuntimeDao,
+        runId: String,
+        toolCallId: String,
+    ) {
+        val inserted = dao.insertToolTransactionIfAbsent(
+            AgentToolTransactionEntity(
+                runId = runId,
+                toolCallId = toolCallId,
+                toolName = "search_web",
+                argsDigest = "digest-$toolCallId",
+                effectClass = "side_effect",
+                state = "prepared",
+                outcome = null,
+                resultPayload = null,
+                updatedAt = 9_000,
+            ),
+        )
+        assertTrue(inserted > 0)
+        assertEquals("prepared", dao.getToolTransaction(runId, toolCallId)?.state)
+    }
+
+    private fun createProductionDatabaseAtVersion(absolutePath: String, version: Int) {
+        require(version == 3 || version == 4)
+        createV2DatabaseWithProductionRows(absolutePath)
+        val connection = BundledSQLiteDriver().open(absolutePath)
+        MIGRATION_2_3.migrate(connection)
+        if (version == 4) {
+            MIGRATION_3_4.migrate(connection)
+            connection.execSQL(
+                """
+                UPDATE agent_run SET
+                    provider_id = 'provider-v4',
+                    model_id = 'model-v4',
+                    prompt_version = 'prompt-v4',
+                    tool_catalog_version = 'catalog-v4',
+                    capability_snapshot = '{"vision":true}'
+                WHERE run_id = 'run-v2-prod'
+                """.trimIndent(),
+            )
+            connection.execSQL(
+                """
+                INSERT INTO agent_event (
+                    event_id, run_id, parent_run_id, seq, type, payload_type, payload,
+                    payload_schema_version, agent_descriptor_id, agent_version, is_final, ts,
+                    turn_id, step_id, tool_call_id
+                ) VALUES (
+                    'event-v4-prod', 'run-v2-prod', NULL, 1, 'tool_started', 'json', '{"source":"v4"}',
+                    1, 'chat', '1', 0, 2000, 'turn-v4', 'step-v4', 'call-v4'
+                )
+                """.trimIndent(),
+            )
+        } else {
+            connection.execSQL(
+                """
+                INSERT INTO agent_event (
+                    event_id, run_id, parent_run_id, seq, type, payload_type, payload,
+                    payload_schema_version, agent_descriptor_id, agent_version, is_final, ts
+                ) VALUES (
+                    'event-v3-prod', 'run-v2-prod', NULL, 1, 'step_started', 'json', '{"source":"v3"}',
+                    1, 'chat', '1', 0, 1000
+                )
+                """.trimIndent(),
+            )
+        }
+        val identityHash = if (version == 3) V3_IDENTITY_HASH else V4_IDENTITY_HASH
+        connection.execSQL("UPDATE room_master_table SET identity_hash = '$identityHash' WHERE id = 42")
+        connection.execSQL("PRAGMA user_version = $version")
+        connection.close()
+    }
+
     /** 用 2.json 的确切 v2 schema + identity hash 构造 v2 库，写入生产形态行。 */
     private fun createV2DatabaseWithProductionRows(absolutePath: String) {
         val driver = BundledSQLiteDriver()
@@ -220,6 +353,10 @@ class ThreadEdgeDaoTest {
                 'run-v2-waiting', NULL, 'chat', '1', 'cafe-waiting',
                 NULL, NULL, NULL, 'awaiting_permission', 'digest-waiting',
                 'tool_call:legacy', 1, 1234568, NULL, NULL
+            ), (
+                'run-v2-recovery', NULL, 'chat', '1', 'cafe-recovery',
+                NULL, NULL, NULL, 'recovery_pending', 'digest-recovery',
+                'checkpoint:legacy', 1, 1234569, NULL, NULL
             )
             """.trimIndent(),
         )
@@ -237,6 +374,9 @@ class ThreadEdgeDaoTest {
     }
 
     private companion object {
+        const val V3_IDENTITY_HASH = "b9892dc46cb00dd154f3f115be5302eb"
+        const val V4_IDENTITY_HASH = "2d6064740356ce12c577ca9db8b6972b"
+
         // 与 schemas/app.amber.core.agent.store.AgentRuntimeDatabase/2.json 逐字一致。
         const val V2_AGENT_RUN_CREATE =
             "CREATE TABLE IF NOT EXISTS `agent_run` (`run_id` TEXT NOT NULL, `parent_run_id` TEXT, `agent_descriptor_id` TEXT NOT NULL, `agent_version` TEXT NOT NULL, `conversation_id` TEXT, `message_node_id` TEXT, `produces_message_id` TEXT, `assistant_id` TEXT, `status` TEXT NOT NULL, `input_digest` TEXT NOT NULL, `input_snapshot_ref` TEXT, `input_schema_version` INTEGER NOT NULL, `started_at` INTEGER NOT NULL, `finished_at` INTEGER, `interrupted_reason` TEXT, PRIMARY KEY(`run_id`))"

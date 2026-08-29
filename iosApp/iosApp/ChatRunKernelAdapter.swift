@@ -129,6 +129,10 @@ final class ChatRunKernelAdapter {
     private var isStoppedByHost: Bool { isCancelledByHost || isDetachedByHost }
     /// 终态只报一次(cancel 与正常终态互斥)。
     private var didReportTerminal = false
+    /// A direct nested/approval executor can finish outside the engine's own
+    /// terminal recording path. If that durable terminal write fails, cancel
+    /// the driver and keep the run recoverable instead of publishing output.
+    private var durabilityFailureMessage: String?
     /// 当前 run 的 citation tracker(run() 开始时取自 request;cancel() 的
     /// remainder 折入需要它)。
     private var activeCitationTracker: IOSMemoryCitationTracker?
@@ -153,6 +157,7 @@ final class ChatRunKernelAdapter {
         // Host 可能在 run() 进入前已取消(preamble 期间):不发任何回调,
         // 直接以初始消息返回(Host 的终态序列走 cancel 分支)。
         if isStoppedByHost { return request.initialMessages }
+        durabilityFailureMessage = nil
         activeCitationTracker = request.citationTracker
         // CGC 首轮头消费:mailbox(:1928)先于 steer(:2141);后续轮边界由
         // 引擎钩子承担(引擎内同序 :1199-1216)。
@@ -312,19 +317,22 @@ final class ChatRunKernelAdapter {
                         // 引擎从 KMP 流协程串行回调;盒跨边界回 MainActor。
                         let box = UncheckedStageBox(stage)
                         Task { @MainActor [weak self] in
-                            guard let self, !self.isStoppedByHost else { return }
+                            guard let self, !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil else { return }
                             self.callbacks.onAssistantStage(box.value)
                         }
                     },
                     onAssistantText: { [weak self] text in
                         Task { @MainActor [weak self] in
-                            guard let self, !self.isStoppedByHost else { return }
+                            guard let self, !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil else { return }
                             self.callbacks.onAssistantText(text)
                         }
                     },
                     onAssistantReasoning: { [weak self] text in
                         Task { @MainActor [weak self] in
-                            guard let self, !self.isStoppedByHost else { return }
+                            guard let self, !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil else { return }
                             self.callbacks.onAssistantReasoning(text)
                         }
                     },
@@ -337,6 +345,7 @@ final class ChatRunKernelAdapter {
                         let box = UncheckedMessageSnapshotBox(message)
                         Task { @MainActor [weak self] in
                             guard let self, !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil,
                                   seq > self.lastAppliedSnapshotSeq else { return }
                             self.lastAppliedSnapshotSeq = seq
                             self.callbacks.onAssistantMessageSnapshot(box.value)
@@ -353,6 +362,7 @@ final class ChatRunKernelAdapter {
                         let box = UncheckedMessagesBox(messages)
                         Task { @MainActor [weak self] in
                             guard let self, !self.isStoppedByHost,
+                                  self.durabilityFailureMessage == nil,
                                   seq > self.lastAppliedSnapshotSeq else { return }
                             self.lastAppliedSnapshotSeq = seq
                             self.working = box.value
@@ -367,6 +377,12 @@ final class ChatRunKernelAdapter {
             // 取消填充(cancel() 内)是权威快照:引擎迟到结果不回灌,
             // 终态(cancelled)也已上报——直接返回。
             if isStoppedByHost { return working }
+            if let durabilityFailureMessage {
+                callbacks.onProviderFailure(durabilityFailureMessage)
+                didReportTerminal = true
+                callbacks.onRunTerminal(AgentRunStatus.recoveryPending.wireName)
+                return working
+            }
 
             if result.hitOutputLimit {
                 // A4 截断收口(CG-C completeTruncatedStream :2802 语义,适配器侧
@@ -422,13 +438,20 @@ final class ChatRunKernelAdapter {
                 if isStoppedByHost { return working }
                 if !didContinue {
                     didReportTerminal = true
-                    callbacks.onRunTerminal(AgentRunStatus.failed.wireName)
+                    if let durabilityFailureMessage {
+                        callbacks.onProviderFailure(durabilityFailureMessage)
+                        callbacks.onRunTerminal(AgentRunStatus.recoveryPending.wireName)
+                    } else {
+                        callbacks.onRunTerminal(AgentRunStatus.failed.wireName)
+                    }
                     return working
                 }
                 continue
             }
 
-            if let failure = result.providerFailureMessage {
+            if let failure = result.durabilityFailureMessage {
+                callbacks.onProviderFailure(failure)
+            } else if let failure = result.providerFailureMessage {
                 // B1: provider/上传准备失败——先把原始错误串交给 Host(产出
                 // CG-C presentStreamError 同款用户向错误泡),再报 failed。
                 // hitOutputLimit 已在上方 A4 分支提前返回,不会到达这里。
@@ -443,7 +466,7 @@ final class ChatRunKernelAdapter {
     // MARK: - Host 取消
 
     /// CGC cancel(:1438-1581)的适配层等价:
-    /// 1) 未决工具原地填 "User cancelled." 结构化 denied JSON(:1494-1500 同款),
+    /// 1) 未决工具原地填调用方给出的取消原因结构化 denied JSON,
     ///    取消填充是权威快照;
     /// 2) citation remainder 折入取消快照(:1490 flushingCitationTracker 同款——
     ///    引擎段被腰斩,其终态 flush 随迟到结果一起被丢弃,这里补上);
@@ -451,12 +474,12 @@ final class ChatRunKernelAdapter {
     ///    dispatchSearchToolCall 的 catch,产出 cancelled JSON 的 .completed,
     ///    账本 Finished 迟于终态落地(F10 诚实晚完成纪律);
     /// 4) 终态 cancelled 只报一次。
-    func cancel() {
+    func cancel(failureReason: String = "User cancelled.") {
         guard !didReportTerminal, !isStoppedByHost else { return }
         isCancelledByHost = true
         var filled = runtime.messagesByFailingPendingToolCalls(
             in: working,
-            failureReason: "User cancelled.",
+            failureReason: failureReason,
             denied: true
         )
         if let tracker = activeCitationTracker {
@@ -609,24 +632,30 @@ final class ChatRunKernelAdapter {
             recipeCatalogSnapshot: request.recipeCatalogSnapshot
         ) {
         case .completed(let messages):
-            await recordToolTerminal(
+            guard await recordToolTerminal(
                 runId: request.runId,
                 toolCallId: toolCall.toolCallId,
                 outcome: "completed",
                 messages: messages
-            )
+            ) else { return Self.nestedExecToolUnavailable(name: name) }
             return Self.nestedExecToolOutputText(from: messages, toolCallId: toolCall.toolCallId)
         case .waitingForApproval(let prompt):
-            await ledger.recordToolCallFinished(
+            guard await ledger.recordToolCallFinished(
                 runId: request.runId,
                 toolCallId: toolCall.toolCallId,
                 outcome: "paused_for_approval"
-            )
+            ) else {
+                markDurabilityFailure()
+                return Self.nestedExecToolUnavailable(name: name)
+            }
             return await resolveNestedExecApproval(
                 prompt,
                 pending: pending,
                 request: request
             )
+        case .durabilityFailure:
+            markDurabilityFailure()
+            return Self.nestedExecToolUnavailable(name: name)
         }
     }
 
@@ -816,11 +845,13 @@ final class ChatRunKernelAdapter {
             // Finished(not_executed_permission_claim_failed) 并诚实收口
             // (CG-C :4310-4325——Host 侧已呈现「无法恢复待确认任务」)。
             guard await callbacks.onRunResumed() else {
-                await ledger.recordToolCallFinished(
+                if !(await ledger.recordToolCallFinished(
                     runId: pending.runId,
                     toolCallId: pending.toolCall.toolCallId,
                     outcome: "not_executed_permission_claim_failed"
-                )
+                )) {
+                    markDurabilityFailure()
+                }
                 return .failed
             }
             let messages = await finishBoolApproval(
@@ -829,12 +860,12 @@ final class ChatRunKernelAdapter {
                 pending: pending,
                 candidates: candidates
             )
-            await recordToolTerminal(
+            guard await recordToolTerminal(
                 runId: pending.runId,
                 toolCallId: pending.toolCall.toolCallId,
                 outcome: allow ? "completed" : "denied",
                 messages: messages
-            )
+            ) else { return .failed }
             return .resumed(messages)
 
         case .memory(let memoryRequest):
@@ -852,11 +883,13 @@ final class ChatRunKernelAdapter {
                 effectClass: Self.resumeEffectClass(for: prompt, input: pending.toolCall.input)
             ) else { return .failed }
             guard await callbacks.onRunResumed() else {
-                await ledger.recordToolCallFinished(
+                if !(await ledger.recordToolCallFinished(
                     runId: pending.runId,
                     toolCallId: pending.toolCall.toolCallId,
                     outcome: "not_executed_permission_claim_failed"
-                )
+                )) {
+                    markDurabilityFailure()
+                }
                 return .failed
             }
             let messages = runtime.finishMemoryApproval(
@@ -864,12 +897,12 @@ final class ChatRunKernelAdapter {
                 writePolicy: writePolicy,
                 expectedUpdatedAt: memoryRequest.expectedUpdatedAt
             )
-            await recordToolTerminal(
+            guard await recordToolTerminal(
                 runId: pending.runId,
                 toolCallId: pending.toolCall.toolCallId,
                 outcome: "completed",
                 messages: messages
-            )
+            ) else { return .failed }
             return .resumed(messages)
 
         case .askUser:
@@ -878,20 +911,22 @@ final class ChatRunKernelAdapter {
                 return .failed
             }
             guard await callbacks.onRunResumed() else {
-                await ledger.recordToolCallFinished(
+                if !(await ledger.recordToolCallFinished(
                     runId: pending.runId,
                     toolCallId: pending.toolCall.toolCallId,
                     outcome: "not_executed_permission_claim_failed"
-                )
+                )) {
+                    markDurabilityFailure()
+                }
                 return .failed
             }
             let messages = runtime.finishAskUserAnswer(pending: pending, answer: answer)
-            await recordToolTerminal(
+            guard await recordToolTerminal(
                 runId: pending.runId,
                 toolCallId: pending.toolCall.toolCallId,
                 outcome: "completed",
                 messages: messages
-            )
+            ) else { return .failed }
             return .resumed(messages)
 
         case .recipe(let recipeRequest):
@@ -902,24 +937,26 @@ final class ChatRunKernelAdapter {
                     return .failed
                 }
                 guard await callbacks.onRunResumed() else {
-                await ledger.recordToolCallFinished(
-                    runId: pending.runId,
-                    toolCallId: pending.toolCall.toolCallId,
-                    outcome: "not_executed_permission_claim_failed"
-                )
-                return .failed
-            }
+                    if !(await ledger.recordToolCallFinished(
+                        runId: pending.runId,
+                        toolCallId: pending.toolCall.toolCallId,
+                        outcome: "not_executed_permission_claim_failed"
+                    )) {
+                        markDurabilityFailure()
+                    }
+                    return .failed
+                }
                 let messages = await runtime.finishRecipeImportApproval(
                     pending: pending,
                     allow: allow,
                     prepared: candidates.recipeImport
                 )
-                await recordToolTerminal(
+                guard await recordToolTerminal(
                     runId: pending.runId,
                     toolCallId: pending.toolCall.toolCallId,
                     outcome: allow ? "completed" : "denied",
                     messages: messages
-                )
+                ) else { return .failed }
                 return .resumed(messages)
 
             case .step:
@@ -962,20 +999,26 @@ final class ChatRunKernelAdapter {
                     )
                     switch result {
                     case .completed(let messages):
-                        await recordToolTerminal(
+                        guard await recordToolTerminal(
                             runId: pending.runId,
                             toolCallId: pending.toolCall.toolCallId,
                             outcome: "completed",
                             messages: messages
-                        )
+                        ) else { return .failed }
                         return .resumed(messages)
                     case .pausedForNextStep(let nextRequest):
-                        await ledger.recordToolCallFinished(
+                        guard await ledger.recordToolCallFinished(
                             runId: pending.runId,
                             toolCallId: pending.toolCall.toolCallId,
                             outcome: "paused_for_approval"
-                        )
+                        ) else {
+                            markDurabilityFailure()
+                            return .failed
+                        }
                         return .rePause(.recipe(nextRequest))
+                    case .durabilityFailure:
+                        markDurabilityFailure()
+                        return .failed
                     }
                 }
             }
@@ -1069,14 +1112,23 @@ final class ChatRunKernelAdapter {
         toolCallId: String,
         outcome: String,
         messages: [UIMessage]
-    ) async {
+    ) async -> Bool {
         let parts = Self.toolPart(toolCallId: toolCallId, in: messages)?.output
-        await ledger.recordToolCallTerminal(
+        let recorded = await ledger.recordToolCallTerminal(
             runId: runId,
             toolCallId: toolCallId,
             outcome: outcome,
             resultPayload: parts.map { IosToolOutputJsonBridge.shared.encode(parts: $0) }
         )
+        if !recorded { markDurabilityFailure() }
+        return recorded
+    }
+
+    private func markDurabilityFailure() {
+        if durabilityFailureMessage == nil {
+            durabilityFailureMessage = "tool result ledger write failed"
+        }
+        driverTask?.cancel()
     }
 
     /// CGC 恢复路径各审批类目的硬编码 effectClass——注意 search 在恢复
@@ -1157,6 +1209,7 @@ final class ChatRunKernelAdapter {
     }
 
     private nonisolated static func terminalWireName(of result: IOSAgentToolEngineResult) -> String {
+        if result.durabilityFailureMessage != nil { return AgentRunStatus.recoveryPending.wireName }
         if result.wasCancelled { return AgentRunStatus.cancelled.wireName }
         if result.guardStopped { return AgentRunStatus.failed.wireName }
         if result.hitStepLimit { return AgentRunStatus.failed.wireName }

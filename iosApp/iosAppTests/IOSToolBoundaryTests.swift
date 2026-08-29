@@ -107,10 +107,12 @@ final class IOSToolBoundaryTests: XCTestCase {
         private(set) var finishedCalls: [(runId: String, toolCallId: String, outcome: String)] = []
         private(set) var approvalDeniedCalls: [(runId: String, toolCallId: String, toolName: String)] = []
         private let startResult: Bool
+        private let terminalResult: Bool
         private let log: TestEventLog?
 
-        init(startResult: Bool = true, log: TestEventLog? = nil) {
+        init(startResult: Bool = true, terminalResult: Bool = true, log: TestEventLog? = nil) {
             self.startResult = startResult
+            self.terminalResult = terminalResult
             self.log = log
         }
 
@@ -142,7 +144,7 @@ final class IOSToolBoundaryTests: XCTestCase {
             runId: String,
             toolCallId: String,
             outcome: String
-        ) async {
+        ) async -> Bool {
             await recordToolCallFinished(
                 runId: runId, toolCallId: toolCallId, outcome: outcome,
                 artifactId: nil, artifactVersion: nil, outcomeKind: nil, errorCode: nil, sourceRef: nil
@@ -158,9 +160,10 @@ final class IOSToolBoundaryTests: XCTestCase {
             outcomeKind: String? = nil,
             errorCode: String? = nil,
             sourceRef: String? = nil
-        ) async {
+        ) async -> Bool {
             finishedCalls.append((runId, toolCallId, outcome))
             log?.record("finished:\(toolCallId):\(outcome)")
+            return terminalResult
         }
 
         func recordApprovalDenied(
@@ -202,7 +205,7 @@ final class IOSToolBoundaryTests: XCTestCase {
         XCTAssertEqual(ledger.startedCalls.first?.toolName, "test_tool")
         XCTAssertEqual(ledger.startedCalls.first?.effectClass, .sideEffect, "unknown tool name must default to the fail-safe sideEffect class")
         XCTAssertEqual(ledger.finishedCalls.first?.outcome, "completed")
-        let toolPart = result.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
+        let toolPart = result.messages.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
         XCTAssertEqual(toolPart?.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.first, "{\"ok\":true}")
     }
 
@@ -222,7 +225,7 @@ final class IOSToolBoundaryTests: XCTestCase {
 
         XCTAssertEqual(executor.calls.count, 0, "the executor must never run when the ledger could not durably record Started (I-1)")
         XCTAssertEqual(ledger.finishedCalls.count, 0, "no Finished is written for a tool that never ran")
-        let toolPart = result.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
+        let toolPart = result.messages.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
         let outputText = toolPart?.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.first ?? ""
         XCTAssertTrue(outputText.contains("tool_ledger_write_failed"), "output was: \(outputText)")
         // F5 fix: `ChatToolOutputFormatter.failureReason` only recognizes
@@ -230,6 +233,26 @@ final class IOSToolBoundaryTests: XCTestCase {
         // without an explicit `"ok":false`, this ledger-write-failure notice
         // rendered as an ordinary "succeeded" step in the tool timeline.
         XCTAssertTrue(outputText.contains("\"ok\":false"), "output was: \(outputText)")
+    }
+
+    func testEngineStopsWithoutPublishingToolOutputWhenTerminalCannotPersist() async {
+        let ledger = SpyLedger(terminalResult: false)
+        let executor = RecordingExecutor(.filled("{\"ok\":true}"))
+        let engine = IOSAgentToolEngine(
+            provider: UnusedProvider(),
+            executors: ["test_tool": executor],
+            ledger: ledger,
+            ledgerRunId: "run-terminal-fail-1"
+        )
+
+        let result = await engine.executePreExistingToolsOnly(messages: [
+            toolCallMessage(toolCallId: "tc-1", toolName: "test_tool", input: "{}"),
+        ])
+
+        XCTAssertEqual(executor.calls.count, 1, "the executor returned before the terminal write failed")
+        XCTAssertEqual(result.durabilityFailureMessage, "tool result ledger write failed")
+        let toolPart = result.messages.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
+        XCTAssertTrue(toolPart?.output.isEmpty == true, "an uncommitted result must not enter the transcript")
     }
 
     func testEngineWithoutALedgerRunsNormallyAndWritesNothing() async {
@@ -246,7 +269,7 @@ final class IOSToolBoundaryTests: XCTestCase {
         ])
 
         XCTAssertEqual(executor.calls.count, 1)
-        let toolPart = result.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
+        let toolPart = result.messages.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
         XCTAssertEqual(toolPart?.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.first, "{\"ok\":true}")
     }
 
@@ -568,6 +591,50 @@ final class IOSToolBoundaryTests: XCTestCase {
         }
         XCTAssertEqual(finishedPayload["toolCallId"], "tc-1")
         XCTAssertEqual(finishedPayload["outcome"], "completed")
+    }
+
+    func testToolTerminalRetryIsIdempotentButConflictingTerminalFails() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let runId = "tool-terminal-idempotency-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let ledger = IOSAgentRunLedger(dao: dao)
+
+        let didStart = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-1",
+            toolName: "search_web",
+            argsDigest: "digest",
+            effectClass: .networkRead
+        )
+        XCTAssertTrue(didStart)
+        let didFinish = await ledger.recordToolCallFinished(
+            runId: runId,
+            toolCallId: "tc-1",
+            outcome: "completed"
+        )
+        XCTAssertTrue(didFinish)
+        let didRepeatFinish = await ledger.recordToolCallFinished(
+            runId: runId,
+            toolCallId: "tc-1",
+            outcome: "completed"
+        )
+        XCTAssertTrue(didRepeatFinish)
+        let didConflictingFinish = await ledger.recordToolCallFinished(
+            runId: runId,
+            toolCallId: "tc-1",
+            outcome: "failed"
+        )
+        XCTAssertFalse(didConflictingFinish)
+
+        let transactions = await ledger.toolTransactions(runId: runId)
+        let transaction = try XCTUnwrap(transactions?.first)
+        XCTAssertEqual(transaction.state, .finished)
+        XCTAssertEqual(transaction.outcome, "completed")
+        let eventTypes = (await fetchLedgerEvents(dao: dao, runId: runId)).map(\.type)
+        XCTAssertEqual(eventTypes, [
+            "tool_prepared", "tool_started", "tool_finished",
+        ])
     }
 
     // MARK: - Layer 2b: memory effect classification

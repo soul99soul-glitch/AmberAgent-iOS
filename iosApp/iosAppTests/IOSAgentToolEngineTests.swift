@@ -534,7 +534,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             runId: String,
             toolCallId: String,
             outcome: String
-        ) async {
+        ) async -> Bool {
             await recordToolCallFinished(
                 runId: runId, toolCallId: toolCallId, outcome: outcome,
                 artifactId: nil, artifactVersion: nil, outcomeKind: nil, errorCode: nil, sourceRef: nil
@@ -550,8 +550,9 @@ final class IOSAgentToolEngineTests: XCTestCase {
             outcomeKind: String? = nil,
             errorCode: String? = nil,
             sourceRef: String? = nil
-        ) async {
+        ) async -> Bool {
             finishedOutcomes.append(outcome)
+            return true
         }
 
         func recordApprovalDenied(
@@ -1609,7 +1610,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             ),
         ])
 
-        let output = result
+        let output = result.messages
             .flatMap(\.parts)
             .compactMap { $0 as? UIMessagePart.Tool }
             .first?.output

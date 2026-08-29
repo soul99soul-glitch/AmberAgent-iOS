@@ -106,6 +106,8 @@ private enum RecipeAdvanceOutcome {
     /// A mutation step needs user approval; the execution state is stashed
     /// and the checkpoint persisted.
     case needsApproval(RecipeToolApprovalRequest)
+    /// A step side effect returned, but its own durable terminal did not.
+    case durabilityFailure(String)
 }
 
 /// Result of the recipe step approval finisher.
@@ -114,6 +116,7 @@ enum RecipeApprovalFinishResult {
     case completed([UIMessage])
     /// The approved step ran and a LATER mutation step needs another card.
     case pausedForNextStep(RecipeToolApprovalRequest)
+    case durabilityFailure(String)
 }
 
 /// Per-step approval gate verdict.
@@ -224,6 +227,7 @@ enum ChatToolApprovalPrompt {
 enum ChatToolRuntimeResult {
     case completed([UIMessage])
     case waitingForApproval(ChatToolApprovalPrompt)
+    case durabilityFailure(String)
 }
 
 private enum ChatCodexImageConfig {
@@ -2734,6 +2738,8 @@ final class ChatToolRuntime {
             return .completed(messages)
         case .needsApproval(let request):
             return .waitingForApproval(.recipe(request))
+        case .durabilityFailure(let message):
+            return .durabilityFailure(message)
         }
     }
 
@@ -2920,6 +2926,9 @@ final class ChatToolRuntime {
                 state.stepOutputs[step.id] = output
                 state.completedSteps.append(step.id)
                 state.nextStepIndex += 1
+            } catch is IOSRecipeToolTerminalPersistenceError {
+                discardPreparedRecipeExecution(toolCallId: state.toolCallId)
+                return .durabilityFailure("tool result ledger write failed")
             } catch let error as IOSRecipeRunError {
                 await recordRecipeLevelFinished(
                     recipeName: state.recipeName,
@@ -3077,6 +3086,8 @@ final class ChatToolRuntime {
                 return .completed(messages)
             case .needsApproval(let request):
                 return .pausedForNextStep(request)
+            case .durabilityFailure(let message):
+                return .durabilityFailure(message)
             }
         }
 
@@ -4921,6 +4932,8 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
         case .waitingForApproval(let prompt):
             approvalPromptBox.put(tool.toolCallId, prompt)
             return .needsApproval(prompt.toolTitle)
+        case .durabilityFailure(let message):
+            return .durabilityFailure(message)
         }
     }
 }

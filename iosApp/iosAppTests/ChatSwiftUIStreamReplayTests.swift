@@ -109,6 +109,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         private var displayLink: CADisplayLink?
         private var previousTimestamp: CFTimeInterval?
         private(set) var gaps: [TimeInterval] = []
+        private(set) var gapEndTimestamps: [CFTimeInterval] = []
 
         func start() {
             let displayLink = CADisplayLink(target: self, selector: #selector(tick(_:)))
@@ -125,6 +126,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             defer { previousTimestamp = displayLink.timestamp }
             guard let previousTimestamp else { return }
             gaps.append(displayLink.timestamp - previousTimestamp)
+            gapEndTimestamps.append(displayLink.timestamp)
         }
     }
 
@@ -1131,7 +1133,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         }
     }
 
-    func testPacedStreamStartsContinuousFollowOnFirstAssistantLine() throws {
+    func testKernelStreamStartsContinuousFollowOnFirstAssistantLine() async throws {
         try XCTSkipIf(
             UIAccessibility.isReduceMotionEnabled,
             "系统 Reduce Motion 开启时，生产契约就是立即贴底"
@@ -1139,21 +1141,53 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         let fixture = makeFixture()
         defer { fixture.tearDown() }
 
-        fixture.model.messages = longConversation(turns: 8)
+        let history = longConversation(turns: 8)
+        fixture.model.messages = history
         fixture.model.isGenerationActive = true
         fixture.model.send(.initialLoad)
         XCTAssertTrue(pumpUntil(timeout: 4.0) {
             fixture.model.latestViewport.isAtBottom && fixture.model.latestViewport.isContentScrollable
         })
 
-        fixture.model.messages.append(makeUserMessage("请连续生成一段正文。"))
+        let seed = history + [makeUserMessage("请连续生成一段正文。")]
+        fixture.model.messages = seed
         fixture.model.send(.userAppend)
         pump(seconds: 0.4)
+
+        let targetText = "连续正文开始。" + String(
+            repeating: "这是用来测量真实手机行宽与首段追底节奏的中文。",
+            count: 10
+        )
+        let kernelHarness = IOSChatForegroundHarness(seedMessages: seed)
+        var firstStreamRevisionTimestamp: CFTimeInterval?
+        kernelHarness.onMessagesChanged = { messages in fixture.model.messages = messages }
+        kernelHarness.onRevision = { reason, lagAllowance in
+            if case .streamDelta = reason, firstStreamRevisionTimestamp == nil {
+                firstStreamRevisionTimestamp = CACurrentMediaTime()
+            }
+            fixture.model.send(reason, lagAllowance: lagAllowance)
+        }
+        let provider = IOSChatScriptedStreamingProvider(streams: [
+            .init(
+                chunks: iosChatScriptedTextDeltas(targetText, chunkCount: 16).map {
+                    IOSChatForegroundFixtures.streamChunk(
+                        delta: IOSChatForegroundFixtures.assistantText($0)
+                    )
+                },
+                intervalNanos: 70_000_000
+            ),
+        ])
+        let kernelHost = ChatKernelRunHost(
+            dependencies: kernelHarness.dependencies,
+            bindings: kernelHarness.bindings,
+            backgroundExecution: kernelHarness.keepAlive,
+            toolLedger: kernelHarness.ledger,
+            textProvider: provider
+        )
 
         guard let scrollView = fixture.scrollView else {
             return XCTFail("Expected the default Native timeline scroll view")
         }
-        let assistantID = KotlinUuid.companion.random()
         // CADisplayLink callbacks run before the frame commit and in registration order.
         // This probe is registered before the Native driver, so synchronous reads would
         // capture the driver's pre-write state rather than the geometry shown on screen.
@@ -1172,27 +1206,50 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         let gapStart = gapProbe.gaps.count
         let initialContentHeight = scrollView.contentSize.height
         let initialOffsetY = scrollView.contentOffset.y
-        let targetText = "连续正文开始。" + String(
-            repeating: "这是用来测量真实手机行宽与首段追底节奏的中文。",
-            count: 8
+        kernelHost.start(
+            providerSetting: kernelHarness.providerSetting,
+            params: kernelHarness.params,
+            inputDigest: "native-timeline-first-line",
+            conversationId: kernelHarness.conversationId,
+            uploadMessages: kernelHarness.messages,
+            toolExposureBridge: kernelHarness.toolExposureBridge
         )
-        let target = fixture.model.messages + [makeAssistantMessage(
-            id: assistantID,
-            text: targetText,
-            finished: false
-        )]
-        var current = fixture.model.messages
 
-        for _ in 1...10 {
-            let step = IOSChatStreamSnapshotStepper.step(current: current, target: target)
-            current = step.snapshot
-            fixture.model.messages = current
-            fixture.model.send(.streamDelta)
-            pump(seconds: 0.06)
+        let earlyTextThreshold = targetText.count * 3 / 8
+        let earlyDeadline = Date().addingTimeInterval(3)
+        var earlyTextVisible = false
+        while Date() < earlyDeadline {
+            if let assistant = kernelHarness.messages.last,
+               assistant.role == MessageRole.assistant,
+               assistant.toText().count >= earlyTextThreshold {
+                earlyTextVisible = true
+                break
+            }
+            try? await Task.sleep(nanoseconds: 10_000_000)
         }
+        XCTAssertTrue(earlyTextVisible, "真实 Host 必须在流结束前投影 assistant 前缀")
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        probe.stop()
+        gapProbe.stop()
 
         let samples = Array(probe.samples.dropFirst(sampleStart))
-        let measuredGapsMS = gapProbe.gaps.dropFirst(gapStart).map { $0 * 1_000 }
+        let streamBeganAt = firstStreamRevisionTimestamp ?? .greatestFiniteMagnitude
+        let measuredGapsMS = zip(
+            gapProbe.gapEndTimestamps.dropFirst(gapStart),
+            gapProbe.gaps.dropFirst(gapStart)
+        ).compactMap { timestamp, gap in
+            timestamp >= streamBeganAt ? gap * 1_000 : nil
+        }
+        let streamContentHeight = scrollView.contentSize.height
+        let streamOffsetY = scrollView.contentOffset.y
+
+        let terminal = await kernelHarness.waitForTerminal()
+        XCTAssertEqual(terminal, "completed")
+        fixture.model.messages = kernelHarness.messages
+        fixture.model.isGenerationActive = false
+        fixture.model.send(.generationCompleted)
+        pump(seconds: 0.2)
+
         let maxGapMS = measuredGapsMS.max() ?? 0
         let heightGrowthCount = zip(samples, samples.dropFirst()).reduce(into: 0) { count, pair in
             if pair.1.contentHeight > pair.0.contentHeight + 0.5 {
@@ -1203,10 +1260,11 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             max(result, pair.0.contentOffsetY - pair.1.contentOffsetY)
         }
 
+        XCTAssertNotNil(firstStreamRevisionTimestamp, "门禁必须观测到真实 streamDelta")
         XCTAssertGreaterThanOrEqual(measuredGapsMS.count, 10, "门禁必须真实采样首段 display-link")
         XCTAssertGreaterThanOrEqual(heightGrowthCount, 3, "输入必须跨过多个真实行高边界")
-        XCTAssertGreaterThan(scrollView.contentSize.height, initialContentHeight + 60)
-        XCTAssertGreaterThan(scrollView.contentOffset.y, initialOffsetY + 60)
+        XCTAssertGreaterThan(streamContentHeight, initialContentHeight + 60)
+        XCTAssertGreaterThan(streamOffsetY, initialOffsetY + 60)
         XCTAssertLessThan(maxBackjump, 1, "首段追底不能反向回跳")
         XCTAssertLessThanOrEqual(
             samples.map(\.distanceToBottom).max() ?? 0,
@@ -1220,7 +1278,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         XCTAssertLessThanOrEqual(
             maxGapMS,
             80,
-            "首行冷启动不能先停顿再变流畅：max=\(maxGapMS)ms"
+            "首行上屏后不能先停顿再变流畅：max=\(maxGapMS)ms"
         )
     }
 
@@ -1638,19 +1696,22 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             repeating: "最后一个字已经上屏后，完成态只能结束生成状态，不能重新排版同一段正文。",
             count: 10
         )
-        let target = fixture.model.messages + [makeAssistantMessage(
+        let baseMessages = fixture.model.messages
+        let target = baseMessages + [makeAssistantMessage(
             id: assistantID,
             text: finalText,
             finished: true
         )]
-        var presented = fixture.model.messages
-        while true {
-            let step = IOSChatStreamSnapshotStepper.step(current: presented, target: target)
-            presented = step.snapshot
-            fixture.model.messages = presented
+        let prefixes = iosChatScriptedTextPrefixes(finalText, chunkCount: 12)
+        for (index, prefix) in prefixes.enumerated() {
+            let isFinalPrefix = index == prefixes.count - 1
+            fixture.model.messages = baseMessages + [makeAssistantMessage(
+                id: assistantID,
+                text: prefix,
+                finished: isFinalPrefix
+            )]
             fixture.model.send(.streamDelta)
-            if step.isCaughtUp { break }
-            pump(seconds: 0.048)
+            if !isFinalPrefix { pump(seconds: 0.048) }
         }
 
         // 与生产顺序一致：drain 的最后一拍已经带上 authoritative finishedAt，
@@ -1752,18 +1813,14 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         | 三 | 尾段整体淡入的机制描述 | 再议 |
         | 四 | 完成零跳变的机制描述 | 待定
         """
-        let target = fixture.model.messages + [makeAssistantMessage(
-            id: assistantID,
-            text: finalText,
-            finished: false
-        )]
-        var presented = fixture.model.messages
-        while true {
-            let step = IOSChatStreamSnapshotStepper.step(current: presented, target: target)
-            presented = step.snapshot
-            fixture.model.messages = presented
+        let baseMessages = fixture.model.messages
+        for prefix in iosChatScriptedTextPrefixes(finalText, chunkCount: 16) {
+            fixture.model.messages = baseMessages + [makeAssistantMessage(
+                id: assistantID,
+                text: prefix,
+                finished: false
+            )]
             fixture.model.send(.streamDelta)
-            if step.isCaughtUp { break }
             pump(seconds: 0.048)
         }
 
@@ -1881,20 +1938,30 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         | 方案 | 机制 | 结论 |
         | --- | --- | --- |
         """ + "\n" + rows.joined(separator: "\n")
-        let target = fixture.model.messages + [makeAssistantMessage(
+        let baseMessages = fixture.model.messages
+        guard let finalRowStart = finalText.lastIndex(of: "\n") else {
+            return XCTFail("Expected a final table-row boundary")
+        }
+        let settledPrefix = String(finalText[..<finalRowStart])
+        for prefix in iosChatScriptedTextPrefixes(settledPrefix, chunkCount: 24) {
+            fixture.model.messages = baseMessages + [makeAssistantMessage(
+                id: assistantID,
+                text: prefix,
+                finished: false
+            )]
+            fixture.model.send(.streamDelta)
+            pump(seconds: 0.048)
+        }
+        // 先让截至完整行的大表格前缀解析落地，再立即补上最后一行；
+        // 这样终态切换时最后一次解析仍在飞行，但基线是有效的格式化前缀。
+        pump(seconds: 0.4)
+        fixture.model.messages = baseMessages + [makeAssistantMessage(
             id: assistantID,
             text: finalText,
             finished: false
         )]
-        var presented = fixture.model.messages
-        while true {
-            let step = IOSChatStreamSnapshotStepper.step(current: presented, target: target)
-            presented = step.snapshot
-            fixture.model.messages = presented
-            fixture.model.send(.streamDelta)
-            if step.isCaughtUp { break }
-            pump(seconds: 0.048)
-        }
+        fixture.model.send(.streamDelta)
+        pump(seconds: 0.048)
 
         // 基线：流式期最后一拍的渲染必须是「已格式化」——没有任何字面结构标记
         // （表格尾块按 0.12s 节流，最后一拍全文解析仍在飞行中，基线只要求
@@ -1961,18 +2028,14 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             repeating: "流式尾行离屏时模型发布必须暂停，回到视口后同一块继续增长而不重建。",
             count: 24
         )
-        let target = fixture.model.messages + [makeAssistantMessage(
-            id: assistantID,
-            text: finalText,
-            finished: false
-        )]
-        var presented = fixture.model.messages
-        while true {
-            let step = IOSChatStreamSnapshotStepper.step(current: presented, target: target)
-            presented = step.snapshot
-            fixture.model.messages = presented
+        let baseMessages = fixture.model.messages
+        for prefix in iosChatScriptedTextPrefixes(finalText, chunkCount: 18) {
+            fixture.model.messages = baseMessages + [makeAssistantMessage(
+                id: assistantID,
+                text: prefix,
+                finished: false
+            )]
             fixture.model.send(.streamDelta)
-            if step.isCaughtUp { break }
             pump(seconds: 0.048)
         }
         pump(seconds: 0.6)
@@ -2072,7 +2135,11 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             count: 12
         )
         let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
-        func assistantMessage(reasoningFinished: Bool, finished: Bool) -> UIMessage {
+        func assistantMessage(
+            text: String = finalText,
+            reasoningFinished: Bool,
+            finished: Bool
+        ) -> UIMessage {
             UIMessage(
                 id: assistantID,
                 role: MessageRole.assistant,
@@ -2083,7 +2150,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
                         finishedAt: reasoningFinished ? instant : nil,
                         metadata: nil
                     ),
-                    UIMessagePart.Text(text: finalText, metadata: nil),
+                    UIMessagePart.Text(text: text, metadata: nil),
                 ],
                 annotations: [],
                 createdAt: chatNowLocalDateTime(),
@@ -2094,15 +2161,15 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             )
         }
 
-        // 流式期：推理进行中（未收口）+ 正文按 pacer 逐拍增长。
-        let streamingTarget = fixture.model.messages + [assistantMessage(reasoningFinished: false, finished: false)]
-        var presented = fixture.model.messages
-        while true {
-            let step = IOSChatStreamSnapshotStepper.step(current: presented, target: streamingTarget)
-            presented = step.snapshot
-            fixture.model.messages = presented
+        // 流式期：推理进行中（未收口）+ 固定正文前缀回放。
+        let baseMessages = fixture.model.messages
+        for prefix in iosChatScriptedTextPrefixes(finalText, chunkCount: 16) {
+            fixture.model.messages = baseMessages + [assistantMessage(
+                text: prefix,
+                reasoningFinished: false,
+                finished: false
+            )]
             fixture.model.send(.streamDelta)
-            if step.isCaughtUp { break }
             pump(seconds: 0.048)
         }
 

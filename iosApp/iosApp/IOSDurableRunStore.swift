@@ -227,6 +227,37 @@ final class IOSDurableRunStore: @unchecked Sendable {
         return false
     }
 
+    /// Settles an active run, or accepts an exact replay of the same persisted
+    /// terminal. Recoverable states are never treated as settled: their next
+    /// transition still has to win the normal compare-and-set path.
+    func transitionFromAnyActiveOrMatchingState(
+        runId: String,
+        to status: AgentRunStatus,
+        inputSnapshotRef: String? = nil,
+        detail: String? = nil,
+        at: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+    ) async throws -> Bool {
+        if try await transitionFromAnyActive(
+            runId: runId,
+            to: status,
+            inputSnapshotRef: inputSnapshotRef,
+            detail: detail,
+            at: at
+        ) {
+            return true
+        }
+        guard status.isTerminal,
+              let existing = try await snapshot(runId: runId),
+              existing.status == status,
+              existing.finishedAt != nil,
+              existing.inputSnapshotRef == inputSnapshotRef,
+              existing.detail == detail,
+              existing.terminalReason == detail else {
+            return false
+        }
+        return true
+    }
+
     func snapshot(runId: String) async throws -> Snapshot? {
         try await withCheckedThrowingContinuation { continuation in
             store.getRun(runId: runId) { run, error in

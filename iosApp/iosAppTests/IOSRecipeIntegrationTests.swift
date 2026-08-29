@@ -82,6 +82,55 @@ final class IOSRecipeIntegrationTests: XCTestCase {
 
     // MARK: - Acceptance 2: hot-reload e2e canary (search → promote → call → final)
 
+    func testRecipeStepTerminalFailurePropagatesDurabilityFailure() async throws {
+        let root = tempRoot()
+        let store = makeStore(root: root)
+        try apply(store: store, json: try listingRecipeJSON(version: "1.0.0"))
+        let snapshot = try unwrapSnapshot(await makeRegistry(store: store).refresh())
+        let log = IOSRunEventLog()
+        let ledger = IOSRunEventLogLedger(log: log)
+        ledger.failTerminals = true
+        let runtime = makeRuntime(root: root, ledger: ledger)
+        let toolCall = makeRecipeToolCall(name: "recipe__catalog_probe", input: "{}")
+
+        let result = await executeRecipeCall(
+            runtime: runtime,
+            toolCall: toolCall,
+            snapshot: snapshot,
+            bridge: IosToolExposureBridge(tools: fullIosDeclarations()),
+            runId: "recipe-durability-\(UUID().uuidString)"
+        )
+
+        guard case .durabilityFailure(let message) = result else {
+            return XCTFail("recipe step terminal failure must not become a normal tool output")
+        }
+        XCTAssertEqual(message, "tool result ledger write failed")
+    }
+
+    func testRecipePrimitiveFailureTerminalFailurePropagatesDurabilityFailure() async throws {
+        let root = tempRoot()
+        let store = makeStore(root: root)
+        try apply(store: store, json: try listingRecipeJSON(version: "1.0.0"))
+        let snapshot = try unwrapSnapshot(await makeRegistry(store: store).refresh())
+        let ledger = IOSRunEventLogLedger(log: IOSRunEventLog())
+        ledger.failTerminals = true
+        let runtime = makeRuntime(root: root, ledger: ledger)
+        let toolCall = makeRecipeToolCall(name: "recipe__catalog_probe", input: "{}")
+
+        let result = await executeRecipeCall(
+            runtime: runtime,
+            toolCall: toolCall,
+            snapshot: snapshot,
+            bridge: nil,
+            runId: "recipe-failed-step-durability-\(UUID().uuidString)"
+        )
+
+        guard case .durabilityFailure(let message) = result else {
+            return XCTFail("failed recipe primitive must not hide a terminal ledger failure")
+        }
+        XCTAssertEqual(message, "tool result ledger write failed")
+    }
+
     func testHotReloadCanarySearchPromoteCallResultRoundByRound() async throws {
         let root = tempRoot()
         let store = makeStore(root: root)
@@ -1554,6 +1603,8 @@ private final class RecipeRouteExecutor: IOSToolExecutor {
             return .filled(output)
         case .waitingForApproval:
             return .needsApproval("Recipe step requires approval.")
+        case .durabilityFailure(let message):
+            return .durabilityFailure(message)
         }
     }
 }

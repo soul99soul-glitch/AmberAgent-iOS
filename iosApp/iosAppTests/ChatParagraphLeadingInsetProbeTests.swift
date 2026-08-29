@@ -45,8 +45,12 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
         @Published var scrollToBottomTrigger = 0
         var messages: [UIMessage] = []
 
-        func send(_ reason: ChatMessageUpdateReason) {
-            signal = ChatMessageUpdateSignal(revision: signal.revision + 1, reason: reason)
+        func send(_ reason: ChatMessageUpdateReason, lagAllowance: CGFloat = 1) {
+            signal = ChatMessageUpdateSignal(
+                revision: signal.revision + 1,
+                reason: reason,
+                lagAllowance: lagAllowance
+            )
         }
     }
 
@@ -291,9 +295,9 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
         return nil
     }
 
-    func testLongCJKParagraphLeadingStaysAtTimelineInset() throws {
-        let target = makeMessage(id: "stream-1", role: .assistant, text: Self.longCJK, finished: false)
-        let fixture = makeFixture(messages: [target])
+    func testLongCJKParagraphLeadingStaysAtTimelineInset() async throws {
+        let seed = [makeMessage(id: "user-1", role: .user, text: "请生成长段落。", finished: true)]
+        let fixture = makeFixture(messages: seed)
         let model = fixture.model
         let window = fixture.window
         defer {
@@ -305,22 +309,41 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
         model.send(.initialLoad)
         pump(0.3)
 
-        // 生产流式节奏：pacer 逐拍推进 + streamDelta 信号。
-        var current = model.messages
-        for tick in 1...40 {
-            let step = IOSChatStreamSnapshotStepper.step(current: current, target: [target])
-            if step.isCaughtUp { break }
-            current = step.snapshot
-            model.messages = current
-            model.send(.streamDelta)
-            pump(0.03)
-            if tick.isMultiple(of: 8) {
-                window.layoutIfNeeded()
-            }
+        let kernelHarness = IOSChatForegroundHarness(seedMessages: seed)
+        kernelHarness.onMessagesChanged = { messages in model.messages = messages }
+        kernelHarness.onRevision = { reason, lagAllowance in
+            model.send(reason, lagAllowance: lagAllowance)
         }
+        let provider = IOSChatScriptedStreamingProvider(streams: [
+            .init(
+                chunks: iosChatScriptedTextDeltas(Self.longCJK, chunkCount: 10).map {
+                    IOSChatForegroundFixtures.streamChunk(
+                        delta: IOSChatForegroundFixtures.assistantText($0)
+                    )
+                },
+                intervalNanos: 70_000_000
+            ),
+        ])
+        let kernelHost = ChatKernelRunHost(
+            dependencies: kernelHarness.dependencies,
+            bindings: kernelHarness.bindings,
+            backgroundExecution: kernelHarness.keepAlive,
+            toolLedger: kernelHarness.ledger,
+            textProvider: provider
+        )
+        kernelHost.start(
+            providerSetting: kernelHarness.providerSetting,
+            params: kernelHarness.params,
+            inputDigest: "cjk-leading-inset",
+            conversationId: kernelHarness.conversationId,
+            uploadMessages: kernelHarness.messages,
+            toolExposureBridge: kernelHarness.toolExposureBridge
+        )
+        let terminal = await kernelHarness.waitForTerminal()
+        XCTAssertEqual(terminal, "completed")
 
         // 完成（同生产：completion 后渲染器 latch 保持 block 渲染器）。
-        model.messages = [makeMessage(id: "stream-1", role: .assistant, text: Self.longCJK, finished: true)]
+        model.messages = kernelHarness.messages
         model.isGenerationActive = false
         model.send(.generationCompleted)
         pump(0.8)

@@ -32,8 +32,6 @@ import UIKit
 /// 记录在案的 v1 差异(相对 CGC 前台):
 /// - 无逐拍推进/终端 drain:B2 投影在引擎侧按 CGC 同一 48ms 节拍门控推送,
 ///   provisional 气泡一次放出全部已收增量(CG-C 是每拍推进 12-36 字);
-/// - 流式期间不清除上一轮气泡的时长标签(CG-C 经累加器种子清除;终态
-///   盖章两侧一致);
 /// - 取消的同步拆解比 CGC 晚一个 MainActor hop(取消填充仍同步上屏);
 /// - 首轮 mailbox/steer 预折进 working,上传准备会覆盖它们(CG-C 首轮是
 ///   准备后再追加;上传字节序差异接受)。
@@ -56,6 +54,12 @@ final class ChatKernelRunHost {
     /// 审批卡类目(入口分发用;与 ChatToolApprovalPrompt 九案一一对应)。
     private enum ApprovalCategory {
         case memory, search, webMount, workspace, ish, mcp, council, askUser, recipe
+    }
+
+    private enum ImageToolTerminalClaimResult: Equatable {
+        case recorded
+        case alreadyClaimed
+        case failed
     }
 
     private let dependencies: ChatGenerationDependencies
@@ -583,12 +587,17 @@ final class ChatKernelRunHost {
             self.imageToolDidStart = didRecordStarted
             guard self.currentRunId == runId, self.cancelCause == nil else {
                 if didRecordStarted {
-                    await self.recordImageToolTerminalIfNeeded(
+                    let terminalClaim = await self.recordImageToolTerminalIfNeeded(
                         runId: runId,
                         toolCall: toolCall,
                         outcome: "cancelled_before_execution",
                         resultPayload: nil
                     )
+                    if terminalClaim == .failed {
+                        await self.failImageToolDurability(runId: runId)
+                        return
+                    }
+                    guard terminalClaim == .recorded else { return }
                 } else {
                     await self.reconcileImageToolStartFailure(
                         runId: runId,
@@ -646,20 +655,30 @@ final class ChatKernelRunHost {
                 .output
             guard self.currentRunId == runId else { return }
             if self.cancelCause != nil {
-                await self.markImageToolOutcomeUnknownIfNeeded(
+                let terminalClaim = await self.markImageToolOutcomeUnknownIfNeeded(
                     runId: runId,
                     toolCall: toolCall,
                     outcome: "cancelled_during_execution"
                 )
+                if terminalClaim == .failed {
+                    await self.failImageToolDurability(runId: runId)
+                    return
+                }
+                guard terminalClaim == .recorded else { return }
                 await self.finalizeTerminal(runId: runId)
                 return
             }
-            await self.recordImageToolTerminalIfNeeded(
+            let terminalClaim = await self.recordImageToolTerminalIfNeeded(
                 runId: runId,
                 toolCall: toolCall,
                 outcome: failureReason == nil ? "completed" : "failed",
                 resultPayload: resultParts.map { IosToolOutputJsonBridge.shared.encode(parts: $0) }
             )
+            if terminalClaim == .failed {
+                await self.failImageToolDurability(runId: runId)
+                return
+            }
+            guard terminalClaim == .recorded else { return }
             guard self.currentRunId == runId else { return }
             if self.cancelCause != nil {
                 await self.finalizeTerminal(runId: runId)
@@ -676,7 +695,7 @@ final class ChatKernelRunHost {
                 await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
             }
             let succeeded = failureReason == nil && didPersist
-            _ = await self.bindings.recordRun(
+            let didRecordTerminalRun = await self.bindings.recordRun(
                 runId,
                 startedAt,
                 didPersist ? (failureReason == nil ? .completed : .failed) : .recoveryPending,
@@ -684,6 +703,10 @@ final class ChatKernelRunHost {
                 conversationHex,
                 nil
             )
+            guard didRecordTerminalRun else {
+                self.releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+                return
+            }
             if succeeded {
                 WatchTaskCoordinator.shared.publishCompleted(
                     runId: runId,
@@ -741,7 +764,7 @@ final class ChatKernelRunHost {
         bindings.bumpMessageRevision(.toolResultAppended, 1)
         let conversationHex = conversationId?.toHexDashString()
         let didPersist = await bindings.persistMessages(conversationId)
-        _ = await bindings.recordRun(
+        let didRecordRun = await bindings.recordRun(
             runId,
             startedAt,
             didPersist ? .failed : .recoveryPending,
@@ -749,6 +772,10 @@ final class ChatKernelRunHost {
             conversationHex,
             nil
         )
+        guard didRecordRun else {
+            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+            return
+        }
         WatchTaskCoordinator.shared.publish(
             runId: runId,
             conversationId: conversationHex,
@@ -764,35 +791,42 @@ final class ChatKernelRunHost {
         toolCall: UIMessagePart.Tool,
         outcome: String,
         resultPayload: String?
-    ) async {
+    ) async -> ImageToolTerminalClaimResult {
         guard currentRunId == runId,
-              imageToolDidStart,
-              !imageToolTerminalClaimed else { return }
+              imageToolDidStart else { return .failed }
+        guard !imageToolTerminalClaimed else { return .alreadyClaimed }
         imageToolTerminalClaimed = true
-        await toolLedger.recordToolCallTerminal(
+        return await toolLedger.recordToolCallTerminal(
             runId: runId,
             toolCallId: toolCall.toolCallId,
             outcome: outcome,
             resultPayload: resultPayload
-        )
+        ) ? .recorded : .failed
+    }
+
+    private func failImageToolDurability(runId: String) async {
+        guard currentRunId == runId, !didFinalizeTerminal else { return }
+        didFinalizeTerminal = true
+        lastFailureMessage = "tool result ledger write failed"
+        await failedTerminal(runId: runId, requiresRecovery: true)
     }
 
     private func markImageToolOutcomeUnknownIfNeeded(
         runId: String,
         toolCall: UIMessagePart.Tool,
         outcome: String
-    ) async {
+    ) async -> ImageToolTerminalClaimResult {
         guard currentRunId == runId,
-              imageToolDidStart,
-              !imageToolTerminalClaimed else { return }
+              imageToolDidStart else { return .failed }
+        guard !imageToolTerminalClaimed else { return .alreadyClaimed }
         imageToolTerminalClaimed = true
-        _ = await toolLedger.recordToolCallRecoveryTransition(
+        return await toolLedger.recordToolCallRecoveryTransition(
             runId: runId,
             toolCallId: toolCall.toolCallId,
             expected: .started,
             to: .outcomeUnknown,
             outcome: outcome
-        )
+        ) ? .recorded : .failed
     }
 
     private func reconcileImageToolStartFailure(
@@ -975,6 +1009,13 @@ final class ChatKernelRunHost {
         // cancelled 会制造 Finished(completed) 与取消消息互相矛盾的快照。
         if activeImageToolCall != nil, imageToolTerminalClaimed { return }
         cancelCause = cause
+        let toolFailureReason: String
+        switch cause {
+        case .user:
+            toolFailureReason = "User cancelled."
+        case .backgroundInterruption:
+            toolFailureReason = "Generation interrupted by the system."
+        }
         IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
         cancelRemoteDurableResponseIfNeeded()
         cancelBaseline = bindings.capturePersistMessagesBaseline(currentConversationIdForRun)
@@ -985,7 +1026,7 @@ final class ChatKernelRunHost {
             if toolRuntime.hasUnresolvedToolCall(in: messages) {
                 messages = toolRuntime.messagesByFailingPendingToolCalls(
                     in: messages,
-                    failureReason: "User cancelled.",
+                    failureReason: toolFailureReason,
                     denied: true
                 )
                 bindings.setMessages(messages)
@@ -993,20 +1034,26 @@ final class ChatKernelRunHost {
             if imageToolDidStart {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    let terminalClaim: ImageToolTerminalClaimResult
                     if wasExecuting {
-                        await self.markImageToolOutcomeUnknownIfNeeded(
+                        terminalClaim = await self.markImageToolOutcomeUnknownIfNeeded(
                             runId: runId,
                             toolCall: activeImageToolCall,
                             outcome: "cancelled_during_execution"
                         )
                     } else {
-                        await self.recordImageToolTerminalIfNeeded(
+                        terminalClaim = await self.recordImageToolTerminalIfNeeded(
                             runId: runId,
                             toolCall: activeImageToolCall,
                             outcome: "cancelled_before_execution",
                             resultPayload: nil
                         )
                     }
+                    if terminalClaim == .failed {
+                        await self.failImageToolDurability(runId: runId)
+                        return
+                    }
+                    guard terminalClaim == .recorded else { return }
                     await self.finalizeTerminal(runId: runId)
                 }
             }
@@ -1016,7 +1063,7 @@ final class ChatKernelRunHost {
         // remainder 折入 + 终态 cancelled 上报;preamble 期间则跳过(空
         // working 不得发布成 transcript),由 runTask 收口。
         if adapterDidStart {
-            adapter?.cancel()
+            adapter?.cancel(failureReason: toolFailureReason)
         }
         // 审批等待中取消:放行决定器(返回 nil),适配器走 cancel 优先分支,
         // 不再写账本/副作用。
@@ -1367,6 +1414,9 @@ final class ChatKernelRunHost {
             guard let self, self.currentRunId == runId else { return }
             self.didReportFirstDeltaThisRound = false
             self.streamClock.resetRound()
+            self.bindings.setMessages(
+                self.bindings.getMessages().clearingLastAssistantGenerationDuration()
+            )
             self.projection.discardProvisionalAssistant()
             self.backgroundExecution.updateProgress(runId, completed: 1, total: 4, subtitle: "正在生成回复")
             // 审批恢复(含 recipe 再暂停恢复)后首轮:keepalive 已还在暂停时
@@ -1749,6 +1799,8 @@ final class ChatKernelRunHost {
         switch terminalWireName {
         case AgentRunStatus.completed.wireName:
             await completedTerminal(runId: runId)
+        case AgentRunStatus.recoveryPending.wireName:
+            await failedTerminal(runId: runId, requiresRecovery: true)
         default:
             await failedTerminal(runId: runId)
         }
@@ -1785,11 +1837,15 @@ final class ChatKernelRunHost {
                 await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
             }
             let succeeded = didPersist && !miniAppExpected
-            _ = await bindings.recordRun(
+            let didRecordRun = await bindings.recordRun(
                 runId, startedAt,
                 didPersist ? (miniAppExpected ? .failed : .completed) : .recoveryPending,
                 inputDigest, conversationHex, nil
             )
+            guard didRecordRun else {
+                releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+                return
+            }
             if succeeded {
                 WatchTaskCoordinator.shared.publishCompleted(runId: runId, conversationId: conversationHex, summary: nil)
             } else {
@@ -1846,11 +1902,15 @@ final class ChatKernelRunHost {
             bindings.bumpMessageRevision(.toolResultAppended, 1)
             _ = await bindings.persistMessages(conversationId)
         }
-        _ = await bindings.recordRun(
+        let didRecordRun = await bindings.recordRun(
             runId, startedAt,
             didPersist ? (miniAppFailed ? .failed : .completed) : .recoveryPending,
             inputDigest, conversationHex, nil
         )
+        guard didRecordRun else {
+            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+            return
+        }
         if didPersist, !miniAppFailed {
             WatchTaskCoordinator.shared.publishCompleted(runId: runId, conversationId: conversationHex, summary: summary)
         } else {
@@ -1879,7 +1939,7 @@ final class ChatKernelRunHost {
     /// failed(CG-C presentStreamError :2483-2533;截断终态由适配器 A4 分支
     /// 追加过输出上限提示,这里不再加泡,对齐 completeTruncatedStream
     /// :2802-2843 的 Watch/LiveActivity 形状)。
-    private func failedTerminal(runId: String) async {
+    private func failedTerminal(runId: String, requiresRecovery: Bool = false) async {
         projection.discardProvisionalAssistant()
         let startedAt = currentStartedAt
         let inputDigest = currentInputDigest
@@ -1938,11 +1998,15 @@ final class ChatKernelRunHost {
         if didPersist {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
         }
-        _ = await bindings.recordRun(
+        let didRecordRun = await bindings.recordRun(
             runId, startedAt,
-            didPersist ? .failed : .recoveryPending,
+            didPersist && !requiresRecovery ? .failed : .recoveryPending,
             inputDigest, conversationHex, nil
         )
+        guard didRecordRun else {
+            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+            return
+        }
         WatchTaskCoordinator.shared.publish(
             runId: runId,
             conversationId: conversationHex,
@@ -1999,20 +2063,39 @@ final class ChatKernelRunHost {
         if didPersist {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
         }
-        _ = await bindings.recordRun(
+        let didRecordRun = await bindings.recordRun(
             runId, startedAt,
             didPersist ? cause.durableStatus : .recoveryPending,
             inputDigest, conversationHex, nil
         )
+        guard didRecordRun else {
+            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+            return
+        }
+        let terminalPresentation: AgentActivityPresentation
+        let terminalSummary: String?
+        if !didPersist {
+            terminalPresentation = .failed()
+            terminalSummary = "已停止生成，但最终状态保存失败。"
+        } else {
+            switch cause {
+            case .user:
+                terminalPresentation = .cancelled()
+                terminalSummary = nil
+            case .backgroundInterruption:
+                terminalPresentation = .failed()
+                terminalSummary = "后台生成被系统中断，可以重试。"
+            }
+        }
         WatchTaskCoordinator.shared.publish(
             runId: runId,
             conversationId: conversationHex,
-            presentation: didPersist ? .cancelled() : .failed(),
-            summary: didPersist ? nil : "已停止生成，但最终状态保存失败。"
+            presentation: terminalPresentation,
+            summary: terminalSummary
         )
         await dependencies.liveActivityController.end(
             runId: runId,
-            presentation: didPersist ? .cancelled() : .failed()
+            presentation: terminalPresentation
         )
         backgroundExecution.end(runId)
         // P1-c 终态回传(CG-C :1570-1579 同款;服务按 runId 幂等去重)。
@@ -2050,6 +2133,25 @@ final class ChatKernelRunHost {
         Task { @MainActor [bindings, runConversationId, runId, terminalMessages] in
             await bindings.onRunTerminal(runConversationId, runId, terminalMessages)
         }
+    }
+
+    /// The durable row rejected this terminal, so do not publish a terminal to
+    /// Watch/orchestration. The provider is already done; release only the
+    /// process-local owner so the composer cannot remain stuck forever.
+    private func releaseLocalRunAfterTerminalRecordFailure(runId: String) {
+        guard currentRunId == runId else { return }
+        let runConversationId = currentConversationIdForRun
+        backgroundExecution.end(runId)
+        keepaliveHeld = false
+        ChatStreamRecorder.shared.finish(runId: runId)
+        clearRunIdentity()
+        adapter = nil
+        citationTracker = nil
+        bindings.setIsLoading(false)
+        bindings.setContextCompactState(.idle)
+        projection.clearAllApprovals()
+        bindings.bumpMessageRevision(.generationFailed, 1)
+        bindings.handleSteerQueueAtTerminal(runConversationId, false)
     }
 
     private func clearRunIdentity() {
