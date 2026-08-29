@@ -31,7 +31,7 @@ class MailboxDaoTest {
     private fun builder(path: String): AgentRuntimeDatabase =
         Room.databaseBuilder<AgentRuntimeDatabase>(name = path)
             .setDriver(BundledSQLiteDriver())
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
 
     private fun envelope(

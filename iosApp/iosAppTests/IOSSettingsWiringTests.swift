@@ -14,14 +14,14 @@ final class IOSSettingsWiringTests: XCTestCase {
     /// （coordinator 从 SettingsStore 读上限）三处齐备。
     func testChatToolResumeCapIsWiredThroughExecutionSettings() throws {
         let view = try source("iosApp/ExecutionSettingsView.swift")
-        let coordinator = try source("iosApp/ChatGenerationCoordinator.swift")
+        let host = try source("iosApp/ChatKernelRunHost.swift")
         let store = try source("iosApp/SettingsStore.swift")
 
         XCTAssertTrue(view.contains("@AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)"))
         XCTAssertTrue(view.contains("Stepper("))
         XCTAssertTrue(view.contains("chatMaxToolResumeCountRange"))
         XCTAssertTrue(store.contains("chatMaxToolResumeCount"))
-        XCTAssertTrue(coordinator.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
+        XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
     func testChatComposerSendAndStopReachTheCurrentConversationRun() throws {
@@ -255,23 +255,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         )
     }
 
-    func testSystemProgressCardCancellationStopsTheOwnedChatRun() throws {
-        let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
-        let coordinator = try source("iosApp/ChatGenerationCoordinator.swift")
-
-        XCTAssertTrue(keepAlive.contains("var onSystemTaskExpiration: (() -> Void)?"))
-        XCTAssertTrue(keepAlive.contains("onSystemTaskExpiration: (() -> Void)? = nil"))
-        XCTAssertTrue(keepAlive.contains("lease.onExpire?()"))
-        XCTAssertTrue(keepAlive.contains("(lease.onSystemTaskExpiration ?? lease.onExpire)?()"))
-        XCTAssertEqual(
-            coordinator.components(separatedBy: "onSystemTaskExpiration:").count - 1,
-            3,
-            "普通回复、生图与审批恢复都提交系统进度卡，取消任一张都必须停止其 owned run"
-        )
-        XCTAssertTrue(coordinator.contains("cancelRunAfterSystemKeepAliveExpiration(runId)"))
-        XCTAssertTrue(coordinator.contains("private func cancelRunAfterSystemKeepAliveExpiration"))
-    }
-
     func testBackgroundHandoffExpirationStopsWithoutAutomaticResubmission() throws {
         let coordinator = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
         let appShell = try source("iosApp/AppShell.swift")
@@ -289,19 +272,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertFalse(appShell.contains("resumeSuspendedRunsIfNeeded()"))
         XCTAssertFalse(coordinator.contains("finalizeSuspendedRunsIfNeeded"))
         XCTAssertFalse(coordinator.contains("IOSChatBackgroundSuspensionStore"))
-    }
-
-    func testDirectImageKeepAliveExpiresWithoutStartingASecondImageRequest() throws {
-        let coordinator = try source("iosApp/ChatGenerationCoordinator.swift")
-        let start = try XCTUnwrap(coordinator.range(of: "func runImageTool("))
-        let end = try XCTUnwrap(
-            coordinator.range(of: "private func failImageToolCallBeforeExecution(", range: start.upperBound..<coordinator.endIndex)
-        )
-        let imageRun = coordinator[start.lowerBound..<end.lowerBound]
-
-        XCTAssertTrue(imageRun.contains("onExpire: { [weak self] in"))
-        XCTAssertTrue(imageRun.contains("cancelRunAfterSystemKeepAliveExpiration(runId)"))
-        XCTAssertFalse(imageRun.contains("mode: .singleToolOnly"))
     }
 
     func testReasoningExpansionAndIslandGlowHonorFrozenMotion() throws {
@@ -323,7 +293,7 @@ final class IOSSettingsWiringTests: XCTestCase {
     func testGrokWebLoginIsWiredToProviderSettingsAndChatRuntime() throws {
         let detail = try source("iosApp/ProviderDetailView.swift")
         let configuration = try source("iosApp/ChatProviderConfiguration.swift")
-        let coordinator = try source("iosApp/ChatGenerationCoordinator.swift")
+        let runtime = try source("iosApp/ChatKernelRunHost.swift")
         let grokProvider = try source("iosApp/IOSGrokWebProvider.swift")
         let grokOAuth = try source("iosApp/IOSGrokOAuthClient.swift")
 
@@ -346,12 +316,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(configuration.contains("hasUsableCredential"))
         XCTAssertTrue(configuration.contains("credentialStatusTitle"))
 
-        XCTAssertTrue(coordinator.contains("IOSGrokWebProviderResolver.isGrokWebConfiguration(openAI)"))
-        XCTAssertTrue(coordinator.contains("IOSGrokWebProviderResolver.resolved("))
-        XCTAssertTrue(coordinator.contains("IOSGrokWebClient(providerId: providerId).streamText"))
-        XCTAssertTrue(coordinator.contains("grokWebStreamTask?.cancel()"))
-        XCTAssertTrue(coordinator.contains("IOSGrokWebProviderResolver.isGrokWebConfiguration(grokOpenAI)"))
-        XCTAssertTrue(coordinator.contains("backgroundProviderSetting: effectiveProvider"))
+        XCTAssertTrue(runtime.contains("IOSGrokWebProviderResolver.isGrokWebConfiguration(openAI)"))
+        XCTAssertTrue(runtime.contains("IOSGrokWebProviderResolver.resolved("))
+        XCTAssertTrue(runtime.contains("IOSGrokWebProviderResolver.augmentParamsForGrok("))
         XCTAssertTrue(detail.contains("providerBackup: grokProviderBackup"))
         XCTAssertTrue(detail.contains("baseUrl: backup.baseUrl"))
         XCTAssertTrue(grokProvider.contains("IOSGrokWebBrowserTransport"))
@@ -608,19 +575,6 @@ final class IOSSettingsWiringTests: XCTestCase {
             IOSGrokWebStreamFrame(token: nil, isFinished: true, errorMessage: "session expired")
         )
         XCTAssertTrue(provider.contains("return frame.isFinished"))
-    }
-
-    func testApprovedCouncilRunIsOwnedByTheCoordinatorCancellationTask() throws {
-        let coordinator = try source("iosApp/ChatGenerationCoordinator.swift")
-        let start = try XCTUnwrap(coordinator.range(of: "private func finishPendingCouncilToolApproval"))
-        let end = try XCTUnwrap(
-            coordinator.range(of: "private func resumeAfterApproval", range: start.upperBound..<coordinator.endIndex)
-        )
-        let approvalPath = coordinator[start.lowerBound..<end.lowerBound]
-
-        XCTAssertTrue(approvalPath.contains("foregroundToolExecutionTask = executionTask"))
-        XCTAssertTrue(approvalPath.contains("completeApprovedToolExecution(result, matching: executionToken)"))
-        XCTAssertTrue(coordinator.contains("approvedToolContinuation?.resume(returning: nil)"))
     }
 
     func testCouncilSettingsExposeAnExplicitCurrentModelConnectivityProbe() throws {

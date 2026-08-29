@@ -3,7 +3,7 @@ import XCTest
 @testable import iosApp
 
 /// I-1 (durable tool-execution boundary) coverage: see
-/// `docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md` §W1. Three layers, mirroring
+/// `docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md` §W1. Two layers, mirroring
 /// `IOSToolArgumentsFailClosedTests`' style (own self-contained fixtures, no
 /// cross-file coupling to another test class' privates):
 ///
@@ -16,9 +16,6 @@ import XCTest
 ///     relaunch (a fresh ledger instance sharing the same underlying Room DB),
 ///     and that a real write round-trips through `listEventsForRun` with the
 ///     expected shape.
-///  3. `IOSToolCallLedgerClassifier` — the pure pairing/classification
-///     function W3 will build its recovery UX on, exercised now per the plan's
-///     "lay the groundwork" directive.
 final class IOSToolBoundaryTests: XCTestCase {
 
     // MARK: - Fixtures (mirrors IOSToolArgumentsFailClosedTests' style)
@@ -105,6 +102,7 @@ final class IOSToolBoundaryTests: XCTestCase {
     /// `TestEventLog`, and can be told to fail `recordToolCallStarted` to
     /// exercise the fail-closed gate without touching the real Room DB.
     private final class SpyLedger: IOSAgentRunLedgering, @unchecked Sendable {
+        private(set) var preparedCalls: [(runId: String, toolCallId: String)] = []
         private(set) var startedCalls: [(runId: String, toolCallId: String, toolName: String, argsDigest: String, effectClass: IOSToolEffectClass)] = []
         private(set) var finishedCalls: [(runId: String, toolCallId: String, outcome: String)] = []
         private(set) var approvalDeniedCalls: [(runId: String, toolCallId: String, toolName: String)] = []
@@ -114,6 +112,18 @@ final class IOSToolBoundaryTests: XCTestCase {
         init(startResult: Bool = true, log: TestEventLog? = nil) {
             self.startResult = startResult
             self.log = log
+        }
+
+        func recordToolCallPrepared(
+            runId: String,
+            toolCallId: String,
+            toolName: String,
+            argsDigest: String,
+            effectClass: IOSToolEffectClass
+        ) async -> IOSToolTransactionPreparation {
+            preparedCalls.append((runId, toolCallId))
+            log?.record("prepared:\(toolCallId)")
+            return .ready
         }
 
         func recordToolCallStarted(
@@ -184,9 +194,10 @@ final class IOSToolBoundaryTests: XCTestCase {
 
         XCTAssertEqual(
             log.events,
-            ["started:tc-1", "executor:test_tool", "finished:tc-1:completed"],
-            "Started must land before the executor runs, Finished only after it returns"
+            ["prepared:tc-1", "started:tc-1", "executor:test_tool", "finished:tc-1:completed"],
+            "Prepared and Started must land before the executor runs; Finished only after it returns"
         )
+        XCTAssertEqual(ledger.preparedCalls.first?.toolCallId, "tc-1")
         XCTAssertEqual(ledger.startedCalls.first?.toolCallId, "tc-1")
         XCTAssertEqual(ledger.startedCalls.first?.toolName, "test_tool")
         XCTAssertEqual(ledger.startedCalls.first?.effectClass, .sideEffect, "unknown tool name must default to the fail-safe sideEffect class")
@@ -281,7 +292,9 @@ final class IOSToolBoundaryTests: XCTestCase {
             agentVersion: IOSDurableRunStore.Descriptor.chatVersion,
             conversationId: nil, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
             status: "running", inputDigest: "digest", inputSnapshotRef: nil,
-            inputSchemaVersion: 1, startedAt: 1, finishedAt: nil, interruptedReason: nil
+            inputSchemaVersion: 1, startedAt: 1, finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in
@@ -299,6 +312,97 @@ final class IOSToolBoundaryTests: XCTestCase {
     }
 
     // MARK: - Layer 2: IOSAgentRunLedger (real Room writes)
+
+    func testPreparedClaimAllowsOnlyOneLedgerInstanceToOwnAToolCall() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let runId = "tool-claim-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let foreground = IOSAgentRunLedger(dao: dao)
+        let background = IOSAgentRunLedger(dao: dao)
+
+        let first = await foreground.recordToolCallPrepared(
+            runId: runId,
+            toolCallId: "tc-claim",
+            toolName: "workspace_file_write",
+            argsDigest: "digest",
+            effectClass: .sideEffect
+        )
+        let second = await background.recordToolCallPrepared(
+            runId: runId,
+            toolCallId: "tc-claim",
+            toolName: "workspace_file_write",
+            argsDigest: "digest",
+            effectClass: .sideEffect
+        )
+
+        XCTAssertEqual(first, .ready)
+        guard case .blocked = second else {
+            return XCTFail("the second ledger instance must not own the same run/toolCallId")
+        }
+        let loadedTransactions = await foreground.toolTransactions(runId: runId)
+        let transactions = try XCTUnwrap(loadedTransactions)
+        XCTAssertEqual(transactions.count, 1)
+        XCTAssertEqual(transactions.first?.state, .prepared)
+        let claimEvents = await fetchLedgerEvents(dao: dao, runId: runId)
+        let eventTypes = claimEvents.map(\.type)
+        XCTAssertEqual(eventTypes, ["tool_prepared"])
+    }
+
+    func testEventAppendFailureReconcilesTransactionsThatNeverExecuted() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let runId = "missing-run-\(UUID().uuidString)"
+        let ledger = IOSAgentRunLedger(dao: dao)
+
+        let preparation = await ledger.recordToolCallPrepared(
+            runId: runId,
+            toolCallId: "tc-prepared",
+            toolName: "search_web",
+            argsDigest: "digest-prepared",
+            effectClass: .pure
+        )
+        guard case .blocked = preparation else {
+            return XCTFail("missing run must make tool_prepared append fail closed")
+        }
+
+        let startedTransaction = AgentToolTransactionEntity(
+            runId: runId,
+            toolCallId: "tc-started",
+            toolName: "search_web",
+            argsDigest: "digest-started",
+            effectClass: IOSToolEffectClass.pure.rawValue,
+            state: IOSToolTransactionState.prepared.rawValue,
+            outcome: nil,
+            resultPayload: nil,
+            updatedAt: 1
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            dao.insertToolTransactionIfAbsent(transaction: startedTransaction) { _, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+        let started = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-started",
+            toolName: "search_web",
+            argsDigest: "digest-started",
+            effectClass: .pure
+        )
+        XCTAssertFalse(started, "missing run must make tool_started append fail closed")
+
+        let loadedTransactions = await ledger.toolTransactions(runId: runId)
+        let transactions = try XCTUnwrap(loadedTransactions)
+        let prepared = try XCTUnwrap(transactions.first { $0.toolCallId == "tc-prepared" })
+        XCTAssertEqual(prepared.state, .reconciled)
+        XCTAssertEqual(prepared.outcome, "not_executed_prepared_event_failed")
+        let startedRow = try XCTUnwrap(transactions.first { $0.toolCallId == "tc-started" })
+        XCTAssertEqual(startedRow.state, .reconciled)
+        XCTAssertEqual(startedRow.outcome, "not_executed_started_event_failed")
+        let events = await fetchLedgerEvents(dao: dao, runId: runId)
+        XCTAssertTrue(events.isEmpty)
+    }
 
     func testSeqIsMonotonicAcrossLedgerInstancesSharingTheSameRun() async throws {
         let db = makeDatabase()
@@ -334,11 +438,52 @@ final class IOSToolBoundaryTests: XCTestCase {
 
         let events = await fetchLedgerEvents(dao: dao, runId: runId)
 
-        XCTAssertEqual(events.count, 4, "two Started/Finished pairs across two ledger instances")
+        XCTAssertEqual(events.count, 6, "two Prepared/Started/Finished transactions across two ledger instances")
         let seqs = events.map { $0.seq }
         XCTAssertEqual(seqs, seqs.sorted(), "listEventsForRun already orders by seq ASC")
-        XCTAssertEqual(Set(seqs).count, 4, "no seq collision across the simulated relaunch")
-        XCTAssertEqual(seqs, [1, 2, 3, 4], "fresh run starts seq at 1 and increments by 1 per event, unbroken across instances")
+        XCTAssertEqual(Set(seqs).count, 6, "no seq collision across the simulated relaunch")
+        XCTAssertEqual(seqs, [1, 2, 3, 4, 5, 6], "fresh run starts seq at 1 and increments by 1 per event, unbroken across instances")
+    }
+
+    func testRequestSnapshotIndexContinuesAcrossLedgerInstances() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let runId = "request-index-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let snapshot = IOSRunRequestSnapshot(
+            roundIndex: 1,
+            requestDigest: "request",
+            messageCount: 1,
+            systemPromptDigest: "system",
+            generationParamsDigest: "params",
+            toolCatalogDigest: "tools",
+            toolNames: [],
+            providerId: "provider",
+            modelId: "model",
+            compactionRefs: []
+        )
+
+        let firstWriteSucceeded = await IOSAgentRunLedger(dao: dao).recordRequestSnapshot(
+            runId: runId,
+            snapshot: snapshot
+        )
+        let secondWriteSucceeded = await IOSAgentRunLedger(dao: dao).recordRequestSnapshot(
+            runId: runId,
+            snapshot: snapshot
+        )
+        XCTAssertTrue(firstWriteSucceeded)
+        XCTAssertTrue(secondWriteSucceeded)
+
+        let events = await fetchLedgerEvents(dao: dao, runId: runId)
+        let indices = events.compactMap { event -> Int? in
+            guard event.type == IOSAgentRunLedger.requestSnapshotEventType,
+                  let data = event.payload.data(using: .utf8),
+                  let decoded = try? JSONDecoder().decode(IOSRunRequestSnapshot.self, from: data) else {
+                return nil
+            }
+            return decoded.roundIndex
+        }
+        XCTAssertEqual(indices, [1, 2])
     }
 
     /// 前台/后台协调器各持一个账本实例、写同一 runId,用户来回切 app 会让两个
@@ -377,7 +522,7 @@ final class IOSToolBoundaryTests: XCTestCase {
 
         let events = await fetchLedgerEvents(dao: dao, runId: runId)
         let seqs = events.map { $0.seq }
-        XCTAssertEqual(seqs, [1, 2, 3, 4, 5, 6], "ping-pong writes stay gapless and collision-free")
+        XCTAssertEqual(seqs, [1, 2, 3, 4, 5, 6, 7, 8, 9], "ping-pong writes stay gapless and collision-free")
     }
 
     func testRealLedgerWriteRoundTripsThroughListEventsForRun() async throws {
@@ -399,25 +544,27 @@ final class IOSToolBoundaryTests: XCTestCase {
 
         let events = await fetchLedgerEvents(dao: dao, runId: runId)
 
-        XCTAssertEqual(events.count, 2)
-        XCTAssertEqual(events[0].type, "tool_call_started")
-        XCTAssertEqual(events[1].type, "tool_call_finished")
+        XCTAssertEqual(events.count, 3)
+        XCTAssertEqual(events[0].type, "tool_prepared")
+        XCTAssertEqual(events[1].type, "tool_started")
+        XCTAssertEqual(events[2].type, "tool_finished")
         XCTAssertTrue(events[0].seq < events[1].seq)
+        XCTAssertTrue(events[1].seq < events[2].seq)
         XCTAssertEqual(events[0].agentDescriptorId, "chat")
         XCTAssertEqual(events[0].agentVersion, "1")
         XCTAssertEqual(events[0].payloadSchemaVersion, 1)
         XCTAssertFalse(events[0].isFinal)
 
-        guard let startedPayload = try? JSONSerialization.jsonObject(with: Data(events[0].payload.utf8)) as? [String: String] else {
-            return XCTFail("Started payload must be a flat string dictionary, was: \(events[0].payload)")
+        guard let startedPayload = try? JSONSerialization.jsonObject(with: Data(events[1].payload.utf8)) as? [String: String] else {
+            return XCTFail("Started payload must be a flat string dictionary, was: \(events[1].payload)")
         }
         XCTAssertEqual(startedPayload["toolCallId"], "tc-1")
         XCTAssertEqual(startedPayload["toolName"], "search_web")
         XCTAssertEqual(startedPayload["argsDigest"], "abc123")
         XCTAssertEqual(startedPayload["effectClass"], "pure")
 
-        guard let finishedPayload = try? JSONSerialization.jsonObject(with: Data(events[1].payload.utf8)) as? [String: String] else {
-            return XCTFail("Finished payload must be a flat string dictionary, was: \(events[1].payload)")
+        guard let finishedPayload = try? JSONSerialization.jsonObject(with: Data(events[2].payload.utf8)) as? [String: String] else {
+            return XCTFail("Finished payload must be a flat string dictionary, was: \(events[2].payload)")
         }
         XCTAssertEqual(finishedPayload["toolCallId"], "tc-1")
         XCTAssertEqual(finishedPayload["outcome"], "completed")
@@ -516,80 +663,4 @@ final class IOSToolBoundaryTests: XCTestCase {
         )
     }
 
-    // MARK: - Layer 3: IOSToolCallLedgerClassifier (pure function, S3 groundwork)
-
-    func testClassifierMarksUnfinishedSideEffectAsOutcomeUnknown() {
-        let events = [IOSToolCallLedgerEvent(type: "tool_call_started", seq: 1)]
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: events, effectClass: .sideEffect),
-            .outcomeUnknown
-        )
-    }
-
-    func testClassifierMarksUnfinishedPureAsRetryable() {
-        let events = [IOSToolCallLedgerEvent(type: "tool_call_started", seq: 1)]
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: events, effectClass: .pure),
-            .retryable
-        )
-    }
-
-    func testClassifierMarksUnfinishedIdempotentAsRetryable() {
-        let events = [IOSToolCallLedgerEvent(type: "tool_call_started", seq: 1)]
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: events, effectClass: .idempotent),
-            .retryable
-        )
-    }
-
-    func testClassifierMarksStartedThenFinishedAsClean() {
-        let events = [
-            IOSToolCallLedgerEvent(type: "tool_call_started", seq: 1),
-            IOSToolCallLedgerEvent(type: "tool_call_finished", seq: 2),
-        ]
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: events, effectClass: .sideEffect),
-            .clean
-        )
-    }
-
-    func testClassifierMarksPausedForApprovalNarrativeAsClean() {
-        // Started -> Finished(paused_for_approval): the classifier only looks
-        // at event `type`, not the Finished payload's `outcome` field, so this
-        // is mechanically the same two-event shape as the plain case above —
-        // but the narrative is the point: this is the awaiting-approval
-        // hand-off, which the awaiting_permission recovery path already owns,
-        // so the tool-call ledger must NOT also flag it as an unresolved crash.
-        let events = [
-            IOSToolCallLedgerEvent(type: "tool_call_started", seq: 1),
-            IOSToolCallLedgerEvent(type: "tool_call_finished", seq: 2),
-        ]
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: events, effectClass: .sideEffect),
-            .clean
-        )
-    }
-
-    func testClassifierPairsAgainstTheLastStartedNotTheFirst() {
-        // Started -> Finished(paused) -> Started (re-executed after approval,
-        // still in flight when the process died) -> no Finished. Must
-        // classify against the SECOND Started, not treat the first pair as
-        // satisfying the whole toolCallId.
-        let events = [
-            IOSToolCallLedgerEvent(type: "tool_call_started", seq: 1),
-            IOSToolCallLedgerEvent(type: "tool_call_finished", seq: 2),
-            IOSToolCallLedgerEvent(type: "tool_call_started", seq: 3),
-        ]
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: events, effectClass: .sideEffect),
-            .outcomeUnknown
-        )
-    }
-
-    func testClassifierTreatsNeverStartedAsClean() {
-        XCTAssertEqual(
-            IOSToolCallLedgerClassifier.classify(events: [], effectClass: .sideEffect),
-            .clean
-        )
-    }
 }

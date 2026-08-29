@@ -54,6 +54,29 @@ public protocol IOSToolExecutor: AnyObject {
         arguments: String,
         isUserInitiated: Bool
     ) async -> IOSAgentToolOutcome
+
+    /// P0-2 B2: 携带完整 Tool(含 toolCallId)的执行入口。**必须是协议要求**
+    /// (带默认实现)而不是纯扩展方法——纯扩展方法在 `any IOSToolExecutor`
+    /// 存在类型上静态派发,具体实现永远不会被调到。默认转发三参版本,现有
+    /// 执行器零改动;需要 toolCallId 的实现(前台内核适配器——审批盒与回填
+    /// 都按 toolCallId 键控)覆盖此方法,引擎经 witness table 动态派发到它。
+    func execute(
+        tool: UIMessagePart.Tool,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome
+}
+
+extension IOSToolExecutor {
+    public func execute(
+        tool: UIMessagePart.Tool,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome {
+        await execute(
+            name: tool.toolName,
+            arguments: tool.input,
+            isUserInitiated: isUserInitiated
+        )
+    }
 }
 
 /// Abstraction over the model call so the engine is unit-testable without a
@@ -394,8 +417,22 @@ private final class StreamStepState: @unchecked Sendable {
     private var job: Kotlinx_coroutines_coreJob?
     private var cancellationRequested = false
     private var resumed = false
+    private var lastAssistantSnapshotAt: ContinuousClock.Instant?
 
     init(accumulator: MessageStreamAccumulator) { self.accumulator = accumulator }
+
+    /// B2 provisional 快照的推送节流(前台内核路径专属;hook 为 nil 的后台/
+    /// 子代理流根本不调 snapshot——O(n²) 红线由
+    /// testStreamingAssistantTextDoesNotSnapshotOnEveryChunk 钉住)。
+    /// 认领即盖章:同一窗口内的后续 chunk 不再快照。
+    func claimAssistantSnapshotPublish(minimumInterval: Duration) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let now = ContinuousClock.now
+        if let last = lastAssistantSnapshotAt, now < last + minimumInterval { return false }
+        lastAssistantSnapshotAt = now
+        return true
+    }
 
     func appendAssistantDelta(from chunk: MessageChunk) -> AssistantUpdate {
         lock.lock()
@@ -610,6 +647,66 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         self.executorRebuilder = executorRebuilder
     }
 
+    /// B2 前台内核投影:按节拍推送在途 assistant 的累加器快照。快照只在
+    /// hook 非 nil(前台 kernel run)时生成——后台/子代理/小说流保持零快照
+    /// 开销;48ms 与 CGC 的 streamSnapshotFlushDelayNanos 同一发布节拍,
+    /// 快照成本与前台现状同阶(不是逐 chunk)。
+    private static let assistantSnapshotPublishInterval: Duration = .milliseconds(48)
+
+    private enum PreparedStepMode {
+        case grokWeb
+        case gemini
+        case blocking
+        case streaming
+    }
+
+    private struct PreparedStepRequest {
+        let providerSetting: ProviderSetting
+        let params: TextGenerationParams
+        let mode: PreparedStepMode
+    }
+
+    /// Resolve the same provider/params pair that the transport will consume.
+    /// Keeping preparation ahead of the durable snapshot means a failed
+    /// prepare never leaves an event that claims a request was sent.
+    private func prepareStepRequest(
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams
+    ) async throws -> PreparedStepRequest {
+        if let openAI = providerSetting as? ProviderSetting.OpenAI,
+           IOSGrokWebProviderResolver.isGrokWebConfiguration(openAI) {
+            return PreparedStepRequest(providerSetting: providerSetting, params: params, mode: .grokWeb)
+        }
+        if let google = providerSetting as? ProviderSetting.Google,
+           IOSGeminiProviderResolver.supportsChat(google) {
+            return PreparedStepRequest(providerSetting: providerSetting, params: params, mode: .gemini)
+        }
+        guard let streaming = provider as? IOSAgentStreamingProvider else {
+            return PreparedStepRequest(providerSetting: providerSetting, params: params, mode: .blocking)
+        }
+        let (requestProvider, requestParams) = try await streaming.prepareRequest(
+            providerSetting: providerSetting,
+            params: params
+        )
+        guard streaming.supportsStreaming(providerSetting: requestProvider) else {
+            // Preserve the provider's blocking fallback contract: it receives
+            // the original pair, exactly as before request snapshots existed.
+            return PreparedStepRequest(providerSetting: providerSetting, params: params, mode: .blocking)
+        }
+        return PreparedStepRequest(providerSetting: requestProvider, params: requestParams, mode: .streaming)
+    }
+
+    private static func deliverAssistantSnapshotIfDue(
+        state: StreamStepState,
+        hook: (@Sendable (UIMessage) -> Void)?
+    ) {
+        guard let hook,
+              state.claimAssistantSnapshotPublish(minimumInterval: assistantSnapshotPublishInterval),
+              let provisional = state.accumulator.snapshot().last,
+              provisional.role == MessageRole.assistant else { return }
+        hook(provisional)
+    }
+
     /// Streams one model turn, accumulating chunks via the shared (500-fixed)
     /// MessageStreamAccumulator and surfacing the accumulating assistant text to
     /// [onAssistantText] token-by-token. Returns a MessageChunk wrapping the final
@@ -622,42 +719,53 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     ///   is), so the terminal snapshot carries no `<amber-mem-cite>` markers.
     ///   Default nil keeps every existing caller (SubAgent, Novel) byte-identical.
     private func streamStep(
-        providerSetting: ProviderSetting,
+        request: PreparedStepRequest,
         messages: [UIMessage],
-        params: TextGenerationParams,
         citationTracker: IOSMemoryCitationTracker?,
         onAssistantStage: (@Sendable (AgentActivityStage) -> Void)?,
         onAssistantText: (@Sendable (String) -> Void)?,
-        onAssistantReasoning: (@Sendable (String) -> Void)?
+        onAssistantReasoning: (@Sendable (String) -> Void)?,
+        onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?
     ) async throws -> MessageChunk {
-        if let google = providerSetting as? ProviderSetting.Google,
-           IOSGeminiProviderResolver.supportsChat(google) {
-            return try await streamGeminiStep(
-                provider: google,
+        switch request.mode {
+        case .grokWeb:
+            guard let openAI = request.providerSetting as? ProviderSetting.OpenAI else {
+                throw NSError(domain: "IOSAgentToolEngine.PreparedRequest", code: 1)
+            }
+            return try await streamGrokWebStep(
+                provider: openAI,
                 messages: messages,
-                params: params,
+                params: request.params,
                 citationTracker: citationTracker,
                 onAssistantStage: onAssistantStage,
                 onAssistantText: onAssistantText,
-                onAssistantReasoning: onAssistantReasoning
+                onAssistantReasoning: onAssistantReasoning,
+                onAssistantMessageSnapshot: onAssistantMessageSnapshot
             )
-        }
-        // Non-streaming providers (e.g. test doubles) do a single blocking
-        // generate — no live tokens, identical loop behavior.
-        guard let streaming = provider as? IOSAgentStreamingProvider else {
-            return try await provider.generateText(providerSetting: providerSetting, messages: messages, params: params)
-        }
-        let (requestProvider, requestParams) = try await streaming.prepareRequest(
-            providerSetting: providerSetting,
-            params: params
-        )
-        guard streaming.supportsStreaming(providerSetting: requestProvider) else {
-            return try await provider.generateText(
-                providerSetting: providerSetting,
+        case .gemini:
+            guard let google = request.providerSetting as? ProviderSetting.Google else {
+                throw NSError(domain: "IOSAgentToolEngine.PreparedRequest", code: 2)
+            }
+            return try await streamGeminiStep(
+                provider: google,
                 messages: messages,
-                params: params
+                params: request.params,
+                citationTracker: citationTracker,
+                onAssistantStage: onAssistantStage,
+                onAssistantText: onAssistantText,
+                onAssistantReasoning: onAssistantReasoning,
+                onAssistantMessageSnapshot: onAssistantMessageSnapshot
             )
+        case .blocking:
+            return try await provider.generateText(
+                providerSetting: request.providerSetting,
+                messages: messages,
+                params: request.params
+            )
+        case .streaming:
+            break
         }
+        let streaming = provider as! IOSAgentStreamingProvider
         // Seed with a single NON-assistant placeholder so the streamed turn
         // forms exactly one fresh assistant message (returned as `.last`),
         // instead of merging into `messages`' trailing assistant turn — which on
@@ -688,9 +796,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     return
                 }
                 let job = streaming.streamText(
-                    providerSetting: requestProvider,
+                    providerSetting: request.providerSetting,
                     messages: messages,
-                    params: requestParams,
+                    params: request.params,
                     onChunk: { chunk in
                         // P2-c: 后台流在进入 accumulator 前剥离 citation 隐藏
                         // 标记（与前台 sink 同语义——所有下游消费者只见到已剥离的
@@ -707,6 +815,12 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                         if let text = update.text {
                             onAssistantText?(text)
                         }
+                        // B2 前台内核投影:节流后的在途 assistant 累加器快照
+                        // (与终态消息同 id;citation 已在上游剥离)。
+                        Self.deliverAssistantSnapshotIfDue(
+                            state: state,
+                            hook: onAssistantMessageSnapshot
+                        )
                     },
                     onComplete: {
                         let last = state.accumulator.snapshot().last
@@ -738,6 +852,69 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         }
     }
 
+    private func streamGrokWebStep(
+        provider: ProviderSetting.OpenAI,
+        messages: [UIMessage],
+        params: TextGenerationParams,
+        citationTracker: IOSMemoryCitationTracker?,
+        onAssistantStage: (@Sendable (AgentActivityStage) -> Void)?,
+        onAssistantText: (@Sendable (String) -> Void)?,
+        onAssistantReasoning: (@Sendable (String) -> Void)?,
+        onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?
+    ) async throws -> MessageChunk {
+        let seed = UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.user,
+            parts: [],
+            annotations: [],
+            createdAt: Self.nowLocalDateTime(),
+            finishedAt: nil,
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+        let state = StreamStepState(
+            accumulator: MessageStreamAccumulator(initialMessages: [seed], model: nil)
+        )
+        let boxed = UncheckedUIMessageBox(messages)
+        let task = Task { @MainActor in
+            try await IOSGrokWebClient(
+                providerId: IOSGrokWebProviderResolver.providerKey(provider)
+            ).streamText(messages: boxed.value, params: params) { chunk in
+                let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
+                state.accumulator.append(chunk: strippedChunk)
+                let update = state.appendAssistantDelta(from: strippedChunk)
+                if let stage = update.stage { onAssistantStage?(stage) }
+                if let reasoning = update.reasoning { onAssistantReasoning?(reasoning) }
+                if let text = update.text { onAssistantText?(text) }
+                Self.deliverAssistantSnapshotIfDue(
+                    state: state,
+                    hook: onAssistantMessageSnapshot
+                )
+            }
+        }
+        try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        let last = state.accumulator.snapshot().last
+        let finalMessage: UIMessage = last?.role == MessageRole.assistant
+            ? last!
+            : Self.emptyAssistant()
+        return MessageChunk(
+            id: "",
+            model: params.model.modelId,
+            choices: [UIMessageChoice(
+                index: 0,
+                delta: nil,
+                message: finalMessage,
+                finishReason: state.terminalFinishReason() ?? "stop"
+            )],
+            usage: nil
+        )
+    }
+
     private func streamGeminiStep(
         provider: ProviderSetting.Google,
         messages: [UIMessage],
@@ -745,7 +922,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         citationTracker: IOSMemoryCitationTracker?,
         onAssistantStage: (@Sendable (AgentActivityStage) -> Void)?,
         onAssistantText: (@Sendable (String) -> Void)?,
-        onAssistantReasoning: (@Sendable (String) -> Void)?
+        onAssistantReasoning: (@Sendable (String) -> Void)?,
+        onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?
     ) async throws -> MessageChunk {
         let seed = UIMessage(
             id: KotlinUuid.companion.random(),
@@ -779,6 +957,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 if let text = update.text {
                     onAssistantText?(text)
                 }
+                // 与 streamStep 通用路径同款:B2 前台内核投影的在途快照。
+                Self.deliverAssistantSnapshotIfDue(
+                    state: state,
+                    hook: onAssistantMessageSnapshot
+                )
             }
         }.value
         let last = state.accumulator.snapshot().last
@@ -844,11 +1027,17 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         citationTracker: IOSMemoryCitationTracker? = nil,
         toolExposureBridge: IosToolExposureBridge? = nil,
         mailboxDrain: (@Sendable () async -> IOSMailboxDrainResult)? = nil,
+        drainSteer: (@Sendable () async -> [UIMessage])? = nil,
+        prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])? = nil,
+        sortPendingToolCalls: (@Sendable ([UIMessagePart.Tool]) -> [UIMessagePart.Tool])? = nil,
+        preemptToolBatch: (@Sendable ([UIMessagePart.Tool]) async -> String?)? = nil,
+        resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)? = nil,
         onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)? = nil,
-        onToolExecutionStarted: (@MainActor @Sendable (String) async -> Void)? = nil,
+        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)? = nil,
         onAssistantStage: (@Sendable (AgentActivityStage) -> Void)? = nil,
         onAssistantText: (@Sendable (String) -> Void)? = nil,
         onAssistantReasoning: (@Sendable (String) -> Void)? = nil,
+        onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)? = nil,
         onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)? = nil
     ) async -> IOSAgentToolEngineResult {
         let result = await runInternal(
@@ -858,11 +1047,17 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             citationTracker: citationTracker,
             toolExposureBridge: toolExposureBridge,
             mailboxDrain: mailboxDrain,
+            drainSteer: drainSteer,
+            prepareRequestMessages: prepareRequestMessages,
+            sortPendingToolCalls: sortPendingToolCalls,
+            preemptToolBatch: preemptToolBatch,
+            resolveUnexposedToolCall: resolveUnexposedToolCall,
             onAssistantTurnStarted: onAssistantTurnStarted,
             onToolExecutionStarted: onToolExecutionStarted,
             onAssistantStage: onAssistantStage,
             onAssistantText: onAssistantText,
             onAssistantReasoning: onAssistantReasoning,
+            onAssistantMessageSnapshot: onAssistantMessageSnapshot,
             onMessagesUpdated: onMessagesUpdated
         )
         return Self.finishingCitation(result, tracker: citationTracker)
@@ -878,11 +1073,17 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         citationTracker: IOSMemoryCitationTracker?,
         toolExposureBridge: IosToolExposureBridge?,
         mailboxDrain: (@Sendable () async -> IOSMailboxDrainResult)?,
+        drainSteer: (@Sendable () async -> [UIMessage])?,
+        prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])?,
+        sortPendingToolCalls: (@Sendable ([UIMessagePart.Tool]) -> [UIMessagePart.Tool])?,
+        preemptToolBatch: (@Sendable ([UIMessagePart.Tool]) async -> String?)?,
+        resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)?,
         onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)?,
-        onToolExecutionStarted: (@MainActor @Sendable (String) async -> Void)?,
+        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?,
         onAssistantStage: (@Sendable (AgentActivityStage) -> Void)?,
         onAssistantText: (@Sendable (String) -> Void)?,
         onAssistantReasoning: (@Sendable (String) -> Void)?,
+        onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?,
         onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)?
     ) async -> IOSAgentToolEngineResult {
         var working = messages
@@ -932,6 +1133,15 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 guardStopped: true
             )
         }
+        if let approval = preExistingResult.pendingApproval,
+           configuration.honorApprovalPause {
+            return IOSAgentToolEngineResult(
+                messages: working,
+                stepsExecuted: 0,
+                pendingApproval: approval,
+                hitStepLimit: false
+            )
+        }
 
         while steps < configuration.maxSteps {
             let chunk: MessageChunk
@@ -952,14 +1162,44 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )
             }
             do {
-                chunk = try await streamStep(
+                // P0-2 hook: request-only transform before every provider round.
+                // `working` stays the canonical transcript (tool outputs appended
+                // in place below); whatever the hook injects/compacts is what the
+                // model actually sees this round. Default (nil) = identity.
+                // B1: 钩子可抛(如上下文压缩失败)——落入下方通用 catch,与本轮
+                // provider 失败同路径收口(CG-C prepareAndStartStreaming 压缩失败
+                // → presentStreamError 的引擎侧等价)。
+                let requestMessages = try await prepareRequestMessages?(working) ?? working
+                let preparedRequest = try await prepareStepRequest(
                     providerSetting: providerSetting,
-                    messages: working,
-                    params: effectiveParams,
+                    params: effectiveParams
+                )
+                if let ledger, let ledgerRunId {
+                    let snapshot = IOSRunRequestSnapshot.make(
+                        roundIndex: steps + 1,
+                        providerSetting: preparedRequest.providerSetting,
+                        messages: requestMessages,
+                        params: preparedRequest.params
+                    )
+                    guard await ledger.recordRequestSnapshot(
+                        runId: ledgerRunId,
+                        snapshot: snapshot
+                    ) else {
+                        throw NSError(
+                            domain: "IOSAgentToolEngine.RequestSnapshot",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "request snapshot ledger write failed"]
+                        )
+                    }
+                }
+                chunk = try await streamStep(
+                    request: preparedRequest,
+                    messages: requestMessages,
                     citationTracker: citationTracker,
                     onAssistantStage: onAssistantStage,
                     onAssistantText: onAssistantText,
-                    onAssistantReasoning: onAssistantReasoning
+                    onAssistantReasoning: onAssistantReasoning,
+                    onAssistantMessageSnapshot: onAssistantMessageSnapshot
                 )
             } catch is CancellationError {
                 return IOSAgentToolEngineResult(
@@ -1072,13 +1312,37 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )
             }
 
+            // P0-2 hook: 批量准入闸门(前台预算/硬失败语义)。CGC 在流完成后、
+            // 执行前裁定本轮未决调用——预算耗尽或彻底未知的名字不进入执行,
+            // 整批以失败文案原地收口并终止 run。nil = 放行(引擎现状)。
+            if let preemptToolBatch,
+               let batchFailureText = await preemptToolBatch(pendingTools) {
+                let preemptedOutputs: [(tool: UIMessagePart.Tool, parts: [UIMessagePart])] = pendingTools.map {
+                    (tool: $0, parts: [UIMessagePart.Text(text: batchFailureText, metadata: nil)])
+                }
+                working = applyToolOutputs(preemptedOutputs, to: working)
+                onMessagesUpdated?(working)
+                return IOSAgentToolEngineResult(
+                    messages: working,
+                    stepsExecuted: steps + 1,
+                    pendingApproval: nil,
+                    hitStepLimit: false,
+                    guardStopped: true
+                )
+            }
+
             // Execute every pending tool in this turn (batch), then fill all
             // of them in place before the next round — mirrors Android's
             // AgentToolDispatcher.executeBatch.
+            // P0-2 hook: `sortPendingToolCalls` may re-order the batch before
+            // execution (foreground pins kind-priority today); default nil
+            // keeps the model's emission order (engine status quo).
+            let orderedPendingTools = sortPendingToolCalls?(pendingTools) ?? pendingTools
             let batchResult = await executeBatch(
-                pendingTools,
+                orderedPendingTools,
                 isUserInitiated: false,
                 loopGuard: &loopGuard,
+                resolveUnexposedToolCall: resolveUnexposedToolCall,
                 onToolExecutionStarted: onToolExecutionStarted
             )
             if batchResult.wasCancelled {
@@ -1130,6 +1394,17 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 let drained = (await mailboxDrain()).values
                 if !drained.isEmpty {
                     working.append(contentsOf: drained)
+                    onMessagesUpdated?(working)
+                }
+            }
+
+            // P0-2 hook: steer drain 与 mailbox 同点、紧随其后——顺序对齐前台
+            // CGC 的轮边界消费（先 mailbox 后 steer）。drained steer 消息折入
+            // 下一轮 upload；不传 = 零影响（SubAgent/Novel 现状）。
+            if let drainSteer {
+                let steered = await drainSteer()
+                if !steered.isEmpty {
+                    working.append(contentsOf: steered)
                     onMessagesUpdated?(working)
                 }
             }
@@ -1240,6 +1515,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     /// Returns the messages unchanged when there is nothing pre-existing to run.
     private struct PreExistingExecutionResult {
         let messages: [UIMessage]
+        let pendingApproval: IOSPendingToolApproval?
         let guardStopped: Bool
         let wasCancelled: Bool
     }
@@ -1247,7 +1523,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     private func executePreExistingPendingTools(
         in messages: [UIMessage],
         loopGuard: inout IOSToolLoopGuard,
-        onToolExecutionStarted: (@MainActor @Sendable (String) async -> Void)?
+        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?
     ) async -> PreExistingExecutionResult {
         let preExisting = messages.flatMap { message -> [UIMessagePart.Tool] in
             guard message.role == MessageRole.assistant else { return [] }
@@ -1264,6 +1540,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         guard !executable.isEmpty else {
             return PreExistingExecutionResult(
                 messages: messages,
+                pendingApproval: nil,
                 guardStopped: false,
                 wasCancelled: false
             )
@@ -1274,13 +1551,12 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             loopGuard: &loopGuard,
             onToolExecutionStarted: onToolExecutionStarted
         )
-        // honorApprovalPause is irrelevant here: pre-existing tools handed off
-        // from the foreground are not user-initiated prompts, and a background
-        // run cannot surface an approval card. A .needsApproval outcome is
-        // simply left unfilled (the model will re-issue it after streaming,
-        // where the normal loop honors approvalPause per configuration).
+        // 前台审批恢复会以新 Engine 实例继续同一批剩余调用；这里必须把第二个
+        // needsApproval 继续向 Adapter 冒泡。后台配置关闭 honorApprovalPause，
+        // 保持其既有“不可发审批卡”语义。
         return PreExistingExecutionResult(
             messages: applyToolOutputs(batchResult.outputs, to: messages),
+            pendingApproval: batchResult.pendingApproval,
             guardStopped: batchResult.guardStopped,
             wasCancelled: batchResult.wasCancelled
         )
@@ -1305,7 +1581,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         _ tools: [UIMessagePart.Tool],
         isUserInitiated: Bool,
         loopGuard: inout IOSToolLoopGuard,
-        onToolExecutionStarted: (@MainActor @Sendable (String) async -> Void)?
+        resolveUnexposedToolCall: (@Sendable (UIMessagePart.Tool) async -> [UIMessagePart]?)? = nil,
+        onToolExecutionStarted: (@MainActor @Sendable (String, String) async -> Void)?
     ) async -> BatchExecutionResult {
         var outputs: [(UIMessagePart.Tool, [UIMessagePart])] = []
         var firstApproval: IOSPendingToolApproval?
@@ -1327,6 +1604,24 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )]))
                 continue
             }
+            // P0-2 hook: 未暴露工具的引导软失败(CG-C P0-a Fix B 语义)——在
+            // I-2/I-5/I-1 全部闸门之前拦截(CG-C 的软失败同样发生在任何执行
+            // 闸门之前):不写 Started(从未执行),只写 Finished(failed) 留痕,
+            // 填引导输出,批内继续。nil = 不拦截(引擎现状:未注册名字由下游
+            // no-executor 失败化)。
+            if let resolveUnexposedToolCall,
+               let guidedParts = await resolveUnexposedToolCall(tool) {
+                if let ledger, let ledgerRunId {
+                    await ledger.recordToolCallFinished(
+                        runId: ledgerRunId,
+                        toolCallId: tool.toolCallId,
+                        outcome: "failed"
+                    )
+                }
+                outputs.append((tool, guidedParts))
+                continue
+            }
+
             // I-2 fail-closed: refuse to dispatch a tool call whose `input` cannot
             // be parsed as a JSON object, *before* consulting the executor map. A
             // gateway that double-writes a call, truncates one mid-argument, or a
@@ -1355,24 +1650,47 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 continue
             }
 
-            // I-1 durable boundary: when this engine instance carries a ledger
-            // (only the chat background coordinator does — see the `ledger`
-            // property doc), record Started before the executor runs. A write
-            // failure here is treated exactly like the I-2 gate above: do not
-            // reach the executor, fail this tool call in place instead of
-            // silently executing with no durable trace. When there is no
-            // ledger, this whole block is skipped (`ledger`/`ledgerRunId` are
-            // both nil for SubAgent/Novel — zero overhead, matches today).
+            // Durable tool transaction: PREPARED claims this run/toolCallId
+            // before STARTED crosses the execution boundary. A competing
+            // foreground/background writer either replays the stored terminal
+            // result or gets a resolved failure; it never reaches the executor.
             if let ledger, let ledgerRunId {
                 let effectClass = IOSToolEffectClassMapping.forToolName(
                     tool.toolName,
                     input: tool.input
                 )
+                let argsDigest = chatInputDigest(for: tool.input)
+                switch await ledger.recordToolCallPrepared(
+                    runId: ledgerRunId,
+                    toolCallId: tool.toolCallId,
+                    toolName: tool.toolName,
+                    argsDigest: argsDigest,
+                    effectClass: effectClass
+                ) {
+                case .ready:
+                    break
+                case .replay(let resultPayload):
+                    if let replayed = Self.decodeToolOutput(resultPayload) {
+                        outputs.append((tool, replayed))
+                    } else {
+                        outputs.append((tool, [UIMessagePart.Text(
+                            text: "{\"ok\":false,\"error\":\"tool_result_replay_failed\",\"message\":\"stored tool result could not be decoded\"}",
+                            metadata: nil
+                        )]))
+                    }
+                    continue
+                case .blocked(let reason):
+                    outputs.append((tool, [UIMessagePart.Text(
+                        text: "{\"ok\":false,\"error\":\"tool_transaction_blocked\",\"message\":\"\(sanitized(reason))\"}",
+                        metadata: nil
+                    )]))
+                    continue
+                }
                 let didRecordStart = await ledger.recordToolCallStarted(
                     runId: ledgerRunId,
                     toolCallId: tool.toolCallId,
                     toolName: tool.toolName,
-                    argsDigest: chatInputDigest(for: tool.input),
+                    argsDigest: argsDigest,
                     effectClass: effectClass
                 )
                 guard didRecordStart else {
@@ -1391,7 +1709,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 cancelledBeforeExecution = true
             } else {
                 if executor != nil {
-                    await onToolExecutionStarted?(tool.toolName)
+                    await onToolExecutionStarted?(tool.toolName, tool.input)
                 }
                 cancelledBeforeExecution = Task.isCancelled
             }
@@ -1412,40 +1730,24 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             }
             if let executor {
                 result = await executor.execute(
-                    name: tool.toolName,
-                    arguments: tool.input,
+                    tool: tool,
                     isUserInitiated: isUserInitiated
                 )
             } else {
                 result = .failed("[engine] no executor registered for tool `\(tool.toolName)`")
             }
 
-            if let ledger, let ledgerRunId {
-                let outcome: String
-                switch result {
-                case .filled, .filledParts:
-                    outcome = "completed"
-                case .needsApproval:
-                    outcome = "paused_for_approval"
-                case .denied:
-                    outcome = "denied"
-                case .failed:
-                    outcome = "failed"
-                }
-                await ledger.recordToolCallFinished(
-                    runId: ledgerRunId,
-                    toolCallId: tool.toolCallId,
-                    outcome: outcome
-                )
-            }
-
             var resultParts: [UIMessagePart]?
+            let outcome: String
             switch result {
             case .filled(let text):
+                outcome = "completed"
                 resultParts = [UIMessagePart.Text(text: text, metadata: nil)]
             case .filledParts(let parts):
+                outcome = "completed"
                 resultParts = parts
             case .needsApproval(let reason):
+                outcome = "paused_for_approval"
                 firstApproval = IOSPendingToolApproval(
                     toolCallId: tool.toolCallId,
                     toolName: tool.toolName,
@@ -1453,9 +1755,27 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     reason: reason
                 )
             case .denied(let reason):
+                outcome = "denied"
                 resultParts = [UIMessagePart.Text(text: "{\"denied\":\"\(sanitized(reason))\"}", metadata: nil)]
             case .failed(let reason):
+                outcome = "failed"
                 resultParts = [UIMessagePart.Text(text: "{\"error\":\"\(sanitized(reason))\"}", metadata: nil)]
+            }
+            if let ledger, let ledgerRunId {
+                if let resultParts {
+                    await ledger.recordToolCallTerminal(
+                        runId: ledgerRunId,
+                        toolCallId: tool.toolCallId,
+                        outcome: outcome,
+                        resultPayload: Self.encodeToolOutput(resultParts)
+                    )
+                } else {
+                    await ledger.recordToolCallFinished(
+                        runId: ledgerRunId,
+                        toolCallId: tool.toolCallId,
+                        outcome: outcome
+                    )
+                }
             }
             if var parts = resultParts {
                 // I-5 第 2 次相同签名:工具照常执行,把提醒追加为一个额外的
@@ -1554,6 +1874,14 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
             .replacingOccurrences(of: "\n", with: "\\n")
+    }
+
+    private static func encodeToolOutput(_ parts: [UIMessagePart]) -> String? {
+        IosToolOutputJsonBridge.shared.encode(parts: parts)
+    }
+
+    private static func decodeToolOutput(_ payload: String) -> [UIMessagePart]? {
+        try? IosToolOutputJsonBridge.shared.decode(json: payload)
     }
 
     /// Structured stop notice for a tool call `IOSToolLoopGuard` refused to run

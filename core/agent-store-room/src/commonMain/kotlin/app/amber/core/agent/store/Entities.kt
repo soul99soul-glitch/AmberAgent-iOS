@@ -32,6 +32,12 @@ data class AgentRunEntity(
     @ColumnInfo(name = "started_at") val startedAt: Long,
     @ColumnInfo(name = "finished_at") val finishedAt: Long?,
     @ColumnInfo(name = "interrupted_reason") val interruptedReason: String?,
+    @ColumnInfo(name = "terminal_reason") val terminalReason: String?,
+    @ColumnInfo(name = "provider_id") val providerId: String?,
+    @ColumnInfo(name = "model_id") val modelId: String?,
+    @ColumnInfo(name = "prompt_version") val promptVersion: String?,
+    @ColumnInfo(name = "tool_catalog_version") val toolCatalogVersion: String?,
+    @ColumnInfo(name = "capability_snapshot") val capabilitySnapshot: String?,
 )
 
 @Entity(
@@ -56,6 +62,37 @@ data class AgentEventEntity(
     @ColumnInfo(name = "agent_version") val agentVersion: String,
     @ColumnInfo(name = "is_final") val isFinal: Boolean,
     val ts: Long,
+    @ColumnInfo(name = "turn_id") val turnId: String?,
+    @ColumnInfo(name = "step_id") val stepId: String?,
+    @ColumnInfo(name = "tool_call_id") val toolCallId: String?,
+)
+
+/**
+ * Mutable execution head for one durable tool call.
+ *
+ * `agent_event` remains the append-only audit trail; this row is the small CAS
+ * surface that prevents foreground/background or approval-resume writers from
+ * executing the same side effect twice. The terminal result is kept only until
+ * the conversation snapshot has incorporated it, then cleared on reconciliation.
+ */
+@Entity(
+    tableName = "agent_tool_transaction",
+    primaryKeys = ["run_id", "tool_call_id"],
+    indices = [
+        Index("run_id"),
+        Index("state"),
+    ],
+)
+data class AgentToolTransactionEntity(
+    @ColumnInfo(name = "run_id") val runId: String,
+    @ColumnInfo(name = "tool_call_id") val toolCallId: String,
+    @ColumnInfo(name = "tool_name") val toolName: String,
+    @ColumnInfo(name = "args_digest") val argsDigest: String,
+    @ColumnInfo(name = "effect_class") val effectClass: String,
+    val state: String,
+    val outcome: String?,
+    @ColumnInfo(name = "result_payload") val resultPayload: String?,
+    @ColumnInfo(name = "updated_at") val updatedAt: Long,
 )
 
 @Entity(

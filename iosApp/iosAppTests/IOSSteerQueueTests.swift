@@ -216,17 +216,7 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.sendMessage())
         viewModel.generationActiveOverrideForTesting = nil
 
-        let coordinator = viewModel.generationCoordinatorForTesting
-        coordinator.installRunMetadataForTesting(
-            runId: "run-steer-terminal",
-            startedAt: 1,
-            inputDigest: "steer-digest",
-            conversationId: conversationId
-        )
-        XCTAssertTrue(coordinator.finishStreamingForTesting(
-            runId: "run-steer-terminal",
-            terminalEvent: .generationCompleted
-        ))
+        viewModel.handleSteerQueueAtRunTerminal(for: conversationId, autoContinue: true)
 
         // 成功终态：头一条上屏发出；下一条仍留队列；不回填 composer。
         XCTAssertTrue(viewModel.inputText.isEmpty)
@@ -430,18 +420,8 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.sendMessage())
         viewModel.generationActiveOverrideForTesting = nil
 
-        let coordinator = viewModel.generationCoordinatorForTesting
-        coordinator.installRunMetadataForTesting(
-            runId: "run-steer-image-terminal",
-            startedAt: 1,
-            inputDigest: "steer-image",
-            conversationId: conversationId
-        )
         // 取消/失败路径：含附件 leftover 不拼回 composer，留在队列条。
-        XCTAssertTrue(coordinator.finishStreamingForTesting(
-            runId: "run-steer-image-terminal",
-            terminalEvent: .generationCancelled
-        ))
+        viewModel.handleSteerQueueAtRunTerminal(for: conversationId, autoContinue: false)
 
         XCTAssertTrue(viewModel.inputText.isEmpty)
         XCTAssertEqual(viewModel.steerQueue.count, 1)
@@ -533,17 +513,7 @@ final class IOSSteerQueueTests: XCTestCase {
         XCTAssertTrue(viewModel.sendMessage())
         viewModel.generationActiveOverrideForTesting = nil
 
-        let coordinator = viewModel.generationCoordinatorForTesting
-        coordinator.installRunMetadataForTesting(
-            runId: "run-steer-mixed",
-            startedAt: 1,
-            inputDigest: "steer-mixed",
-            conversationId: conversationId
-        )
-        XCTAssertTrue(coordinator.finishStreamingForTesting(
-            runId: "run-steer-mixed",
-            terminalEvent: .generationCompleted
-        ))
+        viewModel.handleSteerQueueAtRunTerminal(for: conversationId, autoContinue: true)
 
         // 成功终态先发纯文本头一条；带图条目仍留队列。
         XCTAssertTrue(viewModel.inputText.isEmpty)

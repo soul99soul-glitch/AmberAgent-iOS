@@ -72,7 +72,9 @@ final class IOSPermissionStoreTests: XCTestCase {
             action: .allowed,
             reason: "password=secret token=abc123",
             runId: "run-1",
-            payloadDigest: "payload"
+            scopeDigest: "scope-digest",
+            payloadDigest: "payload-digest",
+            policyDigest: "policy-digest"
         )
 
         let reloaded = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
@@ -84,6 +86,9 @@ final class IOSPermissionStoreTests: XCTestCase {
         XCTAssertEqual(record.toolName, "remote_command_run")
         XCTAssertFalse(record.reason.contains("secret"))
         XCTAssertFalse(record.reason.contains("abc123"))
+        XCTAssertEqual(record.scopeDigest, "scope-digest")
+        XCTAssertEqual(record.payloadDigest, "payload-digest")
+        XCTAssertEqual(record.policyDigest, "policy-digest")
     }
 
     func testHighRiskAdvancedCapabilitiesDoNotOfferRunScopedReuse() throws {

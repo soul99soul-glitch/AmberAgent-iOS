@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 @preconcurrency import Shared
 
 // MARK: - W1 durable tool-execution ledger ("先记账，后动手")
@@ -8,9 +9,7 @@ import Foundation
 // BEFORE and AFTER the tool's side effect, so a process death mid-execution
 // leaves a durable "we called X and don't know if it finished" trace instead
 // of amnesia. This file only writes the ledger; W3 (crash-recovery UX) reads
-// it back and decides what to tell the user — the pairing/classification rule
-// it will need is included here as a pure function so its contract is locked
-// in now (`IOSToolCallLedgerClassifier`).
+// it back and decides what to tell the user.
 
 /// How safe a tool call is to blindly retry after its outcome becomes unknown
 /// (process died between Started and Finished). Four values only — amber
@@ -34,6 +33,104 @@ public enum IOSToolEffectClass: String, Sendable, Equatable {
     case sideEffect
 }
 
+public enum IOSToolTransactionState: String, Sendable, Equatable {
+    case prepared
+    case started
+    case waitingUser = "waiting_user"
+    case finished
+    case outcomeUnknown = "outcome_unknown"
+    case reconciled
+}
+
+public enum IOSToolTransactionPreparation: Sendable, Equatable {
+    case ready
+    case replay(resultPayload: String)
+    case blocked(reason: String)
+}
+
+public struct IOSToolTransactionSnapshot: Sendable, Equatable {
+    public let runId: String
+    public let toolCallId: String
+    public let toolName: String
+    public let argsDigest: String
+    public let effectClass: IOSToolEffectClass
+    public let state: IOSToolTransactionState
+    public let outcome: String?
+    public let resultPayload: String?
+}
+
+/// Secret-free logical request identity for one provider round.
+/// Raw messages, prompts and credentials stay out of the durable ledger; their
+/// canonical bytes are reduced to SHA-256 digests before this value is written.
+public struct IOSRunRequestSnapshot: Sendable, Equatable, Codable {
+    let roundIndex: Int
+    let requestDigest: String
+    let messageCount: Int
+    let systemPromptDigest: String
+    let generationParamsDigest: String
+    let toolCatalogDigest: String
+    let toolNames: [String]
+    let providerId: String
+    let modelId: String
+    let compactionRefs: [String]
+
+    static func make(
+        roundIndex: Int,
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams
+    ) -> IOSRunRequestSnapshot {
+        let bridge = IosRunRequestSnapshotJsonBridge.shared
+        let systemMessages = messages.filter { $0.role == MessageRole.system }
+        return IOSRunRequestSnapshot(
+            roundIndex: roundIndex,
+            requestDigest: sha256(bridge.encodeMessages(messages: messages)),
+            messageCount: messages.count,
+            systemPromptDigest: sha256(bridge.encodeMessages(messages: systemMessages)),
+            generationParamsDigest: sha256(bridge.encodeGenerationParams(params: params)),
+            toolCatalogDigest: sha256(bridge.encodeToolCatalog(tools: params.tools)),
+            toolNames: params.tools.map(\.name).sorted(),
+            providerId: providerSetting.id.description(),
+            modelId: params.model.modelId,
+            compactionRefs: compactHandoffRefs(in: systemMessages)
+        )
+    }
+
+    func withRoundIndex(_ roundIndex: Int) -> IOSRunRequestSnapshot {
+        IOSRunRequestSnapshot(
+            roundIndex: roundIndex,
+            requestDigest: requestDigest,
+            messageCount: messageCount,
+            systemPromptDigest: systemPromptDigest,
+            generationParamsDigest: generationParamsDigest,
+            toolCatalogDigest: toolCatalogDigest,
+            toolNames: toolNames,
+            providerId: providerId,
+            modelId: modelId,
+            compactionRefs: compactionRefs
+        )
+    }
+
+    private static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func compactHandoffRefs(in messages: [UIMessage]) -> [String] {
+        let prefix = "[Conversation compact handoff: "
+        var refs = Set<String>()
+        for text in messages.flatMap(\.parts).compactMap({ ($0 as? UIMessagePart.Text)?.text }) {
+            for line in text.split(separator: "\n") {
+                guard line.hasPrefix(prefix), line.hasSuffix("]") else { continue }
+                let start = line.index(line.startIndex, offsetBy: prefix.count)
+                let id = String(line[start..<line.index(before: line.endIndex)])
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !id.isEmpty { refs.insert(id) }
+            }
+        }
+        return refs.sorted()
+    }
+}
+
 /// Testable surface for the ledger. Production uses `IOSAgentRunLedger`
 /// (Room-backed); tests substitute a spy that records calls and can force a
 /// failure to exercise the fail-closed path without touching the real DB.
@@ -43,6 +140,21 @@ public enum IOSToolEffectClass: String, Sendable, Equatable {
 /// types to be at least as visible as the API itself, even though every
 /// conformer (`IOSAgentRunLedger`, the test spy) lives in this same module.
 public protocol IOSAgentRunLedgering: Sendable {
+    /// Must succeed before the provider sees this round. Failure prevents the
+    /// request, preserving a complete audit trail instead of an untracked call.
+    func recordRequestSnapshot(
+        runId: String,
+        snapshot: IOSRunRequestSnapshot
+    ) async -> Bool
+
+    func recordToolCallPrepared(
+        runId: String,
+        toolCallId: String,
+        toolName: String,
+        argsDigest: String,
+        effectClass: IOSToolEffectClass
+    ) async -> IOSToolTransactionPreparation
+
     @discardableResult
     func recordToolCallStarted(
         runId: String,
@@ -86,6 +198,86 @@ public protocol IOSAgentRunLedgering: Sendable {
         capabilityId: String?
     ) async
 
+    func recordToolCallTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?
+    ) async
+
+    func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]?
+
+    func transitionToolTransaction(
+        runId: String,
+        toolCallId: String,
+        expected: IOSToolTransactionState,
+        to state: IOSToolTransactionState,
+        outcome: String?,
+        resultPayload: String?
+    ) async -> Bool
+
+    func recordToolCallRecoveryTransition(
+        runId: String,
+        toolCallId: String,
+        expected: IOSToolTransactionState,
+        to state: IOSToolTransactionState,
+        outcome: String
+    ) async -> Bool
+
+}
+
+extension IOSAgentRunLedgering {
+    func recordRequestSnapshot(
+        runId: String,
+        snapshot: IOSRunRequestSnapshot
+    ) async -> Bool { true }
+
+    func recordToolCallPrepared(
+        runId: String,
+        toolCallId: String,
+        toolName: String,
+        argsDigest: String,
+        effectClass: IOSToolEffectClass
+    ) async -> IOSToolTransactionPreparation {
+        .ready
+    }
+
+    func recordToolCallTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?
+    ) async {
+        await recordToolCallFinished(runId: runId, toolCallId: toolCallId, outcome: outcome)
+    }
+
+    func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]? { nil }
+
+    func transitionToolTransaction(
+        runId: String,
+        toolCallId: String,
+        expected: IOSToolTransactionState,
+        to state: IOSToolTransactionState,
+        outcome: String?,
+        resultPayload: String?
+    ) async -> Bool { false }
+
+    func recordToolCallRecoveryTransition(
+        runId: String,
+        toolCallId: String,
+        expected: IOSToolTransactionState,
+        to state: IOSToolTransactionState,
+        outcome: String
+    ) async -> Bool {
+        await transitionToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: expected,
+            to: state,
+            outcome: outcome,
+            resultPayload: nil
+        )
+    }
 }
 
 /// Room-backed production ledger. Room allocates `seq` and copies run identity
@@ -93,12 +285,122 @@ public protocol IOSAgentRunLedgering: Sendable {
 actor IOSAgentRunLedger: IOSAgentRunLedgering {
     /// Ledger event type for an explicitly denied approval card (§11.1). Its
     /// `eventId` is the stable evidence ref for the denial.
-    static let approvalDeniedEventType = "approval_denied"
+    static let approvalDeniedEventType = "tool_approval_denied"
+    static let toolStartedEventType = "tool_started"
+    static let toolFinishedEventType = "tool_finished"
+    static let toolPreparedEventType = "tool_prepared"
+    static let toolOutcomeUnknownEventType = "tool_outcome_unknown"
+    static let toolReconciledEventType = "tool_reconciled"
+    static let requestSnapshotEventType = "request_snapshot"
 
+    private let dao: AgentRuntimeDao
     private let store: RoomAgentEventStore
 
     init(dao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao()) {
+        self.dao = dao
         self.store = RoomAgentEventStore(dao: dao)
+    }
+
+    func recordRequestSnapshot(
+        runId: String,
+        snapshot: IOSRunRequestSnapshot
+    ) async -> Bool {
+        guard let roundIndex = await nextRequestSnapshotIndex(runId: runId) else { return false }
+        let persistedSnapshot = snapshot.withRoundIndex(roundIndex)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        guard let data = try? encoder.encode(persistedSnapshot),
+              let payload = String(data: data, encoding: .utf8) else { return false }
+        return await append(
+            runId: runId,
+            event: AgentRunEvent(
+                eventId: UUID().uuidString,
+                type: Self.requestSnapshotEventType,
+                payloadType: Self.requestSnapshotEventType,
+                payload: payload,
+                payloadSchemaVersion: 1,
+                isFinal: false,
+                ts: Self.nowMillis(),
+                turnId: String(roundIndex),
+                stepId: String(roundIndex),
+                toolCallId: nil
+            )
+        )
+    }
+
+    private func nextRequestSnapshotIndex(runId: String) async -> Int? {
+        await withCheckedContinuation { continuation in
+            dao.listEventsForRun(id: runId) { rows, error in
+                guard error == nil, let rows else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let existingCount = rows.lazy.filter { $0.type == Self.requestSnapshotEventType }.count
+                continuation.resume(returning: existingCount + 1)
+            }
+        }
+    }
+
+    func recordToolCallPrepared(
+        runId: String,
+        toolCallId: String,
+        toolName: String,
+        argsDigest: String,
+        effectClass: IOSToolEffectClass
+    ) async -> IOSToolTransactionPreparation {
+        let transaction = AgentToolTransactionEntity(
+            runId: runId,
+            toolCallId: toolCallId,
+            toolName: toolName,
+            argsDigest: argsDigest,
+            effectClass: effectClass.rawValue,
+            state: IOSToolTransactionState.prepared.rawValue,
+            outcome: nil,
+            resultPayload: nil,
+            updatedAt: Self.nowMillis()
+        )
+        let inserted = await withCheckedContinuation { continuation in
+            dao.insertToolTransactionIfAbsent(transaction: transaction) { rowId, error in
+                continuation.resume(returning: error == nil && (rowId?.int64Value ?? -1) != -1)
+            }
+        }
+        if inserted {
+            let ok = await append(
+                runId: runId,
+                event: makeToolEvent(
+                    type: Self.toolPreparedEventType,
+                    toolCallId: toolCallId,
+                    fields: [
+                        "toolCallId": toolCallId,
+                        "toolName": toolName,
+                        "argsDigest": argsDigest,
+                        "effectClass": effectClass.rawValue,
+                    ]
+                )
+            )
+            if !ok {
+                _ = await transitionToolTransaction(
+                    runId: runId,
+                    toolCallId: toolCallId,
+                    expected: .prepared,
+                    to: .reconciled,
+                    outcome: "not_executed_prepared_event_failed",
+                    resultPayload: nil
+                )
+            }
+            return ok ? .ready : .blocked(reason: "could not durably append tool_prepared")
+        }
+
+        guard let existing = await toolTransaction(runId: runId, toolCallId: toolCallId) else {
+            return .blocked(reason: "tool transaction claim failed")
+        }
+        guard existing.toolName == toolName, existing.argsDigest == argsDigest else {
+            return .blocked(reason: "tool call identity changed for an existing transaction")
+        }
+        if existing.state == .finished, let payload = existing.resultPayload {
+            return .replay(resultPayload: payload)
+        }
+        return .blocked(reason: "tool transaction is already \(existing.state.rawValue)")
     }
 
     @discardableResult
@@ -109,24 +411,58 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         argsDigest: String,
         effectClass: IOSToolEffectClass
     ) async -> Bool {
+        if await toolTransaction(runId: runId, toolCallId: toolCallId) == nil {
+            guard await recordToolCallPrepared(
+                runId: runId,
+                toolCallId: toolCallId,
+                toolName: toolName,
+                argsDigest: argsDigest,
+                effectClass: effectClass
+            ) == .ready else { return false }
+        }
+        let current = await toolTransaction(runId: runId, toolCallId: toolCallId)
+        guard let expected = current?.state,
+              expected == .prepared || expected == .waitingUser,
+              await transitionToolTransaction(
+                runId: runId,
+                toolCallId: toolCallId,
+                expected: expected,
+                to: .started,
+                outcome: nil,
+                resultPayload: nil
+              ) else { return false }
         let payload = Self.jsonPayload([
             "toolCallId": toolCallId,
             "toolName": toolName,
             "argsDigest": argsDigest,
             "effectClass": effectClass.rawValue,
         ])
-        return await append(
+        let ok = await append(
             runId: runId,
             event: AgentRunEvent(
                 eventId: UUID().uuidString,
-                type: "tool_call_started",
-                payloadType: "tool_call_started",
+                type: Self.toolStartedEventType,
+                payloadType: Self.toolStartedEventType,
                 payload: payload,
                 payloadSchemaVersion: 1,
                 isFinal: false,
-                ts: Self.nowMillis()
+                ts: Self.nowMillis(),
+                turnId: nil,
+                stepId: nil,
+                toolCallId: toolCallId
             )
         )
+        if !ok {
+            _ = await transitionToolTransaction(
+                runId: runId,
+                toolCallId: toolCallId,
+                expected: .started,
+                to: .reconciled,
+                outcome: "not_executed_started_event_failed",
+                resultPayload: nil
+            )
+        }
+        return ok
     }
 
     /// Pre-contract overload: delegates to the full evolution-contract form
@@ -171,6 +507,60 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
         if let outcomeKind { fields["outcomeKind"] = outcomeKind }
         if let errorCode { fields["errorCode"] = errorCode }
         if let sourceRef { fields["sourceRef"] = sourceRef }
+        await finishToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            outcome: outcome,
+            resultPayload: nil,
+            fields: fields
+        )
+    }
+
+    func recordToolCallTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?
+    ) async {
+        await finishToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            outcome: outcome,
+            resultPayload: resultPayload,
+            fields: ["toolCallId": toolCallId, "outcome": outcome]
+        )
+    }
+
+    private func finishToolTransaction(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?,
+        fields: [String: String]
+    ) async {
+        if await toolTransaction(runId: runId, toolCallId: toolCallId) == nil {
+            let ok = await append(
+                runId: runId,
+                event: makeToolEvent(type: Self.toolFinishedEventType, toolCallId: toolCallId, fields: fields)
+            )
+            if !ok {
+                print("[AmberChat] non-executed tool terminal ledger write failed run=\(runId) toolCallId=\(toolCallId) outcome=\(outcome)")
+            }
+            return
+        }
+        let nextState: IOSToolTransactionState = outcome == "paused_for_approval" ? .waitingUser : .finished
+        let transitioned = await transitionToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: .started,
+            to: nextState,
+            outcome: outcome,
+            resultPayload: resultPayload
+        )
+        guard transitioned else {
+            print("[AmberChat] tool transaction finish CAS failed run=\(runId) toolCallId=\(toolCallId) outcome=\(outcome)")
+            return
+        }
         let payload = Self.jsonPayload(fields)
         // The attempt either produced an outcome or was definitively stopped
         // before its side effect began. A failed write here can't change that
@@ -179,17 +569,129 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
             runId: runId,
             event: AgentRunEvent(
                 eventId: UUID().uuidString,
-                type: "tool_call_finished",
-                payloadType: "tool_call_finished",
+                type: Self.toolFinishedEventType,
+                payloadType: Self.toolFinishedEventType,
                 payload: payload,
                 payloadSchemaVersion: 1,
                 isFinal: false,
-                ts: Self.nowMillis()
+                ts: Self.nowMillis(),
+                turnId: nil,
+                stepId: nil,
+                toolCallId: toolCallId
             )
         )
         if !ok {
             print("[AmberChat] tool_call_finished ledger write failed run=\(runId) toolCallId=\(toolCallId) outcome=\(outcome)")
         }
+    }
+
+    func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]? {
+        await withCheckedContinuation { continuation in
+            dao.listToolTransactionsForRun(runId: runId) { rows, error in
+                guard error == nil, let rows else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: rows.compactMap(Self.snapshot))
+            }
+        }
+    }
+
+    func transitionToolTransaction(
+        runId: String,
+        toolCallId: String,
+        expected: IOSToolTransactionState,
+        to state: IOSToolTransactionState,
+        outcome: String?,
+        resultPayload: String?
+    ) async -> Bool {
+        await withCheckedContinuation { continuation in
+            dao.transitionToolTransaction(
+                runId: runId,
+                toolCallId: toolCallId,
+                expectedState: expected.rawValue,
+                state: state.rawValue,
+                outcome: outcome,
+                resultPayload: resultPayload,
+                updatedAt: Self.nowMillis()
+            ) { count, error in
+                continuation.resume(returning: error == nil && (count?.intValue ?? 0) == 1)
+            }
+        }
+    }
+
+    func recordToolCallRecoveryTransition(
+        runId: String,
+        toolCallId: String,
+        expected: IOSToolTransactionState,
+        to state: IOSToolTransactionState,
+        outcome: String
+    ) async -> Bool {
+        guard state == .outcomeUnknown || state == .reconciled else { return false }
+        guard await transitionToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: expected,
+            to: state,
+            outcome: outcome,
+            resultPayload: nil
+        ) else { return false }
+        let type = state == .outcomeUnknown
+            ? Self.toolOutcomeUnknownEventType
+            : Self.toolReconciledEventType
+        let eventWritten = await append(
+            runId: runId,
+            event: makeToolEvent(
+                type: type,
+                toolCallId: toolCallId,
+                fields: ["toolCallId": toolCallId, "outcome": outcome]
+            )
+        )
+        if !eventWritten {
+            print("[AmberChat] tool recovery event write failed run=\(runId) toolCallId=\(toolCallId) state=\(state.rawValue)")
+        }
+        return true
+    }
+
+    private func toolTransaction(runId: String, toolCallId: String) async -> IOSToolTransactionSnapshot? {
+        await withCheckedContinuation { continuation in
+            dao.getToolTransaction(runId: runId, toolCallId: toolCallId) { row, error in
+                continuation.resume(returning: error == nil ? row.flatMap(Self.snapshot) : nil)
+            }
+        }
+    }
+
+    private nonisolated static func snapshot(_ row: AgentToolTransactionEntity) -> IOSToolTransactionSnapshot? {
+        guard let state = IOSToolTransactionState(rawValue: row.state) else { return nil }
+        return IOSToolTransactionSnapshot(
+            runId: row.runId,
+            toolCallId: row.toolCallId,
+            toolName: row.toolName,
+            argsDigest: row.argsDigest,
+            effectClass: IOSToolEffectClass(rawValue: row.effectClass) ?? .sideEffect,
+            state: state,
+            outcome: row.outcome,
+            resultPayload: row.resultPayload
+        )
+    }
+
+    private func makeToolEvent(
+        type: String,
+        toolCallId: String,
+        fields: [String: String]
+    ) -> AgentRunEvent {
+        AgentRunEvent(
+            eventId: UUID().uuidString,
+            type: type,
+            payloadType: type,
+            payload: Self.jsonPayload(fields),
+            payloadSchemaVersion: 1,
+            isFinal: false,
+            ts: Self.nowMillis(),
+            turnId: nil,
+            stepId: nil,
+            toolCallId: toolCallId
+        )
     }
 
     /// Approval-denial ledger event (§11.1 required evidence source). Written
@@ -221,7 +723,10 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
                 payload: payload,
                 payloadSchemaVersion: 1,
                 isFinal: false,
-                ts: Self.nowMillis()
+                ts: Self.nowMillis(),
+                turnId: nil,
+                stepId: nil,
+                toolCallId: toolCallId
             )
         )
         if !ok {
@@ -420,75 +925,31 @@ enum IOSToolEffectClassMapping {
     }
 }
 
-// MARK: - S3 ground work: pairing/classification (pure, no I/O)
-
-/// Recovery classification for one tool call's ledger trail, keyed off the
-/// LAST `tool_call_started` for that `toolCallId` (a call that was Started,
-/// paused for approval, Finished, then re-Started and re-Finished after
-/// approval has TWO pairs — only the latest matters for "is anything
-/// currently unresolved").
-enum IOSToolCallRecoveryOutcome: String, Equatable {
-    /// No unresolved call: either it never started, or the last Started has a
-    /// matching Finished (including the honest "paused_for_approval" outcome,
-    /// which the awaiting-permission recovery path already owns).
-    case clean
-    /// Last Started has no Finished, but the tool is pure/idempotent — safe to
-    /// offer an automatic retry.
-    case retryable
-    /// Last Started has no Finished and the tool is a side effect — must be
-    /// surfaced as "did this actually happen?" and never auto-retried.
-    case outcomeUnknown
-}
-
-/// One ledger row, reduced to what the classifier needs. Callers project
-/// `AgentEventEntity` rows (`type`/`seq`) into this before calling — kept
-/// separate from the Room entity so the classifier has zero KMP/Room
-/// dependency and can be exercised with plain fixtures.
-struct IOSToolCallLedgerEvent: Equatable {
-    let type: String
-    let seq: Int64
-}
-
 enum IOSToolCallLedgerClassifier {
-    static let startedType = "tool_call_started"
-    static let finishedType = "tool_call_finished"
+    static let startedType = IOSAgentRunLedger.toolStartedEventType
+    static let finishedType = IOSAgentRunLedger.toolFinishedEventType
+    private static let legacyStartedType = "tool_call_started"
+    private static let legacyFinishedType = "tool_call_finished"
 
-    /// `events` should already be filtered to one `toolCallId`'s rows; order
-    /// does not matter, this sorts by `seq` itself.
-    static func classify(
-        events: [IOSToolCallLedgerEvent],
-        effectClass: IOSToolEffectClass
-    ) -> IOSToolCallRecoveryOutcome {
-        let sorted = events.sorted { $0.seq < $1.seq }
-        guard let lastStarted = sorted.last(where: { $0.type == startedType }) else {
-            // Never started: nothing to reconcile.
-            return .clean
-        }
-        let hasFinishedAfter = sorted.contains { $0.type == finishedType && $0.seq > lastStarted.seq }
-        if hasFinishedAfter {
-            return .clean
-        }
-        switch effectClass {
-        case .sideEffect:
-            return .outcomeUnknown
-        case .pure, .networkRead, .idempotent:
-            return .retryable
-        }
+    static func isStarted(_ type: String) -> Bool {
+        type == startedType || type == legacyStartedType
     }
+
+    static func isFinished(_ type: String) -> Bool {
+        type == finishedType || type == legacyFinishedType
+    }
+
 }
 
 // MARK: - W3: crash-recovery UX (§W3, invariant I-3)
 //
-// The classifier above answers "is this toolCallId resolved" per call; W3's
-// recovery sweep needs one more layer on top of that to reach all three
-// documented states, including the third one (§W3 step 3 / task point 3):
+// W3's recovery sweep covers all three documented states, including the third
+// one (§W3 step 3 / task point 3):
 // a clean Started→Finished(completed) pairing whose result never reached the
 // persisted conversation (died between Finished and the turn-end message
 // save). That disambiguation needs the *outcome* string a Finished event
 // carries and whether the tool part's output is still empty — neither of
-// which `IOSToolCallLedgerClassifier.classify` looks at, by design (S2 kept
-// it minimal). `IOSToolCallRecoveryPlanner` below is additive, not a
-// replacement for it.
+// which simple Started/Finished pairing alone cannot distinguish.
 
 /// What a single toolCallId's ledger trail resolves to for the recovery UX.
 /// I-3: three durable outcomes, none of which is "silently rerun" — every
@@ -516,10 +977,18 @@ enum IOSToolCallRecoveryAction: Equatable {
     /// like any other tool result and re-issues the call itself if the task
     /// still needs it.
     case markRetryable
+    /// The app stopped while the tool was waiting for explicit approval. The
+    /// side effect never started; close the abandoned approval without implying
+    /// that the tool itself was side-effect free.
+    case markApprovalInterrupted
     /// Clean Started/Finished(completed) pairing, but the conversation's
     /// persisted tool part still has an empty output: the side effect ran to
     /// completion, only the write of its result never made it to disk.
     case markResultLost
+    /// A terminal result exists in the transaction row even though the
+    /// conversation snapshot did not yet contain it. Apply the stored parts;
+    /// never invoke the executor again.
+    case replayResult(String)
 
     /// User-visible text (I-3), rendered via `ChatToolOutputFormatter.failureReason(from:)`
     /// as the tool timeline's failed-step detail — the same JSON shape for
@@ -531,14 +1000,17 @@ enum IOSToolCallRecoveryAction: Equatable {
             return "应用中断，此操作是否已生效未知。为避免重复执行的风险，已停止自动重试。"
         case .markRetryable:
             return "应用中断，该操作未执行（该工具无副作用，可安全重试）。如任务仍需要，请重新调用此工具。"
+        case .markApprovalInterrupted:
+            return "App 在等待确认时中断，该操作尚未执行。本次调用已结束；如仍需要，请重新发起。"
         case .markResultLost:
             return "工具已执行完成，但结果在应用中断中丢失（不会重复执行）。"
+        case .replayResult:
+            return "工具结果已从安全恢复记录中还原。"
         }
     }
 }
 
-/// One decoded `agent_event` row, carrying what W3's grouping needs beyond
-/// `IOSToolCallLedgerEvent`'s bare type/seq. Built by best-effort parsing of
+/// One decoded `agent_event` row used by W3 grouping. Built by best-effort parsing of
 /// `AgentEventEntity.payload` (a flat JSON string — see `IOSAgentRunLedger`'s
 /// `jsonPayload`).
 struct IOSToolCallLedgerRow: Equatable {
@@ -569,7 +1041,7 @@ struct IOSToolCallLedgerRow: Equatable {
             return nil
         }
         var effectClass: IOSToolEffectClass?
-        if type == IOSToolCallLedgerClassifier.startedType {
+        if IOSToolCallLedgerClassifier.isStarted(type) {
             if let raw = object["effectClass"] as? String, let parsed = IOSToolEffectClass(rawValue: raw) {
                 effectClass = parsed
             } else {
@@ -598,12 +1070,12 @@ enum IOSToolCallRecoveryPlanner {
         var actions: [String: IOSToolCallRecoveryAction] = [:]
         for (toolCallId, toolRows) in byToolCallId {
             let sorted = toolRows.sorted { $0.seq < $1.seq }
-            guard let lastStarted = sorted.last(where: { $0.type == IOSToolCallLedgerClassifier.startedType }) else {
+            guard let lastStarted = sorted.last(where: { IOSToolCallLedgerClassifier.isStarted($0.type) }) else {
                 continue // Never started: nothing to reconcile.
             }
             let effectClass = lastStarted.effectClass ?? .sideEffect
             let finishedAfter = sorted.last(where: {
-                $0.type == IOSToolCallLedgerClassifier.finishedType && $0.seq > lastStarted.seq
+                IOSToolCallLedgerClassifier.isFinished($0.type) && $0.seq > lastStarted.seq
             })
             guard let finishedAfter else {
                 // Unresolved (same condition `classify` calls outcomeUnknown/retryable).
@@ -639,8 +1111,16 @@ enum IOSToolCallRecoveryPlanner {
 /// model's view instead of "staying resumable".
 enum IOSToolCallRecoveryApplier {
     static func apply(
-        _ actions: [String: IOSToolCallRecoveryAction],
+        _ plan: IOSToolCallRecoveryPlan,
         to messages: [UIMessage]
+    ) -> [UIMessage] {
+        apply(plan.actions, to: messages, toolNames: plan.toolNames)
+    }
+
+    static func apply(
+        _ actions: [String: IOSToolCallRecoveryAction],
+        to messages: [UIMessage],
+        toolNames: [String: String] = [:]
     ) -> [UIMessage] {
         guard !actions.isEmpty else { return messages }
         var result = messages
@@ -648,14 +1128,88 @@ enum IOSToolCallRecoveryApplier {
         // mercy of Dictionary's iteration order.
         for toolCallId in actions.keys.sorted() {
             guard let action = actions[toolCallId] else { continue }
-            guard let toolPart = result
+            let toolPart = result
                 .flatMap(\.parts)
                 .compactMap({ $0 as? UIMessagePart.Tool })
-                .first(where: { $0.toolCallId == toolCallId && $0.output.isEmpty }) else { continue }
-            let failureText = Self.failureJSON(toolName: toolPart.toolName, reason: action.toolPartMessage)
-            result = replacingToolOutput(toolCallId: toolCallId, outputText: failureText, in: result)
+                .first(where: { $0.toolCallId == toolCallId && $0.output.isEmpty })
+            let hasPersistedToolPart = result
+                .flatMap(\.parts)
+                .compactMap({ $0 as? UIMessagePart.Tool })
+                .contains(where: { $0.toolCallId == toolCallId })
+            if let toolPart {
+                let output = output(for: action, toolName: toolPart.toolName)
+                result = replacingToolOutput(toolCallId: toolCallId, output: output, in: result)
+            } else if !hasPersistedToolPart, let toolName = toolNames[toolCallId] {
+                result.append(recoveredToolMessage(
+                    toolCallId: toolCallId,
+                    toolName: toolName,
+                    output: output(for: action, toolName: toolName)
+                ))
+            }
         }
         return result
+    }
+
+    private static func output(
+        for action: IOSToolCallRecoveryAction,
+        toolName: String
+    ) -> [UIMessagePart] {
+        if case .replayResult(let payload) = action,
+           let replayed = try? IosToolOutputJsonBridge.shared.decode(json: payload) {
+            return replayed
+        }
+        return [UIMessagePart.Text(
+            text: failureJSON(toolName: toolName, reason: action.toolPartMessage),
+            metadata: nil
+        )]
+    }
+
+    private static func recoveredToolMessage(
+        toolCallId: String,
+        toolName: String,
+        output: [UIMessagePart]
+    ) -> UIMessage {
+        let seed = UIMessage.companion.assistant(prompt: "")
+        return UIMessage(
+            id: seed.id,
+            role: seed.role,
+            parts: [UIMessagePart.Tool(
+                toolCallId: toolCallId,
+                toolName: toolName,
+                input: #"{"recovered_from_transaction":true}"#,
+                output: output,
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )],
+            annotations: seed.annotations,
+            createdAt: seed.createdAt,
+            finishedAt: seed.finishedAt,
+            modelId: seed.modelId,
+            usage: seed.usage,
+            translation: seed.translation
+        )
+    }
+
+    static func applyOutcomeUnknownReconciliation(
+        toolCallId: String,
+        didApply: Bool,
+        to messages: [UIMessage]
+    ) -> [UIMessage] {
+        guard let toolName = messages
+            .flatMap(\.parts)
+            .compactMap({ $0 as? UIMessagePart.Tool })
+            .first(where: { $0.toolCallId == toolCallId })?.toolName else {
+            return messages
+        }
+        let reason = didApply
+            ? "用户确认：该操作已经生效。为避免重复执行，不会再次运行此工具。"
+            : "用户确认：该操作没有生效。本次调用已结束；如仍需要，请重新发起。"
+        let output = [UIMessagePart.Text(
+            text: failureJSON(toolName: toolName, reason: reason),
+            metadata: nil
+        )]
+        return replacingToolOutput(toolCallId: toolCallId, output: output, in: messages)
     }
 
     /// Same `{"ok":false,"tool":...,"reason":...}` shape as
@@ -676,7 +1230,7 @@ enum IOSToolCallRecoveryApplier {
 
     private static func replacingToolOutput(
         toolCallId: String,
-        outputText: String,
+        output: [UIMessagePart],
         in messages: [UIMessage]
     ) -> [UIMessage] {
         var didReplace = false
@@ -693,7 +1247,7 @@ enum IOSToolCallRecoveryApplier {
                     toolCallId: toolPart.toolCallId,
                     toolName: toolPart.toolName,
                     input: toolPart.input,
-                    output: [UIMessagePart.Text(text: outputText, metadata: nil)],
+                    output: output,
                     approvalState: toolPart.approvalState,
                     streamIndex: toolPart.streamIndex,
                     metadata: nil

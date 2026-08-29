@@ -360,9 +360,6 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertTrue(appearance.contains("applyTakingOverTryOn { runtime.paper = paper }"))
         XCTAssertTrue(appearance.contains("applyTakingOverTryOn { runtime.apply(option) }"))
         XCTAssertTrue(appearance.contains("AmberThemePackTransfer.document(from: runtime)"))
-        let coordinator = try source("iosApp/ChatGenerationCoordinator.swift")
-        XCTAssertTrue(coordinator.contains("discardPreparedThemeImport()"))
-        XCTAssertTrue(coordinator.contains("clearPendingMcpApproval(discardThemeTryOn: false)"))
     }
 
     func testTimelineTitles() {

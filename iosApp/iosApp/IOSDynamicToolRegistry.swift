@@ -94,7 +94,7 @@ enum IOSRecipePrimitiveCatalog {
 //    so in lazy mode (production catalog) they stay hidden until exposed.
 // 5. Phase 1 background (§16.2): recipes are NOT declared in the background
 //    catalog. The foreground handoff filters `recipe__*` names out of
-//    `fullToolNames` (see ChatGenerationCoordinator.refreshBackgroundHandoff),
+//    `fullToolNames` (see ChatKernelRunHost.refreshBackgroundHandoff),
 //    and the background bridge rebuild cannot reconstruct recipe names (they
 //    are not static KMP declarations) — so background behavior is unchanged
 //    and recipes simply do not exist there until the parity wave.

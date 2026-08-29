@@ -1359,7 +1359,7 @@ enum IOSGuizangHtmlDeckValidator {
         BlockedRule(pattern: #"\bmodulepreload\b"#, reason: "module preloads are not allowed"),
     ]
 
-    /// 是否含 slide 结构。被 ChatGenerationCoordinator 的终态校验（SLIDES 路由）
+    /// 是否含 slide 结构。被 ChatKernelRunHost 的终态校验（SLIDES 路由）
     /// 复用，因此不设 private。
     static func hasSlideLikeContent(_ html: String) -> Bool {
         html.containsMatch(pattern: #"<(?:section|article|div)\b(?=[^>]*(?:\bclass\s*=\s*(?:"[^"]*\bslide\b[^"]*"|'[^']*\bslide\b[^']*'|[^\s>]*\bslide\b[^\s>]*)|\bdata-slide(?:\s|=|>)))[^>]*>"#)

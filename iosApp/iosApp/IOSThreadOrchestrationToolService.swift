@@ -185,7 +185,8 @@ final class IOSThreadOrchestrationToolService {
         params: TextGenerationParams,
         runId: String,
         conversationId: KotlinUuid? = nil,
-        toolExposureBridge: IosToolExposureBridge? = nil
+        toolExposureBridge: IosToolExposureBridge? = nil,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) async -> String {
         switch toolName {
         case "spawn_agent":
@@ -195,7 +196,8 @@ final class IOSThreadOrchestrationToolService {
                 params: params,
                 parentRunId: runId,
                 conversationId: conversationId,
-                toolExposureBridge: toolExposureBridge
+                toolExposureBridge: toolExposureBridge,
+                executionPolicy: executionPolicy
             )
         case "list_agents":
             return await listAgents(arguments: arguments, conversationId: conversationId)
@@ -210,7 +212,8 @@ final class IOSThreadOrchestrationToolService {
                 params: params,
                 runId: runId,
                 conversationId: conversationId,
-                toolExposureBridge: toolExposureBridge
+                toolExposureBridge: toolExposureBridge,
+                executionPolicy: executionPolicy
             )
         case "wait_agent":
             return await waitAgent(arguments: arguments, conversationId: conversationId)
@@ -236,7 +239,8 @@ final class IOSThreadOrchestrationToolService {
         params: TextGenerationParams,
         parentRunId: String,
         conversationId: KotlinUuid?,
-        toolExposureBridge: IosToolExposureBridge?
+        toolExposureBridge: IosToolExposureBridge?,
+        executionPolicy: IOSExecutionPolicySnapshot?
     ) async -> String {
         guard let args = ChatToolCallParsing.jsonObject(arguments),
               let taskNameRaw = args["task_name"] as? String,
@@ -437,7 +441,8 @@ final class IOSThreadOrchestrationToolService {
             params: params,
             runId: childRunId,
             store: store,
-            toolExposureBridge: toolExposureBridge
+            toolExposureBridge: toolExposureBridge,
+            executionPolicy: executionPolicy
         ) else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -687,7 +692,8 @@ final class IOSThreadOrchestrationToolService {
         params: TextGenerationParams,
         runId: String,
         conversationId: KotlinUuid?,
-        toolExposureBridge: IosToolExposureBridge?
+        toolExposureBridge: IosToolExposureBridge?,
+        executionPolicy: IOSExecutionPolicySnapshot?
     ) async -> String {
         guard let args = ChatToolCallParsing.jsonObject(arguments),
               let targetRaw = args["target"] as? String,
@@ -814,7 +820,8 @@ final class IOSThreadOrchestrationToolService {
             params: params,
             runId: targetRunId,
             store: store,
-            toolExposureBridge: toolExposureBridge
+            toolExposureBridge: toolExposureBridge,
+            executionPolicy: executionPolicy
         ) else {
             return Self.errorJSON(
                 toolName: "followup_task",
@@ -1004,7 +1011,8 @@ final class IOSThreadOrchestrationToolService {
         params: TextGenerationParams,
         runId: String,
         store: IOSConversationStore,
-        toolExposureBridge: IosToolExposureBridge?
+        toolExposureBridge: IosToolExposureBridge?,
+        executionPolicy: IOSExecutionPolicySnapshot?
     ) async -> IOSChatBackgroundHandoff? {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let inputDigest = chatInputDigest(for: renderedText)
@@ -1023,7 +1031,7 @@ final class IOSThreadOrchestrationToolService {
             targetMessages: targetMessages,
             soulMarkdown: soulMarkdown()
         )
-        // M3: fullToolNames 取 run 的桥全目录（对齐 ChatGenerationCoordinator
+        // M3: fullToolNames 取 run 的桥全目录（对齐 ChatKernelRunHost
         // handoff 的做法）——params.tools 只是当轮可见子集，子线程目录会被
         // 永久截断（未暴露的 wm_* 等永远不可 search/命中）。桥不可用回退现行为。
         let fullToolNames = toolExposureBridge?.fullToolDeclarations().map(\.name)
@@ -1048,7 +1056,8 @@ final class IOSThreadOrchestrationToolService {
             mode: .continueModel,
             generativeUiRequirement: .none,
             generativeUiFallbackAttempted: false,
-            fullToolNames: fullToolNames
+            fullToolNames: fullToolNames,
+            executionPolicy: executionPolicy
         )
         let didStart = backgroundCoordinator.start(
             handoff: handoff,

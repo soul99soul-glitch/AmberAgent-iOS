@@ -112,11 +112,10 @@ struct NovelSessionPresentationBuffer {
 
 /// Pure presentation drain for novel streaming.
 ///
-/// The per-tick advance policy is shared with Chat via
-/// `StreamPresentationPacingPolicy` — this type only adapts it to the novel
-/// session's single-String shape. Terminal drain uses the same continuous
-/// whoosh curve as `ChatStreamPresentationPacer` (fixed advance anchor +
-/// dynamic tick interval), not the live streaming 36-char cap.
+/// The per-tick advance policy comes from `StreamPresentationPacingPolicy`;
+/// this type only adapts it to the novel session's single-String shape.
+/// Terminal drain uses the shared continuous whoosh curve (fixed advance
+/// anchor + dynamic tick interval), not the live streaming 36-char cap.
 enum NovelSessionPresentationPacer {
     enum Mode {
         case streaming

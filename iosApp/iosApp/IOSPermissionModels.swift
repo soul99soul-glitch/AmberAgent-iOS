@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 enum IOSCapabilityStatus: String, CaseIterable, Identifiable {
     case supported
@@ -1699,6 +1700,57 @@ enum IOSToolApprovalAction: String, Codable, Equatable, Identifiable {
     }
 }
 
+/// Immutable, secret-free policy values captured once when an agent run starts.
+/// Tool declarations are already frozen in `TextGenerationParams`; this snapshot
+/// closes the remaining execution-time policy reads that used to change between
+/// provider rounds or after a foreground-to-background handoff.
+struct IOSExecutionPolicySnapshot: Codable, Equatable, Sendable {
+    let capabilityPolicies: [String: String]
+    let globalAutoApproveEnabled: Bool
+    let highRiskAutoApproveEnabled: Bool
+    let execJavaScriptEnabled: Bool
+    let webSearchEnabled: Bool
+    let mcpEnabled: Bool?
+
+    init(
+        capabilityPolicies: [String: String],
+        globalAutoApproveEnabled: Bool,
+        highRiskAutoApproveEnabled: Bool,
+        execJavaScriptEnabled: Bool,
+        webSearchEnabled: Bool,
+        mcpEnabled: Bool? = nil
+    ) {
+        self.capabilityPolicies = capabilityPolicies
+        self.globalAutoApproveEnabled = globalAutoApproveEnabled
+        self.highRiskAutoApproveEnabled = highRiskAutoApproveEnabled
+        self.execJavaScriptEnabled = execJavaScriptEnabled
+        self.webSearchEnabled = webSearchEnabled
+        self.mcpEnabled = mcpEnabled
+    }
+
+    func policy(for capability: IOSPlatformCapability) -> IOSAgentPermissionPolicy {
+        capabilityPolicies[capability.id]
+            .flatMap(IOSAgentPermissionPolicy.init(rawValue:))
+            ?? IOSPermissionStore.defaultPolicy(for: capability)
+    }
+
+    var encodedJSON: String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    var digest: String {
+        let data = Data((encodedJSON ?? "{}").utf8)
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func decode(json: String) -> IOSExecutionPolicySnapshot? {
+        try? JSONDecoder().decode(Self.self, from: Data(json.utf8))
+    }
+}
+
 struct IOSToolApprovalRecord: Codable, Equatable, Identifiable {
     var id: String
     var capabilityId: String
@@ -1708,6 +1760,7 @@ struct IOSToolApprovalRecord: Codable, Equatable, Identifiable {
     var runId: String
     var scopeDigest: String
     var payloadDigest: String
+    var policyDigest: String? = nil
     var createdAt: Date
 }
 
@@ -1789,6 +1842,7 @@ final class IOSPermissionStore {
         runId: String = "",
         scopeDigest: String = "",
         payloadDigest: String = "",
+        policyDigest: String? = nil,
         now: Date = Date()
     ) -> IOSToolApprovalRecord {
         let record = IOSToolApprovalRecord(
@@ -1800,6 +1854,7 @@ final class IOSPermissionStore {
             runId: IOSAdvancedTaskStore.redacted(runId),
             scopeDigest: IOSAdvancedTaskStore.redacted(scopeDigest),
             payloadDigest: IOSAdvancedTaskStore.redacted(payloadDigest),
+            policyDigest: policyDigest.map(IOSAdvancedTaskStore.redacted),
             createdAt: now
         )
         approvalRecords.insert(record, at: 0)
@@ -1836,7 +1891,7 @@ final class IOSPermissionStore {
         Self.availablePolicies(for: capability)
     }
 
-    static func availablePolicies(for capability: IOSPlatformCapability) -> [IOSAgentPermissionPolicy] {
+    nonisolated static func availablePolicies(for capability: IOSPlatformCapability) -> [IOSAgentPermissionPolicy] {
         if capability.status == .unsupported {
             return [.disabled]
         }
@@ -1848,7 +1903,7 @@ final class IOSPermissionStore {
         return [.disabled, .askEveryTime, .autoApprove]
     }
 
-    static func defaultPolicy(for capability: IOSPlatformCapability) -> IOSAgentPermissionPolicy {
+    nonisolated static func defaultPolicy(for capability: IOSPlatformCapability) -> IOSAgentPermissionPolicy {
         let preferred: IOSAgentPermissionPolicy = capability.defaultEnabled ? .askEveryTime : .disabled
         return availablePolicies(for: capability).contains(preferred)
             ? preferred

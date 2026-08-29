@@ -486,7 +486,38 @@ final class IOSAgentToolEngineTests: XCTestCase {
     }
 
     actor RecordingLedger: IOSAgentRunLedgering {
+        private let preparation: IOSToolTransactionPreparation
+        private let requestSnapshotResult: Bool
         private var finishedOutcomes: [String] = []
+        private var startedCount = 0
+        private var requestSnapshots: [IOSRunRequestSnapshot] = []
+
+        init(
+            preparation: IOSToolTransactionPreparation = .ready,
+            requestSnapshotResult: Bool = true
+        ) {
+            self.preparation = preparation
+            self.requestSnapshotResult = requestSnapshotResult
+        }
+
+        func recordRequestSnapshot(
+            runId: String,
+            snapshot: IOSRunRequestSnapshot
+        ) async -> Bool {
+            guard requestSnapshotResult else { return false }
+            requestSnapshots.append(snapshot)
+            return true
+        }
+
+        func recordToolCallPrepared(
+            runId: String,
+            toolCallId: String,
+            toolName: String,
+            argsDigest: String,
+            effectClass: IOSToolEffectClass
+        ) async -> IOSToolTransactionPreparation {
+            preparation
+        }
 
         func recordToolCallStarted(
             runId: String,
@@ -495,7 +526,8 @@ final class IOSAgentToolEngineTests: XCTestCase {
             argsDigest: String,
             effectClass: IOSToolEffectClass
         ) async -> Bool {
-            true
+            startedCount += 1
+            return true
         }
 
         func recordToolCallFinished(
@@ -534,6 +566,9 @@ final class IOSAgentToolEngineTests: XCTestCase {
         func outcomes() -> [String] {
             finishedOutcomes
         }
+
+        func starts() -> Int { startedCount }
+        func snapshots() -> [IOSRunRequestSnapshot] { requestSnapshots }
     }
 
     /// A scripted executor that returns a fixed result per tool name, and
@@ -585,6 +620,68 @@ final class IOSAgentToolEngineTests: XCTestCase {
         let last = result.messages.last
         XCTAssertEqual(last?.role, MessageRole.assistant)
         XCTAssertTrue(last?.parts.first is UIMessagePart.Text)
+    }
+
+    func testEveryProviderRoundRecordsPreparedRequestSnapshot() async {
+        let provider = ScriptedProvider([
+            toolCallMessage(toolCallId: "tc-1", toolName: "echo", input: "{}"),
+            assistantText("done"),
+        ])
+        let ledger = RecordingLedger()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["echo": RecordingExecutor(.filled("{\"ok\":true}"))],
+            configuration: .init(maxSteps: 4),
+            ledger: ledger,
+            ledgerRunId: "request-snapshot-run"
+        )
+        let compact = makeMessage(
+            role: MessageRole.system,
+            parts: [UIMessagePart.Text(
+                text: "[Conversation compact handoff: compact-42]\n\nsummary",
+                metadata: nil
+            )]
+        )
+        let compactBox = IOSMailboxDrainResult(values: [compact])
+
+        _ = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("private request text")],
+            params: makeParams(tools: ["echo"]),
+            prepareRequestMessages: { messages in compactBox.values + messages }
+        )
+
+        let snapshots = await ledger.snapshots()
+        XCTAssertEqual(provider.callCount, 2)
+        XCTAssertEqual(snapshots.map(\.roundIndex), [1, 2])
+        XCTAssertEqual(snapshots.map(\.compactionRefs), [["compact-42"], ["compact-42"]])
+        // This fixture intentionally cannot construct a bridged Kotlin Tool,
+        // so the actual outbound tool catalog is empty even though the scripted
+        // provider returns an `echo` call.
+        XCTAssertEqual(snapshots.map(\.toolNames), [[], []])
+        XCTAssertTrue(snapshots.allSatisfy { $0.toolCatalogDigest.count == 64 })
+        XCTAssertNotEqual(snapshots[0].requestDigest, snapshots[1].requestDigest)
+        XCTAssertTrue(snapshots.allSatisfy { $0.requestDigest.count == 64 })
+    }
+
+    func testRequestSnapshotWriteFailurePreventsProviderInvocation() async {
+        let provider = ScriptedProvider([assistantText("must not run")])
+        let ledger = RecordingLedger(requestSnapshotResult: false)
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: [:],
+            ledger: ledger,
+            ledgerRunId: "request-snapshot-failure"
+        )
+
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("hello")],
+            params: makeParams(tools: [])
+        )
+
+        XCTAssertEqual(provider.callCount, 0)
+        XCTAssertEqual(result.providerFailureMessage, "request snapshot ledger write failed")
     }
 
     func testProviderFailureIsExposedWithoutParsingTheTranscript() async {
@@ -1299,6 +1396,58 @@ final class IOSAgentToolEngineTests: XCTestCase {
         XCTAssertEqual(provider.callCount, 1, "engine must not re-prompt the model to regenerate an already-present tool call")
     }
 
+    func testPreExistingBatchSurfacesSecondApprovalBeforeStreaming() async {
+        let pendingTurn = makeMessage(
+            role: MessageRole.assistant,
+            parts: [
+                UIMessagePart.Tool(
+                    toolCallId: "read-1",
+                    toolName: "read_tool",
+                    input: "{}",
+                    output: [],
+                    approvalState: ToolApprovalState.Auto.shared,
+                    streamIndex: nil,
+                    metadata: nil
+                ),
+                UIMessagePart.Tool(
+                    toolCallId: "approval-2",
+                    toolName: "sensitive_tool",
+                    input: "{}",
+                    output: [],
+                    approvalState: ToolApprovalState.Auto.shared,
+                    streamIndex: nil,
+                    metadata: nil
+                ),
+            ]
+        )
+        let provider = ScriptedProvider([assistantText("should-not-reach")])
+        let readExecutor = RecordingExecutor(.filled("{\"ok\":true}"))
+        let approvalExecutor = RecordingExecutor(.needsApproval("second approval required"))
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: [
+                "read_tool": readExecutor,
+                "sensitive_tool": approvalExecutor,
+            ],
+            configuration: .init(maxSteps: 4, honorApprovalPause: true)
+        )
+
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("continue pending batch"), pendingTurn],
+            params: makeParams(tools: ["read_tool", "sensitive_tool"])
+        )
+
+        XCTAssertEqual(provider.callCount, 0, "pre-existing approval must pause before another model round")
+        XCTAssertEqual(readExecutor.calls.count, 1)
+        XCTAssertEqual(approvalExecutor.calls.count, 1)
+        XCTAssertEqual(result.pendingApproval?.toolCallId, "approval-2")
+        XCTAssertEqual(result.pendingApproval?.reason, "second approval required")
+        let tools = result.messages[1].parts.compactMap { $0 as? UIMessagePart.Tool }
+        XCTAssertFalse(tools.first { $0.toolCallId == "read-1" }?.output.isEmpty ?? true)
+        XCTAssertTrue(tools.first { $0.toolCallId == "approval-2" }?.output.isEmpty == true)
+    }
+
     func testExecutionCallbacksBracketPreExistingAndFreshToolsInOrder() async {
         let provider = ScriptedProvider([
             toolCallMessage(
@@ -1335,7 +1484,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             onAssistantTurnStarted: {
                 events.append("assistant")
             },
-            onToolExecutionStarted: { toolName in
+            onToolExecutionStarted: { toolName, _ in
                 events.append("tool:\(toolName)")
             }
         )
@@ -1383,7 +1532,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
                 providerSetting: providerSetting,
                 messages: input,
                 params: params,
-                onToolExecutionStarted: { _ in
+                onToolExecutionStarted: { _, _ in
                     await gate.suspend()
                 }
             )
@@ -1437,6 +1586,41 @@ final class IOSAgentToolEngineTests: XCTestCase {
         XCTAssertEqual(executor.calls.count, 1, "a tool whose output is already filled must not be re-executed")
         XCTAssertEqual(provider.callCount, 2, "the engine must continue to the provider's final text turn")
         XCTAssertEqual(result.messages.last?.toText(), "done")
+    }
+
+    func testFinishedTransactionReplaysStoredResultWithoutCallingExecutor() async {
+        let payload = IosToolOutputJsonBridge.shared.encode(parts: [
+            UIMessagePart.Text(text: "{\"ok\":true,\"source\":\"replay\"}", metadata: nil),
+        ])
+        let ledger = RecordingLedger(preparation: .replay(resultPayload: payload))
+        let executor = RecordingExecutor(.filled("{\"ok\":true,\"source\":\"executor\"}"))
+        let engine = IOSAgentToolEngine(
+            provider: ScriptedProvider([]),
+            executors: ["generate_image": executor],
+            ledger: ledger,
+            ledgerRunId: "finished-replay"
+        )
+
+        let result = await engine.executePreExistingToolsOnly(messages: [
+            toolCallMessage(
+                toolCallId: "image-replay-1",
+                toolName: "generate_image",
+                input: "{\"prompt\":\"cat\"}"
+            ),
+        ])
+
+        let output = result
+            .flatMap(\.parts)
+            .compactMap { $0 as? UIMessagePart.Tool }
+            .first?.output
+            .compactMap { ($0 as? UIMessagePart.Text)?.text }
+            .first
+        XCTAssertEqual(output, "{\"ok\":true,\"source\":\"replay\"}")
+        XCTAssertEqual(executor.calls.count, 0)
+        let starts = await ledger.starts()
+        let outcomes = await ledger.outcomes()
+        XCTAssertEqual(starts, 0)
+        XCTAssertTrue(outcomes.isEmpty)
     }
 
     func testCompletedToolEchoIsRemovedWhenSameTurnAlsoContainsTextAndANewTool() async {

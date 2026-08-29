@@ -83,6 +83,11 @@ final class IOSMcpManagerTests: XCTestCase {
         XCTAssertTrue(manager.tools.isEmpty)
         XCTAssertTrue(manager.statusByServer.isEmpty)
         XCTAssertFalse(fakeClient.didConnect)
+
+        await manager.syncAll(enabledOverride: true)
+
+        XCTAssertTrue(fakeClient.didConnect)
+        XCTAssertEqual(manager.statusByServer["docs"], .connected)
     }
 
     func testSyncAllDisconnectsServerWhenConfigTurnsOff() async {

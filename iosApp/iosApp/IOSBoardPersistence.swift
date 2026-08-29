@@ -3745,15 +3745,24 @@ enum IOSDeepReadDraftGenerator {
             provider: provider
         )
         do {
-            let boxed = try await withTimeout(seconds: timeoutSeconds) {
-                try await DeepReadChunkBox(chunk: request.provider.generateText(
+            let result = try await withTimeout(seconds: timeoutSeconds) {
+                await IOSAgentToolEngine(
+                    provider: request.provider,
+                    executors: [:],
+                    configuration: .init(maxSteps: 1, honorApprovalPause: false)
+                ).run(
                     providerSetting: request.providerSetting,
                     messages: request.messages,
                     params: request.params
-                ))
+                )
             }
-            let chunk = boxed.chunk
-            let text = (chunk.choices.first?.message?.parts ?? [])
+            if let failure = result.providerFailureMessage {
+                return ("", failure)
+            }
+            if result.hitStepLimit || result.pendingApproval != nil {
+                return ("", "深度阅读生成未在单轮内完成。")
+            }
+            let text = (result.messages.last(where: { $0.role == MessageRole.assistant })?.parts ?? [])
                 .compactMap { $0 as? UIMessagePart.Text }
                 .map { $0.text }
                 .joined(separator: "")
@@ -3882,10 +3891,6 @@ enum IOSDeepReadDraftGenerator {
         let messages: [UIMessage]
         let params: TextGenerationParams
         let provider: IOSAgentTextProvider
-    }
-
-    private struct DeepReadChunkBox: @unchecked Sendable {
-        let chunk: MessageChunk
     }
 
     private struct IOSDeepReadStageTimeoutError: Error, LocalizedError {

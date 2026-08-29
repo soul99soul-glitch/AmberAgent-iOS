@@ -27,7 +27,7 @@ class DurableRunStoreTest {
     private fun open(path: String): AgentRuntimeDatabase =
         Room.databaseBuilder<AgentRuntimeDatabase>(name = path)
             .setDriver(BundledSQLiteDriver())
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
 
     private fun run(
@@ -55,17 +55,26 @@ class DurableRunStoreTest {
 
     private fun event(id: String) = AgentRunEvent(
         eventId = id,
-        type = "tool_result",
+        type = "tool_finished",
         payloadType = "application/json",
         payload = "{\"id\":\"$id\"}",
         payloadSchemaVersion = 1,
         isFinal = true,
         ts = 2_000,
+        turnId = "turn-$id",
+        stepId = "step-$id",
+        toolCallId = "tool-$id",
     )
 
     @Test
     fun persistedStatusDecodeKeepsSharedLifecycleClosed() {
         assertEquals(AgentRunStatus.RECOVERY_PENDING, AgentRunStatus.fromWireName("recovery_pending"))
+        assertEquals("resumable", AgentRunStatus.RECOVERY_PENDING.wireName)
+        assertEquals(AgentRunStatus.AWAITING_PERMISSION, AgentRunStatus.fromWireName("awaiting_permission"))
+        assertEquals("waiting_user", AgentRunStatus.AWAITING_PERMISSION.wireName)
+        assertTrue(AgentRunStatus.RUNNING.canTransitionTo(AgentRunStatus.WAITING_EXTERNAL))
+        assertTrue(AgentRunStatus.RUNNING.canTransitionTo(AgentRunStatus.OUTCOME_UNKNOWN))
+        assertTrue(AgentRunStatus.CREATED.canTransitionTo(AgentRunStatus.INTERRUPTED))
         assertEquals(AgentRunStatus.CANCELLED, AgentRunStatus.fromWireName("cancelled"))
         assertEquals(AgentRunStatus.FAILED, AgentRunStatus.fromWireName("truncated"))
         assertEquals(AgentRunStatus.FAILED, AgentRunStatus.fromWireName("guard_stopped"))
@@ -77,7 +86,13 @@ class DurableRunStoreTest {
     fun startRunIsIdempotentAndDoesNotReplaceExistingIdentity() = runTest {
         val db = open(newPath("start"))
         val store = RoomAgentEventStore(db.agentRuntimeDao())
-        val original = run(id = "run-1", descriptor = "chat_turn")
+        val original = run(id = "run-1", descriptor = "chat_turn").copy(
+            providerId = "provider-1",
+            modelId = "model-1",
+            promptVersion = "prompt-v1",
+            toolCatalogVersion = "tools-v2",
+            capabilitySnapshot = "{\"network\":false}",
+        )
 
         assertTrue(store.startRun(original))
         assertTrue(
@@ -96,6 +111,11 @@ class DurableRunStoreTest {
         assertEquals(AgentRunStatus.COMPLETED, persisted.status)
         assertEquals("chat_turn", persisted.agentDescriptorId)
         assertEquals("digest-run-1", persisted.inputDigest)
+        assertEquals("provider-1", persisted.providerId)
+        assertEquals("model-1", persisted.modelId)
+        assertEquals("prompt-v1", persisted.promptVersion)
+        assertEquals("tools-v2", persisted.toolCatalogVersion)
+        assertEquals("{\"network\":false}", persisted.capabilitySnapshot)
         assertEquals(2_000L, persisted.finishedAt)
         db.close()
     }
@@ -159,6 +179,7 @@ class DurableRunStoreTest {
         assertEquals(AgentRunStatus.RECOVERY_PENDING, pending.status)
         assertEquals("snapshot-1", pending.inputSnapshotRef)
         assertNull("non-terminal transitions must clear finishedAt", pending.finishedAt)
+        assertNull("non-terminal detail is not a terminal reason", pending.terminalReason)
 
         assertFalse(
             "a stale writer must not settle the run",
@@ -198,7 +219,7 @@ class DurableRunStoreTest {
                 expectedStatus = AgentRunStatus.RUNNING,
                 status = AgentRunStatus.COMPLETED,
                 inputSnapshotRef = "snapshot-1",
-                detail = null,
+                detail = "completed_normally",
                 at = 4_000,
             ),
         )
@@ -206,6 +227,7 @@ class DurableRunStoreTest {
         val completed = store.getRun(AgentRunId("run-1"))!!
         assertEquals(AgentRunStatus.COMPLETED, completed.status)
         assertEquals(4_000L, completed.finishedAt)
+        assertEquals("completed_normally", completed.terminalReason)
         assertFalse(
             "terminal runs cannot be reopened",
             store.transitionRun(
@@ -242,11 +264,79 @@ class DurableRunStoreTest {
         assertTrue(persisted.all { it.parentRunId == "parent-1" })
         assertTrue(persisted.all { it.agentDescriptorId == "chat_turn" })
         assertTrue(persisted.all { it.agentVersion == "1.0.0" })
+        assertTrue(persisted.all { it.turnId == "turn-${it.eventId}" })
+        assertTrue(persisted.all { it.stepId == "step-${it.eventId}" })
+        assertTrue(persisted.all { it.toolCallId == "tool-${it.eventId}" })
+        assertTrue(persisted.all { it.type == "tool_finished" })
         assertFalse(first.appendRunEvent(AgentRunId("missing"), event("orphan")))
         assertFalse(first.appendRunEvent(AgentRunId("run-1"), event("event-1")))
         assertEquals(40, first.listRunEvents(AgentRunId("run-1")).size)
 
         secondDb.close()
         firstDb.close()
+    }
+
+    @Test
+    fun toolTransactionClaimAndTransitionsUseCompareAndSet() = runTest {
+        val db = open(newPath("tool-transaction"))
+        val dao = db.agentRuntimeDao()
+        val store = RoomAgentEventStore(dao)
+        assertTrue(store.startRun(run(id = "run-tool")))
+        val transaction = AgentToolTransactionEntity(
+            runId = "run-tool",
+            toolCallId = "tool-1",
+            toolName = "workspace_file_write",
+            argsDigest = "args-digest",
+            effectClass = "sideEffect",
+            state = "prepared",
+            outcome = null,
+            resultPayload = null,
+            updatedAt = 1_000,
+        )
+
+        assertTrue(dao.insertToolTransactionIfAbsent(transaction) != -1L)
+        assertEquals(-1L, dao.insertToolTransactionIfAbsent(transaction))
+        assertEquals(
+            1,
+            dao.transitionToolTransaction(
+                runId = "run-tool",
+                toolCallId = "tool-1",
+                expectedState = "prepared",
+                state = "started",
+                outcome = null,
+                resultPayload = null,
+                updatedAt = 2_000,
+            ),
+        )
+        assertEquals(
+            0,
+            dao.transitionToolTransaction(
+                runId = "run-tool",
+                toolCallId = "tool-1",
+                expectedState = "prepared",
+                state = "started",
+                outcome = null,
+                resultPayload = null,
+                updatedAt = 2_001,
+            ),
+        )
+        assertEquals(
+            1,
+            dao.transitionToolTransaction(
+                runId = "run-tool",
+                toolCallId = "tool-1",
+                expectedState = "started",
+                state = "finished",
+                outcome = "completed",
+                resultPayload = "[{\"type\":\"text\",\"text\":\"ok\"}]",
+                updatedAt = 3_000,
+            ),
+        )
+        val finished = dao.getToolTransaction("run-tool", "tool-1")!!
+        assertEquals("finished", finished.state)
+        assertEquals("completed", finished.outcome)
+        assertTrue(finished.resultPayload?.contains("ok") == true)
+        assertEquals(listOf("tool-1"), dao.listToolTransactionsForRun("run-tool").map { it.toolCallId })
+        db.close()
     }
 }

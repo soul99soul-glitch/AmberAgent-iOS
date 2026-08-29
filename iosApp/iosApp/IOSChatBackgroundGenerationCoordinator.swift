@@ -21,6 +21,7 @@ private struct IOSChatBackgroundRuntimeJob {
     let responseSequenceNumber: Int64?
     let generativeUiRequirement: IOSGenerativeUiRequirement
     let generativeUiFallbackAttempted: Bool
+    let executionPolicy: IOSExecutionPolicySnapshot?
     let conversationStore: IOSConversationStore
     let toolRuntime: ChatToolRuntime
     let liveActivityController: AgentLiveActivityController
@@ -67,6 +68,7 @@ struct IOSChatBackgroundHandoff {
     /// the background bridge). Empty for legacy payloads → fall back to
     /// params.tools.
     let fullToolNames: [String]
+    var executionPolicy: IOSExecutionPolicySnapshot? = nil
 }
 
 enum IOSChatBackgroundHandoffMode: String {
@@ -311,23 +313,45 @@ private final class IOSChatBackgroundMessagesSnapshot: @unchecked Sendable {
 
 private final class IOSChatDurableResponseAccumulator: @unchecked Sendable {
     private let lock = NSLock()
+    private let displayMessages: [UIMessage]
+    private let seedId: KotlinUuid
     private let accumulator: MessageStreamAccumulator
 
     init(displayMessages: [UIMessage], model: Model) {
-        accumulator = MessageStreamAccumulator(initialMessages: displayMessages, model: model)
+        self.displayMessages = displayMessages
+        let seedId = KotlinUuid.companion.random()
+        self.seedId = seedId
+        // Resume 从 response 事件 0 重新投影。不能用历史最后一条 assistant
+        // 初始化 accumulator，否则新 response 会拼进上一轮气泡。
+        let seed = UIMessage(
+            id: seedId,
+            role: MessageRole.user,
+            parts: [UIMessagePart.Text(text: "", metadata: nil)],
+            annotations: [],
+            createdAt: chatNowLocalDateTime(),
+            finishedAt: chatNowLocalDateTime(),
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+        accumulator = MessageStreamAccumulator(initialMessages: [seed], model: model)
     }
 
     func append(_ chunk: MessageChunk) -> [UIMessage] {
         lock.lock()
         defer { lock.unlock() }
         accumulator.append(chunk: chunk)
-        return accumulator.snapshot()
+        return combinedMessages()
     }
 
     var messages: [UIMessage] {
         lock.lock()
         defer { lock.unlock() }
-        return accumulator.snapshot()
+        return combinedMessages()
+    }
+
+    private func combinedMessages() -> [UIMessage] {
+        displayMessages + accumulator.snapshot().filter { $0.id != seedId }
     }
 }
 
@@ -424,6 +448,19 @@ final class IOSChatBackgroundGenerationCoordinator {
 
     var restorableRunIds: Set<String> {
         Set(activeJobs.values.map(\.runId))
+    }
+
+    /// Runs that still have a live owner at startup and therefore must not be
+    /// swept by generic tool recovery. Queued non-durable handoffs are omitted:
+    /// after process death they have no executing owner and must go through W3.
+    var startupRecoveryExclusionRunIds: Set<String> {
+        let persisted = taskMap()
+        var requestIds = Set(activeBackgroundTasks.keys)
+        requestIds.formUnion(activeDetachedResponseTasks.keys)
+        requestIds.formUnion(activeJobs.compactMap { requestId, job in
+            job.mode == .resumeResponse && job.responseId != nil ? requestId : nil
+        })
+        return Set(requestIds.compactMap { persisted[$0] ?? activeJobs[$0]?.runId })
     }
 
     var reconnectingWatchProjection: WatchTaskReconnectProjection? {
@@ -688,11 +725,12 @@ final class IOSChatBackgroundGenerationCoordinator {
                     to: job.conversationId
                 )
             }
+            if didPersistTerminal {
+                await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
+            }
             await self.recordRun(
                 job.runId,
-                startedAt: job.startedAt,
                 status: didPersistTerminal ? .cancelled : .recoveryPending,
-                inputDigest: job.inputDigest,
                 conversationId: job.conversationId
             )
             if didPersistTerminal {
@@ -713,11 +751,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                 presentation: didPersistTerminal ? .cancelled() : .failed()
             )
             let backgroundTask = self.activeBackgroundTasks[requestId]
-            if didPersistTerminal {
-                self.finish(runId: job.runId, requestId: requestId)
-            } else {
-                self.releaseRuntimeOwnership(requestId: requestId)
-            }
+            // 取消是不可恢复的远端语义：即便 transcript 保存失败、run 行需
+            // 保留 recoveryPending 供本地对账，也不能留下 resumeResponse 的
+            // task-map/payload owner，否则冷启动会把已取消的服务端响应重新拉起。
+            self.finish(runId: job.runId, requestId: requestId)
             backgroundTask?.setTaskCompleted(success: false)
         }
         return true
@@ -822,6 +859,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             responseSequenceNumber: handoff.responseSequenceNumber,
             generativeUiRequirement: handoff.generativeUiRequirement,
             generativeUiFallbackAttempted: handoff.generativeUiFallbackAttempted,
+            executionPolicy: handoff.executionPolicy,
             conversationStore: conversationStore,
             toolRuntime: toolRuntime,
             liveActivityController: liveActivityController,
@@ -939,7 +977,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     mode: .continueModel,
                     generativeUiRequirement: job.generativeUiRequirement,
                     generativeUiFallbackAttempted: job.generativeUiFallbackAttempted,
-                    fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name)
+                    fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
+                    executionPolicy: job.executionPolicy
                 )
                 nextHandoff.responseId = nil
                 nextHandoff.responseSequenceNumber = nil
@@ -1037,7 +1076,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             responseSequenceNumber: job.responseSequenceNumber,
             generativeUiRequirement: job.generativeUiRequirement,
             generativeUiFallbackAttempted: job.generativeUiFallbackAttempted,
-            fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name)
+            fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
+            executionPolicy: job.executionPolicy
         )
     }
 
@@ -1078,15 +1118,16 @@ final class IOSChatBackgroundGenerationCoordinator {
             to: job.conversationId
         )
         if didSave {
+            await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
+        }
+        if didSave {
             _ = miniAppApplication?.commit()
         } else {
             _ = miniAppApplication?.rollback()
         }
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: didSave ? .completed : .recoveryPending,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         guard runState.finalizeTerminal() else { return }
@@ -1243,7 +1284,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                 // 本 job 的 conversationId 为父，不读 VM 当前会话。
                 conversationId: job.conversationId,
                 // Pad-image enrich must use the job-frozen display snapshot.
-                messages: job.displayMessages
+                messages: job.displayMessages,
+                executionPolicy: job.executionPolicy
             ),
             // M2: 传了 toolExposureBridge 的路径，每轮 replacingTools 后按当轮
             // effectiveParams 重建 executor 表——tool_search 命中工具下一轮
@@ -1264,7 +1306,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     runId: job.runId,
                     toolExposureBridge: job.toolExposureBridge,
                     conversationId: job.conversationId,
-                    messages: job.displayMessages
+                    messages: job.displayMessages,
+                    executionPolicy: job.executionPolicy
                 )
             }
         )
@@ -1319,7 +1362,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                             )
                         )
                     },
-                    onToolExecutionStarted: { toolName in
+                    onToolExecutionStarted: { toolName, _ in
                         presentationEvents.continuation.yield(
                             AgentActivityPresentation.runningTool(toolName: toolName)
                         )
@@ -1407,7 +1450,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                             )
                         )
                     },
-                    onToolExecutionStarted: { toolName in
+                    onToolExecutionStarted: { toolName, _ in
                         presentationEvents.continuation.yield(
                             AgentActivityPresentation.runningTool(toolName: toolName)
                         )
@@ -1473,6 +1516,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 displayMessages: job.displayMessages
             )
             : result.messages
+        var generativeUiRepairFailed = false
         if job.mode == .continueModel,
            IOSGenerativeUiRequestPolicy.widgetIssue(
                in: reconciledMessages,
@@ -1480,6 +1524,11 @@ final class IOSChatBackgroundGenerationCoordinator {
                requirement: job.generativeUiRequirement
            ) != nil {
             reconciledMessages = IOSGenerativeUiRequestPolicy.terminalRepairFailureMessages(
+                reconciledMessages
+            )
+            generativeUiRepairFailed = true
+        } else if job.mode == .continueModel {
+            reconciledMessages = IOSGenerativeUiRequestPolicy.terminalRepairSuccessMessages(
                 reconciledMessages
             )
         }
@@ -1542,9 +1591,9 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         let emptyMiniAppResponse = job.mode == .continueModel &&
             ChatRuntimeContextBuilder.miniAppTurnContext(in: job.displayMessages) != nil &&
-            ChatGenerationCoordinator.isEmptyAssistantResponse(finalMessages)
+            ChatGenerationSupport.isEmptyAssistantResponse(finalMessages)
         if emptyMiniAppResponse {
-            finalMessages.append(ChatGenerationCoordinator.emptyMiniAppResponseNotice())
+            finalMessages.append(ChatGenerationSupport.emptyMiniAppResponseNotice())
         }
         let miniAppApplication = job.mode == .continueModel
             ? job.saveMiniAppIfPresent?(finalMessages, job.conversationId)
@@ -1573,6 +1622,9 @@ final class IOSChatBackgroundGenerationCoordinator {
                 to: job.conversationId
             )
         }
+        if didSave {
+            await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
+        }
         if !didSave,
            let miniAppApplication,
            !miniAppApplication.rollback() {
@@ -1600,6 +1652,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     singleToolFailureReason: singleToolFailureReason,
                     guardStoppedNotice: guardStoppedNotice,
                     miniAppFailed: miniAppFailed,
+                    hitStepLimit: result.hitStepLimit,
+                    generativeUiRepairFailed: generativeUiRepairFailed,
                     summary: watchSummary,
                     completedMessages: finalMessages
                 )
@@ -1619,14 +1673,14 @@ final class IOSChatBackgroundGenerationCoordinator {
             didSave: didSave,
             singleToolFailureReason: singleToolFailureReason,
             guardStopped: guardStoppedNotice != nil,
-            miniAppFailed: miniAppFailed
+            miniAppFailed: miniAppFailed,
+            hitStepLimit: result.hitStepLimit,
+            generativeUiRepairFailed: generativeUiRepairFailed
         )
         let succeeded = runStatus == .completed
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: runStatus,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
@@ -1682,12 +1736,15 @@ final class IOSChatBackgroundGenerationCoordinator {
                 failureReason: "The model output ended before the tool call completed."
             )
         }
-        finalMessages.append(ChatGenerationCoordinator.outputLimitNotice())
+        finalMessages.append(ChatGenerationSupport.outputLimitNotice())
         let didSave = await job.conversationStore.saveBackgroundCompletion(
             baseMessages: job.displayMessages,
             completedMessages: finalMessages,
             to: job.conversationId
         )
+        if didSave {
+            await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
+        }
         let didFinalize = runState.finalizeTerminal()
         guard didFinalize else {
             if runState.terminalIsOwned(by: .expiration) {
@@ -1733,9 +1790,7 @@ final class IOSChatBackgroundGenerationCoordinator {
     ) async {
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: didSave ? .failed : .recoveryPending,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         WatchTaskCoordinator.shared.publish(
@@ -1800,6 +1855,9 @@ final class IOSChatBackgroundGenerationCoordinator {
             completedMessages: finalMessages,
             to: job.conversationId
         )
+        if didSave {
+            await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
+        }
         let didFinalize = terminalOwner == .completion
             ? runState.finalizeTerminal()
             : runState.finalizeTerminal(as: terminalOwner)
@@ -1810,9 +1868,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 }
                 await recordRun(
                     job.runId,
-                    startedAt: job.startedAt,
                     status: didSave ? .failed : .recoveryPending,
-                    inputDigest: job.inputDigest,
                     conversationId: job.conversationId
                 )
                 WatchTaskCoordinator.shared.publish(
@@ -1836,9 +1892,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: .failed,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
@@ -1863,7 +1917,9 @@ final class IOSChatBackgroundGenerationCoordinator {
     /// 只清理没有正在执行 handler 的持久化 request，不重新提交模型请求。调用方
     /// 应在普通 UI 冷启动完成后调用；实际已被系统唤起的 handler 会先登记到
     /// `activeBackgroundTasks`，从而保留给 `handle` 继续处理。重复调用是幂等的。
-    func finalizeStalePersistedJobsIfNeeded() {
+    func finalizeStalePersistedJobsIfNeeded(
+        preservingOutcomeUnknownRunIds: Set<String> = []
+    ) {
         let persisted = taskMap()
         guard !persisted.isEmpty else { return }
 
@@ -1881,6 +1937,12 @@ final class IOSChatBackgroundGenerationCoordinator {
             if let durableJob = job(for: requestId),
                durableJob.mode == .resumeResponse,
                durableJob.responseId != nil {
+                continue
+            }
+
+            if preservingOutcomeUnknownRunIds.contains(mappedRunId) {
+                BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: requestId)
+                finish(runId: mappedRunId, requestId: requestId)
                 continue
             }
 
@@ -1949,13 +2011,14 @@ final class IOSChatBackgroundGenerationCoordinator {
             to: job.conversationId
         )
         if didSave {
+            await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
+        }
+        if didSave {
             removePayload(requestId: requestId)
         }
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: didSave ? .failed : .recoveryPending,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
@@ -1975,6 +2038,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         singleToolFailureReason: String?,
         guardStoppedNotice: String?,
         miniAppFailed: Bool,
+        hitStepLimit: Bool,
+        generativeUiRepairFailed: Bool,
         summary: String?,
         completedMessages: [UIMessage]
     ) async {
@@ -1982,7 +2047,9 @@ final class IOSChatBackgroundGenerationCoordinator {
             didSave: didSave,
             singleToolFailureReason: singleToolFailureReason,
             guardStopped: guardStoppedNotice != nil,
-            miniAppFailed: miniAppFailed
+            miniAppFailed: miniAppFailed,
+            hitStepLimit: hitStepLimit,
+            generativeUiRepairFailed: generativeUiRepairFailed
         )
         let succeeded = runStatus.wireName == AgentRunStatus.completed.wireName
         if didSave {
@@ -1990,9 +2057,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: runStatus,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: completedMessages)
@@ -2033,9 +2098,7 @@ final class IOSChatBackgroundGenerationCoordinator {
     ) async {
         await recordRun(
             job.runId,
-            startedAt: job.startedAt,
             status: .recoveryPending,
-            inputDigest: job.inputDigest,
             conversationId: job.conversationId
         )
         WatchTaskCoordinator.shared.publish(
@@ -2098,7 +2161,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             generativeUiExpectSlides: handoff.generativeUiRequirement.expectSlides,
             generativeUiExpectFullHtmlDeck: handoff.generativeUiRequirement.expectFullHtmlDeck,
             generativeUiFallbackAttempted: handoff.generativeUiFallbackAttempted,
-            fullToolNames: handoff.fullToolNames
+            fullToolNames: handoff.fullToolNames,
+            executionPolicyJson: handoff.executionPolicy?.encodedJSON
         )
         let directory = try jobsDirectory()
         let url = payloadURL(for: requestId, in: directory)
@@ -2125,7 +2189,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             mode: job.mode,
             generativeUiRequirement: job.generativeUiRequirement,
             generativeUiFallbackAttempted: true,
-            fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name)
+            fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
+            executionPolicy: job.executionPolicy
         )
         do {
             try persist(handoff: handoff, requestId: requestId)
@@ -2147,7 +2212,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 return nil
             }
             guard let dependencies,
-                  let params = Self.rehydratedParams(
+                  let persistedParams = Self.rehydratedParams(
                     persistedParams: payload.params,
                     providerSetting: providerSetting,
                     assistantHeaders: dependencies.sharedSettings.snapshot.getCurrentAssistant().customHeaders,
@@ -2155,6 +2220,22 @@ final class IOSChatBackgroundGenerationCoordinator {
                   ) else {
                 NSLog("[AmberChatBG] Missing current background model for \(requestId)")
                 return nil
+            }
+            let visibleTools = Self.rehydratedVisibleTools(
+                names: payload.visibleToolNames,
+                legacyTools: payload.params.tools,
+                additionalDeclarations: dependencies.toolRuntime.mcpExpandedDeclarations()
+            )
+            let params = persistedParams.replacingTools(visibleTools)
+            let executionPolicy: IOSExecutionPolicySnapshot?
+            if let policyJSON = payload.executionPolicyJson {
+                guard let decodedPolicy = IOSExecutionPolicySnapshot.decode(json: policyJSON) else {
+                    NSLog("[AmberChatBG] Invalid execution policy for \(requestId)")
+                    return nil
+                }
+                executionPolicy = decodedPolicy
+            } else {
+                executionPolicy = nil
             }
             return IOSChatBackgroundHandoff(
                 runId: payload.runId,
@@ -2175,7 +2256,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     expectFullHtmlDeck: payload.generativeUiExpectFullHtmlDeck
                 ),
                 generativeUiFallbackAttempted: payload.generativeUiFallbackAttempted,
-                fullToolNames: payload.fullToolNames
+                fullToolNames: payload.fullToolNames,
+                executionPolicy: executionPolicy
             )
         } catch {
             NSLog("[AmberChatBG] Failed to load background payload \(requestId): \(error)")
@@ -2208,9 +2290,7 @@ final class IOSChatBackgroundGenerationCoordinator {
 
     private func recordRun(
         _ runId: String,
-        startedAt: Int64,
         status: AgentRunStatus,
-        inputDigest: String,
         conversationId: KotlinUuid,
         interruptedReason: String? = nil
     ) async {
@@ -2220,20 +2300,11 @@ final class IOSChatBackgroundGenerationCoordinator {
             : nil
 
         do {
-            if status == .running {
-                _ = try await runStore.startChatRun(
-                    runId: runId,
-                    startedAt: startedAt,
-                    inputDigest: inputDigest,
-                    conversationId: conversationId.toHexDashString()
-                )
-            } else {
-                _ = try await runStore.transitionFromAnyActive(
-                    runId: runId,
-                    to: status,
-                    detail: resolvedInterruptedReason
-                )
-            }
+            _ = try await runStore.transitionFromAnyActive(
+                runId: runId,
+                to: status,
+                detail: resolvedInterruptedReason
+            )
         } catch {
             // agent_run 是强杀恢复（applyToolCallLedgerRecovery）依赖的账本，
             // 写失败必须走用户可见错误通道，不能只 print 静默吞掉。
@@ -2322,6 +2393,20 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
+    private static func assistantErrorMessage(_ text: String) -> UIMessage {
+        UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: [MessageKt.localGenerationErrorTextPart(text: text)],
+            annotations: [],
+            createdAt: chatNowLocalDateTime(),
+            finishedAt: chatNowLocalDateTime(),
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+    }
+
     private static func backgroundSummary(from messages: [UIMessage]) -> String? {
         guard let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) else {
             return nil
@@ -2337,10 +2422,14 @@ final class IOSChatBackgroundGenerationCoordinator {
         didSave: Bool,
         singleToolFailureReason: String?,
         guardStopped: Bool,
-        miniAppFailed: Bool = false
+        miniAppFailed: Bool = false,
+        hitStepLimit: Bool = false,
+        generativeUiRepairFailed: Bool = false
     ) -> AgentRunStatus {
         guard didSave else { return .recoveryPending }
-        if guardStopped || miniAppFailed { return .failed }
+        if guardStopped || miniAppFailed || hitStepLimit || generativeUiRepairFailed {
+            return .failed
+        }
         return singleToolFailureReason == nil ? .completed : .failed
     }
 
@@ -2388,6 +2477,17 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
+    private static func rehydratedVisibleTools(
+        names: [String],
+        legacyTools: [Tool],
+        additionalDeclarations: [Tool]
+    ) -> [Tool] {
+        guard !names.isEmpty else { return legacyTools }
+        let declarations = ToolKt.iosToolDeclarations(names: names) + additionalDeclarations
+        let byName = Dictionary(declarations.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        return names.compactMap { byName[$0] }
+    }
+
     private static func failedMessages(
         displayMessages: [UIMessage],
         preservedGeneratedSuffix: [UIMessage] = [],
@@ -2399,9 +2499,9 @@ final class IOSChatBackgroundGenerationCoordinator {
         let partial = partialAssistantText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let errorText = ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
         if partial.isEmpty {
-            finalMessages.append(assistantMessage(errorText))
+            finalMessages.append(assistantErrorMessage(errorText))
         } else {
-            finalMessages.append(assistantMessage("\(partial)\n\n\(errorText)"))
+            finalMessages.append(assistantErrorMessage("\(partial)\n\n\(errorText)"))
         }
         return finalMessages
     }
@@ -2482,13 +2582,17 @@ final class IOSChatBackgroundGenerationCoordinator {
         didSave: Bool,
         singleToolFailureReason: String?,
         guardStopped: Bool,
-        miniAppFailed: Bool = false
+        miniAppFailed: Bool = false,
+        hitStepLimit: Bool = false,
+        generativeUiRepairFailed: Bool = false
     ) -> String {
         backgroundTerminalStatus(
             didSave: didSave,
             singleToolFailureReason: singleToolFailureReason,
             guardStopped: guardStopped,
-            miniAppFailed: miniAppFailed
+            miniAppFailed: miniAppFailed,
+            hitStepLimit: hitStepLimit,
+            generativeUiRepairFailed: generativeUiRepairFailed
         ).wireName
     }
 

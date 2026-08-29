@@ -55,8 +55,8 @@ final class IOSMcpManager {
         }
     }
 
-    func syncAll() async {
-        guard isEnabled() else {
+    func syncAll(enabledOverride: Bool? = nil) async {
+        guard enabledOverride ?? isEnabled() else {
             disconnectAll()
             servers = []
             tools = []
@@ -79,8 +79,8 @@ final class IOSMcpManager {
 
     /// Refreshes exactly one configured server. Management-tool tests must not
     /// contact every enabled MCP server as a side effect.
-    func sync(serverName: String) async {
-        guard isEnabled() else {
+    func sync(serverName: String, enabledOverride: Bool? = nil) async {
+        guard enabledOverride ?? isEnabled() else {
             disconnectAll()
             servers = []
             tools = []
@@ -93,12 +93,17 @@ final class IOSMcpManager {
         await sync(server: server)
     }
 
-    func callTool(serverName: String, toolName: String, arguments: [String: Any]) async throws -> String {
-        guard isEnabled() else {
+    func callTool(
+        serverName: String,
+        toolName: String,
+        arguments: [String: Any],
+        enabledOverride: Bool? = nil
+    ) async throws -> String {
+        guard enabledOverride ?? isEnabled() else {
             throw IOSMcpClientError.invalidResponse
         }
         if servers.isEmpty || clientsByServer[serverName] == nil {
-            await syncAll()
+            await syncAll(enabledOverride: enabledOverride)
         }
         guard let server = servers.first(where: { $0.name == serverName }) else {
             throw IOSMcpClientError.serverNotFound(serverName)

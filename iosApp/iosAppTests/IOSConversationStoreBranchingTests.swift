@@ -297,7 +297,7 @@ final class IOSConversationStoreBranchingTests: XCTestCase {
             snapshot: [
                 store.currentMessages[0],
                 UIMessage.companion.assistant(prompt: "partial regenerated answer"),
-                ChatGenerationCoordinator.outputLimitNotice(),
+                ChatGenerationSupport.outputLimitNotice(),
             ]
         )
 
@@ -308,7 +308,7 @@ final class IOSConversationStoreBranchingTests: XCTestCase {
             [
                 "what is 2+2",
                 "partial regenerated answer",
-                ChatGenerationCoordinator.outputLimitNotice().toText(),
+                ChatGenerationSupport.outputLimitNotice().toText(),
             ]
         )
     }
@@ -328,7 +328,7 @@ final class IOSConversationStoreBranchingTests: XCTestCase {
             generatedMessageIndex: 1,
             snapshot: [
                 store.currentMessages[0],
-                ChatGenerationCoordinator.outputLimitNotice(),
+                ChatGenerationSupport.outputLimitNotice(),
             ]
         )
 
@@ -336,7 +336,7 @@ final class IOSConversationStoreBranchingTests: XCTestCase {
         XCTAssertEqual(store.variantInfo(forMessageIndex: 1)?.variantCount, 1)
         XCTAssertEqual(
             store.currentMessages.map { $0.toText() },
-            ["what is 2+2", "4", ChatGenerationCoordinator.outputLimitNotice().toText()]
+            ["what is 2+2", "4", ChatGenerationSupport.outputLimitNotice().toText()]
         )
     }
 

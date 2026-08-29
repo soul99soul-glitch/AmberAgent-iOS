@@ -1,6 +1,9 @@
 package shared
 
 import app.amber.ai.core.MessageRole
+import app.amber.ai.core.InputSchema
+import app.amber.ai.core.Tool
+import app.amber.ai.core.createAskUserToolDeclaration
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
@@ -21,6 +24,41 @@ import kotlin.uuid.Uuid
 
 @OptIn(ExperimentalUuidApi::class)
 class IosChatBackgroundPayloadJsonBridgeTest {
+    @Test
+    fun requestSnapshotParamsEncodeRealExecutableToolWithoutSerializingClosures() {
+        val params = TextGenerationParams(
+            model = Model(modelId = "gpt-tool", displayName = "GPT Tool"),
+            tools = listOf(createAskUserToolDeclaration()),
+            temperature = 0.25f,
+        )
+
+        val paramsJson = IosRunRequestSnapshotJsonBridge.encodeGenerationParams(params)
+        val catalogJson = IosRunRequestSnapshotJsonBridge.encodeToolCatalog(params.tools)
+
+        assertTrue(paramsJson.contains("gpt-tool"))
+        assertTrue(paramsJson.contains("0.25"))
+        assertFalse(paramsJson.contains("ask_user"), "tool identity is hashed by the separate catalog snapshot")
+        assertTrue(catalogJson.contains("ask_user"))
+    }
+
+    @Test
+    fun requestSnapshotToolCatalogCanonicalizesNestedSchemaKeys() {
+        val stringSchema = JsonObject(mapOf("type" to JsonPrimitive("string")))
+        fun tool(properties: JsonObject) = Tool(
+            name = "canonical_tool",
+            description = "Canonical schema",
+            parameters = { InputSchema.Obj(properties) },
+            execute = { emptyList() },
+        )
+        val ab = JsonObject(linkedMapOf("a" to stringSchema, "b" to stringSchema))
+        val ba = JsonObject(linkedMapOf("b" to stringSchema, "a" to stringSchema))
+
+        assertEquals(
+            IosRunRequestSnapshotJsonBridge.encodeToolCatalog(listOf(tool(ab))),
+            IosRunRequestSnapshotJsonBridge.encodeToolCatalog(listOf(tool(ba))),
+        )
+    }
+
     @Test
     fun encodePersistsProviderIdWithoutProviderSecrets() {
         val provider = ProviderSetting.OpenAI(
@@ -52,6 +90,7 @@ class IosChatBackgroundPayloadJsonBridgeTest {
             mode = "resume_response",
             responseId = "resp_123",
             responseSequenceNumber = 7L,
+            executionPolicyJson = "{\"policy\":\"frozen\"}",
         )
 
         assertFalse(json.contains("sk-persisted-secret"))
@@ -71,6 +110,7 @@ class IosChatBackgroundPayloadJsonBridgeTest {
         assertEquals("resume_response", decoded.mode)
         assertEquals("resp_123", decoded.responseId)
         assertEquals(7L, decoded.responseSequenceNumber)
+        assertEquals("{\"policy\":\"frozen\"}", decoded.executionPolicyJson)
     }
 
     @Test
@@ -99,6 +139,36 @@ class IosChatBackgroundPayloadJsonBridgeTest {
     }
 
     @Test
+    fun encodePersistsRealExecutableToolByNameWithoutSerializingClosures() {
+        val provider = ProviderSetting.OpenAI(
+            id = Uuid.random(),
+            apiKey = "secret",
+            models = listOf(Model(modelId = "gpt-tool", displayName = "GPT Tool")),
+        )
+        val params = TextGenerationParams(
+            model = provider.models.first(),
+            tools = listOf(createAskUserToolDeclaration()),
+        )
+
+        val decoded = IosChatBackgroundPayloadJsonBridge.decode(
+            IosChatBackgroundPayloadJsonBridge.encode(
+                runId = "run-real-tool",
+                startedAt = 5L,
+                inputDigest = "digest",
+                conversationId = Uuid.random(),
+                providerSetting = provider,
+                params = params,
+                uploadMessages = emptyList(),
+                displayMessages = emptyList(),
+                fullToolNames = listOf("ask_user"),
+            )
+        )
+
+        assertEquals(emptyList(), decoded.params.tools)
+        assertEquals(listOf("ask_user"), decoded.visibleToolNames)
+    }
+
+    @Test
     fun decodePayloadWithoutFullToolNamesFallsBackToEmpty() {
         val provider = ProviderSetting.OpenAI(
             id = Uuid.random(),
@@ -121,10 +191,15 @@ class IosChatBackgroundPayloadJsonBridgeTest {
             uploadMessages = emptyList(),
             displayMessages = emptyList(),
         )
-        val json = JsonObject(Json.parseToJsonElement(jsonWithKey).jsonObject - "fullToolNames").toString()
+        val json = JsonObject(
+            Json.parseToJsonElement(jsonWithKey).jsonObject -
+                setOf("fullToolNames", "visibleToolNames", "executionPolicyJson")
+        ).toString()
 
         val decoded = IosChatBackgroundPayloadJsonBridge.decode(json)
         assertEquals(emptyList(), decoded.fullToolNames)
+        assertEquals(emptyList(), decoded.visibleToolNames)
+        assertEquals(null, decoded.executionPolicyJson)
     }
 
     @Test

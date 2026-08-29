@@ -14,7 +14,7 @@ import java.nio.file.Files
  * P1-c: thread_edge 存储契约（jvmTest + Room 真实 JVM 驱动）。
  *
  * 覆盖：insert/查询（edgeFor/childrenOf）；setStatus；descendants 内存递归
- * （传递子级、跨代稳定序）；v2 → v3 迁移保全（agent_run + mailbox_envelope
+ * （传递子级、跨代稳定序）；v2 → v5 迁移保全（agent_run + mailbox_envelope
  * 行原样保留、thread_edge 表可用）。
  */
 class ThreadEdgeDaoTest {
@@ -24,7 +24,7 @@ class ThreadEdgeDaoTest {
         Files.delete(path)
         return Room.databaseBuilder<AgentRuntimeDatabase>(name = path.toAbsolutePath().toString())
             .setDriver(BundledSQLiteDriver())
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
     }
 
@@ -128,12 +128,12 @@ class ThreadEdgeDaoTest {
         assertTrue(fromLeaf.isEmpty())
     }
 
-    // MARK: - v2 → v3 migration preserves production data
+    // MARK: - v2 → v5 migration preserves production data
 
     /**
      * P1-b 升级过的老设备（v2 库，agent_run + mailbox_envelope 已在用）再升
-     * v3：用 2.json 的确切 v2 schema + identity hash 造库，写入生产形态行，
-     * 经 MIGRATION_2_3 打开——数据完整保留、thread_edge 可用。
+     * v5：用 2.json 的确切 v2 schema + identity hash 造库，写入生产形态行，
+     * 经完整迁移链打开——数据完整保留、旧状态归一化、thread_edge 可用。
      */
     @Test
     fun migrationFromV2PreservesAgentRunAndMailboxAndEnablesThreadEdge() = runTest {
@@ -144,7 +144,7 @@ class ThreadEdgeDaoTest {
 
         val db = Room.databaseBuilder<AgentRuntimeDatabase>(name = absolutePath)
             .setDriver(BundledSQLiteDriver())
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
 
         // agent_run 行保留。
@@ -153,6 +153,8 @@ class ThreadEdgeDaoTest {
         assertEquals("cafe-dead", run?.conversationId)
         assertEquals("completed", run?.status)
         assertEquals(1234567L, run?.startedAt)
+        assertEquals("legacy_terminal", run?.terminalReason)
+        assertEquals("waiting_user", db.agentRuntimeDao().getRun("run-v2-waiting")?.status)
 
         // mailbox_envelope 行保留且仍可 drain（exactly-once 语义不因升级丢失）。
         val mailboxDao = db.mailboxDao()
@@ -213,7 +215,11 @@ class ThreadEdgeDaoTest {
             ) VALUES (
                 'run-v2-prod', NULL, 'chat', '1', 'cafe-dead',
                 NULL, NULL, NULL, 'completed', 'digest',
-                NULL, 1, 1234567, 1239999, NULL
+                NULL, 1, 1234567, 1239999, 'legacy_terminal'
+            ), (
+                'run-v2-waiting', NULL, 'chat', '1', 'cafe-waiting',
+                NULL, NULL, NULL, 'awaiting_permission', 'digest-waiting',
+                'tool_call:legacy', 1, 1234568, NULL, NULL
             )
             """.trimIndent(),
         )

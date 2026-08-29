@@ -12,12 +12,13 @@ import androidx.sqlite.execSQL
     entities = [
         AgentRunEntity::class,
         AgentEventEntity::class,
+        AgentToolTransactionEntity::class,
         TraceSpanEntity::class,
         PermissionIntentEntity::class,
         MailboxEnvelopeEntity::class,
         ThreadEdgeEntity::class,
     ],
-    version = 3,
+    version = 5,
     exportSchema = true,
 )
 @ConstructedBy(AgentRuntimeDatabaseConstructor::class)
@@ -89,6 +90,58 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         )
         connection.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_thread_edge_agent_path` ON `thread_edge` (`agent_path`)",
+        )
+    }
+}
+
+/**
+ * v3 → v4: durable envelope fields for the shared Run Protocol. Existing rows
+ * are preserved; the two historical active-state wire values are normalized so
+ * future compare-and-set transitions use one canonical vocabulary.
+ */
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE `agent_run` ADD COLUMN `terminal_reason` TEXT")
+        connection.execSQL("ALTER TABLE `agent_run` ADD COLUMN `provider_id` TEXT")
+        connection.execSQL("ALTER TABLE `agent_run` ADD COLUMN `model_id` TEXT")
+        connection.execSQL("ALTER TABLE `agent_run` ADD COLUMN `prompt_version` TEXT")
+        connection.execSQL("ALTER TABLE `agent_run` ADD COLUMN `tool_catalog_version` TEXT")
+        connection.execSQL("ALTER TABLE `agent_run` ADD COLUMN `capability_snapshot` TEXT")
+        connection.execSQL("ALTER TABLE `agent_event` ADD COLUMN `turn_id` TEXT")
+        connection.execSQL("ALTER TABLE `agent_event` ADD COLUMN `step_id` TEXT")
+        connection.execSQL("ALTER TABLE `agent_event` ADD COLUMN `tool_call_id` TEXT")
+        connection.execSQL("UPDATE `agent_run` SET `terminal_reason` = `interrupted_reason` WHERE `finished_at` IS NOT NULL")
+        connection.execSQL("UPDATE `agent_run` SET `status` = 'waiting_user' WHERE `status` = 'awaiting_permission'")
+        connection.execSQL("UPDATE `agent_run` SET `status` = 'resumable' WHERE `status` = 'recovery_pending'")
+    }
+}
+
+/** v4 → v5: add the per-tool compare-and-set execution head. */
+val MIGRATION_4_5 = object : Migration(4, 5) {
+    override fun migrate(connection: SQLiteConnection) {
+        connection.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `agent_tool_transaction` (
+                `run_id` TEXT NOT NULL,
+                `tool_call_id` TEXT NOT NULL,
+                `tool_name` TEXT NOT NULL,
+                `args_digest` TEXT NOT NULL,
+                `effect_class` TEXT NOT NULL,
+                `state` TEXT NOT NULL,
+                `outcome` TEXT,
+                `result_payload` TEXT,
+                `updated_at` INTEGER NOT NULL,
+                PRIMARY KEY(`run_id`, `tool_call_id`)
+            )
+            """.trimIndent(),
+        )
+        connection.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_agent_tool_transaction_run_id` " +
+                "ON `agent_tool_transaction` (`run_id`)",
+        )
+        connection.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_agent_tool_transaction_state` " +
+                "ON `agent_tool_transaction` (`state`)",
         )
     }
 }

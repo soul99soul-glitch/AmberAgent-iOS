@@ -10,20 +10,31 @@ func chatToolCallKey(_ toolCall: UIMessagePart.Tool) -> String {
 /// P3-b: runs one nested tool call from inside an `exec` evaluation through
 /// the same top-level execution path (same `ChatToolRuntime` dispatch with
 /// its approval pause/resume, same ledger Started/Finished pair). Implemented
-/// by `ChatGenerationCoordinator` (it owns the ledger and the approval UI);
+/// by `ChatRunKernelAdapter` (it owns the ledger and approval decisions);
 /// `ChatToolRuntime` only threads it into the sandbox's synchronous
 /// `tools` bridge.
 typealias IosExecNestedToolRunner = @MainActor (String, String) async -> String
 
+private enum IOSExecutionPolicyContext {
+    @TaskLocal static var snapshot: IOSExecutionPolicySnapshot?
+}
+
 private final class IOSClosureToolExecutor: IOSToolExecutor {
     private let handler: @MainActor (String, String, Bool) async -> IOSAgentToolOutcome
+    private let executionPolicy: IOSExecutionPolicySnapshot?
 
-    init(_ handler: @escaping @MainActor (String, String, Bool) async -> IOSAgentToolOutcome) {
+    init(
+        executionPolicy: IOSExecutionPolicySnapshot? = IOSExecutionPolicyContext.snapshot,
+        _ handler: @escaping @MainActor (String, String, Bool) async -> IOSAgentToolOutcome
+    ) {
         self.handler = handler
+        self.executionPolicy = executionPolicy
     }
 
     func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
-        await handler(name, arguments, isUserInitiated)
+        await IOSExecutionPolicyContext.$snapshot.withValue(executionPolicy) {
+            await handler(name, arguments, isUserInitiated)
+        }
     }
 }
 
@@ -305,6 +316,35 @@ final class ChatToolRuntime {
         baseDirectory: recipeStoreBaseDirectory ?? recipeDefaultBaseDirectory
     )
 
+    private var effectiveGlobalAutoApproveEnabled: Bool {
+        IOSExecutionPolicyContext.snapshot?.globalAutoApproveEnabled
+            ?? IOSLocalToolExecutor.isGlobalAutoApproveEnabled
+    }
+
+    private var effectiveHighRiskAutoApproveEnabled: Bool {
+        IOSExecutionPolicyContext.snapshot?.highRiskAutoApproveEnabled
+            ?? IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+    }
+
+    private var effectiveExecJavaScriptEnabled: Bool {
+        IOSExecutionPolicyContext.snapshot?.execJavaScriptEnabled
+            ?? settingsStore.execJavaScriptEnabled
+    }
+
+    private var effectiveWebSearchEnabled: Bool {
+        IOSExecutionPolicyContext.snapshot?.webSearchEnabled
+            ?? sharedSettings.snapshot.enableWebSearch
+    }
+
+    func withExecutionPolicy<T>(
+        _ executionPolicy: IOSExecutionPolicySnapshot?,
+        operation: @MainActor () async -> T
+    ) async -> T {
+        await IOSExecutionPolicyContext.$snapshot.withValue(executionPolicy) {
+            await operation()
+        }
+    }
+
     private var recipeDefaultBaseDirectory: URL {
         (try? FileManager.default.url(
             for: .documentDirectory,
@@ -416,7 +456,7 @@ final class ChatToolRuntime {
                 executors[name] = projectExecutor
             }
         }
-        guard sharedSettings.snapshot.enableWebSearch else { return executors }
+        guard effectiveWebSearchEnabled else { return executors }
         for name in IOSSearchExecutor.supportedToolNames {
             executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
@@ -435,7 +475,28 @@ final class ChatToolRuntime {
         conversationId: KotlinUuid? = nil,
         /// Job-frozen display messages for generate_image pad-image enrich.
         /// Must be the snapshot that owns this tool call — not a live store read.
-        messages: [UIMessage] = []
+        messages: [UIMessage] = [],
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) -> [String: any IOSToolExecutor] {
+        backgroundToolExecutorsWithCurrentPolicy(
+            providerSetting: providerSetting,
+            params: params,
+            runId: runId,
+            toolExposureBridge: toolExposureBridge,
+            conversationId: conversationId,
+            messages: messages,
+            executionPolicy: executionPolicy
+        )
+    }
+
+    private func backgroundToolExecutorsWithCurrentPolicy(
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        runId: String,
+        toolExposureBridge: IosToolExposureBridge?,
+        conversationId: KotlinUuid?,
+        messages: [UIMessage],
+        executionPolicy: IOSExecutionPolicySnapshot?
     ) -> [String: any IOSToolExecutor] {
         var executors: [String: any IOSToolExecutor] = [:]
         let availableToolNames = Set(params.tools.map(\.name))
@@ -447,7 +508,7 @@ final class ChatToolRuntime {
         // bridge after every batch (Fix C), so hits expanded inside a
         // background round become callable on the next background round.
         if availableToolNames.contains("tool_search") {
-            executors["tool_search"] = IOSClosureToolExecutor { _, arguments, _ in
+            executors["tool_search"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, arguments, _ in
                 guard let bridge = toolExposureBridge else {
                     return .failed("tool_search is unavailable in this run.")
                 }
@@ -457,7 +518,7 @@ final class ChatToolRuntime {
         // M5: tools_list 与 tool_search 同属本地目录调用（discovery 引导引用它）——
         // 后台安全，注册为桥的本地执行（返回全目录 {name, description} 清单）。
         if availableToolNames.contains("tools_list") {
-            executors["tools_list"] = IOSClosureToolExecutor { _, _, _ in
+            executors["tools_list"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
                 guard let bridge = toolExposureBridge else {
                     return .failed("tools_list is unavailable in this run.")
                 }
@@ -466,7 +527,7 @@ final class ChatToolRuntime {
         }
 
         for name in IOSSearchExecutor.supportedToolNames where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 guard self.shouldExecuteSearchInBackground(toolName: toolName, arguments: arguments) else {
                     return .denied("后台生成期间需要回到 App 确认网络搜索或网页读取。")
@@ -485,7 +546,7 @@ final class ChatToolRuntime {
 
         if localToolExecutor != nil {
             for name in IOSWorkspaceToolCatalog.supportedToolNames where availableToolNames.contains(name) {
-                executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.workspaceToolExecutionOutput(toolCall, isUserInitiated: false)
@@ -498,7 +559,7 @@ final class ChatToolRuntime {
 
             for name in IOSIshToolCatalog.supportedToolNames.union(IOSEmbeddedIshToolCatalog.supportedToolNames)
             where availableToolNames.contains(name) {
-                executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.ishToolExecutionOutput(toolCall, isUserInitiated: false)
@@ -513,7 +574,7 @@ final class ChatToolRuntime {
         if isWebMountRuntimeEnabled {
             for name in IOSWebMountToolCatalog.supportedToolNames.union(IOSWebMountToolCatalog.unsupportedToolNames)
             where availableToolNames.contains(name) {
-                executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.webMountToolExecutionOutput(toolCall, isUserInitiated: false)
@@ -526,7 +587,7 @@ final class ChatToolRuntime {
         }
 
         if availableToolNames.contains("memory_tool") {
-            executors["memory_tool"] = IOSClosureToolExecutor { [weak self] _, arguments, _ in
+            executors["memory_tool"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] _, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 let policy = self.memoryToolWritePolicy(input: arguments, isUserInitiated: false)
                 if case .needsUserAction(let reason) = policy {
@@ -538,7 +599,7 @@ final class ChatToolRuntime {
 
         if availableToolNames.contains("generate_image") {
             let enrichMessages = messages
-            executors["generate_image"] = IOSClosureToolExecutor { [weak self] _, arguments, _ in
+            executors["generate_image"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] _, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 return .filledParts(
                     await self.dispatchImageToolCall(
@@ -565,7 +626,7 @@ final class ChatToolRuntime {
         //    leaving an incomplete run. It also drives the council-room @Observable
         //    UI, which has no subscriber in background. Revert to foreground.
         if availableToolNames.contains("subagent_dispatch") {
-            executors["subagent_dispatch"] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors["subagent_dispatch"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 let toolCall = self.toolCall(name: toolName, input: arguments)
                 guard self.isAdvancedToolEnabled(toolName) else {
@@ -595,7 +656,7 @@ final class ChatToolRuntime {
         }
 
         if availableToolNames.contains("model_council_run") {
-            executors["model_council_run"] = IOSClosureToolExecutor { _, _, _ in
+            executors["model_council_run"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
                 .denied("模型委员会运行时间较长且依赖前台房间界面，请回到 App 内执行。")
             }
         }
@@ -604,18 +665,18 @@ final class ChatToolRuntime {
         // Watch decision, so deny with an explicit return-to-app reason instead of
         // leaving the tool unregistered (engine would otherwise error-fill and continue).
         if availableToolNames.contains("ask_user") {
-            executors["ask_user"] = IOSClosureToolExecutor { _, _, _ in
+            executors["ask_user"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
                 .denied("后台生成期间需要回到 App 回答问题。")
             }
         }
 
         if availableToolNames.contains("mcp_call") {
-            executors["mcp_call"] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors["mcp_call"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 // High-risk gate mirrors the foreground path (executeAdvancedToolCall):
                 // MCP may touch external services, so only auto-run when the high-risk
                 // auto-approve switch is on. Otherwise deny so the user returns to confirm.
-                guard IOSLocalToolExecutor.isHighRiskAutoApproveEnabled else {
+                guard self.effectiveHighRiskAutoApproveEnabled else {
                     return .denied("后台生成期间需要回到 App 确认 MCP 工具。")
                 }
                 guard self.isAdvancedToolEnabled(toolName) else {
@@ -643,9 +704,9 @@ final class ChatToolRuntime {
         // visible in the current round's params are registered.
         for tool in params.tools where ToolKt.isExpandedMcpToolName(name: tool.name) {
             let expandedName = tool.name
-            executors[expandedName] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[expandedName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                guard IOSLocalToolExecutor.isHighRiskAutoApproveEnabled else {
+                guard self.effectiveHighRiskAutoApproveEnabled else {
                     return .denied("后台生成期间需要回到 App 确认 MCP 工具。")
                 }
                 guard self.isAdvancedToolEnabled(toolName) else {
@@ -672,7 +733,7 @@ final class ChatToolRuntime {
             .union(IOSMcpManagementToolCatalog.toolNames)
             .union([IOSSoulToolCatalog.toolName])
         for name in skillMcpNames where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 if Self.isHostPublishTool(toolName) {
                     return await self.backgroundHostPublishOutcome(
@@ -684,9 +745,9 @@ final class ChatToolRuntime {
                     || IOSMcpManagementToolCatalog.mutatingToolNames.contains(toolName)
                 let highRisk = IOSMcpManagementToolCatalog.highRiskToolNames.contains(toolName)
                 let autoApproved = highRisk
-                    ? IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
-                    : IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-                        || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+                    ? self.effectiveHighRiskAutoApproveEnabled
+                    : self.effectiveGlobalAutoApproveEnabled
+                        || self.effectiveHighRiskAutoApproveEnabled
                 if mutating, !autoApproved {
                     return .denied("后台生成期间需要回到 App 确认 \(toolName)。")
                 }
@@ -709,7 +770,7 @@ final class ChatToolRuntime {
         // 在后台桥里本就不存在（B1 的 handoff 过滤）；import 仅在高风险自动批准
         // 打开时直接 CAS 应用，否则拒绝并要求回到 App。
         if availableToolNames.contains("recipe_import") {
-            executors["recipe_import"] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors["recipe_import"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 return await self.backgroundHostPublishOutcome(
                     toolName: toolName,
@@ -724,7 +785,7 @@ final class ChatToolRuntime {
         // 的 run 锚定会话（由后台协调器传入），生成中切会话不串到当前会话。
         for name in ["spawn_agent", "list_agents", "interrupt_agent", "send_message", "followup_task", "wait_agent"]
             where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 guard let service = self.orchestrationToolService else {
                     return .failed("线程编排工具当前不可用。")
@@ -738,7 +799,8 @@ final class ChatToolRuntime {
                     conversationId: conversationId,
                     // M3: 传 run 的桥——子 run 的 fullToolNames 取全目录而非当轮
                     // 可见子集（闭包捕获的是本 job 的桥实例，全 run 不变）。
-                    toolExposureBridge: toolExposureBridge
+                    toolExposureBridge: toolExposureBridge,
+                    executionPolicy: IOSExecutionPolicyContext.snapshot
                 )
                 return .filled(result)
             }
@@ -747,7 +809,7 @@ final class ChatToolRuntime {
         // 跨会话读取（session_search/session_read）：本地只读、无审批，前后台
         // 同注册（照 tool_search 先例）。只注册当前轮 params 可见的名字。
         for name in ["session_search", "session_read"] where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 return .filled(await self.dispatchSessionReadToolCall(
                     self.toolCall(name: toolName, input: arguments)
@@ -757,7 +819,7 @@ final class ChatToolRuntime {
 
         // Provider/model 配置：后台仅 status（纯读）；写工具拒绝（审批卡只在前台）。
         for name in IOSProviderConfigToolCatalog.toolNames where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 if !IOSProviderConfigToolCatalog.backgroundAllowedToolNames.contains(toolName) {
                     return .denied("provider 配置写入仅前台可用，请回到 App 确认后再试。")
@@ -772,7 +834,7 @@ final class ChatToolRuntime {
 
         // Theme pack: background only status (pure read); import needs the try-on card.
         for name in IOSThemePackToolCatalog.toolNames where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 if !IOSThemePackToolCatalog.backgroundAllowedToolNames.contains(toolName) {
                     return .denied("主题试穿仅前台可用，请回到 App 确认后再试。")
@@ -794,9 +856,9 @@ final class ChatToolRuntime {
         // P3-c: 后台 run 同样按会话注册 cell（conversationId 由 job 传入），
         // 前台 yield 的 cell 后台可以 wait，反之亦然——注册表跨 run/前后台共享。
         if availableToolNames.contains("exec") {
-            executors["exec"] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors["exec"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                guard self.settingsStore.execJavaScriptEnabled else {
+                guard self.effectiveExecJavaScriptEnabled else {
                     return .failed("exec 未开启。请先在设置中启用 JavaScript 执行工具。")
                 }
                 let whitelist = ChatToolRuntime.execNestedToolWhitelist(
@@ -823,9 +885,9 @@ final class ChatToolRuntime {
         }
         // P3-c: wait 与 exec 同开关同池——后台 run 可 wait 本会话的 cell。
         if availableToolNames.contains("wait") {
-            executors["wait"] = IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
+            executors["wait"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                guard self.settingsStore.execJavaScriptEnabled else {
+                guard self.effectiveExecJavaScriptEnabled else {
                     return .failed("wait 未开启。请先在设置中启用 JavaScript 执行工具。")
                 }
                 return .filled(await self.dispatchWaitToolCall(
@@ -835,6 +897,119 @@ final class ChatToolRuntime {
             }
         }
 
+        return executors
+    }
+
+    // MARK: - P0-2 B2: 前台内核执行器适配
+
+    /// 审批卡暂存盒:引擎执行器回调(nonisolated 上下文)命中 `.waitingForApproval`
+    /// 时按 toolCallId 登记 prompt;`ChatRunKernelAdapter` 在引擎返回
+    /// `pendingApproval` 后取出、走 bindings 发布。审批请求类型未标 Sendable,
+    /// 照 `IOSMailboxDrainResult` 先例用锁 + @unchecked Sendable 跨边界。
+    final class IOSForegroundApprovalPromptBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var prompts: [String: ChatToolApprovalPrompt] = [:]
+
+        func put(_ toolCallId: String, _ prompt: ChatToolApprovalPrompt) {
+            lock.withLock { prompts[toolCallId] = prompt }
+        }
+
+        func take(_ toolCallId: String) -> ChatToolApprovalPrompt? {
+            lock.withLock { prompts.removeValue(forKey: toolCallId) }
+        }
+    }
+
+    /// 工具名 → 前台 kind 分类。与 `nextPendingToolCall` 的逐类扫描同源
+    /// (各名字集互斥,单名分类与扫描序无关);实例级闸门保持一致:
+    /// workspace/ish 需 localToolExecutor,webMount 需运行时开关,exec/wait
+    /// 需 execJavaScriptEnabled。全部集合之外的名字返回 nil(= CGC 的
+    /// 「未知名」档位,由调用方决定硬失败,不在此伪装成 advanced)。
+    func pendingKindForForegroundTool(
+        named name: String,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) -> ChatPendingToolKind? {
+        if ["tool_search", "tools_list"].contains(name) { return .toolSearch }
+        if IOSSearchExecutor.supportedToolNames.contains(name) { return .search }
+        if localToolExecutor != nil {
+            if IOSWorkspaceToolCatalog.supportedToolNames.contains(name) { return .workspace }
+            let ishNames = IOSIshToolCatalog.supportedToolNames
+                .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            if ishNames.contains(name) { return .ish }
+        }
+        if isWebMountRuntimeEnabled {
+            let webMountNames = IOSWebMountToolCatalog.supportedToolNames
+                .union(IOSWebMountToolCatalog.unsupportedToolNames)
+            if webMountNames.contains(name) { return .webMount }
+        }
+        if name == "memory_tool" { return .memory }
+        if name == "generate_image" { return .image }
+        if name == "ask_user" { return .askUser }
+        if ["session_search", "session_read"].contains(name) { return .sessionRead }
+        var advancedNames: Set<String> = Set([
+            "mcp_call", "subagent_dispatch", "model_council_run",
+            IOSSoulToolCatalog.toolName,
+            "spawn_agent", "list_agents", "interrupt_agent",
+            "send_message", "followup_task", "wait_agent",
+        ])
+        .union(IOSSkillToolCatalog.toolNames)
+        .union(IOSMcpManagementToolCatalog.toolNames)
+        .union(IOSProviderConfigToolCatalog.toolNames)
+        .union(IOSThemePackToolCatalog.toolNames)
+        .union(IOSRecipeToolCatalog.toolNames)
+        if IOSDynamicToolRegistry.isRecipeToolName(name) { return .advanced }
+        if executionPolicy?.execJavaScriptEnabled ?? effectiveExecJavaScriptEnabled {
+            advancedNames.formUnion(["exec", "wait"])
+        }
+        if advancedNames.contains(name) || name.hasPrefix("mcp__") { return .advanced }
+        return nil
+    }
+
+    /// 前台策略的内核执行器表:与 `backgroundToolExecutors` 同构,但走
+    /// `execute(...)` 前台分发(kind 分发、审批卡、记忆污染置位全部沿用),
+    /// `isUserInitiated` 由调用点语义决定。审批命中时 prompt 登记进
+    /// `approvalPromptBox`(引擎的 `.needsApproval` 只有 reason 字符串,
+    /// 审批卡对象经盒子交接),引擎随后以 `pendingApproval` 暂停,由
+    /// `ChatRunKernelAdapter` 决定批准/拒绝并调用对应 finish*Approval。
+    ///
+    /// - parameter baseMessagesProvider: 执行器被引擎调用时取当前 run 的
+    ///   工作消息,充当 `ChatPendingToolApproval.baseMessages`(回填锚点)。
+    ///   适配器必须返回引擎当轮 working 的最新值。
+    func foregroundToolExecutors(
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        runId: String,
+        startedAt: Int64,
+        inputDigest: String,
+        conversationId: KotlinUuid?,
+        toolExposureBridge: IosToolExposureBridge?,
+        baseMessagesProvider: @escaping @MainActor @Sendable () -> [UIMessage],
+        approvalPromptBox: IOSForegroundApprovalPromptBox,
+        nestedToolRunner: IosExecNestedToolRunner? = nil,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) -> [String: any IOSToolExecutor] {
+        var executors: [String: any IOSToolExecutor] = [:]
+        for tool in params.tools {
+            let name = tool.name
+            let kind = pendingKindForForegroundTool(named: name, executionPolicy: executionPolicy)
+            guard let kind else { continue }
+            executors[name] = IOSForegroundKernelToolExecutor(
+                runtime: self,
+                kind: kind,
+                providerSetting: providerSetting,
+                params: params,
+                runId: runId,
+                startedAt: startedAt,
+                inputDigest: inputDigest,
+                conversationId: conversationId,
+                toolExposureBridge: toolExposureBridge,
+                baseMessagesProvider: baseMessagesProvider,
+                approvalPromptBox: approvalPromptBox,
+                nestedToolRunner: nestedToolRunner,
+                recipeCatalogSnapshot: recipeCatalogSnapshot,
+                executionPolicy: executionPolicy
+            )
+        }
         return executors
     }
 
@@ -887,6 +1062,25 @@ final class ChatToolRuntime {
         toolExposureBridge: IosToolExposureBridge? = nil,
         nestedToolRunner: IosExecNestedToolRunner? = nil,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil
+    ) async -> ChatToolRuntimeResult {
+        let executionPolicy = context.executionPolicy ?? IOSExecutionPolicyContext.snapshot
+        return await IOSExecutionPolicyContext.$snapshot.withValue(executionPolicy) {
+            await executeWithCurrentExecutionPolicy(
+                pendingToolCall,
+                context: context,
+                toolExposureBridge: toolExposureBridge,
+                nestedToolRunner: nestedToolRunner,
+                recipeCatalogSnapshot: recipeCatalogSnapshot
+            )
+        }
+    }
+
+    private func executeWithCurrentExecutionPolicy(
+        _ pendingToolCall: ChatPendingToolCall,
+        context: ChatPendingToolApproval,
+        toolExposureBridge: IosToolExposureBridge?,
+        nestedToolRunner: IosExecNestedToolRunner?,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     ) async -> ChatToolRuntimeResult {
         // I-2 fail-closed: gate every kind on the same check before it reaches its
         // own dispatch* function, all of which read `context.toolCall.input`
@@ -1040,7 +1234,8 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: allowed ? .allowed : .denied,
             reason: allowed ? "User approved memory write." : "User denied memory write.",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
 
         let resultText = IOSMemoryToolExecutor.execute(
@@ -1065,7 +1260,8 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
             reason: allow ? "User approved network search." : "User denied network search.",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
         let resultText = allow
             ? await dispatchSearchToolCall(pending.toolCall)
@@ -1091,12 +1287,17 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
             reason: allow ? "User approved WebMount foreground action." : "User denied WebMount foreground action.",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
 
         let resultText: String
         if allow {
-            let output = await webMountToolExecutionOutput(pending.toolCall, isUserInitiated: true)
+            let output = await webMountToolExecutionOutput(
+                pending.toolCall,
+                isUserInitiated: true,
+                executionPolicy: pending.executionPolicy
+            )
             resultText = ChatToolOutputFormatter.webMountResultText(for: pending.toolCall, output: output)
         } else {
             resultText = IOSWebMountController.json([
@@ -1118,21 +1319,24 @@ final class ChatToolRuntime {
         pending: ChatPendingToolApproval,
         allow: Bool
     ) async -> [UIMessage] {
+        recordToolApproval(
+            capabilityId: IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
+                ?? "ios.workspace.files",
+            toolCall: pending.toolCall,
+            action: allow ? .allowed : .denied,
+            reason: allow ? "User approved Workspace tool access." : "User denied Workspace tool access.",
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
+        )
         let resultText: String
         if allow {
-            let output = await workspaceToolExecutionOutput(pending.toolCall, isUserInitiated: true)
+            let output = await workspaceToolExecutionOutput(
+                pending.toolCall,
+                isUserInitiated: true,
+                executionPolicy: pending.executionPolicy
+            )
             resultText = ChatToolOutputFormatter.workspaceResultText(for: pending.toolCall, output: output)
         } else {
-            // §15 Phase 0: workspace denials do not flow through
-            // `recordToolApproval` (pre-existing gap — no permission-store
-            // record either), but the ledger denial is still a required
-            // §11.1 evidence source, so record it here.
-            recordApprovalDeniedInLedger(
-                runId: pending.runId,
-                toolCall: pending.toolCall,
-                reason: "User denied Workspace tool access.",
-                capabilityId: IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
-            )
             resultText = IOSWorkspaceStore.json([
                 "ok": false,
                 "tool": pending.toolCall.toolName,
@@ -1158,12 +1362,17 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
             reason: allow ? "User approved iSH tool." : "User denied iSH tool.",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
 
         let resultText: String
         if allow {
-            let output = await ishToolExecutionOutput(pending.toolCall, isUserInitiated: true)
+            let output = await ishToolExecutionOutput(
+                pending.toolCall,
+                isUserInitiated: true,
+                executionPolicy: pending.executionPolicy
+            )
             resultText = ChatToolOutputFormatter.ishHandoffResultText(for: pending.toolCall, output: output)
         } else {
             resultText = IOSWorkspaceStore.json([
@@ -1213,7 +1422,8 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
             reason: allow ? "User approved \(audit.actionName)." : "User denied \(audit.actionName).",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
 
         let resultText: String
@@ -1334,7 +1544,8 @@ final class ChatToolRuntime {
             reason: allow
                 ? "User approved \(pending.toolCall.toolName)."
                 : "User denied \(pending.toolCall.toolName).",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
         let resultText: String
         if allow {
@@ -1938,7 +2149,7 @@ final class ChatToolRuntime {
         // P3-a: exec 仅开关开时存在执行路径；关时零痕迹——模型调用 exec 走
         // 未知名硬失败语义（与声明侧 gate 同源：settingsStore.execJavaScriptEnabled）。
         // P3-c: wait 与 exec 同开关（cell 生命周期续取，无独立设置项）。
-        if settingsStore.execJavaScriptEnabled {
+        if effectiveExecJavaScriptEnabled {
             advancedNames.insert("exec")
             advancedNames.insert("wait")
         }
@@ -1995,8 +2206,8 @@ final class ChatToolRuntime {
     private func executeSearchToolCall(_ pending: ChatPendingToolApproval) async -> ChatToolRuntimeResult {
         // Honor the global / high-risk auto-approve switches (Permissions page). When on,
         // skip the per-call approval card and dispatch directly.
-        let autoApprove = IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-            || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+        let autoApprove = effectiveGlobalAutoApproveEnabled
+            || effectiveHighRiskAutoApproveEnabled
         if !autoApprove,
            let request = ChatToolApprovalRequestBuilder.search(
                for: pending.toolCall,
@@ -2138,7 +2349,7 @@ final class ChatToolRuntime {
                         in: pending.baseMessages
                     ))
                 }
-                if IOSLocalToolExecutor.isHighRiskAutoApproveEnabled {
+                if effectiveHighRiskAutoApproveEnabled {
                     let resultText = try soulService.applyPreparedImport(prepared)
                     return .completed(messagesByFinishingToolCall(
                         pending.toolCall,
@@ -2180,7 +2391,7 @@ final class ChatToolRuntime {
                         in: pending.baseMessages
                     ))
                 }
-                if IOSLocalToolExecutor.isHighRiskAutoApproveEnabled {
+                if effectiveHighRiskAutoApproveEnabled {
                     let resultText = await skillMcpToolService.applyPreparedMcpImport(prepared) { [weak self] in
                         self?.isMcpNetworkAllowed() ?? false
                     }
@@ -2284,7 +2495,7 @@ final class ChatToolRuntime {
                         in: pending.baseMessages
                     ))
                 }
-                if IOSLocalToolExecutor.isHighRiskAutoApproveEnabled {
+                if effectiveHighRiskAutoApproveEnabled {
                     let resultText = try skillMcpToolService.applyPreparedSkillImport(prepared)
                     return .completed(messagesByFinishingToolCall(
                         pending.toolCall,
@@ -2317,7 +2528,7 @@ final class ChatToolRuntime {
                     for: pending.toolCall,
                     prepared: prepared
                 )
-                if IOSLocalToolExecutor.isHighRiskAutoApproveEnabled {
+                if effectiveHighRiskAutoApproveEnabled {
                     let resultText = try await recipeToolService.applyPreparedRecipeImport(prepared)
                     return .completed(messagesByFinishingToolCall(
                         pending.toolCall,
@@ -2346,7 +2557,7 @@ final class ChatToolRuntime {
         let highRiskMcp = toolName == "mcp_call"
             || ToolKt.isExpandedMcpToolName(name: toolName)
             || IOSMcpManagementToolCatalog.highRiskToolNames.contains(toolName)
-        if highRiskMcp, !IOSLocalToolExecutor.isHighRiskAutoApproveEnabled {
+        if highRiskMcp, !effectiveHighRiskAutoApproveEnabled {
             let request: McpToolApprovalRequest?
             if toolName == "mcp_call" {
                 request = ChatToolApprovalRequestBuilder.mcp(
@@ -2377,8 +2588,8 @@ final class ChatToolRuntime {
 
         let mutatingSkill = IOSSkillToolCatalog.mutatingToolNames.contains(pending.toolCall.toolName)
         if mutatingSkill,
-           !IOSLocalToolExecutor.isGlobalAutoApproveEnabled,
-           !IOSLocalToolExecutor.isHighRiskAutoApproveEnabled,
+           !effectiveGlobalAutoApproveEnabled,
+           !effectiveHighRiskAutoApproveEnabled,
            let request = ChatToolApprovalRequestBuilder.extensionMutation(
                for: pending.toolCall,
                reason: "将写入本机 Skill 或 MCP 配置，需要你确认。"
@@ -2852,7 +3063,8 @@ final class ChatToolRuntime {
                 toolCall: pending.toolCall,
                 action: .allowed,
                 reason: "User approved recipe step.",
-                runId: pending.runId
+                runId: pending.runId,
+                executionPolicy: pending.executionPolicy
             )
             // The resumed step is the one the user just approved — skip its
             // gate (the top-level post-approval contract); later steps gate
@@ -2874,7 +3086,8 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: .denied,
             reason: "User denied recipe step.",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
         discardPreparedRecipeExecution(toolCallId: toolCallId)
         let step = state.plan.steps[state.nextStepIndex]
@@ -2919,7 +3132,8 @@ final class ChatToolRuntime {
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
             reason: allow ? "User approved recipe import." : "User denied recipe import.",
-            runId: pending.runId
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
         )
         let resultText: String
         if allow {
@@ -3058,7 +3272,11 @@ final class ChatToolRuntime {
                 : bridge.executeToolSearch(argumentsJson: argsJSON)
             return .output(result)
         case .skill:
-            let result = await skillMcpToolService.execute(toolName: tool, arguments: argsJSON)
+            let result = await skillMcpToolService.execute(
+                toolName: tool,
+                arguments: argsJSON,
+                mcpEnabledOverride: isMcpNetworkAllowed()
+            )
             return .output(result)
         case .advanced:
             return .output(await dispatchAdvancedToolCall(
@@ -3085,8 +3303,8 @@ final class ChatToolRuntime {
         case .workspace:
             return workspaceRecipeStepGate(toolName: tool)
         case .search:
-            let autoApprove = IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-                || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+            let autoApprove = effectiveGlobalAutoApproveEnabled
+                || effectiveHighRiskAutoApproveEnabled
             if !autoApprove,
                ChatToolApprovalRequestBuilder.search(
                    for: toolCall(name: tool, input: argsJSON),
@@ -3110,12 +3328,12 @@ final class ChatToolRuntime {
         case .advanced:
             switch tool {
             case "mcp_call":
-                guard IOSLocalToolExecutor.isHighRiskAutoApproveEnabled else {
+                guard effectiveHighRiskAutoApproveEnabled else {
                     return .approvalRequired(reason: "MCP 工具可能访问外部服务或执行远端操作，需要你确认。")
                 }
                 return .proceed
             case let name where ToolKt.isExpandedMcpToolName(name: name):
-                guard IOSLocalToolExecutor.isHighRiskAutoApproveEnabled else {
+                guard effectiveHighRiskAutoApproveEnabled else {
                     return .approvalRequired(reason: "MCP 工具可能访问外部服务或执行远端操作，需要你确认。")
                 }
                 return .proceed
@@ -3145,8 +3363,8 @@ final class ChatToolRuntime {
             }
         case .skill:
             let mutating = IOSSkillToolCatalog.mutatingToolNames.contains(tool)
-            if mutating, !IOSLocalToolExecutor.isGlobalAutoApproveEnabled,
-               !IOSLocalToolExecutor.isHighRiskAutoApproveEnabled {
+            if mutating, !effectiveGlobalAutoApproveEnabled,
+               !effectiveHighRiskAutoApproveEnabled {
                 return .approvalRequired(reason: "将写入本机 Skill 或 MCP 配置，需要你确认。")
             }
             return .proceed
@@ -3164,8 +3382,11 @@ final class ChatToolRuntime {
     /// execution itself (when allowed) happens through the existing path.
     private func workspaceRecipeStepGate(toolName: String) -> RecipeStepGate {
         guard let localToolExecutor,
-              let capability = IOSCapabilityRegistry.capability(forToolName: toolName),
-              let policy = localToolExecutor.permissionPolicy(capabilityId: capability.id) else {
+              let capability = IOSCapabilityRegistry.capability(forToolName: toolName) else {
+            return .proceed
+        }
+        guard let policy = IOSExecutionPolicyContext.snapshot?.policy(for: capability)
+            ?? localToolExecutor.permissionPolicy(capabilityId: capability.id) else {
             return .proceed
         }
         if policy == .disabled {
@@ -3176,15 +3397,15 @@ final class ChatToolRuntime {
             return .proceed
         }
         if IOSWorkspaceToolCatalog.writeToolNames.contains(toolName) {
-            if IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-                && (capability.risk != .high || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled) {
+            if effectiveGlobalAutoApproveEnabled
+                && (capability.risk != .high || effectiveHighRiskAutoApproveEnabled) {
                 return .proceed
             }
             return .approvalRequired(reason: "Workspace 写入与删除需要显式批准。")
         }
         if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
-            if IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-                && (capability.risk != .high || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled) {
+            if effectiveGlobalAutoApproveEnabled
+                && (capability.risk != .high || effectiveHighRiskAutoApproveEnabled) {
                 return .proceed
             }
             return .approvalRequired(reason: "Workspace 读取需要显式批准。")
@@ -3195,8 +3416,11 @@ final class ChatToolRuntime {
     /// Mirror of `IOSLocalToolExecutor.resolveWebMount`'s gate.
     private func webMountRecipeStepGate(toolName: String) -> RecipeStepGate {
         guard let localToolExecutor,
-              let capability = IOSCapabilityRegistry.capability(forToolName: toolName),
-              let policy = localToolExecutor.permissionPolicy(capabilityId: capability.id) else {
+              let capability = IOSCapabilityRegistry.capability(forToolName: toolName) else {
+            return .proceed
+        }
+        guard let policy = IOSExecutionPolicyContext.snapshot?.policy(for: capability)
+            ?? localToolExecutor.permissionPolicy(capabilityId: capability.id) else {
             return .proceed
         }
         if policy == .disabled {
@@ -3212,8 +3436,8 @@ final class ChatToolRuntime {
             return .approvalRequired(reason: "此 WebMount 操作需要显式批准。")
         }
         if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
-            if IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-                && (capability.risk != .high || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled) {
+            if effectiveGlobalAutoApproveEnabled
+                && (capability.risk != .high || effectiveHighRiskAutoApproveEnabled) {
                 return .proceed
             }
             return .approvalRequired(reason: "WebMount 浏览器操作需要显式批准。")
@@ -3358,7 +3582,7 @@ final class ChatToolRuntime {
     }
 
     private func dispatchSearchToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
-        guard sharedSettings.snapshot.enableWebSearch else {
+        guard effectiveWebSearchEnabled else {
             return ChatToolOutputFormatter.toolFailureJSON(
                 toolName: toolCall.toolName,
                 reason: "Web search is disabled in settings."
@@ -3389,8 +3613,8 @@ final class ChatToolRuntime {
     }
 
     private func shouldExecuteSearchInBackground(toolName: String, arguments: String) -> Bool {
-        let autoApprove = IOSLocalToolExecutor.isGlobalAutoApproveEnabled
-            || IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+        let autoApprove = effectiveGlobalAutoApproveEnabled
+            || effectiveHighRiskAutoApproveEnabled
         guard !autoApprove else { return true }
         let toolCall = toolCall(name: toolName, input: arguments)
         return ChatToolApprovalRequestBuilder.search(
@@ -3491,38 +3715,34 @@ final class ChatToolRuntime {
 
     private func workspaceToolExecutionOutput(
         _ toolCall: UIMessagePart.Tool,
-        isUserInitiated: Bool
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) async -> IOSLocalToolExecutionOutput {
         guard let localToolExecutor else {
             return .failed("Local iOS tool executor is unavailable.")
         }
-        return await localToolExecutor.execute(
-            IOSLocalToolExecutionRequest(
-                toolName: toolCall.toolName,
-                operation: toolCall.input,
-                scopeDigest: "workspace",
-                payloadDigest: chatInputDigest(for: toolCall.input),
-                isUserInitiated: isUserInitiated
-            )
-        )
+        return await localToolExecutor.execute(localToolExecutor.executionRequest(
+            toolName: toolCall.toolName,
+            operation: toolCall.input,
+            isUserInitiated: isUserInitiated,
+            executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
+        ))
     }
 
     private func ishToolExecutionOutput(
         _ toolCall: UIMessagePart.Tool,
-        isUserInitiated: Bool
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) async -> IOSLocalToolExecutionOutput {
         guard let localToolExecutor else {
             return .failed("Local iOS tool executor is unavailable.")
         }
-        return await localToolExecutor.execute(
-            IOSLocalToolExecutionRequest(
-                toolName: toolCall.toolName,
-                operation: toolCall.input,
-                scopeDigest: "ish",
-                payloadDigest: chatInputDigest(for: toolCall.input),
-                isUserInitiated: isUserInitiated
-            )
-        )
+        return await localToolExecutor.execute(localToolExecutor.executionRequest(
+            toolName: toolCall.toolName,
+            operation: toolCall.input,
+            isUserInitiated: isUserInitiated,
+            executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
+        ))
     }
 
     private func dispatchWebMountToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
@@ -3532,20 +3752,18 @@ final class ChatToolRuntime {
 
     private func webMountToolExecutionOutput(
         _ toolCall: UIMessagePart.Tool,
-        isUserInitiated: Bool
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) async -> IOSLocalToolExecutionOutput {
         guard let localToolExecutor else {
             return .failed("Local iOS tool executor is unavailable.")
         }
-        return await localToolExecutor.execute(
-            IOSLocalToolExecutionRequest(
-                toolName: toolCall.toolName,
-                operation: toolCall.input,
-                scopeDigest: "webmount",
-                payloadDigest: chatInputDigest(for: toolCall.input),
-                isUserInitiated: isUserInitiated
-            )
-        )
+        return await localToolExecutor.execute(localToolExecutor.executionRequest(
+            toolName: toolCall.toolName,
+            operation: toolCall.input,
+            isUserInitiated: isUserInitiated,
+            executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
+        ))
     }
 
     private func dispatchMemoryToolCall(
@@ -3562,7 +3780,8 @@ final class ChatToolRuntime {
     private func memoryToolWritePolicy(input: String, isUserInitiated: Bool) -> IOSMemoryToolWritePolicy {
         localToolExecutor?.memoryToolWritePolicy(
             input: input,
-            isUserInitiated: isUserInitiated
+            isUserInitiated: isUserInitiated,
+            executionPolicy: IOSExecutionPolicyContext.snapshot
         ) ?? (IOSMemoryToolExecutor.requiresWriteApproval(input: input)
             ? .needsUserAction("Memory writes require foreground approval.")
             : .allow)
@@ -3735,7 +3954,12 @@ final class ChatToolRuntime {
             }
             let arguments = (args["arguments"] as? [String: Any]) ?? [:]
             do {
-                return try await mcpManager.callTool(serverName: server, toolName: tool, arguments: arguments)
+                return try await mcpManager.callTool(
+                    serverName: server,
+                    toolName: tool,
+                    arguments: arguments,
+                    enabledOverride: isMcpNetworkAllowed()
+                )
             } catch {
                 // P2-a：失败输出必须是结构化 JSON（与 search 路径同契约），否则
                 // failureReason 识别不到 → 误把失败调用标成 POLLUTED。
@@ -3765,7 +3989,12 @@ final class ChatToolRuntime {
                 )
             }
             do {
-                return try await mcpManager.callTool(serverName: target.server, toolName: target.tool, arguments: arguments)
+                return try await mcpManager.callTool(
+                    serverName: target.server,
+                    toolName: target.tool,
+                    arguments: arguments,
+                    enabledOverride: isMcpNetworkAllowed()
+                )
             } catch {
                 // P2-a：与 mcp_call 同一契约——结构化失败输出，failureReason 可识别，
                 // 不把失败调用误标成 POLLUTED。
@@ -3777,7 +4006,11 @@ final class ChatToolRuntime {
             }
         case let name where IOSSkillToolCatalog.toolNames.contains(name)
             || IOSMcpManagementToolCatalog.toolNames.contains(name):
-            return await skillMcpToolService.execute(toolName: name, arguments: toolCall.input)
+            return await skillMcpToolService.execute(
+                toolName: name,
+                arguments: toolCall.input,
+                mcpEnabledOverride: isMcpNetworkAllowed()
+            )
         case "recipe_import":
             // Host-publish apply lives in executeAdvancedToolCall / background
             // host-publish; this dispatch table must not silently import.
@@ -3807,7 +4040,8 @@ final class ChatToolRuntime {
                 conversationId: conversationId,
                 // M3: 子 run 的 fullToolNames 取 run 桥全目录（spawn/followup
                 // 不被当轮可见子集截断）；nil 时服务回退 params.tools。
-                toolExposureBridge: toolExposureBridge
+                toolExposureBridge: toolExposureBridge,
+                executionPolicy: IOSExecutionPolicyContext.snapshot
             )
         case let name where IOSProviderConfigToolCatalog.toolNames.contains(name):
             return await providerConfigToolService.execute(
@@ -4030,7 +4264,12 @@ final class ChatToolRuntime {
 
         if IOSSearchExecutor.supportedToolNames.contains(name) {
             let output = await dispatchSearchToolCall(toolCall(name: name, input: arguments))
-            recordSubAgentParentToolApproval(toolName: name, arguments: arguments, action: .allowed, runId: runId)
+            recordSubAgentParentToolApproval(
+                toolName: name,
+                arguments: arguments,
+                action: .allowed,
+                runId: runId
+            )
             return .filled(output)
         }
 
@@ -4038,24 +4277,20 @@ final class ChatToolRuntime {
             return .failed("Local iOS tool executor is unavailable.")
         }
 
-        let request: IOSLocalToolExecutionRequest
-        if name == "file_read_selected" {
-            request = localToolExecutor.requestForCurrentSelectedFile(isUserInitiated: true)
-        } else {
-            request = IOSLocalToolExecutionRequest(
-                toolName: name,
-                operation: arguments,
-                scopeDigest: "subagent",
-                payloadDigest: chatInputDigest(for: arguments),
-                isUserInitiated: false
-            )
-        }
+        let request = localToolExecutor.executionRequest(
+            toolName: name,
+            operation: arguments,
+            isUserInitiated: name == "file_read_selected",
+            runId: runId,
+            executionPolicy: IOSExecutionPolicyContext.snapshot
+        )
         let output = await localToolExecutor.execute(request)
         recordSubAgentParentToolApproval(
             toolName: name,
             arguments: arguments,
             action: output.isSuccessfulToolResult ? .allowed : .denied,
-            runId: runId
+            runId: runId,
+            request: request
         )
         return ChatToolOutputFormatter.subAgentOutcome(for: name, output: output)
     }
@@ -4064,18 +4299,27 @@ final class ChatToolRuntime {
         toolName: String,
         arguments: String,
         action: IOSToolApprovalAction,
-        runId: String
+        runId: String,
+        request: IOSLocalToolExecutionRequest? = nil
     ) {
         guard let localToolExecutor,
               let capability = IOSCapabilityRegistry.capability(forToolName: toolName) else { return }
+        let auditRequest = request ?? localToolExecutor.executionRequest(
+            toolName: toolName,
+            operation: arguments,
+            isUserInitiated: false,
+            runId: runId,
+            executionPolicy: IOSExecutionPolicyContext.snapshot
+        )
         localToolExecutor.recordApproval(
             capabilityId: capability.id,
             toolName: toolName,
             action: action,
             reason: "SubAgent read-only parent tool \(action == .allowed ? "executed" : "denied").",
             runId: runId,
-            scopeDigest: "subagent",
-            payloadDigest: chatInputDigest(for: arguments)
+            scopeDigest: auditRequest.scopeDigest,
+            payloadDigest: auditRequest.payloadDigest,
+            policyDigest: auditRequest.executionPolicy?.digest
         )
     }
 
@@ -4121,17 +4365,29 @@ final class ChatToolRuntime {
         action: IOSToolApprovalAction,
         reason: String,
         runId: String,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
         isUserDecision: Bool = true
     ) {
-        localToolExecutor?.recordApproval(
-            capabilityId: capabilityId,
-            toolName: toolCall.toolName,
-            action: action,
-            reason: reason,
-            runId: runId,
-            scopeDigest: chatToolCallKey(toolCall),
-            payloadDigest: chatInputDigest(for: toolCall.input)
-        )
+        let policy = executionPolicy ?? IOSExecutionPolicyContext.snapshot
+        if let localToolExecutor {
+            let request = localToolExecutor.executionRequest(
+                toolName: toolCall.toolName,
+                operation: toolCall.input,
+                isUserInitiated: true,
+                runId: runId,
+                executionPolicy: policy
+            )
+            localToolExecutor.recordApproval(
+                capabilityId: capabilityId,
+                toolName: toolCall.toolName,
+                action: action,
+                reason: reason,
+                runId: runId,
+                scopeDigest: request.scopeDigest,
+                payloadDigest: request.payloadDigest,
+                policyDigest: policy?.digest
+            )
+        }
         if action == .denied, isUserDecision {
             recordApprovalDeniedInLedger(
                 runId: runId,
@@ -4245,7 +4501,9 @@ final class ChatToolRuntime {
     }
 
     private func isMcpNetworkAllowed() -> Bool {
-        isCapabilityPolicyEnabled("ios.mcp.tool_call")
+        let masterEnabled = IOSExecutionPolicyContext.snapshot?.mcpEnabled
+            ?? sharedSettings.isCapabilityGateEnabled(.mcp)
+        return masterEnabled && isCapabilityPolicyEnabled("ios.mcp.tool_call")
     }
 
     private static func isHostPublishTool(_ toolName: String) -> Bool {
@@ -4261,7 +4519,7 @@ final class ChatToolRuntime {
         toolName: String,
         arguments: String
     ) async -> IOSAgentToolOutcome {
-        guard IOSLocalToolExecutor.isHighRiskAutoApproveEnabled else {
+        guard effectiveHighRiskAutoApproveEnabled else {
             return .denied("后台生成期间需要回到 App 确认 \(toolName)。")
         }
         do {
@@ -4329,34 +4587,50 @@ final class ChatToolRuntime {
         case "exec":
             // P3-a: 与声明侧同源 gate。开关关时（理论上调用到不了这里，因为
             // pendingAdvancedToolCall 不收 exec）诚实拒绝而非静默执行。
-            settingsStore.execJavaScriptEnabled
+            effectiveExecJavaScriptEnabled
         case "wait":
             // P3-c: 与 exec 同开关（cell 续取工具没有独立设置项）。
-            settingsStore.execJavaScriptEnabled
+            effectiveExecJavaScriptEnabled
         default:
             false
         }
     }
 
     private func isCapabilityPolicyEnabled(_ capabilityId: String) -> Bool {
+        if let snapshot = IOSExecutionPolicyContext.snapshot,
+           let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.id == capabilityId }) {
+            return snapshot.policy(for: capability) != .disabled
+        }
         guard let localToolExecutor else { return true }
         let snapshot = localToolExecutor.permissionsStatus()
         return snapshot.capabilities.first { $0.id == capabilityId }?.policy != IOSAgentPermissionPolicy.disabled.title
     }
 
     private var requiresCouncilApproval: Bool {
-        guard let policy = localToolExecutor?.permissionPolicy(
-            capabilityId: "ios.agent.model_council_run"
-        ) else {
+        let capabilityId = "ios.agent.model_council_run"
+        let policy: IOSAgentPermissionPolicy?
+        if let snapshot = IOSExecutionPolicyContext.snapshot,
+           let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.id == capabilityId }) {
+            policy = snapshot.policy(for: capability)
+        } else {
+            policy = localToolExecutor?.permissionPolicy(capabilityId: capabilityId)
+        }
+        guard let policy else {
             return false
         }
         return policy == .askEveryTime || policy == .allowOncePerRun
     }
 
     func requiresSubAgentApproval() -> Bool {
-        guard let policy = localToolExecutor?.permissionPolicy(
-            capabilityId: "ios.agent.subagent_dispatch"
-        ) else {
+        let capabilityId = "ios.agent.subagent_dispatch"
+        let policy: IOSAgentPermissionPolicy?
+        if let snapshot = IOSExecutionPolicyContext.snapshot,
+           let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.id == capabilityId }) {
+            policy = snapshot.policy(for: capability)
+        } else {
+            policy = localToolExecutor?.permissionPolicy(capabilityId: capabilityId)
+        }
+        guard let policy else {
             return false
         }
         return policy == .askEveryTime || policy == .allowOncePerRun
@@ -4530,4 +4804,123 @@ final class ChatToolRuntime {
         return await dispatchSearchToolCall(toolCall)
     }
 #endif
+}
+
+// MARK: - P0-2 B2: 前台内核执行器
+
+/// 前台工具面的引擎执行器:把引擎的 (tool) 调用桥进 `ChatToolRuntime.execute`
+/// 的 kind 分发——审批卡、记忆污染置位、回填格式化全部沿用前台实现,不复制
+/// dispatch 逻辑。命中审批时 prompt 登记进盒子(引擎的 `.needsApproval` 只有
+/// reason 字符串),`ChatRunKernelAdapter` 后续从盒子取出发布。
+///
+/// 三参 legacy 入口不被引擎调用(引擎优先 `execute(tool:)`);返回诚实失败,
+/// 防止绕过 toolCallId 键控语义的直连。
+///
+/// @unchecked Sendable:引擎从 nonisolated 上下文调 `execute(tool:)`,随即
+/// hop 到 MainActor 的 `dispatch`——跨域发送 self 是这次 hop 本身;全部
+/// 存储属性 init 后不可变,且只在 MainActor 上读取。
+private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked Sendable {
+    private weak var runtime: ChatToolRuntime?
+    private let kind: ChatPendingToolKind
+    private let providerSetting: ProviderSetting
+    private let params: TextGenerationParams
+    private let runId: String
+    private let startedAt: Int64
+    private let inputDigest: String
+    private let conversationId: KotlinUuid?
+    private let toolExposureBridge: IosToolExposureBridge?
+    private let baseMessagesProvider: @MainActor @Sendable () -> [UIMessage]
+    private let approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox
+    private let nestedToolRunner: IosExecNestedToolRunner?
+    private let recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
+    private let executionPolicy: IOSExecutionPolicySnapshot?
+
+    init(
+        runtime: ChatToolRuntime,
+        kind: ChatPendingToolKind,
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        runId: String,
+        startedAt: Int64,
+        inputDigest: String,
+        conversationId: KotlinUuid?,
+        toolExposureBridge: IosToolExposureBridge?,
+        baseMessagesProvider: @escaping @MainActor @Sendable () -> [UIMessage],
+        approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox,
+        nestedToolRunner: IosExecNestedToolRunner?,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
+        executionPolicy: IOSExecutionPolicySnapshot?
+    ) {
+        self.runtime = runtime
+        self.kind = kind
+        self.providerSetting = providerSetting
+        self.params = params
+        self.runId = runId
+        self.startedAt = startedAt
+        self.inputDigest = inputDigest
+        self.conversationId = conversationId
+        self.toolExposureBridge = toolExposureBridge
+        self.baseMessagesProvider = baseMessagesProvider
+        self.approvalPromptBox = approvalPromptBox
+        self.nestedToolRunner = nestedToolRunner
+        self.recipeCatalogSnapshot = recipeCatalogSnapshot
+        self.executionPolicy = executionPolicy
+    }
+
+    func execute(
+        tool: UIMessagePart.Tool,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome {
+        await dispatch(tool: tool)
+    }
+
+    func execute(
+        name: String,
+        arguments: String,
+        isUserInitiated: Bool
+    ) async -> IOSAgentToolOutcome {
+        .failed("[engine] foreground kernel executor requires the tool-carrying execute(tool:) entry")
+    }
+
+    @MainActor
+    private func dispatch(tool: UIMessagePart.Tool) async -> IOSAgentToolOutcome {
+        guard let runtime else { return .failed("Chat runtime is unavailable.") }
+        let context = ChatPendingToolApproval(
+            toolCall: tool,
+            providerSetting: providerSetting,
+            params: params,
+            runId: runId,
+            startedAt: startedAt,
+            inputDigest: inputDigest,
+            conversationId: conversationId,
+            baseMessages: baseMessagesProvider(),
+            executionPolicy: executionPolicy
+        )
+        let result = await runtime.execute(
+            ChatPendingToolCall(kind: kind, toolCall: tool),
+            context: context,
+            toolExposureBridge: toolExposureBridge,
+            nestedToolRunner: nestedToolRunner,
+            recipeCatalogSnapshot: recipeCatalogSnapshot
+        )
+        switch result {
+        case .completed(let messages):
+            // 引擎只认 output parts:从回填后的消息里按 toolCallId 提取。
+            // 回填函数(messagesByFinishingToolCall)已把结构化结果写进
+            // 该 part 的 output。
+            for message in messages where message.role == MessageRole.assistant {
+                for part in message.parts {
+                    guard let toolPart = part as? UIMessagePart.Tool,
+                          toolPart.toolCallId == tool.toolCallId else { continue }
+                    return toolPart.output.isEmpty
+                        ? .failed("foreground tool produced no output")
+                        : .filledParts(toolPart.output)
+                }
+            }
+            return .failed("foreground tool output not found in completed messages")
+        case .waitingForApproval(let prompt):
+            approvalPromptBox.put(tool.toolCallId, prompt)
+            return .needsApproval(prompt.toolTitle)
+        }
+    }
 }

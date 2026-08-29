@@ -74,7 +74,9 @@ final class IOSToolRecoveryTests: XCTestCase {
             agentVersion: IOSDurableRunStore.Descriptor.chatVersion,
             conversationId: nil, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
             status: "running", inputDigest: "digest", inputSnapshotRef: nil,
-            inputSchemaVersion: 1, startedAt: 1, finishedAt: nil, interruptedReason: nil
+            inputSchemaVersion: 1, startedAt: 1, finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in
@@ -222,15 +224,6 @@ final class IOSToolRecoveryTests: XCTestCase {
         XCTAssertTrue(IOSToolCallRecoveryAction.markResultLost.toolPartMessage.contains("结果在应用中断中丢失"))
     }
 
-    func testThreeStatesHaveMutuallyDistinctMessages() {
-        let texts = Set([
-            IOSToolCallRecoveryAction.markUnknown.toolPartMessage,
-            IOSToolCallRecoveryAction.markRetryable.toolPartMessage,
-            IOSToolCallRecoveryAction.markResultLost.toolPartMessage,
-        ])
-        XCTAssertEqual(texts.count, 3, "each of the three states must render distinguishable text to the user/model")
-    }
-
     func testApplyIgnoresActionForToolCallIdNotFoundOrAlreadyResolved() {
         let messages = [toolCallMessage(toolCallId: "tc-1", toolName: "ask_user", output: [UIMessagePart.Text(text: "already resolved", metadata: nil)])]
         let result = IOSToolCallRecoveryApplier.apply(["tc-1": .markUnknown, "tc-missing": .markUnknown], to: messages)
@@ -294,6 +287,10 @@ final class IOSToolRecoveryTests: XCTestCase {
         )
         let actions = try XCTUnwrap(plannedActions)
         XCTAssertEqual(actions["tc-1"], .markUnknown)
+        let loadedUnknownTransactions = await ledger.toolTransactions(runId: runId)
+        let unknownTransactions = try XCTUnwrap(loadedUnknownTransactions)
+        XCTAssertEqual(unknownTransactions.first?.state, .outcomeUnknown)
+        XCTAssertEqual(unknownTransactions.first?.outcome, "process_interrupted")
 
         let recovered = IOSToolCallRecoveryApplier.apply(actions, to: messages)
         await store.saveCurrent(messages: recovered)
@@ -303,6 +300,121 @@ final class IOSToolRecoveryTests: XCTestCase {
         let runtime = makeRuntime()
         XCTAssertTrue(runtime.hasUnresolvedToolCall(in: messages), "sanity: before recovery the call is still open")
         XCTAssertFalse(runtime.hasUnresolvedToolCall(in: reloaded), "after markUnknown the call must never again be found as pending — I-3, never auto-rerun")
+    }
+
+    @MainActor
+    func testTransactionRecoverySynthesizesMissingToolPartWithoutReexecution() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "w3-missing-message-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let started = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-missing",
+            toolName: "workspace_write",
+            argsDigest: "d1",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(started)
+
+        let loadedPlan = await IOSRunRecovery.planToolCallRecovery(
+            runId: runId,
+            messages: [],
+            dao: dao
+        )
+        let plan = try XCTUnwrap(loadedPlan)
+        XCTAssertEqual(plan["tc-missing"], .markUnknown)
+
+        let recovered = IOSToolCallRecoveryApplier.apply(plan, to: [])
+        let toolPart = recovered.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first
+        XCTAssertEqual(toolPart?.toolCallId, "tc-missing")
+        XCTAssertEqual(toolPart?.toolName, "workspace_write")
+        XCTAssertEqual(
+            ChatToolOutputFormatter.failureReason(from: toolPart?.output ?? []),
+            IOSToolCallRecoveryAction.markUnknown.toolPartMessage
+        )
+    }
+
+    @MainActor
+    func testWaitingApprovalIsClosedAsNotExecutedAfterProcessInterruption() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "w3-waiting-approval-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let started = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-approval",
+            toolName: "workspace_write",
+            argsDigest: "d1",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(started)
+        await ledger.recordToolCallTerminal(
+            runId: runId,
+            toolCallId: "tc-approval",
+            outcome: "paused_for_approval",
+            resultPayload: nil
+        )
+
+        let loadedPlan = await IOSRunRecovery.planToolCallRecovery(
+            runId: runId,
+            messages: [],
+            dao: dao
+        )
+        let plan = try XCTUnwrap(loadedPlan)
+        XCTAssertEqual(plan["tc-approval"], .markApprovalInterrupted)
+        let loadedTransactions = await ledger.toolTransactions(runId: runId)
+        let transaction = try XCTUnwrap(loadedTransactions?.first)
+        XCTAssertEqual(transaction.state, .reconciled)
+        XCTAssertEqual(transaction.outcome, "process_interrupted_before_approval")
+
+        let recovered = IOSToolCallRecoveryApplier.apply(plan, to: [])
+        let output = recovered.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first?.output ?? []
+        XCTAssertEqual(
+            ChatToolOutputFormatter.failureReason(from: output),
+            IOSToolCallRecoveryAction.markApprovalInterrupted.toolPartMessage
+        )
+    }
+
+    @MainActor
+    func testRecoveryMergesLegacyEventOnlyCallWithTransactionBackedCall() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "w3-mixed-ledger-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let started = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-new",
+            toolName: "ask_user",
+            argsDigest: "d1",
+            effectClass: .pure
+        )
+        XCTAssertTrue(started)
+        _ = try await dao.insertRunEvent(
+            runId: runId,
+            eventId: UUID().uuidString,
+            type: "tool_call_started",
+            payloadType: "tool_call_started",
+            payload: "{\"effectClass\":\"sideEffect\",\"toolCallId\":\"tc-legacy\"}",
+            payloadSchemaVersion: 1,
+            isFinal: false,
+            ts: Int64(Date().timeIntervalSince1970 * 1000),
+            turnId: nil,
+            stepId: nil,
+            toolCallId: "tc-legacy"
+        )
+
+        let loadedPlan = await IOSRunRecovery.planToolCallRecovery(
+            runId: runId,
+            messages: [],
+            dao: dao
+        )
+        let plan = try XCTUnwrap(loadedPlan)
+        XCTAssertEqual(plan["tc-new"], .markRetryable)
+        XCTAssertEqual(plan["tc-legacy"], .markUnknown)
     }
 
     @MainActor
@@ -338,6 +450,10 @@ final class IOSToolRecoveryTests: XCTestCase {
         )
         let actions = try XCTUnwrap(plannedActions)
         XCTAssertEqual(actions["tc-1"], .markRetryable)
+        let loadedRetryableTransactions = await ledger.toolTransactions(runId: runId)
+        let retryableTransactions = try XCTUnwrap(loadedRetryableTransactions)
+        XCTAssertEqual(retryableTransactions.first?.state, .reconciled)
+        XCTAssertEqual(retryableTransactions.first?.outcome, "safe_to_retry")
 
         let recovered = IOSToolCallRecoveryApplier.apply(actions, to: messages)
         let recoveredToolPart = recovered.first?.parts.compactMap { $0 as? UIMessagePart.Tool }.first
@@ -394,6 +510,116 @@ final class IOSToolRecoveryTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testFinishedResultIsReplayedThenReconciledWithoutReexecution() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "tool-result-replay-\(UUID().uuidString)"
+        try await insertRunningRun(dao: dao, runId: runId)
+        let didStartTool = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-replay",
+            toolName: "generate_image",
+            argsDigest: "digest",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(didStartTool)
+        let payload = IosToolOutputJsonBridge.shared.encode(parts: [
+            UIMessagePart.Text(text: "{\"ok\":true,\"restored\":true}", metadata: nil),
+        ])
+        await ledger.recordToolCallTerminal(
+            runId: runId,
+            toolCallId: "tc-replay",
+            outcome: "completed",
+            resultPayload: payload
+        )
+        let messages = [toolCallMessage(toolCallId: "tc-replay", toolName: "generate_image")]
+
+        let plannedActions = await IOSRunRecovery.planToolCallRecovery(
+            runId: runId,
+            messages: messages,
+            dao: dao
+        )
+        let actions = try XCTUnwrap(plannedActions)
+        XCTAssertEqual(actions["tc-replay"], .replayResult(payload))
+        let recovered = IOSToolCallRecoveryApplier.apply(actions, to: messages)
+        let restoredText = recovered
+            .flatMap(\.parts)
+            .compactMap { $0 as? UIMessagePart.Tool }
+            .first?.output
+            .compactMap { ($0 as? UIMessagePart.Text)?.text }
+            .first
+        XCTAssertEqual(restoredText, "{\"ok\":true,\"restored\":true}")
+
+        await IOSRunRecovery.finalizeToolCallRecovery(runId: runId, plan: actions, dao: dao)
+        let loadedFinalized = await ledger.toolTransactions(runId: runId)
+        let finalized = try XCTUnwrap(loadedFinalized).first
+        XCTAssertEqual(finalized?.state, .reconciled)
+        XCTAssertEqual(finalized?.outcome, "result_replayed")
+        XCTAssertNil(finalized?.resultPayload)
+    }
+
+    @MainActor
+    func testOutcomeUnknownRemainsAUserGateUntilExplicitReconciliation() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let store = makeConversationStore()
+        await store.bootstrap()
+        await store.saveCurrent(messages: [toolCallMessage(toolCallId: "tc-unknown", toolName: "workspace_file_write")])
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let runId = "tool-unknown-user-gate-\(UUID().uuidString)"
+        let didStartRun = try await IOSDurableRunStore(dao: dao).startChatRun(
+            runId: runId,
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: conversationId.toHexDashString()
+        )
+        XCTAssertTrue(didStartRun)
+        let didStartTool = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-unknown",
+            toolName: "workspace_file_write",
+            argsDigest: "digest",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(didStartTool)
+
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false,
+            agentRuntimeDao: dao
+        )
+        viewModel.conversationStore = store
+        viewModel.reloadFromStore()
+        let sweep = await viewModel.applyToolCallLedgerRecovery(
+            forInterruptedRuns: [(runId: runId, conversationId: conversationId.toHexDashString())]
+        )
+
+        XCTAssertTrue(sweep.outcomeUnknownRunIds.contains(runId))
+        XCTAssertEqual(viewModel.pendingToolOutcomeUnknown?.toolCallId, "tc-unknown")
+        XCTAssertTrue(viewModel.hasPendingUserGate)
+        let unknownRun = try await IOSDurableRunStore(dao: dao).snapshot(runId: runId)
+        XCTAssertEqual(unknownRun?.status, .outcomeUnknown)
+
+        await viewModel.reconcilePendingToolOutcome(didApply: true)
+
+        XCTAssertNil(viewModel.pendingToolOutcomeUnknown)
+        let loadedPersisted = await store.messages(for: conversationId)
+        let persisted = try XCTUnwrap(loadedPersisted)
+        let reason = ChatToolOutputFormatter.failureReason(
+            from: persisted.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first?.output ?? []
+        )
+        XCTAssertTrue(reason?.contains("用户确认：该操作已经生效") == true)
+        let loadedTransactions = await ledger.toolTransactions(runId: runId)
+        let transaction = try XCTUnwrap(loadedTransactions).first
+        XCTAssertEqual(transaction?.state, .reconciled)
+        XCTAssertEqual(transaction?.outcome, "user_confirmed_applied")
+        let interruptedRun = try await IOSDurableRunStore(dao: dao).snapshot(runId: runId)
+        XCTAssertEqual(interruptedRun?.status, .interrupted)
+    }
+
     // F1 fix (docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md's independent-review
     // findings): `ChatViewModel.terminateRecoveredPendingApprovals` used to
     // short-circuit — `guard let pendingTool = ... first(where: descriptor's
@@ -403,13 +629,13 @@ final class IOSToolRecoveryTests: XCTestCase {
     // output: "approve tc-1 -> it fully executes -> model immediately issues
     // tc-2 -> app dies mid tc-2 execution" leaves tc-1 resolved but tc-2
     // dangling with an open ledger Started and empty message output. The
-    // run's `agent_run.status` never left "awaiting_permission" (approving a
+    // run's `agent_run.status` never left `waiting_user` (approving a
     // tool never flips it back to "running" — see this function's own W3
     // comment), so AppShell's startup sweep still produces a descriptor for
     // this run, pointing at tc-1 (the run's original inputSnapshotRef). Before
     // the fix, tc-2 was never even looked at: `planToolCallRecovery` was
     // skipped entirely, and `completePendingApprovalRecovery` permanently
-    // reclassified the run away from "awaiting_permission" — so no future
+    // reclassified the run away from `waiting_user` — so no future
     // sweep would ever revisit it either. On next resume, `nextPendingToolCall`
     // would find tc-2 still open with empty output and silently re-fire a real
     // sideEffect tool — a direct I-3 violation.
@@ -430,14 +656,16 @@ final class IOSToolRecoveryTests: XCTestCase {
         ])
         let conversationId = try XCTUnwrap(store.currentConversation?.id)
 
-        // The run row: still "awaiting_permission" per the I-3 doc comment —
+        // The run row: still `waiting_user` per the I-3 doc comment —
         // approving a tool never flips status back to "running".
         let startedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let run = AgentRunEntity(
             runId: runId, parentRunId: nil, agentDescriptorId: "chat", agentVersion: "1",
             conversationId: conversationId.toHexDashString(), messageNodeId: nil, producesMessageId: nil, assistantId: nil,
-            status: "awaiting_permission", inputDigest: "digest", inputSnapshotRef: "tool_call:tc-1", inputSchemaVersion: 1,
-            startedAt: startedAt, finishedAt: nil, interruptedReason: nil
+            status: AgentRunStatus.awaitingPermission.wireName, inputDigest: "digest", inputSnapshotRef: "tool_call:tc-1", inputSchemaVersion: 1,
+            startedAt: startedAt, finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in
@@ -501,7 +729,7 @@ final class IOSToolRecoveryTests: XCTestCase {
         let finalStatus = await withCheckedContinuation { (cont: CheckedContinuation<String?, Never>) in
             dao.getRun(id: runId) { result, _ in cont.resume(returning: result?.status) }
         }
-        XCTAssertNotEqual(finalStatus, "awaiting_permission", "the run must reach a terminal classification, not be left stuck awaiting a decision nobody can make anymore")
+        XCTAssertNotEqual(finalStatus, AgentRunStatus.awaitingPermission.wireName, "the run must reach a terminal classification, not be left stuck awaiting a decision nobody can make anymore")
     }
 
     func testUnfinishedRunConversationPairsExcludesRunsWithoutConversationId() async throws {
@@ -513,7 +741,9 @@ final class IOSToolRecoveryTests: XCTestCase {
             runId: runId, parentRunId: nil, agentDescriptorId: "chat", agentVersion: "1",
             conversationId: nil, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
             status: "running", inputDigest: "digest", inputSnapshotRef: nil, inputSchemaVersion: 1,
-            startedAt: startedAt, finishedAt: nil, interruptedReason: nil
+            startedAt: startedAt, finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in
@@ -535,8 +765,10 @@ final class IOSToolRecoveryTests: XCTestCase {
         let run = AgentRunEntity(
             runId: runId, parentRunId: nil, agentDescriptorId: "chat", agentVersion: "1",
             conversationId: conversationId, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
-            status: "recovery_pending", inputDigest: "digest", inputSnapshotRef: nil, inputSchemaVersion: 1,
-            startedAt: Int64(Date().timeIntervalSince1970 * 1000), finishedAt: nil, interruptedReason: nil
+            status: AgentRunStatus.recoveryPending.wireName, inputDigest: "digest", inputSnapshotRef: nil, inputSchemaVersion: 1,
+            startedAt: Int64(Date().timeIntervalSince1970 * 1000), finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in

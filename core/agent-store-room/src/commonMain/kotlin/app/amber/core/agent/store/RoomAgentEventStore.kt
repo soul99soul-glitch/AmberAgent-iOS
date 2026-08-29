@@ -6,6 +6,7 @@ import app.amber.core.agent.runtime.AgentEventRecord
 import app.amber.core.agent.runtime.AgentRunId
 import app.amber.core.agent.runtime.AgentRunEvent
 import app.amber.core.agent.runtime.AgentRunRecord
+import app.amber.core.agent.runtime.AgentRunProtocolContext
 import app.amber.core.agent.runtime.AgentRunSnapshot
 import app.amber.core.agent.runtime.AgentRunStatus
 import app.amber.core.agent.runtime.TraceSpanRecord
@@ -18,7 +19,7 @@ class RoomAgentEventStore(
 
     @Throws(Exception::class)
     override suspend fun startRun(run: AgentRunRecord): Boolean {
-        if (run.status != AgentRunStatus.RUNNING || run.finishedAt != null) return false
+        if (run.status !in setOf(AgentRunStatus.CREATED, AgentRunStatus.RUNNING) || run.finishedAt != null) return false
         return dao.insertRunIfAbsent(run.toEntity()) != -1L
     }
 
@@ -57,7 +58,10 @@ class RoomAgentEventStore(
             payloadSchemaVersion = event.payloadSchemaVersion,
             isFinal = event.isFinal,
             ts = event.ts,
-        ) != -1L
+            turnId = event.turnId,
+            stepId = event.stepId,
+            toolCallId = event.toolCallId,
+        ) == 1
 
     @Throws(Exception::class)
     override suspend fun listRunEvents(runId: AgentRunId): List<AgentEventRecord> =
@@ -92,6 +96,12 @@ private fun AgentRunRecord.toEntity() = AgentRunEntity(
     startedAt = startedAt,
     finishedAt = finishedAt,
     interruptedReason = interruptedReason,
+    terminalReason = terminalReason,
+    providerId = providerId,
+    modelId = modelId,
+    promptVersion = promptVersion,
+    toolCatalogVersion = toolCatalogVersion,
+    capabilitySnapshot = capabilitySnapshot,
 )
 
 private fun AgentRunEntity.toRecord(): AgentRunRecord {
@@ -112,6 +122,12 @@ private fun AgentRunEntity.toRecord(): AgentRunRecord {
         startedAt = startedAt,
         finishedAt = finishedAt.takeIf { typedStatus.isTerminal },
         interruptedReason = interruptedReason,
+        terminalReason = terminalReason,
+        providerId = providerId,
+        modelId = modelId,
+        promptVersion = promptVersion,
+        toolCatalogVersion = toolCatalogVersion,
+        capabilitySnapshot = capabilitySnapshot,
     )
 }
 
@@ -124,6 +140,14 @@ private fun AgentRunEntity.toSnapshot(): AgentRunSnapshot {
         status = typedStatus,
         startedAt = startedAt,
         finishedAt = finishedAt.takeIf { typedStatus.isTerminal },
+        terminalReason = terminalReason,
+        protocolContext = AgentRunProtocolContext(
+            providerId = providerId,
+            modelId = modelId,
+            promptVersion = promptVersion,
+            toolCatalogVersion = toolCatalogVersion,
+            capabilitySnapshot = capabilitySnapshot,
+        ),
     )
 }
 
@@ -140,6 +164,9 @@ private fun AgentEventEntity.toRecord() = AgentEventRecord(
     agentVersion = agentVersion,
     isFinal = isFinal,
     ts = ts,
+    turnId = turnId,
+    stepId = stepId,
+    toolCallId = toolCallId,
 )
 
 private fun TraceSpanRecord.toEntity() = TraceSpanEntity(

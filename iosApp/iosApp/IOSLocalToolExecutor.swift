@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Combine
 import Observation
 import OSLog
@@ -15,6 +16,26 @@ struct IOSLocalToolExecutionRequest: Equatable {
     let scopeDigest: String
     let payloadDigest: String
     let isUserInitiated: Bool
+    let runId: String
+    let executionPolicy: IOSExecutionPolicySnapshot?
+
+    init(
+        toolName: String,
+        operation: String,
+        scopeDigest: String,
+        payloadDigest: String,
+        isUserInitiated: Bool,
+        runId: String = "",
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) {
+        self.toolName = toolName
+        self.operation = operation
+        self.scopeDigest = scopeDigest
+        self.payloadDigest = payloadDigest
+        self.isUserInitiated = isUserInitiated
+        self.runId = runId
+        self.executionPolicy = executionPolicy
+    }
 }
 
 enum IOSLocalToolExecutionOutput: Equatable {
@@ -115,6 +136,63 @@ final class IOSLocalToolExecutor {
         self.webMountController = webMountController ?? IOSWebMountController.shared
     }
 
+    func executionPolicySnapshot(
+        execJavaScriptEnabled: Bool,
+        webSearchEnabled: Bool,
+        mcpEnabled: Bool? = nil
+    ) -> IOSExecutionPolicySnapshot {
+        IOSExecutionPolicySnapshot(
+            capabilityPolicies: Dictionary(uniqueKeysWithValues: IOSCapabilityRegistry.capabilities.map {
+                ($0.id, permissionStore.policy(for: $0).rawValue)
+            }),
+            globalAutoApproveEnabled: Self.isGlobalAutoApproveEnabled,
+            highRiskAutoApproveEnabled: Self.isHighRiskAutoApproveEnabled,
+            execJavaScriptEnabled: execJavaScriptEnabled,
+            webSearchEnabled: webSearchEnabled,
+            mcpEnabled: mcpEnabled
+        )
+    }
+
+    func executionRequest(
+        toolName: String,
+        operation: String,
+        isUserInitiated: Bool,
+        runId: String = "",
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) -> IOSLocalToolExecutionRequest {
+        if toolName == "file_read_selected" {
+            let selected = requestForCurrentSelectedFile(isUserInitiated: isUserInitiated)
+            return IOSLocalToolExecutionRequest(
+                toolName: selected.toolName,
+                operation: selected.operation,
+                scopeDigest: selected.scopeDigest,
+                payloadDigest: selected.payloadDigest,
+                isUserInitiated: selected.isUserInitiated,
+                runId: runId,
+                executionPolicy: executionPolicy
+            )
+        }
+
+        let capabilityId = IOSCapabilityRegistry.capability(forToolName: toolName)?.id ?? "unknown"
+        let scopeTarget: String
+        if let workspace = workspaceApprovalPreview(toolName: toolName, input: operation) {
+            scopeTarget = "workspace:\(workspace.target)"
+        } else if let webMount = webMountApprovalPreview(toolName: toolName, input: operation) {
+            scopeTarget = "webmount:\(webMount.siteId):\(webMount.host)"
+        } else {
+            scopeTarget = "capability:\(capabilityId)"
+        }
+        return IOSLocalToolExecutionRequest(
+            toolName: toolName,
+            operation: operation,
+            scopeDigest: Self.sha256("\(toolName)\n\(scopeTarget)"),
+            payloadDigest: Self.sha256(operation),
+            isUserInitiated: isUserInitiated,
+            runId: runId,
+            executionPolicy: executionPolicy
+        )
+    }
+
     func execute(
         _ request: IOSLocalToolExecutionRequest,
         now: Date = Date()
@@ -199,7 +277,8 @@ final class IOSLocalToolExecutor {
             operation: request.operation,
             scopeDigest: request.scopeDigest,
             payloadDigest: request.payloadDigest,
-            isUserInitiated: request.isUserInitiated
+            isUserInitiated: request.isUserInitiated,
+            executionPolicy: request.executionPolicy
         )
 
         guard request.toolName == "file_read_selected" else {
@@ -230,7 +309,7 @@ final class IOSLocalToolExecutor {
         request: IOSLocalToolExecutionRequest,
         capability: IOSPlatformCapability
     ) -> IOSPlatformGateDecision {
-        let policy = permissionStore.policy(for: capability)
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent policy")
         }
@@ -246,7 +325,7 @@ final class IOSLocalToolExecutor {
                 return .needsUserAction(reason: "This WebMount action requires explicit foreground user approval: \(request.toolName)")
             }
             if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
-                if Self.isGlobalAutoApproveEnabled && (capability.risk != .high || Self.isHighRiskAutoApproveEnabled) {
+                if globalAutoApproveEnabled(for: request) && (capability.risk != .high || highRiskAutoApproveEnabled(for: request)) {
                     return .allow(capabilityId: capability.id)
                 }
                 return .needsUserAction(reason: "WebMount browser tools require explicit foreground approval before the model can use the page session.")
@@ -259,7 +338,7 @@ final class IOSLocalToolExecutor {
         request: IOSLocalToolExecutionRequest,
         capability: IOSPlatformCapability
     ) -> IOSPlatformGateDecision {
-        let policy = permissionStore.policy(for: capability)
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent embedded iSH policy")
         }
@@ -273,7 +352,7 @@ final class IOSLocalToolExecutor {
         request: IOSLocalToolExecutionRequest,
         capability: IOSPlatformCapability
     ) -> IOSPlatformGateDecision {
-        let policy = permissionStore.policy(for: capability)
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent iSH handoff policy")
         }
@@ -287,7 +366,7 @@ final class IOSLocalToolExecutor {
         request: IOSLocalToolExecutionRequest,
         capability: IOSPlatformCapability
     ) -> IOSPlatformGateDecision {
-        let policy = permissionStore.policy(for: capability)
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent Workspace tool policy")
         }
@@ -299,14 +378,14 @@ final class IOSLocalToolExecutor {
             if IOSWorkspaceToolCatalog.writeToolNames.contains(request.toolName) {
                 if !(policy == .autoApprove || policy == .autoApproveHighRisk) {
                     // Honor the global / high-risk auto-approve switches (writes are high-risk).
-                    if Self.isGlobalAutoApproveEnabled && (capability.risk != .high || Self.isHighRiskAutoApproveEnabled) {
+                    if globalAutoApproveEnabled(for: request) && (capability.risk != .high || highRiskAutoApproveEnabled(for: request)) {
                         return .allow(capabilityId: capability.id)
                     }
                     return .needsUserAction(reason: "Workspace writes and deletes require explicit foreground approval.")
                 }
             }
             if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
-                if Self.isGlobalAutoApproveEnabled && (capability.risk != .high || Self.isHighRiskAutoApproveEnabled) {
+                if globalAutoApproveEnabled(for: request) && (capability.risk != .high || highRiskAutoApproveEnabled(for: request)) {
                     return .allow(capabilityId: capability.id)
                 }
                 return .needsUserAction(reason: "Workspace reads require explicit foreground approval before the model can use saved files or artifacts.")
@@ -380,6 +459,7 @@ final class IOSLocalToolExecutor {
         runId: String = "",
         scopeDigest: String = "",
         payloadDigest: String = "",
+        policyDigest: String? = nil,
         now: Date = Date()
     ) -> IOSToolApprovalRecord {
         permissionStore.recordApproval(
@@ -390,13 +470,15 @@ final class IOSLocalToolExecutor {
             runId: runId,
             scopeDigest: scopeDigest,
             payloadDigest: payloadDigest,
+            policyDigest: policyDigest,
             now: now
         )
     }
 
     func memoryToolWritePolicy(
         input: String,
-        isUserInitiated: Bool
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) -> IOSMemoryToolWritePolicy {
         guard IOSMemoryToolExecutor.requiresWriteApproval(input: input) else {
             return .allow
@@ -405,7 +487,7 @@ final class IOSLocalToolExecutor {
             return .needsUserAction("Memory writes require foreground approval.")
         }
 
-        switch permissionStore.policy(for: capability) {
+        switch executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability) {
         case .disabled:
             return .denied("Memory writes are disabled in AmberAgent tool policy.")
         case .askEveryTime, .allowOncePerRun:
@@ -413,7 +495,9 @@ final class IOSLocalToolExecutor {
                 return .allow
             }
             // Honor the global / high-risk auto-approve switches (writes are high-risk).
-            if Self.isGlobalAutoApproveEnabled && (capability.risk != .high || Self.isHighRiskAutoApproveEnabled) {
+            let globalAutoApprove = executionPolicy?.globalAutoApproveEnabled ?? Self.isGlobalAutoApproveEnabled
+            let highRiskAutoApprove = executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled
+            if globalAutoApprove && (capability.risk != .high || highRiskAutoApprove) {
                 return .allow
             }
             return .needsUserAction("Memory writes require explicit foreground approval before the model can change saved memories.")
@@ -537,6 +621,18 @@ final class IOSLocalToolExecutor {
             return "Unavailable on iOS"
         }
         return capability.domain.title
+    }
+
+    private func globalAutoApproveEnabled(for request: IOSLocalToolExecutionRequest) -> Bool {
+        request.executionPolicy?.globalAutoApproveEnabled ?? Self.isGlobalAutoApproveEnabled
+    }
+
+    private func highRiskAutoApproveEnabled(for request: IOSLocalToolExecutionRequest) -> Bool {
+        request.executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled
+    }
+
+    private static func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     func requestForCurrentSelectedFile(isUserInitiated: Bool) -> IOSLocalToolExecutionRequest {

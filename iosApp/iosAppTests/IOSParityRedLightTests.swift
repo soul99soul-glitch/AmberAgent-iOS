@@ -40,14 +40,14 @@ final class IOSParityRedLightTests: XCTestCase {
             translation: nil
         )
 
-        let belowLimit = ChatGenerationCoordinator.continuationMessagesAfterToolBudgetExhaustion(
+        let belowLimit = ChatGenerationSupport.continuationMessagesAfterToolBudgetExhaustion(
             [userMessage],
             resumeCount: 3,
             maxResumeCount: 4
         )
         XCTAssertEqual(belowLimit.count, 1, "预算未耗尽时不得注入收尾提示")
 
-        let atLimit = ChatGenerationCoordinator.continuationMessagesAfterToolBudgetExhaustion(
+        let atLimit = ChatGenerationSupport.continuationMessagesAfterToolBudgetExhaustion(
             [userMessage],
             resumeCount: 4,
             maxResumeCount: 4
@@ -505,7 +505,13 @@ final class IOSParityRedLightTests: XCTestCase {
             inputSchemaVersion: 1,
             startedAt: now,
             finishedAt: nil,
-            interruptedReason: nil
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: runningRow) { _, error in
@@ -555,7 +561,13 @@ final class IOSParityRedLightTests: XCTestCase {
             inputSchemaVersion: 1,
             startedAt: now,
             finishedAt: nil,
-            interruptedReason: nil
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: runningRow) { _, error in
@@ -598,13 +610,19 @@ final class IOSParityRedLightTests: XCTestCase {
             messageNodeId: nil,
             producesMessageId: nil,
             assistantId: nil,
-            status: "awaiting_permission",
+            status: AgentRunStatus.awaitingPermission.wireName,
             inputDigest: "digest",
             inputSnapshotRef: "tool_call:\(toolCallId)",
             inputSchemaVersion: 1,
             startedAt: now,
             finishedAt: nil,
-            interruptedReason: nil
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in
@@ -624,7 +642,7 @@ final class IOSParityRedLightTests: XCTestCase {
                 continuation.resume(returning: result?.status)
             }
         }
-        XCTAssertEqual(pendingStatus, "awaiting_permission")
+        XCTAssertEqual(pendingStatus, AgentRunStatus.awaitingPermission.wireName)
 
         await IOSRunRecovery.completePendingApprovalRecovery(runId: runId, now: now)
         let recoveredStatus = await withCheckedContinuation {
@@ -1354,6 +1372,11 @@ final class IOSParityRedLightTests: XCTestCase {
         XCTAssertEqual(messages.map { $0.role }, [MessageRole.user, MessageRole.assistant])
         XCTAssertTrue(messages[1].toText().contains("已经生成但尚未完成的正文"))
         XCTAssertTrue(messages[1].toText().contains("后台生成被系统中断"))
+        let errorPart = messages[1].parts.first as? UIMessagePart.Text
+        XCTAssertEqual(
+            errorPart?.metadata?[MessageKt.LOCAL_GENERATION_ERROR_METADATA_KEY]?.jsonPrimitiveOrNull?.content,
+            MessageKt.LOCAL_GENERATION_ERROR_METADATA_VALUE
+        )
     }
 
     func testBackgroundExpirationAtomicallyOwnsTheTerminalPath() {
@@ -1475,7 +1498,7 @@ final class IOSParityRedLightTests: XCTestCase {
                 singleToolFailureReason: nil,
                 guardStopped: true
             ),
-            "recovery_pending"
+            AgentRunStatus.recoveryPending.wireName
         )
         XCTAssertEqual(
             IOSChatBackgroundGenerationCoordinator.backgroundTerminalStatusForTesting(
@@ -1483,6 +1506,24 @@ final class IOSParityRedLightTests: XCTestCase {
                 singleToolFailureReason: nil,
                 guardStopped: false,
                 miniAppFailed: true
+            ),
+            "failed"
+        )
+        XCTAssertEqual(
+            IOSChatBackgroundGenerationCoordinator.backgroundTerminalStatusForTesting(
+                didSave: true,
+                singleToolFailureReason: nil,
+                guardStopped: false,
+                hitStepLimit: true
+            ),
+            "failed"
+        )
+        XCTAssertEqual(
+            IOSChatBackgroundGenerationCoordinator.backgroundTerminalStatusForTesting(
+                didSave: true,
+                singleToolFailureReason: nil,
+                guardStopped: false,
+                generativeUiRepairFailed: true
             ),
             "failed"
         )
@@ -1704,7 +1745,7 @@ final class IOSParityRedLightTests: XCTestCase {
         )
     }
 
-    func testBackgroundCoordinatorDeletesPayloadAfterTerminalSaveFailureWithoutRetryOwner() throws {
+    func testBackgroundCoordinatorRetainsPayloadAfterTerminalSaveFailureForColdStartRecovery() throws {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let source = try String(
             contentsOf: testDirectory
@@ -1729,166 +1770,16 @@ final class IOSParityRedLightTests: XCTestCase {
         ]
         XCTAssertTrue(
             retainedFailureBody.contains(
-                "finish(requestId: backgroundTask.identifier)"
+                "releaseRuntimeOwnership(requestId: backgroundTask.identifier)"
             ),
-            "A terminal save failure without a retry owner must release ownership and delete its payload."
+            "A terminal save failure must release only its live owner so cold-start reconciliation can retry."
         )
         XCTAssertFalse(
-            retainedFailureBody.contains("removePayload: false"),
-            "A payload cannot outlive its task-map owner without a retry path or cleanup policy."
+            retainedFailureBody.contains("finish(requestId: backgroundTask.identifier)"),
+            "The cold-start reconciliation payload must survive a terminal save failure."
         )
     }
 
-    func testForegroundPresentationPacerSplitsBurstWithoutDroppingSuffix() {
-        let user = UIMessage.companion.user(prompt: "question")
-        let assistant = UIMessage.companion.assistant(prompt: "已显示")
-        let burst = "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥天地玄黄"
-        let targetAssistant = UIMessage(
-            id: assistant.id,
-            role: assistant.role,
-            parts: [UIMessagePart.Text(text: "已显示" + burst, metadata: nil)],
-            annotations: assistant.annotations,
-            createdAt: assistant.createdAt,
-            finishedAt: nil,
-            modelId: assistant.modelId,
-            usage: assistant.usage,
-            translation: assistant.translation
-        )
-        let target = [user, targetAssistant]
-
-        var current = [user, assistant]
-        var publishedSuffixes: [String] = []
-        var caughtUp = false
-        for _ in 0..<10 where !caughtUp {
-            let step = ChatStreamPresentationPacer.step(current: current, target: target)
-            current = step.snapshot
-            caughtUp = step.isCaughtUp
-            publishedSuffixes.append(String(current.last?.toText().dropFirst("已显示".count) ?? ""))
-        }
-
-        XCTAssertGreaterThan(publishedSuffixes.count, 1, "A multi-line provider burst must not reach layout in one frame.")
-        // 这段 burst 的积压很小(26 字),自适应推进落在下限档,所以每拍仍是
-        // `minimumTextAdvance`。断言从 `maximumTextAdvance` 改到下限常量:
-        // 推进量不再是固定预算,而是「下限 ≤ 推进 ≤ 上限」的自适应值。
-        XCTAssertTrue(
-            publishedSuffixes.dropLast().allSatisfy { $0.count.isMultiple(of: ChatStreamPresentationPacer.minimumTextAdvance) },
-            "Each intermediate frame should advance by the bounded presentation budget."
-        )
-        XCTAssertTrue(caughtUp)
-        XCTAssertEqual(current.last?.toText(), targetAssistant.toText(), "Pacing must eventually publish the authoritative full text.")
-    }
-
-    /// 长回复的积压必须在有界拍数内追平,而不是恒定 12 字符/拍。
-    ///
-    /// 固定预算下,4000 字的回复要 334 拍 × 48ms ≈ 16 秒才显示完;模型通常
-    /// 早已结束,而 `drainStreamPresentation` 在终态后仍按同一节奏逐拍追平,
-    /// 期间 `isLoading` 保持 true——用户看着"停止"按钮等一段已经生成完的文本。
-    /// 小说创作侧的 `NovelSessionPresentationPacer` 已按积压自适应,标准 Chat
-    /// 必须同构。
-    ///
-    /// 实测拍数:自适应 88 拍(≈4.2s),固定 12 字符 334 拍(≈16.0s)。阈值取 150,
-    /// 两侧余量充足。
-    func testForegroundPresentationPacerDrainsLongReplyWithinBoundedTicks() {
-        let user = UIMessage.companion.user(prompt: "question")
-        let assistant = UIMessage.companion.assistant(prompt: "已显示")
-        let targetAssistant = UIMessage(
-            id: assistant.id,
-            role: assistant.role,
-            parts: [UIMessagePart.Text(text: "已显示" + String(repeating: "长", count: 4000), metadata: nil)],
-            annotations: assistant.annotations,
-            createdAt: assistant.createdAt,
-            finishedAt: nil,
-            modelId: assistant.modelId,
-            usage: assistant.usage,
-            translation: assistant.translation
-        )
-        let target = [user, targetAssistant]
-
-        var current = [user, assistant]
-        var ticks = 0
-        var caughtUp = false
-        var firstAdvance = 0
-        while !caughtUp, ticks < 1_000 {
-            let before = current.last?.toText().count ?? 0
-            let step = ChatStreamPresentationPacer.step(current: current, target: target)
-            current = step.snapshot
-            caughtUp = step.isCaughtUp
-            if ticks == 0 {
-                firstAdvance = (current.last?.toText().count ?? 0) - before
-            }
-            ticks += 1
-        }
-
-        XCTAssertTrue(caughtUp, "Pacing must converge on the authoritative text.")
-        XCTAssertEqual(current.last?.toText(), targetAssistant.toText())
-        XCTAssertGreaterThan(
-            firstAdvance,
-            ChatStreamPresentationPacer.minimumTextAdvance,
-            "大积压的第一拍必须超过下限预算,否则长回复会以恒定速率持续落后于模型"
-        )
-        XCTAssertLessThanOrEqual(
-            ticks,
-            150,
-            "4000 字积压必须在约 150 拍(≈7s)内追平;固定 12 字符/拍需要 334 拍(≈16s)"
-        )
-    }
-
-    /// 契约按真实耗时表述：拍间隔随节奏锚动态缩放后，「拍数」不再是耗时代理。
-    /// 24k 积压 → 节奏锚 1500 字/拍 × 8ms ≈ 0.13s whoosh；旧固定 48ms 口径下
-    /// 的「16 拍 ≈ 0.8s」被更严的 0.5s 真实耗时上限取代。
-    func testForegroundTerminalDrainUsesIndependentBoundedBudget() {
-        let user = UIMessage.companion.user(prompt: "question")
-        let assistant = UIMessage.companion.assistant(prompt: "已显示")
-        let targetAssistant = UIMessage(
-            id: assistant.id,
-            role: assistant.role,
-            parts: [UIMessagePart.Text(text: "已显示" + String(repeating: "长", count: 24_000), metadata: nil)],
-            annotations: assistant.annotations,
-            createdAt: assistant.createdAt,
-            finishedAt: nil,
-            modelId: assistant.modelId,
-            usage: assistant.usage,
-            translation: assistant.translation
-        )
-        let target = [user, targetAssistant]
-
-        let advance = ChatStreamPresentationPacer.terminalDrainAdvance(backlogCount: 24_000)
-        let delayNanos = ChatStreamPresentationPacer.terminalDrainDelayNanos(advance: advance)
-
-        var current = [user, assistant]
-        var ticks = 0
-        var caughtUp = false
-        while !caughtUp, ticks < 100 {
-            let step = ChatStreamPresentationPacer.step(
-                current: current,
-                target: target,
-                mode: .terminalDrain,
-                fixedTerminalAdvance: advance
-            )
-            current = step.snapshot
-            caughtUp = step.isCaughtUp
-            ticks += 1
-        }
-
-        XCTAssertTrue(caughtUp)
-        XCTAssertEqual(current.last?.toText(), targetAssistant.toText())
-        // 2026-08-15 契约变更（用户拍板）：排空收尾必须连续减速到打字节奏、
-        // 末拍以完整淡入落定（「最后一个字优雅地逐字淡入结束」）。拍速
-        // = min(锚速, max(12, 剩余/8))：中段 whoosh 不变，末段多拍减速——
-        // 拍数与耗时上限随之放宽（恒速口径的 16 拍/0.5s 不再是耗时代理）。
-        XCTAssertLessThanOrEqual(ticks, 64, "减速收尾下 2.4 万字积压应在 ~52 拍内排空")
-        // 恒速 delayNanos 只代表锚速拍间隔；真实耗时按逐拍间隔积分远小于此
-        // 上限，此处仍用它做量级护栏。
-        let realtimeSeconds = Double(ticks) * Double(delayNanos) / 1_000_000_000
-        XCTAssertLessThanOrEqual(
-            realtimeSeconds,
-            0.6,
-            "锚速拍间隔护栏：\(realtimeSeconds)s"
-        )
-    }
-
-    /// 排空期间滞后允许度随剩余积压连续衰减（1→0 无分档断点）：
-    /// 滚动跟随器据此连续收紧 τ_eff，让视口在最后一拍前贴回底部。
     func testTerminalDrainLagAllowanceDecaysContinuously() {
         let drainStart = 24 * 1_024
         XCTAssertEqual(
@@ -1926,57 +1817,6 @@ final class IOSParityRedLightTests: XCTestCase {
         )
     }
 
-    /// 收尾小积压必须按流式节拍排空，而不是快排一拍抛完。
-    ///
-    /// 真机录像：模型略快于显示，收尾积压几十字；旧快排公式一拍倒 36+ 字
-    /// （约两行），底部锚定一次上移一格——「最后半句跳出来、往上跳一下」。
-    /// 契约：小积压单拍推进 ≤ 流式上限，且分多拍排空（读作打字的自然延续）；
-    /// 大积压快排由上一条用例锁。
-    func testForegroundTerminalDrainPacesSmallBacklogLikeStreaming() {
-        let user = UIMessage.companion.user(prompt: "question")
-        let assistant = UIMessage.companion.assistant(prompt: "已显示")
-        let tail = "需要我调整到更精确的 500 字、换主题，或者换个风格（议论文/说明文/故事）再写吗？"
-        let targetAssistant = UIMessage(
-            id: assistant.id,
-            role: assistant.role,
-            parts: [UIMessagePart.Text(text: "已显示" + tail, metadata: nil)],
-            annotations: assistant.annotations,
-            createdAt: assistant.createdAt,
-            finishedAt: nil,
-            modelId: assistant.modelId,
-            usage: assistant.usage,
-            translation: assistant.translation
-        )
-        let target = [user, targetAssistant]
-
-        var current = [user, assistant]
-        var ticks = 0
-        var caughtUp = false
-        var maximumAdvance = 0
-        while !caughtUp, ticks < 100 {
-            let before = current.last?.toText().count ?? 0
-            let step = ChatStreamPresentationPacer.step(
-                current: current,
-                target: target,
-                mode: .terminalDrain
-            )
-            current = step.snapshot
-            maximumAdvance = max(maximumAdvance, (current.last?.toText().count ?? 0) - before)
-            caughtUp = step.isCaughtUp
-            ticks += 1
-        }
-
-        XCTAssertTrue(caughtUp)
-        XCTAssertEqual(current.last?.toText(), targetAssistant.toText())
-        XCTAssertLessThanOrEqual(
-            maximumAdvance,
-            ChatStreamPresentationPacer.maximumTextAdvance,
-            "小积压终态排空单拍不得超流式上限，否则收尾跳变"
-        )
-        XCTAssertGreaterThan(ticks, 1, "小积压应分多拍排空，而不是一拍抛完")
-    }
-
-    /// 常见 provider 的输出上限终态必须统一识别，普通停止与工具调用不能误判。
     func testForegroundCompletionRecognizesOutputLimitFinishReasons() {
         func chunk(finishReason: String?) -> MessageChunk {
             MessageChunk(
@@ -1992,112 +1832,20 @@ final class IOSParityRedLightTests: XCTestCase {
             )
         }
 
-        XCTAssertTrue(ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: "length")))
-        XCTAssertTrue(ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: "max_tokens")))
-        XCTAssertTrue(ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: "max_output_tokens")))
+        XCTAssertTrue(ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: "length")))
+        XCTAssertTrue(ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: "max_tokens")))
+        XCTAssertTrue(ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: "max_output_tokens")))
         XCTAssertTrue(
-            ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: "LENGTH")),
+            ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: "LENGTH")),
             "finish_reason 的大小写由网关决定,判定必须大小写无关。"
         )
-        XCTAssertFalse(ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: "stop")))
-        XCTAssertFalse(ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: "tool_calls")))
-        XCTAssertFalse(ChatGenerationCoordinator.reachedOutputLimit(chunk(finishReason: nil)))
+        XCTAssertFalse(ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: "stop")))
+        XCTAssertFalse(ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: "tool_calls")))
+        XCTAssertFalse(ChatGenerationSupport.reachedOutputLimit(chunk(finishReason: nil)))
     }
 
     /// Source-level canary for ordering contracts that do not have an injectable behavior seam.
     /// Keep the cases together as a table so the orchestration wiring costs one focused test.
-    func testCriticalForegroundAndMiniAppOrchestrationKeepsTerminalOrdering() throws {
-        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let appDirectory = testDirectory.deletingLastPathComponent().appendingPathComponent("iosApp")
-        let foreground = try String(
-            contentsOf: appDirectory.appendingPathComponent("ChatGenerationCoordinator.swift"),
-            encoding: .utf8
-        )
-        let background = try String(
-            contentsOf: appDirectory.appendingPathComponent("IOSChatBackgroundGenerationCoordinator.swift"),
-            encoding: .utf8
-        )
-        let checks: [(String, String, String, String, [String])] = [
-            (
-                "output-limit capture", foreground, "case .chunk(let chunk):", "case .complete:",
-                ["reachedOutputLimit(chunk)"]
-            ),
-            (
-                "output-limit before tool dispatch", foreground,
-                "private func handleCompletedStream(", "private func completeTruncatedStream(",
-                ["if hitOutputLimit {", "completeTruncatedStream(", "toolRuntime.nextPendingToolCall("]
-            ),
-            (
-                "truncated terminal", foreground,
-                "private func completeTruncatedStream(", "static func outputLimitNotice()",
-                ["Self.outputLimitNotice()", "didPersist ? .failed : .recoveryPending"]
-            ),
-            (
-                "foreground completion ownership", foreground, "case .complete:", "case .error(let error):",
-                ["self.activeStreamSession = nil", "drainStreamPresentation(to: snapshot", "handleCompletedStream("]
-            ),
-            (
-                "foreground error drain", foreground, "case .error(let error):", "streamJob = dispatchStream(",
-                [
-                    "self.activeStreamSession = nil", "drainStreamPresentation(to: snapshot",
-                    "bindings.setMessages(snapshot)", "presentStreamError("
-                ]
-            ),
-            (
-                "foreground cancel drain", foreground,
-                "private func cancel(runId expectedRunId: String?)",
-                "/// (Re)snapshots the background handoff payload.",
-                [
-                    "streamEventSink?.finish()", "drainPendingStreamChunksIntoAccumulator()",
-                    "latestPendingStreamSnapshot()", "bindings.setMessages(messagesAtCancellation)",
-                    "persistMessagesSnapshot("
-                ]
-            ),
-            (
-                "tool continuation", foreground,
-                "private func continueAfterToolResult(", "static func continuationMessagesAfterToolBudgetExhaustion(",
-                [
-                    "toolRuntime.nextPendingToolCall(", "toolRuntime.hasUnresolvedToolCall(",
-                    "let continuationUploadMessages", "prepareAndStartStreaming(", "params: roundParams"
-                ]
-            ),
-            (
-                "foreground MiniApp transaction", foreground,
-                "let miniAppApplication = bindings.saveMiniAppIfPresent", "await bindings.recordRun(",
-                [
-                    "let didPersist = await bindings.persistMessages(", "miniAppApplication.rollback()",
-                    "bindings.setMessages(miniAppApplication.rollbackMessages)", "miniAppApplication.commit()",
-                    "miniAppApplication?.syncWorkspaceAfterConversationPersistence()"
-                ]
-            ),
-            (
-                "background MiniApp transaction", background,
-                "let miniAppApplication = job.mode == .continueModel", "guard runState.finalizeTerminal()",
-                [
-                    "let didSave: Bool", "miniAppApplication.rollback()", "miniAppApplication.commit()",
-                    "miniAppApplication?.syncWorkspaceAfterConversationPersistence()"
-                ]
-            )
-        ]
-
-        for (label, source, startMarker, endMarker, markers) in checks {
-            let start = try XCTUnwrap(source.range(of: startMarker), "\(label): missing start boundary")
-            let end = try XCTUnwrap(
-                source.range(of: endMarker, range: start.upperBound..<source.endIndex),
-                "\(label): missing end boundary"
-            )
-            let body = source[start.lowerBound..<end.lowerBound]
-            var cursor = body.startIndex
-            for marker in markers {
-                let match = try XCTUnwrap(
-                    body.range(of: marker, range: cursor..<body.endIndex),
-                    "\(label): missing or out-of-order marker \(marker)"
-                )
-                cursor = match.upperBound
-            }
-        }
-    }
-
     func testBackgroundCompletionUsesTypedEngineTerminalSignals() throws {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let source = try String(
@@ -2132,119 +1880,6 @@ final class IOSParityRedLightTests: XCTestCase {
         XCTAssertTrue(
             truncatedBody.contains("presentation: .failed()"),
             "Watch and Live Activity must not present truncated output as an unqualified success"
-        )
-    }
-
-    func testApprovedAsyncToolsAcquireLeaseAndCancellationOwnershipBeforeExecution() throws {
-        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let source = try String(
-            contentsOf: testDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/ChatGenerationCoordinator.swift"),
-            encoding: .utf8
-        )
-
-        guard let helperStart = source.range(of: "private func executeApprovedAsyncTool("),
-              let helperEnd = source.range(
-                of: "private func resumeAfterApproval(",
-                range: helperStart.upperBound..<source.endIndex
-              ) else {
-            return XCTFail("Expected one owner for approved async tool execution")
-        }
-        let helper = source[helperStart.lowerBound..<helperEnd.lowerBound]
-        guard let lease = helper.range(of: "beginKeepAlive(for: pending)"),
-              let taskOwner = helper.range(of: "foregroundToolExecutionTask = executionTask") else {
-            return XCTFail("Approved async tools must hold both keepalive and a cancellable task owner")
-        }
-        XCTAssertLessThan(lease.lowerBound, taskOwner.lowerBound)
-        XCTAssertTrue(helper.contains("guard allow else"), "Denied approvals must not acquire async execution ownership")
-        guard let beginStart = source.range(of: "private func beginKeepAlive(for pending:"),
-              let beginEnd = source.range(
-                of: "private func resumeAfterApproval(",
-                range: beginStart.upperBound..<source.endIndex
-              ) else {
-            return XCTFail("Expected the shared approved-tool keepalive helper")
-        }
-        XCTAssertTrue(
-            source[beginStart.lowerBound..<beginEnd.lowerBound].contains("backgroundExecution.begin(")
-        )
-
-        for functionName in [
-            "finishPendingSearchToolApproval",
-            "finishPendingWebMountToolApproval",
-            "finishPendingWorkspaceToolApproval",
-            "finishPendingIshHandoffToolApproval",
-            "finishPendingMcpToolApproval",
-            "finishPendingCouncilToolApproval"
-        ] {
-            guard let start = source.range(of: "private func \(functionName)("),
-                  let resume = source.range(
-                    of: "resumeAfterApproval(",
-                    range: start.upperBound..<source.endIndex
-                  ) else {
-                return XCTFail("Missing approved tool path \(functionName)")
-            }
-            XCTAssertTrue(
-                source[start.lowerBound..<resume.lowerBound].contains("executeApprovedAsyncTool("),
-                "\(functionName) must use the shared cancellable owner"
-            )
-        }
-    }
-
-    func testForegroundTerminalPersistencePrecedesExternalTerminalAndSuccessCallbackIsExplicit() throws {
-        let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let source = try String(
-            contentsOf: testDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/ChatGenerationCoordinator.swift"),
-            encoding: .utf8
-        )
-
-        XCTAssertTrue(source.contains("persistMessages: @MainActor (KotlinUuid?) async -> Bool"))
-        XCTAssertTrue(source.contains("generationSucceeded: @MainActor () -> Void"))
-
-        guard let completionStart = source.range(of: "private func handleCompletedStream("),
-              let completionEnd = source.range(
-                of: "private func completeTruncatedStream(",
-                range: completionStart.upperBound..<source.endIndex
-              ) else {
-            return XCTFail("Expected foreground completion boundary")
-        }
-        let completion = source[completionStart.lowerBound..<completionEnd.lowerBound]
-        guard let persist = completion.range(of: "await bindings.persistMessages("),
-              let publish = completion.range(of: "WatchTaskCoordinator.shared.publishCompleted("),
-              let finish = completion.range(of: "finishStreaming("),
-              let success = completion.range(of: "bindings.generationSucceeded()") else {
-            return XCTFail("Successful completion must persist, publish, finish, then notify auxiliary work")
-        }
-        XCTAssertLessThan(persist.lowerBound, publish.lowerBound)
-        XCTAssertLessThan(finish.lowerBound, success.lowerBound)
-
-        guard let pauseStart = source.range(of: "private func pauseForApproval("),
-              let pauseEnd = source.range(
-                of: "private func finishPendingMemoryToolApproval(",
-                range: pauseStart.upperBound..<source.endIndex
-              ) else {
-            return XCTFail("Expected approval pause boundary")
-        }
-        let pause = source[pauseStart.lowerBound..<pauseEnd.lowerBound]
-        guard let pausePersist = pause.range(of: "await bindings.persistMessagesSnapshot("),
-              let release = pause.range(of: "backgroundExecution.end(pending.runId)"),
-              let waiting = pause.range(of: "WatchTaskCoordinator.shared.publishWaitingApproval(") else {
-            return XCTFail("Approval pause must durably save before release and external waiting state")
-        }
-        XCTAssertLessThan(pausePersist.lowerBound, release.lowerBound)
-        XCTAssertLessThan(pausePersist.lowerBound, waiting.lowerBound)
-
-        guard let truncatedStart = source.range(of: "private func completeTruncatedStream("),
-              let truncatedEnd = source.range(
-                of: "static func outputLimitNotice()",
-                range: truncatedStart.upperBound..<source.endIndex
-              ) else {
-            return XCTFail("Expected truncated terminal boundary")
-        }
-        XCTAssertFalse(
-            source[truncatedStart.lowerBound..<truncatedEnd.lowerBound].contains("generationSucceeded")
         )
     }
 

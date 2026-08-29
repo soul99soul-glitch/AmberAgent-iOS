@@ -221,11 +221,10 @@ final class IOSMailboxDeliveryTests: XCTestCase {
         )
 
         // 下一次 run 首轮 prepareAndStartStreaming 头消费（displayMessagesOverride == nil）。
-        let drained = await viewModel.generationCoordinatorForTesting
-            .drainMailboxAtNewRunHeadForTesting(
-                conversationId: conversationId,
-                displayMessagesOverride: nil
-            )
+        let drained = await viewModel.drainMailboxAtNewRunHeadForTesting(
+            conversationId: conversationId,
+            displayMessagesOverride: nil
+        )
         XCTAssertEqual(drained.map { $0.toText() }, [renderedText("终态信封")])
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.map { $0.toText() },
@@ -248,11 +247,10 @@ final class IOSMailboxDeliveryTests: XCTestCase {
         let viewModel = makeViewModel(conversationStore: store, mailboxDao: dao)
 
         // displayMessagesOverride 非 nil = 补绘重试轮：展示基线是显式快照，不消费。
-        let drained = await viewModel.generationCoordinatorForTesting
-            .drainMailboxAtNewRunHeadForTesting(
-                conversationId: conversationId,
-                displayMessagesOverride: [UIMessage.companion.assistant(prompt: "补绘基线")]
-            )
+        let drained = await viewModel.drainMailboxAtNewRunHeadForTesting(
+            conversationId: conversationId,
+            displayMessagesOverride: [UIMessage.companion.assistant(prompt: "补绘基线")]
+        )
         XCTAssertTrue(drained.isEmpty)
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.count,

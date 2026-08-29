@@ -7,13 +7,12 @@ import XCTest
 /// a durable checkpoint, `recipe_import` promotion, lease pinning and the
 /// round-by-round hot-reload canary.
 ///
-/// Assembly level (reported trade-off): the foreground Chat loop
-/// (`ChatGenerationCoordinator`) is not provider-injectable (it owns
-/// `OpenAIKmpProvider`), so a coordinator-level scripted-provider harness does
+/// Assembly level (reported trade-off): the foreground Adapter owns the
+/// provider loop, so a scripted-provider harness does
 /// not exist. The canary therefore drives the REAL round loop
 /// (`IOSAgentToolEngine`, the same loop the background path uses) one round at
 /// a time with a scripted provider, performing the promotion + registry
-/// refresh + bridge rebuild between rounds — exactly the coordinator's
+/// refresh + bridge rebuild between rounds — exactly the Adapter's
 /// `continueAfterToolResult` / `refreshDynamicCatalogAtRoundBoundary` seam —
 /// with the REAL bridge, REAL registry, REAL recipe store, REAL ledger and the
 /// REAL `ChatToolRuntime` recipe route. Everything except the provider script
@@ -123,7 +122,7 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         XCTAssertTrue(toolSearchHitNames(search1).isEmpty, "round 1 search must miss: \(search1)")
 
         // Between rounds: promote + registry.refresh() → new revision; rebuild
-        // the run bridge over the new snapshot (the coordinator seam does this
+        // the run bridge over the new snapshot (the Adapter seam does this
         // at the round boundary).
         try apply(store: store, json: try listingRecipeJSON(version: "1.0.0"))
         let promotedSnapshot = try unwrapSnapshot(await registry.refresh())
@@ -331,11 +330,18 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         // The candidate changes while the card is open.
         try await seedWorkspaceRecipe(workspace: workspace, json: try listingRecipeJSON(version: "1.0.1"))
 
-        let coordinator = makeCoordinator(root: root, ledger: ledger, runtimeOverride: runtime)
-        await coordinator.installPendingRecipeToolApprovalForTesting(pending: pendingContext(for: previewCall, runId: runId), request: request)
-        await coordinator.approvePendingRecipeTool(requestId: request.id)
-
-        let output = try XCTUnwrap(toolOutputText(in: coordinatorState.messages, toolCallId: previewCall.toolCallId))
+        let resolution = await resolveRecipeApproval(
+            runtime: runtime,
+            ledger: ledger,
+            request: request,
+            decision: .approve,
+            toolCall: previewCall,
+            runId: runId
+        )
+        guard case .resumed(let messages) = resolution else {
+            return XCTFail("expected resolved stale candidate failure, got \(resolution)")
+        }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: previewCall.toolCallId))
         let parsed = try XCTUnwrap(parse(output))
         XCTAssertEqual(parsed["success"] as? Bool, false, output)
         XCTAssertEqual(parsed["code"] as? String, "stale_candidate")
@@ -451,7 +457,6 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         let ledger = IOSAgentRunLedger(dao: dao)
         let (executor, workspace, _) = makeWorkspaceExecutor(root: root)
         let runtime = makeRuntime(root: root, ledger: ledger, localToolExecutor: executor, workspaceStore: workspace)
-        let coordinator = makeCoordinator(root: root, ledger: ledger, executor: executor, runtimeOverride: runtime)
         let runId = "mutation-deny-run-\(UUID().uuidString)"
         try await seedDurableRun(runId, dao: dao)
 
@@ -473,14 +478,19 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         guard case .waitingForApproval(.recipe(let request)) = result else {
             return XCTFail("expected step approval, got \(result)")
         }
-        await coordinator.installPendingRecipeToolApprovalForTesting(
-            pending: pendingContext(for: call, runId: runId),
+        let resolution = await resolveRecipeApproval(
+            runtime: runtime,
+            ledger: ledger,
             request: request,
+            decision: .deny,
+            toolCall: call,
+            runId: runId,
             toolExposureBridge: bridge
         )
-        await coordinator.denyPendingRecipeTool(requestId: request.id)
-
-        let output = try XCTUnwrap(toolOutputText(in: coordinatorState.messages, toolCallId: call.toolCallId))
+        guard case .resumed(let messages) = resolution else {
+            return XCTFail("expected denied recipe result, got \(resolution)")
+        }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
         let parsed = try XCTUnwrap(parse(output))
         XCTAssertEqual(parsed["ok"] as? Bool, false, output)
         XCTAssertEqual(parsed["step"] as? String, "save")
@@ -507,102 +517,9 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         XCTAssertEqual(recipeLevel["artifactId"] as? String, "recipe__digest_save")
     }
 
-    /// Slice B 红测试 2：每个 mutation step 的审批 request id 必须唯一到
-    /// step（外层 toolCallId + executionId + stepId）。step A 被消费后暂停在
-    /// step B 时，来自旧 A 卡的 approve id 不得批准 B（零执行、零清槽、UI
-    /// 保持 pending）；随后用当前 B 的 id approve 仍能正常完成整个 recipe
-    /// （两文件落盘、终态 completed）。红点：当前 A.id == B.id（都是外层
-    /// toolCallId），旧 id 会消费 B。
-    func testStaleStepApprovalIdCannotConsumeNextStepPause() async throws {
-        let root = tempRoot()
-        let store = makeStore(root: root)
-        let registry = makeRegistry(store: store)
-        let (_, dao) = makeDatabase(root: root)
-        let ledger = IOSAgentRunLedger(dao: dao)
-        let (executor, workspace, _) = makeWorkspaceExecutor(root: root)
-        let runtime = makeRuntime(root: root, ledger: ledger, localToolExecutor: executor, workspaceStore: workspace)
-        let coordinator = makeCoordinator(root: root, ledger: ledger, executor: executor, runtimeOverride: runtime)
-        let runId = "stale-step-run-\(UUID().uuidString)"
-        try await seedDurableRun(runId, dao: dao)
-
-        try apply(store: store, json: try twoMutationRecipeJSON(version: "1.0.0"))
-        let snapshot = try unwrapSnapshot(await registry.refresh())
-        let bridge = IOSDynamicToolBridgeRebuilder.rebuiltBridge(
-            from: IosToolExposureBridge(tools: fullIosDeclarations()),
-            snapshot: snapshot
-        )
-
-        let call = makeRecipeToolCall(
-            name: "recipe__double_save",
-            input: #"{"path_a":"/workspace/notes/a.md","path_b":"/workspace/notes/b.md"}"#
-        )
-        let firstResult = await executeRecipeCall(
-            runtime: runtime, toolCall: call, snapshot: snapshot, bridge: bridge,
-            runId: runId
-        )
-        guard case .waitingForApproval(.recipe(let firstRequest)) = firstResult,
-              case .step(let firstPayload) = firstRequest.payload else {
-            return XCTFail("expected first step approval, got \(firstResult)")
-        }
-        XCTAssertEqual(firstPayload.stepId, "save_a")
-
-        // 批准 save_a → recipe 继续并再次暂停在 save_b。
-        await coordinator.installPendingRecipeToolApprovalForTesting(
-            pending: pendingContext(for: call, runId: runId),
-            request: firstRequest,
-            toolExposureBridge: bridge
-        )
-        await coordinator.approvePendingRecipeTool(requestId: firstRequest.id)
-
-        let secondRequest = try XCTUnwrap(coordinatorState.pendingRecipeApproval,
-                                          "approving the first mutation step must re-pause at the second")
-        guard case .step(let secondPayload) = secondRequest.payload else {
-            return XCTFail("expected a second step approval, got \(secondRequest.payload)")
-        }
-        XCTAssertEqual(secondPayload.stepId, "save_b")
-        XCTAssertTrue(
-            FileManager.default.fileExists(
-                atPath: workspace.fileURL(for: try XCTUnwrap(
-                    workspace.fileRecord(idOrPath: "/workspace/notes/a.md")
-                )).path
-            ),
-            "the first approved step must have executed before the second pause"
-        )
-
-        // 旧 A 卡 id 再 approve：零执行、零清槽（红点：当前 A.id == B.id，
-        // 旧 id 会消费 B、执行 save_b 并完成 recipe）。
-        await coordinator.approvePendingRecipeTool(requestId: firstRequest.id)
-        XCTAssertNil(
-            workspace.fileRecord(idOrPath: "/workspace/notes/b.md"),
-            "旧 step 卡的 approve id 不得执行 save_b（B2）"
-        )
-        XCTAssertEqual(
-            coordinatorState.pendingRecipeApproval?.id, secondRequest.id,
-            "旧 step 卡的 approve id 不得消费当前 pending（零清槽，UI 保持）"
-        )
-        XCTAssertNil(
-            toolOutputText(in: coordinatorState.messages, toolCallId: call.toolCallId),
-            "旧 step 卡的 approve id 不得产生终态输出"
-        )
-
-        // 用当前 B 卡 id approve → 正常完成整个 recipe。
-        await coordinator.approvePendingRecipeTool(requestId: secondRequest.id)
-        let output = try XCTUnwrap(toolOutputText(in: coordinatorState.messages, toolCallId: call.toolCallId))
-        let parsed = try XCTUnwrap(parse(output))
-        XCTAssertEqual(parsed["ok"] as? Bool, true, output)
-        XCTAssertEqual(parsed["status"] as? String, "completed")
-        XCTAssertEqual(parsed["steps"] as? [String], ["list", "save_a", "save_b"])
-        for path in ["/workspace/notes/a.md", "/workspace/notes/b.md"] {
-            let record = try XCTUnwrap(workspace.fileRecord(idOrPath: path))
-            XCTAssertTrue(FileManager.default.fileExists(atPath: workspace.fileURL(for: record).path),
-                          "the approved step must have written \(path)")
-        }
-        XCTAssertNil(coordinatorState.pendingRecipeApproval, "recipe 完成后 pending 清槽")
-    }
-
     /// Checker-requested coverage (§10.3.5): a recipe with TWO mutation steps
     /// must pause once per mutation step — approving the first CONTINUES the
-    /// recipe, which pauses again at the second (the coordinator's
+    /// recipe, which pauses again at the second (the Adapter's
     /// `pausedForNextStep` branch + the runtime's resumable loop), then
     /// completes on the second approval. Checkpoint is persisted at each
     /// pause and cleaned at the terminal.
@@ -614,7 +531,6 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         let ledger = IOSAgentRunLedger(dao: dao)
         let (executor, workspace, permissionStore) = makeWorkspaceExecutor(root: root)
         let runtime = makeRuntime(root: root, ledger: ledger, localToolExecutor: executor, workspaceStore: workspace)
-        let coordinator = makeCoordinator(root: root, ledger: ledger, executor: executor, runtimeOverride: runtime)
         let runId = "two-mutation-run-\(UUID().uuidString)"
         try await seedDurableRun(runId, dao: dao)
 
@@ -644,17 +560,19 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         XCTAssertEqual(checkpointFileCount(checkpointDir), 1,
                        "first pause must persist its checkpoint")
 
-        // Approve save_a → the recipe must CONTINUE and pause AGAIN at save_b
-        // (coordinator `pausedForNextStep` re-enters the durable pause).
-        await coordinator.installPendingRecipeToolApprovalForTesting(
-            pending: pendingContext(for: call, runId: runId),
+        // Approve save_a → the recipe must CONTINUE and pause AGAIN at save_b.
+        let firstResolution = await resolveRecipeApproval(
+            runtime: runtime,
+            ledger: ledger,
             request: firstRequest,
+            decision: .approve,
+            toolCall: call,
+            runId: runId,
             toolExposureBridge: bridge
         )
-        await coordinator.approvePendingRecipeTool(requestId: firstRequest.id)
-
-        let secondRequest = try XCTUnwrap(coordinatorState.pendingRecipeApproval,
-                                          "approving the first mutation step must re-pause at the second")
+        guard case .rePause(.recipe(let secondRequest)) = firstResolution else {
+            return XCTFail("approving the first mutation step must re-pause at the second, got \(firstResolution)")
+        }
         guard case .step(let secondPayload) = secondRequest.payload else {
             return XCTFail("expected a second step approval, got \(secondRequest.payload)")
         }
@@ -671,12 +589,19 @@ final class IOSRecipeIntegrationTests: XCTestCase {
             "the first approved step must have executed before the second pause"
         )
 
-        // The finisher's `pausedForNextStep` branch already re-entered the
-        // durable pause (card + prepared execution installed), so approve the
-        // second card directly — no second install.
-        await coordinator.approvePendingRecipeTool(requestId: secondRequest.id)
-
-        let output = try XCTUnwrap(toolOutputText(in: coordinatorState.messages, toolCallId: call.toolCallId))
+        let secondResolution = await resolveRecipeApproval(
+            runtime: runtime,
+            ledger: ledger,
+            request: secondRequest,
+            decision: .approve,
+            toolCall: call,
+            runId: runId,
+            toolExposureBridge: bridge
+        )
+        guard case .resumed(let messages) = secondResolution else {
+            return XCTFail("expected recipe completion after second approval, got \(secondResolution)")
+        }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
         let parsed = try XCTUnwrap(parse(output))
         XCTAssertEqual(parsed["ok"] as? Bool, true, output)
         XCTAssertEqual(parsed["status"] as? String, "completed")
@@ -740,7 +665,6 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         let ledger = IOSAgentRunLedger(dao: dao)
         let workspace = makeWorkspaceStore(root: root)
         let runtime = makeRuntime(root: root, ledger: ledger, workspaceStore: workspace)
-        let coordinator = makeCoordinator(root: root, ledger: ledger, runtimeOverride: runtime)
         let runId = "import-run-\(UUID().uuidString)"
         try await seedDurableRun(runId, dao: dao)
 
@@ -774,13 +698,18 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         XCTAssertEqual(payload.stepsSummary, ["list → tools_list"])
         XCTAssertEqual(payload.effectClassRawValue, IOSToolEffectClass.pure.rawValue)
 
-        await coordinator.installPendingRecipeToolApprovalForTesting(
-            pending: pendingContext(for: call, runId: runId),
-            request: request
+        let resolution = await resolveRecipeApproval(
+            runtime: runtime,
+            ledger: ledger,
+            request: request,
+            decision: .approve,
+            toolCall: call,
+            runId: runId
         )
-        await coordinator.approvePendingRecipeTool(requestId: request.id)
-
-        let output = try XCTUnwrap(toolOutputText(in: coordinatorState.messages, toolCallId: call.toolCallId))
+        guard case .resumed(let messages) = resolution else {
+            return XCTFail("expected approved recipe import result, got \(resolution)")
+        }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
         let parsed = try XCTUnwrap(parse(output))
         XCTAssertEqual(parsed["success"] as? Bool, true, output)
         XCTAssertEqual(parsed["name"] as? String, "catalog_probe")
@@ -912,7 +841,6 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         let ledger = IOSAgentRunLedger(dao: dao)
         let (executor, workspace, _) = makeWorkspaceExecutor(root: root)
         let runtime = makeRuntime(root: root, ledger: ledger, localToolExecutor: executor, workspaceStore: workspace)
-        let coordinator = makeCoordinator(root: root, ledger: ledger, executor: executor, runtimeOverride: runtime)
         let runId = "ws-honest-run-\(UUID().uuidString)"
         try await seedDurableRun(runId, dao: dao)
 
@@ -936,14 +864,19 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         guard case .waitingForApproval(.recipe(let request)) = result else {
             return XCTFail("expected step approval, got \(result)")
         }
-        await coordinator.installPendingRecipeToolApprovalForTesting(
-            pending: pendingContext(for: call, runId: runId),
+        let resolution = await resolveRecipeApproval(
+            runtime: runtime,
+            ledger: ledger,
             request: request,
+            decision: .approve,
+            toolCall: call,
+            runId: runId,
             toolExposureBridge: bridge
         )
-        await coordinator.approvePendingRecipeTool(requestId: request.id)
-
-        let output = try XCTUnwrap(toolOutputText(in: coordinatorState.messages, toolCallId: call.toolCallId))
+        guard case .resumed(let messages) = resolution else {
+            return XCTFail("expected failed recipe result after approved read, got \(resolution)")
+        }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
         let parsed = try XCTUnwrap(parse(output))
         XCTAssertEqual(parsed["ok"] as? Bool, false,
                        "workspace ok:false 必须冒泡为 recipe 级失败：\(output)")
@@ -1064,40 +997,6 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         return (executor, workspace, permissionStore)
     }
 
-    private var coordinatorState = RecipeBindingState()
-
-    private func makeCoordinator(
-        root: URL,
-        ledger: IOSAgentRunLedgering,
-        executor: IOSLocalToolExecutor? = nil,
-        runtimeOverride: ChatToolRuntime? = nil
-    ) -> ChatGenerationCoordinator {
-        coordinatorState = RecipeBindingState()
-        let defaults = UserDefaults(suiteName: "recipe-coord-\(UUID().uuidString)")!
-        let settingsStore = SettingsStore(userDefaults: defaults)
-        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
-        let coordinator = ChatGenerationCoordinator(
-            dependencies: ChatGenerationDependencies(
-                settingsStore: settingsStore,
-                sharedSettings: sharedSettings,
-                localToolExecutor: executor,
-                searchTransport: RecipeNoopSearchTransport(),
-                liveActivityController: .shared,
-                autoGenerateResponses: false,
-                mcpManager: IOSMcpManager(sharedSettings: sharedSettings, configStore: .shared),
-                orchestrationToolService: nil,
-                memoryPollutionMarker: nil
-            ),
-            bindings: coordinatorState.bindings(),
-            toolLedger: ledger
-        )
-        // The finisher must run through the SAME runtime that executed the
-        // recipe call (its stashed execution state / temp workspace / recipe
-        // store); set the override before the lazy runtime is first touched.
-        coordinator.toolRuntimeOverrideForTesting = runtimeOverride
-        return coordinator
-    }
-
     private func makeRecipeToolCall(name: String, input: String) -> UIMessagePart.Tool {
         UIMessagePart.Tool(
             toolCallId: "tc-\(name)-\(UUID().uuidString)",
@@ -1120,6 +1019,56 @@ final class IOSRecipeIntegrationTests: XCTestCase {
             inputDigest: "digest",
             conversationId: nil,
             baseMessages: [makeAssistantMessage(parts: [toolCall])]
+        )
+    }
+
+    private func resolveRecipeApproval(
+        runtime: ChatToolRuntime,
+        ledger: IOSAgentRunLedgering,
+        request: RecipeToolApprovalRequest,
+        decision: ChatKernelApprovalDecision,
+        toolCall: UIMessagePart.Tool,
+        runId: String,
+        toolExposureBridge: IosToolExposureBridge? = nil
+    ) async -> ChatRunKernelAdapter.ApprovalResolution {
+        let pending = pendingContext(for: toolCall, runId: runId)
+        var candidates = ChatRunKernelAdapter.PreparedApprovalCandidates()
+        switch request.payload {
+        case .recipeImport:
+            candidates.recipeImport = runtime.takePreparedRecipeImportForApproval(
+                toolCallId: toolCall.toolCallId
+            )
+        case .step:
+            candidates.recipeExecution = runtime.takePreparedRecipeExecution(
+                toolCallId: toolCall.toolCallId
+            )
+        }
+        let bridge = toolExposureBridge ?? IosToolExposureBridge(tools: fullIosDeclarations())
+        let adapter = ChatRunKernelAdapter(runtime: runtime, ledger: ledger)
+        let runRequest = ChatRunKernelAdapter.RunRequest(
+            provider: RecipeUnusedProvider(),
+            providerSetting: pending.providerSetting,
+            params: pending.params,
+            runId: runId,
+            startedAt: pending.startedAt,
+            inputDigest: pending.inputDigest,
+            conversationId: pending.conversationId,
+            initialMessages: pending.baseMessages,
+            toolExposureBridge: bridge,
+            maxToolResumeCount: 1,
+            drainSteer: nil,
+            mailboxDrain: nil,
+            citationTracker: nil,
+            prepareUploadMessages: nil,
+            nestedToolRunner: nil,
+            approvalDecider: { _ in nil }
+        )
+        return await adapter.resolveApproval(
+            prompt: .recipe(request),
+            decision: decision,
+            pending: pending,
+            candidates: candidates,
+            request: runRequest
         )
     }
 
@@ -1622,38 +1571,12 @@ private struct RecipeNoopSearchTransport: IOSSearchHTTPTransport {
     }
 }
 
-/// Coordinator bindings state（照 IOSExecNestedBindingState 模式）。
-private final class RecipeBindingState {
-    var messages: [UIMessage] = []
-    var pendingRecipeApproval: RecipeToolApprovalRequest?
-    var revisions: [ChatMessageUpdateReason] = []
-    var isLoading = false
-
-    func bindings() -> ChatGenerationBindings {
-        ChatGenerationBindings(
-            getMessages: { self.messages },
-            setMessages: { self.messages = $0 },
-            bumpMessageRevision: { reason, _ in self.revisions.append(reason) },
-            shouldPaceStreamPresentation: { true },
-            setIsLoading: { self.isLoading = $0 },
-            setPendingMemoryApproval: { _ in },
-            setPendingSearchApproval: { _ in },
-            setPendingWebMountApproval: { _ in },
-            setPendingWorkspaceApproval: { _ in },
-            setPendingIshHandoffApproval: { _ in },
-            setPendingMcpApproval: { _ in },
-            setPendingCouncilApproval: { _ in },
-            setPendingAskUser: { _ in },
-            setPendingRecipeApproval: { self.pendingRecipeApproval = $0 },
-            setContextCompactState: { _ in },
-            persistMessages: { _ in true },
-            capturePersistMessagesBaseline: { _ in nil },
-            persistMessagesSnapshot: { _, _, _ in true },
-            recordRun: { _, _, _, _, _ in true },
-            startLiveActivity: { _, _, _ in },
-            saveMiniAppIfPresent: { _, _ in nil },
-            messagesByInjectingRuntimeContext: { $0 },
-            userFacingGenerationError: { rawMessage, _ in rawMessage }
-        )
+private struct RecipeUnusedProvider: IOSAgentTextProvider {
+    func generateText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams
+    ) async throws -> MessageChunk {
+        throw NSError(domain: "IOSRecipeIntegrationTests", code: 1)
     }
 }

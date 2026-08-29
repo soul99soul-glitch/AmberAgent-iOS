@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -20,7 +21,8 @@ interface AgentRuntimeDao {
         """
         INSERT OR IGNORE INTO agent_event (
             event_id, run_id, parent_run_id, seq, type, payload_type, payload,
-            payload_schema_version, agent_descriptor_id, agent_version, is_final, ts
+            payload_schema_version, agent_descriptor_id, agent_version, is_final, ts,
+            turn_id, step_id, tool_call_id
         )
         SELECT
             :eventId, run.run_id, run.parent_run_id,
@@ -30,11 +32,30 @@ interface AgentRuntimeDao {
                 WHERE existing.run_id = run.run_id
             ), 1),
             :type, :payloadType, :payload, :payloadSchemaVersion,
-            run.agent_descriptor_id, run.agent_version, :isFinal, :ts
+            run.agent_descriptor_id, run.agent_version, :isFinal, :ts,
+            :turnId, :stepId, :toolCallId
         FROM agent_run AS run
         WHERE run.run_id = :runId
         """,
     )
+    suspend fun insertRunEventIgnoring(
+        runId: String,
+        eventId: String,
+        type: String,
+        payloadType: String,
+        payload: String,
+        payloadSchemaVersion: Int,
+        isFinal: Boolean,
+        ts: Long,
+        turnId: String?,
+        stepId: String?,
+        toolCallId: String?,
+    )
+
+    @Query("SELECT changes()")
+    suspend fun changedRowCount(): Int
+
+    @Transaction
     suspend fun insertRunEvent(
         runId: String,
         eventId: String,
@@ -44,7 +65,25 @@ interface AgentRuntimeDao {
         payloadSchemaVersion: Int,
         isFinal: Boolean,
         ts: Long,
-    ): Long
+        turnId: String?,
+        stepId: String?,
+        toolCallId: String?,
+    ): Int {
+        insertRunEventIgnoring(
+            runId = runId,
+            eventId = eventId,
+            type = type,
+            payloadType = payloadType,
+            payload = payload,
+            payloadSchemaVersion = payloadSchemaVersion,
+            isFinal = isFinal,
+            ts = ts,
+            turnId = turnId,
+            stepId = stepId,
+            toolCallId = toolCallId,
+        )
+        return changedRowCount()
+    }
 
     @Insert
     suspend fun insertSpan(span: TraceSpanEntity)
@@ -64,6 +103,7 @@ interface AgentRuntimeDao {
         SET status = :status,
             input_snapshot_ref = :inputSnapshotRef,
             interrupted_reason = :detail,
+            terminal_reason = CASE WHEN :finishedAt IS NULL THEN NULL ELSE :detail END,
             finished_at = :finishedAt
         WHERE run_id = :runId AND status = :expectedStatus
         """,
@@ -87,11 +127,47 @@ interface AgentRuntimeDao {
     @Query("SELECT * FROM agent_event WHERE run_id = :id ORDER BY seq ASC")
     suspend fun listEventsForRun(id: String): List<AgentEventEntity>
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertToolTransactionIfAbsent(transaction: AgentToolTransactionEntity): Long
+
+    @Query(
+        """
+        UPDATE agent_tool_transaction
+        SET state = :state,
+            outcome = :outcome,
+            result_payload = :resultPayload,
+            updated_at = :updatedAt
+        WHERE run_id = :runId
+          AND tool_call_id = :toolCallId
+          AND state = :expectedState
+        """,
+    )
+    suspend fun transitionToolTransaction(
+        runId: String,
+        toolCallId: String,
+        expectedState: String,
+        state: String,
+        outcome: String?,
+        resultPayload: String?,
+        updatedAt: Long,
+    ): Int
+
+    @Query(
+        "SELECT * FROM agent_tool_transaction WHERE run_id = :runId AND tool_call_id = :toolCallId",
+    )
+    suspend fun getToolTransaction(runId: String, toolCallId: String): AgentToolTransactionEntity?
+
+    @Query("SELECT * FROM agent_tool_transaction WHERE run_id = :runId ORDER BY updated_at ASC, tool_call_id ASC")
+    suspend fun listToolTransactionsForRun(runId: String): List<AgentToolTransactionEntity>
+
     @Query(
         """
         SELECT * FROM agent_run
         WHERE agent_descriptor_id IN (:descriptorIds)
-          AND status IN ('running', 'awaiting_permission', 'recovery_pending')
+          AND status IN (
+              'created', 'running', 'waiting_user', 'waiting_external',
+              'resumable', 'outcome_unknown'
+          )
         ORDER BY started_at ASC, run_id ASC
         """,
     )

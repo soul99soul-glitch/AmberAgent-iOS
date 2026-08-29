@@ -43,6 +43,12 @@ data class AgentRunRecord(
     val startedAt: Long,
     val finishedAt: Long?,
     val interruptedReason: String?,
+    val terminalReason: String? = null,
+    val providerId: String? = null,
+    val modelId: String? = null,
+    val promptVersion: String? = null,
+    val toolCatalogVersion: String? = null,
+    val capabilitySnapshot: String? = null,
 )
 
 /**
@@ -57,6 +63,9 @@ data class AgentRunEvent(
     val payloadSchemaVersion: Int,
     val isFinal: Boolean,
     val ts: Long,
+    val turnId: String? = null,
+    val stepId: String? = null,
+    val toolCallId: String? = null,
 )
 
 data class AgentEventRecord(
@@ -72,6 +81,9 @@ data class AgentEventRecord(
     val agentVersion: String,
     val isFinal: Boolean,
     val ts: Long,
+    val turnId: String?,
+    val stepId: String?,
+    val toolCallId: String?,
 )
 
 data class TraceSpanRecord(

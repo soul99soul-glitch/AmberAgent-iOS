@@ -89,7 +89,7 @@ final class IOSMiniAppOutputParserTests: XCTestCase {
             UIMessage.companion.assistant(
                 prompt: #"{"title":"番茄钟","description":"计时","html":"<!DOCTYPE html><html><body>"#
             ),
-            ChatGenerationCoordinator.outputLimitNotice(),
+            ChatGenerationSupport.outputLimitNotice(),
             UIMessage.companion.user(prompt: "继续"),
         ]
 
@@ -106,7 +106,7 @@ final class IOSMiniAppOutputParserTests: XCTestCase {
             UIMessage.companion.assistant(
                 prompt: #"{"title":"番茄钟","description":"计时","html":"<!DOCTYPE html><html><body>"#
             ),
-            ChatGenerationCoordinator.outputLimitNotice(),
+            ChatGenerationSupport.outputLimitNotice(),
             UIMessage.companion.user(prompt: "先解释一下时间管理方法"),
             UIMessage.companion.assistant(prompt: "可以从设定边界开始。"),
             UIMessage.companion.user(prompt: "继续"),

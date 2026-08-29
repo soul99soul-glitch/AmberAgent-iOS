@@ -1604,6 +1604,23 @@ struct IOSToolInvocationRequest: Equatable {
     let scopeDigest: String
     let payloadDigest: String
     let isUserInitiated: Bool
+    let executionPolicy: IOSExecutionPolicySnapshot?
+
+    init(
+        toolName: String,
+        operation: String,
+        scopeDigest: String,
+        payloadDigest: String,
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) {
+        self.toolName = toolName
+        self.operation = operation
+        self.scopeDigest = scopeDigest
+        self.payloadDigest = payloadDigest
+        self.isUserInitiated = isUserInitiated
+        self.executionPolicy = executionPolicy
+    }
 }
 
 enum IOSPlatformGateDecision: Equatable {
@@ -1652,7 +1669,7 @@ final class IOSToolRuntime {
             return .deny(reason: "Tool is blocked on iOS")
         }
 
-        let policy = permissionStore.policy(for: capability)
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent policy")
         }

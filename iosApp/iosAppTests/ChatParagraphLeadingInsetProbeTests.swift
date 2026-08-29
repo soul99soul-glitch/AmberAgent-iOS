@@ -308,7 +308,7 @@ final class ChatParagraphLeadingInsetProbeTests: XCTestCase {
         // 生产流式节奏：pacer 逐拍推进 + streamDelta 信号。
         var current = model.messages
         for tick in 1...40 {
-            let step = ChatStreamPresentationPacer.step(current: current, target: [target])
+            let step = IOSChatStreamSnapshotStepper.step(current: current, target: [target])
             if step.isCaughtUp { break }
             current = step.snapshot
             model.messages = current

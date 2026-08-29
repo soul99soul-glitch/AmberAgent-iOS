@@ -591,7 +591,9 @@ struct ChatView: View {
             return ChatActivityIslandState.activity(
                 kind: .awaitingUser,
                 title: "等待确认",
-                detail: viewModel.pendingAskUser != nil ? "回答问题" : "工具审批",
+                detail: viewModel.pendingAskUser != nil
+                    ? "回答问题"
+                    : (viewModel.pendingToolOutcomeUnknown != nil ? "确认操作结果" : "工具审批"),
                 systemImage: "checkmark.circle",
                 tint: .amber
             )
@@ -828,6 +830,19 @@ struct ChatView: View {
 
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if let descriptor = viewModel.pendingToolOutcomeUnknown {
+                ToolOutcomeUnknownCard(
+                    descriptor: descriptor,
+                    onDidApply: {
+                        Task { await viewModel.reconcilePendingToolOutcome(didApply: true) }
+                    },
+                    onDidNotApply: {
+                        Task { await viewModel.reconcilePendingToolOutcome(didApply: false) }
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             if let request = viewModel.pendingMemoryApproval {
                 MemoryToolApprovalCard(
                     request: request,
@@ -1036,7 +1051,7 @@ struct ChatView: View {
                                 // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
                                 isDisabled: viewModel.isRecognizingImages
                                     || viewModel.isAttachingSelectedFile
-                                    || hasPendingToolApproval
+                                    || hasPendingComposerGate
                                     || viewModel.currentConversationIsOrchestratedChild
                             ) {
                                 withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
@@ -1049,7 +1064,7 @@ struct ChatView: View {
                                     text: $viewModel.inputText,
                                     height: $composerInputHeight,
                                     isFocused: inputFocusBinding,
-                                    isEnabled: !hasPendingToolApproval
+                                    isEnabled: !hasPendingComposerGate
                                         && !viewModel.currentConversationIsOrchestratedChild,
                                     sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
                                     controller: composerInputController,
@@ -1227,6 +1242,10 @@ struct ChatView: View {
             viewModel.pendingRecipeApproval != nil
     }
 
+    private var hasPendingComposerGate: Bool {
+        hasPendingToolApproval || viewModel.pendingToolOutcomeUnknown != nil
+    }
+
     private var isCurrentConversationRunActive: Bool {
         viewModel.isGenerationActiveForCurrentConversation ||
             hasPendingToolApproval ||
@@ -1331,8 +1350,6 @@ struct ChatView: View {
     }
 
     private func applyCollectionViewportState(_ newState: ChatViewportState) {
-        viewModel.streamPresentationPacingEnabled =
-            !newState.followPaused && !newState.userDragging && !newState.liveRenderingFarFromBottom
         guard viewportState != newState else { return }
         var transaction = Transaction()
         transaction.animation = nil

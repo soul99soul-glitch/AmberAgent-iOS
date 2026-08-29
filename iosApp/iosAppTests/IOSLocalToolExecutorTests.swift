@@ -163,6 +163,37 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         }
     }
 
+    func testSelectedFileReadUsesFrozenExecutionPolicy() async throws {
+        let documentStore = DocumentAccessStore()
+        _ = documentStore.registerPickedFile(try makeTempFile(size: 16))
+        let permissionStore = IOSPermissionStore(userDefaults: isolatedDefaults())
+        let capability = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.files.selected_read" }
+        )
+        permissionStore.setPolicy(.disabled, for: capability)
+        let executor = makeExecutor(permissionStore: permissionStore, documentStore: documentStore)
+        let snapshot = executor.executionPolicySnapshot(
+            execJavaScriptEnabled: false,
+            webSearchEnabled: false
+        )
+        permissionStore.setPolicy(.autoApprove, for: capability)
+
+        let output = await executor.execute(
+            executor.executionRequest(
+                toolName: "file_read_selected",
+                operation: "read_preview",
+                isUserInitiated: true,
+                runId: "run-frozen-file-policy",
+                executionPolicy: snapshot
+            )
+        )
+
+        guard case .denied(let reason) = output else {
+            return XCTFail("Expected frozen disabled policy to deny, got \(output)")
+        }
+        XCTAssertTrue(reason.contains("Disabled"))
+    }
+
     func testScopeToolOrPayloadMismatchCannotSucceed() async throws {
         let documentStore = DocumentAccessStore()
         let grant = documentStore.registerPickedFile(try makeTempFile(size: 16))
@@ -746,6 +777,76 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             return XCTFail("Expected disabled policy to deny")
         }
         XCTAssertTrue(disabledReason.contains("disabled"))
+    }
+
+    func testExecutionPolicySnapshotFreezesMemoryDecisionAndHasStableDigest() throws {
+        let permissionStore = IOSPermissionStore(userDefaults: isolatedDefaults())
+        let executor = makeExecutor(permissionStore: permissionStore)
+        let input = #"{"action":"create","content":"remember this"}"#
+        let snapshot = executor.executionPolicySnapshot(
+            execJavaScriptEnabled: false,
+            webSearchEnabled: true,
+            mcpEnabled: false
+        )
+        let decoded = try XCTUnwrap(snapshot.encodedJSON.flatMap(IOSExecutionPolicySnapshot.decode(json:)))
+        XCTAssertEqual(decoded, snapshot)
+        XCTAssertEqual(decoded.digest, snapshot.digest)
+        XCTAssertEqual(decoded.mcpEnabled, false)
+
+        let capability = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.agent.memory_write" }
+        )
+        permissionStore.setPolicy(.disabled, for: capability)
+
+        guard case .denied = executor.memoryToolWritePolicy(
+            input: input,
+            isUserInitiated: true
+        ) else {
+            return XCTFail("Live disabled policy should deny")
+        }
+        XCTAssertEqual(
+            executor.memoryToolWritePolicy(
+                input: input,
+                isUserInitiated: true,
+                executionPolicy: snapshot
+            ),
+            .allow,
+            "An in-flight run must keep the policy captured at its start"
+        )
+        XCTAssertNotEqual(
+            snapshot.digest,
+            executor.executionPolicySnapshot(
+                execJavaScriptEnabled: false,
+                webSearchEnabled: true
+            ).digest
+        )
+    }
+
+    func testExecutionRequestDigestsSeparateScopeFromPayload() {
+        let executor = makeExecutor()
+        let first = executor.executionRequest(
+            toolName: "workspace_file_write",
+            operation: #"{"path":"/workspace/a.md","content":"one"}"#,
+            isUserInitiated: false,
+            runId: "run-policy"
+        )
+        let sameScope = executor.executionRequest(
+            toolName: "workspace_file_write",
+            operation: #"{"path":"/workspace/a.md","content":"two"}"#,
+            isUserInitiated: false,
+            runId: "run-policy"
+        )
+        let otherScope = executor.executionRequest(
+            toolName: "workspace_file_write",
+            operation: #"{"path":"/workspace/b.md","content":"one"}"#,
+            isUserInitiated: false,
+            runId: "run-policy"
+        )
+
+        XCTAssertEqual(first.scopeDigest, sameScope.scopeDigest)
+        XCTAssertNotEqual(first.payloadDigest, sameScope.payloadDigest)
+        XCTAssertNotEqual(first.scopeDigest, otherScope.scopeDigest)
+        XCTAssertEqual(first.runId, "run-policy")
     }
 
     func testWorkspaceReadRequiresApprovalAndReturnsImportedText() async throws {

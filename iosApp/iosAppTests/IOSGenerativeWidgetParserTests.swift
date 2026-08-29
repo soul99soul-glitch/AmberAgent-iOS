@@ -594,6 +594,24 @@ final class IOSGenerativeWidgetParserTests: XCTestCase {
         XCTAssertEqual(closed[2].toText(), quotedReply.toText())
     }
 
+    func testTerminalRepairSuccessRemovesOnlyGeneratedNotice() {
+        let quotedReply = message(
+            role: .assistant,
+            text: "模型复述：\(IOSGenerativeUiRequestPolicy.generativeUiRepairNoticeText)，但这是正文。"
+        )
+        let messages = [
+            message(role: .user, text: "画一个流程图"),
+            IOSGenerativeUiRequestPolicy.generativeUiRepairNotice(),
+            quotedReply,
+        ]
+
+        let closed = IOSGenerativeUiRequestPolicy.terminalRepairSuccessMessages(messages)
+
+        XCTAssertEqual(closed.count, 2)
+        XCTAssertEqual(closed[0].toText(), "画一个流程图")
+        XCTAssertEqual(closed[1].toText(), quotedReply.toText())
+    }
+
     func testBaselineTerminalRepairDoesNotReplaceQuotedNoticeReply() {
         let quotedReply = message(
             role: .assistant,

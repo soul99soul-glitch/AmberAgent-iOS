@@ -622,8 +622,8 @@ protocol IOSCouncilTextStreaming: AnyObject {
 /// accumulate losslessly; the expensive full snapshot is deferred until the one
 /// scheduled UI flush (or an exact terminal/cancel flush).
 ///
-/// 节奏层（与 Chat 的 `ChatStreamPresentationPacer.step` / 小说的
-/// `NovelSessionPresentationPacer` 同一份 `StreamPresentationPacingPolicy`）：
+/// 节奏层（与小说的 `NovelSessionPresentationPacer` 共用
+/// `StreamPresentationPacingPolicy`）：
 /// 每个 48ms 刷新窗只发布一个节奏拍（流式 `textAdvance` 预算），大积压时
 /// 自续拍直到追平——上游再快，显示侧仍以平滑节拍输出，模型慢时零损失。
 /// 完成路径走 `drainAndClose`：以锚速 whoosh 中段 + 优雅尾连续减速收尾，

@@ -216,13 +216,21 @@ final class IOSOrchestrationToolTests: XCTestCase {
             scheduler: scheduler,
             currentConversationId: { parentId }
         )
+        let executionPolicy = IOSExecutionPolicySnapshot(
+            capabilityPolicies: ["ios.agent.subagent_dispatch": "autoApprove"],
+            globalAutoApproveEnabled: true,
+            highRiskAutoApproveEnabled: false,
+            execJavaScriptEnabled: true,
+            webSearchEnabled: false
+        )
 
         let result = parseJSON(await service.execute(
             toolName: "spawn_agent",
             arguments: spawnArguments(taskName: "research", message: "调研房价", forkTurns: "all"),
             providerSetting: makeProviderSetting(),
             params: makeParams(),
-            runId: "parent-run-1"
+            runId: "parent-run-1",
+            executionPolicy: executionPolicy
         ))
 
         XCTAssertEqual(result["ok"] as? Bool, true)
@@ -251,6 +259,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         // 后台 start 被调且 payload 正确。
         let handoff = try XCTUnwrap(scheduler.startedHandoff)
         XCTAssertEqual(handoff.conversationId.toHexDashString(), childHex)
+        XCTAssertEqual(handoff.executionPolicy, executionPolicy)
         // 场景 C 修复后：upload 首条为子线程向编排语境（system），其后与持久化一致。
         XCTAssertEqual(handoff.uploadMessages.count, childMessages.count + 1)
         XCTAssertEqual(handoff.uploadMessages.first?.role, MessageRole.system)
@@ -268,7 +277,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
 
     /// 红测试对应缺陷：startDurableBackgroundRun 用 params.tools.map(\.name)（当轮
     /// 可见子集）作 fullToolNames → 子线程目录永久截断（未暴露的 wm_* 永远不可
-    /// search/命中）。修复后从 run 桥全目录取名集合（对齐 ChatGenerationCoordinator）。
+    /// search/命中）。修复后从 run 桥全目录取名集合（对齐 ChatKernelRunHost）。
     func testSpawnHandoffFullToolNamesComeFromBridgeFullCatalog() async throws {
         let base = makeTempDirectory("SpawnFullNames")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -577,7 +586,13 @@ final class IOSOrchestrationToolTests: XCTestCase {
                 inputSchemaVersion: 1,
                 startedAt: now,
                 finishedAt: nil,
-                interruptedReason: nil
+                interruptedReason: nil,
+                terminalReason: nil,
+                providerId: nil,
+                modelId: nil,
+                promptVersion: nil,
+                toolCatalogVersion: nil,
+                capabilitySnapshot: nil
             ))
         }
         let scheduler = FakeBackgroundScheduler()
@@ -723,13 +738,17 @@ final class IOSOrchestrationToolTests: XCTestCase {
             runId: "old", parentRunId: nil, agentDescriptorId: "chat", agentVersion: "1",
             conversationId: childHex, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
             status: "completed", inputDigest: "d", inputSnapshotRef: nil, inputSchemaVersion: 1,
-            startedAt: now, finishedAt: KotlinLong(value: now + 1), interruptedReason: nil
+            startedAt: now, finishedAt: KotlinLong(value: now + 1), interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         ))
         _ = try await db.agentRuntimeDao().insertRunIfAbsent(run: AgentRunEntity(
             runId: "new", parentRunId: nil, agentDescriptorId: "chat", agentVersion: "1",
             conversationId: childHex, messageNodeId: nil, producesMessageId: nil, assistantId: nil,
             status: "running", inputDigest: "d", inputSnapshotRef: nil, inputSchemaVersion: 1,
-            startedAt: now + 2, finishedAt: nil, interruptedReason: nil
+            startedAt: now + 2, finishedAt: nil, interruptedReason: nil,
+            terminalReason: nil, providerId: nil, modelId: nil, promptVersion: nil,
+            toolCatalogVersion: nil, capabilitySnapshot: nil
         ))
 
         let scheduler = FakeBackgroundScheduler()
@@ -926,13 +945,12 @@ final class IOSOrchestrationToolTests: XCTestCase {
         viewModel.conversationStore = store
         viewModel.reloadFromStore()
 
-        // 子线程 run 终态（前台 finishStreaming 路径）→ FINAL_ANSWER 进父 mailbox。
-        viewModel.generationCoordinatorForTesting.installRunSnapshotForTesting(
+        // 子线程 run 终态 → FINAL_ANSWER 进父 mailbox。
+        await service.notifyRunTerminal(
+            conversationId: childId,
             runId: "child-run-1",
-            snapshot: nil,
-            conversationId: childId
+            finalMessages: viewModel.messages
         )
-        XCTAssertTrue(viewModel.generationCoordinatorForTesting.finishStreamingForTesting(runId: "child-run-1"))
         let finalEnvelope = try await pollFinalAnswerEnvelope(
             mailboxDao: db.mailboxDao(),
             recipient: parentId,
@@ -1139,13 +1157,12 @@ final class IOSOrchestrationToolTests: XCTestCase {
         viewModel.conversationStore = store
         viewModel.reloadFromStore()
 
-        // 前台 run 取消 → 终态回传父 mailbox（带 Open 父 edge）。
-        viewModel.generationCoordinatorForTesting.installRunSnapshotForTesting(
+        // run 取消终态 → 回传父 mailbox（带 Open 父 edge）。
+        await service.notifyRunTerminal(
+            conversationId: childId,
             runId: "child-run-cancel",
-            snapshot: nil,
-            conversationId: childId
+            finalMessages: viewModel.messages
         )
-        XCTAssertTrue(viewModel.generationCoordinatorForTesting.cancel(runId: "child-run-cancel"))
         let finalEnvelope = try await pollFinalAnswerEnvelope(
             mailboxDao: db.mailboxDao(),
             recipient: parentId,
@@ -1154,13 +1171,12 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertEqual(finalEnvelope?.author, "/root/sub")
         XCTAssertEqual(finalEnvelope?.payload, "部分回答")
 
-        // cancel 后再 finishStreaming 双触发：服务按 runId 幂等去重，不双发。
-        viewModel.generationCoordinatorForTesting.installRunSnapshotForTesting(
+        // 同一终态重复通知：服务按 runId 幂等去重，不双发。
+        await service.notifyRunTerminal(
+            conversationId: childId,
             runId: "child-run-cancel",
-            snapshot: nil,
-            conversationId: childId
+            finalMessages: viewModel.messages
         )
-        _ = viewModel.generationCoordinatorForTesting.finishStreamingForTesting(runId: "child-run-cancel")
         try await Task.sleep(nanoseconds: 300_000_000)
         let count = try await countFinalAnswerEnvelopes(
             mailboxDao: db.mailboxDao(),
@@ -1243,12 +1259,11 @@ final class IOSOrchestrationToolTests: XCTestCase {
         viewModel.reloadFromStore()
 
         // 空转录 failed 子 run → 父 Room 仍收到结构化终态信封。
-        viewModel.generationCoordinatorForTesting.installRunSnapshotForTesting(
+        await service.notifyRunTerminal(
+            conversationId: childId,
             runId: "child-run-empty",
-            snapshot: nil,
-            conversationId: childId
+            finalMessages: viewModel.messages
         )
-        XCTAssertTrue(viewModel.generationCoordinatorForTesting.finishStreamingForTesting(runId: "child-run-empty"))
         let finalEnvelope = try await pollFinalAnswerEnvelope(
             mailboxDao: db.mailboxDao(),
             recipient: parentId,

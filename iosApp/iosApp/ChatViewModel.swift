@@ -245,9 +245,6 @@ final class ChatViewModel {
     @ObservationIgnored private var cachedTokenRevision: Int = -1
     @ObservationIgnored private var imageGenerationResumeCache: [String: ImageGenerationResumeCacheEntry] = [:]
     @ObservationIgnored private var imageGenerationResumeCacheStoreID: ObjectIdentifier?
-    /// UI presentation pacing is useful only while the live tail is being watched.
-    /// The authoritative stream accumulator is independent from this flag.
-    var streamPresentationPacingEnabled = true
     var pendingMemoryApproval: MemoryToolApprovalRequest?
     var pendingSearchApproval: SearchToolApprovalRequest?
     var pendingWebMountApproval: WebMountToolApprovalRequest?
@@ -258,6 +255,12 @@ final class ChatViewModel {
     var pendingAskUser: ChatAskUserRequest?
     /// Wave B2: recipe 审批卡（mutation step / recipe_import）。
     var pendingRecipeApproval: RecipeToolApprovalRequest?
+    private(set) var toolOutcomeUnknownDescriptors: [IOSToolOutcomeUnknownDescriptor] = []
+
+    var pendingToolOutcomeUnknown: IOSToolOutcomeUnknownDescriptor? {
+        guard let conversationId = currentConversationId?.toHexDashString() else { return nil }
+        return toolOutcomeUnknownDescriptors.first { $0.conversationId == conversationId }
+    }
 
     var configurationError: String?
     var contextCompactState: ChatContextCompactState = .idle
@@ -265,7 +268,7 @@ final class ChatViewModel {
     // MARK: - Steer 队列（P1-a）
 
     /// 生成激活期间排队、待折入下一轮模型请求的 user 消息（v1 仅文本 STEER）。
-    /// 内存队列唯一 owner 是本 ViewModel；`ChatGenerationCoordinator` 在工具循环
+    /// 内存队列唯一 owner 是本 ViewModel；`ChatRunKernelAdapter` 在工具循环
     /// 边界经 bindings 消费，不持有第二份队列。切会话由 `reloadFromStore()` 重灌。
     private(set) var steerQueue: [IOSSteerQueueEntry] = []
     /// 磁盘镜像（Documents/steer-queue/{conversationId}.json），进程死亡后队列不丢。
@@ -281,7 +284,7 @@ final class ChatViewModel {
             pendingWebMountApproval != nil || pendingWorkspaceApproval != nil ||
             pendingIshHandoffApproval != nil || pendingMcpApproval != nil ||
             pendingCouncilApproval != nil || pendingAskUser != nil ||
-            pendingRecipeApproval != nil
+            pendingRecipeApproval != nil || pendingToolOutcomeUnknown != nil
     }
 
     /// 顶部活动岛等待连接副标题（取不到则 nil，文案规则：宁缺毋滥）。
@@ -417,17 +420,22 @@ final class ChatViewModel {
 
 #if DEBUG
     var generationActiveOverrideForTesting: ((KotlinUuid?) -> Bool)?
+    /// P0-2 e2e:kernel 路径的剧本化 provider 注入缝。lazy Host 必须在
+    /// 首次发送前完成注入，之后改动不生效。nil = 生产统一 provider adapter。
+    @ObservationIgnored var kernelTextProviderOverrideForTesting: (any IOSAgentTextProvider)?
 #endif
     var isGenerationActive: Bool {
 #if DEBUG
         if generationActiveOverrideForTesting?(currentConversationId) == true { return true }
 #endif
-        return generationCoordinator.isRunning || hasActiveBackgroundGenerationForCurrentConversation
+        return kernelRunHost.isRunning
+            || hasActiveBackgroundGenerationForCurrentConversation
     }
 
     var isForegroundGenerationActiveForCurrentConversation: Bool {
-        guard generationCoordinator.isRunning else { return false }
-        switch (currentConversationId, generationCoordinator.activeConversationId) {
+        guard kernelRunHost.isRunning else { return false }
+        let activeConversationId = kernelRunHost.activeConversationId
+        switch (currentConversationId, activeConversationId) {
         case (nil, nil):
             return true
         case let (current?, active?):
@@ -439,8 +447,8 @@ final class ChatViewModel {
 
     var isGenerationActiveForCurrentConversation: Bool {
         guard let currentConversationId else { return false }
-        if generationCoordinator.isRunning,
-           let activeConversationId = generationCoordinator.activeConversationId,
+        if kernelRunHost.isRunning,
+           let activeConversationId = kernelRunHost.activeConversationId,
            String(describing: currentConversationId) == String(describing: activeConversationId) {
             return true
         }
@@ -451,8 +459,8 @@ final class ChatViewModel {
 #if DEBUG
         if generationActiveOverrideForTesting?(conversationId) == true { return true }
 #endif
-        if generationCoordinator.isRunning,
-           let activeConversationId = generationCoordinator.activeConversationId,
+        if kernelRunHost.isRunning,
+           let activeConversationId = kernelRunHost.activeConversationId,
            conversationId == activeConversationId {
             return true
         }
@@ -542,10 +550,11 @@ final class ChatViewModel {
     @discardableResult
     func prepareForConversationChange(to targetConversationId: KotlinUuid?) -> Bool {
         let canChangeConversation: Bool
-        if !generationCoordinator.isRunning {
+        let foregroundActiveConversationId = kernelRunHost.activeConversationId
+        if !kernelRunHost.isRunning {
             canChangeConversation = true
         } else if let targetConversationId,
-                  let activeConversationId = generationCoordinator.activeConversationId,
+                  let activeConversationId = foregroundActiveConversationId,
                   String(describing: targetConversationId) == String(describing: activeConversationId) {
             canChangeConversation = true
         } else {
@@ -586,7 +595,7 @@ final class ChatViewModel {
         conversationId: String
     ) async -> Bool {
         await withCheckedContinuation { continuation in
-            db.agentRuntimeDao().getRun(id: runId) { result, _ in
+            agentRuntimeDao.getRun(id: runId) { result, _ in
                 let belongs = result?.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame
                 continuation.resume(returning: belongs)
             }
@@ -594,14 +603,15 @@ final class ChatViewModel {
     }
 
     func canOpenActivityConfirmation(runId: String) -> Bool {
-        generationCoordinator.hasPendingApproval(runId: runId)
+        kernelRunHost.hasPendingApproval(runId: runId)
     }
 
     func prepareForConversationDeletion(_ conversationId: KotlinUuid) {
         if currentConversationId.map({ String(describing: $0) }) == String(describing: conversationId) {
             discardSelectedFileContextForConversationChange()
-            if generationCoordinator.activeConversationId.map({ String(describing: $0) })
-                == String(describing: conversationId) {
+            let hostOwns = kernelRunHost.activeConversationId
+                .map({ String(describing: $0) }) == String(describing: conversationId)
+            if hostOwns {
                 cancelGeneration()
             }
         }
@@ -703,8 +713,15 @@ final class ChatViewModel {
     @ObservationIgnored private let injectedAgentRuntimeDao: AgentRuntimeDao?
     @ObservationIgnored private lazy var agentRuntimeDao = injectedAgentRuntimeDao ?? db.agentRuntimeDao()
     @ObservationIgnored private lazy var runStore = IOSDurableRunStore(dao: agentRuntimeDao)
+    /// 前台兼容入口与 kernel Host 共用的工具账本。必须显式绑到
+    /// agentRuntimeDao:run 行经 runStore 落同一个库,账本的 insertRunEvent
+    /// 是 INSERT…SELECT agent_run 的 identity 拷贝——各走各的默认库时事件
+    /// 静默落空(注入测试库的场景必现),默认参数 IOSAgentRunLedger() 只在
+    /// 「run 行也在默认库」时才安全。
+    @ObservationIgnored private lazy var chatRunLedger: IOSAgentRunLedgering = IOSAgentRunLedger(dao: agentRuntimeDao)
     @ObservationIgnored private let mcpManager: IOSMcpManager
-    @ObservationIgnored private lazy var generationCoordinator = makeGenerationCoordinator()
+    /// 生产前台文本与直接图片路径的唯一 Host；懒构造本身零副作用。
+    @ObservationIgnored private lazy var kernelRunHost = makeKernelRunHost()
     private var attachRequestId: UUID?
 
     private var currentModel: Model? {
@@ -768,15 +785,14 @@ final class ChatViewModel {
             },
             currentConversationId: { [weak self] in self?.currentConversationId },
             foregroundActiveRunId: { [weak self] childHex in
-                self?.generationCoordinator.activeForegroundRunId(matchingHex: childHex)
+                self?.kernelRunHost.activeForegroundRunId(matchingHex: childHex)
             },
             cancelForegroundRun: { [weak self] runId in
-                self?.generationCoordinator.cancel(runId: runId) ?? false
+                self?.kernelRunHost.cancel(runId: runId) ?? false
             },
-            // P1-e: 前台活跃 run 全局 0/1（任意会话；与 P1-c activeForegroundRunId
-            // 同一来源 isRunning）。
+            // 前台活跃 run 全局 0/1（任意会话）。
             foregroundRunActive: { [weak self] in
-                self?.generationCoordinator.isRunning ?? false
+                self?.kernelRunHost.isRunning ?? false
             },
             // M4: role_assistant_id 存在性校验——对照当前设置快照的 assistants。
             roleAssistantExists: { [weak self] assistantId in
@@ -792,10 +808,10 @@ final class ChatViewModel {
         injectedOrchestrationToolService ?? defaultOrchestrationToolService
     }
 
-    /// P1-c: 后台 job 工具 runtime 构造（spawnAgent 的 `makeBackgroundToolRuntime`
-    /// 闭包与测试缝共用同一构造点）。子线程在后台引擎里同样注册三编排工具，
-    /// 必须注入本 VM 的编排服务，否则孙线程 spawn 恒报「不可用」。
-    private func makeBackgroundToolRuntime() -> ChatToolRuntime {
+    /// P1-c: 后台 job 工具 runtime 构造（AppShell 冷启动恢复、spawnAgent 的
+    /// `makeBackgroundToolRuntime` 闭包与测试缝共用同一构造点）。子线程在后台
+    /// 引擎里同样注册编排工具，必须注入本 VM 的编排服务。
+    func makeBackgroundToolRuntime() -> ChatToolRuntime {
         ChatToolRuntime(
             settingsStore: settingsStore,
             sharedSettings: sharedSettings,
@@ -888,21 +904,38 @@ final class ChatViewModel {
         }
     }
 
-    private func makeGenerationCoordinator() -> ChatGenerationCoordinator {
-        ChatGenerationCoordinator(
-            dependencies: ChatGenerationDependencies(
-                settingsStore: settingsStore,
-                sharedSettings: sharedSettings,
-                localToolExecutor: localToolExecutor,
-                searchTransport: searchTransport,
-                liveActivityController: liveActivityController,
-                autoGenerateResponses: autoGenerateResponses,
-                mcpManager: mcpManager,
-                orchestrationToolService: orchestrationToolService,
-                memoryPollutionMarker: memoryPollutionMarker,
-                conversationStoreProvider: { [weak self] in self?.conversationStore }
-            ),
-            bindings: ChatGenerationBindings(
+    /// 前台路径唯一 Host；dependencies/bindings 集中装配消息、审批卡、持久化、
+    /// 账本与 Watch/Live Activity 副作用。
+    private func makeKernelRunHost() -> ChatKernelRunHost {
+        var textProviderOverride: (any IOSAgentTextProvider)?
+#if DEBUG
+        textProviderOverride = kernelTextProviderOverrideForTesting
+#endif
+        return ChatKernelRunHost(
+            dependencies: makeGenerationDependencies(),
+            bindings: makeGenerationBindings(),
+            toolLedger: chatRunLedger,
+            textProvider: textProviderOverride
+        )
+    }
+
+    private func makeGenerationDependencies() -> ChatGenerationDependencies {
+        ChatGenerationDependencies(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            localToolExecutor: localToolExecutor,
+            searchTransport: searchTransport,
+            liveActivityController: liveActivityController,
+            autoGenerateResponses: autoGenerateResponses,
+            mcpManager: mcpManager,
+            orchestrationToolService: orchestrationToolService,
+            memoryPollutionMarker: memoryPollutionMarker,
+            conversationStoreProvider: { [weak self] in self?.conversationStore }
+        )
+    }
+
+    private func makeGenerationBindings() -> ChatGenerationBindings {
+        ChatGenerationBindings(
                 getMessages: { [weak self] in
                     self?.messages ?? []
                 },
@@ -911,9 +944,6 @@ final class ChatViewModel {
                 },
                 bumpMessageRevision: { [weak self] reason, lagAllowance in
                     self?.bumpMessageRevision(reason: reason, lagAllowance: lagAllowance)
-                },
-                shouldPaceStreamPresentation: { [weak self] in
-                    self?.streamPresentationPacingEnabled ?? false
                 },
                 setIsLoading: { [weak self] isLoading in
                     self?.isLoading = isLoading
@@ -969,14 +999,15 @@ final class ChatViewModel {
                         writeBaseline: writeBaseline
                     )
                 },
-                recordRun: { [weak self] runId, startedAt, status, inputDigest, conversationId in
+                recordRun: { [weak self] runId, startedAt, status, inputDigest, conversationId, protocolContext in
                     guard let self else { return false }
                     return await self.recordRun(
                         runId: runId,
                         startedAt: startedAt,
                         status: status,
                         inputDigest: inputDigest,
-                        conversationId: conversationId
+                        conversationId: conversationId,
+                        protocolContext: protocolContext
                     )
                 },
                 markRunAwaitingPermission: { [weak self] runId, toolCallId in
@@ -1002,6 +1033,12 @@ final class ChatViewModel {
                 },
                 messagesByInjectingRuntimeContext: { [weak self] messages in
                     self?.messagesByInjectingRuntimeContext(messages) ?? messages
+                },
+                messagesByInjectingRuntimeContextForRun: { [weak self] messages, mcpEnabled in
+                    self?.messagesByInjectingRuntimeContext(
+                        messages,
+                        mcpEnabledOverride: mcpEnabled
+                    ) ?? messages
                 },
                 userFacingGenerationError: { rawMessage, modelId in
                     ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
@@ -1040,7 +1077,6 @@ final class ChatViewModel {
                 refreshOrchestrationLinks: { [weak self] in
                     await self?.refreshCurrentConversationOrchestratedStatus()
                 }
-            )
         )
     }
 
@@ -1240,6 +1276,11 @@ final class ChatViewModel {
                 guard await conversationStore.save(messages: recoveredMessages, to: conversationId) else {
                     continue
                 }
+                await IOSRunRecovery.finalizeToolCallRecovery(
+                    runId: descriptor.runId,
+                    plan: ledgerActions,
+                    dao: agentRuntimeDao
+                )
                 didUpdateCurrentConversation = didUpdateCurrentConversation || currentConversationId == conversationId
             }
             await IOSRunRecovery.completePendingApprovalRecovery(
@@ -1263,10 +1304,11 @@ final class ChatViewModel {
     /// that method.
     func applyToolCallLedgerRecovery(
         forInterruptedRuns pairs: [(runId: String, conversationId: String)]
-    ) async -> Set<String> {
-        guard let conversationStore, !pairs.isEmpty else { return [] }
+    ) async -> IOSToolCallRecoverySweepResult {
+        guard let conversationStore, !pairs.isEmpty else { return IOSToolCallRecoverySweepResult() }
         var didUpdateCurrentConversation = false
-        var reconciledRunIds = Set<String>()
+        var result = IOSToolCallRecoverySweepResult()
+        var discoveredUnknowns: [IOSToolOutcomeUnknownDescriptor] = []
 
         for pair in pairs {
             guard let conversationId = conversationStore.summaries.first(where: {
@@ -1274,7 +1316,7 @@ final class ChatViewModel {
             })?.id else {
                 print("[AmberChat] W3 recovery: conversation \(pair.conversationId) for run \(pair.runId) not found, skipping (may have been deleted).")
                 // A deleted conversation has no pending tool node left to replay.
-                reconciledRunIds.insert(pair.runId)
+                result.reconciledRunIds.insert(pair.runId)
                 continue
             }
             guard let storedMessages = await conversationStore.messages(for: conversationId) else { continue }
@@ -1284,20 +1326,81 @@ final class ChatViewModel {
                 dao: agentRuntimeDao
             ) else { continue }
             guard !actions.isEmpty else {
-                reconciledRunIds.insert(pair.runId)
+                result.reconciledRunIds.insert(pair.runId)
                 continue
+            }
+
+            let unknownToolCallIds = actions.actions.compactMap { toolCallId, action -> String? in
+                action == .markUnknown ? toolCallId : nil
             }
 
             let recoveredMessages = IOSToolCallRecoveryApplier.apply(actions, to: storedMessages)
             guard await conversationStore.save(messages: recoveredMessages, to: conversationId) else { continue }
-            reconciledRunIds.insert(pair.runId)
+            await IOSRunRecovery.finalizeToolCallRecovery(
+                runId: pair.runId,
+                plan: actions,
+                dao: agentRuntimeDao
+            )
+            if unknownToolCallIds.isEmpty {
+                result.reconciledRunIds.insert(pair.runId)
+            } else {
+                _ = try? await runStore.transitionFromAnyActive(
+                    runId: pair.runId,
+                    to: .outcomeUnknown,
+                    detail: "tool_outcome_unknown"
+                )
+                result.outcomeUnknownRunIds.insert(pair.runId)
+                for toolCallId in unknownToolCallIds.sorted() {
+                    guard let toolName = recoveredMessages
+                        .flatMap(\.parts)
+                        .compactMap({ $0 as? UIMessagePart.Tool })
+                        .first(where: { $0.toolCallId == toolCallId })?.toolName
+                        ?? actions.toolNames[toolCallId] else { continue }
+                    discoveredUnknowns.append(IOSToolOutcomeUnknownDescriptor(
+                        runId: pair.runId,
+                        conversationId: pair.conversationId,
+                        toolCallId: toolCallId,
+                        toolName: toolName
+                    ))
+                }
+            }
             didUpdateCurrentConversation = didUpdateCurrentConversation || currentConversationId == conversationId
+        }
+
+        for descriptor in discoveredUnknowns where !toolOutcomeUnknownDescriptors.contains(descriptor) {
+            toolOutcomeUnknownDescriptors.append(descriptor)
         }
 
         if didUpdateCurrentConversation {
             reloadFromStore(reason: .branchChange)
         }
-        return reconciledRunIds
+        return result
+    }
+
+    func reconcilePendingToolOutcome(didApply: Bool) async {
+        guard let descriptor = pendingToolOutcomeUnknown,
+              let conversationStore,
+              let conversationId = conversationStore.summaries.first(where: {
+                  $0.id.toHexDashString() == descriptor.conversationId
+              })?.id,
+              let storedMessages = await conversationStore.messages(for: conversationId) else { return }
+        let reconciledMessages = IOSToolCallRecoveryApplier.applyOutcomeUnknownReconciliation(
+            toolCallId: descriptor.toolCallId,
+            didApply: didApply,
+            to: storedMessages
+        )
+        guard await conversationStore.save(messages: reconciledMessages, to: conversationId) else { return }
+        guard await IOSRunRecovery.reconcileOutcomeUnknown(
+            runId: descriptor.runId,
+            toolCallId: descriptor.toolCallId,
+            didApply: didApply,
+            dao: agentRuntimeDao,
+            runStore: runStore
+        ) else { return }
+        toolOutcomeUnknownDescriptors.removeAll { $0 == descriptor }
+        if currentConversationId == conversationId {
+            reloadFromStore(reason: .branchChange)
+        }
     }
 
     /// 把当前 messages 落盘（节流：只在流式结束/取消/切换时调，不在每个 chunk 调）。
@@ -1463,11 +1566,11 @@ final class ChatViewModel {
             sourceImageURL: trimmedSource,
             aspectRatio: aspectRatio
         )
-        generationCoordinator.runImageTool(
+        let params = makeTextGenerationParams()
+        kernelRunHost.runImageTool(
             input: input,
             conversationId: currentConversationId,
-            providerSetting: makeProviderSetting(),
-            params: makeTextGenerationParams()
+            modelDisplayName: params.model.displayName
         )
     }
 
@@ -2452,128 +2555,105 @@ final class ChatViewModel {
         return modalities.contains { $0.name == "IMAGE" }
     }
 
+    // MARK: - 审批入口
+
     func approvePendingMemoryTool() {
-        generationCoordinator.approvePendingMemoryTool()
+        kernelRunHost.approvePendingMemoryTool()
     }
 
     func denyPendingMemoryTool() {
-        generationCoordinator.denyPendingMemoryTool()
+        kernelRunHost.denyPendingMemoryTool()
     }
 
     func approvePendingSearchTool() {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingSearchTool()
-        }
+        kernelRunHost.approvePendingSearchTool()
     }
 
     func denyPendingSearchTool() {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingSearchTool()
-        }
+        kernelRunHost.denyPendingSearchTool()
     }
 
     func approvePendingWebMountTool() {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingWebMountTool()
-        }
+        kernelRunHost.approvePendingWebMountTool()
     }
 
     func denyPendingWebMountTool() {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingWebMountTool()
-        }
+        kernelRunHost.denyPendingWebMountTool()
     }
 
     func approvePendingWorkspaceTool() {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingWorkspaceTool()
-        }
+        kernelRunHost.approvePendingWorkspaceTool()
     }
 
     func denyPendingWorkspaceTool() {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingWorkspaceTool()
-        }
+        kernelRunHost.denyPendingWorkspaceTool()
     }
 
     func approvePendingIshHandoffTool() {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingIshHandoffTool()
-        }
+        kernelRunHost.approvePendingIshHandoffTool()
     }
 
     func denyPendingIshHandoffTool() {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingIshHandoffTool()
-        }
+        kernelRunHost.denyPendingIshHandoffTool()
     }
 
     func approvePendingMcpTool(requestId: String) {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingMcpTool(requestId: requestId)
-        }
+        kernelRunHost.approvePendingMcpTool(requestId: requestId)
     }
 
     func denyPendingMcpTool(requestId: String) {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingMcpTool(requestId: requestId)
-        }
+        kernelRunHost.denyPendingMcpTool(requestId: requestId)
     }
 
     /// Wave B2: recipe 审批卡（mutation step / recipe_import）。
     func approvePendingRecipeTool(requestId: String) {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingRecipeTool(requestId: requestId)
-        }
+        kernelRunHost.approvePendingRecipeTool(requestId: requestId)
     }
 
     func denyPendingRecipeTool(requestId: String) {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingRecipeTool(requestId: requestId)
-        }
+        kernelRunHost.denyPendingRecipeTool(requestId: requestId)
     }
 
     func approvePendingCouncilTool() {
-        Task { @MainActor in
-            await generationCoordinator.approvePendingCouncilTool()
-        }
+        kernelRunHost.approvePendingCouncilTool()
     }
 
     func denyPendingCouncilTool() {
-        Task { @MainActor in
-            await generationCoordinator.denyPendingCouncilTool()
-        }
+        kernelRunHost.denyPendingCouncilTool()
     }
 
     @discardableResult
     func answerPendingAskUser(_ answer: String) -> Bool {
-        generationCoordinator.answerPendingAskUser(answer)
+        kernelRunHost.answerPendingAskUser(answer)
     }
 
     @discardableResult
     func skipPendingAskUser() -> Bool {
-        generationCoordinator.answerPendingAskUser("")
+        answerPendingAskUser("")
     }
 
+    /// Watch 全量入口走 VM 自身的 Host 审批路由；各 VM 入口自身是 fire-and-forget,卡清/续跑的
+    /// Watch 快照经 bindings 异步回流,与 iPhone 路径同语义。
     func approveAnyPendingToolFromWatch() async {
         if pendingMemoryApproval != nil {
             approvePendingMemoryTool()
         } else if pendingSearchApproval != nil {
-            await generationCoordinator.approvePendingSearchTool()
+            approvePendingSearchTool()
         } else if pendingWebMountApproval != nil {
-            await generationCoordinator.approvePendingWebMountTool()
+            approvePendingWebMountTool()
         } else if pendingWorkspaceApproval != nil {
-            await generationCoordinator.approvePendingWorkspaceTool()
+            approvePendingWorkspaceTool()
         } else if pendingIshHandoffApproval != nil {
-            await generationCoordinator.approvePendingIshHandoffTool()
-        } else if pendingMcpApproval != nil {
-            await generationCoordinator.approvePendingMcpTool()
+            approvePendingIshHandoffTool()
+        } else if let request = pendingMcpApproval {
+            // Slice B 同款纪律:Watch 路径把 UI 展示的 request id 传回核对。
+            approvePendingMcpTool(requestId: request.id)
         } else if pendingCouncilApproval != nil {
-            await generationCoordinator.approvePendingCouncilTool()
+            approvePendingCouncilTool()
         } else if let request = pendingRecipeApproval {
             // Slice B（B2）：Watch 路径也把 UI 展示的 request id 传回，
             // 消费前核对当前 pending request id。
-            await generationCoordinator.approvePendingRecipeTool(requestId: request.id)
+            approvePendingRecipeTool(requestId: request.id)
         }
     }
 
@@ -2581,22 +2661,22 @@ final class ChatViewModel {
         if pendingMemoryApproval != nil {
             denyPendingMemoryTool()
         } else if pendingSearchApproval != nil {
-            await generationCoordinator.denyPendingSearchTool()
+            denyPendingSearchTool()
         } else if pendingWebMountApproval != nil {
-            await generationCoordinator.denyPendingWebMountTool()
+            denyPendingWebMountTool()
         } else if pendingWorkspaceApproval != nil {
-            await generationCoordinator.denyPendingWorkspaceTool()
+            denyPendingWorkspaceTool()
         } else if pendingIshHandoffApproval != nil {
-            await generationCoordinator.denyPendingIshHandoffTool()
-        } else if pendingMcpApproval != nil {
-            await generationCoordinator.denyPendingMcpTool()
+            denyPendingIshHandoffTool()
+        } else if let request = pendingMcpApproval {
+            denyPendingMcpTool(requestId: request.id)
         } else if pendingCouncilApproval != nil {
-            await generationCoordinator.denyPendingCouncilTool()
+            denyPendingCouncilTool()
         } else if pendingAskUser != nil {
             skipPendingAskUser()
         } else if let request = pendingRecipeApproval {
             // Slice B（B2）：Watch deny 同样传回 UI 展示的 request id。
-            await generationCoordinator.denyPendingRecipeTool(requestId: request.id)
+            denyPendingRecipeTool(requestId: request.id)
         }
     }
 
@@ -2620,8 +2700,8 @@ final class ChatViewModel {
 
     func cancelGeneration() {
         // cancel() itself publishes the cancelled watch snapshot; do not clear first.
-        if generationCoordinator.isRunning {
-            generationCoordinator.cancel()
+        if kernelRunHost.isRunning {
+            kernelRunHost.cancel()
             return
         }
         guard let currentConversationId else { return }
@@ -2632,7 +2712,7 @@ final class ChatViewModel {
 
     @discardableResult
     func cancelGeneration(runId: String) -> Bool {
-        if generationCoordinator.cancel(runId: runId) {
+        if kernelRunHost.cancel(runId: runId) {
             return true
         }
         return IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: runId)
@@ -2640,7 +2720,7 @@ final class ChatViewModel {
 
     @discardableResult
     func handoffGenerationToBackgroundIfNeeded(honorKeepAliveLease: Bool = false) -> Bool {
-        generationCoordinator.handoffCurrentGenerationToBackground(
+        kernelRunHost.handoffCurrentGenerationToBackground(
             conversationStore: conversationStore,
             honorKeepAliveLease: honorKeepAliveLease
         )
@@ -2807,21 +2887,21 @@ final class ChatViewModel {
         generateResponse(inputDigest: inputDigest, conversationId: conversationId)
     }
 
-    /// P1-a 测试缝：访问 ViewModel 自己的 generationCoordinator（其 bindings 指向本
-    /// ViewModel，drainSteerQueue/drainMailbox/restoreSteerQueueLeftover 走真实实现）。
-    var generationCoordinatorForTesting: ChatGenerationCoordinator {
-        generationCoordinator
-    }
-
-    /// P1-a/P1-b 测试缝：工具循环边界消费（mailbox 先于 steer）+ 下一轮 upload 组装
-    /// （复用 continueAfterToolResult 的真实生产函数，不发起流式请求）。
+    /// 工具循环边界的 VM 队列语义：mailbox 先于 steer。
     func nextRoundMessagesAfterMailboxAndSteerConsumptionForTesting(
         baseMessages: [UIMessage]
     ) async -> [UIMessage] {
-        await generationCoordinator.nextRoundMessagesAfterMailboxAndSteerConsumptionForTesting(
-            baseMessages: baseMessages,
-            conversationId: currentConversationId
-        )
+        let mailboxMessages = await drainMailbox(conversationId: currentConversationId)
+        let steerMessages = drainSteerQueue(conversationId: currentConversationId)
+        return baseMessages + mailboxMessages + steerMessages
+    }
+
+    func drainMailboxAtNewRunHeadForTesting(
+        conversationId: KotlinUuid?,
+        displayMessagesOverride: [UIMessage]?
+    ) async -> [UIMessage] {
+        guard displayMessagesOverride == nil else { return [] }
+        return await drainMailbox(conversationId: conversationId)
     }
 
     func shouldApplyVisionRecognitionResultForTesting(
@@ -2875,7 +2955,9 @@ final class ChatViewModel {
             return
         }
 
-        generationCoordinator.start(
+        // P0-2:所有前台文本 run 都进入唯一 Kernel。CGC 只保留非 agent 的
+        // one-shot 能力与兼容终态入口，不再拥有第二套模型—工具循环。
+        kernelRunHost.start(
             providerSetting: resolvedProvider,
             params: params,
             inputDigest: inputDigest,
@@ -2894,7 +2976,10 @@ final class ChatViewModel {
     - The user cannot type into child threads; relay important results to the user yourself.
     """
 
-    private func messagesByInjectingRuntimeContext(_ messages: [UIMessage]) -> [UIMessage] {
+    private func messagesByInjectingRuntimeContext(
+        _ messages: [UIMessage],
+        mcpEnabledOverride: Bool? = nil
+    ) -> [UIMessage] {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
         // P0-a Fix A: when the current run bridge is in lazy mode, prepend the
         // tool_search discovery guidance as a standalone system fragment (the
@@ -2916,7 +3001,9 @@ final class ChatViewModel {
         }
         let withContext = ChatRuntimeContextBuilder(
             sharedSettings: sharedSettings,
-            mcpTools: isCapabilityPolicyEnabled("ios.mcp.tool_call") ? mcpManager.tools : [],
+            mcpTools: (mcpEnabledOverride ?? isCapabilityPolicyEnabled("ios.mcp.tool_call"))
+                ? mcpManager.tools
+                : [],
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
         ).injectingRuntimeContext(into: uploadableWithGuidance, coalesceSystemMessages: false)
@@ -3189,23 +3276,33 @@ final class ChatViewModel {
         outputText: String,
         in messages: [UIMessage]
     ) -> [UIMessage] {
-        generationCoordinator.finishedToolCallMessagesForTesting(
+        kernelRunHost.toolRuntimeForTesting.finishedToolCallMessagesForTesting(
             targetToolCall,
             outputText: outputText,
             in: messages
         )
     }
 
+    func failingPendingToolCallMessagesForTesting(
+        outputText: String,
+        in messages: [UIMessage]
+    ) -> [UIMessage] {
+        kernelRunHost.toolRuntimeForTesting.messagesByFailingPendingToolCalls(
+            in: messages,
+            outputText: outputText
+        )
+    }
+
     func memoryToolOutputForTesting(input: String) -> String {
-        generationCoordinator.memoryToolOutputForTesting(input: input)
+        kernelRunHost.toolRuntimeForTesting.memoryToolOutputForTesting(input: input)
     }
 
     func memoryApprovalRequestForTesting(input: String) -> MemoryToolApprovalRequest? {
-        generationCoordinator.memoryApprovalRequestForTesting(input: input)
+        kernelRunHost.toolRuntimeForTesting.memoryApprovalRequestForTesting(input: input)
     }
 
     func memoryToolApprovalOutputForTesting(input: String, allow: Bool) -> String {
-        generationCoordinator.memoryToolApprovalOutputForTesting(input: input, allow: allow)
+        kernelRunHost.toolRuntimeForTesting.memoryToolApprovalOutputForTesting(input: input, allow: allow)
     }
 
     func webMountToolOutputForTesting(
@@ -3213,7 +3310,7 @@ final class ChatViewModel {
         input: String,
         isUserInitiated: Bool = false
     ) async -> String {
-        await generationCoordinator.webMountToolOutputForTesting(
+        await kernelRunHost.toolRuntimeForTesting.webMountToolOutputForTesting(
             toolName: toolName,
             input: input,
             isUserInitiated: isUserInitiated
@@ -3224,7 +3321,7 @@ final class ChatViewModel {
         toolName: String,
         input: String
     ) async -> WebMountToolApprovalRequest? {
-        await generationCoordinator.webMountApprovalRequestForTesting(toolName: toolName, input: input)
+        await kernelRunHost.toolRuntimeForTesting.webMountApprovalRequestForTesting(toolName: toolName, input: input)
     }
 
     func webMountToolApprovalOutputForTesting(
@@ -3232,7 +3329,7 @@ final class ChatViewModel {
         input: String,
         allow: Bool
     ) async -> String {
-        await generationCoordinator.webMountToolApprovalOutputForTesting(
+        await kernelRunHost.toolRuntimeForTesting.webMountToolApprovalOutputForTesting(
             toolName: toolName,
             input: input,
             allow: allow
@@ -3243,7 +3340,7 @@ final class ChatViewModel {
         toolName: String,
         input: String
     ) -> SearchToolApprovalRequest? {
-        generationCoordinator.searchApprovalRequestForTesting(toolName: toolName, input: input)
+        kernelRunHost.toolRuntimeForTesting.searchApprovalRequestForTesting(toolName: toolName, input: input)
     }
 
     func searchToolApprovalOutputForTesting(
@@ -3251,7 +3348,7 @@ final class ChatViewModel {
         input: String,
         allow: Bool
     ) async -> String {
-        await generationCoordinator.searchToolApprovalOutputForTesting(
+        await kernelRunHost.toolRuntimeForTesting.searchToolApprovalOutputForTesting(
             toolName: toolName,
             input: input,
             allow: allow
@@ -3311,10 +3408,20 @@ final class ChatViewModel {
         startedAt: Int64,
         status: AgentRunStatus,
         inputDigest: String,
-        conversationId: String?
+        conversationId: String?,
+        protocolContext: AgentRunProtocolContext?
     ) async -> Bool {
         do {
             if status == .running {
+                if let protocolContext {
+                    return try await runStore.startChatRun(
+                        runId: runId,
+                        startedAt: startedAt,
+                        inputDigest: inputDigest,
+                        conversationId: conversationId,
+                        protocolContext: protocolContext
+                    )
+                }
                 return try await runStore.startChatRun(
                     runId: runId,
                     startedAt: startedAt,
@@ -3670,7 +3777,9 @@ final class ChatViewModel {
         let raw = rawMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowercased = raw.lowercased()
         let prefix: String
-        if lowercased.contains("invalid api key") ||
+        if lowercased.contains("request snapshot ledger write failed") {
+            prefix = "请求尚未发送，因为本地运行记录写入失败。请重试；若问题持续，请检查设备可用存储空间。"
+        } else if lowercased.contains("invalid api key") ||
             lowercased.contains("incorrect api key") ||
             lowercased.contains("unauthorized") ||
             lowercased.contains("401") {

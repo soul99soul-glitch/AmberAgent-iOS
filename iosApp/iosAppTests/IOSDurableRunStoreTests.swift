@@ -127,6 +127,42 @@ final class IOSDurableRunStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.startedAt, 100)
     }
 
+    func testCreatedRunCanStartOrBeClosedByStartupRecovery() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let store = IOSDurableRunStore(dao: dao)
+        let resumableId = "created-resume-\(UUID().uuidString)"
+        let interruptedId = "created-interrupt-\(UUID().uuidString)"
+        for runId in [resumableId, interruptedId] {
+            try await insertRawRun(
+                dao: dao,
+                runId: runId,
+                descriptorId: IOSDurableRunStore.Descriptor.chat,
+                conversationId: "conversation",
+                status: AgentRunStatus.created.wireName,
+                startedAt: 100
+            )
+        }
+
+        let didResume = try await store.ensureRunning(
+            runId: resumableId,
+            descriptorId: IOSDurableRunStore.Descriptor.chat,
+            startedAt: 999,
+            inputDigest: "ignored"
+        )
+        XCTAssertTrue(didResume)
+        let resumed = try await store.snapshot(runId: resumableId)
+        XCTAssertEqual(resumed?.status, .running)
+
+        let recovered = await IOSRunRecovery.recoverInterruptedRuns(
+            candidateRunIds: [interruptedId],
+            runStore: store
+        )
+        XCTAssertEqual(recovered, 1)
+        let interrupted = try await store.snapshot(runId: interruptedId)
+        XCTAssertEqual(interrupted?.status, .interrupted)
+    }
+
     func testApprovalClaimReturnsToRunningBeforeSuccessfulTerminal() async throws {
         let db = makeDatabase()
         let store = IOSDurableRunStore(dao: db.agentRuntimeDao())
@@ -240,7 +276,7 @@ final class IOSDurableRunStoreTests: XCTestCase {
             runId: otherRunId,
             descriptorId: "miniapp",
             conversationId: "miniapp-conversation",
-            status: "awaiting_permission",
+            status: AgentRunStatus.awaitingPermission.wireName,
             inputSnapshotRef: "tool_call:miniapp-tool",
             startedAt: 50
         )
@@ -275,7 +311,13 @@ final class IOSDurableRunStoreTests: XCTestCase {
             inputSchemaVersion: 1,
             startedAt: startedAt,
             finishedAt: nil,
-            interruptedReason: nil
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
         )
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             dao.insertRunIfAbsent(run: run) { _, error in

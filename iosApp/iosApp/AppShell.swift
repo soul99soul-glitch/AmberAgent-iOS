@@ -27,6 +27,7 @@ struct AppShell: View {
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
     @State private var didFinalizeStaleBackgroundJobs = false
+    @State private var staleBackgroundOutcomeUnknownRunIds = Set<String>()
     @State private var isResolvingThemeTryOn = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
@@ -45,28 +46,13 @@ struct AppShell: View {
             workspaceStore: workspaceStore,
             systemPermissionCoordinator: systemPermissionCoordinator
         )
-        let backgroundMcpManager = IOSMcpManager(
-            sharedSettings: sharedSettingsStore,
-            configStore: .shared,
-            isNetworkAllowed: {
-                localToolExecutor.permissionsStatus().capabilities
-                    .first { $0.id == "ios.mcp.tool_call" }?.policy != IOSAgentPermissionPolicy.disabled.title
-            }
-        )
-        let backgroundToolRuntime = ChatToolRuntime(
-            settingsStore: settingsStore,
-            sharedSettings: sharedSettingsStore,
-            localToolExecutor: localToolExecutor,
-            searchTransport: IOSURLSessionSearchHTTPTransport(),
-            mcpManager: backgroundMcpManager,
-            conversationStoreProvider: { [weak conversationStore] in conversationStore }
-        )
         let chatViewModel = ChatViewModel(
             settingsStore: settingsStore,
             sharedSettings: sharedSettingsStore,
             localToolExecutor: localToolExecutor
         )
         chatViewModel.conversationStore = conversationStore
+        let backgroundToolRuntime = chatViewModel.makeBackgroundToolRuntime()
         let councilChatViewModel = CouncilChatViewModel(
             settingsStore: settingsStore,
             sharedSettings: sharedSettingsStore,
@@ -208,8 +194,10 @@ struct AppShell: View {
                 await councilChatViewModel.reconcileDurableRuns()
                 await IOSMiniAppAIRunRecovery.reconcile()
                 let backgroundRunIds = IOSChatBackgroundGenerationCoordinator.shared.restorableRunIds
+                let backgroundRecoveryExclusions = IOSChatBackgroundGenerationCoordinator.shared
+                    .startupRecoveryExclusionRunIds
                 let recoveredPendingApprovals = await IOSRunRecovery.recoverPendingApprovalDescriptors(
-                    excludingRunIds: backgroundRunIds
+                    excludingRunIds: backgroundRecoveryExclusions
                 )
                 let startupRecoverableRuns = try? await IOSDurableRunStore().recoverableRuns()
                 let startupCandidateRunIds = Set(startupRecoverableRuns?.map(\.runId) ?? [])
@@ -224,19 +212,24 @@ struct AppShell: View {
                 if let recoveredPendingApprovals {
                     await chatViewModel.terminateRecoveredPendingApprovals(recoveredPendingApprovals)
                     let pendingApprovalRunIds = Set(recoveredPendingApprovals.map(\.runId))
-                    let excludedFromInterrupted = backgroundRunIds.union(pendingApprovalRunIds)
+                    let excludedFromInterrupted = backgroundRecoveryExclusions.union(pendingApprovalRunIds)
                     if let interruptedRunConversationPairs = await IOSRunRecovery.unfinishedRunConversationPairs(
                         candidateRunIds: startupCandidateRunIds,
                         excludingRunIds: excludedFromInterrupted
                     ) {
-                        let reconciledRunIds = await chatViewModel.applyToolCallLedgerRecovery(
+                        let recoveryResult = await chatViewModel.applyToolCallLedgerRecovery(
                             forInterruptedRuns: interruptedRunConversationPairs
                         )
+                        staleBackgroundOutcomeUnknownRunIds.formUnion(
+                            recoveryResult.outcomeUnknownRunIds.intersection(backgroundRunIds)
+                        )
                         let unreconciledRunIds = Set(interruptedRunConversationPairs.map(\.runId))
-                            .subtracting(reconciledRunIds)
+                            .subtracting(recoveryResult.reconciledRunIds)
                         _ = await IOSRunRecovery.recoverInterruptedRuns(
                             candidateRunIds: startupCandidateRunIds,
-                            excludingRunIds: excludedFromInterrupted.union(unreconciledRunIds)
+                            excludingRunIds: excludedFromInterrupted
+                                .union(unreconciledRunIds)
+                                .union(recoveryResult.outcomeUnknownRunIds)
                         )
                     }
                 }
@@ -351,7 +344,9 @@ struct AppShell: View {
     private func finalizeStaleBackgroundJobsIfNeeded() {
         guard scenePhase == .active, !didFinalizeStaleBackgroundJobs else { return }
         didFinalizeStaleBackgroundJobs = true
-        IOSChatBackgroundGenerationCoordinator.shared.finalizeStalePersistedJobsIfNeeded()
+        IOSChatBackgroundGenerationCoordinator.shared.finalizeStalePersistedJobsIfNeeded(
+            preservingOutcomeUnknownRunIds: staleBackgroundOutcomeUnknownRunIds
+        )
     }
 
     private func enqueueAgentActivityURL(_ url: URL) {

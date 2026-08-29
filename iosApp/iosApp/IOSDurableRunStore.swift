@@ -31,6 +31,8 @@ final class IOSDurableRunStore: @unchecked Sendable {
         let startedAt: Int64
         let finishedAt: Int64?
         let detail: String?
+        let terminalReason: String?
+        let protocolContext: AgentRunProtocolContext
     }
 
     private let store: RoomAgentEventStore
@@ -51,7 +53,14 @@ final class IOSDurableRunStore: @unchecked Sendable {
         conversationId: String? = nil,
         startedAt: Int64,
         inputDigest: String,
-        inputSnapshotRef: String? = nil
+        inputSnapshotRef: String? = nil,
+        protocolContext: AgentRunProtocolContext = AgentRunProtocolContext(
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
+        )
     ) async throws -> Bool {
         let run = AgentRunRecord(
             runId: runId,
@@ -68,7 +77,13 @@ final class IOSDurableRunStore: @unchecked Sendable {
             inputSchemaVersion: 1,
             startedAt: startedAt,
             finishedAt: nil,
-            interruptedReason: nil
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: protocolContext.providerId,
+            modelId: protocolContext.modelId,
+            promptVersion: protocolContext.promptVersion,
+            toolCatalogVersion: protocolContext.toolCatalogVersion,
+            capabilitySnapshot: protocolContext.capabilitySnapshot
         )
         return try await withCheckedThrowingContinuation { continuation in
             store.startRun(run: run) { started, error in
@@ -91,7 +106,14 @@ final class IOSDurableRunStore: @unchecked Sendable {
         conversationId: String? = nil,
         startedAt: Int64,
         inputDigest: String,
-        inputSnapshotRef: String? = nil
+        inputSnapshotRef: String? = nil,
+        protocolContext: AgentRunProtocolContext = AgentRunProtocolContext(
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
+        )
     ) async throws -> Bool {
         if try await startRun(
             runId: runId,
@@ -100,7 +122,8 @@ final class IOSDurableRunStore: @unchecked Sendable {
             conversationId: conversationId,
             startedAt: startedAt,
             inputDigest: inputDigest,
-            inputSnapshotRef: inputSnapshotRef
+            inputSnapshotRef: inputSnapshotRef,
+            protocolContext: protocolContext
         ) {
             return true
         }
@@ -111,10 +134,10 @@ final class IOSDurableRunStore: @unchecked Sendable {
         if existing.status == .running {
             return true
         }
-        if existing.status == .recoveryPending {
+        if existing.status == .created || existing.status == .recoveryPending {
             return try await transition(
                 runId: runId,
-                expected: .recoveryPending,
+                expected: existing.status,
                 to: .running,
                 inputSnapshotRef: inputSnapshotRef
             )
@@ -127,7 +150,14 @@ final class IOSDurableRunStore: @unchecked Sendable {
         runId: String,
         startedAt: Int64,
         inputDigest: String,
-        conversationId: String?
+        conversationId: String?,
+        protocolContext: AgentRunProtocolContext = AgentRunProtocolContext(
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
+        )
     ) async throws -> Bool {
         try await startRun(
             runId: runId,
@@ -135,7 +165,8 @@ final class IOSDurableRunStore: @unchecked Sendable {
             descriptorVersion: Descriptor.chatVersion,
             conversationId: conversationId,
             startedAt: startedAt,
-            inputDigest: inputDigest
+            inputDigest: inputDigest,
+            protocolContext: protocolContext
         )
     }
 
@@ -174,7 +205,14 @@ final class IOSDurableRunStore: @unchecked Sendable {
         detail: String? = nil,
         at: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
     ) async throws -> Bool {
-        for expected in [AgentRunStatus.running, .awaitingPermission, .recoveryPending] {
+        for expected in [
+            AgentRunStatus.created,
+            .running,
+            .awaitingPermission,
+            .waitingExternal,
+            .recoveryPending,
+            .outcomeUnknown,
+        ] {
             if try await transition(
                 runId: runId,
                 expected: expected,
@@ -224,7 +262,15 @@ final class IOSDurableRunStore: @unchecked Sendable {
             inputSnapshotRef: run.inputSnapshotRef,
             startedAt: run.startedAt,
             finishedAt: run.finishedAt?.int64Value,
-            detail: run.interruptedReason
+            detail: run.interruptedReason,
+            terminalReason: run.terminalReason,
+            protocolContext: AgentRunProtocolContext(
+                providerId: run.providerId,
+                modelId: run.modelId,
+                promptVersion: run.promptVersion,
+                toolCatalogVersion: run.toolCatalogVersion,
+                capabilitySnapshot: run.capabilitySnapshot
+            )
         )
     }
 }

@@ -17,7 +17,7 @@ import QuartzCore
 ///   happen off the caller's thread on a private serial queue. Recording can therefore
 ///   perturb diagnostic timing slightly and is not a zero-cost profiler.
 /// - In `RELEASE` builds the entire implementation compiles away to an empty function
-///   body — the call site in `ChatGenerationCoordinator` pays no cost at all.
+///   body — the call site in `ChatKernelRunHost` pays no cost at all.
 final class ChatStreamRecorder: @unchecked Sendable {
     static let shared = ChatStreamRecorder()
 

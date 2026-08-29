@@ -11,11 +11,11 @@ import XCTest
 ///  2. `IOSAgentToolEngine.run`/`executeBatch` — the engine is the shared
 ///     wiring point for SubAgent / background-handoff / Novel, so proving the
 ///     guard trips correctly there backs all three callers at once. The
-///     `ChatGenerationCoordinator` (foreground) wiring reuses the exact same
+///     `ChatRunKernelAdapter` (foreground) wiring reuses the exact same
 ///     `IOSToolLoopGuard` type and the same `appendingToolLoopReminder`
 ///     helper tested in layer 1/pure form below; constructing a full
-///     `ChatGenerationCoordinator` run in a unit test would require the same
-///     heavyweight bindings/dependencies scaffolding `ChatGenerationCoordinator`
+///     `ChatKernelRunHost` run in a unit test would require the same
+///     heavyweight bindings/dependencies scaffolding `ChatKernelRunHost`
 ///     itself has no dedicated unit test target for elsewhere in this suite,
 ///     so its wiring correctness is backed by these two layers plus manual
 ///     code reading rather than a third, coordinator-level test here.

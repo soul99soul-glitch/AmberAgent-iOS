@@ -124,7 +124,11 @@ struct IOSSkillMcpToolService {
     let mcpManager: IOSMcpManager
     var ephemeralClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil
 
-    func execute(toolName: String, arguments: String) async -> String {
+    func execute(
+        toolName: String,
+        arguments: String,
+        mcpEnabledOverride: Bool? = nil
+    ) async -> String {
         let args = ChatToolCallParsing.jsonObject(arguments) ?? [:]
         do {
             switch toolName {
@@ -143,7 +147,7 @@ struct IOSSkillMcpToolService {
             case "mcp_list":
                 return await mcpListJSON(args)
             case "mcp_test":
-                return await mcpTestJSON(args)
+                return await mcpTestJSON(args, enabledOverride: mcpEnabledOverride)
             case "mcp_describe_tool":
                 return await mcpDescribeToolJSON(args)
             case "mcp_import_from_skill":
@@ -474,7 +478,7 @@ struct IOSSkillMcpToolService {
         ])
     }
 
-    private func mcpTestJSON(_ args: [String: Any]) async -> String {
+    private func mcpTestJSON(_ args: [String: Any], enabledOverride: Bool?) async -> String {
         let serverId = (args["server_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = (args["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         mcpManager.refreshServers()
@@ -487,7 +491,7 @@ struct IOSSkillMcpToolService {
         guard server.enabled else {
             return Self.json(["ok": false, "error": "MCP server is disabled: \(server.name)"])
         }
-        await mcpManager.sync(serverName: server.name)
+        await mcpManager.sync(serverName: server.name, enabledOverride: enabledOverride)
         let status = mcpManager.statusByServer[server.name]
         let toolCount = mcpManager.servers.first(where: { $0.name == server.name })?.tools.count
             ?? server.tools.count

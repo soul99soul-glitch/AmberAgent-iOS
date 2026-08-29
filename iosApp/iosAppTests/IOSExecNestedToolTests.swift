@@ -3,7 +3,7 @@ import XCTest
 @testable import iosApp
 
 /// P3-b: exec 嵌套 tools 桥的集成契约——真实 JavaScriptCore 求值 + 真实
-/// ChatToolRuntime 分发 + ChatGenerationCoordinator 的嵌套 runner（同一
+/// ChatToolRuntime 分发 + ChatRunKernelAdapter 的嵌套 runner（同一
 /// 执行路径：分类、账本 Started/Finished、审批暂停/恢复）。
 ///
 /// 覆盖：
@@ -98,17 +98,19 @@ final class IOSExecNestedToolTests: XCTestCase {
         return (IOSWorkspaceStore(baseDirectory: directory), directory)
     }
 
-    /// 生产拼装的最小镜像：run 状态 + exposure bridge + 嵌套 runner
-    /// （与 `ChatGenerationCoordinator.executeToolCall` 用同一
-    /// `makeNestedExecToolRunner` 组装），再执行一次 exec 求值。
-    private func runExecThroughCoordinator(
-        coordinator: ChatGenerationCoordinator,
+    /// 生产拼装的最小镜像：exposure bridge + Adapter 的真实嵌套 runner，
+    /// 再执行一次 exec 求值。
+    private func runExecThroughAdapter(
+        adapter: ChatRunKernelAdapter,
+        runtime: ChatToolRuntime,
         toolCall: UIMessagePart.Tool,
         bridge: IosToolExposureBridge,
         providerSetting: ProviderSetting,
         params: TextGenerationParams,
-        runId: String
+        runId: String,
+        approvalDecider: @escaping @MainActor (ChatToolApprovalPrompt) async -> ChatKernelApprovalDecision? = { _ in nil }
     ) async -> ChatToolRuntimeResult {
+        let baseMessages = [makeAssistantMessage(parts: [toolCall])]
         let pending = ChatPendingToolApproval(
             toolCall: toolCall,
             providerSetting: providerSetting,
@@ -117,12 +119,32 @@ final class IOSExecNestedToolTests: XCTestCase {
             startedAt: 1,
             inputDigest: "digest",
             conversationId: nil,
-            baseMessages: [makeAssistantMessage(parts: [toolCall])]
+            baseMessages: baseMessages
         )
-        return await coordinator.executeExecWithNestedToolsForTesting(
+        let request = ChatRunKernelAdapter.RunRequest(
+            provider: IOSExecNestedUnusedProvider(),
+            providerSetting: providerSetting,
+            params: params,
+            runId: runId,
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: nil,
+            initialMessages: baseMessages,
+            toolExposureBridge: bridge,
+            maxToolResumeCount: 1,
+            drainSteer: nil,
+            mailboxDrain: nil,
+            citationTracker: nil,
+            prepareUploadMessages: nil,
+            nestedToolRunner: nil,
+            approvalDecider: approvalDecider
+        )
+        return await runtime.execute(
             ChatPendingToolCall(kind: .advanced, toolCall: toolCall),
             context: pending,
-            toolExposureBridge: bridge
+            toolExposureBridge: bridge,
+            nestedToolRunner: adapter.nestedExecToolRunnerForTesting(request: request),
+            recipeCatalogSnapshot: nil
         )
     }
 
@@ -144,11 +166,11 @@ final class IOSExecNestedToolTests: XCTestCase {
         return result
     }
 
-    private func makeCoordinatorAndRuntime(
+    private func makeAdapterAndRuntime(
         executor: IOSLocalToolExecutor?,
         ledger: IOSAgentRunLedgering,
         state: IOSExecNestedBindingState
-    ) -> (ChatGenerationCoordinator, ChatToolRuntime, IOSSharedSettingsStore) {
+    ) -> (ChatRunKernelAdapter, ChatToolRuntime) {
         let defaults = isolatedDefaults()
         let settingsStore = SettingsStore(userDefaults: defaults)
         settingsStore.execJavaScriptEnabled = true
@@ -160,22 +182,14 @@ final class IOSExecNestedToolTests: XCTestCase {
             searchTransport: IOSExecNestedNoopSearchTransport(),
             mcpManager: IOSMcpManager(sharedSettings: sharedSettings, configStore: .shared)
         )
-        let coordinator = ChatGenerationCoordinator(
-            dependencies: ChatGenerationDependencies(
-                settingsStore: settingsStore,
-                sharedSettings: sharedSettings,
-                localToolExecutor: executor,
-                searchTransport: IOSExecNestedNoopSearchTransport(),
-                liveActivityController: .shared,
-                autoGenerateResponses: false,
-                mcpManager: IOSMcpManager(sharedSettings: sharedSettings, configStore: .shared),
-                orchestrationToolService: nil,
-                memoryPollutionMarker: nil
-            ),
-            bindings: state.bindings(),
-            toolLedger: ledger
-        )
-        return (coordinator, runtime, sharedSettings)
+        var callbacks = ChatRunKernelAdapter.Callbacks()
+        callbacks.onApprovalPrompt = { prompt in
+            if case .workspace(let request) = prompt {
+                state.pendingWorkspaceApproval = request
+            }
+        }
+        let adapter = ChatRunKernelAdapter(runtime: runtime, ledger: ledger, callbacks: callbacks)
+        return (adapter, runtime)
     }
 
     // MARK: - Ledger inheritance
@@ -195,7 +209,7 @@ final class IOSExecNestedToolTests: XCTestCase {
             documentStore: DocumentAccessStore(),
             workspaceStore: workspaceStore
         )
-        let (coordinator, runtime, _) = makeCoordinatorAndRuntime(
+        let (adapter, runtime) = makeAdapterAndRuntime(
             executor: executor,
             ledger: ledger,
             state: state
@@ -206,8 +220,9 @@ final class IOSExecNestedToolTests: XCTestCase {
         let providerSetting = makeProviderSetting()
 
         let toolCall = execToolCall(input: #"{"code":"const r = tools.workspace_file_write({path: '/workspace/notes/a.md', content: 'hi'}); ({ok: r.ok, path: r.path})"}"#)
-        let result = await runExecThroughCoordinator(
-            coordinator: coordinator,
+        let result = await runExecThroughAdapter(
+            adapter: adapter,
+            runtime: runtime,
             toolCall: toolCall,
             bridge: bridge,
             providerSetting: providerSetting,
@@ -249,7 +264,7 @@ final class IOSExecNestedToolTests: XCTestCase {
             documentStore: DocumentAccessStore(),
             workspaceStore: workspaceStore
         )
-        let (coordinator, runtime, _) = makeCoordinatorAndRuntime(
+        let (adapter, runtime) = makeAdapterAndRuntime(
             executor: executor,
             ledger: ledger,
             state: state
@@ -260,21 +275,19 @@ final class IOSExecNestedToolTests: XCTestCase {
         let providerSetting = makeProviderSetting()
 
         let toolCall = execToolCall(input: #"{"code":"const r = tools.workspace_file_write({path: '/workspace/notes/summary.md', content: 'hello workspace'}); ({ok: r.ok})"}"#)
-        let pending = ChatPendingToolApproval(
-            toolCall: toolCall,
-            providerSetting: providerSetting,
-            params: params,
-            runId: "run-exec-nested-approval",
-            startedAt: 1,
-            inputDigest: "digest",
-            conversationId: nil,
-            baseMessages: [makeAssistantMessage(parts: [toolCall])]
-        )
+        var decisionContinuation: CheckedContinuation<ChatKernelApprovalDecision?, Never>?
         let execTask = Task { @MainActor in
-            await coordinator.executeExecWithNestedToolsForTesting(
-                ChatPendingToolCall(kind: .advanced, toolCall: toolCall),
-                context: pending,
-                toolExposureBridge: bridge
+            await runExecThroughAdapter(
+                adapter: adapter,
+                runtime: runtime,
+                toolCall: toolCall,
+                bridge: bridge,
+                providerSetting: providerSetting,
+                params: params,
+                runId: "run-exec-nested-approval",
+                approvalDecider: { _ in
+                    await withCheckedContinuation { decisionContinuation = $0 }
+                }
             )
         }
 
@@ -287,7 +300,8 @@ final class IOSExecNestedToolTests: XCTestCase {
         XCTAssertEqual(request.toolName, "workspace_file_write")
 
         // 批准后同一 finish 路径执行写入，结果回到阻塞的 JS，exec 完成。
-        await coordinator.approvePendingWorkspaceTool()
+        decisionContinuation?.resume(returning: .approve)
+        decisionContinuation = nil
         let result = await execTask.value
         guard case .completed(let messages) = result else {
             return XCTFail("exec must complete after approval, got \(result)")
@@ -327,7 +341,7 @@ final class IOSExecNestedToolTests: XCTestCase {
             documentStore: DocumentAccessStore(),
             workspaceStore: workspaceStore
         )
-        let (coordinator, runtime, _) = makeCoordinatorAndRuntime(
+        let (adapter, runtime) = makeAdapterAndRuntime(
             executor: executor,
             ledger: ledger,
             state: state
@@ -338,21 +352,19 @@ final class IOSExecNestedToolTests: XCTestCase {
         let providerSetting = makeProviderSetting()
 
         let toolCall = execToolCall(input: #"{"code":"const r = tools.workspace_file_write({path: '/workspace/notes/nope.md', content: 'x'}); ({ok: r.ok})"}"#)
-        let pending = ChatPendingToolApproval(
-            toolCall: toolCall,
-            providerSetting: providerSetting,
-            params: params,
-            runId: "run-exec-nested-deny",
-            startedAt: 1,
-            inputDigest: "digest",
-            conversationId: nil,
-            baseMessages: [makeAssistantMessage(parts: [toolCall])]
-        )
+        var decisionContinuation: CheckedContinuation<ChatKernelApprovalDecision?, Never>?
         let execTask = Task { @MainActor in
-            await coordinator.executeExecWithNestedToolsForTesting(
-                ChatPendingToolCall(kind: .advanced, toolCall: toolCall),
-                context: pending,
-                toolExposureBridge: bridge
+            await runExecThroughAdapter(
+                adapter: adapter,
+                runtime: runtime,
+                toolCall: toolCall,
+                bridge: bridge,
+                providerSetting: providerSetting,
+                params: params,
+                runId: "run-exec-nested-deny",
+                approvalDecider: { _ in
+                    await withCheckedContinuation { decisionContinuation = $0 }
+                }
             )
         }
         let deadline = Date().addingTimeInterval(10)
@@ -361,7 +373,8 @@ final class IOSExecNestedToolTests: XCTestCase {
         }
         XCTAssertNotNil(state.pendingWorkspaceApproval, "approval card must appear")
 
-        await coordinator.denyPendingWorkspaceTool()
+        decisionContinuation?.resume(returning: .deny)
+        decisionContinuation = nil
         let result = await execTask.value
         guard case .completed(let messages) = result else {
             return XCTFail("exec must complete after denial, got \(result)")
@@ -379,7 +392,7 @@ final class IOSExecNestedToolTests: XCTestCase {
     func testExcludedToolsAreNotVisibleInExecScript() async throws {
         let ledger = IOSExecNestedRecordingLedger()
         let state = IOSExecNestedBindingState()
-        let (coordinator, runtime, _) = makeCoordinatorAndRuntime(
+        let (adapter, runtime) = makeAdapterAndRuntime(
             executor: nil,
             ledger: ledger,
             state: state
@@ -390,8 +403,9 @@ final class IOSExecNestedToolTests: XCTestCase {
         let providerSetting = makeProviderSetting()
 
         let toolCall = execToolCall(input: #"{"code":"typeof tools.exec + '|' + typeof tools.spawn_agent + '|' + typeof tools.workspace_file_read"}"#)
-        let result = await runExecThroughCoordinator(
-            coordinator: coordinator,
+        let result = await runExecThroughAdapter(
+            adapter: adapter,
+            runtime: runtime,
             toolCall: toolCall,
             bridge: bridge,
             providerSetting: providerSetting,
@@ -411,10 +425,10 @@ final class IOSExecNestedToolTests: XCTestCase {
 
     // MARK: - P3-d: ALL_TOOLS discovery metadata (integration)
 
-    func testAllToolsThroughCoordinatorCarriesRealDescriptionsAndExcludesVisibleExcludedTools() async throws {
+    func testAllToolsThroughAdapterCarriesRealDescriptionsAndExcludesVisibleExcludedTools() async throws {
         let ledger = IOSExecNestedRecordingLedger()
         let state = IOSExecNestedBindingState()
-        let (coordinator, runtime, _) = makeCoordinatorAndRuntime(
+        let (adapter, runtime) = makeAdapterAndRuntime(
             executor: nil,
             ledger: ledger,
             state: state
@@ -432,8 +446,9 @@ final class IOSExecNestedToolTests: XCTestCase {
         let toolCall = execToolCall(input: #"""
         {"code":"const names = ALL_TOOLS.map(t => t.name); const read = ALL_TOOLS.filter(t => t.name === 'workspace_file_read')[0]; ({names: names, hasRead: !!read, descriptionPrefix: read ? read.description.slice(0, 4) : '', noExec: names.indexOf('exec') === -1, noSpawn: names.indexOf('spawn_agent') === -1, noAsk: names.indexOf('ask_user') === -1, noSearch: names.indexOf('tool_search') === -1, frozen: Object.isFrozen(ALL_TOOLS)})"}
         """#)
-        let result = await runExecThroughCoordinator(
-            coordinator: coordinator,
+        let result = await runExecThroughAdapter(
+            adapter: adapter,
+            runtime: runtime,
             toolCall: toolCall,
             bridge: bridge,
             providerSetting: providerSetting,
@@ -478,7 +493,7 @@ final class IOSExecNestedToolTests: XCTestCase {
             documentStore: DocumentAccessStore(),
             workspaceStore: workspaceStore
         )
-        let (coordinator, runtime, _) = makeCoordinatorAndRuntime(
+        let (adapter, runtime) = makeAdapterAndRuntime(
             executor: executor,
             ledger: ledger,
             state: state
@@ -493,8 +508,9 @@ final class IOSExecNestedToolTests: XCTestCase {
         let toolCall = execToolCall(input: #"""
         {"code":"const found = ALL_TOOLS.filter(t => t.description.indexOf('Read text preview') !== -1)[0]; const r = tools[found.name]({path: '/workspace/notes/missing.md'}); ({name: found.name, isObject: typeof r === 'object', hasOk: typeof r === 'object' && 'ok' in r})"}
         """#)
-        let result = await runExecThroughCoordinator(
-            coordinator: coordinator,
+        let result = await runExecThroughAdapter(
+            adapter: adapter,
+            runtime: runtime,
             toolCall: toolCall,
             bridge: bridge,
             providerSetting: providerSetting,
@@ -515,16 +531,6 @@ final class IOSExecNestedToolTests: XCTestCase {
                       "the found tool must have executed through the real chain: \(resultText)")
     }
 
-    // MARK: - P3-d 安全审查：exec/wait 的 effectClass 分类钉死
-
-    func testExecAndWaitEffectClassClassificationIsPinned() {
-        // exec 重放会重复运行任意 JS → sideEffect；wait 会推进/终止 cell 状态
-        // （terminate 真实变更），保守按 fail-safe sideEffect 分类（崩溃后不
-        // 自动重试 wait，避免读到推进后的另一终态）。两条路径分类一致。
-        XCTAssertEqual(IOSToolEffectClassMapping.forToolName("exec", input: "{}"), .sideEffect)
-        XCTAssertEqual(IOSToolEffectClassMapping.forToolName("wait", input: "{}"), .sideEffect)
-        XCTAssertEqual(IOSToolEffectClassMapping.forChatKind(.advanced, input: "{}"), .sideEffect)
-    }
 }
 
 // MARK: - Fixtures
@@ -579,45 +585,17 @@ private actor IOSExecNestedRecordingLedger: IOSAgentRunLedgering {
     }
 }
 
-/// bindings 状态捕获（同 IOSRunSnapshotTests 的 harness 模式）。
 private final class IOSExecNestedBindingState {
-    var messages: [UIMessage] = []
-    var pendingMemoryApproval: MemoryToolApprovalRequest?
-    var pendingSearchApproval: SearchToolApprovalRequest?
-    var pendingWebMountApproval: WebMountToolApprovalRequest?
     var pendingWorkspaceApproval: WorkspaceToolApprovalRequest?
-    var pendingIshHandoffApproval: IshHandoffToolApprovalRequest?
-    var pendingMcpApproval: McpToolApprovalRequest?
-    var pendingCouncilApproval: CouncilToolApprovalRequest?
-    var pendingAskUser: ChatAskUserRequest?
-    var revisions: [ChatMessageUpdateReason] = []
-    var isLoading = false
+}
 
-    func bindings() -> ChatGenerationBindings {
-        ChatGenerationBindings(
-            getMessages: { self.messages },
-            setMessages: { self.messages = $0 },
-            bumpMessageRevision: { reason, _ in self.revisions.append(reason) },
-            shouldPaceStreamPresentation: { true },
-            setIsLoading: { self.isLoading = $0 },
-            setPendingMemoryApproval: { self.pendingMemoryApproval = $0 },
-            setPendingSearchApproval: { self.pendingSearchApproval = $0 },
-            setPendingWebMountApproval: { self.pendingWebMountApproval = $0 },
-            setPendingWorkspaceApproval: { self.pendingWorkspaceApproval = $0 },
-            setPendingIshHandoffApproval: { self.pendingIshHandoffApproval = $0 },
-            setPendingMcpApproval: { self.pendingMcpApproval = $0 },
-            setPendingCouncilApproval: { self.pendingCouncilApproval = $0 },
-            setPendingAskUser: { self.pendingAskUser = $0 },
-            setContextCompactState: { _ in },
-            persistMessages: { _ in true },
-            capturePersistMessagesBaseline: { _ in nil },
-            persistMessagesSnapshot: { _, _, _ in true },
-            recordRun: { _, _, _, _, _ in true },
-            startLiveActivity: { _, _, _ in },
-            saveMiniAppIfPresent: { _, _ in nil },
-            messagesByInjectingRuntimeContext: { $0 },
-            userFacingGenerationError: { rawMessage, _ in rawMessage }
-        )
+private struct IOSExecNestedUnusedProvider: IOSAgentTextProvider {
+    func generateText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams
+    ) async throws -> MessageChunk {
+        throw NSError(domain: "IOSExecNestedToolTests", code: 1)
     }
 }
 

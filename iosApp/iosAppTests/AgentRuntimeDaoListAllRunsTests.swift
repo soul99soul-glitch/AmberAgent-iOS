@@ -33,7 +33,13 @@ final class AgentRuntimeDaoListAllRunsTests: XCTestCase {
             inputSchemaVersion: 1,
             startedAt: startedAt,
             finishedAt: KotlinLong(value: startedAt),
-            interruptedReason: nil
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
         )
 
         // Insert via the same path as ChatViewModel.recordRun.

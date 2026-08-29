@@ -11,7 +11,7 @@ struct WatchTaskReconnectProjection: Equatable, Sendable {
 }
 
 /// Owns the current watch-facing task snapshot and translates Watch intents
-/// into ChatViewModel / ChatGenerationCoordinator actions.
+/// into ChatViewModel / ChatKernelRunHost actions.
 @MainActor
 final class WatchTaskCoordinator: WatchTaskActionHandling {
     static let shared = WatchTaskCoordinator()

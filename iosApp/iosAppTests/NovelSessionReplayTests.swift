@@ -208,12 +208,12 @@ final class NovelSessionReplayTests: XCTestCase {
         let delayNanos = NovelSessionPresentationPacer.terminalDrainDelayNanos(advance: advance)
         XCTAssertEqual(
             advance,
-            ChatStreamPresentationPacer.terminalDrainAdvance(backlogCount: backlog),
+            StreamPresentationPacingPolicy.terminalDrainAdvance(backlogCount: backlog),
             "Novel terminal drain advance must match Chat shared policy."
         )
         XCTAssertEqual(
             delayNanos,
-            ChatStreamPresentationPacer.terminalDrainDelayNanos(advance: advance)
+            StreamPresentationPacingPolicy.terminalDrainDelayNanos(advance: advance)
         )
 
         let target = String(repeating: "章", count: backlog)

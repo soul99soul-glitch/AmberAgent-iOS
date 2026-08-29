@@ -368,6 +368,9 @@ final class ProviderRegistryStoreTests: XCTestCase {
             ChatViewModel.userFacingGenerationError("NSURLErrorDomain timed out")
                 .contains("网络连接失败")
         )
+        let snapshotFailure = ChatViewModel.userFacingGenerationError("request snapshot ledger write failed")
+        XCTAssertTrue(snapshotFailure.contains("请求尚未发送"))
+        XCTAssertFalse(snapshotFailure.contains("服务商配置"))
     }
 
     private func makeSettings(
