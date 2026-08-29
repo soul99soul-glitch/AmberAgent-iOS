@@ -894,7 +894,10 @@ final class NovelSessionReplayTests: XCTestCase {
             session: session,
             candidates: [candidate]
         ))
-        XCTAssertEqual(needsSync.rows[1].actions.first?.blocker, .branchNeedsSync)
+        XCTAssertNil(
+            needsSync.rows[1].actions.first?.blocker,
+            "Collecting an already-generated candidate must not wait on plot sync."
+        )
 
         let activeRun = makeRun(fixture: fixture, kind: .discussion)
         var runningBranch = fixture.branch
@@ -950,9 +953,9 @@ final class NovelSessionReplayTests: XCTestCase {
             candidates: [candidate],
             pending: [manualSyncPending]
         ))
-        XCTAssertEqual(
+        XCTAssertNil(
             blockedByStateSync.rows[1].actions.first?.blocker,
-            .branchNeedsSync
+            "Leftover plot-relink is not a write lock; prose collect stays available."
         )
         XCTAssertEqual(retryable.rows[0].digest, available.rows[0].digest)
         XCTAssertNotEqual(retryable.rows[1].digest, available.rows[1].digest)
@@ -1740,7 +1743,14 @@ final class NovelSessionReplayTests: XCTestCase {
             runs: [run],
             pending: [manualSync]
         ))
-        XCTAssertEqual(blocked.rows[0].actions.first?.blocker, .branchNeedsSync)
+        XCTAssertNil(
+            blocked.rows[0].actions.first?.blocker,
+            "Leftover plot-relink must not grey out collect on an already-generated candidate."
+        )
+        XCTAssertNil(
+            NovelSessionBubble.sharedActionBarBlocker(blocked.rows[0].actions),
+            "Enabled collect must not inherit a sibling action's sync caption."
+        )
 
         let transientRun = makeRun(
             fixture: fixture,

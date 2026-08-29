@@ -1075,7 +1075,8 @@ private struct NovelSessionProjectionIndex {
     }
 
     func pendingOperationBlocker(
-        excluding pendingID: NovelPendingOperationID?
+        excluding pendingID: NovelPendingOperationID?,
+        ignoringPlotRelinkJobs: Bool = false
     ) -> NovelSessionActionBlocker? {
         let excludesPending = pendingID.map(branchPendingOperationIDs.contains) == true
         let remainingCount = branchPendingOperationIDs.count - (excludesPending ? 1 : 0)
@@ -1084,7 +1085,10 @@ private struct NovelSessionProjectionIndex {
         let excludesManualSync = pendingID.map(branchManualSyncPendingOperationIDs.contains) == true
         let remainingManualSyncCount = branchManualSyncPendingOperationIDs.count -
             (excludesManualSync ? 1 : 0)
-        return remainingCount == remainingManualSyncCount ? .branchNeedsSync : .pendingOperation
+        if remainingCount == remainingManualSyncCount {
+            return ignoringPlotRelinkJobs ? nil : .branchNeedsSync
+        }
+        return .pendingOperation
     }
 
     func hasBlockingPolishTransaction(excluding transactionID: NovelPendingOperationID?) -> Bool {
@@ -1698,11 +1702,11 @@ private extension NovelSessionPresentation {
             input: input,
             index: index,
             includePending: true,
-            excludingRunID: tail.runID
+            excludingRunID: tail.runID,
+            ignoringPlotRelinkJobs: true
         ) {
             return blocker
         }
-        guard input.branch.syncStatus == .synchronized else { return .branchNeedsSync }
         guard let run = index.runByID[tail.runID],
               run.baseCheckpointID == input.branch.headCheckpointID,
               run.baseHeadRevision == input.branch.headRevision else {
@@ -1717,10 +1721,15 @@ private extension NovelSessionPresentation {
         index: NovelSessionProjectionIndex,
         requiresCurrentBase: Bool = true
     ) -> NovelSessionActionBlocker? {
-        if let blocker = baseMutationBlocker(input: input, index: index, includePending: true) {
+        if let blocker = baseMutationBlocker(
+            input: input,
+            index: index,
+            includePending: true,
+            ignoringPlotRelinkJobs: candidate.kind == .prose
+        ) {
             return blocker
         }
-        if input.branch.syncStatus == .needsSync {
+        if candidate.kind != .prose, input.branch.syncStatus == .needsSync {
             return .branchNeedsSync
         }
         if requiresCurrentBase {
@@ -1761,7 +1770,8 @@ private extension NovelSessionPresentation {
         includePending: Bool,
         excludingPendingID: NovelPendingOperationID? = nil,
         excludingPolishTransactionID: NovelPendingOperationID? = nil,
-        excludingRunID: NovelRunID? = nil
+        excludingRunID: NovelRunID? = nil,
+        ignoringPlotRelinkJobs: Bool = false
     ) -> NovelSessionActionBlocker? {
         if input.access != .readWrite { return .projectReadOnly }
         if input.branch.lifecycle != .active { return .branchInactive }
@@ -1776,7 +1786,10 @@ private extension NovelSessionPresentation {
             return .generationRunning
         }
         if includePending {
-            if let blocker = index.pendingOperationBlocker(excluding: excludingPendingID) {
+            if let blocker = index.pendingOperationBlocker(
+                excluding: excludingPendingID,
+                ignoringPlotRelinkJobs: ignoringPlotRelinkJobs
+            ) {
                 return blocker
             }
             if index.hasBlockingPolishTransaction(excluding: excludingPolishTransactionID) {

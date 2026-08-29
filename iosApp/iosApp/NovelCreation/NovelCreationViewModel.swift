@@ -2513,17 +2513,45 @@ final class NovelCreationViewModel {
         let branchPending = project.pendingOperations.filter {
             $0.branchID == branch.branch.id
         }
-        let leftoverManualSync = branchPending.count == 1 &&
-            branchPending[0].kind == .manualSync &&
-            (branchPending[0].status == .pending ||
-                branchPending[0].status == .retryable)
-        guard branchPending.isEmpty || leftoverManualSync else { return }
+        // Leftover plot-relink jobs are the work to consume, not a write lock.
+        guard branchPending.allSatisfy(\.isPlotRelinkJob) else { return }
         startWorkspacePlotRelink(
             NovelAutomaticStateSyncTarget(
                 projectID: project.project.id,
                 branchID: branch.branch.id
             )
         )
+    }
+
+    /// Deterministic pointer commit: finish leftover JSON extract or rebuild
+    /// plot/current.md from the working manuscript. No model call.
+    func finishPlotRelinkIfNeeded() async {
+        guard let project = projectSnapshot,
+              let branch = branchSnapshot else { return }
+        let leftover = project.pendingOperations.filter {
+            $0.branchID == branch.branch.id && $0.isPlotRelinkJob
+        }
+        let writePending = project.pendingOperations.contains {
+            $0.branchID == branch.branch.id && !$0.isPlotRelinkJob
+        }
+        guard !writePending else { return }
+        guard branch.branch.syncStatus == .needsSync || !leftover.isEmpty else { return }
+        let target = NovelAutomaticStateSyncTarget(
+            projectID: project.project.id,
+            branchID: branch.branch.id
+        )
+        if let task = automaticStateSyncTask,
+           automaticStateSyncTarget == target {
+            await task.value
+            return
+        }
+        if automaticStateSyncTask == nil, automaticStateSyncTarget == target {
+            automaticStateSyncTarget = nil
+        }
+        startWorkspacePlotRelink(target)
+        if let task = automaticStateSyncTask, automaticStateSyncTarget == target {
+            await task.value
+        }
     }
 
     func scheduleAutomaticStateSync(
@@ -3530,15 +3558,10 @@ final class NovelCreationViewModel {
             let branchPending = projectSnapshot.pendingOperations.filter {
                 $0.branchID == target.branchID
             }
-            let canDriveManualSync = branchPending.isEmpty ||
-                (branchPending.count == 1 &&
-                    branchPending[0].kind == .manualSync &&
-                    (branchPending[0].status == .pending ||
-                        branchPending[0].status == .retryable))
-            guard canDriveManualSync else {
+            guard branchPending.allSatisfy(\.isPlotRelinkJob) else {
                 // Previously returned silently — retry looked broken with no new banner.
                 let message: String
-                if branchPending.contains(where: { $0.kind != .manualSync }) {
+                if branchPending.contains(where: { !$0.isPlotRelinkJob }) {
                     message = "当前还有未完成的正文操作，请先处理后再重试剧情同步。"
                 } else if branchPending.count > 1 {
                     message = "当前有多个未完成的同步任务，请重新打开项目后再试。"

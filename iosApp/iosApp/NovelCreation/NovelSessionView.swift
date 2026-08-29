@@ -49,9 +49,15 @@ enum NovelComposerIntentPreference {
     static func resolve(
         stored: NovelComposerIntent?,
         collaborationMode: NovelCollaborationMode,
-        hasConfirmedChapterPlan: Bool
+        hasConfirmedChapterPlan: Bool,
+        branchNeedsSync: Bool = false
     ) -> NovelComposerIntent {
         let intent = stored ?? .discuss
+        // 正文生成仍被 needsSync 门禁拦住；讨论规划可以继续，所以输入框切到讨论，
+        // 不要把「写一段/写整章」偏好写盘。
+        if branchNeedsSync, intent != .discuss {
+            return .discuss
+        }
         if collaborationMode == .ghostwrite,
            !hasConfirmedChapterPlan,
            intent == .wholeChapter {
@@ -1214,9 +1220,14 @@ struct NovelSessionView: View {
                     }
                     Section("写正文") {
                         ForEach(NovelComposerIntent.proseOptions) { intent in
-                            Text(intent.title).tag(intent)
+                            Text(intent.title)
+                                .tag(intent)
+                                .disabled(viewModel.needsSync)
                         }
                     }
+                }
+                if viewModel.needsSync {
+                    Text("剧情同步完成后可写正文")
                 }
                 Divider()
                 Button("归档当前讨论", systemImage: "archivebox") {
@@ -1443,7 +1454,10 @@ struct NovelSessionView: View {
     private var composerIntentBinding: Binding<NovelComposerIntent> {
         Binding(
             get: {
-                NovelComposerIntent(mode: viewModel.mode, granularity: viewModel.granularity)
+                if viewModel.needsSync {
+                    return .discuss
+                }
+                return NovelComposerIntent(mode: viewModel.mode, granularity: viewModel.granularity)
             },
             set: { intent in
                 viewModel.setComposerIntent(intent)
@@ -1556,7 +1570,7 @@ struct NovelSessionView: View {
             return NovelWorkspaceLedger.unresolvedPlotGateMessage
         }
         if viewModel.needsSync {
-            return "请先同步剧情状态，再写正文"
+            return "剧情还在同步，可以先讨论规划"
         }
         return viewModel.granularity == .wholeChapter
             ? "描述下一章的目标或关键事件"

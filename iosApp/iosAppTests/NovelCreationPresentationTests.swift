@@ -724,6 +724,24 @@ final class NovelCreationPresentationTests: XCTestCase {
             ),
             .continueProse
         )
+        XCTAssertEqual(
+            NovelComposerIntentPreference.resolve(
+                stored: .continueProse,
+                collaborationMode: .cocreation,
+                hasConfirmedChapterPlan: false,
+                branchNeedsSync: true
+            ),
+            .discuss
+        )
+        XCTAssertEqual(
+            NovelComposerIntentPreference.resolve(
+                stored: .wholeChapter,
+                collaborationMode: .cocreation,
+                hasConfirmedChapterPlan: true,
+                branchNeedsSync: true
+            ),
+            .discuss
+        )
     }
 
     func testComposerIntentFallsBackFromWholeChapterWhenGhostwriteHasNoPlan() {

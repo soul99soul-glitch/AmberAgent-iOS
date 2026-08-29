@@ -2882,11 +2882,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         )), to: fixture.document).document
         let harness = try await makeHarness(
             document: document,
-            scripts: [NovelModelScript(steps: [
-                .delta(validRebuildJSON),
-                .pause,
-                .complete,
-            ])]
+            scripts: []
         )
 
         try? await Task.sleep(for: .milliseconds(350))
@@ -2894,19 +2890,13 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(requestsBeforeAppearance.count, 0)
 
         harness.workspace.scheduleAutomaticStateSyncIfNeeded()
-        let syncStarted = await eventually {
-            await harness.adapter.requests.count == 1
-        }
-        XCTAssertTrue(syncStarted)
-        let requests = await harness.adapter.requests
-        let syncRequest = try XCTUnwrap(requests.first)
-        await harness.adapter.resume(runID: syncRequest.runID)
-
         let syncCompleted = await eventually {
             let project = try? await harness.repository.loadProject(id: harness.projectID).document
             return project?.branches[0].syncStatus == .synchronized
         }
         XCTAssertTrue(syncCompleted)
+        let requests = await harness.adapter.requests
+        XCTAssertTrue(requests.isEmpty, "automatic plot relink must not start a model call")
     }
 
     func testWorkspaceAppearanceResumesPersistedPendingManualSync() async throws {
@@ -2917,34 +2907,18 @@ final class NovelSessionViewModelTests: XCTestCase {
         let fixture = try persistedManualSync(status: .retryable)
         let harness = try await makeHarness(
             document: fixture.document,
-            scripts: [NovelModelScript(steps: [
-                .delta(validRebuildJSON),
-                .complete,
-            ])]
+            scripts: []
         )
 
         harness.workspace.scheduleAutomaticStateSyncIfNeeded()
-        let syncStarted = await eventually {
-            await harness.adapter.requests.count == 1
-        }
-        XCTAssertTrue(syncStarted, "retryable pending should auto-start heal")
-        let requests = await harness.adapter.requests
-        let request = try XCTUnwrap(requests.first)
-        let userText = request.messages
-            .filter { $0.role == .user }
-            .map(\.content)
-            .joined(separator: "\n")
-        XCTAssertTrue(
-            userText.contains("PREVIOUS ATTEMPT FAILURE"),
-            "heal request must carry lastError; got \(userText.prefix(400))"
-        )
-        XCTAssertTrue(userText.contains("上一次状态同步超时"))
-
         let syncCompleted = await eventually(timeout: 5) {
             let project = try? await harness.repository.loadProject(id: harness.projectID).document
-            return project?.branches[0].syncStatus == .synchronized
+            return project?.pendingOperations.isEmpty == true &&
+                project?.branches[0].syncStatus == .synchronized
         }
-        XCTAssertTrue(syncCompleted, "heal with lastError must still commit")
+        XCTAssertTrue(syncCompleted, "leftover plot-relink must finish even when lastError is set")
+        let requests = await harness.adapter.requests
+        XCTAssertTrue(requests.isEmpty, "automatic plot relink must not start a model call")
     }
 
     func testRetryableManualSyncBlocksGeneratingANewProseCandidate() async throws {
@@ -2960,14 +2934,10 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.granularity = .continuation
 
         XCTAssertEqual(harness.workspace.branchSnapshot?.branch.syncStatus, .needsSync)
-        XCTAssertFalse(harness.session.canSend)
-        let didStart = await harness.session.send(text: "继续写她进入档案馆")
-        XCTAssertFalse(didStart)
-
-        harness.session.mode = .discussPlan
+        XCTAssertEqual(harness.session.composerSendKind, .discussion)
         XCTAssertTrue(harness.session.canSend)
-        let didStartDiscussion = await harness.session.send(text: "我们先聊聊这段改写")
-        XCTAssertTrue(didStartDiscussion)
+        let didStart = await harness.session.send(text: "继续写她进入档案馆")
+        XCTAssertTrue(didStart)
         let discussionSettled = await eventually { !harness.session.isRunning }
         XCTAssertTrue(discussionSettled)
 
@@ -2975,6 +2945,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(persisted.pendingOperations.first?.id, fixture.pendingID)
         XCTAssertEqual(persisted.pendingOperations.first?.status, .retryable)
         XCTAssertTrue(persisted.candidates.isEmpty)
+        XCTAssertEqual(persisted.sessions[0].messages.last?.mode, .discussPlan)
     }
 
     func testRetryableManualSyncCandidateCanBeCollectedAfterSuccessfulRetry() async throws {
@@ -2992,8 +2963,10 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.mode = .writeProse
         harness.session.granularity = .continuation
 
-        // Formal prose stays blocked until the stale branch state is synchronized.
-        XCTAssertFalse(harness.session.canSend)
+        // Formal prose stays blocked until the stale branch state is synchronized;
+        // the composer still sends discussion so the input is not dead.
+        XCTAssertEqual(harness.session.composerSendKind, .discussion)
+        XCTAssertTrue(harness.session.canSend)
         await harness.workspace.retryPending(fixture.pendingID)
         let synchronized = await eventually {
             harness.workspace.projectSnapshot?.pendingOperations.isEmpty == true &&
@@ -3070,6 +3043,85 @@ final class NovelSessionViewModelTests: XCTestCase {
             target: .appendToChapter(try XCTUnwrap(fixture.document.chapters.first?.id))
         )
         XCTAssertTrue(recollected)
+    }
+
+    func testLeftoverManualSyncIsConsumedByPlotRelinkWithoutModel() async throws {
+        let fixture = try persistedManualSync(status: .retryable)
+        let harness = try await makeHarness(
+            document: fixture.document,
+            scripts: []
+        )
+        XCTAssertEqual(harness.workspace.branchSnapshot?.branch.syncStatus, .needsSync)
+        XCTAssertFalse(harness.workspace.projectSnapshot?.pendingOperations.isEmpty ?? true)
+
+        await harness.workspace.finishPlotRelinkIfNeeded()
+        let synchronized = await eventually {
+            harness.workspace.projectSnapshot?.pendingOperations.isEmpty == true &&
+                harness.workspace.branchSnapshot?.branch.syncStatus == .synchronized
+        }
+        XCTAssertTrue(synchronized, "leftover plot-relink must finish without a model call")
+        let requests = await harness.adapter.requests
+        XCTAssertTrue(requests.isEmpty)
+    }
+
+    func testCollectFinishesLeftoverPlotRelinkThenCommitsCandidate() async throws {
+        let fixture = try documentWithChapter()
+        var document = fixture.document
+        let candidateID = NovelCandidateID()
+        let messageID = NovelMessageID()
+        let content = "Mara crossed the quiet hall."
+        document.sessions[0].messages = [
+            NovelSessionMessageRecord(
+                id: messageID,
+                sequence: 0,
+                role: .assistant,
+                mode: .writeProse,
+                kind: .proseCandidate,
+                content: content,
+                createdAt: document.project.updatedAt,
+                runID: nil,
+                candidateID: candidateID
+            )
+        ]
+        document.sessions[0].revision = 1
+        document.candidates.append(
+            NovelCandidateRecord(
+                id: candidateID,
+                kind: .prose,
+                branchID: document.branches[0].id,
+                sessionID: document.branches[0].sessionID,
+                sourceMessageID: messageID,
+                baseCheckpointID: document.branches[0].headCheckpointID,
+                baseHeadRevision: document.branches[0].headRevision,
+                status: .available,
+                content: content,
+                sourceChapterVersionID: nil,
+                collectedCheckpointID: nil,
+                createdAt: document.project.updatedAt
+            )
+        )
+        try NovelDocumentValidator.validate(document)
+        document = try overlayRetryableManualSync(on: document)
+
+        let harness = try await makeHarness(document: document, scripts: [])
+        XCTAssertEqual(harness.workspace.branchSnapshot?.branch.syncStatus, .needsSync)
+
+        let paragraphs = harness.session.paragraphs(candidateID: candidateID)
+        let collected = await harness.session.collectCandidate(
+            candidateID,
+            selection: NovelParagraphSelection(paragraphIDs: paragraphs.map(\.id)),
+            target: .appendToChapter(fixture.chapterID)
+        )
+        XCTAssertTrue(collected, harness.session.operationErrorMessage ?? "collect failed")
+        let persisted = try await harness.repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(
+            persisted.candidates.first { $0.id == candidateID }?.status,
+            .collected
+        )
+        XCTAssertTrue(persisted.pendingOperations.isEmpty)
+        XCTAssertEqual(persisted.branches[0].syncStatus, .synchronized)
+        let requests = await harness.adapter.requests
+        XCTAssertTrue(requests.isEmpty, "plot relink plus collect must not start a model call")
     }
 
     func testExplicitManualSyncRetryPublishesDurableProgressUntilTerminal() async throws {
@@ -3316,17 +3368,9 @@ final class NovelSessionViewModelTests: XCTestCase {
 
     func testAutomaticManualSyncHealsTransientFailureWithoutBanner() async throws {
         let fixture = try persistedManualSync(status: .pending)
-        let failure = NovelModelFailure(
-            code: "structured_no_output_timeout",
-            message: "状态同步请求超时，请稍后重试。",
-            isRetryable: true
-        )
         let harness = try await makeHarness(
             document: fixture.document,
-            scripts: [
-                NovelModelScript(steps: [.fail(failure)]),
-                NovelModelScript(steps: [.delta(validRebuildJSON), .complete]),
-            ]
+            scripts: []
         )
         let branchID = try XCTUnwrap(harness.workspace.selectedBranchID)
 
@@ -3335,70 +3379,37 @@ final class NovelSessionViewModelTests: XCTestCase {
             let project = try? await harness.repository.loadProject(id: harness.projectID).document
             return project?.branches[0].syncStatus == .synchronized
         }
-        XCTAssertTrue(recovered, "one transient fail should auto-heal to synchronized")
+        XCTAssertTrue(recovered, "leftover plot-relink should finish without a model call")
         XCTAssertNil(harness.workspace.automaticStateSyncFailureMessage(
             projectID: harness.projectID,
             branchID: branchID
         ))
         let requests = await harness.adapter.requests
-        XCTAssertEqual(requests.count, 2)
-        let retryUserText = requests[1].messages
-            .filter { $0.role == .user }
-            .map(\.content)
-            .joined(separator: "\n")
-        XCTAssertTrue(
-            retryUserText.contains("PREVIOUS ATTEMPT FAILURE"),
-            "second attempt must include lastError; got \(retryUserText.prefix(400))"
-        )
-        XCTAssertTrue(retryUserText.contains(failure.message))
+        XCTAssertTrue(requests.isEmpty)
     }
 
-    func testAutomaticManualSyncStopsAfterBoundedHealAttempts() async throws {
+    func testAutomaticManualSyncConsumesLeftoverWithoutModelHealLoop() async throws {
         let fixture = try persistedManualSync(status: .pending)
-        let failure = NovelModelFailure(
-            code: "structured_no_output_timeout",
-            message: "状态同步请求超时，请稍后重试。",
-            isRetryable: true
-        )
         let harness = try await makeHarness(
             document: fixture.document,
-            scripts: Array(
-                repeating: NovelModelScript(steps: [.fail(failure)]),
-                count: NovelGhostwriteHeal.defaultMaxInfraRetries
-            )
+            scripts: []
         )
         let branchID = try XCTUnwrap(harness.workspace.selectedBranchID)
 
         harness.workspace.scheduleAutomaticStateSyncIfNeeded()
-
-        let failurePersisted = await eventually(timeout: 5) {
-            guard let loaded = try? await harness.repository.loadProject(id: harness.projectID),
-                  let pending = loaded.document.pendingOperations.first(where: {
-                      $0.id == fixture.pendingID
-                  }) else {
-                return false
-            }
-            return pending.status == .retryable &&
-                pending.lastError == failure.message &&
-                !harness.workspace.isPerforming &&
-                harness.workspace.automaticStateSyncFailureMessage(
-                    projectID: harness.projectID,
-                    branchID: branchID
-                ) != nil
+        let recovered = await eventually(timeout: 5) {
+            let project = try? await harness.repository.loadProject(id: harness.projectID).document
+            return project?.pendingOperations.isEmpty == true &&
+                project?.branches[0].syncStatus == .synchronized
         }
-        XCTAssertTrue(failurePersisted)
-
-        try? await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(recovered)
+        XCTAssertNil(harness.workspace.automaticStateSyncFailureMessage(
+            projectID: harness.projectID,
+            branchID: branchID
+        ))
         let requests = await harness.adapter.requests
-        XCTAssertEqual(requests.count, NovelGhostwriteHeal.defaultMaxInfraRetries)
-        let persisted = try await harness.repository.loadProject(id: harness.projectID).document
-        XCTAssertEqual(persisted.branches[0].syncStatus, .needsSync)
-        XCTAssertEqual(persisted.pendingOperations.first?.status, .retryable)
-        XCTAssertEqual(persisted.pendingOperations.first?.lastError, failure.message)
-        XCTAssertEqual(
-            harness.workspace.projectSnapshot?.pendingOperations.first?.lastError,
-            failure.message
-        )
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertNil(harness.workspace.projectSnapshot?.pendingOperations.first?.lastError)
     }
 
     func testChapterRevisionApprovalSyncsLastChapterWithOneStateDelta() async throws {
@@ -3488,7 +3499,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         )
     }
 
-    func testAutomaticManualSyncDoesNotOuterRetryValidationFailures() async throws {
+    func testAutomaticManualSyncDoesNotCallModelForLeftoverValidationScripts() async throws {
         let fixture = try persistedManualSync(status: .pending)
         let truncated = #"{"schemaVersion":1,"stateSummary":"Mara entered"#
         let harness = try await makeHarness(
@@ -3501,79 +3512,47 @@ final class NovelSessionViewModelTests: XCTestCase {
         let branchID = try XCTUnwrap(harness.workspace.selectedBranchID)
 
         harness.workspace.scheduleAutomaticStateSyncIfNeeded()
-        let failed = await eventually(timeout: 5) {
-            harness.workspace.automaticStateSyncFailureMessage(
-                projectID: harness.projectID,
-                branchID: branchID
-            ) != nil &&
-                !harness.workspace.isPerforming
+        let recovered = await eventually(timeout: 5) {
+            let project = try? await harness.repository.loadProject(id: harness.projectID).document
+            return project?.pendingOperations.isEmpty == true &&
+                project?.branches[0].syncStatus == .synchronized
         }
-        XCTAssertTrue(failed)
-        try? await Task.sleep(for: .milliseconds(400))
+        XCTAssertTrue(recovered)
+        XCTAssertNil(harness.workspace.automaticStateSyncFailureMessage(
+            projectID: harness.projectID,
+            branchID: branchID
+        ))
         let requests = await harness.adapter.requests
-        XCTAssertEqual(requests.count, 3)
-        let persisted = try await harness.repository.loadProject(id: harness.projectID).document
-        XCTAssertEqual(persisted.branches[0].syncStatus, .needsSync)
-        XCTAssertEqual(persisted.pendingOperations.first?.status, .retryable)
+        XCTAssertTrue(requests.isEmpty)
     }
 
-    func testAutomaticSyncFailureRetryStartsRetryablePendingOnFirstTap() async throws {
+    func testAutomaticSyncFailureRetryIsUnnecessaryOncePlotRelinkSucceeds() async throws {
         let fixture = try persistedManualSync(status: .pending)
-        let failure = NovelModelFailure(
-            code: "structured_no_output_timeout",
-            message: "状态同步请求超时，请稍后重试。",
-            isRetryable: true
-        )
         let harness = try await makeHarness(
             document: fixture.document,
-            scripts: Array(
-                repeating: NovelModelScript(steps: [.fail(failure)]),
-                count: NovelGhostwriteHeal.defaultMaxInfraRetries
-            ) + [
-                NovelModelScript(steps: [
-                    .delta(validRebuildJSON),
-                    .pause,
-                    .complete,
-                ]),
-            ]
+            scripts: []
         )
         let branchID = try XCTUnwrap(harness.workspace.selectedBranchID)
 
         harness.workspace.scheduleAutomaticStateSyncIfNeeded()
-        let failed = await eventually(timeout: 5) {
-            harness.workspace.automaticStateSyncFailureMessage(
-                projectID: harness.projectID,
-                branchID: branchID
-            ) != nil &&
-                harness.workspace.projectSnapshot?.pendingOperations.first?.status == .retryable
+        let recovered = await eventually(timeout: 5) {
+            harness.workspace.projectSnapshot?.pendingOperations.isEmpty == true &&
+                harness.workspace.branchSnapshot?.branch.syncStatus == .synchronized
         }
-        XCTAssertTrue(failed)
+        XCTAssertTrue(recovered)
+        XCTAssertNil(harness.workspace.automaticStateSyncFailureMessage(
+            projectID: harness.projectID,
+            branchID: branchID
+        ))
 
         harness.workspace.retryAutomaticStateSync(
             projectID: harness.projectID,
             branchID: branchID
         )
-
-        let retriedOnFirstTap = await eventually(timeout: 3) {
-            let requests = await harness.adapter.requests
-            return requests.count == NovelGhostwriteHeal.defaultMaxInfraRetries + 1
-        }
-        XCTAssertTrue(
-            retriedOnFirstTap,
-            "failure banner 的第一次重试必须直接执行 durable retryable pending"
-        )
-        XCTAssertTrue(harness.workspace.canCancelAutomaticStateSync(
-            projectID: harness.projectID,
-            branchID: branchID
-        ))
-        harness.workspace.cancelAutomaticStateSync(
-            projectID: harness.projectID,
-            branchID: branchID
-        )
-        let stopped = await eventually(timeout: 3) {
-            !harness.workspace.isPerforming && harness.workspace.stateSyncActivity == nil
-        }
-        XCTAssertTrue(stopped)
+        try? await Task.sleep(for: .milliseconds(200))
+        let requests = await harness.adapter.requests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertEqual(harness.workspace.branchSnapshot?.branch.syncStatus, .synchronized)
     }
 
     func testExactRunRetryDoesNotRetryAStillNewerTerminalBubble() async throws {
@@ -4260,16 +4239,65 @@ private extension NovelSessionViewModelTests {
         return (prepared, sync.pendingID)
     }
 
+    func overlayRetryableManualSync(
+        on document: NovelProjectDocumentV1
+    ) throws -> NovelProjectDocumentV1 {
+        let branch = document.branches[0]
+        let selection = try XCTUnwrap(branch.workingChapterSelections.first)
+        let version = try XCTUnwrap(document.chapterVersions.first {
+            $0.id == selection.versionID
+        })
+        let edit = NovelSaveManualEditCommand(
+            context: NovelMutationContext(
+                operationID: NovelOperationID(),
+                expectedProjectRevision: document.project.revision,
+                expectedConfigRevision: document.project.configRevision,
+                expectedBranchHeadRevision: branch.headRevision
+            ),
+            projectID: document.project.id,
+            branchID: branch.id,
+            chapterID: selection.chapterID,
+            versionID: NovelChapterVersionID(),
+            title: version.title,
+            content: version.content + "\nShe waited for the archivist.",
+            factCompatibilityID: UUID(),
+            expectedWorkingRevision: branch.workingRevision
+        )
+        let edited = try NovelReducer.apply(.saveManualEdit(edit), to: document).document
+        let editedBranch = edited.branches[0]
+        let sync = NovelSyncManualEditsCommand(
+            context: NovelMutationContext(
+                operationID: NovelOperationID(),
+                expectedProjectRevision: edited.project.revision,
+                expectedConfigRevision: edited.project.configRevision,
+                expectedBranchHeadRevision: editedBranch.headRevision
+            ),
+            projectID: edited.project.id,
+            branchID: editedBranch.id,
+            pendingID: NovelPendingOperationID(),
+            checkpointID: NovelCheckpointID(),
+            stateSnapshotID: NovelStateSnapshotID(),
+            expectedWorkingRevision: editedBranch.workingRevision
+        )
+        let prepared = try NovelFactTransactionReducer.prepareManualSync(
+            sync,
+            payloadSHA256: sync.canonicalPayloadSHA256(),
+            in: edited
+        ).document
+        return try NovelFactTransactionReducer.markRetryable(
+            pendingID: sync.pendingID,
+            message: "上一次状态同步超时",
+            in: prepared
+        )
+    }
+
     func assertPersistedManualSyncResumes(
         status: NovelPendingOperationStatus
     ) async throws {
         let fixture = try persistedManualSync(status: status)
         let harness = try await makeHarness(
             document: fixture.document,
-            scripts: [NovelModelScript(steps: [
-                .delta(validRebuildJSON),
-                .complete,
-            ])]
+            scripts: []
         )
 
         try? await Task.sleep(for: .milliseconds(100))
@@ -4290,7 +4318,7 @@ private extension NovelSessionViewModelTests {
         }
         XCTAssertTrue(syncCompleted)
         let requests = await harness.adapter.requests
-        XCTAssertEqual(requests.count, 1)
+        XCTAssertTrue(requests.isEmpty, "automatic plot relink must not start a model call")
     }
 
     func documentWithMaterials() throws -> (

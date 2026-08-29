@@ -1912,6 +1912,11 @@ struct NovelPendingOperationRecord: Codable, Equatable, Sendable {
     var blocksProseGeneration: Bool {
         kind != .manualSync || status != .retryable
     }
+
+    /// Leftover plot-relink job. Not a manuscript write lock.
+    var isPlotRelinkJob: Bool {
+        kind == .manualSync
+    }
 }
 
 enum NovelSettingProposalOrigin: Codable, Equatable, Sendable {

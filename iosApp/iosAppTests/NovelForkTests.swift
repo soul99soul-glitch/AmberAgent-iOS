@@ -239,7 +239,7 @@ final class NovelForkTests: XCTestCase {
         XCTAssertNoThrow(try NovelDocumentValidator.validate(decoded))
     }
 
-    func testCollectionBaseBridgeRejectsCandidateThatPredatesManualSync() throws {
+    func testCollectionBaseBridgeAllowsCandidateAcrossPlotRelinkManualSync() throws {
         let document = try NovelTestFixtures.document()
         let branch = document.branches[0]
         let generated = try NovelBranchTestFixtures.appendCompletedRun(
@@ -275,7 +275,7 @@ final class NovelForkTests: XCTestCase {
             createdAt: sourceMessage.createdAt.addingTimeInterval(1)
         )
 
-        XCTAssertFalse(NovelCandidateSemantics.collectionBaseMatches(
+        XCTAssertTrue(NovelCandidateSemantics.collectionBaseMatches(
             candidate,
             targetCheckpointID: synchronizedHead.id,
             targetHeadRevision: candidate.baseHeadRevision + 1,

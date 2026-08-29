@@ -31,10 +31,14 @@ enum NovelCandidateSemantics {
             return true
         }
 
+        // Leftover plot-relink (and a completed manual sync sitting directly on
+        // the candidate's parent) is not a manuscript write. Collect still
+        // applies onto the working chapter; a covering sessionCursor must not
+        // treat the uncollected draft as stale.
         guard candidate.kind == .prose,
               candidate.clonedFromCandidateID == nil,
               targetHeadRevision == candidate.baseHeadRevision + 1,
-              let sourceMessage,
+              sourceMessage != nil,
               let checkpoint = checkpoints.first(where: { $0.id == targetCheckpointID }),
               checkpoint.kind == .manualSync,
               checkpoint.createdOnBranchID == candidate.branchID,
@@ -42,12 +46,7 @@ enum NovelCandidateSemantics {
               checkpoint.baseHeadRevision == candidate.baseHeadRevision else {
             return false
         }
-        switch checkpoint.sessionCursor {
-        case .empty:
-            return true
-        case .through(let sequence):
-            return sourceMessage.sequence > sequence
-        }
+        return true
     }
 
     static func cloneBaseMatches(

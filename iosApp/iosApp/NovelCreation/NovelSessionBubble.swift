@@ -224,7 +224,7 @@ struct NovelSessionBubble: View {
                 }
             }
 
-            if let blocker = effectiveActions.compactMap(\.blocker).first {
+            if let blocker = Self.sharedActionBarBlocker(effectiveActions) {
                 Text(blocker.displayName)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.foreground2)
@@ -262,6 +262,18 @@ struct NovelSessionBubble: View {
                 blocker: runtimeActionBlocker
             )
         }
+    }
+
+    /// Don't pin a disabled sibling's reason under a still-enabled action
+    /// (collect can stay open while retry waits for plot-relink).
+    nonisolated static func sharedActionBarBlocker(
+        _ actions: [NovelSessionRowActionAvailability]
+    ) -> NovelSessionActionBlocker? {
+        let enabledMutation = actions.contains {
+            $0.blocker == nil && $0.action.requiresMutation
+        }
+        guard !enabledMutation else { return nil }
+        return actions.compactMap(\.blocker).first
     }
 
     @ViewBuilder

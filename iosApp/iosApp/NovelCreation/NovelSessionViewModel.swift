@@ -432,10 +432,14 @@ final class NovelSessionViewModel {
     }
 
     func setComposerIntent(_ intent: NovelComposerIntent) {
-        applyComposerIntent(intent)
         if let projectID = binding?.projectID ?? workspace.selectedProjectID {
             NovelComposerIntentPreference.store(intent, for: projectID, defaults: composerDefaults)
         }
+        if needsSync, intent != .discuss {
+            applyComposerIntent(.discuss)
+            return
+        }
+        applyComposerIntent(intent)
     }
 
     func reconcileComposerIntent() {
@@ -456,13 +460,16 @@ final class NovelSessionViewModel {
             for: project.project.id,
             defaults: composerDefaults
         )
+        let needsSync = branch.branch.syncStatus == .needsSync
         let resolved = NovelComposerIntentPreference.resolve(
             stored: stored,
             collaborationMode: project.project.collaborationMode,
-            hasConfirmedChapterPlan: project.confirmedChapterPlan(for: branch.branch.id) != nil
+            hasConfirmedChapterPlan: project.confirmedChapterPlan(for: branch.branch.id) != nil,
+            branchNeedsSync: needsSync
         )
         applyComposerIntent(resolved)
-        if persistFallback, resolved != stored {
+        // needsSync 只是临时改成讨论，不能覆盖用户记住的写正文偏好。
+        if persistFallback, resolved != stored, !needsSync {
             NovelComposerIntentPreference.store(
                 resolved,
                 for: project.project.id,
@@ -915,8 +922,13 @@ final class NovelSessionViewModel {
         hasPolishableChapters && batchPolishBlocker == nil
     }
 
+    /// `needsSync` 时正式正文仍禁止，发送走讨论规划，避免输入框看起来像坏了。
+    var composerSendKind: NovelRunKind {
+        needsSync ? .discussion : (mode == .discussPlan ? .discussion : .prose)
+    }
+
     var canSend: Bool {
-        canStart(kind: mode == .discussPlan ? .discussion : .prose)
+        canStart(kind: composerSendKind)
     }
 
     var canStop: Bool {
@@ -1069,10 +1081,11 @@ final class NovelSessionViewModel {
         injectionOverrides: NovelInjectionOverrides = .none,
         inputBudgetTokens: Int = 16_000
     ) async -> Bool {
-        let kind: NovelRunKind = mode == .discussPlan ? .discussion : .prose
+        let kind = composerSendKind
+        let sendMode: NovelSessionMode = kind == .discussion ? .discussPlan : mode
         let draft = NovelSessionRunDraft(
             kind: kind,
-            mode: mode,
+            mode: sendMode,
             granularity: kind == .prose ? granularity : nil,
             userText: text,
             sourceChapterVersionID: nil,
@@ -1659,8 +1672,8 @@ final class NovelSessionViewModel {
             operationErrorMessage = "会话已切换，无法收录。"
             return false
         }
-        guard let project = workspace.projectSnapshot,
-              let branch = workspace.branchSnapshot else {
+        guard workspace.projectSnapshot != nil,
+              let currentBranch = workspace.branchSnapshot else {
             operationErrorMessage = "项目未就绪，无法收录。"
             return false
         }
@@ -1670,15 +1683,12 @@ final class NovelSessionViewModel {
             operationErrorMessage = "没有可收录的完整正文候选。"
             return false
         }
-        guard branch.branch.syncStatus == .synchronized else {
-            operationErrorMessage = "分支待同步，无法收录正文。"
+        let writePending = branchPendingOperations.contains { !$0.isPlotRelinkJob }
+        if writePending || !unresolvedBranchPolishTransactions.isEmpty {
+            operationErrorMessage = "仍有未完成的正文事务，无法收录。"
             return false
         }
-        guard branchPendingOperations.isEmpty else {
-            operationErrorMessage = "仍有未完成的同步或事务，无法收录。"
-            return false
-        }
-        guard branch.branch.activeRunID == nil else {
+        guard currentBranch.branch.activeRunID == nil else {
             operationErrorMessage = "生成尚未完全结束，无法收录。"
             return false
         }
@@ -1686,6 +1696,43 @@ final class NovelSessionViewModel {
             _ = try NovelParagraphParser.selectedText(for: selection, in: candidate.content)
         } catch {
             operationErrorMessage = describe(error)
+            return false
+        }
+        // beginAction 失败时 perform 会静默返回 nil，这里先占锁并给出明确原因。
+        guard beginAction() else {
+            operationErrorMessage = workspace.requiresReload
+                ? "项目需要重新载入，无法收录。"
+                : "有其他操作进行中，无法收录。"
+            return false
+        }
+        // Leftover plot-relink is not a write lock. Finish it first so collect
+        // uses the working manuscript as HEAD, then collect with a fresh context.
+        await workspace.finishPlotRelinkIfNeeded()
+        guard snapshotMatchesBinding,
+              let project = workspace.projectSnapshot,
+              let branch = workspace.branchSnapshot,
+              let candidate = self.candidate(id: candidateID),
+              candidate.kind == .prose,
+              candidate.status == .available || candidate.status == .interrupted else {
+            endAction()
+            operationErrorMessage = "收录前项目状态已变化，请重试。"
+            return false
+        }
+        if workspace.projectSnapshot?.pendingOperations.contains(where: {
+            $0.branchID == branch.branch.id && $0.isPlotRelinkJob
+        }) == true {
+            endAction()
+            operationErrorMessage = workspace.automaticStateSyncFailureMessage(
+                projectID: project.project.id,
+                branchID: branch.branch.id
+            ) ?? "剧情指针未能对齐，无法收录。"
+            return false
+        }
+        if workspace.projectSnapshot?.pendingOperations.contains(where: {
+            $0.branchID == branch.branch.id && !$0.isPlotRelinkJob
+        }) == true {
+            endAction()
+            operationErrorMessage = "仍有未完成的正文事务，无法收录。"
             return false
         }
         let action = NovelAction.collectCandidate(NovelCollectCandidateCommand(
@@ -1702,13 +1749,6 @@ final class NovelSessionViewModel {
             factCompatibilityID: UUID(),
             source: source
         ))
-        // beginAction 失败时 perform 会静默返回 nil，这里先占锁并给出明确原因。
-        guard beginAction() else {
-            operationErrorMessage = workspace.requiresReload
-                ? "项目需要重新载入，无法收录。"
-                : "有其他操作进行中，无法收录。"
-            return false
-        }
         let outcome: NovelOutcome?
         do {
             outcome = try await workspace.performSessionAction(action)
@@ -3866,9 +3906,19 @@ extension NovelSessionViewModel {
             branchID: branchID,
             requireChapterPlan: !canResumeGhostwriteWithoutPlan
         )
-        // 批中续跑「同步失败」：由 pipeline 内 await sync，不在入口硬挡。
         if canResumeGhostwriteWithoutPlan {
-            issues.removeAll { $0 == .branchNeedsSync || $0 == .missingChapterPlan }
+            issues.removeAll { $0 == .missingChapterPlan }
+        }
+        // 批中续跑：同步由 pipeline 内 await，不在入口把「继续」整灰。
+        if ghostwriteProgressStorage?.shouldContinueSameBatch == true {
+            issues.removeAll { $0 == .branchNeedsSync }
+            let onlyManualSyncPending = branchPendingOperations.allSatisfy {
+                $0.kind == .manualSync
+            }
+            if unresolvedBranchPolishTransactions.isEmpty,
+               onlyManualSyncPending || branchPendingOperations.isEmpty {
+                issues.removeAll { $0 == .pendingOperations }
+            }
         }
         return issues.first
     }
@@ -3910,9 +3960,16 @@ extension NovelSessionViewModel {
         if isGhostwriting { return .transactionInProgress }
         if isBatchPolishing { return .transactionInProgress }
         if isRunning { return .generationRunning }
-        // 续跑「同步失败」时允许在 needsSync 下点继续，pipeline 内再等同步。
-        if needsSync, !canResumeGhostwriteWithoutPlan { return .branchNeedsSync }
-        if !branchPendingOperations.isEmpty || !unresolvedBranchPolishTransactions.isEmpty {
+        let continuingBatch = ghostwriteProgressStorage?.shouldContinueSameBatch == true
+        // 续跑时允许在 needsSync / 仅剩 manualSync pending 下点继续，pipeline 内再等同步。
+        if needsSync, !continuingBatch, !canResumeGhostwriteWithoutPlan {
+            return .branchNeedsSync
+        }
+        let blockingPending = branchPendingOperations.filter { pending in
+            if continuingBatch, pending.kind == .manualSync { return false }
+            return true
+        }
+        if !blockingPending.isEmpty || !unresolvedBranchPolishTransactions.isEmpty {
             return .pendingOperation
         }
         if isBusy { return .transactionInProgress }
@@ -4249,6 +4306,27 @@ extension NovelSessionViewModel {
                         return
                     }
                     continue
+                }
+
+                let leftoverOnly = branchPendingOperations.allSatisfy(\.isPlotRelinkJob)
+                let needsRelink = workspace.branchSnapshot?.branch.syncStatus == .needsSync
+                    || (!branchPendingOperations.isEmpty && leftoverOnly)
+                if needsRelink {
+                    mutateGhostwriteProgress(binding: expectedBinding) {
+                        $0.phase = .syncing
+                        $0.detailMessage = "正在对齐剧情指针…"
+                    }
+                    let synced = await awaitGhostwriteStateSync(expectedBinding: expectedBinding)
+                    try Task.checkCancellation()
+                    guard synced else {
+                        pauseGhostwritePipeline(
+                            binding: expectedBinding,
+                            reason: .syncFailed,
+                            detail: "剧情指针未能对齐，无法继续代笔。",
+                            candidateID: ghostwriteProgressStorage?.candidateID
+                        )
+                        return
+                    }
                 }
 
                 let target = ghostwriteProgressStorage?.targetChapterCount
@@ -5414,6 +5492,7 @@ extension NovelSessionViewModel {
                 }
             }
 
+            let leftoverOnly = !pending.isEmpty && pending.allSatisfy(\.isPlotRelinkJob)
             let workInFlight = isRunning
                 || activity != nil
                 || pending.contains {
@@ -5422,11 +5501,12 @@ extension NovelSessionViewModel {
             let idleNeedsSync = branch?.syncStatus == .needsSync
                 && pending.isEmpty
                 && !workInFlight
+            let idleNeedsRelink = leftoverOnly && !workInFlight
             let stuckRetryable = pending.count == 1
                 && pending[0].kind == .manualSync
                 && pending[0].status == .retryable
                 && !workInFlight
-            let shouldKick = idleNeedsSync
+            let shouldKick = (idleNeedsSync || idleNeedsRelink)
                 && infraRetries < maxInfra
                 && (lastKickAt.map { Date().timeIntervalSince($0) >= 1.5 } ?? true)
 
@@ -5436,26 +5516,33 @@ extension NovelSessionViewModel {
                 mutateGhostwriteProgress(binding: expectedBinding) {
                     $0.phase = .syncing
                     $0.infraRetryCount = infraRetries
-                    $0.detailMessage = "剧情同步重试 \(infraRetries)/\(maxInfra)…"
+                    $0.detailMessage = leftoverOnly
+                        ? "正在对齐剧情指针…"
+                        : "剧情同步重试 \(infraRetries)/\(maxInfra)…"
                 }
-                workspace.retryStateSync(
-                    projectID: expectedBinding.projectID,
-                    branchID: expectedBinding.branchID
-                )
+                if leftoverOnly {
+                    await workspace.finishPlotRelinkIfNeeded()
+                } else {
+                    workspace.retryStateSync(
+                        projectID: expectedBinding.projectID,
+                        branchID: expectedBinding.branchID
+                    )
+                }
                 try? await Task.sleep(for: .milliseconds(500))
                 continue
             }
 
-            // Automatic sync already spent its heal budget. Do not kick the same
-            // retryable pending again — that would stack another 3 model calls.
+            // Leftover plot-relink is consumed above. Don't treat it as a
+            // model-heal budget that should abort the batch.
             let healExhausted = !workInFlight
+                && !leftoverOnly
                 && (stuckRetryable || syncFailedMessage != nil)
                 && Date().timeIntervalSince(lastProgressAt) > 2
             if healExhausted {
                 return false
             }
 
-            if idleNeedsSync,
+            if (idleNeedsSync || leftoverOnly),
                infraRetries >= maxInfra,
                Date().timeIntervalSince(lastProgressAt) > 3 {
                 return false
