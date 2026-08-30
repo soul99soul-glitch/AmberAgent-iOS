@@ -2618,12 +2618,12 @@ final class ChatViewModel {
         kernelRunHost.denyPendingSearchTool()
     }
 
-    func approvePendingWebMountTool() {
-        kernelRunHost.approvePendingWebMountTool()
+    func approvePendingWebMountTool(requestId: String) {
+        kernelRunHost.approvePendingWebMountTool(requestId: requestId)
     }
 
-    func denyPendingWebMountTool() {
-        kernelRunHost.denyPendingWebMountTool()
+    func denyPendingWebMountTool(requestId: String) {
+        kernelRunHost.denyPendingWebMountTool(requestId: requestId)
     }
 
     func approvePendingWorkspaceTool() {
@@ -2684,8 +2684,8 @@ final class ChatViewModel {
             approvePendingMemoryTool()
         } else if pendingSearchApproval != nil {
             approvePendingSearchTool()
-        } else if pendingWebMountApproval != nil {
-            approvePendingWebMountTool()
+        } else if let request = pendingWebMountApproval {
+            approvePendingWebMountTool(requestId: request.id)
         } else if pendingWorkspaceApproval != nil {
             approvePendingWorkspaceTool()
         } else if pendingIshHandoffApproval != nil {
@@ -2707,8 +2707,8 @@ final class ChatViewModel {
             denyPendingMemoryTool()
         } else if pendingSearchApproval != nil {
             denyPendingSearchTool()
-        } else if pendingWebMountApproval != nil {
-            denyPendingWebMountTool()
+        } else if let request = pendingWebMountApproval {
+            denyPendingWebMountTool(requestId: request.id)
         } else if pendingWorkspaceApproval != nil {
             denyPendingWorkspaceTool()
         } else if pendingIshHandoffApproval != nil {

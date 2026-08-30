@@ -128,6 +128,8 @@ struct ChatView: View {
     @State private var isAttachExpanded = false
     @State private var isCameraPresented = false
     @State private var isPhotoPickerPresented = false
+    @State private var showWebMountDesktopBackends = false
+    @State private var focusedRemoteWebMountSessionId: String?
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var fileImporterConversationId: String?
     @State private var photoPickerConversationId: String?
@@ -257,6 +259,16 @@ struct ChatView: View {
             } onCancel: {
                 messageEditDraft = nil
             }
+        }
+        .sheet(isPresented: $showWebMountDesktopBackends, onDismiss: {
+            focusedRemoteWebMountSessionId = nil
+        }) {
+            WebMountDesktopBackendsView(
+                controller: .shared,
+                focusedSessionId: focusedRemoteWebMountSessionId
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
         }
         .fileImporter(
             isPresented: $isImportingSelectedFile,
@@ -537,6 +549,47 @@ struct ChatView: View {
 
     private var currentConversationIdString: String? {
         viewModel.currentConversationId?.toHexDashString()
+    }
+
+    private var activeWebMountSession: IOSWebMountSessionRecord? {
+        guard let conversationId = currentConversationIdString else { return nil }
+        return IOSWebMountController.shared.sessionStore.records
+            .filter {
+                $0.ownerConversationId == conversationId &&
+                    ($0.ownerRunId?.nilIfBlank != nil || $0.controlOwner == .user) &&
+                    webMountSessionIsOpenable($0)
+            }
+            .max { $0.lastActivityMillis < $1.lastActivityMillis }
+    }
+
+    private func webMountSessionIsOpenable(_ record: IOSWebMountSessionRecord) -> Bool {
+        record.backend != .local ||
+            WebMountSiteRoute(watching: record, registry: IOSWebMountController.shared.registry) != nil
+    }
+
+    private func webMountSessionAction(sessionId: String?) -> (() -> Void)? {
+        guard let sessionId = sessionId?.nilIfBlank,
+              let record = IOSWebMountController.shared.sessionStore.record(sessionId: sessionId) else {
+            return nil
+        }
+        if !webMountSessionIsOpenable(record) {
+            return nil
+        }
+        return { openWebMountSession(sessionId: sessionId) }
+    }
+
+    private func openWebMountSession(sessionId: String) {
+        let controller = IOSWebMountController.shared
+        guard let record = controller.sessionStore.record(sessionId: sessionId) else { return }
+        if record.backend == .local {
+            guard let route = WebMountSiteRoute(watching: record, registry: controller.registry) else { return }
+            router.navigate(to: .webMountSite(site: route))
+        } else {
+            focusedRemoteWebMountSessionId = record.id
+            Task { @MainActor in
+                showWebMountDesktopBackends = true
+            }
+        }
     }
 
     /// Camera path (already on the main thread): compress + encode and attach.
@@ -891,11 +944,12 @@ struct ChatView: View {
             if let request = viewModel.pendingWebMountApproval {
                 WebMountToolApprovalCard(
                     request: request,
+                    onOpenSession: webMountSessionAction(sessionId: request.sessionId),
                     onApprove: {
-                        viewModel.approvePendingWebMountTool()
+                        viewModel.approvePendingWebMountTool(requestId: request.id)
                     },
                     onDeny: {
-                        viewModel.denyPendingWebMountTool()
+                        viewModel.denyPendingWebMountTool(requestId: request.id)
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -976,6 +1030,14 @@ struct ChatView: View {
                         viewModel.skipPendingAskUser()
                     }
                 )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            if let record = activeWebMountSession,
+               viewModel.pendingWebMountApproval?.sessionId != record.id {
+                AgentBrowserTaskCard(record: record) {
+                    openWebMountSession(sessionId: record.id)
+                }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 

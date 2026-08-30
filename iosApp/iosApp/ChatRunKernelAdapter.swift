@@ -1128,8 +1128,12 @@ final class ChatRunKernelAdapter {
         switch prompt {
         case .search:
             return await runtime.finishSearchApproval(pending: pending, allow: allow)
-        case .webMount:
-            return await runtime.finishWebMountApproval(pending: pending, allow: allow)
+        case .webMount(let request):
+            return await runtime.finishWebMountApproval(
+                pending: pending,
+                allow: allow,
+                approvalRequest: request
+            )
         case .workspace:
             return await runtime.finishWorkspaceApproval(pending: pending, allow: allow)
         case .ish:

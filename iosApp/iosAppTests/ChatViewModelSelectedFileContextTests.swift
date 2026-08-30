@@ -1506,14 +1506,15 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             settings: IOSWebMountSettings(userDefaults: defaults),
             runtime: ChatWebMountRuntime()
         )
+        let executor = IOSLocalToolExecutor(
+            permissionStore: IOSPermissionStore(userDefaults: isolatedDefaults()),
+            documentStore: DocumentAccessStore(),
+            webMountController: controller
+        )
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
             sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
-            localToolExecutor: IOSLocalToolExecutor(
-                permissionStore: IOSPermissionStore(userDefaults: isolatedDefaults()),
-                documentStore: DocumentAccessStore(),
-                webMountController: controller
-            ),
+            localToolExecutor: executor,
             autoGenerateResponses: false
         )
         let input = #"{"site_id":"github","url":"https://github.com/login?token=secret"}"#
@@ -1526,6 +1527,17 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertEqual(request.toolName, "wm_open")
         XCTAssertEqual(request.siteId, "github")
         XCTAssertEqual(request.host, "github.com")
+        let preview = try XCTUnwrap(executor.webMountApprovalPreview(toolName: "wm_open", input: input))
+        XCTAssertEqual(request.backend, preview.backend)
+        XCTAssertEqual(request.mcpServerName, preview.mcpServerName)
+        XCTAssertEqual(request.redactedURL, preview.redactedURL)
+        XCTAssertEqual(request.snapshotId, preview.snapshotId)
+        XCTAssertEqual(request.target, preview.target)
+        XCTAssertEqual(request.action, preview.action)
+        XCTAssertEqual(request.consequence, preview.consequence)
+        XCTAssertEqual(request.screenshotRetentionWarning, preview.screenshotRetentionWarning)
+        XCTAssertFalse(request.requiresHumanHandoff)
+        XCTAssertFalse(request.redactedURL.contains("secret"))
 
         let pendingOutput = await viewModel.webMountToolOutputForTesting(toolName: "wm_open", input: input)
         let pendingPayload = try jsonObject(pendingOutput)
@@ -1540,6 +1552,12 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             streamIndex: nil,
             metadata: nil
         )
+        let handoffRequest = ChatToolApprovalRequestBuilder.webMount(
+            for: toolCall,
+            reason: "human_handoff: Complete the sensitive step in local WebMount.",
+            localToolExecutor: executor
+        )
+        XCTAssertEqual(handoffRequest?.requiresHumanHandoff, true)
         let step = ChatToolStepModel(tool: toolCall)
         XCTAssertFalse(step.detail?.contains("token=secret") == true)
         XCTAssertTrue(step.detail?.contains("https://github.com/login") == true)

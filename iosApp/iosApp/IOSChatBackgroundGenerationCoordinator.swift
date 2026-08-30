@@ -3485,6 +3485,9 @@ final class IOSChatBackgroundGenerationCoordinator {
             }
         }
         UserDefaults.standard.set(map, forKey: taskMapKey)
+        for finishedRunId in finishedRunIds {
+            IOSWebMountController.shared.releaseAgentOwnership(runId: finishedRunId)
+        }
         for job in terminatedJobs {
             publishTerminalEvent(for: job)
         }

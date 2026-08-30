@@ -448,20 +448,21 @@ struct IOSSkillMcpToolService {
         mcpManager.refreshServers()
         let servers = mcpManager.servers.isEmpty ? mcpConfigStore.servers : mcpManager.servers
         let payload: [[String: Any]] = servers.map { server in
+            let tools = IOSMcpManager.toolsForExposure(server.tools)
             var entry: [String: Any] = [
                 "id": server.name,
                 "name": server.name,
                 "enabled": server.enabled,
                 "status": statusString(mcpManager.statusByServer[server.name]),
-                "tool_count": server.tools.count,
-                "enabled_tool_count": server.tools.filter(\.enabled).count,
+                "tool_count": tools.count,
+                "enabled_tool_count": tools.filter(\.enabled).count,
                 "type": server.transportKey,
                 "url": IOSWebMountRedactor.redactedURL(server.url) ?? "",
             ]
             if includeTools {
                 // Directory entry: names/descriptions only (schema lives in the
                 // persisted IOSMcpTool.inputSchema; fetch it with mcp_describe_tool).
-                entry["tools"] = server.tools.map { tool -> [String: Any] in
+                entry["tools"] = tools.map { tool -> [String: Any] in
                     [
                         "name": tool.name,
                         "description": String((tool.description ?? "").prefix(240)),
@@ -493,8 +494,9 @@ struct IOSSkillMcpToolService {
         }
         await mcpManager.sync(serverName: server.name, enabledOverride: enabledOverride)
         let status = mcpManager.statusByServer[server.name]
-        let toolCount = mcpManager.servers.first(where: { $0.name == server.name })?.tools.count
-            ?? server.tools.count
+        let toolCount = mcpManager.servers.first(where: { $0.name == server.name })
+            .map { IOSMcpManager.toolsForExposure($0.tools).count }
+            ?? IOSMcpManager.toolsForExposure(server.tools).count
         return Self.json([
             "server": [
                 "id": server.name,
@@ -524,11 +526,12 @@ struct IOSSkillMcpToolService {
                 "valid_servers": servers.map(\.name).sorted(),
             ])
         }
-        guard let tool = server.tools.first(where: { $0.name == toolName }) else {
+        let tools = IOSMcpManager.toolsForExposure(server.tools)
+        guard let tool = tools.first(where: { $0.name == toolName }) else {
             return Self.json([
                 "ok": false,
                 "error": "MCP tool not found on server '\(serverName)': \(toolName)",
-                "valid_tools": server.tools.map(\.name).sorted(),
+                "valid_tools": tools.map(\.name).sorted(),
             ])
         }
         let inputSchema: Any

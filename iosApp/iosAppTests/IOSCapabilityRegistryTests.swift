@@ -189,6 +189,17 @@ final class IOSCapabilityRegistryTests: XCTestCase {
         XCTAssertFalse(IOSPermissionStore.availablePolicies(for: capability).contains(.allowOncePerRun))
     }
 
+    func testWebMountCapabilityAllowsRunScopedReuseWithoutFreshPresence() throws {
+        let capability = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.webmount.browser" }
+        )
+
+        XCTAssertEqual(capability.risk, .high)
+        XCTAssertFalse(capability.gate.requiresFreshUserPresence)
+        XCTAssertTrue(capability.gate.allowRunScopedReuse)
+        XCTAssertFalse(capability.gate.allowGlobalAutoApproval)
+    }
+
     func testBlockedIOSAndAndroidToolsAreNotExecutable() {
         let blocked = [
             "sms_read",

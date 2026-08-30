@@ -441,19 +441,19 @@ fun createWebMountStationsToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountTabListToolDeclaration(): Tool = webMountTool(
     name = "wm_tab_list",
-    description = "List up to three foreground iOS WebMount sessions with redacted URLs, titles, status, and navigation state.",
+    description = "List up to three foreground iOS WebMount sessions with redacted URLs, titles, status, and navigation state. Use the returned session_id to bind an agent run to an explicit session.",
     parameters = emptyObjectParameters()
 )
 
 fun createWebMountTabNewToolDeclaration(): Tool = webMountTool(
     name = "wm_tab_new",
-    description = "Create a new foreground iOS WebMount session. iOS keeps at most three sessions and evicts least-recently-used sessions.",
+    description = "Create a new foreground iOS WebMount session and return its session_id for an agent run. iOS keeps at most three sessions and evicts least-recently-used sessions.",
     parameters = webMountTabNewParameters()
 )
 
 fun createWebMountTabCloseToolDeclaration(): Tool = webMountTool(
     name = "wm_tab_close",
-    description = "Close a foreground iOS WebMount session by session_id. If omitted, closes the current foreground session.",
+    description = "Close a foreground iOS WebMount session by session_id. Agent runs must provide it; only direct in-app user operations may omit it to close the current foreground session.",
     parameters = webMountTabCloseParameters()
 )
 
@@ -486,7 +486,7 @@ fun createWebMountExtractToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountGetToolDeclaration(): Tool = webMountTool(
     name = "wm_get",
-    description = "Read one element's text, value, HTML, or attribute from the current iOS WebMount page.",
+    description = "Read one visible element's text, checked value, or non-sensitive attribute from the current iOS WebMount page. Raw HTML is not available.",
     parameters = webMountGetParameters()
 )
 
@@ -542,37 +542,37 @@ fun createWebMountSiteRemoveToolDeclaration(): Tool = webMountTool(
 fun createWebMountClickToolDeclaration(): Tool = webMountTool(
     name = "wm_click",
     description = "Click a visible element on the current iOS WebMount page by selector or target ref.",
-    parameters = webMountTargetParameters()
+    parameters = webMountTargetParameters(requireSessionSnapshot = true)
 )
 
 fun createWebMountTapToolDeclaration(): Tool = webMountTool(
     name = "wm_tap",
     description = "Tap a coordinate or target on the current iOS WebMount page; prefer wm_click when a selector/ref exists.",
-    parameters = webMountTargetParameters(includeCoordinates = true)
+    parameters = webMountTargetParameters(includeCoordinates = true, requireSessionSnapshot = true)
 )
 
 fun createWebMountTypeToolDeclaration(): Tool = webMountTool(
     name = "wm_type",
     description = "Type text into an input element on the current iOS WebMount page.",
-    parameters = webMountTextInteractionParameters()
+    parameters = webMountTextInteractionParameters(requireSessionSnapshot = true)
 )
 
 fun createWebMountKeysToolDeclaration(): Tool = webMountTool(
     name = "wm_keys",
     description = "Send a short key sequence to the current iOS WebMount page or focused field.",
-    parameters = webMountTextInteractionParameters()
+    parameters = webMountTextInteractionParameters(requireSessionSnapshot = true)
 )
 
 fun createWebMountScrollToolDeclaration(): Tool = webMountTool(
     name = "wm_scroll",
     description = "Scroll the current iOS WebMount page or an element into view.",
-    parameters = webMountScrollParameters()
+    parameters = webMountScrollParameters(requireSessionSnapshot = true)
 )
 
 fun createWebMountSelectToolDeclaration(): Tool = webMountTool(
     name = "wm_select",
     description = "Select an option value in a select element on the current iOS WebMount page.",
-    parameters = webMountTextInteractionParameters()
+    parameters = webMountTextInteractionParameters(requireSessionSnapshot = true)
 )
 
 fun createWebMountFindToolDeclaration(): Tool = webMountTool(
@@ -583,7 +583,7 @@ fun createWebMountFindToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountWaitToolDeclaration(): Tool = webMountTool(
     name = "wm_wait",
-    description = "Wait briefly for the current iOS WebMount page to settle before the next action.",
+    description = "Wait with a bounded deadline for DOM stability, a selector, visible text, URL fragment, ready state, or an explicit delay. Returns a structured timeout instead of pretending the condition matched.",
     parameters = webMountWaitParameters()
 )
 
@@ -2626,10 +2626,31 @@ private fun webMountStationsParameters(): InputSchema = InputSchema.Obj(
     }
 )
 
-private fun JsonObjectBuilder.putWebMountSessionId() {
+private fun JsonObjectBuilder.putWebMountSessionId(required: Boolean = false) {
     put("session_id", buildJsonObject {
         put("type", "string")
-        put("description", "optional WebMount session id from wm_tab_list; omit to use the current foreground session")
+        put(
+            "description",
+            if (required) {
+                "Required for agent mutations. Bind to the session_id returned by wm_tab_list or wm_tab_new; omitted or mismatched session ids are rejected."
+            } else {
+                "Optional for compatibility. Agent runs must provide a session id returned by wm_tab_list or wm_tab_new; only direct in-app user operations may omit it to address the current foreground session. The executor rejects an omitted agent session id."
+            }
+        )
+    })
+}
+
+private fun JsonObjectBuilder.putWebMountSnapshotId(required: Boolean = false) {
+    put("snapshot_id", buildJsonObject {
+        put("type", "string")
+        put(
+            "description",
+            if (required) {
+                "Required for agent mutations. Bind to the snapshot_id returned by wm_observe or wm_find; stale snapshots fail instead of guessing a target."
+            } else {
+                "optional snapshot id from wm_observe/wm_find; stale snapshots fail instead of guessing a target"
+            }
+        )
     })
 }
 
@@ -2641,9 +2662,28 @@ private fun webMountSessionParameters(): InputSchema = InputSchema.Obj(
 
 private fun webMountTabNewParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
+        put("backend", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional browser backend; defaults to local. Desktop backends require mcp_server_name.")
+            put("enum", buildJsonArray {
+                add("local")
+                add("moli")
+                add("playwright_mcp")
+                add("steel")
+            })
+            put("default", "local")
+        })
+        put("mcp_server_name", buildJsonObject {
+            put("type", "string")
+            put("description", "Required when backend is moli, playwright_mcp, or steel; names the MCP server used by the desktop backend.")
+        })
         put("site_id", buildJsonObject {
             put("type", "string")
             put("description", "optional station id to associate with the new session")
+        })
+        put("persistent", buildJsonObject {
+            put("type", "boolean")
+            put("description", "optional; persist only logical session metadata across app restarts and restore a fresh WebView that must be reopened, never DOM state or actions")
         })
     }
 )
@@ -2698,6 +2738,7 @@ private fun webMountExtractParameters(): InputSchema = InputSchema.Obj(
 private fun webMountGetParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         putWebMountSessionId()
+        putWebMountSnapshotId()
         put("selector", buildJsonObject {
             put("type", "string")
             put("description", "CSS selector to read")
@@ -2713,7 +2754,6 @@ private fun webMountGetParameters(): InputSchema = InputSchema.Obj(
                 add("text")
                 add("value")
                 add("attr")
-                add("html")
             })
         })
         put("attr_name", buildJsonObject {
@@ -2780,9 +2820,13 @@ private fun webMountSiteRemoveParameters(): InputSchema = InputSchema.Obj(
     required = listOf("site_id")
 )
 
-private fun webMountTargetParameters(includeCoordinates: Boolean = false): InputSchema = InputSchema.Obj(
+private fun webMountTargetParameters(
+    includeCoordinates: Boolean = false,
+    requireSessionSnapshot: Boolean = false
+): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
-        putWebMountSessionId()
+        putWebMountSessionId(required = requireSessionSnapshot)
+        putWebMountSnapshotId(required = requireSessionSnapshot)
         put("selector", buildJsonObject {
             put("type", "string")
             put("description", "CSS selector for the target element")
@@ -2801,12 +2845,14 @@ private fun webMountTargetParameters(includeCoordinates: Boolean = false): Input
                 put("description", "Y coordinate in viewport pixels")
             })
         }
-    }
+    },
+    required = if (requireSessionSnapshot) listOf("session_id", "snapshot_id") else null
 )
 
-private fun webMountTextInteractionParameters(): InputSchema = InputSchema.Obj(
+private fun webMountTextInteractionParameters(requireSessionSnapshot: Boolean = false): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
-        putWebMountSessionId()
+        putWebMountSessionId(required = requireSessionSnapshot)
+        putWebMountSnapshotId(required = requireSessionSnapshot)
         put("selector", buildJsonObject {
             put("type", "string")
             put("description", "CSS selector for the target element")
@@ -2823,12 +2869,14 @@ private fun webMountTextInteractionParameters(): InputSchema = InputSchema.Obj(
             put("type", "string")
             put("description", "Alias for text when selecting or typing a value")
         })
-    }
+    },
+    required = if (requireSessionSnapshot) listOf("session_id", "snapshot_id") else null
 )
 
-private fun webMountScrollParameters(): InputSchema = InputSchema.Obj(
+private fun webMountScrollParameters(requireSessionSnapshot: Boolean = false): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
-        putWebMountSessionId()
+        putWebMountSessionId(required = requireSessionSnapshot)
+        putWebMountSnapshotId(required = requireSessionSnapshot)
         put("selector", buildJsonObject {
             put("type", "string")
             put("description", "Optional CSS selector to scroll")
@@ -2845,12 +2893,14 @@ private fun webMountScrollParameters(): InputSchema = InputSchema.Obj(
             put("type", "number")
             put("description", "Vertical pixel delta")
         })
-    }
+    },
+    required = if (requireSessionSnapshot) listOf("session_id", "snapshot_id") else null
 )
 
 private fun webMountFindParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         putWebMountSessionId()
+        putWebMountSnapshotId()
         put("selector", buildJsonObject {
             put("type", "string")
             put("description", "CSS selector to find")
@@ -2869,9 +2919,45 @@ private fun webMountFindParameters(): InputSchema = InputSchema.Obj(
 private fun webMountWaitParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         putWebMountSessionId()
+        put("condition", buildJsonObject {
+            put("type", "string")
+            put("description", "observable condition; defaults to dom_stable")
+            put("enum", buildJsonArray {
+                add("dom_stable")
+                add("selector")
+                add("text")
+                add("url_contains")
+                add("ready_state")
+                add("delay")
+            })
+        })
+        put("selector", buildJsonObject {
+            put("type", "string")
+            put("description", "selector or target ref to wait for when condition=selector")
+        })
+        put("text", buildJsonObject {
+            put("type", "string")
+            put("description", "visible page text to wait for when condition=text")
+        })
+        put("url_contains", buildJsonObject {
+            put("type", "string")
+            put("description", "URL fragment to wait for without returning query values")
+        })
+        put("ready_state", buildJsonObject {
+            put("type", "string")
+            put("description", "document ready state to wait for; interactive or complete")
+            put("enum", buildJsonArray {
+                add("interactive")
+                add("complete")
+            })
+        })
+        put("stable_ms", buildJsonObject {
+            put("type", "integer")
+            put("description", "required unchanged DOM interval for dom_stable, clamped by iOS")
+        })
         put("timeout_ms", buildJsonObject {
             put("type", "integer")
-            put("description", "Wait duration in milliseconds, clamped by iOS")
+            put("description", "bounded deadline in milliseconds, clamped to 100...30000 by iOS")
         })
     }
 )

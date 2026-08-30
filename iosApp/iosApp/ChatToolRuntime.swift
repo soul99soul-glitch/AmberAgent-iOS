@@ -596,7 +596,12 @@ final class ChatToolRuntime {
                 executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
-                    let output = await self.webMountToolExecutionOutput(toolCall, isUserInitiated: false)
+                    let output = await self.webMountToolExecutionOutput(
+                        toolCall,
+                        isUserInitiated: false,
+                        runId: runId,
+                        conversationId: conversationId
+                    )
                     if case .needsUserAction(let reason) = output {
                         return .denied("后台生成期间需要回到 App 确认 WebMount 操作：\(reason)")
                     }
@@ -1305,7 +1310,8 @@ final class ChatToolRuntime {
 
     func finishWebMountApproval(
         pending: ChatPendingToolApproval,
-        allow: Bool
+        allow: Bool,
+        approvalRequest: WebMountToolApprovalRequest
     ) async -> [UIMessage] {
         recordToolApproval(
             capabilityId: "ios.webmount.browser",
@@ -1313,15 +1319,74 @@ final class ChatToolRuntime {
             action: allow ? .allowed : .denied,
             reason: allow ? "User approved WebMount foreground action." : "User denied WebMount foreground action.",
             runId: pending.runId,
-            executionPolicy: pending.executionPolicy
+            executionPolicy: pending.executionPolicy,
+            conversationId: pending.conversationId
         )
 
         let resultText: String
-        if allow {
+        let currentPreview = localToolExecutor?.webMountApprovalPreview(
+            toolName: pending.toolCall.toolName,
+            input: pending.toolCall.input
+        )
+        let handoffContextMatches = allow
+            && approvalRequest.requiresHumanHandoff
+            && approvalRequest.sessionId?.nilIfBlank != nil
+            && approvalRequest.sessionId?.nilIfBlank == currentPreview?.sessionId?.nilIfBlank
+            && approvalRequest.runId?.nilIfBlank != nil
+            && approvalRequest.runId?.nilIfBlank == pending.runId.nilIfBlank
+        let humanHandoffCompleted = handoffContextMatches
+            && approvalRequest.backend == "local"
+            && localToolExecutor?.completeWebMountHumanHandoff(
+                toolName: pending.toolCall.toolName,
+                input: pending.toolCall.input,
+                runId: pending.runId
+            ) == true
+        if allow, approvalRequest.requiresHumanHandoff, !handoffContextMatches {
+            resultText = IOSWebMountController.json([
+                "ok": false,
+                "tool": pending.toolCall.toolName,
+                "status": "stale_handoff",
+                "error_code": "stale_handoff",
+                "requires_reobserve": true,
+                "may_have_applied": false,
+                "message": "The WebMount handoff context changed; re-observe before continuing."
+            ])
+        } else if allow, approvalRequest.requiresHumanHandoff, approvalRequest.backend != "local" {
+            resultText = IOSWebMountController.json([
+                "ok": false,
+                "tool": pending.toolCall.toolName,
+                "status": "requires_human",
+                "error_code": "local_privacy_session_required",
+                "requires_human": true,
+                "handoff": true,
+                "may_have_applied": false,
+                "message": "The sensitive desktop action remained blocked. Complete it in local WebMount, then re-observe."
+            ])
+        } else if humanHandoffCompleted {
+            resultText = IOSWebMountController.json([
+                "ok": true,
+                "tool": pending.toolCall.toolName,
+                "status": "human_handoff_completed",
+                "requires_reobserve": true,
+                "message": "Foreground WebMount handoff completed; re-observe before continuing."
+            ])
+        } else if allow, approvalRequest.requiresHumanHandoff {
+            resultText = IOSWebMountController.json([
+                "ok": false,
+                "tool": pending.toolCall.toolName,
+                "status": "stale_handoff",
+                "error_code": "stale_handoff",
+                "requires_reobserve": true,
+                "may_have_applied": false,
+                "message": "The local handoff is no longer active; re-observe before continuing."
+            ])
+        } else if allow {
             let output = await webMountToolExecutionOutput(
                 pending.toolCall,
                 isUserInitiated: true,
-                executionPolicy: pending.executionPolicy
+                executionPolicy: pending.executionPolicy,
+                runId: pending.runId,
+                conversationId: pending.conversationId
             )
             resultText = ChatToolOutputFormatter.webMountResultText(for: pending.toolCall, output: output)
         } else {
@@ -2286,12 +2351,18 @@ final class ChatToolRuntime {
     }
 
     private func executeWebMountToolCall(_ pending: ChatPendingToolApproval) async -> ChatToolRuntimeResult {
-        let output = await webMountToolExecutionOutput(pending.toolCall, isUserInitiated: false)
+        let output = await webMountToolExecutionOutput(
+            pending.toolCall,
+            isUserInitiated: false,
+            runId: pending.runId,
+            conversationId: pending.conversationId
+        )
         if case .needsUserAction(let reason) = output,
            let request = ChatToolApprovalRequestBuilder.webMount(
                for: pending.toolCall,
                reason: reason,
-               localToolExecutor: localToolExecutor
+               localToolExecutor: localToolExecutor,
+               runId: pending.runId
            ) {
             return .waitingForApproval(.webMount(request))
         }
@@ -2855,7 +2926,11 @@ final class ChatToolRuntime {
             }
 
             if !skipGate {
-                switch recipeStepGate(tool: step.tool, argsJSON: argsJSON) {
+                switch await recipeStepGate(
+                    tool: step.tool,
+                    argsJSON: argsJSON,
+                    context: context
+                ) {
                 case .unsupported(let reason):
                     let error = IOSRecipeRunError.stepFailed(stepId: step.id, tool: step.tool, message: reason)
                     await recordRecipeLevelFinished(
@@ -3321,7 +3396,12 @@ final class ChatToolRuntime {
             }
             return .output(ChatToolOutputFormatter.ishHandoffResultText(for: toolCall, output: output))
         case .webMount:
-            let output = await webMountToolExecutionOutput(toolCall, isUserInitiated: isUserInitiated)
+            let output = await webMountToolExecutionOutput(
+                toolCall,
+                isUserInitiated: isUserInitiated,
+                runId: context.runId,
+                conversationId: context.conversationId
+            )
             if case .needsUserAction(let reason) = output {
                 return .needsApproval(reason: reason)
             }
@@ -3366,7 +3446,11 @@ final class ChatToolRuntime {
     /// `executeAdvancedToolCall` / the local executor's policy gates). The
     /// execution itself is never duplicated — only the "would this need a
     /// card" decision, so a recipe step cannot silently skip a gate.
-    private func recipeStepGate(tool: String, argsJSON: String) -> RecipeStepGate {
+    private func recipeStepGate(
+        tool: String,
+        argsJSON: String,
+        context: ChatPendingToolApproval
+    ) async -> RecipeStepGate {
         switch IOSRecipePrimitiveCatalog.route(for: tool) {
         case .workspace:
             return workspaceRecipeStepGate(toolName: tool)
@@ -3392,7 +3476,11 @@ final class ChatToolRuntime {
             // non-user-initiated call (no auto-approve bypass) — mirror.
             return .approvalRequired(reason: "iSH 执行需要显式批准。")
         case .webMount:
-            return webMountRecipeStepGate(toolName: tool)
+            return await webMountRecipeStepGate(
+                toolName: tool,
+                argsJSON: argsJSON,
+                context: context
+            )
         case .advanced:
             switch tool {
             case "mcp_call":
@@ -3481,34 +3569,72 @@ final class ChatToolRuntime {
         return .proceed
     }
 
-    /// Mirror of `IOSLocalToolExecutor.resolveWebMount`'s gate.
-    private func webMountRecipeStepGate(toolName: String) -> RecipeStepGate {
-        guard let localToolExecutor,
-              let capability = IOSCapabilityRegistry.capability(forToolName: toolName) else {
-            return .proceed
+    /// Reuse the same WebMount gate as top-level execution so recipe steps do
+    /// not drift from the executor's policy or explicit-user-action rules.
+    private func webMountRecipeStepGate(
+        toolName: String,
+        argsJSON: String,
+        context: ChatPendingToolApproval
+    ) async -> RecipeStepGate {
+        guard let localToolExecutor else {
+            return .unsupported(reason: "WebMount executor is unavailable.")
         }
-        guard let policy = IOSExecutionPolicyContext.snapshot?.policy(for: capability)
-            ?? localToolExecutor.permissionPolicy(capabilityId: capability.id) else {
-            return .proceed
-        }
-        if policy == .disabled {
-            return .proceed
-        }
-        if policy == .autoApprove || policy == .autoApproveHighRisk {
-            return .proceed
-        }
-        if toolName == "wm_clear_session" {
-            return .approvalRequired(reason: "清除 WebMount cookies 需要显式批准。")
-        }
-        if IOSWebMountToolCatalog.descriptors.first(where: { $0.name == toolName })?.requiresUserAction == true {
-            return .approvalRequired(reason: "此 WebMount 操作需要显式批准。")
-        }
-        if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
-            if effectiveGlobalAutoApproveEnabled
-                && (capability.risk != .high || effectiveHighRiskAutoApproveEnabled) {
-                return .proceed
+        switch localToolExecutor.webMountGateDecision(
+            toolName: toolName,
+            isUserInitiated: false,
+            executionPolicy: IOSExecutionPolicyContext.snapshot
+        ) {
+        case .allow:
+            return await webMountRecipeActionPreflight(
+                toolName: toolName,
+                argsJSON: argsJSON,
+                context: context
+            ) ?? .proceed
+        case .deny(let reason):
+            return .unsupported(reason: reason)
+        case .needsUserAction(let reason):
+            if let preflight = await webMountRecipeActionPreflight(
+                toolName: toolName,
+                argsJSON: argsJSON,
+                context: context
+            ), case .approvalRequired = preflight {
+                return preflight
             }
-            return .approvalRequired(reason: "WebMount 浏览器操作需要显式批准。")
+            return .approvalRequired(reason: reason)
+        }
+    }
+
+    private func webMountRecipeActionPreflight(
+        toolName: String,
+        argsJSON: String,
+        context: ChatPendingToolApproval
+    ) async -> RecipeStepGate? {
+        guard let localToolExecutor,
+              let output = await localToolExecutor.webMountActionPreflight(
+                  toolName: toolName,
+                  input: argsJSON,
+                  runId: context.runId,
+                  conversationId: context.conversationId?.toHexDashString() ?? ""
+              ) else {
+            return nil
+        }
+        guard let data = output.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .unsupported(reason: "WebMount action preflight returned invalid output.")
+        }
+
+        let reason = (object["reason"] as? String)?.nilIfBlank
+            ?? (object["consequence"] as? String)?.nilIfBlank
+            ?? (object["error"] as? String)?.nilIfBlank
+            ?? "WebMount action preflight failed."
+        if object["requires_human"] as? Bool == true {
+            return .approvalRequired(reason: "human_handoff: \(reason)")
+        }
+        if object["needs_user_action"] as? Bool == true {
+            return .approvalRequired(reason: reason)
+        }
+        if object["ok"] as? Bool == false {
+            return .unsupported(reason: reason)
         }
         return .proceed
     }
@@ -3843,7 +3969,9 @@ final class ChatToolRuntime {
     private func webMountToolExecutionOutput(
         _ toolCall: UIMessagePart.Tool,
         isUserInitiated: Bool,
-        executionPolicy: IOSExecutionPolicySnapshot? = nil
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
+        runId: String = "",
+        conversationId: KotlinUuid? = nil
     ) async -> IOSLocalToolExecutionOutput {
         guard let localToolExecutor else {
             return .failed("Local iOS tool executor is unavailable.")
@@ -3852,6 +3980,8 @@ final class ChatToolRuntime {
             toolName: toolCall.toolName,
             operation: toolCall.input,
             isUserInitiated: isUserInitiated,
+            runId: runId,
+            conversationId: conversationId?.toHexDashString() ?? "",
             executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
         ))
     }
@@ -4022,7 +4152,10 @@ final class ChatToolRuntime {
                 providerSetting: providerSetting,
                 modelId: params.model.modelId,
                 baseParams: params,
-                parentToolExecutors: subAgentParentToolExecutors(runId: runId),
+                parentToolExecutors: subAgentParentToolExecutors(
+                    runId: runId,
+                    conversationId: conversationId?.description() ?? ""
+                ),
                 toolCallId: toolCall.toolCallId
             )
         case "model_council_run":
@@ -4332,13 +4465,21 @@ final class ChatToolRuntime {
         }
     }
 
-    private func subAgentParentToolExecutors(runId: String) -> [String: any IOSToolExecutor] {
+    private func subAgentParentToolExecutors(
+        runId: String,
+        conversationId: String
+    ) -> [String: any IOSToolExecutor] {
         Dictionary(uniqueKeysWithValues: IOSSubAgentToolPolicy.readOnlyParentToolNames.map { name in
             (name, IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
                 guard let self else {
                     return .failed("Chat runtime is unavailable.")
                 }
-                return await self.executeSubAgentParentTool(name: toolName, arguments: arguments, runId: runId)
+                return await self.executeSubAgentParentTool(
+                    name: toolName,
+                    arguments: arguments,
+                    runId: runId,
+                    conversationId: conversationId
+                )
             } as any IOSToolExecutor)
         })
     }
@@ -4346,7 +4487,8 @@ final class ChatToolRuntime {
     private func executeSubAgentParentTool(
         name: String,
         arguments: String,
-        runId: String
+        runId: String,
+        conversationId: String
     ) async -> IOSAgentToolOutcome {
         guard IOSSubAgentToolPolicy.readOnlyParentToolNames.contains(name) else {
             return .denied("SubAgent read-only scope does not allow \(name).")
@@ -4372,6 +4514,7 @@ final class ChatToolRuntime {
             operation: arguments,
             isUserInitiated: name == "file_read_selected",
             runId: runId,
+            conversationId: conversationId,
             executionPolicy: IOSExecutionPolicyContext.snapshot
         )
         let output = await localToolExecutor.execute(request)
@@ -4456,7 +4599,8 @@ final class ChatToolRuntime {
         reason: String,
         runId: String,
         executionPolicy: IOSExecutionPolicySnapshot? = nil,
-        isUserDecision: Bool = true
+        isUserDecision: Bool = true,
+        conversationId: KotlinUuid? = nil
     ) {
         let policy = executionPolicy ?? IOSExecutionPolicyContext.snapshot
         if let localToolExecutor {
@@ -4465,6 +4609,7 @@ final class ChatToolRuntime {
                 operation: toolCall.input,
                 isUserInitiated: true,
                 runId: runId,
+                conversationId: conversationId?.toHexDashString() ?? "",
                 executionPolicy: policy
             )
             localToolExecutor.recordApproval(

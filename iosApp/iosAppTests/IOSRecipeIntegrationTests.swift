@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @preconcurrency import Shared
 @testable import iosApp
 
@@ -566,6 +567,96 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         XCTAssertEqual(recipeLevel["artifactId"] as? String, "recipe__digest_save")
     }
 
+    func testAutoHighRiskWebMountRecipePreflightsPayAndSubmitBeforeDispatch() async throws {
+        let root = tempRoot()
+        let store = makeStore(root: root)
+        let registry = makeRegistry(store: store)
+        let webMountDefaults = UserDefaults(suiteName: "recipe-webmount-\(UUID().uuidString)")!
+        let webMountRegistry = IOSWebMountRegistry(userDefaults: webMountDefaults)
+        let webMountSettings = IOSWebMountSettings(userDefaults: webMountDefaults)
+        webMountSettings.globalEnabled = true
+        let site = try XCTUnwrap(webMountRegistry.site(id: "github"))
+        webMountRegistry.setEnabled(id: site.id, enabled: true)
+        let webMountRuntime = BackgroundFeatureRecipeWebMountRuntime(sessionId: "recipe-session")
+        let controller = IOSWebMountController(
+            registry: webMountRegistry,
+            settings: webMountSettings,
+            runtime: webMountRuntime,
+            runtimeFactory: { BackgroundFeatureRecipeWebMountRuntime() },
+            sessionDefaults: webMountDefaults
+        )
+        controller.sessionStore.tag(sessionId: webMountRuntime.snapshot.sessionId, site: site)
+
+        let runId = "webmount-recipe-\(UUID().uuidString)"
+        let conversationId = KotlinUuid.companion.random()
+        try controller.sessionStore.acquireAgentControl(
+            sessionId: webMountRuntime.snapshot.sessionId,
+            runId: runId,
+            conversationId: conversationId.toHexDashString()
+        )
+        let permissionStore = IOSPermissionStore(
+            userDefaults: UserDefaults(suiteName: "recipe-webmount-perm-\(UUID().uuidString)")!
+        )
+        let webMountCapability = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.webmount.browser" }
+        )
+        permissionStore.setPolicy(.autoApproveHighRisk, for: webMountCapability)
+        let executor = IOSLocalToolExecutor(
+            permissionStore: permissionStore,
+            documentStore: DocumentAccessStore(),
+            webMountController: controller
+        )
+        let executionPolicy = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [
+                webMountCapability.id: IOSAgentPermissionPolicy.autoApproveHighRisk.rawValue
+            ],
+            globalAutoApproveEnabled: false,
+            highRiskAutoApproveEnabled: true,
+            execJavaScriptEnabled: false,
+            webSearchEnabled: false
+        )
+        try apply(
+            store: store,
+            json: try webMountHighRiskRecipeJSON(
+                version: "1.0.0",
+                sessionId: webMountRuntime.snapshot.sessionId,
+                snapshotId: "recipe-snapshot"
+            )
+        )
+        let snapshot = try unwrapSnapshot(await registry.refresh())
+        let bridge = IOSDynamicToolBridgeRebuilder.rebuiltBridge(
+            from: IosToolExposureBridge(tools: fullIosDeclarations()),
+            snapshot: snapshot
+        )
+        let call = makeRecipeToolCall(name: "recipe__webmount_checkout", input: "{}")
+        let pending = pendingContext(
+            for: call,
+            runId: runId,
+            conversationId: conversationId,
+            executionPolicy: executionPolicy
+        )
+        let runtime = makeRuntime(
+            root: root,
+            ledger: IOSRunEventLogLedger(log: IOSRunEventLog()),
+            localToolExecutor: executor
+        )
+        let result = await runtime.execute(
+            ChatPendingToolCall(kind: .advanced, toolCall: call),
+            context: pending,
+            toolExposureBridge: bridge,
+            recipeCatalogSnapshot: snapshot
+        )
+        guard case .waitingForApproval(.recipe(let request)) = result,
+              case .step(let payload) = request.payload else {
+            return XCTFail("auto-high-risk payment/submit recipe must pause before dispatch, got \(result)")
+        }
+        XCTAssertEqual(payload.stepId, "pay_and_submit")
+        XCTAssertEqual(payload.tool, "wm_click")
+        XCTAssertTrue(request.reason.localizedCaseInsensitiveContains("pay or submit"))
+        XCTAssertEqual(webMountRuntime.preflightCount, 1)
+        XCTAssertEqual(webMountRuntime.dispatchCount, 0)
+    }
+
     /// Checker-requested coverage (§10.3.5): a recipe with TWO mutation steps
     /// must pause once per mutation step — approving the first CONTINUES the
     /// recipe, which pauses again at the second (the Adapter's
@@ -1058,7 +1149,12 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         )
     }
 
-    private func pendingContext(for toolCall: UIMessagePart.Tool, runId: String) -> ChatPendingToolApproval {
+    private func pendingContext(
+        for toolCall: UIMessagePart.Tool,
+        runId: String,
+        conversationId: KotlinUuid? = nil,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) -> ChatPendingToolApproval {
         ChatPendingToolApproval(
             toolCall: toolCall,
             providerSetting: makeProviderSetting(),
@@ -1066,8 +1162,9 @@ final class IOSRecipeIntegrationTests: XCTestCase {
             runId: runId,
             startedAt: 1,
             inputDigest: "digest",
-            conversationId: nil,
-            baseMessages: [makeAssistantMessage(parts: [toolCall])]
+            conversationId: conversationId,
+            baseMessages: [makeAssistantMessage(parts: [toolCall])],
+            executionPolicy: executionPolicy
         )
     }
 
@@ -1343,6 +1440,30 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         ])
     }
 
+    private func webMountHighRiskRecipeJSON(
+        version: String,
+        sessionId: String,
+        snapshotId: String
+    ) throws -> Data {
+        try jsonData([
+            "schema": "amber.recipe.v1",
+            "name": "webmount_checkout",
+            "version": version,
+            "description": "检查付款并提交订单。",
+            "inputs": [:],
+            "steps": [[
+                "id": "pay_and_submit",
+                "tool": "wm_click",
+                "arguments": [
+                    "session_id": sessionId,
+                    "snapshot_id": snapshotId,
+                    "target": "Pay and submit order",
+                ],
+            ]],
+            "outputs": ["status": "${step.pay_and_submit.output.status}"],
+        ])
+    }
+
     private func jsonData(_ dict: [String: Any]) throws -> Data {
         try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
     }
@@ -1428,6 +1549,79 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         }
         return entries.sorted()
     }
+}
+
+@MainActor
+private final class BackgroundFeatureRecipeWebMountRuntime: IOSWebMountRuntimeServicing {
+    let webView: WKWebView? = nil
+    private(set) var preflightCount = 0
+    private(set) var dispatchCount = 0
+    var snapshot: IOSWebMountRuntimeSnapshot
+
+    init(sessionId: String = "recipe-webmount-session") {
+        snapshot = IOSWebMountRuntimeSnapshot(
+            sessionId: sessionId,
+            status: .ready,
+            requestedURL: "https://github.com/login",
+            currentURL: "https://github.com/login",
+            title: "Checkout",
+            estimatedProgress: 1,
+            canGoBack: false,
+            canGoForward: false,
+            error: nil,
+            updatedAtMillis: 1
+        )
+    }
+
+    func open(_ url: URL, timeoutMillis: UInt64) async -> IOSWebMountRuntimeSnapshot {
+        snapshot.currentURL = url.absoluteString
+        return snapshot
+    }
+
+    func state() async throws -> [String: Any] {
+        ["snapshot_id": "recipe-snapshot", "page_revision": 1]
+    }
+
+    func extract(mode: String, maxChars: Int, maxLinks: Int) async throws -> [String: Any] {
+        ["mode": mode, "snapshot_id": "recipe-snapshot"]
+    }
+
+    func get(
+        selector: String?,
+        target: String?,
+        kind: String,
+        attrName: String?,
+        maxChars: Int
+    ) async throws -> [String: Any] {
+        ["ok": true, "snapshot_id": "recipe-snapshot"]
+    }
+
+    func interact(
+        method: String,
+        selector: String?,
+        text: String?,
+        options: [String: Any]
+    ) async throws -> [String: Any] {
+        if options["_amber_preflight_only"] as? Bool == true {
+            preflightCount += 1
+            return [
+                "ok": false,
+                "needs_user_action": true,
+                "reason": "This action may pay or submit.",
+                "consequence": "Payment or order submission changes remote state.",
+                "snapshot_id": "recipe-snapshot"
+            ]
+        }
+        dispatchCount += 1
+        return ["ok": true, "verified": true, "snapshot_id": "recipe-snapshot"]
+    }
+
+    func screenshot() async throws -> IOSWebMountScreenshotCapture {
+        IOSWebMountScreenshotCapture(data: Data(), width: 1, height: 1, format: "png")
+    }
+
+    func back() async -> IOSWebMountRuntimeSnapshot { snapshot }
+    func forward() async -> IOSWebMountRuntimeSnapshot { snapshot }
 }
 
 /// Sendable reduction of one `agent_event` row.

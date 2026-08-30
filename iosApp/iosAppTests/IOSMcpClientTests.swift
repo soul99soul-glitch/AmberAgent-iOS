@@ -30,6 +30,120 @@ final class IOSMcpClientTests: XCTestCase {
         XCTAssertTrue(transport.disconnectedServers.isEmpty)
     }
 
+    func testResponseIDMismatchIsInvalidResponseBeforeRPCError() async throws {
+        let transport = FakeMcpHTTPTransport(responses: [
+            ["jsonrpc": "2.0", "id": 99, "error": ["message": "wrong request"]]
+        ])
+        let client = IOSMcpClient(transport: transport)
+
+        do {
+            _ = try await client.connect(config: .streamableHTTP(name: "docs", url: "https://example.com/mcp"))
+            XCTFail("Expected a mismatched JSON-RPC response id to fail")
+        } catch let error as IOSMcpClientError {
+            XCTAssertEqual(error, .invalidResponse)
+        }
+        XCTAssertEqual(transport.sentMethods, ["initialize"])
+    }
+
+    func testStreamableHTTPSessionIDIsCapturedAndSentToSubsequentRequests() async throws {
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 2, "result": ["tools": []]],
+                ["jsonrpc": "2.0", "id": 3, "result": ["content": [["type": "text", "text": "ok"]]]],
+            ],
+            responseHeaders: [["mcp-session-id": "session-1"], [:], [:]]
+        )
+        let client = IOSMcpClient(transport: transport)
+        let config = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://example.com/mcp",
+            headers: [
+                "Authorization": "Bearer test",
+                "Mcp-Session-Id": "stale-session",
+            ]
+        )
+
+        _ = try await client.connect(config: config)
+        _ = try await client.listTools()
+        _ = try await client.callTool(name: "echo", arguments: [:])
+
+        XCTAssertNil(transport.sentRequestHeaders[0]["Mcp-Session-Id"])
+        XCTAssertEqual(transport.sentRequestHeaders[0]["Authorization"], "Bearer test")
+        XCTAssertEqual(transport.sentRequestHeaders[1]["Mcp-Session-Id"], "session-1")
+        XCTAssertEqual(transport.sentRequestHeaders[2]["Mcp-Session-Id"], "session-1")
+        XCTAssertEqual(transport.sentRequestHeaders[3]["Mcp-Session-Id"], "session-1")
+    }
+
+    func testMcpManagerBlocksRawBrowserCdpAndDevtoolsToolsFromExposureAndExecution() async throws {
+        let config = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://example.com/mcp",
+            tools: [
+                IOSMcpTool(name: "search", description: "Search"),
+                IOSMcpTool(name: "browser_click", description: "Browser click"),
+                IOSMcpTool(name: "cdp_click", description: "CDP click"),
+                IOSMcpTool(name: "devtools_click", description: "DevTools click"),
+            ]
+        )
+        let manager = IOSMcpManager(serverProvider: { [config] })
+        manager.refreshFromCurrentSettings()
+
+        XCTAssertEqual(manager.tools.map(\.tool.name), ["search"])
+        for toolName in ["browser_click", "cdp_click", "devtools_click"] {
+            do {
+                _ = try await manager.callTool(serverName: "docs", toolName: toolName, arguments: [:])
+                XCTFail("Expected \(toolName) to be blocked")
+            } catch let error as IOSMcpManagerError {
+                XCTAssertEqual(error, .browserToolBlocked)
+            } catch {
+                XCTFail("Unexpected error for \(toolName): \(error)")
+            }
+        }
+    }
+
+    func testDisconnectClearsStreamableHTTPSessionIDBeforeNextHandshake() async throws {
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 2, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+            ],
+            responseHeaders: [["Mcp-Session-Id": "session-1"], ["Mcp-Session-Id": "session-2"]]
+        )
+        let client = IOSMcpClient(transport: transport)
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+
+        _ = try await client.connect(config: config)
+        client.disconnect()
+        _ = try await client.connect(config: config)
+
+        XCTAssertNil(transport.sentRequestHeaders[2]["Mcp-Session-Id"])
+        XCTAssertEqual(transport.disconnectedServers, ["docs"])
+    }
+
+    func testStreamableHTTP404WithSessionIDMapsToStableSessionExpiredWithoutRetry() async throws {
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 2, "error": ["message": "not found"]],
+            ],
+            responseStatuses: [200, 404],
+            responseHeaders: [["Mcp-Session-Id": "session-1"], [:]]
+        )
+        let client = IOSMcpClient(transport: transport)
+        _ = try await client.connect(config: .streamableHTTP(name: "docs", url: "https://example.com/mcp"))
+
+        do {
+            _ = try await client.listTools()
+            XCTFail("Expected the session-expired error")
+        } catch let error as IOSMcpClientError {
+            XCTAssertEqual(error, .mcpSessionExpired)
+            XCTAssertEqual(error.localizedDescription, "mcp_session_expired")
+        }
+
+        XCTAssertEqual(transport.sentMethods, ["initialize", "notifications/initialized", "tools/list"])
+    }
+
     func testConnectDisconnectsPreviousConfigWhenServerChanges() async throws {
         let transport = FakeMcpHTTPTransport(responses: [
             ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:], "serverInfo": ["name": "fake", "version": "1"]]],
@@ -109,6 +223,25 @@ final class IOSMcpClientTests: XCTestCase {
 
         XCTAssertEqual(transport.sentMethods, ["initialize", "notifications/initialized", "tools/call"])
         XCTAssertEqual(output, "hello")
+    }
+
+    func testCallToolPreservesMcpErrorResult() async throws {
+        let transport = FakeMcpHTTPTransport(responses: [
+            ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+            ["jsonrpc": "2.0", "id": 2, "result": [
+                "isError": true,
+                "content": [["type": "text", "text": "target is stale"]]
+            ]]
+        ])
+        let client = IOSMcpClient(transport: transport)
+        _ = try await client.connect(config: .streamableHTTP(name: "browser", url: "https://example.com/mcp"))
+
+        do {
+            _ = try await client.callTool(name: "browser_click", arguments: ["target": "ref-1"])
+            XCTFail("Expected MCP error result to throw")
+        } catch let error as IOSMcpClientError {
+            XCTAssertEqual(error, .rpcError("target is stale"))
+        }
     }
 
     func testCallToolSerializesNonTextContent() async throws {
@@ -248,10 +381,11 @@ final class IOSMcpClientTests: XCTestCase {
 }
 
 private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
-    private var responses: [[String: Any]]
+    private var responses: [IOSMcpHTTPResponse]
     private let hangingMethods: Set<String>
     private let delayedMethods: [String: UInt64]
     private(set) var sentMethods: [String] = []
+    private(set) var sentRequestHeaders: [[String: String]] = []
     private(set) var disconnectedServers: [String] = []
     private(set) var cancelledMethods: Set<String> = []
     private(set) var maximumConcurrentRequests = 0
@@ -259,24 +393,35 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
 
     init(
         responses: [[String: Any]],
+        responseStatuses: [Int] = [],
+        responseHeaders: [[String: String]] = [],
         hangingMethods: Set<String> = [],
         delayedMethods: [String: UInt64] = [:]
     ) {
-        self.responses = responses
+        self.responses = responses.enumerated().map { index, object in
+            let body = try! JSONSerialization.data(withJSONObject: object)
+            let status = responseStatuses.indices.contains(index) ? responseStatuses[index] : 200
+            let headers = responseHeaders.indices.contains(index) ? responseHeaders[index] : [:]
+            return IOSMcpHTTPResponse(status: status, body: body, headers: headers)
+        }
         self.hangingMethods = hangingMethods
         self.delayedMethods = delayedMethods
     }
 
-    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> [String: Any] {
+    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
         if let method = payload["method"] as? String {
             sentMethods.append(method)
+            sentRequestHeaders.append(config.headers)
             activeRequests += 1
             maximumConcurrentRequests = max(maximumConcurrentRequests, activeRequests)
             defer { activeRequests -= 1 }
             do {
                 if hangingMethods.contains(method) {
                     try await Task.sleep(nanoseconds: 1_000_000_000)
-                    return ["jsonrpc": "2.0", "id": payload["id"] as Any, "result": [:]]
+                    let body = try JSONSerialization.data(withJSONObject: [
+                        "jsonrpc": "2.0", "id": payload["id"] as Any, "result": [:]
+                    ])
+                    return IOSMcpHTTPResponse(status: 200, body: body)
                 }
                 if let delay = delayedMethods[method] {
                     try await Task.sleep(nanoseconds: delay)
@@ -289,10 +434,12 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
         return responses.removeFirst()
     }
 
-    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws {
+    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
         if let method = payload["method"] as? String {
             sentMethods.append(method)
+            sentRequestHeaders.append(config.headers)
         }
+        return IOSMcpHTTPResponse(status: 200)
     }
 
     func disconnect(config: IOSMcpServerConfig) {

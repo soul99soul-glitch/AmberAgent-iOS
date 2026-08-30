@@ -91,6 +91,15 @@ enum IOSMcpServerConfig: Equatable, Identifiable {
             return .sse(name: name, url: url, headers: headers, enabled: enabled, tools: tools)
         }
     }
+
+    func withHeaders(_ headers: [String: String]) -> IOSMcpServerConfig {
+        switch self {
+        case .streamableHTTP(let name, let url, _, let enabled, let tools):
+            return .streamableHTTP(name: name, url: url, headers: headers, enabled: enabled, tools: tools)
+        case .sse(let name, let url, _, let enabled, let tools):
+            return .sse(name: name, url: url, headers: headers, enabled: enabled, tools: tools)
+        }
+    }
 }
 
 struct IOSMcpStoredServer: Codable, Equatable {
@@ -170,6 +179,7 @@ enum IOSMcpClientError: LocalizedError, Equatable {
     case invalidURL(String)
     case unsafeEndpoint
     case httpStatus(Int)
+    case mcpSessionExpired
     case invalidResponse
     case rpcError(String)
     case requestTimedOut(String)
@@ -185,6 +195,7 @@ enum IOSMcpClientError: LocalizedError, Equatable {
         case .invalidURL: "Invalid MCP server URL."
         case .unsafeEndpoint: "MCP server advertised an unsafe endpoint."
         case .httpStatus(let status): "MCP server returned HTTP status \(status)."
+        case .mcpSessionExpired: "mcp_session_expired"
         case .invalidResponse: "MCP server returned an invalid JSON-RPC response."
         case .rpcError(let message): message
         case .requestTimedOut(let message): message
@@ -198,16 +209,60 @@ enum IOSMcpClientError: LocalizedError, Equatable {
     }
 }
 
+struct IOSMcpHTTPResponse: Equatable, Sendable {
+    let status: Int
+    let body: Data
+    let headers: [String: String]
+
+    init(status: Int, body: Data = Data(), headers: [String: String] = [:]) {
+        self.status = status
+        self.body = body
+        self.headers = headers
+    }
+
+    init(statusCode: Int, body: Data = Data(), headers: [String: String] = [:]) {
+        self.init(status: statusCode, body: body, headers: headers)
+    }
+
+    var statusCode: Int { status }
+}
+
+private func mcpJSONRPCIDsMatch(_ responseID: Any?, _ requestID: Any?) -> Bool {
+    guard let responseID, let requestID else { return false }
+    guard !mcpJSONRPCValueIsBoolean(responseID),
+          !mcpJSONRPCValueIsBoolean(requestID) else { return false }
+    if let responseString = responseID as? String,
+       let requestString = requestID as? String {
+        return responseString == requestString
+    }
+    if let responseNumber = responseID as? NSNumber,
+       let requestNumber = requestID as? NSNumber {
+        return responseNumber == requestNumber
+    }
+    if let responseInt = responseID as? Int,
+       let requestInt = requestID as? Int {
+        return responseInt == requestInt
+    }
+    return false
+}
+
+private func mcpJSONRPCValueIsBoolean(_ value: Any) -> Bool {
+    // JSONSerialization bridges both JSON numbers and booleans to NSNumber;
+    // use the CoreFoundation type id so numeric id 1 is not rejected as Bool.
+    guard let number = value as? NSNumber else { return value is Bool }
+    return CFGetTypeID(number) == CFBooleanGetTypeID()
+}
+
 @MainActor
 protocol IOSMcpHTTPTransport {
-    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> [String: Any]
-    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws
+    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse
+    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse
     func disconnect(config: IOSMcpServerConfig)
 }
 
 extension IOSMcpHTTPTransport {
-    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws {
-        _ = try? await sendJSONRPC(payload, to: config)
+    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
+        try await sendJSONRPC(payload, to: config)
     }
 
     func disconnect(config: IOSMcpServerConfig) {}
@@ -222,35 +277,20 @@ final class URLSessionMcpHTTPTransport: IOSMcpHTTPTransport {
         self.session = session
     }
 
-    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> [String: Any] {
+    func sendJSONRPC(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
         if case .sse = config {
             return try await sseSession(for: config).sendJSONRPC(payload)
         }
 
-        let data = try await send(payload, to: config)
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            return object
-        }
-
-        if let eventObject = Self.firstServerSentEventJSON(from: data) {
-            return eventObject
-        }
-
-        throw IOSMcpClientError.invalidResponse
+        return try await send(payload, to: config)
     }
 
-    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws {
+    func sendJSONRPCNotification(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
         if case .sse = config {
-            try await sseSession(for: config).sendNotification(payload)
-            return
+            return try await sseSession(for: config).sendNotification(payload)
         }
 
-        let data = try await send(payload, to: config)
-        guard !data.isEmpty else { return }
-        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let error = object["error"] as? [String: Any] {
-            throw IOSMcpClientError.rpcError(error["message"] as? String ?? "MCP JSON-RPC error")
-        }
+        return try await send(payload, to: config)
     }
 
     func disconnect(config: IOSMcpServerConfig) {
@@ -258,7 +298,7 @@ final class URLSessionMcpHTTPTransport: IOSMcpHTTPTransport {
         sseSessions.removeValue(forKey: Self.sseSessionKey(config: config))
     }
 
-    private func send(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> Data {
+    private func send(_ payload: [String: Any], to config: IOSMcpServerConfig) async throws -> IOSMcpHTTPResponse {
         guard let url = URL(string: config.url) else {
             throw IOSMcpClientError.invalidURL(config.url)
         }
@@ -274,12 +314,8 @@ final class URLSessionMcpHTTPTransport: IOSMcpHTTPTransport {
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await session.data(for: request)
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200...299).contains(httpResponse.statusCode) {
-            throw IOSMcpClientError.httpStatus(httpResponse.statusCode)
-        }
-
-        return data
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        return IOSMcpHTTPResponse(status: status, body: data, headers: Self.headers(from: response))
     }
 
     private func sseSession(for config: IOSMcpServerConfig) async throws -> LegacySSEMcpSession {
@@ -299,6 +335,16 @@ final class URLSessionMcpHTTPTransport: IOSMcpHTTPTransport {
             .map { "\($0.key)=\($0.value)" }
             .joined(separator: "&")
         return "\(config.transportKey)|\(config.name)|\(config.url)|\(headerKey)"
+    }
+
+    private static func headers(from response: URLResponse) -> [String: String] {
+        guard let httpResponse = response as? HTTPURLResponse else { return [:] }
+        var headers: [String: String] = [:]
+        for (key, value) in httpResponse.allHeaderFields {
+            guard let name = key as? String else { continue }
+            headers[name] = String(describing: value)
+        }
+        return headers
     }
 
     static func firstServerSentEventJSON(from data: Data) -> [String: Any]? {
@@ -398,23 +444,26 @@ private final class LegacySSEMcpSession {
         endpointURL = try await readEndpoint()
     }
 
-    func sendJSONRPC(_ payload: [String: Any]) async throws -> [String: Any] {
+    func sendJSONRPC(_ payload: [String: Any]) async throws -> IOSMcpHTTPResponse {
         try await connect()
-        let requestId = Self.requestIdString(from: payload["id"])
+        let requestID = payload["id"]
         let immediateResponse = try await post(payload)
-        if let object = Self.jsonObject(from: immediateResponse), Self.requestIdString(from: object["id"]) == requestId {
-            return object
+        if let object = Self.jsonObject(from: immediateResponse.body) {
+            guard mcpJSONRPCIDsMatch(object["id"], requestID) else {
+                throw IOSMcpClientError.invalidResponse
+            }
+            return immediateResponse
         }
-        return try await readResponse(matching: requestId)
+        let object = try await readResponse(matching: requestID)
+        guard let body = try? JSONSerialization.data(withJSONObject: object) else {
+            throw IOSMcpClientError.invalidResponse
+        }
+        return IOSMcpHTTPResponse(status: immediateResponse.status, body: body, headers: immediateResponse.headers)
     }
 
-    func sendNotification(_ payload: [String: Any]) async throws {
+    func sendNotification(_ payload: [String: Any]) async throws -> IOSMcpHTTPResponse {
         try await connect()
-        let data = try await post(payload)
-        if let object = Self.jsonObject(from: data),
-           let error = object["error"] as? [String: Any] {
-            throw IOSMcpClientError.rpcError(error["message"] as? String ?? "MCP JSON-RPC error")
-        }
+        return try await post(payload)
     }
 
     func close() {
@@ -424,7 +473,7 @@ private final class LegacySSEMcpSession {
         dataLines = []
     }
 
-    private func post(_ payload: [String: Any]) async throws -> Data {
+    private func post(_ payload: [String: Any]) async throws -> IOSMcpHTTPResponse {
         guard let endpointURL else {
             throw IOSMcpClientError.invalidResponse
         }
@@ -440,11 +489,8 @@ private final class LegacySSEMcpSession {
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
         let (data, response) = try await session.data(for: request)
-        if let httpResponse = response as? HTTPURLResponse,
-           !(200...299).contains(httpResponse.statusCode) {
-            throw IOSMcpClientError.httpStatus(httpResponse.statusCode)
-        }
-        return data
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 200
+        return IOSMcpHTTPResponse(status: status, body: data, headers: Self.headers(from: response))
     }
 
     private func readEndpoint() async throws -> URL {
@@ -456,12 +502,15 @@ private final class LegacySSEMcpSession {
         }
     }
 
-    private func readResponse(matching requestId: String?) async throws -> [String: Any] {
+    private func readResponse(matching requestID: Any?) async throws -> [String: Any] {
         while true {
             let event = try await readNextEvent()
             guard event.name == nil || event.name == "message" else { continue }
             guard let object = Self.jsonObject(from: event.data) else { continue }
-            guard Self.requestIdString(from: object["id"]) == requestId else { continue }
+            guard let responseID = object["id"] else { continue }
+            guard mcpJSONRPCIDsMatch(responseID, requestID) else {
+                throw IOSMcpClientError.invalidResponse
+            }
             return object
         }
     }
@@ -525,11 +574,14 @@ private final class LegacySSEMcpSession {
         return jsonObject(from: data)
     }
 
-    private static func requestIdString(from value: Any?) -> String? {
-        if let string = value as? String { return string }
-        if let int = value as? Int { return String(int) }
-        if let number = value as? NSNumber { return number.stringValue }
-        return nil
+    private static func headers(from response: URLResponse) -> [String: String] {
+        guard let httpResponse = response as? HTTPURLResponse else { return [:] }
+        var headers: [String: String] = [:]
+        for (key, value) in httpResponse.allHeaderFields {
+            guard let name = key as? String else { continue }
+            headers[name] = String(describing: value)
+        }
+        return headers
     }
 
     private struct SseEvent {
@@ -550,6 +602,7 @@ final class IOSMcpClient: IOSMcpClienting {
     private let transport: IOSMcpHTTPTransport
     private let requestTimeoutSeconds: TimeInterval
     private var config: IOSMcpServerConfig?
+    private var sessionID: String?
     private var nextId = 1
     private var requestInProgress = false
     private var requestWaiters: [IOSMcpRequestWaiter] = []
@@ -571,6 +624,7 @@ final class IOSMcpClient: IOSMcpClienting {
             }
             self.status = .connecting
             self.config = config
+            self.sessionID = nil
             _ = try await self.sendWithoutRequestSlot(method: "initialize", params: [
                 "protocolVersion": "2024-11-05",
                 "capabilities": [:],
@@ -623,6 +677,9 @@ final class IOSMcpClient: IOSMcpClienting {
             guard item["type"] as? String == "text" else { return nil }
             return item["text"] as? String
         }.joined(separator: "\n")
+        if result["isError"] as? Bool == true {
+            throw IOSMcpClientError.rpcError(text.nilIfBlank ?? "MCP tool returned an error result.")
+        }
         if !text.isEmpty { return text }
         if let data = try? JSONSerialization.data(withJSONObject: content, options: [.sortedKeys]),
            let serialized = String(data: data, encoding: .utf8) {
@@ -636,6 +693,7 @@ final class IOSMcpClient: IOSMcpClienting {
             transport.disconnect(config: config)
         }
         config = nil
+        sessionID = nil
         status = .idle
     }
 
@@ -655,12 +713,23 @@ final class IOSMcpClient: IOSMcpClienting {
             "method": method,
             "params": params
         ]
-        let response = try await sendJSONRPCWithTimeout(payload, to: config, method: method)
-        if let error = response["error"] as? [String: Any] {
+        let requestConfig = requestConfig(for: config)
+        let response = try await sendJSONRPCWithTimeout(payload, to: requestConfig, method: method)
+        try validate(response, for: requestConfig)
+        guard let object = Self.jsonObject(from: response.body) else {
+            throw IOSMcpClientError.invalidResponse
+        }
+        guard mcpJSONRPCIDsMatch(object["id"], id) else {
+            throw IOSMcpClientError.invalidResponse
+        }
+        if let error = object["error"] as? [String: Any] {
             throw IOSMcpClientError.rpcError(error["message"] as? String ?? "MCP JSON-RPC error")
         }
-        guard let result = response["result"] as? [String: Any] else {
+        guard let result = object["result"] as? [String: Any] else {
             throw IOSMcpClientError.invalidResponse
+        }
+        if method == "initialize" {
+            captureSessionID(from: response, for: requestConfig)
         }
         return result
     }
@@ -678,7 +747,57 @@ final class IOSMcpClient: IOSMcpClienting {
             "method": method,
             "params": params
         ]
-        try await sendJSONRPCNotificationWithTimeout(payload, to: config, method: method)
+        let requestConfig = requestConfig(for: config)
+        let response = try await sendJSONRPCNotificationWithTimeout(payload, to: requestConfig, method: method)
+        try validate(response, for: requestConfig)
+        guard !response.body.isEmpty,
+              let object = Self.jsonObject(from: response.body),
+              let error = object["error"] as? [String: Any] else { return }
+        throw IOSMcpClientError.rpcError(error["message"] as? String ?? "MCP JSON-RPC error")
+    }
+
+    private func requestConfig(for config: IOSMcpServerConfig) -> IOSMcpServerConfig {
+        // Mcp-Session-Id is server-issued: never replay a user-configured or
+        // stale value, and only add the id captured from initialize.
+        var headers = config.headers
+        for key in headers.keys.filter({ $0.caseInsensitiveCompare("Mcp-Session-Id") == .orderedSame }) {
+            headers.removeValue(forKey: key)
+        }
+        if case .streamableHTTP = config,
+           let sessionID,
+           !sessionID.isEmpty {
+            headers["Mcp-Session-Id"] = sessionID
+        }
+        return config.withHeaders(headers)
+    }
+
+    private func validate(_ response: IOSMcpHTTPResponse, for requestConfig: IOSMcpServerConfig) throws {
+        guard !(200...299).contains(response.status) else { return }
+        if response.status == 404,
+           Self.headerValue(named: "Mcp-Session-Id", in: requestConfig.headers) != nil {
+            throw IOSMcpClientError.mcpSessionExpired
+        }
+        throw IOSMcpClientError.httpStatus(response.status)
+    }
+
+    private func captureSessionID(from response: IOSMcpHTTPResponse, for requestConfig: IOSMcpServerConfig) {
+        guard case .streamableHTTP = requestConfig,
+              let value = Self.headerValue(named: "Mcp-Session-Id", in: response.headers) else { return }
+        sessionID = value
+    }
+
+    private static func headerValue(named name: String, in headers: [String: String]) -> String? {
+        guard let value = headers.first(where: {
+            $0.key.caseInsensitiveCompare(name) == .orderedSame
+        })?.value.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
+    }
+
+    private static func jsonObject(from data: Data) -> [String: Any]? {
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return object
+        }
+        return URLSessionMcpHTTPTransport.firstServerSentEventJSON(from: data)
     }
 
     private func withRequestSlot<T>(_ operation: () async throws -> T) async throws -> T {
@@ -728,13 +847,12 @@ final class IOSMcpClient: IOSMcpClienting {
         _ payload: [String: Any],
         to config: IOSMcpServerConfig,
         method: String
-    ) async throws -> [String: Any] {
+    ) async throws -> IOSMcpHTTPResponse {
         let timeout = max(0.001, requestTimeoutSeconds)
         let timeoutText = Self.formatTimeout(timeout)
-        let payloadBox = IOSMcpJSONRPCPayloadBox(payload: payload)
         return try await raceAgainstTimeout(method: method, timeout: timeout, timeoutText: timeoutText) {
-            IOSMcpJSONRPCResponseBox(response: try await self.transport.sendJSONRPC(payloadBox.payload, to: config))
-        }.response
+            try await self.transport.sendJSONRPC(payload, to: config)
+        }
     }
 
     private func raceAgainstTimeout<T: Sendable>(
@@ -792,12 +910,11 @@ final class IOSMcpClient: IOSMcpClienting {
         _ payload: [String: Any],
         to config: IOSMcpServerConfig,
         method: String
-    ) async throws {
+    ) async throws -> IOSMcpHTTPResponse {
         let timeout = max(0.001, requestTimeoutSeconds)
         let timeoutText = Self.formatTimeout(timeout)
-        let payloadBox = IOSMcpJSONRPCPayloadBox(payload: payload)
-        try await raceAgainstTimeout(method: method, timeout: timeout, timeoutText: timeoutText) {
-            try await self.transport.sendJSONRPCNotification(payloadBox.payload, to: config)
+        return try await raceAgainstTimeout(method: method, timeout: timeout, timeoutText: timeoutText) {
+            try await self.transport.sendJSONRPCNotification(payload, to: config)
         }
     }
 
@@ -813,14 +930,6 @@ final class IOSMcpClient: IOSMcpClienting {
 private struct IOSMcpRequestWaiter {
     let id: UUID
     let continuation: CheckedContinuation<Void, Error>
-}
-
-private struct IOSMcpJSONRPCPayloadBox: @unchecked Sendable {
-    let payload: [String: Any]
-}
-
-private struct IOSMcpJSONRPCResponseBox: @unchecked Sendable {
-    let response: [String: Any]
 }
 
 private final class IOSMcpContinuationGate<T: Sendable>: @unchecked Sendable {

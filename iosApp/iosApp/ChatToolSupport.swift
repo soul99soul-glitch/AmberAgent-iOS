@@ -48,14 +48,28 @@ struct WebMountToolApprovalRequest: Identifiable, Equatable {
     let siteId: String
     let siteName: String
     let host: String
+    let backend: String
+    let mcpServerName: String?
+    let redactedURL: String
+    let snapshotId: String?
+    let target: String?
+    let action: String
+    let consequence: String
+    let screenshotRetentionWarning: String?
+    let requiresHumanHandoff: Bool
     let reason: String
+    let sessionId: String?
+    let runId: String?
 
     var title: String {
+        if requiresHumanHandoff {
+            return "在本地 WebMount 完成后继续"
+        }
         switch toolName {
         case "wm_clear_session":
-            "清除 WebMount Session"
+            return "清除 WebMount Session"
         default:
-            "执行 WebMount 前台动作"
+            return "执行 WebMount 前台动作"
         }
     }
 }
@@ -461,7 +475,8 @@ enum ChatToolApprovalRequestBuilder {
     static func webMount(
         for toolCall: UIMessagePart.Tool,
         reason: String,
-        localToolExecutor: IOSLocalToolExecutor?
+        localToolExecutor: IOSLocalToolExecutor?,
+        runId: String? = nil
     ) -> WebMountToolApprovalRequest? {
         guard let preview = localToolExecutor?.webMountApprovalPreview(
             toolName: toolCall.toolName,
@@ -475,7 +490,18 @@ enum ChatToolApprovalRequestBuilder {
             siteId: preview.siteId,
             siteName: preview.siteName,
             host: preview.host,
-            reason: reason
+            backend: preview.backend,
+            mcpServerName: preview.mcpServerName,
+            redactedURL: preview.redactedURL,
+            snapshotId: preview.snapshotId,
+            target: preview.target,
+            action: preview.action,
+            consequence: preview.consequence,
+            screenshotRetentionWarning: preview.screenshotRetentionWarning,
+            requiresHumanHandoff: reason.hasPrefix("human_handoff:"),
+            reason: reason,
+            sessionId: preview.sessionId,
+            runId: runId
         )
     }
 

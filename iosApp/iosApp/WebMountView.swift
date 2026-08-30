@@ -1,23 +1,58 @@
+import Foundation
 import SwiftUI
 import WebKit
+
+enum WebMountSitePresentationMode: String, Hashable {
+    case browse
+    case watch
+}
 
 struct WebMountSiteRoute: Hashable, Identifiable {
     let siteId: String
     let name: String
     let host: String
+    let sessionId: String?
+    let mode: WebMountSitePresentationMode
 
-    var id: String { siteId }
+    var id: String { "\(siteId):\(sessionId ?? "current"):\(mode.rawValue)" }
 
-    init(siteId: String, name: String, host: String) {
+    init(
+        siteId: String,
+        name: String,
+        host: String,
+        sessionId: String? = nil
+    ) {
         self.siteId = siteId
         self.name = name
         self.host = host
+        self.sessionId = sessionId?.nilIfBlank
+        self.mode = .browse
     }
 
-    init(site: IOSWebMountSite) {
+    init(
+        site: IOSWebMountSite,
+        sessionId: String? = nil
+    ) {
         self.siteId = site.id
         self.name = site.displayName
         self.host = site.homepageHost
+        self.sessionId = sessionId?.nilIfBlank
+        self.mode = .browse
+    }
+
+    @MainActor
+    init?(watching record: IOSWebMountSessionRecord, registry: IOSWebMountRegistry) {
+        guard record.backend == .local,
+              let sessionId = record.id.nilIfBlank,
+              let siteId = record.siteId?.nilIfBlank,
+              let site = registry.site(id: siteId) else {
+            return nil
+        }
+        self.siteId = site.id
+        self.name = site.displayName
+        self.host = site.homepageHost
+        self.sessionId = sessionId
+        self.mode = .watch
     }
 }
 
@@ -29,22 +64,25 @@ enum IOSDeepReadWebMountAdapter {
     ) async -> Result<IOSDeepReadSource, IOSDeepReadSourceNormalizationError> {
         let snapshot = controller.runtime.snapshot
         guard snapshot.status == .ready else {
-            let reason = snapshot.error?.nilIfBlank
+            let reason = snapshot.error.map(IOSWebMountRedactor.redactedText)?.nilIfBlank
                 ?? "WebMount 当前没有已加载完成的页面；请先打开站点并停留在要深读的页面。"
             return .failure(.unsupported(reason))
         }
         do {
             let extracted = try await controller.runtime.extract(mode: "readable", maxChars: maxChars, maxLinks: 20)
-            let result = extracted["text"] as? String
+            let rawResult = extracted["text"] as? String
                 ?? (extracted["result"] as? [String: Any])?["text"] as? String
                 ?? ""
-            let title = extracted["title"] as? String
+            let result = IOSWebMountRedactor.redactedText(rawResult)
+            let rawTitle = extracted["title"] as? String
                 ?? (extracted["result"] as? [String: Any])?["title"] as? String
                 ?? snapshot.title
                 ?? "WebMount 页面"
-            let url = extracted["url"] as? String
+            let title = IOSWebMountRedactor.redactedText(rawTitle)
+            let rawURL = extracted["url"] as? String
                 ?? (extracted["result"] as? [String: Any])?["url"] as? String
                 ?? snapshot.currentURL
+            let url = IOSWebMountRedactor.redactedURL(rawURL)
             let source = try IOSDeepReadSourceNormalizer.webMountSource(title: title, url: url, text: result)
             return .success(source)
         } catch let error as IOSDeepReadSourceNormalizationError {
@@ -114,7 +152,7 @@ struct IOSWebMountContentHandoff: Equatable, Identifiable {
             id: UUID().uuidString,
             siteId: site.id,
             siteName: site.displayName,
-            title: (extraction["title"] as? String)?.nilIfBlank ?? snapshot.title ?? site.displayName,
+            title: IOSWebMountRedactor.redactedText((extraction["title"] as? String)?.nilIfBlank ?? snapshot.title ?? site.displayName),
             sourceURL: sourceURL,
             text: redactedText,
             linkCount: links.count,
@@ -190,6 +228,173 @@ private enum WebMountResultTab: String, CaseIterable, Identifiable {
 }
 
 @MainActor
+struct AgentBrowserTaskCard: View {
+    let record: IOSWebMountSessionRecord
+    let onOpen: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 10) {
+                    taskIdentity
+                    Spacer(minLength: 8)
+                    statusBadge
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    taskIdentity
+                    statusBadge
+                }
+            }
+
+            Text(pageSummary)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    backendLabel
+                    if record.controlOwner != .none {
+                        controlLabel
+                    }
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    backendLabel
+                    if record.controlOwner != .none {
+                        controlLabel
+                    }
+                }
+            }
+
+            Divider()
+                .overlay(AmberTheme.borderSoft)
+
+            Button(action: onOpen) {
+                HStack(spacing: 8) {
+                    Label(openLabel, systemImage: record.backend == .local ? "eye" : "macwindow")
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AmberTheme.accent)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(openLabel)，\(siteTitle)，\(status.label)")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+        }
+    }
+
+    private var taskIdentity: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "globe.badge.chevron.backward")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+                .frame(width: 32, height: 32)
+                .background(AmberTheme.surface2, in: Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Agent 浏览器任务")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                Text(siteTitle)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var statusBadge: some View {
+        Label(status.label, systemImage: status.image)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(status.tint)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 24)
+            .background(AmberTheme.surface2, in: Capsule())
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var backendLabel: some View {
+        Label(record.backend.title, systemImage: record.backend == .local ? "iphone" : "desktopcomputer")
+            .font(.caption2)
+            .foregroundStyle(AmberTheme.muted)
+    }
+
+    private var controlLabel: some View {
+        Label(controlText, systemImage: controlImage)
+            .font(.caption2)
+            .foregroundStyle(AmberTheme.muted)
+    }
+
+    private var siteTitle: String {
+        record.siteName?.nilIfBlank ?? record.title.nilIfBlank ?? "未命名页面"
+    }
+
+    private var pageSummary: String {
+        guard let rawURL = record.redactedURL.nilIfBlank,
+              let components = URLComponents(string: rawURL),
+              let host = components.host?.nilIfBlank else {
+            return record.redactedURL.nilIfBlank ?? "尚未打开页面"
+        }
+        let path = components.percentEncodedPath
+        return path.isEmpty || path == "/" ? host : host + path
+    }
+
+    private var openLabel: String {
+        record.backend == .local ? "观看页面" : "查看状态"
+    }
+
+    private var controlText: String {
+        switch record.controlOwner {
+        case .agent: "Agent 控制"
+        case .user: "用户控制"
+        case .none: "控制权空闲"
+        }
+    }
+
+    private var controlImage: String {
+        switch record.controlOwner {
+        case .agent: "cpu"
+        case .user: "person.crop.circle"
+        case .none: "lock.open"
+        }
+    }
+
+    private var status: (label: String, image: String, tint: Color) {
+        if record.needsReopen {
+            return ("需要重新打开", "arrow.clockwise", AmberTheme.accentAmber)
+        }
+        switch record.controlOwner {
+        case .user:
+            return ("需要你处理", "person.crop.circle.badge.exclamationmark", AmberTheme.accentAmber)
+        case .agent:
+            return ("Agent 浏览中", "sparkles", AmberTheme.accent)
+        case .none:
+            break
+        }
+        switch record.status {
+        case IOSWebMountRuntimeStatus.loading.rawValue:
+            return ("正在加载", "arrow.triangle.2.circlepath", AmberTheme.accentAmber)
+        case IOSWebMountRuntimeStatus.failed.rawValue:
+            return ("浏览失败", "exclamationmark.triangle", AmberTheme.accentRed)
+        default:
+            return ("等待 Agent", "clock", AmberTheme.muted)
+        }
+    }
+}
+
+@MainActor
 struct WebMountView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(RouterPath.self) private var router
@@ -200,7 +405,10 @@ struct WebMountView: View {
     @State private var addURL = ""
     @State private var addNeedsLogin = true
     @State private var addCookieName = ""
+    @State private var addSiteError: String?
     @State private var banner: String?
+    @State private var showDesktopBackends = false
+    @State private var focusedRemoteSessionId: String?
 
     private var registry: IOSWebMountRegistry { controller.registry }
     private var settings: IOSWebMountSettings { controller.settings }
@@ -234,6 +442,16 @@ struct WebMountView: View {
         .sheet(isPresented: $showAddSite) {
             addSiteSheet
         }
+        .sheet(isPresented: $showDesktopBackends, onDismiss: {
+            focusedRemoteSessionId = nil
+        }) {
+            WebMountDesktopBackendsView(
+                controller: controller,
+                focusedSessionId: focusedRemoteSessionId
+            )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var header: some View {
@@ -248,6 +466,8 @@ struct WebMountView: View {
                 Text("WebMount")
                     .font(.title2.weight(.bold))
                     .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
                 Text("\(registry.sites.count) 个站点")
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(AmberTheme.muted)
@@ -256,6 +476,7 @@ struct WebMountView: View {
             Spacer()
 
             Button {
+                addSiteError = nil
                 showAddSite = true
             } label: {
                 Image(systemName: "plus")
@@ -274,6 +495,8 @@ struct WebMountView: View {
 
     private var stationSection: some View {
         VStack(spacing: 0) {
+            desktopBackendSection
+            agentBrowserTaskSection
             AmberSectionLabel(text: "站点")
             AmberFormGroup {
                 if registry.sites.isEmpty {
@@ -288,7 +511,10 @@ struct WebMountView: View {
                         WebMountStationRow(
                             site: site,
                             onOpen: {
-                                router.navigate(to: .webMountSite(site: WebMountSiteRoute(site: site)))
+                                router.navigate(to: .webMountSite(site: WebMountSiteRoute(
+                                    site: site,
+                                    sessionId: controller.sessionStore.currentSessionId
+                                )))
                             },
                             onToggle: { enabled in
                                 registry.setEnabled(id: site.id, enabled: enabled)
@@ -322,6 +548,92 @@ struct WebMountView: View {
         }
     }
 
+    private var desktopBackendSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "浏览器")
+            AmberFormGroup {
+                AmberFormRow(
+                    systemImage: "macwindow.on.rectangle",
+                    iconColor: AmberTheme.accent,
+                    title: "浏览器与会话",
+                    subtitle: "管理本地与桌面浏览器",
+                    trailing: "管理",
+                    showsChevron: true
+                ) {
+                    focusedRemoteSessionId = nil
+                    showDesktopBackends = true
+                }
+            }
+        }
+    }
+
+    private var agentBrowserSessions: [IOSWebMountSessionRecord] {
+        controller.sessionStore.records
+            .filter { record in
+                let isActive = record.ownerRunId?.nilIfBlank != nil
+                let isUserHeld = record.controlOwner == .user && record.ownerConversationId?.nilIfBlank != nil
+                let isRecoverable = record.needsReopen && record.ownerConversationId?.nilIfBlank != nil
+                guard isActive || isUserHeld || isRecoverable else { return false }
+                return record.backend != .local || WebMountSiteRoute(watching: record, registry: registry) != nil
+            }
+            .sorted { lhs, rhs in
+                if lhs.lastActivityMillis != rhs.lastActivityMillis {
+                    return lhs.lastActivityMillis > rhs.lastActivityMillis
+                }
+                return lhs.id < rhs.id
+            }
+    }
+
+    private var agentBrowserTaskSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "Agent 浏览器任务")
+            if agentBrowserSessions.isEmpty {
+                AmberFormGroup {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("暂无 Agent 浏览任务")
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                        Text("Agent 开始浏览网页后，可在这里观看或接管页面。")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                }
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(agentBrowserSessions) { record in
+                        AgentBrowserTaskCard(record: record) {
+                            openAgentBrowserSession(record.id)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private func openAgentBrowserSession(_ sessionId: String) {
+        guard let record = controller.sessionStore.record(sessionId: sessionId) else {
+            banner = "此 WebMount 会话不存在或已过期。"
+            return
+        }
+        if record.backend == .local {
+            guard let route = WebMountSiteRoute(watching: record, registry: registry) else {
+                banner = "此 WebMount 会话未绑定可用站点，无法观看。"
+                return
+            }
+            router.navigate(to: .webMountSite(site: route))
+        } else {
+            focusedRemoteSessionId = record.id
+            Task { @MainActor in
+                showDesktopBackends = true
+            }
+        }
+    }
+
     private var addSiteSheet: some View {
         NavigationStack {
             ZStack {
@@ -344,6 +656,10 @@ struct WebMountView: View {
                                 WebMountDivider()
                                 WebMountTextFieldRow(title: "Cookie 提示", text: $addCookieName, placeholder: "可选")
                             }
+                        }
+
+                        if let addSiteError {
+                            WebMountBanner(text: addSiteError)
                         }
 
                         Text("自定义站点会保存在本机，Cookie 内容不会在页面中显示。")
@@ -380,11 +696,11 @@ struct WebMountView: View {
             addURL = ""
             addCookieName = ""
             addNeedsLogin = true
+            addSiteError = nil
             showAddSite = false
             banner = "已添加 \(site.displayName)。"
         } catch {
-            banner = "添加失败。请填写名称，并使用 http(s) 网址。"
-            showAddSite = false
+            addSiteError = "添加失败。请填写名称，并使用 http(s) 网址。"
         }
     }
 
@@ -424,6 +740,7 @@ struct WebMountSiteView: View {
     @State private var contentHandoff: IOSWebMountContentHandoff?
     @State private var banner: String?
     @State private var isLoading = false
+    private let hasBoundSession: Bool
 
     private var registry: IOSWebMountRegistry { controller.registry }
     private var resolvedSite: IOSWebMountSite {
@@ -445,7 +762,71 @@ struct WebMountSiteView: View {
     init(site: WebMountSiteRoute, controller: IOSWebMountController = .shared) {
         self.site = site
         _controller = State(initialValue: controller)
-        _runtime = ObservedObject(wrappedValue: controller.visibleRuntime ?? IOSWebMountWKRuntime())
+        let boundRuntime: IOSWebMountRuntimeServicing?
+        if site.mode == .watch {
+            boundRuntime = site.sessionId?.nilIfBlank.flatMap {
+                controller.sessionStore.runtimeIfPresent(sessionId: $0)
+            }
+        } else {
+            boundRuntime = controller.sessionStore.runtimeIfPresent(sessionId: site.sessionId)
+        }
+        if let webRuntime = boundRuntime as? IOSWebMountWKRuntime {
+            _runtime = ObservedObject(wrappedValue: webRuntime)
+            hasBoundSession = true
+        } else {
+            _runtime = ObservedObject(wrappedValue: IOSWebMountWKRuntime(sessionId: site.sessionId))
+            hasBoundSession = false
+        }
+    }
+
+    private var isWatchMode: Bool {
+        site.mode == .watch
+    }
+
+    private var sessionRecord: IOSWebMountSessionRecord? {
+        guard hasBoundSession else { return nil }
+        let sessionId = isWatchMode ? site.sessionId : runtime.snapshot.sessionId
+        guard let sessionId = sessionId?.nilIfBlank else { return nil }
+        return controller.sessionStore.record(sessionId: sessionId)
+    }
+
+    private var isAgentControlActive: Bool {
+        sessionRecord?.controlOwner == .agent
+    }
+
+    private var canUserMutate: Bool {
+        hasBoundSession && sessionRecord?.controlOwner == .user
+    }
+
+    private var hasViewablePage: Bool {
+        guard hasBoundSession, let sessionRecord else { return false }
+        return !sessionRecord.needsReopen
+    }
+
+    private var canReadPage: Bool {
+        hasViewablePage && runtime.snapshot.status == .ready
+    }
+
+    private var displayedBanner: String? {
+        if isWatchMode {
+            guard hasBoundSession, let sessionRecord else {
+                return "此 WebMount 会话不存在或已过期，请返回任务列表。"
+            }
+            if let banner {
+                return banner
+            }
+            if sessionRecord.needsReopen {
+                return "此 WebMount 会话需要重新打开；Amber 不会自动恢复旧页面或动作。"
+            }
+            if runtime.snapshot.status == .idle {
+                return "此 session 尚未打开页面；观看不会自动导航。"
+            }
+            if runtime.snapshot.status == .failed,
+               let error = runtime.snapshot.error?.nilIfBlank {
+                return "页面加载失败：\(IOSWebMountRedactor.redactedText(error))"
+            }
+        }
+        return banner
     }
 
     var body: some View {
@@ -457,7 +838,7 @@ struct WebMountSiteView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
-                        if let banner {
+                        if let banner = displayedBanner {
                             WebMountBanner(text: banner)
                                 .padding(.top, 4)
                         }
@@ -475,10 +856,27 @@ struct WebMountSiteView: View {
         .toolbar(.hidden, for: .navigationBar)
         .task {
             if openURLText.isEmpty {
-                openURLText = resolvedSite.homepageURL
+                openURLText = runtime.snapshot.currentURL
+                    ?? runtime.snapshot.requestedURL
+                    ?? resolvedSite.homepageURL
+            }
+            guard hasBoundSession, sessionRecord != nil else {
+                await refreshCookieSummary()
+                return
+            }
+            if isWatchMode {
+                if let sessionId = site.sessionId?.nilIfBlank {
+                    controller.sessionStore.touch(sessionId: sessionId, makeCurrent: false)
+                }
+                await refreshCookieSummary()
+                return
+            }
+            controller.sessionStore.touch(sessionId: runtime.snapshot.sessionId, makeCurrent: true)
+            if sessionRecord?.controlOwner == IOSWebMountControlOwner.none {
+                _ = try? controller.sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
             }
             await refreshCookieSummary()
-            if runtime.snapshot.status == .idle {
+            if runtime.snapshot.status == .idle && !isAgentControlActive {
                 await openSite()
             }
         }
@@ -508,6 +906,8 @@ struct WebMountSiteView: View {
             AmberGlassCircleButton(systemImage: "arrow.clockwise", accessibilityLabel: "重新加载", size: 44, symbolSize: 17) {
                 Task { await openSite() }
             }
+            .disabled(isLoading || !canUserMutate)
+            .opacity(isLoading || !canUserMutate ? 0.45 : 1)
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
@@ -519,8 +919,8 @@ struct WebMountSiteView: View {
             AmberSectionLabel(text: "网页状态")
             AmberFormGroup {
                 WebMountInfoRow(
-                    title: runtime.snapshot.status.rawValue,
-                    subtitle: runtime.snapshot.currentURL ?? runtime.snapshot.requestedURL ?? resolvedSite.homepageURL,
+                    title: statusText,
+                    subtitle: statusSubtitle,
                     systemImage: statusImage,
                     tint: statusTint,
                     trailing: runtime.snapshot.title?.nilIfBlank ?? "\(Int(runtime.snapshot.estimatedProgress * 100))%"
@@ -528,43 +928,32 @@ struct WebMountSiteView: View {
                 WebMountDivider()
                 browserChromeRow
                 WebMountDivider()
+                controlRow
+                WebMountDivider()
                 AmberGlassGroup(spacing: 12) {
-                    HStack(spacing: 8) {
-                        TextField("https://example.com/path", text: $openURLText)
-                            .font(.system(size: 13, design: .monospaced))
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        Button("打开") { Task { await openTypedURL() } }
-                            .buttonStyle(.glassProminent)
-                            .disabled(isLoading)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            openURLField
+                            openURLButton
+                        }
+                        VStack(alignment: .trailing, spacing: 8) {
+                            openURLField
+                            openURLButton
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 WebMountDivider()
                 AmberGlassGroup(spacing: 12) {
-                    HStack(spacing: 10) {
-                        Button {
-                            Task { _ = await controller.runtime.back() }
-                        } label: {
-                            Label("后退", systemImage: "chevron.left")
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            navigationButtons
+                            Spacer(minLength: 0)
                         }
-                        .buttonStyle(.glass)
-                        .disabled(!runtime.snapshot.canGoBack)
-
-                        Button {
-                            Task { _ = await controller.runtime.forward() }
-                        } label: {
-                            Label("前进", systemImage: "chevron.right")
+                        VStack(alignment: .leading, spacing: 8) {
+                            navigationButtons
                         }
-                        .buttonStyle(.glass)
-                        .disabled(!runtime.snapshot.canGoForward)
-
-                        Spacer()
                     }
                 }
                 .padding(.horizontal, 14)
@@ -573,14 +962,98 @@ struct WebMountSiteView: View {
         }
     }
 
+    private var openURLField: some View {
+        TextField("https://example.com/path", text: $openURLText)
+            .font(.system(size: 13, design: .monospaced))
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .frame(maxWidth: .infinity)
+            .disabled(!canUserMutate)
+    }
+
+    private var openURLButton: some View {
+        Button("打开") { Task { await openTypedURL() } }
+            .buttonStyle(.glassProminent)
+            .frame(minHeight: 44)
+            .disabled(isLoading || !canUserMutate)
+    }
+
+    @ViewBuilder
+    private var navigationButtons: some View {
+        Button {
+            Task {
+                guard canUserMutate else {
+                    banner = "Agent 正在控制此页面，请先接管。"
+                    return
+                }
+                _ = await runtime.back()
+            }
+        } label: {
+            Label("后退", systemImage: "chevron.left")
+        }
+        .buttonStyle(.glass)
+        .frame(minHeight: 44)
+        .disabled(!runtime.snapshot.canGoBack || !canUserMutate)
+
+        Button {
+            Task {
+                guard canUserMutate else {
+                    banner = "Agent 正在控制此页面，请先接管。"
+                    return
+                }
+                _ = await runtime.forward()
+            }
+        } label: {
+            Label("前进", systemImage: "chevron.right")
+        }
+        .buttonStyle(.glass)
+        .frame(minHeight: 44)
+        .disabled(!runtime.snapshot.canGoForward || !canUserMutate)
+    }
+
+    @ViewBuilder
+    private var bridgeActionButtons: some View {
+        Button("状态") { Task { await readState() } }
+            .buttonStyle(.glass)
+            .frame(minHeight: 44)
+            .disabled(!canReadPage)
+        Button("提取正文") { Task { await extractReadable() } }
+            .buttonStyle(.glass)
+            .frame(minHeight: 44)
+            .disabled(!canReadPage)
+        Button("观察") { Task { await self.observePage() } }
+            .buttonStyle(.glass)
+            .frame(minHeight: 44)
+            .disabled(!canReadPage)
+        Button("视觉快照") { Task { await visualSnapshot() } }
+            .buttonStyle(.glass)
+            .frame(minHeight: 44)
+            .disabled(!canReadPage)
+    }
+
     private var browserChromeRow: some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                if isWatchMode {
+                    WebMountBadge(text: "观看模式", systemImage: "eye", tint: AmberTheme.accentCyan)
+                }
                 WebMountBadge(text: resolvedSite.homepageHost, systemImage: "network", tint: AmberTheme.accentCyan)
                 WebMountBadge(text: loginBadgeText, systemImage: "person.crop.circle", tint: loginBadgeTint)
-                WebMountBadge(text: resolvedSite.enabled ? "allowlisted" : "blocked", systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield", tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed)
+                WebMountBadge(text: resolvedSite.enabled ? "已允许" : "已停用", systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield", tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed)
                 WebMountBadge(text: runtime.snapshot.sessionId, systemImage: "rectangle.stack", tint: AmberTheme.accentIndigo)
+                WebMountBadge(text: controlOwnerBadgeText, systemImage: controlOwnerImage, tint: controlOwnerTint)
+                if let sessionRecord, sessionRecord.persistentOptIn {
+                    WebMountBadge(text: "持久会话", systemImage: "pin", tint: AmberTheme.accentAmber)
+                }
+                if let sessionRecord, sessionRecord.needsReopen {
+                    WebMountBadge(text: "需要重新打开", systemImage: "arrow.clockwise", tint: AmberTheme.accentRed)
+                }
             }
+            .scrollIndicators(.hidden)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
         }
@@ -590,14 +1063,37 @@ struct WebMountSiteView: View {
     private var webViewSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "网页")
-            WebMountRuntimeWebView(runtime: runtime)
-                .frame(height: 420)
-                .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous)
-                        .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+            Group {
+                if hasViewablePage {
+                    WebMountRuntimeWebView(runtime: runtime, isInteractive: canUserMutate)
+                        .accessibilityHint(isWatchMode && !canUserMutate ? "观看模式，仅可查看；接管后可操作。" : "")
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: sessionRecord?.needsReopen == true ? "arrow.clockwise" : "rectangle.slash")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundStyle(AmberTheme.muted2)
+                        Text(sessionRecord?.needsReopen == true ? "会话需要重新打开" : "会话不存在或已过期")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                        Text(sessionRecord?.needsReopen == true
+                             ? "接管后可显式打开页面；旧页面和旧动作不会自动恢复。"
+                             : "返回 Agent 浏览器任务列表重新打开。")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(AmberTheme.surface2)
                 }
-                .padding(.horizontal, 16)
+            }
+            .frame(height: 420)
+            .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+            }
+            .padding(.horizontal, 16)
         }
     }
 
@@ -606,16 +1102,14 @@ struct WebMountSiteView: View {
             AmberSectionLabel(text: "页面内容")
             AmberFormGroup {
                 AmberGlassGroup(spacing: 12) {
-                    HStack(spacing: 8) {
-                        Button("状态") { Task { await readState() } }
-                            .buttonStyle(.glass)
-                        Button("提取正文") { Task { await extractReadable() } }
-                            .buttonStyle(.glass)
-                        Button("观察") { Task { await self.observePage() } }
-                            .buttonStyle(.glass)
-                        Button("视觉快照") { Task { await visualSnapshot() } }
-                            .buttonStyle(.glass)
-                        Spacer()
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            bridgeActionButtons
+                            Spacer(minLength: 0)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            bridgeActionButtons
+                        }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -655,8 +1149,11 @@ struct WebMountSiteView: View {
                             .padding(.vertical, 8)
                             .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
                             .autocorrectionDisabled()
+                            .disabled(!canReadPage)
                         Button("读取") { Task { await getElement() } }
                             .buttonStyle(.glass)
+                            .frame(minHeight: 44)
+                            .disabled(!canReadPage)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -682,22 +1179,14 @@ struct WebMountSiteView: View {
                 )
                 WebMountDivider()
                 AmberGlassGroup(spacing: 12) {
-                    HStack(spacing: 8) {
-                        Button {
-                            Task { await openSite() }
-                        } label: {
-                            Label("打开网页登录", systemImage: "person.badge.key")
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) {
+                            cookieActionButtons
+                            Spacer(minLength: 0)
                         }
-                        .buttonStyle(.glass)
-
-                        Button {
-                            Task { await refreshCookieSummary() }
-                        } label: {
-                            Label("重新检测 Cookie", systemImage: "arrow.clockwise")
+                        VStack(alignment: .leading, spacing: 6) {
+                            cookieActionButtons
                         }
-                        .buttonStyle(.glass)
-
-                        Spacer()
                     }
                 }
                 .padding(.horizontal, 14)
@@ -717,26 +1206,139 @@ struct WebMountSiteView: View {
                     .padding(.vertical, 12)
                 }
                 .buttonStyle(.plain)
+                .disabled(!canUserMutate)
+                .opacity(canUserMutate ? 1 : 0.45)
             }
         }
     }
 
+    @ViewBuilder
+    private var cookieActionButtons: some View {
+        Button {
+            Task { await openSite() }
+        } label: {
+            Label("打开网页登录", systemImage: "person.badge.key")
+        }
+        .buttonStyle(.glass)
+        .frame(minHeight: 44)
+        .disabled(!canUserMutate)
+
+        Button {
+            Task { await refreshCookieSummary() }
+        } label: {
+            Label("重新检测 Cookie", systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.glass)
+        .frame(minHeight: 44)
+    }
+
+    private var controlRow: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .center, spacing: 12) {
+                controlOwnerDetails
+                controlOwnerAction
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                controlOwnerDetails
+                HStack {
+                    Spacer(minLength: 0)
+                    controlOwnerAction
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    private var controlOwnerDetails: some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: controlOwnerImage)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(controlOwnerTint)
+                .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(controlOwnerTitle)
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                Text(controlOwnerSubtitle)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var controlOwnerAction: some View {
+        if sessionRecord != nil, sessionRecord?.controlOwner != .user {
+            Button("接管") { takeUserControl() }
+                .buttonStyle(.glassProminent)
+                .frame(minHeight: 44)
+                .accessibilityLabel("接管 WebMount 页面")
+        } else if sessionRecord?.controlOwner == .user {
+            let hasActiveAgent = sessionRecord?.ownerRunId?.nilIfBlank != nil
+            Button(hasActiveAgent ? "交还 Agent" : "释放控制") { handBackToAgent() }
+                .buttonStyle(.glass)
+                .frame(minHeight: 44)
+                .accessibilityLabel(hasActiveAgent ? "交还 WebMount 页面给 Agent" : "释放 WebMount 页面控制权")
+        }
+    }
+
     private var statusImage: String {
+        if !hasBoundSession || sessionRecord == nil {
+            return "rectangle.slash"
+        }
+        if sessionRecord?.needsReopen == true {
+            return "arrow.clockwise"
+        }
         switch runtime.snapshot.status {
-        case .idle: "circle"
-        case .loading: "arrow.triangle.2.circlepath"
-        case .ready: "checkmark.circle"
-        case .failed: "exclamationmark.triangle"
+        case .idle: return "circle"
+        case .loading: return "arrow.triangle.2.circlepath"
+        case .ready: return "checkmark.circle"
+        case .failed: return "exclamationmark.triangle"
+        }
+    }
+
+    private var statusText: String {
+        if !hasBoundSession || sessionRecord == nil {
+            return "会话已失效"
+        }
+        if sessionRecord?.needsReopen == true {
+            return "需要重新打开"
+        }
+        switch runtime.snapshot.status {
+        case .idle: return "待打开"
+        case .loading: return "正在加载"
+        case .ready: return "已就绪"
+        case .failed: return "加载失败"
         }
     }
 
     private var statusTint: Color {
-        switch runtime.snapshot.status {
-        case .idle: AmberTheme.muted2
-        case .loading: AmberTheme.accentAmber
-        case .ready: AmberTheme.accentGreen
-        case .failed: AmberTheme.accentRed
+        if !hasBoundSession || sessionRecord == nil {
+            return AmberTheme.accentRed
         }
+        if sessionRecord?.needsReopen == true {
+            return AmberTheme.accentAmber
+        }
+        switch runtime.snapshot.status {
+        case .idle: return AmberTheme.muted2
+        case .loading: return AmberTheme.accentAmber
+        case .ready: return AmberTheme.accentGreen
+        case .failed: return AmberTheme.accentRed
+        }
+    }
+
+    private var statusSubtitle: String {
+        if !hasBoundSession || sessionRecord == nil {
+            return "目标 session 不存在或已过期"
+        }
+        if sessionRecord?.needsReopen == true {
+            return sessionRecord?.redactedURL.nilIfBlank ?? "旧页面不会自动恢复"
+        }
+        return runtime.snapshot.currentURL ?? runtime.snapshot.requestedURL ?? resolvedSite.homepageURL
     }
 
     private var cookieSubtitle: String {
@@ -762,10 +1364,10 @@ struct WebMountSiteView: View {
     }
 
     private var loginBadgeText: String {
-        guard let cookieSummary else { return "login unknown" }
-        if cookieSummary.hasLoginCookie == true { return "logged in" }
-        if cookieSummary.hasLoginCookie == false { return "logged out" }
-        return "login unknown"
+        guard let cookieSummary else { return "登录状态未知" }
+        if cookieSummary.hasLoginCookie == true { return "已登录" }
+        if cookieSummary.hasLoginCookie == false { return "未登录" }
+        return "登录状态未知"
     }
 
     private var loginBadgeTint: Color {
@@ -775,23 +1377,83 @@ struct WebMountSiteView: View {
         return AmberTheme.accentAmber
     }
 
+    private var controlOwnerBadgeText: String {
+        switch sessionRecord?.controlOwner {
+        case .agent: "Agent 控制"
+        case .user: "用户控制"
+        default: "控制权空闲"
+        }
+    }
+
+    private var controlOwnerTitle: String {
+        switch sessionRecord?.controlOwner {
+        case .agent: "Agent 控制中"
+        case .user: "你正在控制"
+        default: "控制权空闲"
+        }
+    }
+
+    private var controlOwnerSubtitle: String {
+        if !hasBoundSession || sessionRecord == nil {
+            return "当前 session 已失效，请返回站点列表重新打开。"
+        }
+        switch sessionRecord?.controlOwner {
+        case .agent:
+            return "页面仍可观察；打开、导航和网页交互需先接管。"
+        case .user:
+            if sessionRecord?.ownerRunId?.nilIfBlank != nil {
+                return "完成登录、验证码、CAPTCHA 或支付敏感步骤后点“交还 Agent”；Amber 不会自动夺回控制。"
+            }
+            return "你可以操作页面；当前没有活动 Agent 任务。"
+        default:
+            return "没有活动控制方。"
+        }
+    }
+
+    private var controlOwnerImage: String {
+        switch sessionRecord?.controlOwner {
+        case .agent: "cpu"
+        case .user: "person.crop.circle"
+        default: "lock.open"
+        }
+    }
+
+    private var controlOwnerTint: Color {
+        switch sessionRecord?.controlOwner {
+        case .agent: AmberTheme.accentIndigo
+        case .user: AmberTheme.accentGreen
+        default: AmberTheme.muted2
+        }
+    }
+
     private func openSite() async {
+        guard canUserMutate else {
+            if isAgentControlActive {
+                banner = "Agent 正在控制此页面，请先接管。"
+            }
+            return
+        }
         isLoading = true
-        _ = await controller.openForUser(site: resolvedSite)
+        _ = await controller.openForUser(site: resolvedSite, sessionId: runtime.snapshot.sessionId)
         openURLText = runtime.snapshot.currentURL ?? resolvedSite.homepageURL
         isLoading = false
         if let error = runtime.snapshot.error?.nilIfBlank {
-            banner = error
+            banner = IOSWebMountRedactor.redactedText(error)
         }
     }
 
     private func openTypedURL() async {
+        guard canUserMutate else {
+            banner = "Agent 正在控制此页面，请先接管。"
+            return
+        }
         isLoading = true
         let output = await controller.execute(
             toolName: "wm_open",
             input: IOSWebMountController.json([
                 "site_id": resolvedSite.id,
-                "url": openURLText
+                "url": openURLText,
+                "session_id": runtime.snapshot.sessionId
             ]),
             isUserInitiated: true
         )
@@ -811,12 +1473,12 @@ struct WebMountSiteView: View {
 
     private func readState() async {
         do {
-            let state = try await controller.runtime.state()
+            let state = try await runtime.state()
             bridgeState = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(state))
             debugJSONText = bridgeState
             selectedResultTab = .debug
         } catch {
-            bridgeState = IOSWebMountController.json(["ok": false, "error": error.localizedDescription])
+            bridgeState = IOSWebMountController.json(["ok": false, "error": IOSWebMountRedactor.redactedText(error.localizedDescription)])
             debugJSONText = bridgeState
             selectedResultTab = .debug
         }
@@ -824,7 +1486,7 @@ struct WebMountSiteView: View {
 
     private func extractReadable() async {
         do {
-            let result = try await controller.runtime.extract(mode: "readable", maxChars: 4_000, maxLinks: 12)
+            let result = try await runtime.extract(mode: "readable", maxChars: 4_000, maxLinks: 12)
             let redacted = IOSWebMountRedactor.redactedJSONObject(result)
             extractText = IOSWebMountRedactor.redactedText((result["text"] as? String) ?? "")
             linksText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(result["links"] ?? []))
@@ -842,7 +1504,7 @@ struct WebMountSiteView: View {
             )
             selectedResultTab = .text
         } catch {
-            extractText = IOSWebMountController.json(["ok": false, "error": error.localizedDescription])
+            extractText = IOSWebMountController.json(["ok": false, "error": IOSWebMountRedactor.redactedText(error.localizedDescription)])
             debugJSONText = extractText
             contentHandoff = nil
             selectedResultTab = .debug
@@ -851,9 +1513,9 @@ struct WebMountSiteView: View {
 
     private func observePage() async {
         do {
-            let readable = try await controller.runtime.extract(mode: "readable", maxChars: 2_000, maxLinks: 20)
-            let interactive = try await controller.runtime.extract(mode: "interactive", maxChars: 0, maxLinks: 80)
-            let visual = try await controller.runtime.extract(mode: "snapshot", maxChars: 0, maxLinks: 80)
+            let readable = try await runtime.extract(mode: "readable", maxChars: 2_000, maxLinks: 20)
+            let interactive = try await runtime.extract(mode: "interactive", maxChars: 0, maxLinks: 80)
+            let visual = try await runtime.extract(mode: "snapshot", maxChars: 0, maxLinks: 80)
             extractText = IOSWebMountRedactor.redactedText((readable["text"] as? String) ?? extractText)
             linksText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(readable["links"] ?? []))
             interactiveText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(interactive["nodes"] ?? []))
@@ -865,20 +1527,20 @@ struct WebMountSiteView: View {
             ]))
             selectedResultTab = .interactive
         } catch {
-            debugJSONText = IOSWebMountController.json(["ok": false, "error": error.localizedDescription])
+            debugJSONText = IOSWebMountController.json(["ok": false, "error": IOSWebMountRedactor.redactedText(error.localizedDescription)])
             selectedResultTab = .debug
         }
     }
 
     private func visualSnapshot() async {
         do {
-            let result = try await controller.runtime.extract(mode: "snapshot", maxChars: 4_000, maxLinks: 24)
+            let result = try await runtime.extract(mode: "snapshot", maxChars: 4_000, maxLinks: 24)
             visualSnapshotText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(result["visual_candidates"] ?? result))
             interactiveText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(result["interactive_nodes"] ?? []))
             debugJSONText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(result))
             selectedResultTab = .visual
         } catch {
-            visualSnapshotText = IOSWebMountController.json(["ok": false, "error": error.localizedDescription])
+            visualSnapshotText = IOSWebMountController.json(["ok": false, "error": IOSWebMountRedactor.redactedText(error.localizedDescription)])
             debugJSONText = visualSnapshotText
             selectedResultTab = .debug
         }
@@ -886,7 +1548,7 @@ struct WebMountSiteView: View {
 
     private func getElement() async {
         do {
-            let result = try await controller.runtime.get(
+            let result = try await runtime.get(
                 selector: getSelector,
                 target: nil,
                 kind: "text",
@@ -896,15 +1558,37 @@ struct WebMountSiteView: View {
             getText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(result))
             debugJSONText = getText
         } catch {
-            getText = IOSWebMountController.json(["ok": false, "error": error.localizedDescription])
+            getText = IOSWebMountController.json(["ok": false, "error": IOSWebMountRedactor.redactedText(error.localizedDescription)])
             debugJSONText = getText
         }
     }
 
     private func clearSession() async {
+        guard canUserMutate else {
+            banner = "Agent 正在控制此页面，请先接管。"
+            return
+        }
         let result = await controller.cookieStore.clearSession(for: resolvedSite)
         banner = "已清除 \(result.deletedCookieCount) 个 Cookie 和 \(result.clearedWebsiteDataRecords) 条网页数据。"
         await refreshCookieSummary()
+    }
+
+    private func takeUserControl() {
+        do {
+            _ = try controller.sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
+            banner = "已接管此 WebMount 页面。"
+        } catch {
+            banner = "接管失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"
+        }
+    }
+
+    private func handBackToAgent() {
+        do {
+            _ = try controller.sessionStore.handBackToAgent(sessionId: runtime.snapshot.sessionId)
+            banner = "已将此 WebMount 页面交还 Agent。"
+        } catch {
+            banner = "交还失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"
+        }
     }
 
     private static func jsonObject(_ text: String) -> [String: Any]? {
@@ -916,12 +1600,17 @@ struct WebMountSiteView: View {
 @MainActor
 private struct WebMountRuntimeWebView: UIViewRepresentable {
     let runtime: IOSWebMountWKRuntime
+    let isInteractive: Bool
 
     func makeUIView(context: Context) -> WKWebView {
-        runtime.webView ?? WKWebView()
+        let webView = runtime.webView ?? WKWebView()
+        webView.isUserInteractionEnabled = isInteractive
+        return webView
     }
 
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func updateUIView(_ uiView: WKWebView, context: Context) {
+        uiView.isUserInteractionEnabled = isInteractive
+    }
 }
 
 private struct WebMountBadge: View {
@@ -960,7 +1649,7 @@ private struct WebMountStationRow: View {
                             .font(.body)
                             .foregroundStyle(AmberTheme.foreground)
                             .lineLimit(1)
-                        Text("\(site.authKind.rawValue) · \(IOSWebMountRedactor.redactedURL(site.homepageURL) ?? site.homepageURL)")
+                        Text("\(authKindText) · \(IOSWebMountRedactor.redactedURL(site.homepageURL) ?? site.homepageURL)")
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                             .lineLimit(2)
@@ -970,22 +1659,25 @@ private struct WebMountStationRow: View {
             }
             .buttonStyle(.plain)
 
-            Toggle("", isOn: Binding(
+            WebMountAccessibleSwitch(
+                isOn: Binding(
                 get: { site.enabled },
                 set: { value in
                     Task { @MainActor in onToggle(value) }
                 }
-            ))
-                .labelsHidden()
-                .toggleStyle(.switch)
+                ),
+                label: "启用 \(site.displayName)",
+                hint: site.enabled ? "关闭后 Agent 不再打开此站点" : "打开后允许 Agent 使用此站点"
+            )
 
             Button(role: .destructive, action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(AmberTheme.accentRed)
-                    .frame(width: 28, height: 28)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("删除 \(site.displayName)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
@@ -996,6 +1688,14 @@ private struct WebMountStationRow: View {
         case .anonymous: "globe"
         case .cookie: "person.badge.key"
         case .oauth: "key"
+        }
+    }
+
+    private var authKindText: String {
+        switch site.authKind {
+        case .anonymous: "无需登录"
+        case .cookie: "Cookie 登录"
+        case .oauth: "OAuth 登录"
         }
     }
 
@@ -1033,11 +1733,49 @@ private struct WebMountToggleRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Toggle("", isOn: $isOn)
-                .labelsHidden()
+            WebMountAccessibleSwitch(isOn: $isOn, label: title)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 11)
+    }
+}
+
+@MainActor
+private struct WebMountAccessibleSwitch: UIViewRepresentable {
+    @Binding var isOn: Bool
+    let label: String
+    var hint: String? = nil
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isOn: $isOn)
+    }
+
+    func makeUIView(context: Context) -> UISwitch {
+        let control = UISwitch()
+        control.onTintColor = UIColor(AmberTheme.accent)
+        control.addTarget(context.coordinator, action: #selector(Coordinator.valueChanged(_:)), for: .valueChanged)
+        return control
+    }
+
+    func updateUIView(_ control: UISwitch, context: Context) {
+        context.coordinator.isOn = $isOn
+        control.setOn(isOn, animated: false)
+        control.onTintColor = UIColor(AmberTheme.accent)
+        control.accessibilityLabel = label
+        control.accessibilityHint = hint
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var isOn: Binding<Bool>
+
+        init(isOn: Binding<Bool>) {
+            self.isOn = isOn
+        }
+
+        @objc func valueChanged(_ sender: UISwitch) {
+            isOn.wrappedValue = sender.isOn
+        }
     }
 }
 
@@ -1049,6 +1787,23 @@ private struct WebMountInfoRow: View {
     let trailing: String
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                infoLeading
+                infoTrailing
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                infoLeading
+                infoTrailing
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    private var infoLeading: some View {
         HStack(alignment: .top, spacing: 12) {
             Image(systemName: systemImage)
                 .font(.system(size: 16, weight: .medium))
@@ -1065,14 +1820,14 @@ private struct WebMountInfoRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(trailing)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(tint)
-                .multilineTextAlignment(.trailing)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+    }
+
+    private var infoTrailing: some View {
+        Text(trailing)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(tint)
+            .multilineTextAlignment(.trailing)
     }
 }
 
@@ -1089,25 +1844,36 @@ private struct WebMountHandoffActions: View {
                 .lineLimit(2)
 
             AmberGlassGroup(spacing: 12) {
-                HStack(spacing: 8) {
-                    Button(action: onChat) {
-                        Label("转入聊天", systemImage: "bubble.left.and.text.bubble.right")
-                            .font(.caption.weight(.semibold))
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        handoffButtons
+                        Spacer(minLength: 0)
                     }
-                    .buttonStyle(.glass)
-
-                    Button(action: onDeepRead) {
-                        Label("转入深度阅读", systemImage: "book.pages")
-                            .font(.caption.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 6) {
+                        handoffButtons
                     }
-                    .buttonStyle(.glass)
-
-                    Spacer(minLength: 0)
                 }
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private var handoffButtons: some View {
+        Button(action: onChat) {
+            Label("转入聊天", systemImage: "bubble.left.and.text.bubble.right")
+                .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.glass)
+        .frame(minHeight: 44)
+
+        Button(action: onDeepRead) {
+            Label("转入深度阅读", systemImage: "book.pages")
+                .font(.caption.weight(.semibold))
+        }
+        .buttonStyle(.glass)
+        .frame(minHeight: 44)
     }
 }
 
@@ -1121,7 +1887,8 @@ private struct WebMountTextFieldRow: View {
             Text(title)
                 .font(.body)
                 .foregroundStyle(AmberTheme.foreground)
-                .frame(width: 88, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(minWidth: 88, alignment: .leading)
 
             TextField(placeholder, text: $text)
                 .font(.system(size: 14, design: .monospaced))

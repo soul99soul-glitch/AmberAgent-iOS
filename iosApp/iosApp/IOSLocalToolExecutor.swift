@@ -17,6 +17,7 @@ struct IOSLocalToolExecutionRequest: Equatable {
     let payloadDigest: String
     let isUserInitiated: Bool
     let runId: String
+    let conversationId: String
     let executionPolicy: IOSExecutionPolicySnapshot?
 
     init(
@@ -26,6 +27,7 @@ struct IOSLocalToolExecutionRequest: Equatable {
         payloadDigest: String,
         isUserInitiated: Bool,
         runId: String = "",
+        conversationId: String = "",
         executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) {
         self.toolName = toolName
@@ -34,6 +36,7 @@ struct IOSLocalToolExecutionRequest: Equatable {
         self.payloadDigest = payloadDigest
         self.isUserInitiated = isUserInitiated
         self.runId = runId
+        self.conversationId = conversationId
         self.executionPolicy = executionPolicy
     }
 }
@@ -55,6 +58,28 @@ struct IOSWebMountToolApprovalPreview: Equatable {
     let siteId: String
     let siteName: String
     let host: String
+    let sessionId: String?
+    let backend: String
+    let mcpServerName: String?
+    let redactedURL: String
+    let snapshotId: String?
+    let target: String?
+    let action: String
+    let consequence: String
+    let screenshotRetentionWarning: String?
+}
+
+struct IOSWebMountExecutionContext: Equatable {
+    let runId: String
+    let conversationId: String
+
+    var isAgentInvocation: Bool {
+        runId.nilIfBlank != nil || conversationId.nilIfBlank != nil
+    }
+
+    var hasCompleteBinding: Bool {
+        runId.nilIfBlank != nil && conversationId.nilIfBlank != nil
+    }
 }
 
 struct IOSWorkspaceToolApprovalPreview: Equatable {
@@ -158,6 +183,7 @@ final class IOSLocalToolExecutor {
         operation: String,
         isUserInitiated: Bool,
         runId: String = "",
+        conversationId: String = "",
         executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) -> IOSLocalToolExecutionRequest {
         if toolName == "file_read_selected" {
@@ -169,6 +195,7 @@ final class IOSLocalToolExecutor {
                 payloadDigest: selected.payloadDigest,
                 isUserInitiated: selected.isUserInitiated,
                 runId: runId,
+                conversationId: conversationId,
                 executionPolicy: executionPolicy
             )
         }
@@ -178,7 +205,17 @@ final class IOSLocalToolExecutor {
         if let workspace = workspaceApprovalPreview(toolName: toolName, input: operation) {
             scopeTarget = "workspace:\(workspace.target)"
         } else if let webMount = webMountApprovalPreview(toolName: toolName, input: operation) {
-            scopeTarget = "webmount:\(webMount.siteId):\(webMount.host)"
+            scopeTarget = [
+                "webmount",
+                webMount.siteId,
+                webMount.host,
+                webMount.sessionId ?? "unbound",
+                webMount.backend,
+                webMount.mcpServerName ?? "local",
+                webMount.snapshotId ?? "no-snapshot",
+                webMount.target ?? "no-target",
+                webMount.action
+            ].joined(separator: ":")
         } else {
             scopeTarget = "capability:\(capabilityId)"
         }
@@ -189,6 +226,7 @@ final class IOSLocalToolExecutor {
             payloadDigest: Self.sha256(operation),
             isUserInitiated: isUserInitiated,
             runId: runId,
+            conversationId: conversationId,
             executionPolicy: executionPolicy
         )
     }
@@ -250,15 +288,45 @@ final class IOSLocalToolExecutor {
             guard let capability = IOSCapabilityRegistry.capability(forToolName: request.toolName) else {
                 return .denied("Unknown iOS WebMount tool: \(request.toolName)")
             }
-            switch resolveWebMount(request: request, capability: capability) {
+            let webMountContext: IOSWebMountExecutionContext?
+            if request.runId.isEmpty && request.conversationId.isEmpty {
+                webMountContext = nil
+            } else {
+                webMountContext = IOSWebMountExecutionContext(
+                    runId: request.runId,
+                    conversationId: request.conversationId
+                )
+            }
+            let webMountGate = resolveWebMount(request: request, capability: capability)
+            switch webMountGate {
             case .allow:
                 let output = await webMountController.execute(
                     toolName: request.toolName,
                     input: request.operation,
-                    isUserInitiated: request.isUserInitiated
+                    isUserInitiated: request.isUserInitiated,
+                    context: webMountContext
                 )
+                if let reason = Self.webMountHumanActionReason(output) {
+                    return .needsUserAction("human_handoff: \(reason)")
+                }
+                if let reason = Self.webMountUserActionReason(output) {
+                    return .needsUserAction(reason)
+                }
                 return .webMountResult(output)
             case .needsUserAction(let reason):
+                if !request.isUserInitiated,
+                   let preflight = await webMountController.preflightUserAction(
+                       toolName: request.toolName,
+                       input: request.operation,
+                       context: webMountContext
+                   ) {
+                    if let handoffReason = Self.webMountHumanActionReason(preflight) {
+                        return .needsUserAction("human_handoff: \(handoffReason)")
+                    }
+                    if let actionReason = Self.webMountUserActionReason(preflight) {
+                        return .needsUserAction(actionReason)
+                    }
+                }
                 return .needsUserAction(reason)
             case .deny(let reason):
                 return .denied(reason)
@@ -309,23 +377,56 @@ final class IOSLocalToolExecutor {
         request: IOSLocalToolExecutionRequest,
         capability: IOSPlatformCapability
     ) -> IOSPlatformGateDecision {
-        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
+        webMountGateDecision(
+            toolName: request.toolName,
+            isUserInitiated: request.isUserInitiated,
+            executionPolicy: request.executionPolicy,
+            capability: capability
+        )
+    }
+
+    func webMountGateDecision(
+        toolName: String,
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot?
+    ) -> IOSPlatformGateDecision {
+        guard let capability = IOSCapabilityRegistry.capability(forToolName: toolName) else {
+            return .deny(reason: "Unknown iOS WebMount tool: \(toolName)")
+        }
+        return webMountGateDecision(
+            toolName: toolName,
+            isUserInitiated: isUserInitiated,
+            executionPolicy: executionPolicy,
+            capability: capability
+        )
+    }
+
+    private func webMountGateDecision(
+        toolName: String,
+        isUserInitiated: Bool,
+        executionPolicy: IOSExecutionPolicySnapshot?,
+        capability: IOSPlatformCapability
+    ) -> IOSPlatformGateDecision {
+        let policy = executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent policy")
         }
-        // 自动批准策略直接放行。
+        if !isUserInitiated {
+            if toolName == "wm_clear_session" {
+                return .needsUserAction(reason: "Clearing WebMount cookies requires an explicit foreground user action")
+            }
+            if IOSWebMountToolCatalog.descriptors.first(where: { $0.name == toolName })?.requiresUserAction == true {
+                return .needsUserAction(reason: "This WebMount action requires explicit foreground user approval: \(toolName)")
+            }
+        }
         if policy == .autoApprove || policy == .autoApproveHighRisk {
             return .allow(capabilityId: capability.id)
         }
-        if !request.isUserInitiated {
-            if request.toolName == "wm_clear_session" {
-                return .needsUserAction(reason: "Clearing WebMount cookies requires an explicit foreground user action")
-            }
-            if IOSWebMountToolCatalog.descriptors.first(where: { $0.name == request.toolName })?.requiresUserAction == true {
-                return .needsUserAction(reason: "This WebMount action requires explicit foreground user approval: \(request.toolName)")
-            }
+        if !isUserInitiated {
             if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
-                if globalAutoApproveEnabled(for: request) && (capability.risk != .high || highRiskAutoApproveEnabled(for: request)) {
+                let globalAutoApprove = executionPolicy?.globalAutoApproveEnabled ?? Self.isGlobalAutoApproveEnabled
+                let highRiskAutoApprove = executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled
+                if globalAutoApprove && (capability.risk != .high || highRiskAutoApprove) {
                     return .allow(capabilityId: capability.id)
                 }
                 return .needsUserAction(reason: "WebMount browser tools require explicit foreground approval before the model can use the page session.")
@@ -511,34 +612,172 @@ final class IOSLocalToolExecutor {
             return nil
         }
         let object = Self.webMountInputObject(input)
-        if let siteId = (object["site_id"] as? String)?.nilIfBlank,
-           let site = webMountController.registry.site(id: siteId) {
-            return IOSWebMountToolApprovalPreview(
-                toolName: toolName,
-                siteId: site.id,
-                siteName: site.displayName,
-                host: site.homepageHost
-            )
+        let sessionId = (object["session_id"] as? String)?.nilIfBlank
+        let record = sessionId.flatMap { webMountController.sessionStore.record(sessionId: $0) }
+        let previewRuntime = webMountController.sessionStore.runtimeIfPresent(sessionId: sessionId)
+        let requestedURL = IOSWebMountRedactor.redactedURL(object["url"] as? String)
+        let currentURL = requestedURL
+            ?? record?.redactedURL.nilIfBlank
+            ?? IOSWebMountRedactor.redactedURL(previewRuntime?.snapshot.currentURL)
+            ?? ""
+        let requestedSiteId = (object["site_id"] as? String)?.nilIfBlank
+        let requestedSite = requestedSiteId.flatMap { webMountController.registry.site(id: $0) }
+        let urlSite = (object["url"] as? String)
+            .flatMap { URL(string: $0) }
+            .flatMap { webMountController.registry.site(for: $0) }
+        let recordSite = record.flatMap { item in
+            item.siteId.flatMap { webMountController.registry.site(id: $0) }
         }
-        if let rawURL = object["url"] as? String,
-           let url = URL(string: rawURL),
-           let site = webMountController.registry.site(for: url) {
-            return IOSWebMountToolApprovalPreview(
-                toolName: toolName,
-                siteId: site.id,
-                siteName: site.displayName,
-                host: site.homepageHost
-            )
-        }
-        let host = Self.redactedHost(from: object["url"] as? String)
-            ?? Self.redactedHost(from: webMountController.runtime.snapshot.currentURL)
+        let site = requestedSite ?? urlSite ?? recordSite
+        let host = site?.homepageHost
+            ?? Self.redactedHost(from: currentURL)
             ?? "WebMount"
+        let target = Self.webMountApprovalTarget(toolName: toolName, object: object)
         return IOSWebMountToolApprovalPreview(
             toolName: toolName,
-            siteId: "current",
-            siteName: "当前 WebMount 会话",
-            host: host
+            siteId: site?.id ?? record?.siteId ?? "current",
+            siteName: site?.displayName ?? record?.siteName ?? "当前 WebMount 会话",
+            host: host,
+            sessionId: sessionId,
+            backend: record?.backend.rawValue ?? "local",
+            mcpServerName: record?.mcpServerName,
+            redactedURL: currentURL,
+            snapshotId: (object["snapshot_id"] as? String)?.nilIfBlank,
+            target: target,
+            action: Self.webMountApprovalAction(toolName),
+            consequence: Self.webMountApprovalConsequence(toolName: toolName, target: target),
+            screenshotRetentionWarning: toolName == "wm_screenshot"
+                ? "完整视口截图会仅保存在本机，最长保留 24 小时，可能包含页面中的敏感信息。"
+                : nil
         )
+    }
+
+    func webMountActionPreflight(
+        toolName: String,
+        input: String,
+        runId: String,
+        conversationId: String
+    ) async -> String? {
+        let context: IOSWebMountExecutionContext? = runId.isEmpty && conversationId.isEmpty
+            ? nil
+            : IOSWebMountExecutionContext(runId: runId, conversationId: conversationId)
+        return await webMountController.preflightUserAction(
+            toolName: toolName,
+            input: input,
+            context: context
+        )
+    }
+
+    func webMountHandoffIsPending(toolName: String, input: String) -> Bool {
+        guard ["wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select"].contains(toolName) else {
+            return false
+        }
+        let object = Self.webMountInputObject(input)
+        guard let sessionId = (object["session_id"] as? String)?.nilIfBlank,
+              let record = webMountController.sessionStore.record(sessionId: sessionId) else {
+            return false
+        }
+        return record.backend == .local
+            && record.controlOwner == .user
+            && record.ownerRunId?.nilIfBlank != nil
+    }
+
+    /// Completes an approval-card human handoff without replaying the original
+    /// sensitive page action. Local sessions return control to the bound run;
+    /// desktop sessions fail so the caller can require a local privacy session.
+    func completeWebMountHumanHandoff(toolName: String, input: String, runId: String) -> Bool {
+        guard ["wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select"].contains(toolName),
+              let expectedRunId = runId.nilIfBlank else {
+            return false
+        }
+        let object = Self.webMountInputObject(input)
+        guard let sessionId = (object["session_id"] as? String)?.nilIfBlank,
+              let record = webMountController.sessionStore.record(sessionId: sessionId),
+              record.ownerRunId?.nilIfBlank == expectedRunId else {
+            return false
+        }
+        guard record.backend == .local else { return false }
+        switch record.controlOwner {
+        case .user:
+            return (try? webMountController.sessionStore.handBackToAgent(sessionId: sessionId)) != nil
+        case .agent:
+            return true
+        case .none:
+            return false
+        }
+    }
+
+    private static func webMountApprovalAction(_ toolName: String) -> String {
+        switch toolName {
+        case "wm_click": "点击页面元素"
+        case "wm_tap": "点击页面坐标或元素"
+        case "wm_type": "向页面字段输入文本"
+        case "wm_keys": "向页面发送按键"
+        case "wm_select": "选择页面选项"
+        case "wm_screenshot": "保存当前完整视口截图"
+        case "wm_clear_session": "清除站点登录状态"
+        case "wm_site_add": "新增 WebMount 站点"
+        case "wm_site_remove": "移除 WebMount 站点"
+        default: toolName
+        }
+    }
+
+    private static func webMountApprovalTarget(toolName: String, object: [String: Any]) -> String? {
+        if toolName == "wm_tap", let x = object["x"], let y = object["y"] {
+            return IOSWebMountRedactor.redactedText("viewport (\(x), \(y))")
+        }
+        let raw = (object["target"] as? String)?.nilIfBlank
+            ?? (object["selector"] as? String)?.nilIfBlank
+            ?? (toolName == "wm_keys" ? (object["key"] as? String)?.nilIfBlank ?? (object["text"] as? String)?.nilIfBlank : nil)
+        return raw.map { String(IOSWebMountRedactor.redactedText($0).prefix(160)) }
+    }
+
+    private static func webMountApprovalConsequence(toolName: String, target: String?) -> String {
+        switch toolName {
+        case "wm_screenshot":
+            return "会在本机创建一个限时截图文件。"
+        case "wm_clear_session":
+            return "会删除该站点的 Cookie 与网站数据。"
+        case "wm_site_add", "wm_site_remove":
+            return "会更改 WebMount 站点与 URL allowlist。"
+        case "wm_click", "wm_tap", "wm_keys", "wm_select", "wm_type":
+            if let target, target.localizedCaseInsensitiveContains("enter") {
+                return "可能提交当前表单；执行前会再次核对页面快照。"
+            }
+            return "可能提交、授权或改变远端状态；批准只绑定当前页面快照与目标。"
+        default:
+            return "批准只适用于当前会话中的这一项操作。"
+        }
+    }
+
+    private static func webMountUserActionReason(_ output: String) -> String? {
+        guard let data = output.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["needs_user_action"] as? Bool == true,
+              object["requires_human"] as? Bool != true else {
+            return nil
+        }
+        let reason = (object["reason"] as? String)?.nilIfBlank
+            ?? (object["consequence"] as? String)?.nilIfBlank
+            ?? "This WebMount action requires explicit foreground approval."
+        if let label = (object["target_label"] as? String)?.nilIfBlank {
+            return "\(reason) Target: \(IOSWebMountRedactor.redactedText(label))."
+        }
+        return reason
+    }
+
+    private static func webMountHumanActionReason(_ output: String) -> String? {
+        guard let data = output.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["requires_human"] as? Bool == true else {
+            return nil
+        }
+        let reason = (object["reason"] as? String)?.nilIfBlank
+            ?? "Complete the sensitive step in user-controlled WebMount, then continue."
+        if let label = (object["target_label"] as? String)?.nilIfBlank {
+            return "\(reason) Target: \(IOSWebMountRedactor.redactedText(label))."
+        }
+        return reason
     }
 
     func workspaceApprovalPreview(toolName: String, input: String) -> IOSWorkspaceToolApprovalPreview? {
@@ -1255,15 +1494,20 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     private var navigationPolicy: IOSWebMountURLPolicy?
     private var navigationSite: IOSWebMountSite?
 
-    override init() {
-        let sessionId = "ios_wm_" + String(UUID().uuidString.prefix(8))
+    override convenience init() {
+        self.init(sessionId: nil)
+    }
+
+    init(sessionId: String?) {
+        let resolvedSessionId = sessionId?.nilIfBlank
+            ?? "ios_wm_" + String(UUID().uuidString.prefix(8))
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         let webView = WKWebView(frame: .zero, configuration: configuration)
         self.webView = webView
-        self.snapshot = .idle(sessionId: String(sessionId))
+        self.snapshot = .idle(sessionId: resolvedSessionId)
         super.init()
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -1351,7 +1595,17 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     /// restricted JS bridge. Android WebMountInteractionTools parity. Only the
     /// listed methods are permitted; arbitrary JS eval stays disabled.
     func interact(method: String, selector: String?, text: String?, options: [String: Any]) async throws -> [String: Any] {
-        try await evaluateJSON(
+        if method.lowercased() == "wait" {
+            var waitOptions = options
+            if waitOptions["selector"] == nil, let selector {
+                waitOptions["selector"] = selector
+            }
+            if waitOptions["selector"] == nil, let target = options["target"] {
+                waitOptions["selector"] = target
+            }
+            return await waitForCondition(options: waitOptions)
+        }
+        return try await evaluateJSON(
             IOSWebMountBridgeScripts.interact(
                 method: method,
                 selector: selector,
@@ -1359,6 +1613,168 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 options: options
             )
         )
+    }
+
+    private func waitForCondition(options: [String: Any]) async -> [String: Any] {
+        let condition = ((options["condition"] as? String)?.nilIfBlank ?? "dom_stable").lowercased()
+        let supported = Set(["dom_stable", "selector", "text", "url_contains", "ready_state", "delay"])
+        guard supported.contains(condition) else {
+            return [
+                "ok": false,
+                "method": "wait",
+                "error_code": "unsupported_wait_condition",
+                "condition": condition
+            ]
+        }
+        let requiredArgument: String?
+        switch condition {
+        case "selector": requiredArgument = (options["selector"] as? String)?.nilIfBlank
+        case "text": requiredArgument = (options["text"] as? String)?.nilIfBlank
+        case "url_contains": requiredArgument = (options["url_contains"] as? String)?.nilIfBlank
+        case "ready_state": requiredArgument = (options["ready_state"] as? String)?.nilIfBlank
+        default: requiredArgument = "not-required"
+        }
+        guard requiredArgument != nil else {
+            return [
+                "ok": false,
+                "method": "wait",
+                "condition": condition,
+                "error_code": "missing_wait_argument",
+                "matched": false
+            ]
+        }
+        if condition == "ready_state",
+           !["interactive", "complete"].contains(requiredArgument?.lowercased() ?? "") {
+            return [
+                "ok": false,
+                "method": "wait",
+                "condition": condition,
+                "error_code": "invalid_ready_state",
+                "matched": false
+            ]
+        }
+
+        let rawTimeout = (options["wait_ms"] as? Int)
+            ?? (options["timeout_ms"] as? Int)
+            ?? (options["wait_ms"] as? NSNumber)?.intValue
+            ?? (options["timeout_ms"] as? NSNumber)?.intValue
+            ?? 5_000
+        let timeoutMillis = rawTimeout.clamped(to: 100...30_000)
+        let stableMillis = ((options["stable_ms"] as? Int)
+            ?? (options["stable_ms"] as? NSNumber)?.intValue
+            ?? 400).clamped(to: 100...2_000)
+        let startedAt = Date()
+
+        if condition == "delay" {
+            do {
+                try await Task.sleep(nanoseconds: UInt64(timeoutMillis) * 1_000_000)
+                return [
+                    "ok": true,
+                    "method": "wait",
+                    "condition": condition,
+                    "elapsed_ms": timeoutMillis,
+                    "matched": true
+                ]
+            } catch {
+                return [
+                    "ok": false,
+                    "method": "wait",
+                    "condition": condition,
+                    "error_code": "cancelled",
+                    "matched": false
+                ]
+            }
+        }
+
+        var lastSnapshotId: String?
+        var stableSince: Date?
+        var lastProbe: [String: Any] = [:]
+        var lastError: String?
+
+        while true {
+            if Task.isCancelled {
+                return [
+                    "ok": false,
+                    "method": "wait",
+                    "condition": condition,
+                    "error_code": "cancelled",
+                    "matched": false
+                ]
+            }
+
+            do {
+                let probe = try await evaluateJSON(IOSWebMountBridgeScripts.waitProbe(condition: condition, options: options))
+                lastProbe = probe
+                lastError = nil
+                if let errorCode = (probe["error_code"] as? String)?.nilIfBlank {
+                    var result = probe
+                    result["ok"] = false
+                    result["method"] = "wait"
+                    result["condition"] = condition
+                    result["error_code"] = errorCode
+                    result["matched"] = false
+                    result["elapsed_ms"] = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                    return result
+                }
+                if condition == "dom_stable" {
+                    let snapshotId = probe["snapshot_id"] as? String
+                    let readyState = probe["ready_state"] as? String
+                    if snapshotId == lastSnapshotId, readyState != "loading" {
+                        stableSince = stableSince ?? Date()
+                        if let stableSince,
+                           Date().timeIntervalSince(stableSince) * 1_000 >= Double(stableMillis) {
+                            var result = probe
+                            result["ok"] = true
+                            result["method"] = "wait"
+                            result["condition"] = condition
+                            result["matched"] = true
+                            result["elapsed_ms"] = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                            return result
+                        }
+                    } else {
+                        lastSnapshotId = snapshotId
+                        stableSince = nil
+                    }
+                } else if probe["matched"] as? Bool == true {
+                    var result = probe
+                    result["ok"] = true
+                    result["method"] = "wait"
+                    result["condition"] = condition
+                    result["elapsed_ms"] = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                    return result
+                }
+            } catch {
+                // A navigation can transiently replace the JS context. Keep polling
+                // within the same bounded deadline and report the last error on timeout.
+                lastError = error.localizedDescription
+            }
+
+            let elapsedMillis = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            if elapsedMillis >= timeoutMillis {
+                return [
+                    "ok": false,
+                    "method": "wait",
+                    "condition": condition,
+                    "error_code": "wait_timeout",
+                    "matched": false,
+                    "elapsed_ms": elapsedMillis,
+                    "last_snapshot_id": lastProbe["snapshot_id"] as? String ?? "",
+                    "last_error": lastError ?? ""
+                ]
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: UInt64(min(100, timeoutMillis - elapsedMillis)) * 1_000_000)
+            } catch {
+                return [
+                    "ok": false,
+                    "method": "wait",
+                    "condition": condition,
+                    "error_code": "cancelled",
+                    "matched": false
+                ]
+            }
+        }
     }
 
     func screenshot() async throws -> IOSWebMountScreenshotCapture {
@@ -1531,14 +1947,117 @@ enum IOSWebMountRuntimeError: Error {
 }
 
 enum IOSWebMountBridgeScripts {
+    private static let semanticPrelude = """
+      function amberBridge(){
+        var bridge=window.__amberWebMountBridgeV1;
+        if(!bridge || bridge.document!==document){
+          var documentId=(Date.now().toString(36)+Math.random().toString(36).slice(2,10));
+          bridge={document:document,documentId:documentId,revision:0,nextRef:1,refs:{},elementRefs:new WeakMap()};
+          bridge.snapshotId=function(){return bridge.documentId+":"+bridge.revision;};
+          bridge.bump=function(){bridge.revision+=1;return bridge.snapshotId();};
+          bridge.refFor=function(el){
+            if(!el || el.nodeType!==1) return "";
+            var existing=bridge.elementRefs.get(el);
+            if(existing) return existing;
+            var ref="wm:"+bridge.documentId+":"+(bridge.nextRef++);
+            bridge.elementRefs.set(el,ref);bridge.refs[ref]=el;return ref;
+          };
+          bridge.resolve=function(raw){
+            var target=String(raw||"");
+            if(target.indexOf("wm:")===0){
+              if(target.indexOf("wm:"+bridge.documentId+":")!==0) return {errorCode:"stale_ref",element:null};
+              var referenced=bridge.refs[target];
+              if(!referenced || !referenced.isConnected) return {errorCode:"stale_ref",element:null};
+              return {errorCode:"",element:referenced};
+            }
+            if(target.indexOf("css:")===0) target=target.slice(4);
+            if(!target) return {errorCode:"missing_target",element:null};
+            try{return {errorCode:"",element:document.querySelector(target)};}
+            catch(e){return {errorCode:"invalid_selector",element:null};}
+          };
+          try{
+            bridge.observer=new MutationObserver(function(){bridge.revision+=1;});
+            bridge.observer.observe(document,{subtree:true,childList:true,attributes:true,characterData:true});
+          }catch(e){}
+          window.__amberWebMountBridgeV1=bridge;
+        }
+        return bridge;
+      }
+      function amberVisible(el){
+        if(!el || !el.isConnected) return false;
+        var node=el;
+        while(node && node.nodeType===1){
+          var style=window.getComputedStyle?window.getComputedStyle(node):null;
+          if(node.hidden || (style && (style.display==="none" || style.visibility==="hidden" || Number(style.opacity)===0))) return false;
+          node=node.parentElement;
+        }
+        var rect=el.getBoundingClientRect();
+        return !!(rect.width&&rect.height&&rect.bottom>=0&&rect.right>=0&&rect.top<=(window.innerHeight||0)&&rect.left<=(window.innerWidth||0));
+      }
+      function amberRole(el){
+        var explicit=el&&el.getAttribute?el.getAttribute("role"):"";
+        if(explicit) return explicit;
+        var tag=(el&&el.tagName||"").toLowerCase();
+        if(tag==="a") return "link"; if(tag==="button") return "button";
+        if(tag==="input") return "textbox"; if(tag==="textarea") return "textbox";
+        if(tag==="select") return "combobox"; return tag;
+      }
+      function amberName(el){
+        if(!el) return "";
+        var tag=(el.tagName||"").toLowerCase();
+        var label=el.getAttribute&&(el.getAttribute("aria-label")||el.getAttribute("alt")||el.getAttribute("title")||el.getAttribute("placeholder"))||"";
+        if(!label && el.labels && el.labels.length && amberVisible(el.labels[0])){label=el.labels[0].innerText||"";}
+        var text=label || ((tag==="input"||tag==="textarea"||tag==="select")?"":(el.innerText||""));
+        return String(text).replace(/\\s+/g," ").trim().slice(0,240);
+      }
+      function amberSensitiveField(el){
+        if(!el || !el.getAttribute) return false;
+        var type=(el.getAttribute("type")||"").toLowerCase();
+        var autocomplete=(el.getAttribute("autocomplete")||"").toLowerCase();
+        var identity=(el.id||"")+" "+(el.name||"")+" "+(el.getAttribute("aria-label")||"")+" "+(el.getAttribute("placeholder")||"");
+        return type==="password" || type==="hidden" ||
+          /current-password|new-password|one-time-code|cc-number|cc-csc|cc-exp|cc-name/.test(autocomplete) ||
+          /password|passwd|passcode|token|secret|cookie|authorization|otp|2fa|mfa|totp|one[-_ ]?time|verification.?code|captcha|card.?number|credit.?card|\\bpan\\b|cvv|cvc|security.?code/i.test(identity);
+      }
+      function amberActionIdentity(el){
+        if(!el) return "";
+        var form=el.form;
+        var parts=[amberRole(el),amberName(el),el.id||"",el.name||"",el.getAttribute&&el.getAttribute("type")||"",el.getAttribute&&el.getAttribute("aria-label")||""];
+        if(form) parts.push(form.id||"",form.name||"",form.getAttribute&&form.getAttribute("aria-label")||"",form.getAttribute&&form.getAttribute("action")||"");
+        return parts.join(" ").replace(/\\s+/g," ").trim().slice(0,480);
+      }
+      function amberActionDisposition(el,method,text,coordinate){
+        var identity=amberActionIdentity(el);
+        var lower=identity.toLowerCase();
+        var key=String(text||"").toLowerCase();
+        var human=/captcha|two.?factor|2fa|mfa|\\botp\\b|one.?time|verification.?code|passkey|oauth|sign.?in|log.?in|登录|验证码|人机验证/.test(lower);
+        if((method==="type"||method==="keys"||method==="select") && amberSensitiveField(el)) human=true;
+        if(human) return {kind:"human",reason:"login_or_sensitive_field",label:amberName(el)};
+        if(coordinate) return {kind:"approval",reason:"coordinate_tap",label:amberName(el)};
+        if(method==="keys" && key==="enter") return {kind:"approval",reason:"enter_may_submit",label:amberName(el)};
+        var buttonType=el && el.getAttribute ? (el.getAttribute("type")||"").toLowerCase() : "";
+        var submit=el && el.getAttribute && (buttonType==="submit" || (el.tagName==="BUTTON" && el.form && !buttonType));
+        var consequential=/\\b(pay|payment|purchase|buy|checkout|place.?order|submit|authorize|approve|confirm|send|publish|delete|remove)\\b|支付|付款|购买|下单|提交|授权|确认|发送|发布|删除/.test(lower);
+        if(method==="type" && el && el.form && /submit|checkout|payment|order|支付|下单|提交/.test(lower)) consequential=true;
+        if(method==="select" && /payment|billing|checkout|order|支付|账单|订单/.test(lower)) consequential=true;
+        if(submit||consequential) return {kind:"approval",reason:"high_consequence_action",label:amberName(el)};
+        return {kind:"safe",reason:"",label:amberName(el)};
+      }
+    """
+
     static let state = """
     (function(){
+      \(semanticPrelude)
       function cleanUrl(raw){try{var u=new URL(raw);return u.origin+u.pathname;}catch(e){return "";}}
+      var bridge=amberBridge();
       var body=document.body;
       return JSON.stringify({
         url: cleanUrl(location.href),
         title: document.title || "",
         ready_state: document.readyState || "unknown",
+        document_id: bridge.documentId,
+        page_revision: bridge.revision,
+        snapshot_id: bridge.snapshotId(),
         text_length: body && body.innerText ? body.innerText.length : 0,
         links_count: document.links ? document.links.length : 0,
         viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
@@ -1553,6 +2072,7 @@ enum IOSWebMountBridgeScripts {
         let maxLinks = max(0, min(maxLinks, 100))
         return """
         (function(){
+          \(semanticPrelude)
           function cleanUrl(raw){try{var u=new URL(raw, location.href);return u.origin+u.pathname;}catch(e){return "";}}
           function cssPath(el){
             if(!el || !el.tagName) return "";
@@ -1569,17 +2089,24 @@ enum IOSWebMountBridgeScripts {
             }
             return path.join(" > ");
           }
+          var bridge=amberBridge();
           var mode=\(mode);
           var body=document.body;
           if(mode==="interactive" || mode==="snapshot"){
-            var nodes=Array.prototype.slice.call(document.querySelectorAll("a,button,input,textarea,select,[role='button'],[role='link'],[role='tab'],[role='menuitem']"),0,80).map(function(el,idx){
+            var nodes=Array.prototype.slice.call(document.querySelectorAll("a,button,input,textarea,select,[role='button'],[role='link'],[role='tab'],[role='menuitem']"),0,160).filter(amberVisible).slice(0,80).map(function(el,idx){
                 var rect=el.getBoundingClientRect();
               return {
-                ref:"css:"+cssPath(el),
+                ref:bridge.refFor(el),
+                selector:"css:"+cssPath(el),
                 tag:(el.tagName||"").toLowerCase(),
-                text:(el.innerText||el.value||el.getAttribute("aria-label")||"").slice(0,240),
+                role:amberRole(el),
+                name:amberName(el),
+                text:amberName(el),
                 href: el.href ? cleanUrl(el.href) : "",
-                visible: !!(rect.width && rect.height),
+                visible: amberVisible(el),
+                disabled: !!el.disabled,
+                checked: typeof el.checked==="boolean" ? el.checked : null,
+                focused: document.activeElement===el,
                 rect: {
                   x: Math.round(rect.x || 0),
                   y: Math.round(rect.y || 0),
@@ -1589,7 +2116,7 @@ enum IOSWebMountBridgeScripts {
               };
             });
             if(mode==="interactive"){
-              return JSON.stringify({ mode: mode, url: cleanUrl(location.href), nodes: nodes });
+              return JSON.stringify({ mode: mode, url: cleanUrl(location.href), document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), nodes: nodes });
             }
             function nearbyText(el){
               var text="";
@@ -1600,7 +2127,8 @@ enum IOSWebMountBridgeScripts {
             var candidates=Array.prototype.slice.call(document.querySelectorAll("img,iframe,canvas,video,svg,picture,h1,h2,h3,p,blockquote,article,section"),0,120).map(function(el){
               var rect=el.getBoundingClientRect();
               return {
-                ref:"css:"+cssPath(el),
+                ref:bridge.refFor(el),
+                selector:"css:"+cssPath(el),
                 tag:(el.tagName||"").toLowerCase(),
                 src: el.currentSrc ? cleanUrl(el.currentSrc) : (el.src ? cleanUrl(el.src) : ""),
                 href: el.href ? cleanUrl(el.href) : "",
@@ -1620,6 +2148,9 @@ enum IOSWebMountBridgeScripts {
             return JSON.stringify({
               mode: mode,
               url: cleanUrl(location.href),
+              document_id: bridge.documentId,
+              page_revision: bridge.revision,
+              snapshot_id: bridge.snapshotId(),
               viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
               interactive_nodes: nodes,
               visual_candidates: candidates,
@@ -1627,91 +2158,293 @@ enum IOSWebMountBridgeScripts {
             });
           }
           var text=(body && body.innerText ? body.innerText : "").slice(0,\(maxChars));
-          var links=Array.prototype.slice.call(document.querySelectorAll("a[href]"),0,\(maxLinks)).map(function(a){
+          var links=Array.prototype.slice.call(document.querySelectorAll("a[href]"),0,500).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
             return { text:(a.innerText||a.getAttribute("aria-label")||"").trim().slice(0,200), href: cleanUrl(a.href) };
           });
-          return JSON.stringify({ mode:"readable", url: cleanUrl(location.href), title: document.title || "", text: text, links: links });
+          return JSON.stringify({ mode:"readable", url: cleanUrl(location.href), title: document.title || "", document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), text: text, links: links });
         })();
         """
     }
 
     static func get(selector: String?, target: String?, kind: String, attrName: String?, maxChars: Int) -> String {
-        let selectorLiteral = jsString(selector ?? target?.removingPrefix("css:") ?? "body")
+        let targetLiteral = jsString(selector ?? target ?? "css:body")
         let kindLiteral = jsString(kind)
         let attrLiteral = jsString(attrName ?? "")
         let maxChars = max(0, min(maxChars, 100_000))
         return """
         (function(){
+          \(semanticPrelude)
           function cleanUrl(raw){try{var u=new URL(raw, location.href);return u.origin+u.pathname;}catch(e){return "";}}
-          var selector=\(selectorLiteral), kind=\(kindLiteral), attr=\(attrLiteral);
-          var el=null;
-          try{ el=document.querySelector(selector); }catch(e){ return JSON.stringify({ ok:false, error:"invalid selector" }); }
-          if(!el){ return JSON.stringify({ ok:false, error:"target not found", selector: selector }); }
+          var bridge=amberBridge(), target=\(targetLiteral), kind=\(kindLiteral), attr=\(attrLiteral);
+          var resolved=bridge.resolve(target), el=resolved.element;
+          if(resolved.errorCode){ return JSON.stringify({ok:false,error_code:resolved.errorCode,snapshot_id:bridge.snapshotId()}); }
+          if(!el){ return JSON.stringify({ok:false,error_code:"target_not_found",snapshot_id:bridge.snapshotId()}); }
+          if(!amberVisible(el)){ return JSON.stringify({ok:false,error_code:"target_not_visible",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()}); }
+          var sensitive=amberSensitiveField(el) || /csrf|xsrf|auth/i.test((el.id||"")+" "+(el.name||""));
+          if(kind==="value" && sensitive){
+            return JSON.stringify({ok:false,error_code:"sensitive_value_denied",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()});
+          }
+          if(kind==="attr" && /password|passwd|token|csrf|xsrf|secret|cookie|authorization|auth/i.test(attr)){
+            return JSON.stringify({ok:false,error_code:"sensitive_attribute_denied",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()});
+          }
+          if(kind==="attr" && attr.toLowerCase()==="value" && (el.tagName==="INPUT" || el.tagName==="TEXTAREA")){
+            return JSON.stringify({ok:false,error_code:"sensitive_attribute_denied",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()});
+          }
           var value="";
           if(kind==="value"){ value=el.value || ""; }
           else if(kind==="attr"){ value=attr ? (el.getAttribute(attr) || "") : ""; if(attr==="href" || attr==="src") value=cleanUrl(value); }
           else if(kind==="html"){ value=el.outerHTML || ""; }
-          else { value=el.innerText || el.textContent || ""; }
-          return JSON.stringify({ ok:true, selector:selector, kind:kind, value:String(value).slice(0,\(maxChars)) });
+          else { value=el.innerText || ""; }
+          return JSON.stringify({ok:true,target_ref:bridge.refFor(el),kind:kind,value:String(value).slice(0,\(maxChars)),document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()});
         })();
         """
     }
 
-    /// Builds a restricted interaction script (click/type/scroll/select/find/wait).
-    /// Only the listed methods run; arbitrary eval stays disabled. Returns JSON
-    /// {ok, method, found, message}. Android WebMountInteractionTools parity.
+    /// Builds a restricted interaction script. Stable refs are document-scoped,
+    /// and an optional snapshot id rejects stale actions before they run.
     static func interact(method: String, selector: String?, text: String?, options: [String: Any]) -> String {
-        let method = method.lowercased()
-        let sel = jsString(selector ?? "")
-        let txt = jsString(text ?? "")
-        let amount = options["amount"] as? Int ?? 0
-        let waitMs = max(0, min(options["wait_ms"] as? Int ?? 500, 5_000))
+        func intOption(_ keys: [String]) -> Int? {
+            for key in keys {
+                if let value = options[key] as? Int { return value }
+                if let value = options[key] as? NSNumber { return value.intValue }
+                if let value = options[key] as? Double { return Int(value) }
+            }
+            return nil
+        }
 
-        // The script switches on method so only known interactions are reachable.
+        let method = method.lowercased()
+        let target = selector ?? options["target"] as? String ?? ""
+        let snapshotId = options["snapshot_id"] as? String ?? ""
+        let xLiteral = intOption(["x"]).map(String.init) ?? "null"
+        let yLiteral = intOption(["y"]).map(String.init) ?? "null"
+        let byY = intOption(["dy", "by_y"]) ?? 0
+        let namedPosition = (options["to"] as? String)?.lowercased() ?? ""
+        let maxResults = max(1, min(intOption(["max_results"]) ?? 10, 20))
+        let allowHighConsequence = options["_amber_allow_high_consequence"] as? Bool ?? false
+        let preflightOnly = options["_amber_preflight_only"] as? Bool ?? false
+
         return """
         (function(){
-          function pick(sel){
-            try { return document.querySelector(sel); } catch(e){ return null; }
+          \(semanticPrelude)
+          var bridge=amberBridge();
+          var method=\(jsString(method)), target=\(jsString(target)), text=\(jsString(text ?? ""));
+          var expectedSnapshot=\(jsString(snapshotId));
+          var allowHighConsequence=\(allowHighConsequence ? "true" : "false");
+          var preflightOnly=\(preflightOnly ? "true" : "false");
+          function base(extra){
+            var value={method:method,document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()};
+            Object.keys(extra||{}).forEach(function(key){value[key]=extra[key];});
+            return value;
           }
-          var method = \(jsString(method));
-          var sel = \(sel);
-          var text = \(txt);
-          var el = sel ? pick(sel) : null;
-
-          if(method === "click" || method === "tap"){
-            if(!el) return JSON.stringify({ok:false, method:method, found:false, message:"element not found"});
-            el.scrollIntoView({block:"center"}); el.click();
-            return JSON.stringify({ok:true, method:method, found:true, message:"clicked"});
-          }
-          if(method === "type" || method === "keys"){
-            if(!el){ return JSON.stringify({ok:false, method:method, found:false, message:"element not found"}); }
-            if("value" in el || el.tagName === "INPUT" || el.tagName === "TEXTAREA"){
-              el.focus(); el.value = text; el.dispatchEvent(new Event("input",{bubbles:true}));
-              return JSON.stringify({ok:true, method:method, found:true, message:"typed"});
+          function fail(code,extra){return JSON.stringify(base(Object.assign({ok:false,error_code:code},extra||{})));}
+          function finish(extra){return JSON.stringify(base(Object.assign({ok:true},extra||{})));}
+          function dispositionFailure(el,coordinate){
+            var disposition=amberActionDisposition(el,method,text,coordinate);
+            if(disposition.kind==="human"){
+              return fail("sensitive_field_requires_human",{
+                requires_human:true,
+                handoff:true,
+                handoff_reason:disposition.reason,
+                resume_condition:"user_hands_back_control",
+                target_ref:bridge.refFor(el),
+                target_label:disposition.label||"",
+                reason:"Complete login, verification, CAPTCHA, or sensitive payment input in user-controlled WebMount."
+              });
             }
-            return JSON.stringify({ok:false, method:method, found:true, message:"element not typeable"});
+            if(disposition.kind==="approval" && !allowHighConsequence){
+              return fail("high_consequence_requires_approval",{
+                needs_user_action:true,
+                consequence:disposition.reason,
+                target_ref:bridge.refFor(el),
+                target_label:disposition.label||"",
+                reason:"This page action may submit, authorize, pay, send, publish, delete, or otherwise change remote state."
+              });
+            }
+            return "";
           }
-          if(method === "scroll"){
-            var dx = \(amount) || 0;
-            var dy = \(options["dy"] as? Int ?? 0);
-            if(el){ el.scrollIntoView({block:"center"}); }
-            else { window.scrollBy(dx, dy || 400); }
-            return JSON.stringify({ok:true, method:method, found:el!=null, message:"scrolled"});
+          function resolveTarget(required){
+            if(!target) return required ? {errorCode:"missing_target",element:null} : {errorCode:"",element:null};
+            return bridge.resolve(target);
           }
-          if(method === "select"){
-            if(el && "value" in el){ el.value = text; el.dispatchEvent(new Event("change",{bubbles:true})); return JSON.stringify({ok:true, method:method, found:true, message:"selected"}); }
-            return JSON.stringify({ok:false, method:method, found:el!=null, message:"element not selectable"});
+          function isDisabled(el){return !!(el && (el.disabled || (el.getAttribute&&el.getAttribute("aria-disabled")==="true")));}
+          function topmost(el){
+            var rect=el.getBoundingClientRect(), x=rect.left+rect.width/2, y=rect.top+rect.height/2;
+            var hit=document.elementFromPoint(x,y);
+            return !hit || hit===el || el.contains(hit);
           }
-          if(method === "find"){
-            // Read-only: report whether the selector matches + a text snippet.
-            if(!el) return JSON.stringify({ok:false, method:"find", found:false, message:"not found"});
-            var snippet = (el.innerText || el.textContent || "").substring(0, 160);
-            return JSON.stringify({ok:true, method:"find", found:true, snippet:snippet});
+          function nativeSetValue(el,value){
+            var proto=el.tagName==="TEXTAREA"?window.HTMLTextAreaElement&&HTMLTextAreaElement.prototype:window.HTMLInputElement&&HTMLInputElement.prototype;
+            var descriptor=proto&&Object.getOwnPropertyDescriptor(proto,"value");
+            if(descriptor&&descriptor.set) descriptor.set.call(el,value); else el.value=value;
           }
-          if(method === "wait"){
-            return JSON.stringify({ok:true, method:"wait", found:true, message:"waited " + \(waitMs) + "ms"});
+          function keyEvent(el,type,key){return el.dispatchEvent(new KeyboardEvent(type,{key:key,bubbles:true,cancelable:true}));}
+          function inputEvent(el,type,data){
+            try{return el.dispatchEvent(new InputEvent("beforeinput",{inputType:type,data:data,bubbles:true,cancelable:true}));}
+            catch(e){return true;}
           }
-          return JSON.stringify({ok:false, method:method, found:false, message:"unknown interaction method"});
+          function insertText(el,value){
+            var current=String(el.value||""), start=typeof el.selectionStart==="number"?el.selectionStart:current.length;
+            var end=typeof el.selectionEnd==="number"?el.selectionEnd:start;
+            var next=current.slice(0,start)+value+current.slice(end);
+            nativeSetValue(el,next);
+            try{el.setSelectionRange(start+value.length,start+value.length);}catch(e){}
+            try{el.dispatchEvent(new InputEvent("input",{inputType:"insertText",data:value,bubbles:true}));}
+            catch(e){el.dispatchEvent(new Event("input",{bubbles:true}));}
+            return next.length;
+          }
+          if(expectedSnapshot && expectedSnapshot!==bridge.snapshotId()){
+            return fail("stale_snapshot",{expected_snapshot_id:expectedSnapshot});
+          }
+
+          if(method==="click" || method==="tap"){
+            var el=null, x=\(xLiteral), y=\(yLiteral);
+            if(method==="tap" && x!==null && y!==null){el=document.elementFromPoint(x,y);}
+            else {
+              var resolved=resolveTarget(true);
+              if(resolved.errorCode) return fail(resolved.errorCode);
+              el=resolved.element;
+            }
+            if(!el) return fail("target_not_found");
+            if(!amberVisible(el)) return fail("target_not_visible",{target_ref:bridge.refFor(el)});
+            if(isDisabled(el)) return fail("target_disabled",{target_ref:bridge.refFor(el)});
+            if(method==="click" && !topmost(el)) return fail("target_occluded",{target_ref:bridge.refFor(el)});
+            var blocked=dispositionFailure(el,method==="tap" && x!==null && y!==null);
+            if(blocked) return blocked;
+            if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
+            if(method==="click") el.scrollIntoView({block:"center",inline:"nearest"});
+            el.click(); bridge.bump();
+            return finish({found:true,target_ref:bridge.refFor(el),dispatched:true,verified:false});
+          }
+
+          if(method==="type" || method==="keys"){
+            var hasExplicitTarget=!!target, resolved=resolveTarget(method==="type"), el=resolved.element;
+            if(resolved.errorCode) return fail(resolved.errorCode);
+            if(!el && method==="keys" && !hasExplicitTarget) el=document.activeElement;
+            if(!el) return fail(hasExplicitTarget?"target_not_found":"focused_field_not_found");
+            if(el===document.body || el===document.documentElement) return fail("focused_field_not_found");
+            if(!(el.tagName==="INPUT" || el.tagName==="TEXTAREA")) return fail("target_not_typeable",{target_ref:bridge.refFor(el)});
+            if(!amberVisible(el)) return fail("target_not_visible",{target_ref:bridge.refFor(el)});
+            var blocked=dispositionFailure(el,false);
+            if(blocked) return blocked;
+            if(amberSensitiveField(el)) return fail("sensitive_field_requires_human",{requires_human:true,handoff:true,resume_condition:"user_hands_back_control",target_ref:bridge.refFor(el)});
+            if(isDisabled(el) || el.readOnly) return fail("target_not_editable",{target_ref:bridge.refFor(el)});
+            if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
+            var wasFocused=document.activeElement===el;
+            el.focus();
+            if(method==="keys" && !wasFocused && typeof el.setSelectionRange==="function"){
+              var end=String(el.value||"").length;
+              try{el.setSelectionRange(end,end);}catch(e){}
+            }
+            if(method==="type"){
+              if(!inputEvent(el,"insertText",text)) return fail("input_cancelled",{target_ref:bridge.refFor(el)});
+              nativeSetValue(el,text);
+              try{el.dispatchEvent(new InputEvent("input",{inputType:"insertText",data:text,bubbles:true}));}
+              catch(e){el.dispatchEvent(new Event("input",{bubbles:true}));}
+              bridge.bump();
+              var typeVerified=String(el.value||"").length===text.length;
+              return finish({found:true,target_ref:bridge.refFor(el),value_length:String(el.value||"").length,focused:document.activeElement===el,verified:typeVerified});
+            }
+            var special={enter:"Enter",tab:"Tab",escape:"Escape",backspace:"Backspace",arrowup:"ArrowUp",arrowdown:"ArrowDown",arrowleft:"ArrowLeft",arrowright:"ArrowRight"};
+            var key=special[text.toLowerCase()]||"", defaultApplied=false;
+            if(key){
+              var allowed=keyEvent(el,"keydown",key);
+              if(allowed && key==="Backspace"){
+                var current=String(el.value||""), start=typeof el.selectionStart==="number"?el.selectionStart:current.length, end=typeof el.selectionEnd==="number"?el.selectionEnd:start;
+                if(start===end && start>0) start-=1;
+                nativeSetValue(el,current.slice(0,start)+current.slice(end));
+                try{el.setSelectionRange(start,start);}catch(e){}
+                el.dispatchEvent(new Event("input",{bubbles:true})); defaultApplied=true;
+              }
+              keyEvent(el,"keyup",key); bridge.bump();
+              return finish({found:true,target_ref:bridge.refFor(el),key:key,event_dispatched:true,default_applied:defaultApplied,trusted:false,value_length:String(el.value||"").length,verified:defaultApplied});
+            }
+            var beforeLength=String(el.value||"").length, inserted=0;
+            for(var i=0;i<text.length;i++){
+              var ch=text.charAt(i), allowed=keyEvent(el,"keydown",ch);
+              if(allowed && inputEvent(el,"insertText",ch)){insertText(el,ch);inserted+=1;}
+              keyEvent(el,"keyup",ch);
+            }
+            bridge.bump();
+            var afterLength=String(el.value||"").length;
+            return finish({found:true,target_ref:bridge.refFor(el),event_count:text.length,inserted_count:inserted,trusted:false,value_length:afterLength,verified:inserted===text.length&&afterLength>=beforeLength});
+          }
+
+          if(method==="scroll"){
+            var resolved=resolveTarget(false), el=resolved.element;
+            if(resolved.errorCode) return fail(resolved.errorCode);
+            if(preflightOnly) return finish({preflight_only:true,target_ref:el?bridge.refFor(el):"",target_label:el?amberName(el):"",verified:true});
+            var position=\(jsString(namedPosition)), byY=\(byY);
+            var beforeX=Math.round(window.scrollX||0), beforeY=Math.round(window.scrollY||0);
+            if(el){el.scrollIntoView({block:position==="top"?"start":position==="bottom"?"end":"center",inline:"nearest"});}
+            else if(position==="top"){window.scrollTo({top:0});}
+            else if(position==="bottom"){window.scrollTo({top:document.documentElement.scrollHeight});}
+            else {window.scrollBy({top:byY||400});}
+            bridge.bump();
+            var afterX=Math.round(window.scrollX||0), afterY=Math.round(window.scrollY||0);
+            return finish({found:!!el,target_ref:el?bridge.refFor(el):"",scroll_x:afterX,scroll_y:afterY,verified:beforeX!==afterX||beforeY!==afterY});
+          }
+
+          if(method==="select"){
+            var resolved=resolveTarget(true), el=resolved.element;
+            if(resolved.errorCode) return fail(resolved.errorCode);
+            if(!el) return fail("target_not_found");
+            if(el.tagName!=="SELECT") return fail("target_not_selectable",{target_ref:bridge.refFor(el)});
+            if(!amberVisible(el)) return fail("target_not_visible",{target_ref:bridge.refFor(el)});
+            var blocked=dispositionFailure(el,false);
+            if(blocked) return blocked;
+            if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
+            var option=Array.prototype.find.call(el.options,function(item){return item.value===text;});
+            if(!option) return fail("option_not_found",{target_ref:bridge.refFor(el)});
+            el.value=text; el.dispatchEvent(new Event("input",{bubbles:true})); el.dispatchEvent(new Event("change",{bubbles:true})); bridge.bump();
+            return finish({found:true,target_ref:bridge.refFor(el),selected_index:el.selectedIndex,verified:el.value===text});
+          }
+
+          if(method==="find"){
+            var matches=[], maxResults=\(maxResults), query=text.toLowerCase();
+            if(target){
+              if(target.indexOf("wm:")===0){
+                var resolved=bridge.resolve(target);
+                if(resolved.errorCode) return fail(resolved.errorCode);
+                if(resolved.element) matches=[resolved.element];
+              } else {
+                var css=target.indexOf("css:")===0?target.slice(4):target;
+                try{matches=Array.prototype.slice.call(document.querySelectorAll(css),0,maxResults);}
+                catch(e){return fail("invalid_selector");}
+              }
+            } else if(query){
+              var candidates=Array.prototype.slice.call(document.querySelectorAll("a,button,input,textarea,select,label,p,span,div,main,li,h1,h2,h3,h4,h5,h6,td,th,article,section,[role]"),0,600);
+              matches=candidates.filter(function(item){return amberVisible(item) && amberName(item).toLowerCase().indexOf(query)>=0;}).slice(0,maxResults);
+            }
+            var output=matches.filter(amberVisible).slice(0,maxResults).map(function(item){return {ref:bridge.refFor(item),tag:(item.tagName||"").toLowerCase(),role:amberRole(item),name:amberName(item),visible:true};});
+            return finish({found:output.length>0,count:output.length,matches:output,verified:output.length>0});
+          }
+          return fail("unsupported_interaction");
+        })();
+        """
+    }
+
+    static func waitProbe(condition: String, options: [String: Any]) -> String {
+        let selector = options["selector"] as? String ?? ""
+        let text = options["text"] as? String ?? ""
+        let urlFragment = options["url_contains"] as? String ?? ""
+        let readyState = (options["ready_state"] as? String)?.lowercased() ?? "complete"
+        return """
+        (function(){
+          \(semanticPrelude)
+          function cleanUrl(raw){try{var u=new URL(raw);return u.origin+u.pathname;}catch(e){return "";}}
+          var bridge=amberBridge(), condition=\(jsString(condition)), matched=false, errorCode="";
+          if(condition==="selector"){
+            var resolved=bridge.resolve(\(jsString(selector)));
+            errorCode=resolved.errorCode||""; matched=!!resolved.element && amberVisible(resolved.element);
+          } else if(condition==="text"){
+            matched=String(document.body&&document.body.innerText||"").indexOf(\(jsString(text)))>=0;
+          } else if(condition==="url_contains"){
+            matched=String(location.href||"").indexOf(\(jsString(urlFragment)))>=0;
+          } else if(condition==="ready_state"){
+            var expected=\(jsString(readyState));
+            matched=expected==="interactive"?(document.readyState==="interactive"||document.readyState==="complete"):document.readyState===expected;
+          }
+          return JSON.stringify({ok:!errorCode,matched:matched,error_code:errorCode,ready_state:document.readyState||"unknown",url:cleanUrl(location.href),document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()});
         })();
         """
     }
@@ -1726,6 +2459,12 @@ enum IOSWebMountBridgeScripts {
     }
 }
 
+enum IOSWebMountControlOwner: String, Codable, Equatable {
+    case none
+    case agent
+    case user
+}
+
 struct IOSWebMountSessionRecord: Equatable, Identifiable {
     let id: String
     let siteId: String?
@@ -1737,6 +2476,14 @@ struct IOSWebMountSessionRecord: Equatable, Identifiable {
     let canGoForward: Bool
     let lastActivityMillis: Int64
     let isCurrent: Bool
+    let ownerConversationId: String?
+    let ownerRunId: String?
+    let controlOwner: IOSWebMountControlOwner
+    let leaseExpiresAtMillis: Int64?
+    let persistentOptIn: Bool
+    let needsReopen: Bool
+    let backend: IOSWebMountBackendKind
+    let mcpServerName: String?
 
     func dictionary() -> [String: Any] {
         [
@@ -1749,7 +2496,13 @@ struct IOSWebMountSessionRecord: Equatable, Identifiable {
             "can_go_back": canGoBack,
             "can_go_forward": canGoForward,
             "last_activity_ms": lastActivityMillis,
-            "is_current": isCurrent
+            "is_current": isCurrent,
+            "control_owner": controlOwner.rawValue,
+            "lease_expires_at_ms": leaseExpiresAtMillis ?? 0,
+            "persistent": persistentOptIn,
+            "needs_reopen": needsReopen,
+            "backend": backend.rawValue,
+            "mcp_server_name": mcpServerName ?? ""
         ]
     }
 }
@@ -1757,6 +2510,27 @@ struct IOSWebMountSessionRecord: Equatable, Identifiable {
 enum IOSWebMountSessionError: Error, LocalizedError {
     case sessionNotFound(String)
     case cannotCloseOnlySession
+    case sessionLimitReached(Int)
+    case sessionBindingRequired
+    case sessionBindingMismatch(String)
+    case siteBindingRequired
+    case siteDisabled(String)
+    case userControlActive(String)
+    case agentLeaseUnavailable(String)
+
+    var errorCode: String {
+        switch self {
+        case .sessionNotFound: "session_not_found"
+        case .cannotCloseOnlySession: "cannot_close_only_session"
+        case .sessionLimitReached: "session_limit_reached"
+        case .sessionBindingRequired: "session_binding_required"
+        case .sessionBindingMismatch: "session_binding_mismatch"
+        case .siteBindingRequired: "site_binding_required"
+        case .siteDisabled: "site_disabled"
+        case .userControlActive: "user_control_active"
+        case .agentLeaseUnavailable: "control_lease_unavailable"
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -1764,37 +2538,203 @@ enum IOSWebMountSessionError: Error, LocalizedError {
             "WebMount session was not found: \(sessionId)"
         case .cannotCloseOnlySession:
             "Cannot close the only WebMount session."
+        case .sessionLimitReached(let limit):
+            "WebMount already has \(limit) active or persistent sessions. Close one before creating another."
+        case .sessionBindingRequired:
+            "Agent WebMount calls require an explicit session_id and host run binding."
+        case .sessionBindingMismatch(let sessionId):
+            "WebMount session belongs to another conversation: \(sessionId)"
+        case .siteBindingRequired:
+            "WebMount session is no longer bound to a registered station."
+        case .siteDisabled(let siteId):
+            "WebMount station is disabled: \(siteId)"
+        case .userControlActive(let sessionId):
+            "The user currently controls WebMount session \(sessionId). Wait for hand-back before continuing."
+        case .agentLeaseUnavailable(let sessionId):
+            "WebMount agent control is unavailable for session \(sessionId)."
         }
     }
+}
+
+private struct IOSWebMountSessionMetadata: Codable, Equatable {
+    var siteId: String?
+    var siteName: String?
+    var lastTitle: String?
+    var redactedURL: String?
+    var lastActivityMillis: Int64
+    var ownerConversationId: String?
+    var ownerRunId: String?
+    var controlOwner: IOSWebMountControlOwner
+    var leaseExpiresAtMillis: Int64?
+    var persistentOptIn: Bool
+    var needsReopen: Bool
+    /// Optional for backward-compatible decoding of the existing v1 payload.
+    var backendRawValue: String?
+    var mcpServerName: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case siteId
+        case siteName
+        case lastTitle
+        case redactedURL
+        case lastActivityMillis
+        case ownerConversationId
+        case ownerRunId
+        case controlOwner
+        case leaseExpiresAtMillis
+        case persistentOptIn
+        case needsReopen
+        case backendRawValue
+        case mcpServerName
+    }
+
+    init(
+        siteId: String?,
+        siteName: String?,
+        lastTitle: String?,
+        redactedURL: String?,
+        lastActivityMillis: Int64,
+        ownerConversationId: String?,
+        ownerRunId: String?,
+        controlOwner: IOSWebMountControlOwner,
+        leaseExpiresAtMillis: Int64?,
+        persistentOptIn: Bool,
+        needsReopen: Bool,
+        backendRawValue: String?,
+        mcpServerName: String?
+    ) {
+        self.siteId = siteId
+        self.siteName = siteName
+        self.lastTitle = lastTitle
+        self.redactedURL = redactedURL
+        self.lastActivityMillis = lastActivityMillis
+        self.ownerConversationId = ownerConversationId
+        self.ownerRunId = ownerRunId
+        self.controlOwner = controlOwner
+        self.leaseExpiresAtMillis = leaseExpiresAtMillis
+        self.persistentOptIn = persistentOptIn
+        self.needsReopen = needsReopen
+        self.backendRawValue = backendRawValue
+        self.mcpServerName = mcpServerName
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        siteId = try container.decodeIfPresent(String.self, forKey: .siteId)
+        siteName = try container.decodeIfPresent(String.self, forKey: .siteName)
+        lastTitle = try container.decodeIfPresent(String.self, forKey: .lastTitle)
+        redactedURL = try container.decodeIfPresent(String.self, forKey: .redactedURL)
+        lastActivityMillis = try container.decodeIfPresent(Int64.self, forKey: .lastActivityMillis) ?? 0
+        ownerConversationId = try container.decodeIfPresent(String.self, forKey: .ownerConversationId)
+        ownerRunId = try container.decodeIfPresent(String.self, forKey: .ownerRunId)
+        controlOwner = try container.decodeIfPresent(IOSWebMountControlOwner.self, forKey: .controlOwner) ?? .none
+        leaseExpiresAtMillis = try container.decodeIfPresent(Int64.self, forKey: .leaseExpiresAtMillis)
+        // Entries in this store were explicitly persisted by the old v1 path;
+        // restore still marks them needs_reopen before exposing a runtime.
+        persistentOptIn = try container.decodeIfPresent(Bool.self, forKey: .persistentOptIn) ?? true
+        needsReopen = try container.decodeIfPresent(Bool.self, forKey: .needsReopen) ?? true
+        backendRawValue = try container.decodeIfPresent(String.self, forKey: .backendRawValue)
+        mcpServerName = try container.decodeIfPresent(String.self, forKey: .mcpServerName)
+    }
+
+    var backend: IOSWebMountBackendKind {
+        IOSWebMountBackendKind(rawValue: backendRawValue ?? "") ?? .local
+    }
+}
+
+private struct IOSWebMountPersistedSession: Codable, Equatable {
+    let id: String
+    let metadata: IOSWebMountSessionMetadata
 }
 
 @MainActor
 @Observable
 final class IOSWebMountSessionStore {
+    static let ephemeralTTLMillis: Int64 = 15 * 60 * 1_000
+    static let agentLeaseMillis: Int64 = 2 * 60 * 1_000
+
     let maxSessions: Int
 
     private(set) var currentSessionId: String
+    private(set) var recordsRevision: UInt64 = 0
     @ObservationIgnored private var runtimes: [String: IOSWebMountRuntimeServicing] = [:]
-    @ObservationIgnored private var siteIds: [String: String] = [:]
-    @ObservationIgnored private var siteNames: [String: String] = [:]
-    @ObservationIgnored private var lastActivityMillis: [String: Int64] = [:]
+    @ObservationIgnored private var metadata: [String: IOSWebMountSessionMetadata] = [:]
     @ObservationIgnored private let runtimeFactory: () -> IOSWebMountRuntimeServicing
+    @ObservationIgnored private let restoredRuntimeFactory: ((String) -> IOSWebMountRuntimeServicing)?
+    @ObservationIgnored private let remoteRuntimeFactory: ((String, IOSWebMountBackendKind) -> IOSWebMountRuntimeServicing)?
+    @ObservationIgnored private let userDefaults: UserDefaults?
+    @ObservationIgnored private let nowMillis: () -> Int64
+    @ObservationIgnored private let onSessionRemoved: ((String) -> Void)?
+
+    private static let persistedSessionsKey = "app.amber.ios.webmount.persistent-sessions.v1"
+    private static let persistedCurrentSessionKey = "app.amber.ios.webmount.persistent-current-session.v1"
 
     init(
         initialRuntime: IOSWebMountRuntimeServicing? = nil,
         maxSessions: Int = 3,
-        runtimeFactory: @escaping () -> IOSWebMountRuntimeServicing = { IOSWebMountWKRuntime() }
+        runtimeFactory: @escaping () -> IOSWebMountRuntimeServicing = { IOSWebMountWKRuntime() },
+        restoredRuntimeFactory: ((String) -> IOSWebMountRuntimeServicing)? = nil,
+        remoteRuntimeFactory: ((String, IOSWebMountBackendKind) -> IOSWebMountRuntimeServicing)? = nil,
+        userDefaults: UserDefaults? = nil,
+        nowMillis: @escaping () -> Int64 = { IOSWebMountClock.nowMillis() },
+        onSessionRemoved: ((String) -> Void)? = nil
     ) {
         self.maxSessions = max(1, maxSessions)
         self.runtimeFactory = runtimeFactory
-        let runtime = initialRuntime ?? runtimeFactory()
-        let sessionId = runtime.snapshot.sessionId
-        self.currentSessionId = sessionId
-        self.runtimes[sessionId] = runtime
-        self.lastActivityMillis[sessionId] = IOSWebMountClock.nowMillis()
+        self.restoredRuntimeFactory = restoredRuntimeFactory
+        self.remoteRuntimeFactory = remoteRuntimeFactory
+        self.userDefaults = userDefaults
+        self.nowMillis = nowMillis
+        self.onSessionRemoved = onSessionRemoved
+        self.currentSessionId = ""
+
+        let persisted = Self.loadPersistedSessions(from: userDefaults)
+            .filter { $0.metadata.persistentOptIn }
+        // Reserve one slot for a local session. A persisted remote session must
+        // never crowd the only local WKWebView out of the restored set.
+        var restored: [IOSWebMountPersistedSession] = []
+        if let local = persisted.first(where: { $0.metadata.backend == .local }) {
+            restored.append(local)
+        }
+        let remoteLimit = max(0, self.maxSessions - max(1, restored.count))
+        restored.append(contentsOf: persisted.filter { item in
+            item.metadata.backend != .local && !restored.contains(where: { $0.id == item.id })
+        }.prefix(remoteLimit))
+        for item in restored {
+            let backend = item.metadata.backend
+            let restoredRuntime: IOSWebMountRuntimeServicing?
+            if backend == .local {
+                restoredRuntime = restoredRuntimeFactory?(item.id)
+            } else {
+                restoredRuntime = remoteRuntimeFactory?(item.id, backend)
+            }
+            guard let restoredRuntime else { continue }
+            runtimes[item.id] = restoredRuntime
+            var restoredMetadata = item.metadata
+            restoredMetadata.ownerRunId = nil
+            restoredMetadata.controlOwner = .none
+            restoredMetadata.leaseExpiresAtMillis = nil
+            restoredMetadata.needsReopen = true
+            metadata[item.id] = restoredMetadata
+        }
+
+        if !metadata.values.contains(where: { $0.backend == .local }) {
+            let runtime = initialRuntime ?? runtimeFactory()
+            let sessionId = runtime.snapshot.sessionId
+            runtimes[sessionId] = runtime
+            metadata[sessionId] = Self.freshMetadata(nowMillis: nowMillis())
+        }
+
+        let persistedCurrent = userDefaults?.string(forKey: Self.persistedCurrentSessionKey)
+        self.currentSessionId = persistedCurrent.flatMap { sessionId in
+            guard runtimes[sessionId] != nil, metadata[sessionId]?.backend == .local else { return nil }
+            return sessionId
+        } ?? metadata.keys.sorted().first(where: { metadata[$0]?.backend == .local }) ?? ""
+        ensureCurrentSessionIsLocal()
     }
 
     var currentRuntime: IOSWebMountRuntimeServicing {
+        ensureCurrentSessionIsLocal()
         if let runtime = runtimes[currentSessionId] {
             return runtime
         }
@@ -1802,36 +2742,50 @@ final class IOSWebMountSessionStore {
         let sessionId = runtime.snapshot.sessionId
         runtimes[sessionId] = runtime
         currentSessionId = sessionId
-        lastActivityMillis[sessionId] = IOSWebMountClock.nowMillis()
+        metadata[sessionId] = Self.freshMetadata(nowMillis: nowMillis())
         return runtime
     }
 
     var records: [IOSWebMountSessionRecord] {
-        runtimes.keys
+        _ = recordsRevision
+        expireInactiveSessions()
+        normalizeExpiredAgentLeases()
+        ensureCurrentSessionIsLocal()
+        return runtimes.keys
             .sorted { lhs, rhs in
                 if lhs == currentSessionId { return true }
                 if rhs == currentSessionId { return false }
-                return (lastActivityMillis[lhs] ?? 0) > (lastActivityMillis[rhs] ?? 0)
+                return (metadata[lhs]?.lastActivityMillis ?? 0) > (metadata[rhs]?.lastActivityMillis ?? 0)
             }
-            .compactMap { sessionId in
-                guard let runtime = runtimes[sessionId] else { return nil }
+            .compactMap { sessionId -> IOSWebMountSessionRecord? in
+                guard let runtime = runtimes[sessionId], let metadata = metadata[sessionId] else { return nil }
                 let snapshot = runtime.snapshot
                 return IOSWebMountSessionRecord(
                     id: sessionId,
-                    siteId: siteIds[sessionId],
-                    siteName: siteNames[sessionId],
-                    title: snapshot.title?.nilIfBlank ?? "未命名页面",
-                    redactedURL: snapshot.currentURL ?? snapshot.requestedURL ?? "",
-                    status: snapshot.status.rawValue,
+                    siteId: metadata.siteId,
+                    siteName: metadata.siteName,
+                    title: IOSWebMountRedactor.redactedText(snapshot.title?.nilIfBlank ?? metadata.lastTitle?.nilIfBlank ?? "未命名页面"),
+                    redactedURL: snapshot.currentURL ?? snapshot.requestedURL ?? metadata.redactedURL ?? "",
+                    status: metadata.needsReopen ? "needs_reopen" : snapshot.status.rawValue,
                     canGoBack: snapshot.canGoBack,
                     canGoForward: snapshot.canGoForward,
-                    lastActivityMillis: lastActivityMillis[sessionId] ?? snapshot.updatedAtMillis,
-                    isCurrent: sessionId == currentSessionId
+                    lastActivityMillis: metadata.lastActivityMillis,
+                    isCurrent: sessionId == currentSessionId,
+                    ownerConversationId: metadata.ownerConversationId,
+                    ownerRunId: metadata.ownerRunId,
+                    controlOwner: effectiveControlOwner(metadata, now: nowMillis()),
+                    leaseExpiresAtMillis: metadata.leaseExpiresAtMillis,
+                    persistentOptIn: metadata.persistentOptIn,
+                    needsReopen: metadata.needsReopen,
+                    backend: metadata.backend,
+                    mcpServerName: metadata.mcpServerName
                 )
             }
     }
 
     func runtime(sessionId requestedSessionId: String?, makeCurrent: Bool = true) throws -> IOSWebMountRuntimeServicing {
+        normalizeExpiredAgentLeases()
+        ensureCurrentSessionIsLocal()
         let sessionId = requestedSessionId?.nilIfBlank ?? currentSessionId
         guard let runtime = runtimes[sessionId] else {
             throw IOSWebMountSessionError.sessionNotFound(sessionId)
@@ -1840,103 +2794,453 @@ final class IOSWebMountSessionStore {
         return runtime
     }
 
+    func runtimeIfPresent(sessionId requestedSessionId: String?) -> IOSWebMountRuntimeServicing? {
+        expireInactiveSessions()
+        ensureCurrentSessionIsLocal()
+        let sessionId = requestedSessionId?.nilIfBlank ?? currentSessionId
+        return runtimes[sessionId]
+    }
+
     @discardableResult
-    func newSession(site: IOSWebMountSite? = nil) -> IOSWebMountSessionRecord {
+    func newSession(
+        site: IOSWebMountSite? = nil,
+        persistent: Bool = false,
+        makeCurrent: Bool = true,
+        backend: IOSWebMountBackendKind = .local,
+        mcpServerName: String? = nil,
+        runtime suppliedRuntime: IOSWebMountRuntimeServicing? = nil
+    ) throws -> IOSWebMountSessionRecord {
+        expireInactiveSessions()
         if runtimes.count >= maxSessions {
-            evictLeastRecentlyUsedSession()
+            guard evictLeastRecentlyUsedSession(allowCurrent: makeCurrent) else {
+                throw IOSWebMountSessionError.sessionLimitReached(maxSessions)
+            }
         }
-        let runtime = runtimeFactory()
+        let runtime = suppliedRuntime ?? runtimeFactory()
         let sessionId = runtime.snapshot.sessionId
         runtimes[sessionId] = runtime
-        currentSessionId = sessionId
-        lastActivityMillis[sessionId] = IOSWebMountClock.nowMillis()
+        if makeCurrent && backend == .local {
+            currentSessionId = sessionId
+        }
+        var newMetadata = Self.freshMetadata(nowMillis: nowMillis())
+        newMetadata.persistentOptIn = persistent
+        newMetadata.backendRawValue = backend.rawValue
+        newMetadata.mcpServerName = mcpServerName?.nilIfBlank
+        newMetadata.needsReopen = backend != .local
+        metadata[sessionId] = newMetadata
         tag(sessionId: sessionId, site: site)
+        ensureCurrentSessionIsLocal()
+        persistSessions()
         return records.first { $0.id == sessionId } ?? fallbackRecord(for: runtime, sessionId: sessionId)
     }
 
     @discardableResult
     func close(sessionId: String) throws -> IOSWebMountSessionRecord? {
+        ensureCurrentSessionIsLocal()
         guard runtimes[sessionId] != nil else {
             throw IOSWebMountSessionError.sessionNotFound(sessionId)
         }
         if runtimes.count == 1 {
-            runtimes.removeValue(forKey: sessionId)
-            siteIds.removeValue(forKey: sessionId)
-            siteNames.removeValue(forKey: sessionId)
-            lastActivityMillis.removeValue(forKey: sessionId)
-            let record = newSession()
-            return record
+            removeSession(sessionId)
+            expireInactiveSessions()
+            persistSessions()
+            return record(sessionId: currentSessionId)
         }
-        runtimes.removeValue(forKey: sessionId)
-        siteIds.removeValue(forKey: sessionId)
-        siteNames.removeValue(forKey: sessionId)
-        lastActivityMillis.removeValue(forKey: sessionId)
+        removeSession(sessionId)
+        if !metadata.values.contains(where: { $0.backend == .local }) {
+            _ = try newSession(makeCurrent: true)
+        }
         if currentSessionId == sessionId {
-            currentSessionId = runtimes.keys.max {
-                (lastActivityMillis[$0] ?? 0) < (lastActivityMillis[$1] ?? 0)
+            currentSessionId = runtimes.keys.filter { metadata[$0]?.backend == .local }.max {
+                (metadata[$0]?.lastActivityMillis ?? 0) < (metadata[$1]?.lastActivityMillis ?? 0)
             } ?? runtimes.keys.first ?? currentSessionId
         }
+        ensureCurrentSessionIsLocal()
+        persistSessions()
         return records.first { $0.id == currentSessionId }
     }
 
     func tag(sessionId: String, site: IOSWebMountSite?) {
-        guard runtimes[sessionId] != nil else { return }
+        guard runtimes[sessionId] != nil, var item = metadata[sessionId] else { return }
         if let site {
-            siteIds[sessionId] = site.id
-            siteNames[sessionId] = site.displayName
+            item.siteId = site.id
+            item.siteName = site.displayName
+            metadata[sessionId] = item
+            persistSessions()
         }
     }
 
     func touch(sessionId: String, makeCurrent: Bool = true) {
-        guard runtimes[sessionId] != nil else { return }
-        if makeCurrent {
+        normalizeExpiredAgentLeases()
+        ensureCurrentSessionIsLocal()
+        guard let runtime = runtimes[sessionId], var item = metadata[sessionId] else { return }
+        if makeCurrent, item.backend == .local {
             currentSessionId = sessionId
         }
-        lastActivityMillis[sessionId] = IOSWebMountClock.nowMillis()
+        let snapshot = runtime.snapshot
+        item.lastActivityMillis = nowMillis()
+        item.lastTitle = IOSWebMountRedactor.redactedText(snapshot.title ?? "").nilIfBlank ?? item.lastTitle
+        if item.backend == .local {
+            item.redactedURL = snapshot.currentURL ?? snapshot.requestedURL ?? item.redactedURL
+        }
+        metadata[sessionId] = item
+        ensureCurrentSessionIsLocal()
+        persistSessions()
     }
 
-    private func evictLeastRecentlyUsedSession() {
-        let candidate = runtimes.keys
-            .filter { $0 != currentSessionId }
-            .min { (lastActivityMillis[$0] ?? 0) < (lastActivityMillis[$1] ?? 0) }
-            ?? currentSessionId
-        runtimes.removeValue(forKey: candidate)
-        siteIds.removeValue(forKey: candidate)
-        siteNames.removeValue(forKey: candidate)
-        lastActivityMillis.removeValue(forKey: candidate)
-        if currentSessionId == candidate, let next = runtimes.keys.first {
-            currentSessionId = next
+    @discardableResult
+    func acquireAgentControl(
+        sessionId: String,
+        runId: String,
+        conversationId: String
+    ) throws -> IOSWebMountSessionRecord {
+        try bindAgentSession(
+            sessionId: sessionId,
+            runId: runId,
+            conversationId: conversationId,
+            requiresControl: true
+        )
+    }
+
+    @discardableResult
+    func bindAgentSession(
+        sessionId: String,
+        runId: String,
+        conversationId: String,
+        requiresControl: Bool
+    ) throws -> IOSWebMountSessionRecord {
+        normalizeExpiredAgentLease(sessionId: sessionId)
+        guard runtimes[sessionId] != nil, var item = metadata[sessionId] else {
+            throw IOSWebMountSessionError.sessionNotFound(sessionId)
         }
+        guard runId.nilIfBlank != nil, conversationId.nilIfBlank != nil else {
+            throw IOSWebMountSessionError.sessionBindingRequired
+        }
+        if let ownerConversationId = item.ownerConversationId,
+           ownerConversationId != conversationId {
+            throw IOSWebMountSessionError.sessionBindingMismatch(sessionId)
+        }
+        if let ownerRunId = item.ownerRunId,
+           ownerRunId != runId {
+            throw IOSWebMountSessionError.sessionBindingMismatch(sessionId)
+        }
+        let now = nowMillis()
+        let effectiveOwner = effectiveControlOwner(item, now: now)
+        if requiresControl, effectiveOwner == .user {
+            throw IOSWebMountSessionError.userControlActive(sessionId)
+        }
+        item.ownerConversationId = conversationId.nilIfBlank ?? item.ownerConversationId
+        item.ownerRunId = runId
+        if requiresControl || effectiveOwner == .agent {
+            item.controlOwner = .agent
+            item.leaseExpiresAtMillis = now + Self.agentLeaseMillis
+        }
+        item.lastActivityMillis = now
+        metadata[sessionId] = item
+        persistSessions()
+        return record(sessionId: sessionId)!
+    }
+
+    @discardableResult
+    func acquireUserControl(sessionId: String) throws -> IOSWebMountSessionRecord {
+        normalizeExpiredAgentLease(sessionId: sessionId)
+        guard runtimes[sessionId] != nil, var item = metadata[sessionId] else {
+            throw IOSWebMountSessionError.sessionNotFound(sessionId)
+        }
+        let now = nowMillis()
+        item.controlOwner = .user
+        item.leaseExpiresAtMillis = nil
+        item.lastActivityMillis = now
+        metadata[sessionId] = item
+        if item.backend == .local {
+            currentSessionId = sessionId
+        }
+        ensureCurrentSessionIsLocal()
+        persistSessions()
+        return record(sessionId: sessionId)!
+    }
+
+    @discardableResult
+    func handBackToAgent(sessionId: String) throws -> IOSWebMountSessionRecord {
+        normalizeExpiredAgentLease(sessionId: sessionId)
+        guard runtimes[sessionId] != nil, var item = metadata[sessionId] else {
+            throw IOSWebMountSessionError.sessionNotFound(sessionId)
+        }
+        guard item.ownerRunId?.nilIfBlank != nil else {
+            item.controlOwner = .none
+            item.leaseExpiresAtMillis = nil
+            metadata[sessionId] = item
+            persistSessions()
+            return record(sessionId: sessionId)!
+        }
+        item.controlOwner = .agent
+        item.leaseExpiresAtMillis = nowMillis() + Self.agentLeaseMillis
+        metadata[sessionId] = item
+        persistSessions()
+        return record(sessionId: sessionId)!
+    }
+
+    func releaseAgentOwnership(runId: String) {
+        guard !runId.isEmpty else { return }
+        var changed = false
+        for sessionId in metadata.keys where metadata[sessionId]?.ownerRunId == runId {
+            guard var item = metadata[sessionId] else { continue }
+            item.ownerRunId = nil
+            if item.controlOwner == .agent {
+                item.controlOwner = .none
+                item.leaseExpiresAtMillis = nil
+            }
+            metadata[sessionId] = item
+            changed = true
+        }
+        if changed {
+            persistSessions()
+        }
+    }
+
+    func expireInactiveSessions(nowMillis explicitNow: Int64? = nil) {
+        let now = explicitNow ?? nowMillis()
+        normalizeExpiredAgentLeases(now: now)
+        let expired = metadata.compactMap { sessionId, item -> String? in
+            guard !item.persistentOptIn,
+                  effectiveControlOwner(item, now: now) != .user,
+                  now - item.lastActivityMillis >= Self.ephemeralTTLMillis else { return nil }
+            return sessionId
+        }
+        for sessionId in expired {
+            removeSession(sessionId)
+        }
+        if !metadata.values.contains(where: { $0.backend == .local }) {
+            let runtime = runtimeFactory()
+            let sessionId = runtime.snapshot.sessionId
+            runtimes[sessionId] = runtime
+            metadata[sessionId] = Self.freshMetadata(nowMillis: now)
+            currentSessionId = sessionId
+        }
+        ensureCurrentSessionIsLocal()
+        if !expired.isEmpty {
+            persistSessions()
+        }
+    }
+
+    func record(sessionId: String) -> IOSWebMountSessionRecord? {
+        records.first { $0.id == sessionId }
+    }
+
+    private func evictLeastRecentlyUsedSession(allowCurrent: Bool) -> Bool {
+        ensureCurrentSessionIsLocal()
+        let now = nowMillis()
+        let localSessionIds = Set(metadata.compactMap { sessionId, item in
+            item.backend == .local && runtimes[sessionId] != nil ? sessionId : nil
+        })
+        let candidate = runtimes.keys
+            .filter { sessionId in
+                guard let item = metadata[sessionId],
+                      !item.persistentOptIn,
+                      effectiveControlOwner(item, now: now) == .none else { return false }
+                if item.backend == .local, localSessionIds.count <= 1 { return false }
+                return allowCurrent || sessionId != currentSessionId
+            }
+            .min { lhs, rhs in
+                if lhs == currentSessionId { return false }
+                if rhs == currentSessionId { return true }
+                return (metadata[lhs]?.lastActivityMillis ?? 0) < (metadata[rhs]?.lastActivityMillis ?? 0)
+            }
+        guard let candidate else { return false }
+        removeSession(candidate)
+        if currentSessionId == candidate {
+            currentSessionId = runtimes.keys.first(where: { metadata[$0]?.backend == .local }) ?? ""
+        }
+        ensureCurrentSessionIsLocal()
+        persistSessions()
+        return true
     }
 
     private func fallbackRecord(for runtime: IOSWebMountRuntimeServicing, sessionId: String) -> IOSWebMountSessionRecord {
         let snapshot = runtime.snapshot
         return IOSWebMountSessionRecord(
             id: sessionId,
-            siteId: siteIds[sessionId],
-            siteName: siteNames[sessionId],
-            title: snapshot.title?.nilIfBlank ?? "Untitled",
+            siteId: metadata[sessionId]?.siteId,
+            siteName: metadata[sessionId]?.siteName,
+            title: IOSWebMountRedactor.redactedText(snapshot.title?.nilIfBlank ?? "Untitled"),
             redactedURL: snapshot.currentURL ?? snapshot.requestedURL ?? "",
             status: snapshot.status.rawValue,
             canGoBack: snapshot.canGoBack,
             canGoForward: snapshot.canGoForward,
-            lastActivityMillis: lastActivityMillis[sessionId] ?? snapshot.updatedAtMillis,
-            isCurrent: sessionId == currentSessionId
+            lastActivityMillis: metadata[sessionId]?.lastActivityMillis ?? snapshot.updatedAtMillis,
+            isCurrent: sessionId == currentSessionId,
+            ownerConversationId: metadata[sessionId]?.ownerConversationId,
+            ownerRunId: metadata[sessionId]?.ownerRunId,
+            controlOwner: metadata[sessionId]?.controlOwner ?? .none,
+            leaseExpiresAtMillis: metadata[sessionId]?.leaseExpiresAtMillis,
+            persistentOptIn: metadata[sessionId]?.persistentOptIn ?? false,
+            needsReopen: metadata[sessionId]?.needsReopen ?? false,
+            backend: metadata[sessionId]?.backend ?? .local,
+            mcpServerName: metadata[sessionId]?.mcpServerName
+        )
+    }
+
+    private func removeSession(_ sessionId: String) {
+        guard runtimes.removeValue(forKey: sessionId) != nil else { return }
+        metadata.removeValue(forKey: sessionId)
+        onSessionRemoved?(sessionId)
+    }
+
+    func markNeedsReopen(sessionId: String) {
+        guard var item = metadata[sessionId], runtimes[sessionId] != nil else { return }
+        guard !item.needsReopen else { return }
+        item.needsReopen = true
+        metadata[sessionId] = item
+        persistSessions()
+    }
+
+    func recordValidatedRemoteURL(
+        sessionId: String,
+        rawURL: String,
+        clearNeedsReopen: Bool
+    ) {
+        guard var item = metadata[sessionId], runtimes[sessionId] != nil,
+              let redactedURL = IOSWebMountRedactor.redactedURL(rawURL) else { return }
+        item.redactedURL = redactedURL
+        item.lastActivityMillis = nowMillis()
+        if clearNeedsReopen {
+            item.needsReopen = false
+        }
+        metadata[sessionId] = item
+        persistSessions()
+    }
+
+    func clearNeedsReopen(sessionId: String) {
+        guard var item = metadata[sessionId], runtimes[sessionId] != nil else { return }
+        guard item.needsReopen else { return }
+        item.needsReopen = false
+        metadata[sessionId] = item
+        persistSessions()
+    }
+
+    private func normalizeExpiredAgentLease(sessionId: String) {
+        guard var item = metadata[sessionId],
+              item.controlOwner == .agent || item.ownerRunId?.nilIfBlank != nil else { return }
+        guard let leaseExpiresAtMillis = item.leaseExpiresAtMillis,
+              leaseExpiresAtMillis <= nowMillis() else { return }
+        item.controlOwner = .none
+        item.leaseExpiresAtMillis = nil
+        metadata[sessionId] = item
+        persistSessions()
+    }
+
+    private func normalizeExpiredAgentLeases(now: Int64? = nil) {
+        let now = now ?? nowMillis()
+        var changed = false
+        for sessionId in metadata.keys {
+            guard var item = metadata[sessionId],
+                  item.controlOwner == .agent || item.ownerRunId?.nilIfBlank != nil,
+                  let leaseExpiresAtMillis = item.leaseExpiresAtMillis,
+                  leaseExpiresAtMillis <= now else { continue }
+            item.controlOwner = .none
+            item.leaseExpiresAtMillis = nil
+            metadata[sessionId] = item
+            changed = true
+        }
+        if changed {
+            persistSessions()
+        }
+    }
+
+    private func ensureCurrentSessionIsLocal() {
+        if let item = metadata[currentSessionId],
+           item.backend == .local,
+           runtimes[currentSessionId] != nil {
+            return
+        }
+        if let localSessionId = runtimes.keys.first(where: { metadata[$0]?.backend == .local }) {
+            currentSessionId = localSessionId
+            return
+        }
+        let runtime = runtimeFactory()
+        let sessionId = runtime.snapshot.sessionId
+        runtimes[sessionId] = runtime
+        metadata[sessionId] = Self.freshMetadata(nowMillis: nowMillis())
+        currentSessionId = sessionId
+    }
+
+    private func effectiveControlOwner(_ item: IOSWebMountSessionMetadata, now: Int64) -> IOSWebMountControlOwner {
+        if item.controlOwner == .user {
+            return .user
+        }
+        guard let leaseExpiresAtMillis = item.leaseExpiresAtMillis,
+              leaseExpiresAtMillis > now else {
+            return .none
+        }
+        return item.controlOwner
+    }
+
+    private func persistSessions() {
+        recordsRevision &+= 1
+        guard let userDefaults else { return }
+        let persisted = metadata
+            .filter { $0.value.persistentOptIn }
+            .map { IOSWebMountPersistedSession(id: $0.key, metadata: $0.value) }
+            .sorted { $0.id < $1.id }
+        if persisted.isEmpty {
+            userDefaults.removeObject(forKey: Self.persistedSessionsKey)
+            userDefaults.removeObject(forKey: Self.persistedCurrentSessionKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(persisted) {
+            userDefaults.set(data, forKey: Self.persistedSessionsKey)
+            let persistedCurrent = persisted.first(where: { $0.id == currentSessionId && $0.metadata.backend == .local })?.id
+                ?? persisted.first(where: { $0.metadata.backend == .local })?.id
+            if let persistedCurrent {
+                userDefaults.set(persistedCurrent, forKey: Self.persistedCurrentSessionKey)
+            } else {
+                userDefaults.removeObject(forKey: Self.persistedCurrentSessionKey)
+            }
+        }
+    }
+
+    private static func loadPersistedSessions(from userDefaults: UserDefaults?) -> [IOSWebMountPersistedSession] {
+        guard let data = userDefaults?.data(forKey: persistedSessionsKey),
+              let sessions = try? JSONDecoder().decode([IOSWebMountPersistedSession].self, from: data) else {
+            return []
+        }
+        return sessions
+    }
+
+    private static func freshMetadata(nowMillis: Int64) -> IOSWebMountSessionMetadata {
+        IOSWebMountSessionMetadata(
+            siteId: nil,
+            siteName: nil,
+            lastTitle: nil,
+            redactedURL: nil,
+            lastActivityMillis: nowMillis,
+            ownerConversationId: nil,
+            ownerRunId: nil,
+            controlOwner: .none,
+            leaseExpiresAtMillis: nil,
+            persistentOptIn: false,
+            needsReopen: false,
+            backendRawValue: IOSWebMountBackendKind.local.rawValue,
+            mcpServerName: nil
         )
     }
 }
 
 enum IOSWebMountScreenshotArtifactStore {
-    static func save(_ capture: IOSWebMountScreenshotCapture, sessionId: String) throws -> [String: Any] {
+    static let retentionMillis: Int64 = 24 * 60 * 60 * 1_000
+
+    static func save(
+        _ capture: IOSWebMountScreenshotCapture,
+        sessionId: String,
+        rootDirectory: URL? = nil,
+        nowMillis: Int64 = IOSWebMountClock.nowMillis()
+    ) throws -> [String: Any] {
         let fileManager = FileManager.default
-        let root = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        let directory = root
-            .appendingPathComponent("AmberWorkspace", isDirectory: true)
-            .appendingPathComponent("WebMount", isDirectory: true)
-            .appendingPathComponent("screenshots", isDirectory: true)
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let artifactId = "wmshot-\(IOSWebMountClock.nowMillis())-\(sessionId)"
+        let directory = screenshotsDirectory(rootDirectory: rootDirectory)
+        try prepareDirectory(directory, fileManager: fileManager)
+        cleanupExpired(rootDirectory: rootDirectory, nowMillis: nowMillis)
+        let safeSessionId = safePathComponent(sessionId)
+        let artifactId = "wmshot-\(nowMillis)-\(safeSessionId)"
         let fileName = "\(artifactId).\(capture.format)"
         let destination = directory.appendingPathComponent(fileName, isDirectory: false)
         try capture.data.write(to: destination, options: [.atomic])
@@ -1946,8 +3250,77 @@ enum IOSWebMountScreenshotArtifactStore {
             "format": capture.format,
             "width": capture.width,
             "height": capture.height,
-            "size_bytes": capture.data.count
+            "size_bytes": capture.data.count,
+            "created_at_ms": nowMillis,
+            "expires_at_ms": nowMillis + retentionMillis,
+            "retention_hours": 24,
+            "contains_unredacted_viewport": true
         ]
+    }
+
+    static func cleanupExpired(
+        rootDirectory: URL? = nil,
+        nowMillis: Int64 = IOSWebMountClock.nowMillis()
+    ) {
+        let fileManager = FileManager.default
+        let directory = screenshotsDirectory(rootDirectory: rootDirectory)
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for file in files where file.pathExtension.lowercased() == "png" {
+            let createdMillis = timestamp(from: file.lastPathComponent)
+                ?? Int64(((try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1_000)
+            if createdMillis > 0, nowMillis - createdMillis >= retentionMillis {
+                try? fileManager.removeItem(at: file)
+            }
+        }
+    }
+
+    static func deleteArtifacts(sessionId: String, rootDirectory: URL? = nil) {
+        let fileManager = FileManager.default
+        let directory = screenshotsDirectory(rootDirectory: rootDirectory)
+        let suffix = "-\(safePathComponent(sessionId)).png"
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for file in files where file.lastPathComponent.hasSuffix(suffix) {
+            try? fileManager.removeItem(at: file)
+        }
+    }
+
+    private static func screenshotsDirectory(rootDirectory: URL?) -> URL {
+        let root = rootDirectory
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        return root
+            .appendingPathComponent("AmberWorkspace", isDirectory: true)
+            .appendingPathComponent("WebMount", isDirectory: true)
+            .appendingPathComponent("screenshots", isDirectory: true)
+    }
+
+    private static func prepareDirectory(_ directory: URL, fileManager: FileManager) throws {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        var resourceValues = URLResourceValues()
+        resourceValues.isExcludedFromBackup = true
+        var mutableDirectory = directory
+        try? mutableDirectory.setResourceValues(resourceValues)
+    }
+
+    private static func timestamp(from fileName: String) -> Int64? {
+        guard fileName.hasPrefix("wmshot-") else { return nil }
+        let suffix = fileName.dropFirst("wmshot-".count)
+        guard let separator = suffix.firstIndex(of: "-") else { return nil }
+        return Int64(suffix[..<separator])
+    }
+
+    private static func safePathComponent(_ raw: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let value = raw.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : Character("_") }
+        return String(value).nilIfBlank ?? "session"
     }
 }
 
@@ -1969,7 +3342,7 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_state", description: "Read current WKWebView status, title, redacted URL, and page state.", requiresUserAction: false),
         .init(name: "wm_observe", description: "Read state, visible text, links, interactive elements, and visual candidates without cookies or headers.", requiresUserAction: false),
         .init(name: "wm_extract", description: "Extract readable or interactive page content through a read-only bridge.", requiresUserAction: false),
-        .init(name: "wm_get", description: "Read a single element text/value/attribute through a restricted bridge. Raw HTML reads are disabled on iOS.", requiresUserAction: false),
+        .init(name: "wm_get", description: "Read a visible element's text, checked value, or non-sensitive attribute through a restricted bridge. Raw HTML reads are disabled on iOS.", requiresUserAction: false),
         .init(name: "wm_visual_snapshot", description: "Return viewport visual candidates from DOM rectangles without calling an external vision model.", requiresUserAction: false),
         .init(name: "wm_screenshot", description: "Capture the current viewport to a local WebMount artifact after foreground approval.", requiresUserAction: true),
         .init(name: "wm_back", description: "Navigate the current WebMount session backward.", requiresUserAction: false),
@@ -1983,8 +3356,8 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_keys", description: "Send a short key sequence to the current WebMount page or focused field.", requiresUserAction: false),
         .init(name: "wm_scroll", description: "Scroll the page or an element into view.", requiresUserAction: false),
         .init(name: "wm_select", description: "Select an option value in a <select> element by CSS selector.", requiresUserAction: false),
-        .init(name: "wm_find", description: "Read-only check whether a CSS selector matches on the current page, with a text snippet.", requiresUserAction: false),
-        .init(name: "wm_wait", description: "Pause for a short bounded wait (max 5000ms) before the next action.", requiresUserAction: false)
+        .init(name: "wm_find", description: "Read-only selector or visible-text search that returns stable element refs without input values.", requiresUserAction: false),
+        .init(name: "wm_wait", description: "Wait up to 30 seconds for DOM stability, selector, visible text, URL fragment, ready state, or an explicit delay.", requiresUserAction: false)
     ]
 
     static let supportedToolNames = Set(descriptors.map(\.name))
@@ -2005,12 +3378,14 @@ enum IOSWebMountToolCatalog {
 
 @MainActor
 final class IOSWebMountController {
-    static let shared = IOSWebMountController()
+    static let shared = IOSWebMountController(sessionDefaults: .standard)
 
     let registry: IOSWebMountRegistry
     let settings: IOSWebMountSettings
     let cookieStore: IOSWebMountCookieStoreProtocol
     let sessionStore: IOSWebMountSessionStore
+    let desktopBackend: IOSWebMountDesktopBackendAdapter
+    private let mcpServerProvider: () -> [IOSMcpServerConfig]
 
     var runtime: IOSWebMountRuntimeServicing {
         sessionStore.currentRuntime
@@ -2020,29 +3395,94 @@ final class IOSWebMountController {
         runtime as? IOSWebMountWKRuntime
     }
 
+    func releaseAgentOwnership(runId: String) {
+        sessionStore.releaseAgentOwnership(runId: runId)
+    }
+
     init(
         registry: IOSWebMountRegistry? = nil,
         settings: IOSWebMountSettings? = nil,
         cookieStore: IOSWebMountCookieStoreProtocol? = nil,
         runtime: IOSWebMountRuntimeServicing? = nil,
-        runtimeFactory: (() -> IOSWebMountRuntimeServicing)? = nil
+        runtimeFactory: (() -> IOSWebMountRuntimeServicing)? = nil,
+        sessionDefaults: UserDefaults? = nil,
+        sessionNowMillis: @escaping () -> Int64 = { IOSWebMountClock.nowMillis() },
+        desktopBackend: IOSWebMountDesktopBackendAdapter? = nil,
+        mcpServerProvider: @escaping () -> [IOSMcpServerConfig] = { IOSMcpConfigStore.shared.servers }
     ) {
         self.registry = registry ?? IOSWebMountRegistry()
         self.settings = settings ?? IOSWebMountSettings()
         self.cookieStore = cookieStore ?? IOSWebMountCookieStore()
+        let resolvedDesktopBackend = desktopBackend ?? IOSWebMountDesktopBackendAdapter()
+        self.desktopBackend = resolvedDesktopBackend
+        self.mcpServerProvider = mcpServerProvider
+        IOSWebMountScreenshotArtifactStore.cleanupExpired()
         let factory = runtimeFactory ?? { IOSWebMountWKRuntime() }
-        self.sessionStore = IOSWebMountSessionStore(initialRuntime: runtime ?? factory(), runtimeFactory: factory)
+        let restoredFactory: ((String) -> IOSWebMountRuntimeServicing)? = runtimeFactory == nil
+            ? { IOSWebMountWKRuntime(sessionId: $0) }
+            : nil
+        self.sessionStore = IOSWebMountSessionStore(
+            initialRuntime: runtime,
+            runtimeFactory: factory,
+            restoredRuntimeFactory: restoredFactory,
+            remoteRuntimeFactory: { sessionId, _ in
+                IOSWebMountRemotePlaceholderRuntime(sessionId: sessionId)
+            },
+            userDefaults: sessionDefaults,
+            nowMillis: sessionNowMillis,
+            onSessionRemoved: { sessionId in
+                resolvedDesktopBackend.close(logicalSessionId: sessionId)
+                IOSWebMountScreenshotArtifactStore.deleteArtifacts(sessionId: sessionId)
+            }
+        )
         self.settings.syncAllowedHosts(self.registry.sites.flatMap(\.allowedHosts))
     }
 
-    func openForUser(site: IOSWebMountSite) async -> IOSWebMountRuntimeSnapshot {
-        let runtime = sessionStore.currentRuntime
+    func openForUser(site: IOSWebMountSite, sessionId: String? = nil) async -> IOSWebMountRuntimeSnapshot {
+        if let sessionId = sessionId?.nilIfBlank,
+           let record = sessionStore.record(sessionId: sessionId),
+           record.backend != .local {
+            let current = sessionStore.runtimeIfPresent(sessionId: sessionId)?.snapshot
+                ?? .idle(sessionId: sessionId)
+            return IOSWebMountRuntimeSnapshot(
+                sessionId: current.sessionId,
+                status: .failed,
+                requestedURL: IOSWebMountRedactor.redactedURL(site.homepageURL),
+                currentURL: current.currentURL,
+                title: current.title,
+                estimatedProgress: current.estimatedProgress,
+                canGoBack: current.canGoBack,
+                canGoForward: current.canGoForward,
+                error: "Desktop WebMount sessions cannot be opened through the local user WebMount view.",
+                updatedAtMillis: IOSWebMountClock.nowMillis()
+            )
+        }
+        let runtime = (try? sessionStore.runtime(sessionId: sessionId, makeCurrent: true))
+            ?? sessionStore.currentRuntime
+        guard site.enabled else {
+            return IOSWebMountRuntimeSnapshot(
+                sessionId: runtime.snapshot.sessionId,
+                status: .failed,
+                requestedURL: IOSWebMountRedactor.redactedURL(site.homepageURL),
+                currentURL: runtime.snapshot.currentURL,
+                title: runtime.snapshot.title,
+                estimatedProgress: runtime.snapshot.estimatedProgress,
+                canGoBack: runtime.snapshot.canGoBack,
+                canGoForward: runtime.snapshot.canGoForward,
+                error: "WebMount station is disabled",
+                updatedAtMillis: IOSWebMountClock.nowMillis()
+            )
+        }
+        _ = try? sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
         let policy = IOSWebMountURLPolicy(settings: settings, extraAllowedHosts: registry.sites.flatMap(\.allowedHosts))
         switch policy.validate(site.homepageURL, site: site) {
         case .success(let url):
             (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(policy, site: site)
             sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
             let snapshot = await runtime.open(url, timeoutMillis: 30_000)
+            if snapshot.status != .failed {
+                sessionStore.clearNeedsReopen(sessionId: snapshot.sessionId)
+            }
             sessionStore.touch(sessionId: snapshot.sessionId)
             return snapshot
         case .failure(let error):
@@ -2061,33 +3501,60 @@ final class IOSWebMountController {
         }
     }
 
-    func execute(toolName: String, input: String, isUserInitiated: Bool) async -> String {
+    func execute(
+        toolName: String,
+        input: String,
+        isUserInitiated: Bool,
+        context: IOSWebMountExecutionContext? = nil
+    ) async -> String {
         guard IOSWebMountToolCatalog.supportedToolNames.contains(toolName) else {
             return Self.unsupportedToolResult(toolName: toolName)
         }
+        if let context, !context.hasCompleteBinding {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "denied": true,
+                "error_code": IOSWebMountSessionError.sessionBindingRequired.errorCode,
+                "reason": "Agent WebMount calls require both conversation_id and run_id."
+            ])
+        }
+        sessionStore.expireInactiveSessions()
         let args = Self.parseObject(input)
         do {
+            if !Self.desktopRoutingExemptToolNames.contains(toolName),
+               let sessionId = (args["session_id"] as? String)?.nilIfBlank,
+               let record = sessionStore.record(sessionId: sessionId),
+               record.backend != .local {
+                return try await desktopResult(
+                    toolName: toolName,
+                    args: args,
+                    record: record,
+                    isUserInitiated: isUserInitiated,
+                    context: context
+                )
+            }
             switch toolName {
             case "wm_stations":
                 return await stationsResult(args: args)
             case "wm_tab_list":
                 return tabListResult()
             case "wm_tab_new":
-                return tabNewResult(args: args)
+                return try await tabNewResult(args: args, isUserInitiated: isUserInitiated, context: context)
             case "wm_tab_close":
-                return try tabCloseResult(args: args)
+                return try tabCloseResult(args: args, context: context)
             case "wm_open":
-                return try await openResult(args: args)
+                return try await openResult(args: args, context: context)
             case "wm_state":
-                return try await stateResult(args: args)
+                return try await stateResult(args: args, context: context)
             case "wm_observe":
-                return try await observeResult(args: args)
+                return try await observeResult(args: args, context: context)
             case "wm_extract":
-                return try await extractResult(args: args)
+                return try await extractResult(args: args, context: context)
             case "wm_get":
-                return try await getResult(args: args)
+                return try await getResult(args: args, context: context)
             case "wm_visual_snapshot":
-                return try await visualSnapshotResult(args: args)
+                return try await visualSnapshotResult(args: args, context: context)
             case "wm_screenshot":
                 guard isUserInitiated else {
                     return Self.json([
@@ -2097,20 +3564,20 @@ final class IOSWebMountController {
                         "reason": "Viewport screenshots require an explicit foreground user action"
                     ])
                 }
-                return try await screenshotResult(args: args)
+                return try await screenshotResult(args: args, context: context)
             case "wm_back":
-                let runtime = try sessionRuntime(from: args)
+                let runtime = try sessionRuntime(from: args, context: context)
                 let snapshot = await runtime.back()
-                sessionStore.touch(sessionId: snapshot.sessionId)
+                touch(sessionId: snapshot.sessionId, context: context)
                 return Self.json([
                     "ok": true,
                     "session_id": snapshot.sessionId,
                     "state": snapshot.dictionary(redactURLs: true)
                 ])
             case "wm_forward":
-                let runtime = try sessionRuntime(from: args)
+                let runtime = try sessionRuntime(from: args, context: context)
                 let snapshot = await runtime.forward()
-                sessionStore.touch(sessionId: snapshot.sessionId)
+                touch(sessionId: snapshot.sessionId, context: context)
                 return Self.json([
                     "ok": true,
                     "session_id": snapshot.sessionId,
@@ -2147,20 +3614,35 @@ final class IOSWebMountController {
                 }
                 return try siteRemoveResult(args: args)
             case "wm_click", "wm_type", "wm_scroll", "wm_select", "wm_find", "wm_wait", "wm_keys", "wm_tap":
-                // Page-interaction tools (Android WebMountInteractionTools parity).
-                // Map the tool name to an interaction method and run the restricted
-                // JS bridge. Arbitrary eval stays disabled.
-                let runtime = try sessionRuntime(from: args)
                 let method: String
                 switch toolName {
-                case "wm_click", "wm_tap": method = "click"
-                case "wm_type", "wm_keys": method = "type"
+                case "wm_click": method = "click"
+                case "wm_tap": method = "tap"
+                case "wm_type": method = "type"
+                case "wm_keys": method = "keys"
                 case "wm_scroll": method = "scroll"
                 case "wm_select": method = "select"
                 case "wm_find": method = "find"
                 case "wm_wait": method = "wait"
                 default: method = "click"
                 }
+                let mutating = method != "find" && method != "wait"
+                if mutating,
+                   context?.isAgentInvocation == true,
+                   (args["snapshot_id"] as? String)?.nilIfBlank == nil {
+                    return Self.json([
+                        "ok": false,
+                        "tool": toolName,
+                        "denied": true,
+                        "error_code": "snapshot_required",
+                        "reason": "Agent WebMount mutations require snapshot_id from the latest observation."
+                    ])
+                }
+                let runtime = try sessionRuntime(
+                    from: args,
+                    context: context,
+                    requiresControl: mutating
+                )
                 let selector = args["selector"] as? String ?? args["target"] as? String
                 let text = args["text"] as? String ?? args["value"] as? String
                 var options = args
@@ -2170,23 +3652,211 @@ final class IOSWebMountController {
                 if options["wait_ms"] == nil, let timeout = args["timeout_ms"] {
                     options["wait_ms"] = timeout
                 }
-                let result = try await runtime.interact(method: method, selector: selector, text: text, options: options)
-                sessionStore.touch(sessionId: runtime.snapshot.sessionId)
-                var payload = result
-                payload["ok"] = (result["ok"] as? Bool ?? false)
-                payload["tool"] = toolName
-                payload["session_id"] = runtime.snapshot.sessionId
-                return Self.json(payload)
+                options["_amber_allow_high_consequence"] = isUserInitiated
+                var actionStarted = false
+                do {
+                    let before = try await runtime.state()
+                    actionStarted = true
+                    let result = try await runtime.interact(method: method, selector: selector, text: text, options: options)
+                    if mutating, let context, context.isAgentInvocation {
+                        let record = sessionStore.record(sessionId: runtime.snapshot.sessionId)
+                        guard record?.controlOwner == .agent,
+                              record?.ownerRunId == context.runId else {
+                            touch(sessionId: runtime.snapshot.sessionId, context: context)
+                            return Self.json([
+                                "ok": false,
+                                "tool": toolName,
+                                "session_id": runtime.snapshot.sessionId,
+                                "status": "unknown_after_action",
+                                "error_code": "unknown_after_action",
+                                "may_have_applied": true,
+                                "verified": false,
+                                "before_snapshot_id": before["snapshot_id"] as? String ?? "",
+                                "reason": "WebMount control changed while the action was in flight.",
+                                "action": IOSWebMountRedactor.redactedJSONObject(result)
+                            ])
+                        }
+                    }
+                    let after = try await runtime.state()
+                    touch(sessionId: runtime.snapshot.sessionId, context: context)
+                    if let gateOutput = interactionGateOutput(
+                        toolName: toolName,
+                        result: result,
+                        sessionId: runtime.snapshot.sessionId,
+                        snapshotId: after["snapshot_id"] as? String,
+                        handoffToUser: context?.isAgentInvocation == true
+                    ) {
+                        return gateOutput
+                    }
+                    let succeeded = result["ok"] as? Bool ?? false
+                    let verified = (result["verified"] as? Bool)
+                        ?? ((method == "find" && succeeded)
+                            || (method == "wait" && result["matched"] as? Bool == true))
+                    let errorCode = result["error_code"] as? String ?? ""
+                    let status = succeeded
+                        ? (verified ? "verified" : (method == "find" ? "not_found" : "dispatched_unverified"))
+                        : (errorCode == "wait_timeout" ? "timed_out" : "rejected")
+                    return Self.json([
+                        "ok": succeeded,
+                        "tool": toolName,
+                        "session_id": runtime.snapshot.sessionId,
+                        "status": status,
+                        "error_code": errorCode,
+                        "may_have_applied": false,
+                        "verified": verified,
+                        "before_snapshot_id": before["snapshot_id"] as? String ?? "",
+                        "snapshot_id": after["snapshot_id"] as? String ?? result["snapshot_id"] as? String ?? "",
+                        "before": IOSWebMountRedactor.redactedJSONObject(before),
+                        "after": IOSWebMountRedactor.redactedJSONObject(after),
+                        "diff": Self.webMountStateDiff(before: before, after: after),
+                        "action": IOSWebMountRedactor.redactedJSONObject(result)
+                    ])
+                } catch {
+                    touch(sessionId: runtime.snapshot.sessionId, context: context)
+                    let mayHaveApplied = mutating && actionStarted
+                    return Self.json([
+                        "ok": false,
+                        "tool": toolName,
+                        "session_id": runtime.snapshot.sessionId,
+                        "status": mayHaveApplied ? "unknown_after_action" : "failed",
+                        "error_code": mayHaveApplied ? "unknown_after_action" : "runtime_error",
+                        "may_have_applied": mayHaveApplied,
+                        "verified": false,
+                        "error": IOSWebMountRedactor.redactedText(error.localizedDescription)
+                    ])
+                }
             default:
                 return Self.unsupportedToolResult(toolName: toolName)
             }
+        } catch let error as IOSWebMountSessionError {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "denied": true,
+                "error_code": error.errorCode,
+                "error": IOSWebMountRedactor.redactedText(error.localizedDescription),
+                "reason": IOSWebMountRedactor.redactedText(error.localizedDescription)
+            ])
         } catch {
             return Self.json([
                 "ok": false,
                 "tool": toolName,
-                "error": error.localizedDescription
+                "error": IOSWebMountRedactor.redactedText(error.localizedDescription)
             ])
         }
+    }
+
+    func preflightUserAction(
+        toolName: String,
+        input: String,
+        context: IOSWebMountExecutionContext?
+    ) async -> String? {
+        guard Self.interactionMutatingToolNames.contains(toolName) else { return nil }
+        let args = Self.parseObject(input)
+        if context?.isAgentInvocation == true,
+           (args["snapshot_id"] as? String)?.nilIfBlank == nil {
+            return nil
+        }
+        do {
+            if let sessionId = (args["session_id"] as? String)?.nilIfBlank,
+               let record = sessionStore.record(sessionId: sessionId),
+               record.backend != .local {
+                if let context, context.isAgentInvocation {
+                    guard context.hasCompleteBinding else { return nil }
+                    _ = try sessionStore.bindAgentSession(
+                        sessionId: sessionId,
+                        runId: context.runId,
+                        conversationId: context.conversationId,
+                        requiresControl: true
+                    )
+                }
+                return desktopBackend.preflightAction(
+                    toolName: toolName,
+                    arguments: args,
+                    logicalSessionId: sessionId
+                )
+            }
+            let runtime = try sessionRuntime(
+                from: args,
+                context: context,
+                requiresControl: true
+            )
+            let method = toolName.removingPrefix("wm_")
+            let selector = args["selector"] as? String ?? args["target"] as? String
+            let text = args["text"] as? String ?? args["value"] as? String
+            var options = args
+            if options["dy"] == nil, let byY = args["by_y"] { options["dy"] = byY }
+            options["_amber_preflight_only"] = true
+            options["_amber_allow_high_consequence"] = false
+            let result = try await runtime.interact(
+                method: method,
+                selector: selector,
+                text: text,
+                options: options
+            )
+            return interactionGateOutput(
+                toolName: toolName,
+                result: result,
+                sessionId: runtime.snapshot.sessionId,
+                snapshotId: result["snapshot_id"] as? String,
+                handoffToUser: context?.isAgentInvocation == true
+            )
+        } catch {
+            return nil
+        }
+    }
+
+    private func interactionGateOutput(
+        toolName: String,
+        result: [String: Any],
+        sessionId: String,
+        snapshotId: String?,
+        handoffToUser: Bool
+    ) -> String? {
+        if result["requires_human"] as? Bool == true {
+            if handoffToUser {
+                _ = try? sessionStore.acquireUserControl(sessionId: sessionId)
+            }
+            let record = sessionStore.record(sessionId: sessionId)
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "session_id": sessionId,
+                "backend": record?.backend.rawValue ?? "local",
+                "site_id": record?.siteId ?? "",
+                "requires_human": true,
+                "handoff": true,
+                "error_code": result["error_code"] as? String ?? "sensitive_field_requires_human",
+                "reason": IOSWebMountRedactor.redactedText(
+                    result["reason"] as? String
+                        ?? "Complete login, verification, CAPTCHA, or sensitive payment input in user-controlled WebMount."
+                ),
+                "resume_condition": "Finish the sensitive step in WebMount, then use Hand back to Agent.",
+                "snapshot_id": snapshotId ?? "",
+                "target_ref": result["target_ref"] as? String ?? "",
+                "target_label": IOSWebMountRedactor.redactedText(result["target_label"] as? String ?? ""),
+                "may_have_applied": false
+            ])
+        }
+        if result["needs_user_action"] as? Bool == true {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "session_id": sessionId,
+                "needs_user_action": true,
+                "error_code": result["error_code"] as? String ?? "high_consequence_requires_approval",
+                "reason": IOSWebMountRedactor.redactedText(
+                    result["reason"] as? String
+                        ?? "This WebMount action requires explicit foreground approval."
+                ),
+                "consequence": IOSWebMountRedactor.redactedText(result["consequence"] as? String ?? ""),
+                "snapshot_id": snapshotId ?? "",
+                "target_ref": result["target_ref"] as? String ?? "",
+                "target_label": IOSWebMountRedactor.redactedText(result["target_label"] as? String ?? ""),
+                "may_have_applied": false
+            ])
+        }
+        return nil
     }
 
     static func unsupportedToolResult(toolName: String) -> String {
@@ -2209,8 +3879,45 @@ final class IOSWebMountController {
         ])
     }
 
-    private func sessionRuntime(from args: [String: Any]) throws -> IOSWebMountRuntimeServicing {
-        try sessionStore.runtime(sessionId: args["session_id"] as? String, makeCurrent: true)
+    private func sessionRuntime(
+        from args: [String: Any],
+        context: IOSWebMountExecutionContext?,
+        requiresControl: Bool = true
+    ) throws -> IOSWebMountRuntimeServicing {
+        let requestedSessionId = (args["session_id"] as? String)?.nilIfBlank
+        let targetSessionId = requestedSessionId ?? sessionStore.currentSessionId
+        if let record = sessionStore.record(sessionId: targetSessionId), record.siteId != nil {
+            guard let siteId = record.siteId,
+                  let site = registry.site(id: siteId) else {
+                throw IOSWebMountSessionError.siteBindingRequired
+            }
+            guard site.enabled else {
+                throw IOSWebMountSessionError.siteDisabled(site.id)
+            }
+        }
+        if let context {
+            guard context.hasCompleteBinding else {
+                throw IOSWebMountSessionError.sessionBindingRequired
+            }
+            guard let requestedSessionId else {
+                throw IOSWebMountSessionError.sessionBindingRequired
+            }
+            _ = try sessionStore.bindAgentSession(
+                sessionId: requestedSessionId,
+                runId: context.runId,
+                conversationId: context.conversationId,
+                requiresControl: requiresControl
+            )
+            return try sessionStore.runtime(sessionId: requestedSessionId, makeCurrent: false)
+        }
+        return try sessionStore.runtime(sessionId: requestedSessionId, makeCurrent: true)
+    }
+
+    private func touch(sessionId: String, context: IOSWebMountExecutionContext?) {
+        sessionStore.touch(
+            sessionId: sessionId,
+            makeCurrent: context?.isAgentInvocation != true
+        )
     }
 
     private func tabListResult() -> String {
@@ -2220,35 +3927,524 @@ final class IOSWebMountController {
             "current_session_id": sessionStore.currentSessionId,
             "max_sessions": sessionStore.maxSessions,
             "count": sessionStore.records.count,
-            "sessions": sessionStore.records.map { $0.dictionary() }
+            "sessions": sessionStore.records.map(sessionDictionary)
         ])
     }
 
-    private func tabNewResult(args: [String: Any]) -> String {
+    private func tabNewResult(
+        args: [String: Any],
+        isUserInitiated: Bool,
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
+        if let context, !context.hasCompleteBinding {
+            return Self.json([
+                "ok": false,
+                "tool": "wm_tab_new",
+                "denied": true,
+                "error_code": IOSWebMountSessionError.sessionBindingRequired.errorCode,
+                "reason": "Agent WebMount calls require both conversation_id and run_id before a session can be created."
+            ])
+        }
         let site = siteFromArgs(args)
-        let record = sessionStore.newSession(site: site)
+        let persistent = args["persistent"] as? Bool ?? false
+        if persistent && !isUserInitiated {
+            return Self.json([
+                "ok": false,
+                "tool": "wm_tab_new",
+                "needs_user_action": true,
+                "error_code": "persistent_opt_in_required",
+                "reason": "Persistent WebMount metadata requires an explicit App action."
+            ])
+        }
+        let backendRaw = (args["backend"] as? String)?.nilIfBlank ?? IOSWebMountBackendKind.local.rawValue
+        guard let backend = IOSWebMountBackendKind(rawValue: backendRaw) else {
+            return Self.json([
+                "ok": false,
+                "tool": "wm_tab_new",
+                "error_code": "invalid_backend",
+                "reason": "Unknown WebMount backend: \(backendRaw)"
+            ])
+        }
+        let isAgent = context?.isAgentInvocation == true
+        let record: IOSWebMountSessionRecord
+        if backend == .local {
+            if let site, !site.enabled {
+                return Self.json([
+                    "ok": false,
+                    "tool": "wm_tab_new",
+                    "error_code": "site_disabled",
+                    "site_id": site.id,
+                    "reason": "WebMount station is disabled"
+                ])
+            }
+            record = try sessionStore.newSession(
+                site: site,
+                persistent: persistent,
+                makeCurrent: !isAgent
+            )
+        } else {
+            guard let site else {
+                return Self.json([
+                    "ok": false,
+                    "tool": "wm_tab_new",
+                    "error_code": "site_binding_required",
+                    "reason": "Remote WebMount sessions require an existing registered site_id."
+                ])
+            }
+            guard site.enabled else {
+                return Self.json([
+                    "ok": false,
+                    "tool": "wm_tab_new",
+                    "error_code": "site_disabled",
+                    "site_id": site.id,
+                    "reason": "Remote WebMount sessions require an enabled registered station."
+                ])
+            }
+            guard site.authKind == .anonymous else {
+                return Self.json([
+                    "ok": false,
+                    "tool": "wm_tab_new",
+                    "error_code": "local_privacy_session_required",
+                    "reason": "Login, OAuth, and App-private stations stay in local WKWebView."
+                ])
+            }
+            guard let serverName = (args["mcp_server_name"] as? String)?.nilIfBlank,
+                  let config = mcpServerProvider().first(where: { $0.name == serverName }) else {
+                return Self.json([
+                    "ok": false,
+                    "tool": "wm_tab_new",
+                    "error_code": "desktop_backend_not_configured",
+                    "reason": "Select an existing MCP server for the desktop backend."
+                ])
+            }
+            let placeholder = IOSWebMountRemotePlaceholderRuntime()
+            do {
+                try await desktopBackend.connect(
+                    logicalSessionId: placeholder.snapshot.sessionId,
+                    backend: backend,
+                    config: config
+                )
+                record = try sessionStore.newSession(
+                    site: site,
+                    persistent: persistent,
+                    makeCurrent: false,
+                    backend: backend,
+                    mcpServerName: serverName,
+                    runtime: placeholder
+                )
+            } catch {
+                desktopBackend.close(logicalSessionId: placeholder.snapshot.sessionId)
+                return Self.json([
+                    "ok": false,
+                    "tool": "wm_tab_new",
+                    "backend": backend.rawValue,
+                    "mcp_server_name": serverName,
+                    "error_code": Self.desktopErrorCode(error),
+                    "reason": IOSWebMountRedactor.redactedText(error.localizedDescription)
+                ])
+            }
+        }
+        if let context, isAgent {
+            _ = try sessionStore.acquireAgentControl(
+                sessionId: record.id,
+                runId: context.runId,
+                conversationId: context.conversationId
+            )
+        }
         return Self.json([
             "ok": true,
             "tool": "wm_tab_new",
             "session_id": record.id,
             "current_session_id": sessionStore.currentSessionId,
             "max_sessions": sessionStore.maxSessions,
-            "session": record.dictionary(),
-            "sessions": sessionStore.records.map { $0.dictionary() }
+            "session": sessionDictionary(record),
+            "sessions": sessionStore.records.map(sessionDictionary)
         ])
     }
 
-    private func tabCloseResult(args: [String: Any]) throws -> String {
-        let sessionId = (args["session_id"] as? String)?.nilIfBlank ?? sessionStore.currentSessionId
+    private func tabCloseResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) throws -> String {
+        let requestedSessionId = (args["session_id"] as? String)?.nilIfBlank
+        if context?.isAgentInvocation == true, requestedSessionId == nil {
+            throw IOSWebMountSessionError.sessionBindingRequired
+        }
+        let sessionId = requestedSessionId ?? sessionStore.currentSessionId
+        if let context, context.isAgentInvocation {
+            _ = try sessionStore.acquireAgentControl(
+                sessionId: sessionId,
+                runId: context.runId,
+                conversationId: context.conversationId
+            )
+        }
+        desktopBackend.close(logicalSessionId: sessionId)
         let next = try sessionStore.close(sessionId: sessionId)
         return Self.json([
             "ok": true,
             "tool": "wm_tab_close",
             "closed_session_id": sessionId,
             "current_session_id": sessionStore.currentSessionId,
-            "current_session": next?.dictionary() ?? [:],
-            "sessions": sessionStore.records.map { $0.dictionary() }
+            "current_session": next.map(sessionDictionary) ?? [:],
+            "sessions": sessionStore.records.map(sessionDictionary)
         ])
+    }
+
+    func desktopStatus(sessionId: String) -> IOSWebMountDesktopBackendStatus {
+        desktopBackend.status(logicalSessionId: sessionId)
+    }
+
+    func desktopCapabilities(sessionId: String) -> [IOSWebMountDesktopCapability] {
+        desktopBackend.capabilities(logicalSessionId: sessionId)
+    }
+
+    func reconnectDesktopSession(sessionId: String) async -> String {
+        guard let record = sessionStore.record(sessionId: sessionId), record.backend != .local else {
+            return Self.json([
+                "ok": false,
+                "session_id": sessionId,
+                "error_code": "session_not_found"
+            ])
+        }
+        guard let siteId = record.siteId,
+              let site = registry.site(id: siteId) else {
+            return Self.json([
+                "ok": false,
+                "session_id": sessionId,
+                "error_code": "site_binding_required",
+                "reason": "Remote WebMount sessions require a registered bound site."
+            ])
+        }
+        guard site.enabled else {
+            return Self.json([
+                "ok": false,
+                "session_id": sessionId,
+                "error_code": "site_disabled",
+                "site_id": site.id,
+                "reason": "WebMount station is disabled"
+            ])
+        }
+        guard site.authKind == .anonymous else {
+            return Self.json([
+                "ok": false,
+                "session_id": sessionId,
+                "error_code": "local_privacy_session_required",
+                "reason": "Login, OAuth, and App-private stations stay in local WKWebView."
+            ])
+        }
+        guard let serverName = record.mcpServerName,
+              let config = mcpServerProvider().first(where: { $0.name == serverName }) else {
+            return Self.json([
+                "ok": false,
+                "session_id": sessionId,
+                "error_code": "desktop_backend_not_configured"
+            ])
+        }
+        do {
+            try await desktopBackend.connect(
+                logicalSessionId: sessionId,
+                backend: record.backend,
+                config: config
+            )
+            sessionStore.markNeedsReopen(sessionId: sessionId)
+            sessionStore.touch(sessionId: sessionId, makeCurrent: false)
+            return Self.json([
+                "ok": true,
+                "session_id": sessionId,
+                "backend": record.backend.rawValue,
+                "mcp_server_name": serverName,
+                "status": "connected",
+                "capabilities": desktopCapabilities(sessionId: sessionId).filter(\.available).map(\.amberToolName)
+            ])
+        } catch {
+            return Self.json([
+                "ok": false,
+                "session_id": sessionId,
+                "backend": record.backend.rawValue,
+                "mcp_server_name": serverName,
+                "error_code": Self.desktopErrorCode(error),
+                "reason": IOSWebMountRedactor.redactedText(error.localizedDescription)
+            ])
+        }
+    }
+
+    private func desktopResult(
+        toolName: String,
+        args: [String: Any],
+        record: IOSWebMountSessionRecord,
+        isUserInitiated: Bool,
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
+        guard let siteId = record.siteId,
+              let site = registry.site(id: siteId) else {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "session_id": record.id,
+                "backend": record.backend.rawValue,
+                "error_code": "site_binding_required",
+                "reason": "Remote WebMount sessions require a registered bound site."
+            ])
+        }
+        guard site.enabled else {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "session_id": record.id,
+                "backend": record.backend.rawValue,
+                "error_code": "site_disabled",
+                "site_id": site.id,
+                "reason": "WebMount station is disabled"
+            ])
+        }
+        guard site.authKind == .anonymous else {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "session_id": record.id,
+                "backend": record.backend.rawValue,
+                "error_code": "local_privacy_session_required",
+                "reason": "Login, OAuth, and App-private stations stay in local WKWebView."
+            ])
+        }
+        if toolName != "wm_open" {
+            guard !record.needsReopen,
+                  let currentURL = record.redactedURL.nilIfBlank,
+                  Self.remoteURLIsAllowed(currentURL, site: site, settings: settings) else {
+                sessionStore.markNeedsReopen(sessionId: record.id)
+                return Self.remoteRequiresReopenResult(
+                    toolName: toolName,
+                    sessionId: record.id,
+                    reason: "Remote WebMount requires a successful allowlisted wm_open before this operation."
+                )
+            }
+            if desktopBackend.status(logicalSessionId: record.id) == .needsReopen {
+                sessionStore.markNeedsReopen(sessionId: record.id)
+                return Self.remoteRequiresReopenResult(
+                    toolName: toolName,
+                    sessionId: record.id,
+                    reason: "The remote MCP session requires reconnecting and reopening an allowlisted page."
+                )
+            }
+        }
+        let requiresControl = Self.desktopMutatingToolNames.contains(toolName)
+        if let context, context.isAgentInvocation {
+            guard context.hasCompleteBinding else {
+                throw IOSWebMountSessionError.sessionBindingRequired
+            }
+            _ = try sessionStore.bindAgentSession(
+                sessionId: record.id,
+                runId: context.runId,
+                conversationId: context.conversationId,
+                requiresControl: requiresControl
+            )
+        }
+        guard let serverName = record.mcpServerName,
+              let config = mcpServerProvider().first(where: { $0.name == serverName }),
+              desktopBackend.allowsCurrentConfiguration(
+                config,
+                toolName: toolName,
+                logicalSessionId: record.id
+              ) else {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "session_id": record.id,
+                "backend": record.backend.rawValue,
+                "mcp_server_name": record.mcpServerName ?? "",
+                "status": "failed",
+                "error_code": "desktop_backend_disabled",
+                "may_have_applied": false,
+                "reason": "The bound MCP server or browser tool is no longer enabled. Reconnect explicitly after reviewing its configuration."
+            ])
+        }
+
+        var routedArgs = args
+        var requestedURL: String?
+        if toolName == "wm_open" {
+            if let requestedSite = siteFromArgs(args), requestedSite.id != site.id {
+                return Self.json([
+                    "ok": false,
+                    "tool": toolName,
+                    "session_id": record.id,
+                    "error_code": "session_binding_mismatch",
+                    "reason": "Remote navigation must use the session's bound WebMount station."
+                ])
+            }
+            guard site.enabled else {
+                return Self.json([
+                    "ok": false,
+                    "tool": toolName,
+                    "session_id": record.id,
+                    "error_code": "host_not_allowed",
+                    "reason": "Desktop navigation requires an enabled registered WebMount station."
+                ])
+            }
+            guard site.authKind == .anonymous else {
+                return Self.json([
+                    "ok": false,
+                    "tool": toolName,
+                    "session_id": record.id,
+                    "error_code": "local_privacy_session_required",
+                    "reason": "Login, OAuth, and App-private stations stay in local WKWebView."
+                ])
+            }
+            let rawURL = (args["url"] as? String)?.nilIfBlank ?? site.homepageURL
+            let policy = IOSWebMountURLPolicy(
+                settings: settings,
+                extraAllowedHosts: registry.sites.flatMap(\.allowedHosts)
+            )
+            switch policy.validate(rawURL, site: site) {
+            case .failure(let error):
+                return Self.json([
+                    "ok": false,
+                    "tool": toolName,
+                    "session_id": record.id,
+                    "error_code": "host_not_allowed",
+                    "reason": error.localizedDescription,
+                    "url": IOSWebMountRedactor.redactedURL(rawURL) ?? ""
+                ])
+            case .success(let url):
+                guard Self.remoteURLIsAllowed(url.absoluteString, site: site, settings: settings) else {
+                    return Self.json([
+                        "ok": false,
+                        "tool": toolName,
+                        "session_id": record.id,
+                        "error_code": "host_not_allowed",
+                        "reason": "Desktop navigation URL is outside the bound WebMount station allowlist.",
+                        "url": IOSWebMountRedactor.redactedURL(url.absoluteString) ?? ""
+                    ])
+                }
+                requestedURL = url.absoluteString
+                routedArgs["url"] = url.absoluteString
+                sessionStore.tag(sessionId: record.id, site: site)
+            }
+        }
+
+        let output = await desktopBackend.execute(
+            toolName: toolName,
+            arguments: routedArgs,
+            logicalSessionId: record.id,
+            approvedHighConsequence: isUserInitiated
+        )
+        (sessionStore.runtimeIfPresent(sessionId: record.id) as? IOSWebMountRemotePlaceholderRuntime)?
+            .apply(resultText: output, toolName: toolName, requestedURL: requestedURL)
+        let outputObject = Self.parseObject(output)
+        let adapterNeedsReopen = desktopBackend.status(logicalSessionId: record.id) == .needsReopen
+            || outputObject["error_code"] as? String == "mcp_session_expired"
+            || outputObject["error_code"] as? String == "needs_reopen"
+            || outputObject["status"] as? String == "needs_reopen"
+            || outputObject["needs_reopen"] as? Bool == true
+        if adapterNeedsReopen {
+            sessionStore.markNeedsReopen(sessionId: record.id)
+        }
+        if Self.remoteNavigationToolNames.contains(toolName), !adapterNeedsReopen {
+            let succeeded = outputObject["ok"] as? Bool == true
+            let mayHaveApplied = outputObject["may_have_applied"] as? Bool == true
+            if succeeded {
+                guard let currentURL = Self.remoteCurrentURL(from: outputObject),
+                      Self.remoteURLIsAllowed(currentURL, site: site, settings: settings) else {
+                    sessionStore.markNeedsReopen(sessionId: record.id)
+                    return Self.remoteRequiresReopenResult(
+                        toolName: toolName,
+                        sessionId: record.id,
+                        reason: "The remote gateway did not prove a current URL on the bound site after navigation."
+                    )
+                }
+                sessionStore.recordValidatedRemoteURL(
+                    sessionId: record.id,
+                    rawURL: currentURL,
+                    clearNeedsReopen: toolName == "wm_open"
+                )
+            } else if mayHaveApplied {
+                sessionStore.markNeedsReopen(sessionId: record.id)
+            }
+        }
+        sessionStore.touch(sessionId: record.id, makeCurrent: false)
+        return output
+    }
+
+    private func sessionDictionary(_ record: IOSWebMountSessionRecord) -> [String: Any] {
+        var value = record.dictionary()
+        if record.backend == .local {
+            value["desktop_status"] = "local"
+            value["desktop_capabilities"] = []
+        } else {
+            value["desktop_status"] = desktopStatus(sessionId: record.id).code
+            value["desktop_capabilities"] = desktopCapabilities(sessionId: record.id)
+                .filter(\.available)
+                .map(\.amberToolName)
+        }
+        return value
+    }
+
+    private static let desktopRoutingExemptToolNames: Set<String> = [
+        "wm_stations", "wm_tab_list", "wm_tab_new", "wm_tab_close", "wm_site_add", "wm_site_remove"
+    ]
+
+    private static let desktopMutatingToolNames: Set<String> = [
+        "wm_open", "wm_back", "wm_forward", "wm_click", "wm_tap", "wm_type",
+        "wm_keys", "wm_scroll", "wm_select", "wm_clear_session"
+    ]
+
+    private static let interactionMutatingToolNames: Set<String> = [
+        "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select"
+    ]
+
+    private static let remoteNavigationToolNames: Set<String> = [
+        "wm_open", "wm_back", "wm_forward", "wm_click", "wm_tap", "wm_type",
+        "wm_keys", "wm_scroll", "wm_select"
+    ]
+
+    private static func remoteURLIsAllowed(
+        _ rawURL: String,
+        site: IOSWebMountSite,
+        settings: IOSWebMountSettings
+    ) -> Bool {
+        guard let components = URLComponents(string: rawURL),
+              let scheme = components.scheme?.lowercased(),
+              Set(settings.allowedSchemes.map { $0.lowercased() }).contains(scheme),
+              components.user == nil,
+              components.password == nil,
+              let host = components.host,
+              IOSWebMountURLPolicy.host(host, matchesAnyOf: site.allowedHosts) else {
+            return false
+        }
+        return true
+    }
+
+    private static func remoteCurrentURL(from value: Any) -> String? {
+        guard let object = value as? [String: Any] else { return nil }
+        return (object["current_url"] as? String)?.nilIfBlank
+    }
+
+    private static func remoteRequiresReopenResult(
+        toolName: String,
+        sessionId: String,
+        reason: String
+    ) -> String {
+        json([
+            "ok": false,
+            "tool": toolName,
+            "session_id": sessionId,
+            "status": "unknown_after_action",
+            "error_code": "requires_reopen",
+            "may_have_applied": true,
+            "verified": false,
+            "needs_reopen": true,
+            "reason": reason
+        ])
+    }
+
+    private static func desktopErrorCode(_ error: Error) -> String {
+        if let error = error as? IOSWebMountDesktopBackendError { return error.errorCode }
+        if let error = error as? IOSMcpClientError, error == .mcpSessionExpired {
+            return "mcp_session_expired"
+        }
+        if error is IOSWebMountDesktopEndpointPolicyError {
+            return "desktop_endpoint_rejected"
+        }
+        return "desktop_gateway_unavailable"
     }
 
     private func stationsResult(args: [String: Any]) async -> String {
@@ -2294,14 +4490,17 @@ final class IOSWebMountController {
         }
         return Self.json([
             "ok": true,
-            "global_enabled": true,
+            "global_enabled": settings.globalEnabled,
             "eval_enabled": settings.evalEnabled,
             "count": stations.count,
             "stations": stations
         ])
     }
 
-    private func openResult(args: [String: Any]) async throws -> String {
+    private func openResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
         let site = siteFromArgs(args)
         guard let site else {
             return Self.json([
@@ -2330,46 +4529,63 @@ final class IOSWebMountController {
             ])
         case .success(let url):
             let timeout = UInt64((args["timeout_ms"] as? Int) ?? 30_000).clamped(to: 1_000...60_000)
-            let runtime = try sessionRuntime(from: args)
+            let runtime = try sessionRuntime(from: args, context: context)
             (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(policy, site: site)
             sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
             let snapshot = await runtime.open(url, timeoutMillis: timeout)
-            sessionStore.touch(sessionId: snapshot.sessionId)
+            if snapshot.status != .failed {
+                sessionStore.clearNeedsReopen(sessionId: snapshot.sessionId)
+            }
+            touch(sessionId: snapshot.sessionId, context: context)
+            let timedOut = snapshot.status == .failed
+                && snapshot.error?.hasPrefix("load timed out after ") == true
             return Self.json([
                 "ok": snapshot.status != .failed,
                 "session_id": snapshot.sessionId,
-                "status": snapshot.status.rawValue,
+                "status": timedOut ? "unknown_after_action" : snapshot.status.rawValue,
+                "error_code": timedOut ? "unknown_after_action" : "",
+                "may_have_applied": timedOut,
                 "url": snapshot.currentURL ?? snapshot.requestedURL ?? "",
-                "title": snapshot.title ?? "",
-                "error": snapshot.error ?? "",
+                "title": IOSWebMountRedactor.redactedText(snapshot.title ?? ""),
+                "error": IOSWebMountRedactor.redactedText(snapshot.error ?? ""),
                 "waited": true
             ])
         }
     }
 
-    private func stateResult(args: [String: Any]) async throws -> String {
-        let runtime = try sessionRuntime(from: args)
+    private func stateResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let page = try await runtime.state()
-        sessionStore.touch(sessionId: runtime.snapshot.sessionId)
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
             "session_id": runtime.snapshot.sessionId,
+            "snapshot_id": page["snapshot_id"] as? String ?? "",
+            "page_revision": page["page_revision"] ?? 0,
             "state": runtime.snapshot.dictionary(redactURLs: true),
             "page": IOSWebMountRedactor.redactedJSONObject(page)
         ])
     }
 
-    private func observeResult(args: [String: Any]) async throws -> String {
-        let runtime = try sessionRuntime(from: args)
+    private func observeResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let page = try await runtime.state()
         let readable = try await runtime.extract(mode: "readable", maxChars: 2_000, maxLinks: 20)
         let interactive = try await runtime.extract(mode: "interactive", maxChars: 0, maxLinks: 80)
         let visual = try await runtime.extract(mode: "snapshot", maxChars: 0, maxLinks: 80)
-        sessionStore.touch(sessionId: runtime.snapshot.sessionId)
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
             "tool": "wm_observe",
             "session_id": runtime.snapshot.sessionId,
+            "snapshot_id": interactive["snapshot_id"] as? String ?? page["snapshot_id"] as? String ?? "",
+            "page_revision": interactive["page_revision"] ?? page["page_revision"] ?? 0,
             "state": runtime.snapshot.dictionary(redactURLs: true),
             "page": IOSWebMountRedactor.redactedJSONObject(page),
             "visible_text": IOSWebMountRedactor.redactedJSONObject(readable["text"] ?? ""),
@@ -2380,21 +4596,29 @@ final class IOSWebMountController {
         ])
     }
 
-    private func extractResult(args: [String: Any]) async throws -> String {
+    private func extractResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
         let mode = (args["mode"] as? String)?.nilIfBlank ?? "readable"
         let maxChars = ((args["max_chars"] as? Int) ?? 20_000).clamped(to: 0...80_000)
         let maxLinks = ((args["max_links"] as? Int) ?? 20).clamped(to: 0...100)
-        let runtime = try sessionRuntime(from: args)
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let result = try await runtime.extract(mode: mode, maxChars: maxChars, maxLinks: maxLinks)
-        sessionStore.touch(sessionId: runtime.snapshot.sessionId)
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
             "session_id": runtime.snapshot.sessionId,
+            "snapshot_id": result["snapshot_id"] as? String ?? "",
+            "page_revision": result["page_revision"] ?? 0,
             "result": IOSWebMountRedactor.redactedJSONObject(result)
         ])
     }
 
-    private func getResult(args: [String: Any]) async throws -> String {
+    private func getResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
         let kind = ((args["kind"] as? String)?.nilIfBlank ?? "text").lowercased()
         if kind == "html" {
             return Self.json([
@@ -2412,8 +4636,22 @@ final class IOSWebMountController {
                 "reason": "wm_get refused a value read from a selector that looks like a token, password, cookie, or secret field."
             ])
         }
+        if kind == "attr", Self.looksSensitiveSelector(args["attr_name"] as? String) {
+            return Self.json([
+                "ok": false,
+                "denied": true,
+                "reason": "wm_get refused a sensitive token, password, cookie, secret, or authorization attribute."
+            ])
+        }
+        if kind == "attr", (args["attr_name"] as? String)?.lowercased() == "value" {
+            return Self.json([
+                "ok": false,
+                "denied": true,
+                "reason": "wm_get attr_name=value is disabled on iOS. Use kind=value so sensitive fields can be checked."
+            ])
+        }
         let maxChars = ((args["max_chars"] as? Int) ?? 20_000).clamped(to: 0...100_000)
-        let runtime = try sessionRuntime(from: args)
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let result = try await runtime.get(
             selector: args["selector"] as? String,
             target: args["target"] as? String,
@@ -2421,33 +4659,43 @@ final class IOSWebMountController {
             attrName: args["attr_name"] as? String,
             maxChars: maxChars
         )
-        sessionStore.touch(sessionId: runtime.snapshot.sessionId)
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
-            "ok": true,
+            "ok": result["ok"] as? Bool ?? false,
             "session_id": runtime.snapshot.sessionId,
+            "snapshot_id": result["snapshot_id"] as? String ?? "",
+            "page_revision": result["page_revision"] ?? 0,
             "result": IOSWebMountRedactor.redactedJSONObject(result)
         ])
     }
 
-    private func visualSnapshotResult(args: [String: Any]) async throws -> String {
-        let runtime = try sessionRuntime(from: args)
+    private func visualSnapshotResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let result = try await runtime.extract(mode: "snapshot", maxChars: 0, maxLinks: 80)
-        sessionStore.touch(sessionId: runtime.snapshot.sessionId)
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
             "tool": "wm_visual_snapshot",
             "session_id": runtime.snapshot.sessionId,
+            "snapshot_id": result["snapshot_id"] as? String ?? "",
+            "page_revision": result["page_revision"] ?? 0,
             "state": runtime.snapshot.dictionary(redactURLs: true),
             "result": IOSWebMountRedactor.redactedJSONObject(result),
             "redacted": true
         ])
     }
 
-    private func screenshotResult(args: [String: Any]) async throws -> String {
-        let runtime = try sessionRuntime(from: args)
+    private func screenshotResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?
+    ) async throws -> String {
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let capture = try await runtime.screenshot()
         let artifact = try IOSWebMountScreenshotArtifactStore.save(capture, sessionId: runtime.snapshot.sessionId)
-        sessionStore.touch(sessionId: runtime.snapshot.sessionId)
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
             "tool": "wm_screenshot",
@@ -2560,6 +4808,18 @@ final class IOSWebMountController {
         }
     }
 
+    private static func webMountStateDiff(before: [String: Any], after: [String: Any]) -> [String: Any] {
+        let keys = ["url", "title", "ready_state", "text_length", "links_count"]
+        let changedFields = keys.filter { key in
+            String(describing: before[key] ?? NSNull()) != String(describing: after[key] ?? NSNull())
+        }
+        return [
+            "changed": !changedFields.isEmpty,
+            "changed_fields": changedFields,
+            "revision_changed": String(describing: before["snapshot_id"] ?? NSNull()) != String(describing: after["snapshot_id"] ?? NSNull())
+        ]
+    }
+
     private static func parseObject(_ input: String) -> [String: Any] {
         guard let data = input.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -2580,12 +4840,25 @@ final class IOSWebMountController {
 
 enum IOSWebMountRedactor {
     static func redactedURL(_ raw: String?) -> String? {
-        guard let raw, let components = URLComponents(string: raw) else { return raw }
+        guard let raw else { return nil }
+        guard let components = URLComponents(string: raw),
+              let scheme = components.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              components.host?.nilIfBlank != nil else {
+            return "[redacted-url]"
+        }
         var safe = URLComponents()
-        safe.scheme = components.scheme
+        safe.scheme = scheme
         safe.host = components.host
         safe.port = components.port
-        safe.path = components.path.isEmpty ? "/" : components.path
+        let path = components.path.isEmpty ? "/" : components.path
+        let sensitivePathMarkers = [
+            "token", "oauth", "callback", "verify", "verification", "reset",
+            "recovery", "magic", "authorize", "authentication", "session"
+        ]
+        safe.path = sensitivePathMarkers.contains(where: { path.lowercased().contains($0) })
+            ? "/redacted"
+            : path
         return safe.string
     }
 
@@ -2631,23 +4904,55 @@ enum IOSWebMountRedactor {
         }
         output = replacingMatches(
             in: output,
-            pattern: #"(?i)\b(authorization|token|access_token|refresh_token|auth_token|csrf|xsrf|session|secret|password)=([^&\s"'<>)]*)"#,
+            pattern: #"(?i)["']?\b(authorization|auth|token|access_token|refresh_token|auth_token|csrf|xsrf|session|secret|password|passcode|otp|totp|mfa|2fa|captcha|card_number|card.?number|pan|cvv|cvc|security.?code|payment|billing)["']?\s*[:=]\s*["']?[^&,\s"'<>)}\]]+"#,
             options: [.caseInsensitive]
         ) { match in
-            let key = match.split(separator: "=", maxSplits: 1).first.map(String.init) ?? "secret"
-            return "\(key)=***redacted***"
+            let separatorIndex = match.firstIndex(where: { $0 == ":" || $0 == "=" })
+            let prefix = separatorIndex.map { String(match[...$0]) } ?? "secret:"
+            return "\(prefix) ***redacted***"
+        }
+        output = replacingMatches(
+            in: output,
+            pattern: #"(?i)(\b(?:otp|totp|mfa|2fa|passcode|verification\s*code|security\s*code|captcha)\b|验证码|校验码|动态码)\s*[:：=\-]?\s*\d{4,10}"#
+        ) { match in
+            let label = match.prefix { !$0.isNumber }
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(label) ***redacted***"
+        }
+        output = replacingMatches(
+            in: output,
+            pattern: #"(?i)(\b(?:card(?:\s*number)?|credit\s*card|pan|cvv|cvc|security\s*code)\b|卡号|安全码)\s*[:：=\-]?\s*(?:\d[\s-]?){3,19}"#
+        ) { match in
+            let label = match.prefix { !$0.isNumber }
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(label) ***redacted***"
         }
         return output
     }
 
     private static func isSensitiveKey(_ key: String) -> Bool {
-        if ["authorization", "auth", "token", "access_token", "refresh_token", "auth_token", "cookie", "secret", "password"].contains(key) {
+        let compact = String(key.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+        })
+        if [
+            "authorization", "auth", "token", "accesstoken", "refreshtoken", "authtoken",
+            "cookie", "secret", "password", "passcode", "otp", "otpcode", "totp", "mfa", "2fa",
+            "captcha", "verificationcode", "card", "cardnumber", "pan", "cvv", "cvv2", "cvc",
+            "securitycode", "payment", "billing", "billingaddress"
+        ].contains(compact) || ["验证码", "校验码", "动态码", "卡号", "安全码"].contains(where: compact.contains) {
             return true
         }
-        return key.hasSuffix("_token") ||
-            key.hasSuffix("token") ||
-            key.hasSuffix("_secret") ||
-            key.hasSuffix("_password")
+        return compact.hasSuffix("token") ||
+            compact.hasSuffix("secret") ||
+            compact.hasSuffix("password") ||
+            compact.hasSuffix("otp") ||
+            (compact.hasSuffix("code") && [
+                "verification", "security", "mfa", "2fa", "captcha"
+            ].contains { compact.contains($0) }) ||
+            compact.hasSuffix("card") ||
+            compact.hasSuffix("pan") ||
+            compact.hasSuffix("cvv") ||
+            compact.hasSuffix("cvc")
     }
 
     private static func replacingMatches(
@@ -2684,13 +4989,13 @@ private extension IOSWebMountRuntimeSnapshot {
         [
             "session_id": sessionId,
             "status": status.rawValue,
-            "requested_url": redactURLs ? (requestedURL ?? "") : (requestedURL ?? ""),
-            "current_url": redactURLs ? (currentURL ?? "") : (currentURL ?? ""),
-            "title": title ?? "",
+            "requested_url": redactURLs ? (IOSWebMountRedactor.redactedURL(requestedURL) ?? "") : (requestedURL ?? ""),
+            "current_url": redactURLs ? (IOSWebMountRedactor.redactedURL(currentURL) ?? "") : (currentURL ?? ""),
+            "title": redactURLs ? IOSWebMountRedactor.redactedText(title ?? "") : (title ?? ""),
             "estimated_progress": estimatedProgress,
             "can_go_back": canGoBack,
             "can_go_forward": canGoForward,
-            "error": error ?? "",
+            "error": redactURLs ? IOSWebMountRedactor.redactedText(error ?? "") : (error ?? ""),
             "updated_at_ms": updatedAtMillis
         ]
     }

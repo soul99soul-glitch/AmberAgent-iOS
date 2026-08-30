@@ -1266,12 +1266,12 @@ final class ChatKernelRunHost {
         _ = resolvePendingApproval(decision: .deny, category: .search)
     }
 
-    func approvePendingWebMountTool() {
-        _ = resolvePendingApproval(decision: .approve, category: .webMount)
+    func approvePendingWebMountTool(requestId: String) {
+        _ = resolvePendingApproval(decision: .approve, category: .webMount, requestId: requestId)
     }
 
-    func denyPendingWebMountTool() {
-        _ = resolvePendingApproval(decision: .deny, category: .webMount)
+    func denyPendingWebMountTool(requestId: String) {
+        _ = resolvePendingApproval(decision: .deny, category: .webMount, requestId: requestId)
     }
 
     func approvePendingWorkspaceTool() {
@@ -1339,6 +1339,9 @@ final class ChatKernelRunHost {
               let runId = currentRunId,
               Self.category(of: prompt) == category else { return false }
         if let requestId, Self.requestId(of: prompt) != requestId { return false }
+        if case .webMount(let request) = prompt,
+           let requestRunId = request.runId,
+           requestRunId != runId { return false }
         projection.clearApproval(prompt)
         approvalWaiter = nil
         pendingPrompt = nil
@@ -1371,6 +1374,8 @@ final class ChatKernelRunHost {
 
     private static func requestId(of prompt: ChatToolApprovalPrompt) -> String? {
         switch prompt {
+        case .webMount(let request): return request.id
+        case .ish(let request): return request.id
         case .mcp(let request): return request.id
         case .recipe(let request): return request.id
         default: return nil
@@ -2149,6 +2154,7 @@ final class ChatKernelRunHost {
         // P1-c 终态回传(CG-C :1570-1579 同款;服务按 runId 幂等去重)。
         let terminalMessages = messages
         let terminalConversationId = conversationId
+        IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
@@ -2168,6 +2174,7 @@ final class ChatKernelRunHost {
         backgroundExecution.end(runId)
         keepaliveHeld = false
         ChatStreamRecorder.shared.finish(runId: runId)
+        IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
@@ -2192,6 +2199,7 @@ final class ChatKernelRunHost {
         backgroundExecution.end(runId)
         keepaliveHeld = false
         ChatStreamRecorder.shared.finish(runId: runId)
+        IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil

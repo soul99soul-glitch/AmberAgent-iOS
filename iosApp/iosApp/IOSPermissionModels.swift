@@ -1444,7 +1444,7 @@ struct IOSCapabilityRegistry {
             modelToolNames: Array(IOSWebMountToolCatalog.supportedToolNames).sorted(),
             blockedToolNames: Array(IOSWebMountToolCatalog.unsupportedToolNames).sorted(),
             defaultEnabled: true,
-            gate: freshHighRiskGate
+            gate: normalGate
         ),
         capability(
             id: "ios.remote.command",

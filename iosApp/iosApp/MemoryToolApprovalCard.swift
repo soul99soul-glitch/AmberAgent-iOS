@@ -296,6 +296,7 @@ private struct MemoryToolApprovalChip: View {
 
 struct WebMountToolApprovalCard: View {
     let request: WebMountToolApprovalRequest
+    let onOpenSession: (() -> Void)?
     let onApprove: () -> Void
     let onDeny: () -> Void
 
@@ -313,7 +314,7 @@ struct WebMountToolApprovalCard: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
 
-                    Text(request.reason)
+                    Text(displayReason)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(2)
@@ -323,15 +324,34 @@ struct WebMountToolApprovalCard: View {
                 Spacer(minLength: 0)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(request.siteName)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(1)
-                Text(request.host)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 5) {
+                WebMountApprovalDetailRow(
+                    label: "站点",
+                    value: "\(request.siteName) · \(request.host)"
+                )
+                WebMountApprovalDetailRow(label: "动作", value: request.action)
+                WebMountApprovalDetailRow(label: "后果", value: request.consequence)
+                WebMountApprovalDetailRow(
+                    label: "页面",
+                    value: request.redactedURL.nilIfBlank ?? "当前页面"
+                )
+                WebMountApprovalDetailRow(label: "后端", value: backendTitle)
+                if let mcpServerName = request.mcpServerName?.nilIfBlank {
+                    WebMountApprovalDetailRow(label: "MCP", value: mcpServerName)
+                }
+                if let snapshotId = request.snapshotId?.nilIfBlank {
+                    WebMountApprovalDetailRow(label: "快照", value: snapshotId)
+                }
+                if let target = request.target?.nilIfBlank {
+                    WebMountApprovalDetailRow(label: "目标", value: target)
+                }
+                if let warning = request.screenshotRetentionWarning?.nilIfBlank {
+                    Label(warning, systemImage: "exclamationmark.triangle")
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.accentAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 2)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -341,38 +361,34 @@ struct WebMountToolApprovalCard: View {
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
 
-            HStack(spacing: 6) {
-                WebMountApprovalChip(systemImage: "wrench.and.screwdriver", title: request.toolName)
-                WebMountApprovalChip(systemImage: "tag", title: request.siteId)
-                Spacer(minLength: 0)
+            if let onOpenSession {
+                Button(action: onOpenSession) {
+                    HStack(spacing: 8) {
+                        Label(openSessionLabel, systemImage: request.backend == IOSWebMountBackendKind.local.rawValue ? "eye" : "macwindow")
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(AmberTheme.accentCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(openSessionLabel)，不会批准或继续当前动作")
             }
 
-            HStack(spacing: 8) {
-                Spacer()
-
-                Button(action: onDeny) {
-                    Label("拒绝", systemImage: "xmark")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .padding(.horizontal, 12)
-                        .frame(height: 32)
-                        .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    denyButton
+                    approveButton
                 }
-                .buttonStyle(.plain)
-                .chatApprovalHitTarget()
-                .accessibilityLabel("拒绝 WebMount 前台动作")
-
-                Button(action: onApprove) {
-                    Label("批准", systemImage: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 13)
-                        .frame(height: 32)
-                        .background(AmberTheme.accent, in: Capsule())
+                VStack(alignment: .trailing, spacing: 8) {
+                    denyButton
+                    approveButton
                 }
-                .buttonStyle(.plain)
-                .chatApprovalHitTarget()
-                .accessibilityLabel("批准 WebMount 前台动作")
             }
         }
         .padding(12)
@@ -380,6 +396,72 @@ struct WebMountToolApprovalCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(AmberTheme.accentCyan.opacity(0.34), lineWidth: 0.7)
+        }
+    }
+
+    private var denyButton: some View {
+        Button(action: onDeny) {
+            Label("拒绝", systemImage: "xmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+                .padding(.horizontal, 12)
+                .frame(minHeight: 32)
+                .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .chatApprovalHitTarget()
+        .accessibilityLabel("拒绝 WebMount 前台动作")
+    }
+
+    private var approveButton: some View {
+        Button(action: onApprove) {
+            Label(approveLabel, systemImage: request.requiresHumanHandoff ? "arrow.uturn.forward" : "checkmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 13)
+                .frame(minHeight: 32)
+                .background(AmberTheme.accent, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .chatApprovalHitTarget()
+        .accessibilityLabel(approveLabel)
+    }
+
+    private var displayReason: String {
+        guard request.requiresHumanHandoff else { return request.reason }
+        return "请前往本机 WebMount 完成登录、验证码/CAPTCHA 或支付等敏感步骤，然后将控制权交还给 Agent。"
+    }
+
+    private var approveLabel: String {
+        request.requiresHumanHandoff ? "完成并继续" : "批准"
+    }
+
+    private var openSessionLabel: String {
+        request.backend == IOSWebMountBackendKind.local.rawValue ? "观看页面" : "查看状态"
+    }
+
+    private var backendTitle: String {
+        IOSWebMountBackendKind(rawValue: request.backend)?.title ?? request.backend
+    }
+}
+
+private struct WebMountApprovalDetailRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+                .frame(width: 36, alignment: .leading)
+
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.foreground2)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }

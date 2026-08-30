@@ -153,6 +153,50 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
         XCTAssertTrue(text.contains("expanded_tools"), "tool_search 输出应是发现载荷,实际:\(text)")
     }
 
+    func testExecNestedOutcomeUnknownReturnsTypedOuterOutcome() async {
+        let (runtime, settingsStore, _) = makeRuntime()
+        settingsStore.execJavaScriptEnabled = true
+        let bridge = IosToolExposureBridge(
+            tools: ToolKt.iosToolDeclarations(names: ["exec", "wm_open"])
+        )
+        let toolCall = makeToolCall(
+            id: "tc-exec-unknown",
+            name: "exec",
+            input: #"{"code":"tools.wm_open({url: 'https://example.com'})"}"#
+        )
+        let baseMessages = [F.userMessage("打开网页"), F.assistantMessage(parts: [toolCall])]
+        var unknownSignal: IOSToolOutcomeUnknownSignal?
+        let executors = runtime.foregroundToolExecutors(
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: [], tools: bridge.visibleTools()),
+            runId: "run-exec-unknown",
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: nil,
+            toolExposureBridge: bridge,
+            baseMessagesProvider: { baseMessages },
+            approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox(),
+            nestedToolRunner: { name, _ in
+                unknownSignal = IOSToolOutcomeUnknownSignal(
+                    toolCallId: "exec-nested-unknown",
+                    toolName: name
+                )
+                return #"{"ok":false,"status":"unknown_after_action","may_have_applied":true}"#
+            },
+            nestedOutcomeUnknownProvider: { unknownSignal }
+        )
+
+        let outcome = await Self.executeOffMainActor(UncheckedExecuteInput(
+            executor: executors["exec"]!,
+            tool: toolCall
+        ))
+
+        guard case .outcomeUnknown(let parts) = outcome else {
+            return XCTFail("nested unknown 必须把外层 exec 提升为 typed outcomeUnknown,实际 \(outcome)")
+        }
+        XCTAssertFalse(parts.isEmpty)
+    }
+
     // MARK: - 3. 未知名不注册(引擎侧诚实的 no-executor 失败)
 
     func testUnknownToolNameIsNotRegistered() {
