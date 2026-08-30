@@ -3318,8 +3318,8 @@ struct SearchView: View {
 
     private var filterStrip: some View {
         ScrollView(.horizontal) {
-            AmberGlassGroup(spacing: 12) {
-                HStack(spacing: 6) {
+            AmberGlassGroup(spacing: 8) {
+                HStack(spacing: 12) {
                     ForEach(SearchFilter.allCases) { filter in
                         Button {
                             selectedFilter = filter

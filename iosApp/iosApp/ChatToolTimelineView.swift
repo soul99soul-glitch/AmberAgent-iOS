@@ -465,14 +465,15 @@ struct ChatToolStepModel: Identifiable {
         if tool.toolName.hasPrefix("wm_") {
             let executed = !tool.output.isEmpty
             let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+                .map(IOSWebMountRedactor.redactedText)
             self.init(
                 id: stableID,
                 visualKind: kind,
                 title: Self.combinedLine(
                     executed ? Self.webMountCompletedTitle(for: tool) : Self.webMountPendingTitle(for: tool.toolName),
-                    Self.webMountInputSummary(from: tool.input)
+                    Self.webMountInputSummary(for: tool.toolName, from: tool.input)
                 ),
-                detail: executed ? (failureReason ?? Self.webMountResultSummary(from: tool.output)) : Self.webMountInputSummary(from: tool.input),
+                detail: executed ? (failureReason ?? Self.webMountResultSummary(from: tool.output)) : nil,
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
             return
@@ -542,6 +543,7 @@ struct ChatToolStepModel: Identifiable {
             "mcp_import_from_skill": "从技能导入 MCP",
             "recipe_import": "导入 Recipe",
             "permissions_status": "查看权限状态",
+            "tool_search": "查找工具",
             "tools_list": "列出可用工具",
             "subagent_report": "子智能体汇报",
             "terminal_execute": "Remote SSH 执行",
@@ -739,6 +741,14 @@ struct ChatToolStepModel: Identifiable {
         case "wm_site_add": "准备添加 WebMount 站点"
         case "wm_site_remove": "准备移除 WebMount 站点"
         case "wm_stations": "准备读取 WebMount 站点"
+        case "wm_click": "准备点击网页元素"
+        case "wm_tap": "准备点击网页"
+        case "wm_type": "准备输入网页字段"
+        case "wm_keys": "准备发送网页按键"
+        case "wm_scroll": "准备滚动网页"
+        case "wm_select": "准备选择网页选项"
+        case "wm_find": "准备查找网页内容"
+        case "wm_wait": "等待网页条件"
         default: toolName
         }
     }
@@ -761,29 +771,56 @@ struct ChatToolStepModel: Identifiable {
         case "wm_site_add": "WebMount 站点已添加"
         case "wm_site_remove": "WebMount 站点已移除"
         case "wm_stations": "WebMount 站点已读取"
+        case "wm_click": "网页元素已点击"
+        case "wm_tap": "网页已点击"
+        case "wm_type": "网页字段已输入"
+        case "wm_keys": "网页按键已发送"
+        case "wm_scroll": "网页已滚动"
+        case "wm_select": "网页选项已选择"
+        case "wm_find": "网页内容已查找"
+        case "wm_wait": "网页等待已完成"
         default: tool.toolName
         }
     }
 
-    private static func webMountInputSummary(from input: String) -> String? {
+    private static func webMountInputSummary(for toolName: String, from input: String) -> String? {
         let trimmedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedInput.isEmpty else { return nil }
-        if let data = trimmedInput.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let redactedAny = IOSWebMountRedactor.redactedJSONObject(object)
-            let redacted = redactedAny as? [String: Any] ?? object
-            // Prefer a short human label over raw JSON — long JSON titles expand
-            // hug-content capsules and were part of the chat-column width overflow.
-            for key in ["display_name", "name", "url", "homepage_url", "site_id", "selector", "text"] {
-                if let value = redacted[key] as? String {
-                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !trimmed.isEmpty { return String(trimmed.prefix(80)) }
-                }
-            }
-            let json = IOSWebMountController.json(redactedAny)
-            return String(json.prefix(80))
+        guard let data = trimmedInput.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let redacted = IOSWebMountRedactor.redactedJSONObject(object) as? [String: Any] else {
+            return nil
         }
-        return String(IOSWebMountRedactor.redactedText(trimmedInput).prefix(80))
+
+        let keys: [String]
+        switch toolName {
+        case "wm_site_add":
+            keys = ["display_name", "name", "site_id", "homepage_url", "url"]
+        case "wm_site_remove":
+            keys = ["site_id", "display_name", "name"]
+        case "wm_open", "wm_tab_new":
+            keys = ["url", "homepage_url", "site_id"]
+        case "wm_tab_close", "wm_clear_session":
+            keys = ["session_id", "site_id"]
+        case "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select", "wm_find", "wm_wait", "wm_get":
+            // Never surface typed text, key sequences or select values in a chat capsule.
+            keys = ["target", "selector", "ref", "condition", "kind", "attr_name"]
+        default:
+            keys = ["session_id", "site_id"]
+        }
+
+        for key in keys {
+            guard let value = redacted[key] as? String else { continue }
+            let safeValue: String
+            if key == "url" || key == "homepage_url" {
+                safeValue = IOSWebMountRedactor.redactedURL(value) ?? "[redacted-url]"
+            } else {
+                safeValue = IOSWebMountRedactor.redactedText(value)
+            }
+            let trimmed = safeValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return String(trimmed.prefix(80)) }
+        }
+        return nil
     }
 
     private static func ishHandoffInputSummary(from input: String) -> String? {
@@ -957,17 +994,19 @@ struct ChatToolStepModel: Identifiable {
         let text = output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
         guard !text.isEmpty else { return "已返回 WebMount 结果" }
         guard let object = firstJSONObject(in: output) else {
-            return String(IOSWebMountRedactor.redactedText(text).prefix(160))
+            return "已返回 WebMount 结果"
         }
         if object["denied"] as? Bool == true {
-            return "已拒绝：\((object["reason"] as? String) ?? "WebMount 权限限制")"
+            let reason = IOSWebMountRedactor.redactedText((object["reason"] as? String) ?? "WebMount 权限限制")
+            return "已拒绝：\(reason)"
         }
         if object["unsupported"] as? Bool == true {
             return "iOS 暂不支持：\((object["tool"] as? String) ?? "WebMount 工具")"
         }
         if let status = object["status"] as? String {
-            let url = object["url"] as? String
-            return [status, url].compactMap { $0?.nilIfBlank }.joined(separator: " · ")
+            let safeStatus = IOSWebMountRedactor.redactedText(status)
+            let safeURL = IOSWebMountRedactor.redactedURL(object["url"] as? String)
+            return [safeStatus.nilIfBlank, safeURL?.nilIfBlank].compactMap { $0 }.joined(separator: " · ")
         }
         if let artifact = object["artifact"] as? [String: Any],
            let artifactId = artifact["artifact_id"] as? String {
@@ -1068,8 +1107,8 @@ struct ChatToolTimeline: View {
         .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.84), value: step.state)
     }
 
-    /// 搜索胶囊标题走固定槽：哨兵占用 `combinedLine` 预算宽，可见标题 overlay 进去。
-    /// 无界提案下 `lineLimit` 不截断，若标题自己参与理想宽，长 query 仍会把胶囊撑开。
+    /// 网页搜索的流式标题走固定槽，避免 query 尚未闭合时胶囊反复跳宽。
+    /// `tool_search` 等仅借用搜索图标的工具仍按内容自适应，不预留空白。
     @ViewBuilder
     private func titleLabel(for step: ChatToolStepModel) -> some View {
         let label = Text(step.title)
@@ -1077,7 +1116,8 @@ struct ChatToolTimeline: View {
             .foregroundStyle(AmberTheme.foreground2)
             .lineLimit(1)
             .truncationMode(.tail)
-        if step.visualKind == .search {
+        if step.visualKind == .search,
+           step.title == "搜索" || step.title.hasPrefix("搜索 ") {
             Text(ChatToolStepModel.searchTitleLayoutSentinel)
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(.clear)

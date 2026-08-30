@@ -124,7 +124,7 @@ struct PermissionsApprovalView: View {
                     systemImage: highRiskAutoApprove ? "exclamationmark.shield.fill" : "exclamationmark.triangle",
                     iconColor: highRiskAutoApprove ? AmberTheme.accentRed : AmberTheme.muted,
                     title: "高风险自动批准",
-                    subtitle: "含远程命令、清会话等",
+                    subtitle: "含任意公网网站、远程命令等",
                     trailing: nil,
                     showsChevron: false
                 ) {

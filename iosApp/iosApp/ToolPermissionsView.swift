@@ -117,7 +117,7 @@ struct ToolPermissionsView: View {
                     capabilityItem(
                         id: "ios.webmount.browser",
                         title: "WebMount",
-                        subtitle: "使用受限 WKWebView 工具读取允许站点；不暴露 cookie 值或任意 JS",
+                        subtitle: "使用受限 WKWebView；高风险自动批准可访问任意公网网站",
                         systemImage: "globe.badge.chevron.backward",
                         color: AmberTheme.accentIndigo
                     )
@@ -236,7 +236,7 @@ struct ToolPermissionsView: View {
     }
 
     private var footerNote: some View {
-        Text("如果某项权限已经被拒绝，点它会带你去系统设置重新开启。高风险工具调用仍会在使用时单独确认。")
+        Text("权限被拒绝后，点对应项目可前往系统设置。高风险工具默认单独确认；开启高风险自动批准后将直接执行。")
             .font(.caption)
             .foregroundStyle(AmberTheme.muted2)
             .lineSpacing(2)

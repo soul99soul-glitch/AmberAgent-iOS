@@ -130,6 +130,7 @@ struct ChatView: View {
     @State private var isPhotoPickerPresented = false
     @State private var showWebMountDesktopBackends = false
     @State private var focusedRemoteWebMountSessionId: String?
+    @State private var collapsedWebMountSessionId: String?
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var fileImporterConversationId: String?
     @State private var photoPickerConversationId: String?
@@ -180,6 +181,22 @@ struct ChatView: View {
             AmberThemePageBackground(surface: .app)
             messageList
 
+            if let record = compactWebMountSession {
+                VStack {
+                    Spacer()
+                    AgentBrowserTaskCompactBar(
+                        record: record,
+                        runSummary: browserTaskRunSummary,
+                        onExpand: { collapsedWebMountSessionId = nil }
+                    )
+                    .padding(.horizontal, ChatLayout.contentHorizontalInset + 18)
+                    .padding(.bottom, max(10, composerBarHeight + 8))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(browserTaskTransition)
+                .zIndex(9)
+            }
+
             // 视觉浮层,不参与 bottom safe-area inset 布局。否则按钮显隐会改变
             // ScrollView 的可视区域,和系统顶部/底部 rubber-band 回弹互相拉扯。
             if viewportState.showScrollToBottom && chatListSummary.hasMessages {
@@ -189,7 +206,7 @@ struct ChatView: View {
                         scrollToBottomSource = .button
                         scrollToBottomTrigger &+= 1
                     }
-                    .padding(.bottom, max(10, composerBarHeight + 10))
+                    .padding(.bottom, scrollToBottomBottomPadding)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .transition(.scale(scale: 0.6).combined(with: .opacity))
@@ -209,6 +226,7 @@ struct ChatView: View {
                     .transition(.opacity)
             }
         }
+        .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
         .safeAreaBar(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 topBar
@@ -560,6 +578,32 @@ struct ChatView: View {
                     webMountSessionIsOpenable($0)
             }
             .max { $0.lastActivityMillis < $1.lastActivityMillis }
+    }
+
+    private var displayedWebMountSession: IOSWebMountSessionRecord? {
+        guard let record = activeWebMountSession,
+              viewModel.pendingWebMountApproval?.sessionId != record.id else { return nil }
+        return record
+    }
+
+    private var compactWebMountSession: IOSWebMountSessionRecord? {
+        guard !isAttachExpanded,
+              let record = displayedWebMountSession,
+              collapsedWebMountSessionId == record.id else { return nil }
+        return record
+    }
+
+    private var browserTaskRunSummary: String? {
+        guard viewModel.isGenerationActiveForCurrentConversation,
+              let message = viewModel.messages.last,
+              message.role == MessageRole.assistant,
+              let tool = message.parts.compactMap({ $0 as? UIMessagePart.Tool })
+                .last(where: { $0.toolName.hasPrefix("wm_") }) else { return nil }
+        return ChatToolStepModel(tool: tool).title.nilIfBlank
+    }
+
+    private var scrollToBottomBottomPadding: CGFloat {
+        max(10, composerBarHeight + 10 + (compactWebMountSession == nil ? 0 : 52))
     }
 
     private func webMountSessionIsOpenable(_ record: IOSWebMountSessionRecord) -> Bool {
@@ -1050,12 +1094,16 @@ struct ChatView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            if let record = activeWebMountSession,
-               viewModel.pendingWebMountApproval?.sessionId != record.id {
-                AgentBrowserTaskCard(record: record) {
+            if let record = displayedWebMountSession,
+               collapsedWebMountSessionId != record.id {
+                AgentBrowserTaskCard(
+                    record: record,
+                    onCollapse: { collapsedWebMountSessionId = record.id }
+                ) {
                     openWebMountSession(sessionId: record.id)
                 }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .id(record.id)
+                .transition(browserTaskTransition)
             }
 
             if !viewModel.pendingImages.isEmpty {
@@ -1264,6 +1312,23 @@ struct ChatView: View {
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
         // 布局动画，高度连续变化，滚动层逐帧重锚，内容平滑上移。
         .animation(.easeOut(duration: 0.2), value: viewModel.chatSuggestions.isEmpty)
+        .animation(browserTaskVisibilityAnimation, value: displayedWebMountSession?.id)
+    }
+
+    private var browserTaskTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .offset(y: 12))
+                .combined(with: .scale(scale: 0.98, anchor: .bottom)),
+            removal: .opacity
+                .combined(with: .offset(y: 6))
+                .combined(with: .scale(scale: 0.99, anchor: .bottom))
+        )
+    }
+
+    private var browserTaskVisibilityAnimation: Animation? {
+        reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
     }
 
     private var ishApprovalTransition: AnyTransition {

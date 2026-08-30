@@ -316,9 +316,10 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertFalse(settings.evalEnabled)
     }
 
-    func testWebMountURLPolicyRejectsSchemeAndHostOutsideAllowlist() throws {
+    func testWebMountURLPolicyRejectsSchemeAndHostOutsideAllowlist() async throws {
         let settings = IOSWebMountSettings(userDefaults: isolatedDefaults())
         let policy = IOSWebMountURLPolicy(settings: settings)
+        let highRiskPolicy = IOSWebMountURLPolicy(settings: settings, allowUnlistedHosts: true)
 
         XCTAssertNotNil(try? policy.validate("https://github.com/login").get())
         XCTAssertEqual(
@@ -333,6 +334,24 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             policy.validate("https://evil.example.com/").failure,
             .hostNotAllowed("evil.example.com")
         )
+        XCTAssertNotNil(try? highRiskPolicy.validate("https://evil.example.com/").get())
+        XCTAssertEqual(
+            highRiskPolicy.validate("https://127.0.0.1/admin").failure,
+            .privateHostNotAllowed("127.0.0.1")
+        )
+        XCTAssertEqual(
+            highRiskPolicy.validate("https://user:secret@evil.example.com/").failure,
+            .embeddedCredentialsNotAllowed
+        )
+        XCTAssertEqual(
+            policy.validate("https://user:secret@github.com/").failure,
+            .embeddedCredentialsNotAllowed
+        )
+        let privateResolution = await highRiskPolicy.validateResolvedPublicHost(
+            "https://internal.example/",
+            resolveHost: { _ in ["10.0.0.8"] }
+        )
+        XCTAssertEqual(privateResolution.failure, .privateHostNotAllowed("internal.example"))
     }
 
     func testWebMountRedactionRemovesSensitiveValuesAndURLQuery() throws {
@@ -1432,6 +1451,87 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(disabledObject["site_id"] as? String, "github")
     }
 
+    func testWebMountHighRiskAutoApproveOpensUnlistedHostAndOffRestoresAllowlist() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let executor = makeExecutor(webMountController: controller)
+        let sessionId = try XCTUnwrap(controller.sessionStore.records.first?.id)
+        let url = "https://unlisted.amber.invalid/path"
+
+        let disabledOutput = await executor.execute(IOSLocalToolExecutionRequest(
+            toolName: "wm_open",
+            operation: IOSWebMountController.json([
+                "session_id": sessionId,
+                "url": "https://github.com/"
+            ]),
+            scopeDigest: "",
+            payloadDigest: "",
+            isUserInitiated: false,
+            runId: "high-risk-run",
+            conversationId: "high-risk-conversation",
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:],
+                globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: true,
+                execJavaScriptEnabled: false,
+                webSearchEnabled: false
+            )
+        ))
+        guard case .webMountResult(let disabledText) = disabledOutput else {
+            return XCTFail("Expected disabled-site WebMount result, got \(disabledOutput)")
+        }
+        XCTAssertEqual(try jsonObject(disabledText)["denied"] as? Bool, true)
+
+        let output = await executor.execute(IOSLocalToolExecutionRequest(
+            toolName: "wm_open",
+            operation: IOSWebMountController.json(["session_id": sessionId, "url": url]),
+            scopeDigest: "",
+            payloadDigest: "",
+            isUserInitiated: false,
+            runId: "high-risk-run",
+            conversationId: "high-risk-conversation",
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:],
+                globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: true,
+                execJavaScriptEnabled: false,
+                webSearchEnabled: false
+            )
+        ))
+
+        guard case .webMountResult(let text) = output else {
+            return XCTFail("Expected high-risk WebMount result, got \(output)")
+        }
+        XCTAssertEqual(try jsonObject(text)["ok"] as? Bool, true)
+        let record = try XCTUnwrap(controller.sessionStore.record(sessionId: sessionId))
+        XCTAssertNil(record.siteId)
+        XCTAssertEqual(record.redactedURL, url)
+        XCTAssertNotNil(WebMountSiteRoute(watching: record, registry: controller.registry))
+
+        controller.releaseAgentOwnership(runId: "high-risk-run")
+        let blockedOutput = await executor.execute(IOSLocalToolExecutionRequest(
+            toolName: "wm_state",
+            operation: IOSWebMountController.json(["session_id": sessionId]),
+            scopeDigest: "",
+            payloadDigest: "",
+            isUserInitiated: false,
+            runId: "off-run",
+            conversationId: "high-risk-conversation",
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:],
+                globalAutoApproveEnabled: true,
+                highRiskAutoApproveEnabled: false,
+                execJavaScriptEnabled: false,
+                webSearchEnabled: false
+            )
+        ))
+        guard case .webMountResult(let blockedText) = blockedOutput else {
+            return XCTFail("Expected allowlist-restored WebMount result, got \(blockedOutput)")
+        }
+        let blocked = try jsonObject(blockedText)
+        XCTAssertEqual(blocked["denied"] as? Bool, true)
+        XCTAssertEqual(blocked["error_code"] as? String, "high_risk_auto_approve_required")
+    }
+
     func testWebMountGetDeniesHtmlAndSensitiveValueSelectors() async throws {
         let controller = makeWebMountController(globalEnabled: true)
 
@@ -1936,7 +2036,8 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             settings: settings,
             cookieStore: MockWebMountCookieStore(),
             runtime: MockWebMountRuntime(),
-            runtimeFactory: { MockWebMountRuntime() }
+            runtimeFactory: { MockWebMountRuntime() },
+            resolveHost: { _ in ["93.184.216.34"] }
         )
     }
 

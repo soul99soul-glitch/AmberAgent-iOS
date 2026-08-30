@@ -376,7 +376,11 @@ final class IOSLocalToolExecutor {
                     toolName: request.toolName,
                     input: request.operation,
                     isUserInitiated: request.isUserInitiated,
-                    context: webMountContext
+                    context: webMountContext,
+                    allowUnlistedHosts: webMountAllowsUnlistedHosts(
+                        request: request,
+                        capability: capability
+                    )
                 )
                 if let reason = Self.webMountHumanActionReason(output) {
                     return .needsUserAction("human_handoff: \(reason)")
@@ -498,7 +502,10 @@ final class IOSLocalToolExecutor {
             if policy == .askEveryTime || capability.gate.requiresFreshUserPresence {
                 let globalAutoApprove = executionPolicy?.globalAutoApproveEnabled ?? Self.isGlobalAutoApproveEnabled
                 let highRiskAutoApprove = executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled
-                if globalAutoApprove && (capability.risk != .high || highRiskAutoApprove) {
+                let autoApprove = capability.risk == .high
+                    ? highRiskAutoApprove
+                    : globalAutoApprove
+                if autoApprove {
                     return .allow(capabilityId: capability.id)
                 }
                 return .needsUserAction(reason: "WebMount browser tools require explicit foreground approval before the model can use the page session.")
@@ -1008,6 +1015,14 @@ final class IOSLocalToolExecutor {
         request.executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled
     }
 
+    private func webMountAllowsUnlistedHosts(
+        request: IOSLocalToolExecutionRequest,
+        capability: IOSPlatformCapability
+    ) -> Bool {
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
+        return policy == .autoApproveHighRisk || highRiskAutoApproveEnabled(for: request)
+    }
+
     private static func sha256(_ value: String) -> String {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
@@ -1405,6 +1420,9 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
     case invalidURL
     case unsupportedScheme(String)
     case missingHost
+    case embeddedCredentialsNotAllowed
+    case privateHostNotAllowed(String)
+    case navigationTargetNotVerified(String)
     case hostNotAllowed(String)
 
     var errorDescription: String? {
@@ -1415,25 +1433,41 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
             "Unsupported URL scheme: \(scheme)"
         case .missingHost:
             "URL host is missing"
+        case .embeddedCredentialsNotAllowed:
+            "Embedded URL credentials are not allowed"
+        case .privateHostNotAllowed(let host):
+            "Local, loopback, link-local, and private hosts are not allowed: \(host)"
+        case .navigationTargetNotVerified(let host):
+            "Navigation target was not verified before commit: \(host)"
         case .hostNotAllowed(let host):
             "Host is not in the WebMount allowlist: \(host)"
         }
     }
 }
 
+typealias IOSWebMountHostResolver = @Sendable (String) throws -> [String]
+
 struct IOSWebMountURLPolicy {
     let allowedSchemes: Set<String>
     let allowedHosts: Set<String>
+    let allowUnlistedHosts: Bool
 
     @MainActor
-    init(settings: IOSWebMountSettings, extraAllowedHosts: [String] = []) {
+    init(
+        settings: IOSWebMountSettings,
+        extraAllowedHosts: [String] = [],
+        allowUnlistedHosts: Bool = false
+    ) {
         self.allowedSchemes = Set(settings.allowedSchemes.map { $0.lowercased() })
         self.allowedHosts = Set(settings.allowedHosts.map { $0.lowercased() })
             .union(extraAllowedHosts.compactMap(Self.normalizedHost))
+        self.allowUnlistedHosts = allowUnlistedHosts
     }
 
     func validate(_ rawURL: String, site: IOSWebMountSite? = nil) -> Result<URL, IOSWebMountURLPolicyError> {
-        guard let url = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+        let trimmedURL = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmedURL),
+              let components = URLComponents(string: trimmedURL),
               let scheme = url.scheme?.lowercased() else {
             return .failure(.invalidURL)
         }
@@ -1443,11 +1477,47 @@ struct IOSWebMountURLPolicy {
         guard let host = Self.normalizedHost(url.host) else {
             return .failure(.missingHost)
         }
+        guard components.user == nil, components.password == nil else {
+            return .failure(.embeddedCredentialsNotAllowed)
+        }
+        if allowUnlistedHosts {
+            guard IOSSearchExecutor.publicHostAllowed(host) else {
+                return .failure(.privateHostNotAllowed(host))
+            }
+            return .success(url)
+        }
         let hosts = allowedHosts.union(site?.allowedHosts.compactMap(Self.normalizedHost) ?? [])
         guard Self.host(host, matchesAnyOf: Array(hosts)) else {
             return .failure(.hostNotAllowed(host))
         }
         return .success(url)
+    }
+
+    func validateResolvedPublicHost(
+        _ rawURL: String,
+        site: IOSWebMountSite? = nil,
+        resolveHost: @escaping IOSWebMountHostResolver
+    ) async -> Result<URL, IOSWebMountURLPolicyError> {
+        switch validate(rawURL, site: site) {
+        case .failure(let error):
+            return .failure(error)
+        case .success(let url):
+            guard allowUnlistedHosts, let host = Self.normalizedHost(url.host) else {
+                return .success(url)
+            }
+            do {
+                let addresses = try await Task.detached(priority: .userInitiated) {
+                    try resolveHost(host)
+                }.value
+                guard !addresses.isEmpty,
+                      addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
+                    return .failure(.privateHostNotAllowed(host))
+                }
+                return .success(url)
+            } catch {
+                return .failure(.privateHostNotAllowed(host))
+            }
+        }
     }
 
     static func normalizedHost(_ raw: String?) -> String? {
@@ -1631,6 +1701,9 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     private var pendingLoad: (id: Int, continuation: CheckedContinuation<IOSWebMountRuntimeSnapshot, Never>)?
     private var navigationPolicy: IOSWebMountURLPolicy?
     private var navigationSite: IOSWebMountSite?
+    private var navigationHostResolver: IOSWebMountHostResolver = IOSSearchExecutor.resolveIPAddresses
+    private var navigationDecisionSequence = 0
+    private var approvedMainFrameDestination: String?
 
     override convenience init() {
         self.init(sessionId: nil)
@@ -1651,9 +1724,16 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         webView.allowsBackForwardNavigationGestures = true
     }
 
-    func setNavigationPolicy(_ policy: IOSWebMountURLPolicy, site: IOSWebMountSite?) {
+    func setNavigationPolicy(
+        _ policy: IOSWebMountURLPolicy,
+        site: IOSWebMountSite?,
+        resolveHost: @escaping IOSWebMountHostResolver = IOSSearchExecutor.resolveIPAddresses
+    ) {
         navigationPolicy = policy
         navigationSite = site
+        navigationHostResolver = resolveHost
+        navigationDecisionSequence += 1
+        approvedMainFrameDestination = nil
     }
 
     func open(_ url: URL, timeoutMillis: UInt64 = 30_000) async -> IOSWebMountRuntimeSnapshot {
@@ -1983,20 +2063,84 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
             decisionHandler(.allow)
             return
         }
-        switch policy.validate(url.absoluteString, site: navigationSite) {
-        case .success:
+        let site = navigationSite
+        let resolver = navigationHostResolver
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame != false
+        if isMainFrame {
+            navigationDecisionSequence += 1
+        }
+        let decisionSequence = navigationDecisionSequence
+        Task { @MainActor [weak self] in
+            guard let self else {
+                decisionHandler(.cancel)
+                return
+            }
+            switch await policy.validateResolvedPublicHost(
+                url.absoluteString,
+                site: site,
+                resolveHost: resolver
+            ) {
+            case .success(let verifiedURL):
+                guard decisionSequence == self.navigationDecisionSequence else {
+                    decisionHandler(.cancel)
+                    return
+                }
+                if isMainFrame {
+                    self.approvedMainFrameDestination = Self.navigationDestinationKey(verifiedURL)
+                }
+                decisionHandler(.allow)
+            case .failure(let error):
+                if isMainFrame, decisionSequence == self.navigationDecisionSequence {
+                    self.rejectNavigation(error, url: url, webView: webView)
+                }
+                decisionHandler(.cancel)
+            }
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationResponse: WKNavigationResponse,
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
+    ) {
+        guard navigationResponse.isForMainFrame else {
             decisionHandler(.allow)
-        case .failure(let error):
-        snapshot.status = .failed
-        snapshot.requestedURL = IOSWebMountRedactor.redactedURL(url.absoluteString)
-        snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
-        snapshot.title = webView.title
-        snapshot.canGoBack = webView.canGoBack
-        snapshot.canGoForward = webView.canGoForward
-        snapshot.error = error.localizedDescription
-        snapshot.updatedAtMillis = IOSWebMountClock.nowMillis()
-        completePendingLoad()
+            return
+        }
+        guard let policy = navigationPolicy else {
+            decisionHandler(.allow)
+            return
+        }
+        guard let url = navigationResponse.response.url else {
             decisionHandler(.cancel)
+            return
+        }
+        let site = navigationSite
+        let resolver = navigationHostResolver
+        let decisionSequence = navigationDecisionSequence
+        Task { @MainActor [weak self] in
+            guard let self else {
+                decisionHandler(.cancel)
+                return
+            }
+            switch await policy.validateResolvedPublicHost(
+                url.absoluteString,
+                site: site,
+                resolveHost: resolver
+            ) {
+            case .success(let verifiedURL):
+                guard decisionSequence == self.navigationDecisionSequence else {
+                    decisionHandler(.cancel)
+                    return
+                }
+                self.approvedMainFrameDestination = Self.navigationDestinationKey(verifiedURL)
+                decisionHandler(.allow)
+            case .failure(let error):
+                if decisionSequence == self.navigationDecisionSequence {
+                    self.rejectNavigation(error, url: url, webView: webView)
+                }
+                decisionHandler(.cancel)
+            }
         }
     }
 
@@ -2011,6 +2155,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard committedNavigationIsAllowed(webView) else { return }
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
         snapshot.estimatedProgress = webView.estimatedProgress
         snapshot.canGoBack = webView.canGoBack
@@ -2019,6 +2164,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard committedNavigationIsAllowed(webView) else { return }
         snapshot.status = .ready
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
         snapshot.title = webView.title
@@ -2045,6 +2191,50 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         snapshot.estimatedProgress = webView?.estimatedProgress ?? 0
         snapshot.canGoBack = webView?.canGoBack ?? false
         snapshot.canGoForward = webView?.canGoForward ?? false
+        snapshot.error = error.localizedDescription
+        snapshot.updatedAtMillis = IOSWebMountClock.nowMillis()
+        completePendingLoad()
+    }
+
+    private func committedNavigationIsAllowed(_ webView: WKWebView) -> Bool {
+        guard let policy = navigationPolicy, let url = webView.url else { return true }
+        guard case .failure(let error) = policy.validate(url.absoluteString, site: navigationSite) else {
+            guard Self.navigationDestinationKey(url) == approvedMainFrameDestination else {
+                webView.stopLoading()
+                rejectNavigation(
+                    .navigationTargetNotVerified(url.host ?? "unknown"),
+                    url: url,
+                    webView: webView
+                )
+                return false
+            }
+            return true
+        }
+        webView.stopLoading()
+        rejectNavigation(error, url: url, webView: webView)
+        return false
+    }
+
+    private static func navigationDestinationKey(_ url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(),
+              let host = IOSWebMountURLPolicy.normalizedHost(url.host) else {
+            return nil
+        }
+        let port = url.port ?? (scheme == "https" ? 443 : (scheme == "http" ? 80 : -1))
+        return "\(scheme)://\(host):\(port)"
+    }
+
+    private func rejectNavigation(
+        _ error: IOSWebMountURLPolicyError,
+        url: URL,
+        webView: WKWebView
+    ) {
+        snapshot.status = .failed
+        snapshot.requestedURL = IOSWebMountRedactor.redactedURL(url.absoluteString)
+        snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
+        snapshot.title = webView.title
+        snapshot.canGoBack = webView.canGoBack
+        snapshot.canGoForward = webView.canGoForward
         snapshot.error = error.localizedDescription
         snapshot.updatedAtMillis = IOSWebMountClock.nowMillis()
         completePendingLoad()
@@ -3000,12 +3190,10 @@ final class IOSWebMountSessionStore {
 
     func tag(sessionId: String, site: IOSWebMountSite?) {
         guard runtimes[sessionId] != nil, var item = metadata[sessionId] else { return }
-        if let site {
-            item.siteId = site.id
-            item.siteName = site.displayName
-            metadata[sessionId] = item
-            persistSessions()
-        }
+        item.siteId = site?.id
+        item.siteName = site?.displayName
+        metadata[sessionId] = item
+        persistSessions()
     }
 
     func touch(sessionId: String, makeCurrent: Bool = true) {
@@ -3476,7 +3664,7 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_tab_list", description: "List up to three foreground iOS WebMount sessions.", requiresUserAction: false),
         .init(name: "wm_tab_new", description: "Create a new foreground iOS WebMount session, bounded to three sessions.", requiresUserAction: false),
         .init(name: "wm_tab_close", description: "Close one foreground iOS WebMount session by session_id.", requiresUserAction: false),
-        .init(name: "wm_open", description: "Open an allowlisted URL in a local WKWebView session.", requiresUserAction: false),
+        .init(name: "wm_open", description: "Open a URL in a local WKWebView session. Unlisted public hosts require high-risk auto-approve.", requiresUserAction: false),
         .init(name: "wm_state", description: "Read current WKWebView status, title, redacted URL, and page state.", requiresUserAction: false),
         .init(name: "wm_observe", description: "Read state, visible text, links, interactive elements, and visual candidates without cookies or headers.", requiresUserAction: false),
         .init(name: "wm_extract", description: "Extract readable or interactive page content through a read-only bridge.", requiresUserAction: false),
@@ -3524,6 +3712,7 @@ final class IOSWebMountController {
     let sessionStore: IOSWebMountSessionStore
     let desktopBackend: IOSWebMountDesktopBackendAdapter
     private let mcpServerProvider: () -> [IOSMcpServerConfig]
+    private let resolveHost: IOSWebMountHostResolver
 
     var runtime: IOSWebMountRuntimeServicing {
         sessionStore.currentRuntime
@@ -3546,7 +3735,8 @@ final class IOSWebMountController {
         sessionDefaults: UserDefaults? = nil,
         sessionNowMillis: @escaping () -> Int64 = { IOSWebMountClock.nowMillis() },
         desktopBackend: IOSWebMountDesktopBackendAdapter? = nil,
-        mcpServerProvider: @escaping () -> [IOSMcpServerConfig] = { IOSMcpConfigStore.shared.servers }
+        mcpServerProvider: @escaping () -> [IOSMcpServerConfig] = { IOSMcpConfigStore.shared.servers },
+        resolveHost: @escaping IOSWebMountHostResolver = IOSSearchExecutor.resolveIPAddresses
     ) {
         self.registry = registry ?? IOSWebMountRegistry()
         self.settings = settings ?? IOSWebMountSettings()
@@ -3554,6 +3744,7 @@ final class IOSWebMountController {
         let resolvedDesktopBackend = desktopBackend ?? IOSWebMountDesktopBackendAdapter()
         self.desktopBackend = resolvedDesktopBackend
         self.mcpServerProvider = mcpServerProvider
+        self.resolveHost = resolveHost
         IOSWebMountScreenshotArtifactStore.cleanupExpired()
         let factory = runtimeFactory ?? { IOSWebMountWKRuntime() }
         let restoredFactory: ((String) -> IOSWebMountRuntimeServicing)? = runtimeFactory == nil
@@ -3615,7 +3806,11 @@ final class IOSWebMountController {
         let policy = IOSWebMountURLPolicy(settings: settings, extraAllowedHosts: registry.sites.flatMap(\.allowedHosts))
         switch policy.validate(site.homepageURL, site: site) {
         case .success(let url):
-            (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(policy, site: site)
+            (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(
+                policy,
+                site: site,
+                resolveHost: resolveHost
+            )
             sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
             let snapshot = await runtime.open(url, timeoutMillis: 30_000)
             if snapshot.status != .failed {
@@ -3643,7 +3838,8 @@ final class IOSWebMountController {
         toolName: String,
         input: String,
         isUserInitiated: Bool,
-        context: IOSWebMountExecutionContext? = nil
+        context: IOSWebMountExecutionContext? = nil,
+        allowUnlistedHosts: Bool = false
     ) async -> String {
         guard IOSWebMountToolCatalog.supportedToolNames.contains(toolName) else {
             return Self.unsupportedToolResult(toolName: toolName)
@@ -3669,8 +3865,16 @@ final class IOSWebMountController {
                     args: args,
                     record: record,
                     isUserInitiated: isUserInitiated,
-                    context: context
+                    context: context,
+                    allowUnlistedHosts: allowUnlistedHosts
                 )
+            }
+            if let policyFailure = localSessionPolicyFailure(
+                toolName: toolName,
+                args: args,
+                allowUnlistedHosts: allowUnlistedHosts
+            ) {
+                return policyFailure
             }
             switch toolName {
             case "wm_stations":
@@ -3682,7 +3886,11 @@ final class IOSWebMountController {
             case "wm_tab_close":
                 return try tabCloseResult(args: args, context: context)
             case "wm_open":
-                return try await openResult(args: args, context: context)
+                return try await openResult(
+                    args: args,
+                    context: context,
+                    allowUnlistedHosts: allowUnlistedHosts
+                )
             case "wm_state":
                 return try await stateResult(args: args, context: context)
             case "wm_observe":
@@ -4311,7 +4519,8 @@ final class IOSWebMountController {
         args: [String: Any],
         record: IOSWebMountSessionRecord,
         isUserInitiated: Bool,
-        context: IOSWebMountExecutionContext?
+        context: IOSWebMountExecutionContext?,
+        allowUnlistedHosts: Bool
     ) async throws -> String {
         guard let siteId = record.siteId,
               let site = registry.site(id: siteId) else {
@@ -4348,7 +4557,11 @@ final class IOSWebMountController {
         if toolName != "wm_open" {
             guard !record.needsReopen,
                   let currentURL = record.redactedURL.nilIfBlank,
-                  Self.remoteURLIsAllowed(currentURL, site: site, settings: settings) else {
+                  await remoteURLIsAllowed(
+                      currentURL,
+                      site: site,
+                      allowUnlistedHosts: allowUnlistedHosts
+                  ) else {
                 sessionStore.markNeedsReopen(sessionId: record.id)
                 return Self.remoteRequiresReopenResult(
                     toolName: toolName,
@@ -4430,9 +4643,14 @@ final class IOSWebMountController {
             let rawURL = (args["url"] as? String)?.nilIfBlank ?? site.homepageURL
             let policy = IOSWebMountURLPolicy(
                 settings: settings,
-                extraAllowedHosts: registry.sites.flatMap(\.allowedHosts)
+                extraAllowedHosts: registry.sites.flatMap(\.allowedHosts),
+                allowUnlistedHosts: allowUnlistedHosts
             )
-            switch policy.validate(rawURL, site: site) {
+            switch await policy.validateResolvedPublicHost(
+                rawURL,
+                site: site,
+                resolveHost: resolveHost
+            ) {
             case .failure(let error):
                 return Self.json([
                     "ok": false,
@@ -4443,7 +4661,11 @@ final class IOSWebMountController {
                     "url": IOSWebMountRedactor.redactedURL(rawURL) ?? ""
                 ])
             case .success(let url):
-                guard Self.remoteURLIsAllowed(url.absoluteString, site: site, settings: settings) else {
+                guard await remoteURLIsAllowed(
+                    url.absoluteString,
+                    site: site,
+                    allowUnlistedHosts: allowUnlistedHosts
+                ) else {
                     return Self.json([
                         "ok": false,
                         "tool": toolName,
@@ -4481,7 +4703,11 @@ final class IOSWebMountController {
             let mayHaveApplied = outputObject["may_have_applied"] as? Bool == true
             if succeeded {
                 guard let currentURL = Self.remoteCurrentURL(from: outputObject),
-                      Self.remoteURLIsAllowed(currentURL, site: site, settings: settings) else {
+                      await remoteURLIsAllowed(
+                          currentURL,
+                          site: site,
+                          allowUnlistedHosts: allowUnlistedHosts
+                      ) else {
                     sessionStore.markNeedsReopen(sessionId: record.id)
                     return Self.remoteRequiresReopenResult(
                         toolName: toolName,
@@ -4516,8 +4742,54 @@ final class IOSWebMountController {
         return value
     }
 
+    private func localSessionPolicyFailure(
+        toolName: String,
+        args: [String: Any],
+        allowUnlistedHosts: Bool
+    ) -> String? {
+        guard Self.localSessionPolicyToolNames.contains(toolName) else { return nil }
+        let sessionId = (args["session_id"] as? String)?.nilIfBlank ?? sessionStore.currentSessionId
+        guard let record = sessionStore.record(sessionId: sessionId), record.backend == .local else {
+            return nil
+        }
+        let site = record.siteId.flatMap { registry.site(id: $0) }
+        let policy = IOSWebMountURLPolicy(
+            settings: settings,
+            extraAllowedHosts: registry.sites.flatMap(\.allowedHosts),
+            allowUnlistedHosts: allowUnlistedHosts
+        )
+        (sessionStore.runtimeIfPresent(sessionId: sessionId) as? IOSWebMountWKRuntime)?
+            .setNavigationPolicy(policy, site: site, resolveHost: resolveHost)
+        guard let currentURL = record.redactedURL.nilIfBlank else { return nil }
+        guard case .failure(let error) = policy.validate(currentURL, site: site) else { return nil }
+        let errorCode: String
+        switch error {
+        case .hostNotAllowed where !allowUnlistedHosts:
+            errorCode = "high_risk_auto_approve_required"
+        case .privateHostNotAllowed:
+            errorCode = "private_host_not_allowed"
+        default:
+            errorCode = "url_policy_denied"
+        }
+        return Self.json([
+            "ok": false,
+            "tool": toolName,
+            "session_id": sessionId,
+            "denied": true,
+            "error_code": errorCode,
+            "reason": error.localizedDescription,
+            "url": IOSWebMountRedactor.redactedURL(currentURL) ?? ""
+        ])
+    }
+
     private static let desktopRoutingExemptToolNames: Set<String> = [
         "wm_stations", "wm_tab_list", "wm_tab_new", "wm_tab_close", "wm_site_add", "wm_site_remove"
+    ]
+
+    private static let localSessionPolicyToolNames: Set<String> = [
+        "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot", "wm_screenshot",
+        "wm_back", "wm_forward", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
+        "wm_select", "wm_find", "wm_wait"
     ]
 
     private static let desktopMutatingToolNames: Set<String> = [
@@ -4534,21 +4806,32 @@ final class IOSWebMountController {
         "wm_keys", "wm_scroll", "wm_select"
     ]
 
-    private static func remoteURLIsAllowed(
+    private func remoteURLIsAllowed(
         _ rawURL: String,
         site: IOSWebMountSite,
-        settings: IOSWebMountSettings
-    ) -> Bool {
+        allowUnlistedHosts: Bool
+    ) async -> Bool {
         guard let components = URLComponents(string: rawURL),
               let scheme = components.scheme?.lowercased(),
               Set(settings.allowedSchemes.map { $0.lowercased() }).contains(scheme),
               components.user == nil,
               components.password == nil,
-              let host = components.host,
-              IOSWebMountURLPolicy.host(host, matchesAnyOf: site.allowedHosts) else {
+              let host = components.host else {
             return false
         }
-        return true
+        if allowUnlistedHosts {
+            let policy = IOSWebMountURLPolicy(
+                settings: settings,
+                allowUnlistedHosts: true
+            )
+            if case .failure = await policy.validateResolvedPublicHost(
+                rawURL,
+                resolveHost: resolveHost
+            ) {
+                return false
+            }
+        }
+        return allowUnlistedHosts || IOSWebMountURLPolicy.host(host, matchesAnyOf: site.allowedHosts)
     }
 
     private static func remoteCurrentURL(from value: Any) -> String? {
@@ -4637,27 +4920,54 @@ final class IOSWebMountController {
 
     private func openResult(
         args: [String: Any],
-        context: IOSWebMountExecutionContext?
+        context: IOSWebMountExecutionContext?,
+        allowUnlistedHosts: Bool
     ) async throws -> String {
-        let site = siteFromArgs(args)
-        guard let site else {
+        let requestedSiteId = (args["site_id"] as? String)?.nilIfBlank
+        let resolvedSite = siteFromArgs(args)
+        if requestedSiteId != nil, resolvedSite == nil {
             return Self.json([
                 "ok": false,
                 "denied": true,
-                "reason": "wm_open requires a registered WebMount station. Add or restore the site before opening this URL."
+                "error_code": "site_binding_required",
+                "reason": "wm_open received an unknown WebMount station."
             ])
         }
-        guard site.enabled else {
+        if let resolvedSite, !resolvedSite.enabled {
             return Self.json([
                 "ok": false,
                 "denied": true,
                 "reason": "WebMount station is disabled",
-                "site_id": site.id
+                "site_id": resolvedSite.id
             ])
         }
-        let rawURL = (args["url"] as? String)?.nilIfBlank ?? site.homepageURL
-        let policy = IOSWebMountURLPolicy(settings: settings, extraAllowedHosts: registry.sites.flatMap(\.allowedHosts))
-        switch policy.validate(rawURL, site: site) {
+        let site = resolvedSite
+        if !allowUnlistedHosts, site == nil {
+            return Self.json([
+                "ok": false,
+                "denied": true,
+                "error_code": "host_not_allowed",
+                "reason": "wm_open requires a registered WebMount station. Add or restore the site before opening this URL."
+            ])
+        }
+        guard let rawURL = (args["url"] as? String)?.nilIfBlank ?? site?.homepageURL else {
+            return Self.json([
+                "ok": false,
+                "denied": true,
+                "error_code": "missing_url",
+                "reason": "wm_open requires url when no WebMount station is selected."
+            ])
+        }
+        let policy = IOSWebMountURLPolicy(
+            settings: settings,
+            extraAllowedHosts: registry.sites.flatMap(\.allowedHosts),
+            allowUnlistedHosts: allowUnlistedHosts
+        )
+        switch await policy.validateResolvedPublicHost(
+            rawURL,
+            site: site,
+            resolveHost: resolveHost
+        ) {
         case .failure(let error):
             return Self.json([
                 "ok": false,
@@ -4668,7 +4978,11 @@ final class IOSWebMountController {
         case .success(let url):
             let timeout = UInt64((args["timeout_ms"] as? Int) ?? 30_000).clamped(to: 1_000...60_000)
             let runtime = try sessionRuntime(from: args, context: context)
-            (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(policy, site: site)
+            (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(
+                policy,
+                site: site,
+                resolveHost: resolveHost
+            )
             sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
             let snapshot = await runtime.open(url, timeoutMillis: timeout)
             if snapshot.status != .failed {

@@ -43,14 +43,23 @@ struct WebMountSiteRoute: Hashable, Identifiable {
     @MainActor
     init?(watching record: IOSWebMountSessionRecord, registry: IOSWebMountRegistry) {
         guard record.backend == .local,
-              let sessionId = record.id.nilIfBlank,
-              let siteId = record.siteId?.nilIfBlank,
-              let site = registry.site(id: siteId) else {
+              let sessionId = record.id.nilIfBlank else {
             return nil
         }
-        self.siteId = site.id
-        self.name = site.displayName
-        self.host = site.homepageHost
+        if let siteId = record.siteId?.nilIfBlank,
+           let site = registry.site(id: siteId) {
+            self.siteId = site.id
+            self.name = site.displayName
+            self.host = site.homepageHost
+        } else {
+            guard let components = URLComponents(string: record.redactedURL),
+                  let host = components.host?.nilIfBlank else {
+                return nil
+            }
+            self.siteId = "unlisted:\(sessionId)"
+            self.name = record.title.nilIfBlank ?? host
+            self.host = host
+        }
         self.sessionId = sessionId
         self.mode = .watch
     }
@@ -227,10 +236,29 @@ private enum WebMountResultTab: String, CaseIterable, Identifiable {
     }
 }
 
+private enum WebMountActionLayout {
+    static let minimumButtonSpacing: CGFloat = 12
+    static let glassInteractionSpacing: CGFloat = 8
+}
+
 @MainActor
 struct AgentBrowserTaskCard: View {
     let record: IOSWebMountSessionRecord
+    let onCollapse: (() -> Void)?
     let onOpen: () -> Void
+
+    @GestureState private var dragTranslation: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        record: IOSWebMountSessionRecord,
+        onCollapse: (() -> Void)? = nil,
+        onOpen: @escaping () -> Void
+    ) {
+        self.record = record
+        self.onCollapse = onCollapse
+        self.onOpen = onOpen
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -252,46 +280,77 @@ struct AgentBrowserTaskCard: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    backendLabel
-                    if record.controlOwner != .none {
-                        controlLabel
-                    }
-                }
-                VStack(alignment: .leading, spacing: 5) {
-                    backendLabel
-                    if record.controlOwner != .none {
-                        controlLabel
-                    }
-                }
-            }
-
-            Divider()
-                .overlay(AmberTheme.borderSoft)
-
-            Button(action: onOpen) {
-                HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                backendLabel
+                Spacer(minLength: 8)
+                Button(action: onOpen) {
                     Label(openLabel, systemImage: record.backend == .local ? "eye" : "macwindow")
-                    Spacer(minLength: 0)
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accent)
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 34)
+                        .background(AmberTheme.surface2, in: Capsule())
                 }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(AmberTheme.accent)
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+                .contentShape(Capsule())
+                .accessibilityLabel("\(openLabel)，\(siteTitle)，\(status.label)")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(openLabel)，\(siteTitle)，\(status.label)")
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 13)
+        .padding(.vertical, 12)
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
+        .overlay(alignment: .top) {
+            if onCollapse != nil {
+                collapseHandle
+            }
+        }
+        .offset(y: min(12, dragTranslation * 0.24))
+    }
+
+    private var collapseHandle: some View {
+        Button(action: collapse) {
+            Capsule()
+                .fill(AmberTheme.muted2.opacity(0.5))
+                .frame(width: 30, height: 4)
+                .frame(width: 60, height: 30, alignment: .top)
+                .padding(.top, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .frame(width: 60, height: 44, alignment: .top)
+        .contentShape(Rectangle())
+        .simultaneousGesture(collapseGesture)
+        .accessibilityLabel("收起浏览器任务")
+        .accessibilityHint("向下拖动或轻点收起")
+    }
+
+    private var collapseGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .updating($dragTranslation) { value, state, _ in
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                state = max(0, value.translation.height)
+            }
+            .onEnded { value in
+                let projected = max(value.translation.height, value.predictedEndTranslation.height)
+                guard projected > 44, abs(value.translation.height) > abs(value.translation.width) else { return }
+                collapse()
+            }
+    }
+
+    private func collapse() {
+        guard let onCollapse else { return }
+        withAnimation(collapseAnimation) {
+            onCollapse()
+        }
+    }
+
+    private var collapseAnimation: Animation? {
+        reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
     }
 
     private var taskIdentity: some View {
@@ -331,17 +390,113 @@ struct AgentBrowserTaskCard: View {
             .foregroundStyle(AmberTheme.muted)
     }
 
-    private var controlLabel: some View {
-        Label(controlText, systemImage: controlImage)
-            .font(.caption2)
-            .foregroundStyle(AmberTheme.muted)
-    }
-
     private var siteTitle: String {
-        record.siteName?.nilIfBlank ?? record.title.nilIfBlank ?? "未命名页面"
+        displayInfo.siteTitle
     }
 
     private var pageSummary: String {
+        displayInfo.pageSummary
+    }
+
+    private var openLabel: String {
+        record.backend == .local ? "观看页面" : "查看状态"
+    }
+
+    private var status: (label: String, image: String, tint: Color) {
+        displayInfo.status
+    }
+
+    private var displayInfo: AgentBrowserTaskDisplayInfo {
+        AgentBrowserTaskDisplayInfo(record: record)
+    }
+}
+
+@MainActor
+struct AgentBrowserTaskCompactBar: View {
+    let record: IOSWebMountSessionRecord
+    let runSummary: String?
+    let onExpand: () -> Void
+
+    @GestureState private var dragTranslation: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: displayInfo.status.image)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(displayInfo.status.tint)
+                .frame(width: 26, height: 26)
+                .background(AmberTheme.surface2, in: Circle())
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(summary)
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+
+            Image(systemName: "chevron.up")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(AmberTheme.muted2)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 44)
+        .composerDockGlass(cornerRadius: 22)
+        .contentShape(Capsule())
+        .offset(y: max(-8, dragTranslation * 0.18))
+        .onTapGesture(perform: expand)
+        .simultaneousGesture(expandGesture)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(summary)
+        .accessibilityHint("轻点或向上滑动展开浏览器任务")
+        .accessibilityAction(named: "展开浏览器任务", expand)
+    }
+
+    private var expandGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .updating($dragTranslation) { value, state, _ in
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                state = min(0, value.translation.height)
+            }
+            .onEnded { value in
+                let projected = min(value.translation.height, value.predictedEndTranslation.height)
+                guard projected < -36, abs(value.translation.height) > abs(value.translation.width) else { return }
+                expand()
+            }
+    }
+
+    private func expand() {
+        withAnimation(animation) {
+            onExpand()
+        }
+    }
+
+    private var summary: String {
+        runSummary?.nilIfBlank ?? displayInfo.fallbackSummary
+    }
+
+    private var displayInfo: AgentBrowserTaskDisplayInfo {
+        AgentBrowserTaskDisplayInfo(record: record)
+    }
+
+    private var animation: Animation? {
+        reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
+    }
+}
+
+@MainActor
+private struct AgentBrowserTaskDisplayInfo {
+    let record: IOSWebMountSessionRecord
+
+    var siteTitle: String {
+        record.siteName?.nilIfBlank ?? record.title.nilIfBlank ?? "未命名页面"
+    }
+
+    var pageSummary: String {
         guard let rawURL = record.redactedURL.nilIfBlank,
               let components = URLComponents(string: rawURL),
               let host = components.host?.nilIfBlank else {
@@ -351,27 +506,16 @@ struct AgentBrowserTaskCard: View {
         return path.isEmpty || path == "/" ? host : host + path
     }
 
-    private var openLabel: String {
-        record.backend == .local ? "观看页面" : "查看状态"
+    var fallbackSummary: String {
+        [status.label, siteTitle, pageSummary]
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { parts, value in
+                if parts.last != value { parts.append(value) }
+            }
+            .joined(separator: " · ")
     }
 
-    private var controlText: String {
-        switch record.controlOwner {
-        case .agent: "Agent 控制"
-        case .user: "用户控制"
-        case .none: "控制权空闲"
-        }
-    }
-
-    private var controlImage: String {
-        switch record.controlOwner {
-        case .agent: "cpu"
-        case .user: "person.crop.circle"
-        case .none: "lock.open"
-        }
-    }
-
-    private var status: (label: String, image: String, tint: Color) {
+    var status: (label: String, image: String, tint: Color) {
         if record.needsReopen {
             return ("需要重新打开", "arrow.clockwise", AmberTheme.accentAmber)
         }
@@ -740,9 +884,13 @@ struct WebMountSiteView: View {
     @State private var contentHandoff: IOSWebMountContentHandoff?
     @State private var banner: String?
     @State private var isLoading = false
+    @AppStorage("app.amber.ios.highRiskAutoApprove") private var highRiskAutoApprove = false
     private let hasBoundSession: Bool
 
     private var registry: IOSWebMountRegistry { controller.registry }
+    private var isUnlistedWatchSession: Bool {
+        site.mode == .watch && registry.site(id: site.siteId) == nil
+    }
     private var resolvedSite: IOSWebMountSite {
         registry.site(id: site.siteId) ?? IOSWebMountSite(
             id: site.siteId,
@@ -945,13 +1093,13 @@ struct WebMountSiteView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 WebMountDivider()
-                AmberGlassGroup(spacing: 12) {
+                AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 10) {
+                        HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
                             navigationButtons
                             Spacer(minLength: 0)
                         }
-                        VStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
                             navigationButtons
                         }
                     }
@@ -1043,7 +1191,11 @@ struct WebMountSiteView: View {
                 }
                 WebMountBadge(text: resolvedSite.homepageHost, systemImage: "network", tint: AmberTheme.accentCyan)
                 WebMountBadge(text: loginBadgeText, systemImage: "person.crop.circle", tint: loginBadgeTint)
-                WebMountBadge(text: resolvedSite.enabled ? "已允许" : "已停用", systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield", tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed)
+                if isWatchMode, registry.site(id: site.siteId) == nil {
+                    WebMountBadge(text: "高风险模式", systemImage: "exclamationmark.shield", tint: AmberTheme.accentAmber)
+                } else {
+                    WebMountBadge(text: resolvedSite.enabled ? "已允许" : "已停用", systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield", tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed)
+                }
                 WebMountBadge(text: runtime.snapshot.sessionId, systemImage: "rectangle.stack", tint: AmberTheme.accentIndigo)
                 WebMountBadge(text: controlOwnerBadgeText, systemImage: controlOwnerImage, tint: controlOwnerTint)
                 if let sessionRecord, sessionRecord.persistentOptIn {
@@ -1101,13 +1253,13 @@ struct WebMountSiteView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "页面内容")
             AmberFormGroup {
-                AmberGlassGroup(spacing: 12) {
+                AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
                             bridgeActionButtons
                             Spacer(minLength: 0)
                         }
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
                             bridgeActionButtons
                         }
                     }
@@ -1178,13 +1330,13 @@ struct WebMountSiteView: View {
                     trailing: cookieSummary.map { "\($0.cookieCount)" } ?? "..."
                 )
                 WebMountDivider()
-                AmberGlassGroup(spacing: 12) {
+                AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
                     ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
+                        HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
                             cookieActionButtons
                             Spacer(minLength: 0)
                         }
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
                             cookieActionButtons
                         }
                     }
@@ -1433,6 +1585,10 @@ struct WebMountSiteView: View {
             }
             return
         }
+        if isUnlistedWatchSession {
+            await openTypedURL()
+            return
+        }
         isLoading = true
         _ = await controller.openForUser(site: resolvedSite, sessionId: runtime.snapshot.sessionId)
         openURLText = runtime.snapshot.currentURL ?? resolvedSite.homepageURL
@@ -1448,14 +1604,18 @@ struct WebMountSiteView: View {
             return
         }
         isLoading = true
+        var input: [String: Any] = [
+            "url": openURLText,
+            "session_id": runtime.snapshot.sessionId
+        ]
+        if !isUnlistedWatchSession {
+            input["site_id"] = resolvedSite.id
+        }
         let output = await controller.execute(
             toolName: "wm_open",
-            input: IOSWebMountController.json([
-                "site_id": resolvedSite.id,
-                "url": openURLText,
-                "session_id": runtime.snapshot.sessionId
-            ]),
-            isUserInitiated: true
+            input: IOSWebMountController.json(input),
+            isUserInitiated: true,
+            allowUnlistedHosts: isUnlistedWatchSession && highRiskAutoApprove
         )
         isLoading = false
         if let object = Self.jsonObject(output),
@@ -1843,13 +2003,13 @@ private struct WebMountHandoffActions: View {
                 .foregroundStyle(AmberTheme.muted)
                 .lineLimit(2)
 
-            AmberGlassGroup(spacing: 12) {
+            AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
                 ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
                         handoffButtons
                         Spacer(minLength: 0)
                     }
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
                         handoffButtons
                     }
                 }

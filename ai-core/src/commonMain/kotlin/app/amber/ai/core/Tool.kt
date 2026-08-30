@@ -460,8 +460,8 @@ fun createWebMountTabCloseToolDeclaration(): Tool = webMountTool(
 fun createWebMountOpenToolDeclaration(): Tool = webMountTool(
     name = "wm_open",
     description = """
-        Open an allowlisted URL or station in the local iOS WKWebView WebMount session.
-        Use `site_id` from wm_stations when possible. URLs outside the WebMount allowlist are rejected.
+        Open a URL or station in the iOS WebMount session.
+        Use `site_id` from wm_stations when possible. Unlisted public hosts are available only while high-risk auto-approve is enabled.
     """.trimIndent(),
     parameters = webMountOpenParameters()
 )
@@ -2831,7 +2831,7 @@ private fun webMountOpenParameters(): InputSchema = InputSchema.Obj(
         })
         put("url", buildJsonObject {
             put("type", "string")
-            put("description", "optional https URL; must match WebMount allowlist")
+            put("description", "optional web URL; normally must match the WebMount allowlist, while high-risk auto-approve permits unlisted public hosts")
         })
         put("timeout_ms", buildJsonObject {
             put("type", "integer")

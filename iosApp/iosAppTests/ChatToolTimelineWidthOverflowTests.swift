@@ -44,6 +44,41 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         XCTAssertFalse(title.contains("https://"), "不应退回整段 URL，实际=\(title)")
     }
 
+    func testWebMountCapsuleRedactsTypedTextAndURLQuery() {
+        let typedSecret = "typed-private-value"
+        let typeTool = UIMessagePart.Tool(
+            toolCallId: "call_wm_type_private",
+            toolName: "wm_type",
+            input: "{\"selector\":\"#password\",\"text\":\"\(typedSecret)\"}",
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let typeStep = ChatToolStepModel(tool: typeTool)
+        XCTAssertEqual(typeStep.title, "准备输入网页字段 · #password")
+        XCTAssertFalse(typeStep.title.contains(typedSecret))
+        XCTAssertFalse(typeStep.detail?.contains(typedSecret) == true)
+
+        let URLSecret = "query-private-value"
+        let openTool = UIMessagePart.Tool(
+            toolCallId: "call_wm_open_private",
+            toolName: "wm_open",
+            input: "{\"url\":\"https://example.com/orders?token=\(URLSecret)\"}",
+            output: [UIMessagePart.Text(
+                text: "{\"status\":\"ready\",\"url\":\"https://example.com/orders?token=\(URLSecret)\"}",
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let openStep = ChatToolStepModel(tool: openTool)
+        XCTAssertFalse(openStep.title.contains(URLSecret))
+        XCTAssertFalse(openStep.detail?.contains(URLSecret) == true)
+        XCTAssertTrue(openStep.title.contains("https://example.com/orders"))
+    }
+
     /// cell 自 sizing 用无界提案询问理想宽度：胶囊理想宽必须自身就在列宽预算内，
     /// 否则列宽随 toolCallStarted/完成换词跳变、超长行被居中裁切顶到屏幕两端。
     /// 有界提案下的 truncation 由上一条用例覆盖，这里只锁理想宽。
@@ -220,6 +255,48 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             )
         }
         XCTAssertLessThanOrEqual(empty, columnWidth + 1, "搜索胶囊理想宽超出列宽：\(empty)")
+    }
+
+    func testToolSearchCapsuleHugsContentAndFitsCompactAccessibilityWidth() {
+        func model(toolName: String) -> ChatToolStepModel {
+            ChatToolStepModel(tool: UIMessagePart.Tool(
+                toolCallId: "call_\(toolName)",
+                toolName: toolName,
+                input: "{}",
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ))
+        }
+
+        func idealWidth(_ step: ChatToolStepModel) -> CGFloat {
+            UIHostingController(rootView: ChatToolTimeline(steps: [step]))
+                .sizeThatFits(in: CGSize(
+                    width: CGFloat.greatestFiniteMagnitude,
+                    height: UIView.layoutFittingExpandedSize.height
+                ))
+                .width
+        }
+
+        let toolSearch = model(toolName: "tool_search")
+        XCTAssertEqual(toolSearch.title, "查找工具")
+        XCTAssertLessThan(
+            idealWidth(toolSearch) + 20,
+            idealWidth(model(toolName: "search_web")),
+            "tool_search 不应继承 search_web 的固定长标题槽"
+        )
+
+        let compactColumnWidth = 320 - ChatLayout.contentHorizontalInset * 2
+        let compactHost = UIHostingController(
+            rootView: ChatToolTimeline(steps: [toolSearch])
+                .dynamicTypeSize(.accessibility3)
+        )
+        let fitted = compactHost.sizeThatFits(in: CGSize(
+            width: compactColumnWidth,
+            height: UIView.layoutFittingExpandedSize.height
+        ))
+        XCTAssertLessThanOrEqual(fitted.width, compactColumnWidth + 1, "fitted=\(fitted)")
     }
 
     func testLongWebMountToolTitleFitsWhenColumnWidthIsProposed() {

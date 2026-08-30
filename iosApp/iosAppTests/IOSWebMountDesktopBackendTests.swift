@@ -589,7 +589,8 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
             runtime: localRuntime,
             runtimeFactory: { DesktopControllerRuntimeFake(sessionId: "unused-local") },
             desktopBackend: desktopBackend,
-            mcpServerProvider: { [config] in [config] }
+            mcpServerProvider: { [config] in [config] },
+            resolveHost: { _ in ["93.184.216.34"] }
         )
         controller.registry.setEnabled(id: "hackernews", enabled: true)
 
@@ -625,6 +626,32 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
         XCTAssertEqual(explicitOpen["session_id"] as? String, remoteSessionId)
         XCTAssertFalse(controller.sessionStore.record(sessionId: remoteSessionId)?.needsReopen == true)
         XCTAssertEqual(remoteClient.calls.count, 1)
+
+        let unlistedURL = "https://unlisted.amber.invalid/docs"
+        let highRiskOpen = try jsonObject(await controller.execute(
+            toolName: "wm_open",
+            input: IOSWebMountController.json([
+                "session_id": remoteSessionId,
+                "url": unlistedURL
+            ]),
+            isUserInitiated: true,
+            allowUnlistedHosts: true
+        ))
+        XCTAssertEqual(highRiskOpen["ok"] as? Bool, true)
+        XCTAssertEqual(remoteClient.calls.last?.arguments["url"] as? String, unlistedURL)
+
+        let callsBeforeBlockedOpen = remoteClient.calls.count
+        let blockedOpen = try jsonObject(await controller.execute(
+            toolName: "wm_open",
+            input: IOSWebMountController.json([
+                "session_id": remoteSessionId,
+                "url": unlistedURL
+            ]),
+            isUserInitiated: true
+        ))
+        XCTAssertEqual(blockedOpen["ok"] as? Bool, false)
+        XCTAssertEqual(blockedOpen["error_code"] as? String, "host_not_allowed")
+        XCTAssertEqual(remoteClient.calls.count, callsBeforeBlockedOpen)
 
         let closed = try jsonObject(await controller.execute(
             toolName: "wm_tab_close",
