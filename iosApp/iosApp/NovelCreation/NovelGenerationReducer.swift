@@ -879,8 +879,7 @@ extension NovelGenerationReducer {
             let upcomingArc = proposal.upcomingArc.map {
                 $0.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            guard !upcomingArc.isEmpty,
-                  upcomingArc.count <= NovelUpcomingArcRecord.maxBeats,
+            guard upcomingArc.count <= NovelUpcomingArcRecord.maxBeats,
                   upcomingArc.allSatisfy({
                       !$0.isEmpty && $0.count <= NovelUpcomingArcRecord.maxBeatCharacterCount
                   }) else {

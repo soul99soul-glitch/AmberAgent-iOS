@@ -39,6 +39,9 @@ struct NovelInjectionPlanningRequest: Equatable, Sendable {
     let includeUnsynchronizedStateWarning: Bool
     let pendingState: NovelPendingStateInjection?
     let overrides: NovelInjectionOverrides
+    /// Optional sections stop packing at this total-input estimate. Required
+    /// sections still use `budget.maxEstimatedInputTokens` as the hard limit.
+    let optionalPackingLimitTokens: Int?
     let budget: NovelInjectionBudget
 
     init(
@@ -51,6 +54,7 @@ struct NovelInjectionPlanningRequest: Equatable, Sendable {
         includeUnsynchronizedStateWarning: Bool = true,
         pendingState: NovelPendingStateInjection? = nil,
         overrides: NovelInjectionOverrides = .none,
+        optionalPackingLimitTokens: Int? = nil,
         budget: NovelInjectionBudget = .standard
     ) {
         self.branchID = branchID
@@ -62,6 +66,7 @@ struct NovelInjectionPlanningRequest: Equatable, Sendable {
         self.includeUnsynchronizedStateWarning = includeUnsynchronizedStateWarning
         self.pendingState = pendingState
         self.overrides = overrides
+        self.optionalPackingLimitTokens = optionalPackingLimitTokens
         self.budget = budget
     }
 }
@@ -451,7 +456,7 @@ enum NovelInjectionPlanner {
             polishPreferenceSection = nil
         }
         let chapterPlanSection: NovelInjectionSection?
-        if request.promptKind == .proseWholeChapter,
+        if (request.promptKind == .proseWholeChapter || request.promptKind == .chapterAdjudicationV1),
            let plan = document.confirmedChapterPlan(for: branch.id) {
             chapterPlanSection = makeSection(
                 kind: .chapterPlan(plan.id),
@@ -463,7 +468,7 @@ enum NovelInjectionPlanner {
             chapterPlanSection = nil
         }
         let recentHighlightsSection: NovelInjectionSection?
-        if request.promptKind == .proseWholeChapter {
+        if request.promptKind == .proseWholeChapter || request.promptKind == .chapterAdjudicationV1 {
             let highlights = state.injectionHighlightsText()
             recentHighlightsSection = highlights.isEmpty
                 ? nil
@@ -477,7 +482,7 @@ enum NovelInjectionPlanner {
             recentHighlightsSection = nil
         }
         let upcomingArcSection: NovelInjectionSection?
-        if request.promptKind == .proseWholeChapter,
+        if (request.promptKind == .proseWholeChapter || request.promptKind == .chapterAdjudicationV1),
            let arc = document.upcomingArc(for: branch.id),
            !arc.beats.isEmpty {
             upcomingArcSection = makeSection(
@@ -549,6 +554,10 @@ enum NovelInjectionPlanner {
                 }
             )
         }
+        let optionalPackingLimit = min(
+            request.optionalPackingLimitTokens ?? request.budget.maxEstimatedInputTokens,
+            request.budget.maxEstimatedInputTokens
+        )
 
         var selectedSessionSections: [NovelInjectionSection] = []
         let discardedQuickStartRunIDs: Set<NovelRunID> = request.promptKind == .quickStart
@@ -609,7 +618,7 @@ enum NovelInjectionPlanner {
                 user: userSection,
                 stateLast: request.pendingState != nil
             )
-            if estimatedTokens(render(proposed)) <= request.budget.maxEstimatedInputTokens {
+            if estimatedTokens(render(proposed)) <= optionalPackingLimit {
                 selectedSessionSections.append(section)
             } else {
                 break
@@ -637,7 +646,7 @@ enum NovelInjectionPlanner {
                 user: userSection,
                 stateLast: request.pendingState != nil
             )
-            if estimatedTokens(render(proposed)) <= request.budget.maxEstimatedInputTokens {
+            if estimatedTokens(render(proposed)) <= optionalPackingLimit {
                 selectedEvents.append(candidate)
             }
         }
@@ -665,7 +674,7 @@ enum NovelInjectionPlanner {
                 user: userSection,
                 stateLast: request.pendingState != nil
             )
-            if estimatedTokens(render(proposed)) <= request.budget.maxEstimatedInputTokens {
+            if estimatedTokens(render(proposed)) <= optionalPackingLimit {
                 selectedSmart.append(candidate)
             } else {
                 trimmedSmartIDs.insert(candidate.source.material.id)
@@ -692,7 +701,7 @@ enum NovelInjectionPlanner {
                 user: userSection,
                 stateLast: request.pendingState != nil
             )
-            if estimatedTokens(render(proposed)) <= request.budget.maxEstimatedInputTokens {
+            if estimatedTokens(render(proposed)) <= optionalPackingLimit {
                 selectedEvents.append(candidate)
             }
         }
@@ -805,7 +814,7 @@ private extension NovelPromptKind {
     var requiresSynchronizedBranch: Bool {
         switch self {
         case .wholeChapterPolish, .wholeChapterRegeneration,
-             .proseContinuation, .proseWholeChapter:
+             .proseContinuation, .proseWholeChapter, .chapterAdjudicationV1:
             true
         // 矛盾检查只读正文逐字原文,不读分支状态摘要,所以不要求状态已同步 ——
         // 否则「状态没同步」会挡住一次纯粹的正文自查。
@@ -822,7 +831,7 @@ private extension NovelPromptKind {
         switch self {
         // 矛盾检查要求分支空闲:边生成边扫,正文会在扫描途中变化,报出来的位置对不上。
         case .proseContinuation, .proseWholeChapter, .wholeChapterPolish, .wholeChapterRegeneration,
-             .continuityAuditV1:
+             .continuityAuditV1, .chapterAdjudicationV1:
             true
         case .quickStart, .characterProposal, .discussion, .stateDeltaV1, .manualSyncV1,
              .discussionArchiveV1, .polishDriftV1, .chapterPlanAcceptanceV1, .chapterPlanProposalV1,
@@ -904,7 +913,8 @@ private extension NovelInjectionPlanner {
             throw NovelInjectionPlanningError.invalidInput("Input token budget must be positive.")
         }
         guard request.budget.chapterTailCharacterLimit >= 0,
-              request.budget.maximumRecentSessionMessages >= 0 else {
+              request.budget.maximumRecentSessionMessages >= 0,
+              (request.optionalPackingLimitTokens ?? 0) >= 0 else {
             throw NovelInjectionPlanningError.invalidInput("Injection limits cannot be negative.")
         }
         let included = Set(request.overrides.forceIncludeMaterialIDs)

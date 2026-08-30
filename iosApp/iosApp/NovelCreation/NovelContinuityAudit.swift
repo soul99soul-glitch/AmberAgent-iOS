@@ -99,6 +99,35 @@ struct NovelContinuityAuditChunk: Equatable, Sendable {
 
 /// 代笔近距连续门：只取最近若干已收正文，再拼候选。手动全书扫描不走这里。
 enum NovelContinuityAuditScope {
+    /// Maps the branch's authoritative chapter selections to audit chapters.
+    /// Both the manual deep scan and the one-pass ghostwrite adjudication use
+    /// this exact ordering/evidence source.
+    static func manuscriptChapters(
+        branch: NovelBranchRecord,
+        discardedChapterIDs: Set<NovelChapterID>,
+        document: NovelProjectDocumentV1
+    ) throws -> [NovelContinuityAuditChapter] {
+        var result: [NovelContinuityAuditChapter] = []
+        for (index, selection) in branch.workingChapterSelections.enumerated() {
+            guard !discardedChapterIDs.contains(selection.chapterID) else { continue }
+            guard let version = document.chapterVersions.first(where: {
+                $0.id == selection.versionID && $0.chapterID == selection.chapterID
+            }) else {
+                throw NovelError.invalidInput("当前分支引用了一个不存在的章节版本。")
+            }
+            guard !version.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+            result.append(NovelContinuityAuditChapter(
+                chapterID: selection.chapterID,
+                ordinal: index + 1,
+                title: version.title,
+                content: version.content
+            ))
+        }
+        return result
+    }
+
     /// `nil` / ≤0 → 不裁切；大于章数 → 全取。
     static func priorManuscriptChapters(
         _ chapters: [NovelContinuityAuditChapter],

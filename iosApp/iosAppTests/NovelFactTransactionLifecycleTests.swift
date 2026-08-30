@@ -3,6 +3,157 @@ import XCTest
 @testable import iosApp
 
 final class NovelFactTransactionLifecycleTests: XCTestCase {
+    func testGhostwriteAdjudicationRejectsWrongPlanIdentityAtomically() throws {
+        let fixture = try ghostwriteAdjudicationCandidateDocument()
+        let before = fixture.document
+        var command = collectCommand(
+            document: fixture.document,
+            candidate: fixture.candidate
+        )
+        command.source = .systemAutoCollect
+        let prepared = try NovelFactTransactionReducer.prepareCollection(
+            command,
+            payloadSHA256: try command.canonicalPayloadSHA256(),
+            in: before
+        )
+        let artifacts = try NovelTestFixtures.factTransactionArtifacts(
+            document: prepared.document,
+            pendingID: command.pendingID
+        )
+        let plan = try XCTUnwrap(
+            fixture.document.confirmedChapterPlan(for: command.branchID)
+        )
+
+        XCTAssertThrowsError(try NovelFactTransactionReducer.commitGhostwriteAdjudication(
+            command,
+            payloadSHA256: try command.canonicalPayloadSHA256(),
+            planID: NovelChapterPlanID(),
+            planDigest: plan.contentDigest,
+            delta: try NovelStructuredOutputDecoder.decodeStateDelta(
+                from: validDeltaJSON()
+            ),
+            artifacts: artifacts,
+            in: fixture.document
+        )) { error in
+            guard let error = error as? NovelError,
+                  case .invalidInput = error else {
+                return XCTFail("Expected a plan-identity rejection, got \(error)")
+            }
+        }
+        XCTAssertEqual(before, fixture.document)
+        XCTAssertEqual(before.candidates[0].status, .available)
+        XCTAssertEqual(
+            before.confirmedChapterPlan(for: command.branchID)?.id,
+            plan.id
+        )
+    }
+
+    func testGhostwriteAdjudicationCommitsAllArtifactsAndRotatesPlanOnce() throws {
+        let fixture = try ghostwriteAdjudicationCandidateDocument()
+        var command = collectCommand(
+            document: fixture.document,
+            candidate: fixture.candidate
+        )
+        command.source = .systemAutoCollect
+        let payloadSHA256 = try command.canonicalPayloadSHA256()
+        let prepared = try NovelFactTransactionReducer.prepareCollection(
+            command,
+            payloadSHA256: payloadSHA256,
+            in: fixture.document
+        )
+        let artifacts = try NovelTestFixtures.factTransactionArtifacts(
+            document: prepared.document,
+            pendingID: command.pendingID
+        )
+        let plan = try XCTUnwrap(
+            fixture.document.confirmedChapterPlan(for: command.branchID)
+        )
+        let delta = NovelStateDeltaV1(
+            schemaVersion: 1,
+            stateSummary: "Mara opened the archive.",
+            events: [NovelStateEventV1(
+                id: "archive-opened",
+                kind: "discovery",
+                summary: "Mara opened the archive.",
+                entityReferences: ["Mara"],
+                evidence: "Mara opened the archive."
+            )],
+            characterChanges: [],
+            relationshipChanges: [],
+            foreshadowingChanges: [],
+            unresolvedEntityNames: ["Mara"],
+            branchOutlinePatch: "Mara investigates the archive.",
+            settingProposals: [NovelSettingProposalDraftV1(
+                id: "bell-rule",
+                title: "The bell's warning",
+                content: "The bell rings twice before danger.",
+                evidence: "The bell rang twice."
+            )]
+        )
+        let nextPlanID = NovelChapterPlanID()
+        let nextPlan = NovelChapterPlanProposalV1(
+            outlinePlacement: "Chapter Two",
+            goalAndConflict: "Mara follows the archive map.",
+            mustHappen: ["Mara reaches the lower archive."],
+            mustNotHappen: ["Mara leaves the city."],
+            endingHook: "A second bell rings.",
+            visibleFacts: ["Mara knows the archive is open."]
+        )
+
+        let committed = try NovelFactTransactionReducer.commitGhostwriteAdjudication(
+            command,
+            payloadSHA256: payloadSHA256,
+            planID: plan.id,
+            planDigest: plan.contentDigest,
+            nextPlanID: nextPlanID,
+            nextPlan: nextPlan,
+            delta: delta,
+            artifacts: artifacts,
+            in: fixture.document,
+            now: fixture.document.project.updatedAt.addingTimeInterval(1)
+        )
+        let after = committed.document
+
+        XCTAssertEqual(after.project.revision, fixture.document.project.revision + 1)
+        XCTAssertEqual(after.project.configRevision, fixture.document.project.configRevision + 1)
+        XCTAssertEqual(after.chapters.count, fixture.document.chapters.count + 1)
+        XCTAssertEqual(after.chapterVersions.count, fixture.document.chapterVersions.count + 1)
+        XCTAssertEqual(after.events.count, fixture.document.events.count + 1)
+        XCTAssertEqual(after.stateSnapshots.count, fixture.document.stateSnapshots.count + 1)
+        XCTAssertEqual(after.settingProposals.count, fixture.document.settingProposals.count + 1)
+        XCTAssertEqual(after.checkpoints.count, fixture.document.checkpoints.count + 1)
+        XCTAssertEqual(after.injectionReceipts.count, fixture.document.injectionReceipts.count + 1)
+        XCTAssertEqual(after.generationReceipts.count, fixture.document.generationReceipts.count + 1)
+        XCTAssertTrue(after.pendingOperations.isEmpty)
+        let rotatedPlan = try XCTUnwrap(after.confirmedChapterPlan(for: command.branchID))
+        XCTAssertEqual(rotatedPlan.id, nextPlanID)
+        XCTAssertEqual(rotatedPlan.mustHappen, nextPlan.mustHappen)
+        XCTAssertNotEqual(rotatedPlan.id, plan.id)
+        XCTAssertEqual(after.branches[0].syncStatus, .synchronized)
+        XCTAssertEqual(after.appliedOperations.count, fixture.document.appliedOperations.count + 1)
+        XCTAssertEqual(after.appliedOperations.last?.kind, .collectCandidate)
+        XCTAssertEqual(after.appliedOperations.last?.appliedProjectRevision, after.project.revision)
+
+        let candidate = try XCTUnwrap(after.candidates.first { $0.id == command.candidateID })
+        XCTAssertEqual(candidate.status, .collected)
+        let checkpoint = try XCTUnwrap(after.checkpoints.first { $0.id == candidate.collectedCheckpointID })
+        XCTAssertEqual(checkpoint.kind, .collection)
+        XCTAssertEqual(checkpoint.sourceCandidateID, candidate.id)
+        XCTAssertEqual(after.chapterVersions.last?.sourceCandidateID, candidate.id)
+        XCTAssertEqual(checkpoint.stateSnapshotID, after.stateSnapshots.last?.id)
+        XCTAssertEqual(after.events.last?.summary, "Mara opened the archive.")
+        XCTAssertEqual(after.injectionReceipts.last?.factTransaction?.kind, .stateDelta)
+        XCTAssertEqual(after.generationReceipts.last?.factTransaction?.kind, .stateDelta)
+        XCTAssertEqual(committed.outcome, .candidateCollected(
+            projectID: fixture.document.project.id,
+            branchID: command.branchID,
+            candidateID: command.candidateID,
+            checkpointID: checkpoint.id,
+            chapterVersionID: after.chapterVersions.last!.id,
+            revision: after.project.revision
+        ))
+    }
+
     func testCollectionCommitsImmediatelyWithoutStartingFactModel() async throws {
         // 续写/新章：host 写 plot/ 快进，不再抽 JSON。
         let fixture = try candidateDocument()
@@ -38,7 +189,7 @@ final class NovelFactTransactionLifecycleTests: XCTestCase {
         )
     }
 
-    func testFastForwardCollectWritesModelPlotPointer() async throws {
+    func testFastForwardCollectWritesDeterministicPlotPointerWithoutModel() async throws {
         let fixture = try candidateDocument()
         let harness = try await makeHarness(
             document: fixture.document,
@@ -67,17 +218,17 @@ final class NovelFactTransactionLifecycleTests: XCTestCase {
 
         let final = try await harness.repository.document(command.projectID)
         XCTAssertEqual(final.branches[0].syncStatus, .synchronized)
-        XCTAssertEqual(
-            final.stateSnapshots.last?.summary,
-            "Mara has opened the archive; the bell still echoes."
-        )
+        let baseSnapshotID = fixture.document.branches[0].currentStateSnapshotID
+        let baseSummary = fixture.document.stateSnapshots.first {
+            $0.id == baseSnapshotID
+        }?.summary
+        XCTAssertEqual(final.stateSnapshots.last?.summary, baseSummary)
         XCTAssertTrue(
             final.stateSnapshots.last?.chapterPlots.last?.text.contains("Mara opened the archive") == true
         )
         XCTAssertEqual(final.stateSnapshots.last?.chapterPlots.last?.stale, false)
         let requests = await harness.adapter.requests
-        XCTAssertEqual(requests.count, 1)
-        XCTAssertEqual(requests[0].purpose, .stateExtraction)
+        XCTAssertTrue(requests.isEmpty)
     }
 
     func testSystemAutoCollectUsesInlineStateDeltaAndStaysSynchronized() async throws {
@@ -2275,6 +2426,37 @@ private extension NovelFactTransactionLifecycleTests {
             collectedCheckpointID: unbound.collectedCheckpointID,
             chapterPlanDigest: plan.contentDigest,
             ghostwritePlanID: unbound.ghostwritePlanID,
+            createdAt: unbound.createdAt
+        )
+        fixture.document.candidates = [bound]
+        try NovelDocumentValidator.validate(fixture.document)
+        return (fixture.document, bound)
+    }
+
+    func ghostwriteAdjudicationCandidateDocument() throws -> (
+        document: NovelProjectDocumentV1,
+        candidate: NovelCandidateRecord
+    ) {
+        var fixture = try autoCollectableCandidateDocument()
+        let plan = try XCTUnwrap(
+            fixture.document.confirmedChapterPlan(for: fixture.document.branches[0].id)
+        )
+        let unbound = fixture.document.candidates[0]
+        let bound = NovelCandidateRecord(
+            id: unbound.id,
+            kind: unbound.kind,
+            branchID: unbound.branchID,
+            sessionID: unbound.sessionID,
+            sourceMessageID: unbound.sourceMessageID,
+            baseCheckpointID: unbound.baseCheckpointID,
+            baseHeadRevision: unbound.baseHeadRevision,
+            status: unbound.status,
+            content: unbound.content,
+            sourceChapterVersionID: unbound.sourceChapterVersionID,
+            clonedFromCandidateID: unbound.clonedFromCandidateID,
+            collectedCheckpointID: unbound.collectedCheckpointID,
+            chapterPlanDigest: plan.contentDigest,
+            ghostwritePlanID: plan.id,
             createdAt: unbound.createdAt
         )
         fixture.document.candidates = [bound]

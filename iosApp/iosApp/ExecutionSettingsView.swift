@@ -165,7 +165,7 @@ struct ExecutionSettingsView: View {
                 ExecutionToggleRow(
                     systemImage: "waveform",
                     title: "音频保活",
-                    subtitle: "聊天、小说、议会、深度阅读进入后台时循环一段听不见的音频，避免 30 秒后被挂起。锁屏时可能暂停其它音乐，控制中心也可能出现播放指示。",
+                    subtitle: "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。",
                     isOn: audioKeepAlive
                 ) {
                     audioKeepAlive.toggle()

@@ -928,6 +928,32 @@ extension DefaultNovelCreation {
     }
 }
 
+extension DefaultNovelCreation {
+    func mapInjectionError(_ error: Error) -> NovelError {
+        guard let error = error as? NovelInjectionPlanningError else {
+            return .invalidInput(error.localizedDescription)
+        }
+        return switch error {
+        case .requiredContentExceedsBudget(let limit, let estimated, let items):
+            NovelError.injectionBudgetExceeded(
+                required: estimated,
+                limit: limit,
+                items: items
+            )
+        case .missingBranch(let id): NovelError.branchNotFound(id)
+        case .missingSession(let id): NovelError.sessionNotFound(id)
+        case .missingStateSnapshot(let id): NovelError.stateSnapshotNotFound(id)
+        case .missingChapterVersion(let id):
+            NovelError.invalidInput("Chapter version \(id) is unavailable.")
+        case .missingMaterialRevision(let id):
+            NovelError.invalidInput("Material revision \(id) is unavailable.")
+        case .branchRequiresSync:
+            NovelError.invalidInput("The branch must be synchronized before formal generation.")
+        case .invalidInput(let message): NovelError.invalidInput(message)
+        }
+    }
+}
+
 private extension DefaultNovelCreation {
     func resumeRecoveredRunIfPossible(
         _ run: NovelActiveRunRecord,
@@ -2362,30 +2388,6 @@ private extension DefaultNovelCreation {
             )
         }
         return min(request.inputBudgetTokens, available)
-    }
-
-    func mapInjectionError(_ error: Error) -> NovelError {
-        guard let error = error as? NovelInjectionPlanningError else {
-            return .invalidInput(error.localizedDescription)
-        }
-        return switch error {
-        case .requiredContentExceedsBudget(let limit, let estimated, let items):
-            NovelError.injectionBudgetExceeded(
-                required: estimated,
-                limit: limit,
-                items: items
-            )
-        case .missingBranch(let id): NovelError.branchNotFound(id)
-        case .missingSession(let id): NovelError.sessionNotFound(id)
-        case .missingStateSnapshot(let id): NovelError.stateSnapshotNotFound(id)
-        case .missingChapterVersion(let id):
-            NovelError.invalidInput("Chapter version \(id) is unavailable.")
-        case .missingMaterialRevision(let id):
-            NovelError.invalidInput("Material revision \(id) is unavailable.")
-        case .branchRequiresSync:
-            NovelError.invalidInput("The branch must be synchronized before formal generation.")
-        case .invalidInput(let message): NovelError.invalidInput(message)
-        }
     }
 
     func failure(from error: Error, fallbackCode: String) -> NovelFailure {

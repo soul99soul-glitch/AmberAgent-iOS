@@ -30,13 +30,14 @@ struct NovelProjectWorkspaceView: View {
 
     init(
         viewModel: NovelCreationViewModel,
+        sessionViewModel: NovelSessionViewModel,
         sharedSettings: IOSSharedSettingsStore,
         projectID: NovelProjectID
     ) {
         self.viewModel = viewModel
         self.sharedSettings = sharedSettings
         self.projectID = projectID
-        self._sessionViewModel = State(initialValue: NovelSessionViewModel(workspace: viewModel))
+        self._sessionViewModel = State(initialValue: sessionViewModel)
     }
 
     var body: some View {

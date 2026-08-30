@@ -7,8 +7,8 @@ import UIKit
 /// iOS 只把「正在播放」当成可长期保活的理由。全零静音会被系统当没在播并挂起，
 /// 所以这里用 18 kHz、极低振幅的正弦波，手机扬声器听不见，看门狗也读得到能量。
 ///
-/// 前台用 `mixWithOthers`，不抢用户正在听的歌；进入后台后改成独占 playback，
-/// 这是目前能拿到的最狠合法窗口。生成结束立刻停，不常驻。
+/// 前台用 `mixWithOthers`，不抢用户正在听的歌；进入后台后改成独占 playback。
+/// 这只是争取后台执行机会，系统仍可能暂停 App。生成结束立刻停，不常驻。
 @MainActor
 protocol BackgroundAudioKeepAliveControlling: AnyObject {
     var isActive: Bool { get }
@@ -20,8 +20,14 @@ protocol BackgroundAudioKeepAliveControlling: AnyObject {
 final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
     static let shared = BackgroundAudioKeepAlive()
 
-    private(set) var isActive = false
+    /// Callers use this value to decide whether audio is still providing an
+    /// execution opportunity. It must reflect the player, not only our intent.
+    var isActive: Bool {
+        wantsPlayback && player?.isPlaying == true
+    }
 
+    private var wantsPlayback = false
+    private var lastAppliedExclusive: Bool?
     private var player: AVAudioPlayer?
     private var observerTokens: [NSObjectProtocol] = []
     private let session: AVAudioSession
@@ -34,8 +40,8 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
 
     func start() {
         installObserversIfNeeded()
-        guard !isActive else {
-            resumePlaybackIfNeeded()
+        guard !wantsPlayback else {
+            resumePlaybackIfNeeded(transition: "audioKeepAliveResume")
             return
         }
         do {
@@ -52,8 +58,8 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
                 deactivateSessionAfterFailedStart()
                 return
             }
-            isActive = true
-            IOSBackgroundLifecycleLog.record("audioKeepAliveStart", detail: exclusiveDetail)
+            wantsPlayback = true
+            IOSBackgroundLifecycleLog.record("audioKeepAliveStart", detail: playbackDetail)
         } catch {
             NSLog("[AmberAudioKeepAlive] start failed: \(error)")
             deactivateSessionAfterFailedStart()
@@ -61,9 +67,9 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
     }
 
     func stop() {
-        guard isActive else { return }
+        guard wantsPlayback || player != nil else { return }
         player?.stop()
-        isActive = false
+        wantsPlayback = false
         do {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
@@ -109,37 +115,76 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
                 Task { @MainActor in self?.handleInterruption(typeValue: typeValue) }
             }
         )
+        observerTokens.append(
+            center.addObserver(
+                forName: AVAudioSession.routeChangeNotification,
+                object: session,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.handleRouteChange() }
+            }
+        )
+        observerTokens.append(
+            center.addObserver(
+                forName: AVAudioSession.mediaServicesWereResetNotification,
+                object: session,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.handleMediaServicesReset() }
+            }
+        )
     }
 
     private func handleDidEnterBackground() {
-        guard isActive else { return }
+        guard wantsPlayback else { return }
         applySession(exclusive: true)
     }
 
     private func handleWillEnterForeground() {
-        guard isActive else { return }
+        guard wantsPlayback else { return }
         applySession(exclusive: false)
     }
 
     private func handleInterruption(typeValue: UInt?) {
-        guard isActive else { return }
+        guard wantsPlayback else { return }
         let type = typeValue.flatMap(AVAudioSession.InterruptionType.init(rawValue:))
-        if type == .ended {
-            resumePlaybackIfNeeded()
+        if type == .began {
+            IOSBackgroundLifecycleLog.record(
+                "audioKeepAliveInterrupted",
+                detail: playbackDetail
+            )
+            return
         }
+        if type == .ended {
+            resumePlaybackIfNeeded(transition: "audioKeepAliveInterruptionEnded")
+        }
+    }
+
+    private func handleRouteChange() {
+        guard wantsPlayback else { return }
+        applySession(exclusive: shouldBeExclusive)
+        IOSBackgroundLifecycleLog.record("audioKeepAliveRouteChanged", detail: playbackDetail)
+    }
+
+    private func handleMediaServicesReset() {
+        guard wantsPlayback else { return }
+        player = nil
+        wantsPlayback = false
+        IOSBackgroundLifecycleLog.record("audioKeepAliveMediaReset", detail: playbackDetail)
+        start()
     }
 
     private func applySession(exclusive: Bool) {
         do {
             try activateSession(exclusive: exclusive)
-            resumePlaybackIfNeeded()
+            resumePlaybackIfNeeded(transition: "audioKeepAliveSessionApplied")
             IOSBackgroundLifecycleLog.record(
                 exclusive ? "audioKeepAliveExclusive" : "audioKeepAliveMix",
-                detail: exclusiveDetail
+                detail: playbackDetail
             )
         } catch {
             NSLog("[AmberAudioKeepAlive] session update failed: \(error)")
-            resumePlaybackIfNeeded()
+            resumePlaybackIfNeeded(transition: "audioKeepAliveSessionUpdateFailed")
         }
     }
 
@@ -147,6 +192,7 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
         let options: AVAudioSession.CategoryOptions = exclusive ? [] : [.mixWithOthers]
         try session.setCategory(.playback, mode: .default, options: options)
         try session.setActive(true)
+        lastAppliedExclusive = exclusive
     }
 
     /// `play()` / player 构造失败时 `isActive` 仍为 false，`stop()` 进不去；
@@ -154,6 +200,8 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
     private func deactivateSessionAfterFailedStart() {
         player?.stop()
         player = nil
+        wantsPlayback = false
+        lastAppliedExclusive = nil
         do {
             try session.setActive(false, options: .notifyOthersOnDeactivation)
         } catch {
@@ -161,13 +209,19 @@ final class BackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
         }
     }
 
-    private func resumePlaybackIfNeeded() {
-        guard isActive, player?.isPlaying != true else { return }
-        _ = player?.play()
+    private func resumePlaybackIfNeeded(transition: String) {
+        guard wantsPlayback, player?.isPlaying != true else { return }
+        guard player?.play() == true else {
+            IOSBackgroundLifecycleLog.record("\(transition)Failed", detail: playbackDetail)
+            deactivateSessionAfterFailedStart()
+            return
+        }
+        IOSBackgroundLifecycleLog.record(transition, detail: playbackDetail)
     }
 
-    private var exclusiveDetail: String {
-        "exclusive=\(shouldBeExclusive ? 1 : 0)"
+    private var playbackDetail: String {
+        let exclusive = lastAppliedExclusive.map { $0 ? "1" : "0" } ?? "unknown"
+        return "exclusive=\(exclusive) playing=\(player?.isPlaying == true ? 1 : 0)"
     }
 }
 

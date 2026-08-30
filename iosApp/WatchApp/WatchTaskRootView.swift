@@ -191,6 +191,7 @@ struct WatchTaskRootView: View {
         switch model.snapshot.phase {
         case "running": "waveform"
         case "waitingForUser": "hand.raised.fill"
+        case "reconnecting": "arrow.triangle.2.circlepath"
         case "completed": "checkmark.circle.fill"
         case "failed": "exclamationmark.triangle.fill"
         case "cancelled": "stop.circle"

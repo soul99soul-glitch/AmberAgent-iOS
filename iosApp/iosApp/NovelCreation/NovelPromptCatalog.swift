@@ -14,6 +14,7 @@ enum NovelPromptKind: String, Codable, CaseIterable, Sendable {
     case polishDriftV1
     case continuityAuditV1
     case chapterPlanAcceptanceV1
+    case chapterAdjudicationV1
     case chapterPlanProposalV1
     case workspacePlotV1
 }
@@ -106,6 +107,11 @@ enum NovelPromptCatalog {
         case .characterProposal, .discussionArchiveV1, .polishDriftV1, .continuityAuditV1,
              .chapterPlanAcceptanceV1, .workspacePlotV1:
             break
+        case .chapterAdjudicationV1:
+            // v1 is the shipped four-field adjudication contract. Keep it
+            // readable for historical receipts after adding the optional v2
+            // next-plan field.
+            versions.insert("novel.chapter-adjudication.v1")
         }
         return versions
     }
@@ -249,10 +255,11 @@ enum NovelPromptCatalog {
                   confirms it manually in the project panel, so tell them to do so. The tool is rejected
                   during an active ghostwriting run, so never call it there.
                 - When the discussion has converged and the author wants the agent to write the next chapter
-                  or chapters, call novel_prepare_ghostwrite once. Fill the complete chapter plan, the next
-                  arc, and a sensible suggested chapter count from the discussion. The host shows them in an
+                  or chapters, call novel_prepare_ghostwrite once. Fill the complete chapter plan and a sensible
+                  suggested chapter count from the discussion. Include the next arc only when the direction is
+                  clear; otherwise pass an empty upcoming_arc. The host shows them in an
                   approval card where the author can choose 1–10 chapters. If approved, the host confirms the
-                  plan, saves the arc, switches to ghostwriting, and starts that batch; if rejected, nothing is
+                  plan, saves any non-empty arc, switches to ghostwriting, and starts that batch; if rejected, nothing is
                   written. Do not call novel_propose_chapter_plan first, do not ask separately for the chapter
                   count, and do not tell the author to switch modes manually.
                 - When suggesting a project or chapter title, prefer a concise evocative title of 1–8
@@ -299,8 +306,9 @@ enum NovelPromptCatalog {
                 - novel_prepare_ghostwrite {outline_placement, goal_and_conflict, must_happen[],
                   must_not_happen[], ending_hook, visible_facts[], upcoming_arc[],
                   suggested_chapter_count, reason?} — propose the complete confirmed plan and next arc, then
-                  let the author select 1–10 chapters in the approval card. upcoming_arc must contain 1–8
-                  beats of at most 160 characters each. This tool never writes or starts before approval.
+                  let the author select 1–10 chapters in the approval card. upcoming_arc may be empty; when
+                  provided it contains at most 8 non-empty beats of at most 160 characters each. This tool
+                  never writes or starts before approval.
 
                 DISCUSSION MODE — how chat output is handled:
                 - Prose you type in this thread is discussion, not a collectable new-chapter candidate.
@@ -517,6 +525,36 @@ enum NovelPromptCatalog {
                 Do not rewrite the prose. Return only the JSON object.
 
                 \(chapterPlanAcceptanceJSONContract)
+                """
+            )
+
+        case .chapterAdjudicationV1:
+            NovelPromptTemplate(
+                kind: kind,
+                version: "novel.chapter-adjudication.v2",
+                systemText: """
+                Perform the final structured review of one whole-chapter prose candidate before collection.
+                The AUTHORITATIVE CONTEXT contains the confirmed chapter plan, recent written beats, upcoming
+                arc, and current branch state. RECENT MANUSCRIPT FOR CONTINUITY, when supplied, is the only
+                manuscript text you may use for cross-chapter comparison. The candidate is the only text that
+                may produce new state facts.
+
+                Keep the three decisions separate. Plan acceptance is a hard contract gate: mark accepted false
+                only when a must-happen is absent from both the candidate and RECENT WRITTEN BEATS, or when a
+                must-not-happen clearly occurs in the candidate. obviousRepetition is advisory and must not by
+                itself make accepted false. Judge story changes, not props, staging, or wording.
+                Continuity is a hard gate only for a contradiction proven by the supplied manuscript and candidate;
+                do not turn ordinary callbacks, deliberate flashbacks, lies, rumours, or harmless repetition into
+                a blocking issue. State delta records only facts caused or established by the candidate.
+                Every state-delta evidence value must be an exact contiguous substring of the candidate.
+                The PREPARE NEXT CHAPTER PLAN flag and bounded next-plan context are advisory planning inputs.
+                When the flag is true, return a nextPlan object whenever the supplied context supports a coherent
+                next chapter; when the flag is false, return nextPlan as null. If there is not enough information
+                for a safe proposal, return null. A missing nextPlan is also accepted as a host fallback and must
+                never invalidate the four core review fields. Do not rewrite the candidate or add unknown keys.
+                Return exactly one raw JSON object and no Markdown, code fence, comments, or trailing prose.
+
+                \(chapterAdjudicationJSONContract)
                 """
             )
 
@@ -1538,6 +1576,15 @@ enum NovelPromptCatalog {
 
             \(stateRebuildJSONContract)
             """
+        case (.chapterAdjudicationV1, "novel.chapter-adjudication.v1"):
+            """
+            Perform the final structured review of one whole-chapter prose candidate before collection.
+            This historical contract uses schemaVersion 1 and exactly the four root fields
+            schemaVersion, acceptance, continuity, and stateDelta; it has no nextPlan field. Keep the
+            acceptance and continuity summary flags advisory to the host, and require exact candidate
+            evidence for every state-delta fact. Return exactly one raw JSON object and no Markdown,
+            code fence, comments, or trailing prose.
+            """
         case (.chapterPlanProposalV1, "novel.chapter-plan-proposal.v3"):
             """
             Propose the next chapter plan contract for automated ghostwriting.
@@ -1847,6 +1894,100 @@ private extension NovelPromptCatalog {
         from the contract. If accepted is true, both arrays must be empty. If accepted is false, at least one
         of the two arrays must be non-empty.
         obviousRepetition lists clear rehashes of RECENT WRITTEN BEATS; use an empty array when none.
+        """
+
+    static let chapterAdjudicationJSONContract = """
+        Output contract: NovelChapterAdjudicationV1, schemaVersion 2.
+        Return exactly one raw JSON object. The outer object must contain the four required keys
+        schemaVersion, acceptance, continuity, stateDelta, and may contain the optional key nextPlan.
+        Do not add unknown keys at any level. A missing nextPlan and an explicit null nextPlan are both valid.
+        Root shape:
+        {
+          "schemaVersion":2,
+          "acceptance":{
+            "schemaVersion":2,
+            "accepted":true,
+            "missingMustHappen":[],
+            "forbiddenViolations":[],
+            "obviousRepetition":[],
+            "summary":"non-empty string"
+          },
+          "continuity":{
+            "schemaVersion":1,
+            "consistent":true,
+            "issues":[]
+          },
+          "stateDelta":{
+            "schemaVersion":1,
+            "stateSummary":"non-empty string",
+            "events":[],
+            "characterChanges":[],
+            "relationshipChanges":[],
+            "foreshadowingChanges":[],
+            "unresolvedEntityNames":[],
+            "branchOutlinePatch":null,
+            "settingProposals":[]
+          },
+          "nextPlan":null
+        }
+        acceptance, continuity, and stateDelta must follow their existing NovelChapterPlanAcceptanceV1,
+        NovelContinuityAuditV1, and NovelStateDeltaV1 contracts exactly, including all required nested keys.
+        When PREPARE NEXT CHAPTER PLAN is true, set nextPlan to a complete NovelChapterPlanProposalV1 object
+        whenever NEXT CHAPTER PLAN CONTEXT supports a coherent next chapter. When the flag is false, set
+        nextPlan to null. If the context is insufficient or this is the final chapter, use null. A nextPlan
+        object must follow the exact proposal contract below; if it is omitted or null, the host may use its
+        existing next-plan fallback and must still be able to collect this chapter.
+        For clarity, the nested state-delta item shapes are:
+        events: {
+          "id":"stable-id", "kind":"non-empty string", "summary":"non-empty string",
+          "entityReferences":["entity name"],
+          "evidence":"EXACT contiguous substring copied character-for-character from the candidate"
+        }
+        characterChanges: {
+          "id":"stable-id", "characterName":"non-empty string", "attribute":"non-empty string",
+          "value":"non-empty string",
+          "evidence":"EXACT contiguous substring copied character-for-character from the candidate"
+        }
+        relationshipChanges: {
+          "id":"stable-id", "sourceEntity":"non-empty string", "targetEntity":"different non-empty string",
+          "relationship":"non-empty string", "state":"non-empty string",
+          "evidence":"EXACT contiguous substring copied character-for-character from the candidate"
+        }
+        foreshadowingChanges: {
+          "id":"stable-id", "thread":"non-empty string", "status":"introduced|advanced|resolved|reopened",
+          "summary":"non-empty string",
+          "evidence":"EXACT contiguous substring copied character-for-character from the candidate"
+        }
+        settingProposals: {
+          "id":"stable-id", "title":"non-empty string", "content":"non-empty string",
+          "evidence":"EXACT contiguous substring copied character-for-character from the candidate"
+        }
+        continuity issues item shape:
+        {
+          "id":"stable-id",
+          "category":"duplicatedPlot|contradiction|identityDrift|chronology|statusConflict|other",
+          "severity":"blocking|major|minor",
+          "summary":"non-empty string naming both sides of the conflict",
+          "references":[
+            {"chapterOrdinal":1,"chapterTitle":"non-empty string","evidence":"non-empty string"},
+            {"chapterOrdinal":2,"chapterTitle":"non-empty string","evidence":"non-empty string"}
+          ]
+        }
+        acceptance may be true while obviousRepetition is non-empty. If continuity is inconsistent, every issue
+        must have at least two references and a severity of blocking, major, or minor; use blocking only when the
+        candidate cannot be collected without fixing the contradiction. stateDelta arrays may be empty, but every
+        emitted fact must be supported by exact candidate evidence as required by the state-delta contract.
+        The optional nextPlan object has exactly these keys:
+        {
+          "schemaVersion":1,
+          "outlinePlacement":"string (may be empty)",
+          "goalAndConflict":"non-empty string",
+          "mustHappen":["non-empty string"],
+          "mustNotHappen":[],
+          "endingHook":"string (may be empty)",
+          "visibleFacts":[]
+        }
+        Its mustHappen array must contain 1 to 3 non-empty strings; mustNotHappen and visibleFacts may be empty.
         """
 
     static let chapterPlanProposalJSONContract = """

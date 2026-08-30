@@ -224,7 +224,7 @@ private extension DefaultNovelCreation {
             projectID: projectID,
             branchID: branchID
         )
-        let chapters = try continuityAuditChapters(
+        let chapters = try NovelContinuityAuditScope.manuscriptChapters(
             branch: loaded.branch,
             discardedChapterIDs: loaded.discardedChapterIDs,
             document: loaded.document
@@ -265,7 +265,7 @@ private extension DefaultNovelCreation {
         }
 
         let manuscriptChapters = NovelContinuityAuditScope.priorManuscriptChapters(
-            try continuityAuditChapters(
+            try NovelContinuityAuditScope.manuscriptChapters(
                 branch: loaded.branch,
                 discardedChapterIDs: loaded.discardedChapterIDs,
                 document: loaded.document
@@ -382,31 +382,4 @@ private extension DefaultNovelCreation {
     /// 真正的硬约束由 `priorFindingsDigest(_:maximumTokens:)` 的截断负责。
     var continuityAuditLedgerReserveTokens: Int { 2_048 }
 
-    func continuityAuditChapters(
-        branch: NovelBranchRecord,
-        discardedChapterIDs: Set<NovelChapterID>,
-        document: NovelProjectDocumentV1
-    ) throws -> [NovelContinuityAuditChapter] {
-        var result: [NovelContinuityAuditChapter] = []
-        // 序号取分支章节选择里的原始位置,废弃章也占号 —— 与正文页的章号同一口径。
-        for (index, selection) in branch.workingChapterSelections.enumerated() {
-            guard !discardedChapterIDs.contains(selection.chapterID) else { continue }
-            guard let version = document.chapterVersions.first(where: {
-                $0.id == selection.versionID && $0.chapterID == selection.chapterID
-            }) else {
-                throw NovelError.invalidInput("当前分支引用了一个不存在的章节版本。")
-            }
-            // 只有空白字符的章等同于空章:占额度、又必然没有可锚定的证据。
-            guard !version.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-            result.append(NovelContinuityAuditChapter(
-                chapterID: selection.chapterID,
-                ordinal: index + 1,
-                title: version.title,
-                content: version.content
-            ))
-        }
-        return result
-    }
 }

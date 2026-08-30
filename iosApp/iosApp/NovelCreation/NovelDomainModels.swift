@@ -878,17 +878,22 @@ struct NovelCharacterIdentityResolver: Sendable {
 
     /// High-confidence Chinese place / institution endings (澶州、汴京、开封府).
     /// Keep the set tight: do not include 山/河/江 alone — they appear in person names.
+    private static let namedNaturalFeatures: Set<String> = [
+        "黄河",
+    ]
+
     private static let chinesePlaceOrInstitutionSuffixes: [String] = [
         "特别行政区", "自治区", "自治州", "自治县",
         "省", "市", "州", "府", "县", "郡", "镇", "乡", "村", "庄", "堡", "寨",
         "国", "邦", "京", "都",
         "路", "街", "巷", "道",
-        "关", "津", "渡", "湾", "港", "岛", "洲",
+        "渡口", "关", "津", "渡", "湾", "港", "岛", "洲",
         "寺", "庙", "宫", "殿", "观", "庵",
         "衙", "署", "监", "营", "卫",
     ]
 
     private static func looksLikeChineseToponymOrInstitution(_ name: String) -> Bool {
+        if namedNaturalFeatures.contains(name) { return true }
         for suffix in chinesePlaceOrInstitutionSuffixes where name.hasSuffix(suffix) {
             // Suffix alone is not a mention; require a stem (澶+州, 汴+京).
             if name.count > suffix.count { return true }
@@ -1032,7 +1037,7 @@ struct NovelCharacterIdentityResolver: Sendable {
     ]
 
     private static func looksLikeGenericCrowdLabel(_ name: String) -> Bool {
-        genericCrowdLabels.contains(name)
+        genericCrowdLabels.contains(name) || name.hasSuffix("敌军")
     }
 
     /// Deterministic best existing-character match for a free mention.
@@ -1911,11 +1916,6 @@ struct NovelPendingOperationRecord: Codable, Equatable, Sendable {
 
     var blocksProseGeneration: Bool {
         kind != .manualSync || status != .retryable
-    }
-
-    /// Leftover plot-relink job. Not a manuscript write lock.
-    var isPlotRelinkJob: Bool {
-        kind == .manualSync
     }
 }
 

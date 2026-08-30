@@ -130,6 +130,9 @@ class NovelProjectToolDeclarationsTest {
         val params = tool.parameters()
         assertIs<InputSchema.Obj>(params)
         assertTrue("upcoming_arc" in params.required.orEmpty())
+        val upcomingArc = params.properties["upcoming_arc"]!!.jsonObject
+        assertFalse("minItems" in upcomingArc)
+        assertEquals(8, upcomingArc["maxItems"]!!.jsonPrimitive.content.toInt())
         assertTrue("suggested_chapter_count" in params.required.orEmpty())
         assertEquals(
             1,

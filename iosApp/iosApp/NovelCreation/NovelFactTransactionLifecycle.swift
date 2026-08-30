@@ -185,6 +185,43 @@ extension DefaultNovelCreation {
     }
 }
 
+extension DefaultNovelCreation {
+    func makeGhostwriteAdjudicationReceipts(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        pending: NovelPendingOperationRecord,
+        plan: NovelInjectionPlan,
+        invocation: NovelStructuredModelInvocation,
+        requestedInputBudgetTokens: Int,
+        createdAt: Date
+    ) throws -> NovelFactTransactionReceiptArtifacts {
+        try makeFactReceipts(
+            projectID: projectID,
+            branchID: branchID,
+            pending: pending,
+            attempt: NovelFactTransactionAttempt(pending: pending, retryCommand: nil),
+            kind: .stateDelta,
+            plan: plan,
+            invocation: invocation,
+            requestedInputBudgetTokens: requestedInputBudgetTokens,
+            createdAt: createdAt
+        )
+    }
+
+    func reloadGhostwriteAdjudicationDocument(
+        projectID: NovelProjectID
+    ) async throws -> NovelLoadedProject {
+        try await reloadFactDocument(projectID: projectID)
+    }
+
+    func commitGhostwriteAdjudicationDocument(
+        _ document: NovelProjectDocumentV1,
+        replacing loaded: NovelLoadedProject
+    ) async throws -> NovelLoadedProject {
+        try await commitFactDocument(document, replacing: loaded)
+    }
+}
+
 private extension DefaultNovelCreation {
     func canWorkspaceFastForwardCollect(
         _ command: NovelCollectCandidateCommand,

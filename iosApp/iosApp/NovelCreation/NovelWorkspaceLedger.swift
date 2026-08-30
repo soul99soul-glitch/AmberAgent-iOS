@@ -225,6 +225,39 @@ enum NovelWorkspaceLedger {
         }
     }
 
+    /// A pointer-only relink may remove chapters, but it must never reinterpret
+    /// a changed or newly inserted chapter version without a model rebuild.
+    static func canRelinkWithoutModel(
+        branch: NovelBranchRecord,
+        checkpoints: [NovelBranchCheckpointRecord]
+    ) -> Bool {
+        guard let head = checkpoints.first(where: { $0.id == branch.headCheckpointID }) else {
+            return false
+        }
+        guard head.branchOverrideRevisionIDs == branch.overrideRevisionIDs else {
+            return false
+        }
+        var headIndex = head.chapterSelections.startIndex
+        for workingSelection in branch.workingChapterSelections {
+            guard let match = head.chapterSelections[headIndex...].firstIndex(of: workingSelection) else {
+                return false
+            }
+            headIndex = head.chapterSelections.index(after: match)
+        }
+        return true
+    }
+
+    static func isPointerOnlyRelink(
+        branch: NovelBranchRecord,
+        checkpoints: [NovelBranchCheckpointRecord]
+    ) -> Bool {
+        guard let head = checkpoints.first(where: { $0.id == branch.headCheckpointID }) else {
+            return false
+        }
+        return head.chapterSelections == branch.workingChapterSelections &&
+            head.branchOverrideRevisionIDs == branch.overrideRevisionIDs
+    }
+
     static func isFastForward(branch: NovelBranchRecord, chapterID: NovelChapterID) -> Bool {
         branch.workingChapterSelections.last?.chapterID == chapterID
     }
@@ -701,11 +734,14 @@ enum NovelWorkspacePlotCommit {
         }) else {
             throw NovelError.invalidInput("The branch has no current plot snapshot.")
         }
-        let leftover = document.pendingOperations.filter {
-            $0.branchID == branchID && $0.kind == .manualSync
+        guard !document.pendingOperations.contains(where: { $0.branchID == branchID }) else {
+            throw NovelError.invalidInput("当前有未完成的剧情同步事务，不能执行指针重链。")
         }
-        guard leftover.count <= 1 else {
-            throw NovelError.invalidInput("当前有多个未完成的同步任务，请重新打开项目后再试。")
+        guard NovelWorkspaceLedger.canRelinkWithoutModel(
+            branch: branch,
+            checkpoints: document.checkpoints
+        ) else {
+            throw NovelError.invalidInput("正文版本已变化，需要先完成剧情状态重建。")
         }
         let working = NovelWorkspaceLedger.liveWorkingSelections(branch: branch, in: document)
         let headSelections = document.checkpoints.first {
@@ -721,15 +757,6 @@ enum NovelWorkspacePlotCommit {
             summary: old.summary,
             highlights: NovelWorkspaceLedger.foldedHighlightTexts(modules)
         )
-        if let pending = leftover.first {
-            return try completeLeftoverManualSync(
-                in: document,
-                pending: pending,
-                body: body,
-                chapterPlots: modules,
-                now: now
-            )
-        }
         return try apply(
             to: document,
             branchID: branchID,
@@ -738,87 +765,6 @@ enum NovelWorkspacePlotCommit {
             now: now,
             chapterPlots: modules
         )
-    }
-
-    /// Finish a leftover cancelled JSON extract as a pointer commit.
-    /// Stripping the pending alone orphans its factAttempts / receipts.
-    private static func completeLeftoverManualSync(
-        in document: NovelProjectDocumentV1,
-        pending: NovelPendingOperationRecord,
-        body: String,
-        chapterPlots: [NovelChapterPlotModule],
-        now: Date
-    ) throws -> NovelProjectDocumentV1 {
-        guard let branch = document.branches.first(where: { $0.id == pending.branchID }) else {
-            throw NovelError.branchNotFound(pending.branchID)
-        }
-        guard let old = document.stateSnapshots.first(where: {
-            $0.id == branch.currentStateSnapshotID
-        }) else {
-            throw NovelError.invalidInput("The branch has no current plot snapshot.")
-        }
-        guard let checkpointID = pending.proposedCheckpointID,
-              let snapshotID = pending.proposedStateSnapshotID else {
-            throw NovelError.invalidInput("The leftover sync has no reserved record IDs.")
-        }
-        let split = NovelWorkspaceMarkdown.splitHighlights(body)
-        var next = document
-        next.stateSnapshots.append(
-            NovelStateSnapshotRecord(
-                id: snapshotID,
-                eventIDs: old.eventIDs,
-                summary: split.body,
-                branchOutline: old.branchOutline,
-                unresolvedEntityNames: old.unresolvedEntityNames,
-                createdAt: now,
-                settingProposalIDs: old.settingProposalIDs,
-                characterIdentityClarifications: old.characterIdentityClarifications,
-                recentWrittenHighlights: split.highlights ?? old.recentWrittenHighlights,
-                chapterPlots: chapterPlots
-            )
-        )
-        let finalRevision = document.project.revision + 1
-        let outcome = NovelOutcome.manualSyncCommitted(
-            projectID: document.project.id,
-            branchID: pending.branchID,
-            checkpointID: checkpointID,
-            revision: finalRevision
-        )
-        next.appliedOperations.append(
-            NovelAppliedOperationRecord(
-                operationID: pending.operationID,
-                kind: .syncManualEdits,
-                payloadSHA256: pending.payloadSHA256,
-                outcome: outcome,
-                appliedProjectRevision: finalRevision,
-                appliedAt: now
-            )
-        )
-        try NovelReducer.appendCheckpoint(
-            NovelBranchCheckpointRecord(
-                id: checkpointID,
-                kind: .manualSync,
-                createdOnBranchID: pending.branchID,
-                parentCheckpointID: pending.baseCheckpointID,
-                chapterSelections: branch.workingChapterSelections,
-                stateSnapshotID: snapshotID,
-                sessionCursor: pending.sessionCursor ?? .empty,
-                branchOverrideRevisionIDs: branch.overrideRevisionIDs,
-                sourceCandidateID: nil,
-                baseHeadRevision: pending.baseHeadRevision,
-                operationID: pending.operationID,
-                createdAt: now
-            ),
-            to: &next,
-            expectedHeadRevision: pending.baseHeadRevision,
-            advancesWorkingRevision: false,
-            now: now
-        )
-        next.pendingOperations.removeAll { $0.id == pending.id }
-        next.project.revision = finalRevision
-        next.project.updatedAt = now
-        try NovelDocumentValidator.validateTransition(from: document, to: next)
-        return next
     }
 
     static func applyAcceptStale(

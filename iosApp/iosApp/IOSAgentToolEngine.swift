@@ -45,6 +45,20 @@ public enum IOSAgentToolOutcome: Sendable {
     /// underlying side effect returned. The engine must not publish output or
     /// request another provider round.
     case durabilityFailure(String)
+    /// The executor dispatched a side effect, then lost the ability to verify
+    /// whether it applied. The engine must persist the unknown state and stop;
+    /// it must never ask the provider for another round or replay the call.
+    case outcomeUnknown([UIMessagePart])
+}
+
+public struct IOSToolOutcomeUnknownSignal: Sendable, Equatable {
+    public let toolCallId: String
+    public let toolName: String
+
+    public init(toolCallId: String, toolName: String) {
+        self.toolCallId = toolCallId
+        self.toolName = toolName
+    }
 }
 
 /// A single tool executor. The engine routes a pending `UIMessagePart.Tool`
@@ -339,6 +353,9 @@ public struct IOSAgentToolEngineResult: Sendable {
     /// produced a side effect, so callers must stop and keep the run
     /// recoverable instead of treating this as an ordinary provider failure.
     public let durabilityFailureMessage: String?
+    /// A side-effect call whose result cannot be inferred. Its output is
+    /// already present in `messages`; callers must surface user reconciliation.
+    public let toolOutcomeUnknown: IOSToolOutcomeUnknownSignal?
     /// Whether the provider terminated because its output budget was exhausted.
     /// This remains distinct from transport/provider failures even though both
     /// keep `providerFailureMessage` for the existing user-facing message.
@@ -359,6 +376,7 @@ public struct IOSAgentToolEngineResult: Sendable {
         hitStepLimit: Bool,
         providerFailureMessage: String? = nil,
         durabilityFailureMessage: String? = nil,
+        toolOutcomeUnknown: IOSToolOutcomeUnknownSignal? = nil,
         hitOutputLimit: Bool = false,
         wasCancelled: Bool = false,
         guardStopped: Bool = false
@@ -369,6 +387,7 @@ public struct IOSAgentToolEngineResult: Sendable {
         self.hitStepLimit = hitStepLimit
         self.providerFailureMessage = providerFailureMessage
         self.durabilityFailureMessage = durabilityFailureMessage
+        self.toolOutcomeUnknown = toolOutcomeUnknown
         self.hitOutputLimit = hitOutputLimit
         self.wasCancelled = wasCancelled
         self.guardStopped = guardStopped
@@ -1135,6 +1154,15 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 durabilityFailureMessage: durabilityFailure
             )
         }
+        if let outcomeUnknown = preExistingResult.toolOutcomeUnknown {
+            return IOSAgentToolEngineResult(
+                messages: working,
+                stepsExecuted: 0,
+                pendingApproval: nil,
+                hitStepLimit: false,
+                toolOutcomeUnknown: outcomeUnknown
+            )
+        }
         if preExistingResult.wasCancelled {
             return IOSAgentToolEngineResult(
                 messages: working,
@@ -1376,6 +1404,17 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     durabilityFailureMessage: durabilityFailure
                 )
             }
+            if let outcomeUnknown = batchResult.toolOutcomeUnknown {
+                working = applyToolOutputs(batchResult.outputs, to: working)
+                onMessagesUpdated?(working)
+                return IOSAgentToolEngineResult(
+                    messages: working,
+                    stepsExecuted: steps + 1,
+                    pendingApproval: nil,
+                    hitStepLimit: false,
+                    toolOutcomeUnknown: outcomeUnknown
+                )
+            }
             if batchResult.wasCancelled {
                 working = applyToolOutputs(batchResult.outputs, to: working)
                 onMessagesUpdated?(working)
@@ -1484,6 +1523,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             hitStepLimit: result.hitStepLimit,
             providerFailureMessage: result.providerFailureMessage,
             durabilityFailureMessage: result.durabilityFailureMessage,
+            toolOutcomeUnknown: result.toolOutcomeUnknown,
             hitOutputLimit: result.hitOutputLimit,
             wasCancelled: result.wasCancelled,
             guardStopped: result.guardStopped
@@ -1508,6 +1548,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             pendingApproval: result.pendingApproval,
             hitStepLimit: false,
             durabilityFailureMessage: result.durabilityFailureMessage,
+            toolOutcomeUnknown: result.toolOutcomeUnknown,
             wasCancelled: result.wasCancelled,
             guardStopped: result.guardStopped
         )
@@ -1560,6 +1601,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let guardStopped: Bool
         let wasCancelled: Bool
         let durabilityFailureMessage: String?
+        let toolOutcomeUnknown: IOSToolOutcomeUnknownSignal?
     }
 
     private func executePreExistingPendingTools(
@@ -1585,7 +1627,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 pendingApproval: nil,
                 guardStopped: false,
                 wasCancelled: false,
-                durabilityFailureMessage: nil
+                durabilityFailureMessage: nil,
+                toolOutcomeUnknown: nil
             )
         }
         let batchResult = await executeBatch(
@@ -1602,7 +1645,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             pendingApproval: batchResult.pendingApproval,
             guardStopped: batchResult.guardStopped,
             wasCancelled: batchResult.wasCancelled,
-            durabilityFailureMessage: batchResult.durabilityFailureMessage
+            durabilityFailureMessage: batchResult.durabilityFailureMessage,
+            toolOutcomeUnknown: batchResult.toolOutcomeUnknown
         )
     }
 
@@ -1624,6 +1668,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         /// caller must keep the run recoverable instead of requesting another
         /// provider round or declaring completion.
         let durabilityFailureMessage: String?
+        let toolOutcomeUnknown: IOSToolOutcomeUnknownSignal?
     }
 
     private func executeBatch(
@@ -1779,7 +1824,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     pendingApproval: nil,
                     guardStopped: false,
                     wasCancelled: durabilityFailureMessage == nil,
-                    durabilityFailureMessage: durabilityFailureMessage
+                    durabilityFailureMessage: durabilityFailureMessage,
+                    toolOutcomeUnknown: nil
                 )
             }
             if let executor {
@@ -1820,7 +1866,39 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     pendingApproval: nil,
                     guardStopped: false,
                     wasCancelled: false,
-                    durabilityFailureMessage: reason
+                    durabilityFailureMessage: reason,
+                    toolOutcomeUnknown: nil
+                )
+            case .outcomeUnknown(let parts):
+                if let ledger, let ledgerRunId {
+                    guard await ledger.recordToolCallRecoveryTransition(
+                        runId: ledgerRunId,
+                        toolCallId: tool.toolCallId,
+                        expected: .started,
+                        to: .outcomeUnknown,
+                        outcome: "executor_reported_unknown_after_action"
+                    ) else {
+                        return BatchExecutionResult(
+                            outputs: outputs,
+                            pendingApproval: nil,
+                            guardStopped: false,
+                            wasCancelled: false,
+                            durabilityFailureMessage: Self.toolTerminalLedgerFailureMessage,
+                            toolOutcomeUnknown: nil
+                        )
+                    }
+                }
+                outputs.append((tool, parts))
+                return BatchExecutionResult(
+                    outputs: outputs,
+                    pendingApproval: nil,
+                    guardStopped: false,
+                    wasCancelled: false,
+                    durabilityFailureMessage: nil,
+                    toolOutcomeUnknown: IOSToolOutcomeUnknownSignal(
+                        toolCallId: tool.toolCallId,
+                        toolName: tool.toolName
+                    )
                 )
             }
             if let ledger, let ledgerRunId {
@@ -1845,7 +1923,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                         pendingApproval: nil,
                         guardStopped: false,
                         wasCancelled: false,
-                        durabilityFailureMessage: Self.toolTerminalLedgerFailureMessage
+                        durabilityFailureMessage: Self.toolTerminalLedgerFailureMessage,
+                        toolOutcomeUnknown: nil
                     )
                 }
             }
@@ -1864,7 +1943,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             pendingApproval: firstApproval,
             guardStopped: guardStopped,
             wasCancelled: false,
-            durabilityFailureMessage: nil
+            durabilityFailureMessage: nil,
+            toolOutcomeUnknown: nil
         )
     }
 

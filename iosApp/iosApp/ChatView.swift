@@ -147,6 +147,7 @@ struct ChatView: View {
     @State private var pendingDeleteMessageId: String?
     @Environment(IOSConversationStore.self) private var conversationStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     init(
         settingsStore: SettingsStore,
@@ -322,6 +323,11 @@ struct ChatView: View {
             guard let event = notification.object as? IOSChatBackgroundJobTerminalEvent else { return }
             handleBackgroundJobTerminated(event)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .amberChatBackgroundJobStateDidChange)) { notification in
+            guard let event = notification.object as? IOSChatBackgroundJobStateEvent,
+                  event.conversationId == currentConversationIdString else { return }
+            syncIslandPresentation()
+        }
         .onChange(of: viewModel.messageUpdateSignal) { _, signal in
             handleMessageUpdateSignal(signal)
         }
@@ -331,6 +337,9 @@ struct ChatView: View {
         }
         .onChange(of: sharedSettings.revision) { _, _ in
             handleSharedSettingsRevisionChange()
+        }
+        .onChange(of: scenePhase) { _, _ in
+            syncIslandPresentation()
         }
     }
 
@@ -595,6 +604,16 @@ struct ChatView: View {
                     ? "回答问题"
                     : (viewModel.pendingToolOutcomeUnknown != nil ? "确认操作结果" : "工具审批"),
                 systemImage: "checkmark.circle",
+                tint: .amber
+            )
+        }
+
+        if viewModel.isBackgroundGenerationWaitingForForegroundResume {
+            return ChatActivityIslandState.activity(
+                kind: .waiting,
+                title: "正在恢复",
+                detail: "正在检查可安全恢复方式",
+                systemImage: "arrow.triangle.2.circlepath",
                 tint: .amber
             )
         }

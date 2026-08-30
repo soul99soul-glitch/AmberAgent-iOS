@@ -103,7 +103,7 @@ final class NovelCollaborationModeTests: XCTestCase {
         )
     }
 
-    func testGhostwriteContinuityGatePausesWhenAuditIncomplete() {
+    func testGhostwriteContinuityGateTreatsIncompleteAsAdvisory() {
         let report = NovelContinuityAuditReport(
             projectID: NovelProjectID(),
             branchID: NovelBranchID(),
@@ -116,13 +116,30 @@ final class NovelCollaborationModeTests: XCTestCase {
             droppedIssueCount: 0,
             createdAt: Date(timeIntervalSince1970: 1_700_000_100)
         )
-        XCTAssertEqual(
-            NovelGhostwriteContinuityGate.pauseDetail(for: report),
-            NovelGhostwritePauseReason.continuityAuditIncomplete.displayMessage
+        XCTAssertNil(NovelGhostwriteContinuityGate.pauseDetail(for: report))
+        XCTAssertNil(NovelGhostwriteContinuityGate.pauseReason(for: report))
+
+        let failedWithBlocking = NovelContinuityAuditReport(
+            projectID: report.projectID,
+            branchID: report.branchID,
+            auditedChapterSelections: [],
+            promptVersion: "test",
+            scannedChapterCount: 2,
+            chunkCount: 2,
+            failedChunkCount: 1,
+            issues: [NovelContinuityIssue(
+                id: "blocking",
+                category: .identityDrift,
+                severity: .blocking,
+                summary: "候选人物身份冲突",
+                references: []
+            )],
+            droppedIssueCount: 0,
+            createdAt: report.createdAt
         )
         XCTAssertEqual(
-            NovelGhostwriteContinuityGate.pauseReason(for: report),
-            .continuityAuditIncomplete
+            NovelGhostwriteContinuityGate.pauseReason(for: failedWithBlocking),
+            .blockingContinuity
         )
     }
 
@@ -327,47 +344,41 @@ final class NovelCollaborationModeTests: XCTestCase {
 
     @MainActor
     func testGhostwriteSingleChapterHappyPathCollectsAndSyncs() async throws {
-        // 端到端链路守护：写 → 验收 → 连续性 → 收录 → 清合同 → 同步 → 完批。
-        // 此前批循环零测试覆盖，真机「一篇都出不来」漏检。四个脚本 FIFO 消费，
-        // 任一环断裂都会落到非 chapterCompleted 终态或第 5 次意外调用。
+        // 端到端链路守护：写 → 一次联合审查并原子收录/同步/消费合同 → 完批。
         let chapterText = "林晚潜入密室，夺回了信物。\n\n她推开了封死的门，月光落在掌心。"
-        let acceptanceJSON = """
-        {
-          "schemaVersion": 2,
-          "accepted": true,
-          "missingMustHappen": [],
-          "forbiddenViolations": [],
-          "obviousRepetition": [],
-          "summary": "按计划完成。"
-        }
-        """
-        let continuityJSON = """
+        let adjudicationJSON = """
         {
           "schemaVersion": 1,
-          "consistent": true,
-          "issues": []
-        }
-        """
-        // 收录后的同步执行 stateRebuild（manualSync 交易，见
-        // executeManualSyncTransaction 的 taskKind: .stateRebuild）；evidence 必须
-        // 逐字锚定在收录后的正文里，否则同步被证据校验拦下。
-        let stateRebuildJSON = """
-        {
-          "schemaVersion": 1,
-          "stateSummary": "林晚夺回了信物，推开了封死的门。",
-          "branchOutline": "林晚继续追查碎裂信物的来历。",
-          "events": [{
-            "id": "door-opened",
-            "kind": "discovery",
-            "summary": "林晚推开了封死的门。",
-            "entityReferences": ["林晚"],
-            "evidence": "她推开了封死的门，月光落在掌心。"
-          }],
-          "characterStates": [],
-          "relationships": [],
-          "foreshadowing": [],
-          "unresolvedEntityNames": [],
-          "settingProposals": []
+          "acceptance": {
+            "schemaVersion": 2,
+            "accepted": true,
+            "missingMustHappen": [],
+            "forbiddenViolations": [],
+            "obviousRepetition": [],
+            "summary": "按计划完成。"
+          },
+          "continuity": {
+            "schemaVersion": 1,
+            "consistent": true,
+            "issues": []
+          },
+          "stateDelta": {
+            "schemaVersion": 1,
+            "stateSummary": "林晚夺回了信物，推开了封死的门。",
+            "events": [{
+              "id": "door-opened",
+              "kind": "discovery",
+              "summary": "林晚推开了封死的门。",
+              "entityReferences": ["林晚"],
+              "evidence": "她推开了封死的门，月光落在掌心。"
+            }],
+            "characterChanges": [],
+            "relationshipChanges": [],
+            "foreshadowingChanges": [],
+            "unresolvedEntityNames": [],
+            "branchOutlinePatch": "林晚继续追查碎裂信物的来历。",
+            "settingProposals": []
+          }
         }
         """
 
@@ -410,9 +421,7 @@ final class NovelCollaborationModeTests: XCTestCase {
             ),
             scripts: [
                 NovelModelScript(steps: [.delta(chapterText), .complete]),
-                NovelModelScript(steps: [.delta(acceptanceJSON), .complete]),
-                NovelModelScript(steps: [.delta(continuityJSON), .complete]),
-                NovelModelScript(steps: [.delta(stateRebuildJSON), .complete]),
+                NovelModelScript(steps: [.delta(adjudicationJSON), .complete]),
             ]
         )
         let workspace = NovelCreationViewModel(creation: DefaultNovelCreation(
@@ -451,12 +460,29 @@ final class NovelCollaborationModeTests: XCTestCase {
         XCTAssertNotNil(collected)
         XCTAssertTrue(collected?.content.contains("封死的门") == true)
         XCTAssertNil(workspace.projectSnapshot?.confirmedChapterPlan(for: branchID))
+        XCTAssertEqual(workspace.branchSnapshot?.branch.syncStatus, .synchronized)
+        let currentStateID = try XCTUnwrap(workspace.branchSnapshot?.branch.currentStateSnapshotID)
+        XCTAssertTrue(
+            workspace.projectSnapshot?.stateSnapshots
+                .first(where: { $0.id == currentStateID })?
+                .summary.contains("夺回了信物") == true
+        )
         XCTAssertNil(session.operationErrorMessage)
 
-        // 三次模型调用：写稿 → 验收 → 连续性。收录后的剧情模块由 host 确定性落盘，不再抽 JSON。
+        // 健康路径固定两次模型调用：写稿 → 联合审查；无隐藏验收/连续性/state 调用。
         let requests = await adapter.requests
-        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests.count, 2)
         XCTAssertFalse(BackgroundGenerationKeepAlive.shared.holdsLease(ghostwriteLeaseID))
+    }
+
+    @MainActor
+    func testGhostwriteFiveChapterBatchUsesOneAdjudicationPerChapter() async throws {
+        try await assertGhostwriteBatchCompletes(targetChapterCount: 5)
+    }
+
+    @MainActor
+    func testGhostwriteTenChapterBatchUsesOneAdjudicationPerChapter() async throws {
+        try await assertGhostwriteBatchCompletes(targetChapterCount: 10)
     }
 
     func testCollaborationModeCanSwitchBackToCocreation() throws {
@@ -1196,11 +1222,11 @@ final class NovelCollaborationModeTests: XCTestCase {
             autoCollectedCandidateIDs: [],
             startedAt: Date(timeIntervalSince1970: 0)
         )
-        XCTAssertEqual(progress.boardStepSummary, "写✓ · 验收中")
+        XCTAssertEqual(progress.boardStepSummary, "写✓ · 审核收录中")
 
         progress.phase = .waitingUser
         progress.pauseReason = .chapterCompleted
-        XCTAssertEqual(progress.boardStepSummary, "写✓验✓收✓同✓")
+        XCTAssertEqual(progress.boardStepSummary, "写✓审✓收✓同✓")
 
         progress.pauseReason = .obviousRepetition
         // 质量失败：看板标明继续将重写，避免「再验旧稿」误解。
@@ -1237,7 +1263,7 @@ final class NovelCollaborationModeTests: XCTestCase {
         progress.phase = .waitingUser
         progress.pauseReason = .batchCompleted
         XCTAssertTrue(progress.isBatchComplete)
-        XCTAssertEqual(progress.boardStepSummary, "写✓验✓收✓同✓ · 已收5/5")
+        XCTAssertEqual(progress.boardStepSummary, "写✓审✓收✓同✓ · 已收5/5")
         XCTAssertEqual(progress.statusLabel, "本批已完成 · 5/5 章")
         progress.pauseReason = .chapterCompleted
         progress.targetChapterCount = 1
@@ -1648,7 +1674,7 @@ final class NovelCollaborationModeTests: XCTestCase {
             phase: .writing,
             startedAt: Date(timeIntervalSince1970: 0),
             targetChapterCount: 5,
-            maxQualityAttempts: 5
+            maxQualityAttempts: 3
         )
         let same = NovelGhostwriteFailureReceipt.make(
             reason: .obviousRepetition,
@@ -1673,20 +1699,6 @@ final class NovelCollaborationModeTests: XCTestCase {
         XCTAssertFalse(b.willRewrite)
         XCTAssertTrue(b.blockedByFingerprint)
         XCTAssertTrue(NovelGhostwriteHeal.isStuckOnSameFingerprint(progress.recentFailureFingerprints))
-        XCTAssertTrue(
-            NovelGhostwriteHeal.shouldAttemptMustNotAmend(
-                reason: .obviousRepetition,
-                receipt: same,
-                alreadyAmendedThisChapter: false
-            )
-        )
-        XCTAssertFalse(
-            NovelGhostwriteHeal.shouldAttemptMustNotAmend(
-                reason: .obviousRepetition,
-                receipt: same,
-                alreadyAmendedThisChapter: true
-            )
-        )
 
         progress.resetChapterHealState()
         XCTAssertEqual(progress.qualityAttemptIndex, 0)
@@ -1694,92 +1706,22 @@ final class NovelCollaborationModeTests: XCTestCase {
         XCTAssertTrue(progress.supersededCandidateIDs.isEmpty)
     }
 
-    func testGhostwriteRepetitionAmendDropsMustThatAlreadyLandedInPriorChapter() {
-        // Device sidecar 2026-08-22: chapter 3 「立冬」acceptance said the boiling-water
-        // rollout was missing, then marked the same event as a rehash of 沸水令. Heal
-        // used to append mustNot while keeping the must — unsatisfiable.
-        let boilingMust = "立冬后第一场雪落汴京，沈砚奉令将西营烧开水规矩推行京城诸司——他带伙夫在衙署支锅、立牌、定时辰，旧吏当面讥为'西营野规矩'，沈砚以'水烧开了能喝，规矩立起来能用'回敬，心里记下：这是头一回有人把'规矩'和'西营'连在一起说。"
-        let impeachmentMust = "无头参劾有了下文：刘延广旧部军官张武被查出藏匿城中，与左营队正有旧。"
-        let repetition = "开篇沈砚奉中旨带伙夫赴御史台、三司院、开封府推行沸水令、立牌，与近期已写‘上沸水令，郭威批可，命亲送三衙；御史台、三司院受牌，开封府老吏…’为同一事件"
-
-        XCTAssertTrue(NovelGhostwriteHeal.sameStoryEvent(boilingMust, repetition))
-        XCTAssertFalse(NovelGhostwriteHeal.sameStoryEvent(impeachmentMust, repetition))
-        XCTAssertFalse(
-            NovelGhostwriteHeal.sameStoryEvent(
-                "沈砚赴开封府递状，把张武的粮账呈给司吏。",
-                repetition
-            )
-        )
-        XCTAssertFalse(
-            NovelGhostwriteHeal.isRestageBan("沈砚此章不得与郭威当面冲突，以免提前引爆后文。")
-        )
-
-        let resolved = NovelGhostwriteHeal.resolvedContract(
-            mustHappen: [boilingMust, impeachmentMust],
-            mustNotHappen: ["不写柴荣正式离京赴澶州（细冬丙才展开兄弟相送）。"],
-            repetitionBeats: [repetition]
-        )
-        XCTAssertFalse(resolved.mustHappen.contains(where: { $0.contains("烧开水") || $0.contains("支锅") }))
-        XCTAssertTrue(resolved.mustHappen.contains(where: { $0.contains("参劾") }))
-        XCTAssertEqual(resolved.droppedMustHappen, [boilingMust])
-        XCTAssertTrue(resolved.mustNotHappen.contains(repetition))
-        XCTAssertTrue(resolved.mustNotHappen.contains(where: { $0.contains("柴荣") }))
-
-        // Already-knotted disk contract: only restage bans (not 「不写…」纪律项)
-        // are used to drop musts, so 「赵匡胤三字」纪律不会误删参劾义务。
-        XCTAssertTrue(NovelGhostwriteHeal.isRestageBan(repetition))
-        XCTAssertFalse(NovelGhostwriteHeal.isRestageBan("不写沈砚念出'赵匡胤'三字（名字线纪律：他始终叫赵大）。"))
-        let knotted = NovelGhostwriteHeal.resolvedContract(
-            mustHappen: [boilingMust, impeachmentMust],
-            mustNotHappen: ["不写柴荣正式离京赴澶州（细冬丙才展开兄弟相送）。", repetition],
-            repetitionBeats: [repetition]
-        )
-        XCTAssertEqual(knotted.droppedMustHappen, [boilingMust])
-        XCTAssertTrue(knotted.mustHappen.contains(where: { $0.contains("参劾") }))
-        XCTAssertEqual(knotted.mustNotHappen.count, 2)
-    }
-
-    func testGhostwriteResolvedContractKeepsAForwardMustWhenEveryMustAlreadyLanded() {
-        let must = "沈砚带伙夫立牌推行沸水令。"
-        let resolved = NovelGhostwriteHeal.resolvedContract(
-            mustHappen: [must],
-            mustNotHappen: [],
-            repetitionBeats: ["开篇带伙夫立牌推行沸水令，与上章同一事件"]
-        )
-        XCTAssertEqual(resolved.mustHappen, [NovelGhostwriteHeal.alreadyLandedMustFallback])
-        XCTAssertEqual(resolved.droppedMustHappen, [must])
-        XCTAssertEqual(resolved.mustNotHappen.count, 1)
-    }
-
     func testBackgroundExpirationKeepsQualityPauseReason() {
-        let acceptance = NovelGhostwriteFailureReceipt.make(
-            reason: .acceptanceFailed,
-            summary: "缺烧开水场面",
-            missingMustHappen: ["烧开水规矩"],
-            repetitionBeats: [],
-            continuityNotes: [],
-            attemptIndex: 1,
-            sourceCandidateID: NovelCandidateID(),
-            planDigest: "old-digest"
-        )
         XCTAssertEqual(
             NovelGhostwritePauseReason.afterBackgroundExpiration(
-                current: nil,
-                lastFailure: acceptance
+                current: .acceptanceFailed
             ),
             .acceptanceFailed
         )
         XCTAssertEqual(
             NovelGhostwritePauseReason.afterBackgroundExpiration(
-                current: nil,
-                lastFailure: nil
+                current: nil
             ),
-            .infrastructureFailed
+            .backgroundInterrupted
         )
         XCTAssertEqual(
             NovelGhostwritePauseReason.afterBackgroundExpiration(
-                current: .syncFailed,
-                lastFailure: nil
+                current: .syncFailed
             ),
             .syncFailed
         )
@@ -1951,90 +1893,6 @@ final class NovelCollaborationModeTests: XCTestCase {
         )
     }
 
-    func testGhostwriteSingleMustAlignGateAndRephrase() {
-        let missingReceipt = NovelGhostwriteFailureReceipt.make(
-            reason: .acceptanceFailed,
-            summary: "主角吃醋与自觉多余已写出，但「碍事」字面未点明",
-            missingMustHappen: ["主角觉得京娘有点碍事、心里不爽"],
-            attemptIndex: 3,
-            sourceCandidateID: nil,
-            planDigest: "d"
-        )
-        XCTAssertTrue(
-            NovelGhostwriteHeal.shouldAttemptMustAlign(
-                reason: .acceptanceFailed,
-                receipt: missingReceipt,
-                forbiddenViolations: [],
-                alreadyAmendedThisChapter: false
-            )
-        )
-        // 有禁止项违反 → 不改 must
-        XCTAssertFalse(
-            NovelGhostwriteHeal.shouldAttemptMustAlign(
-                reason: .acceptanceFailed,
-                receipt: missingReceipt,
-                forbiddenViolations: ["出现了禁止的死亡"],
-                alreadyAmendedThisChapter: false
-            )
-        )
-        // 同时有复读 → 不改 must（走 mustNot 路径）
-        let withRep = NovelGhostwriteFailureReceipt.make(
-            reason: .acceptanceFailed,
-            summary: "缺 must 且复读",
-            missingMustHappen: ["A"],
-            repetitionBeats: ["旧 beat"],
-            attemptIndex: 3,
-            sourceCandidateID: nil,
-            planDigest: "d"
-        )
-        XCTAssertFalse(
-            NovelGhostwriteHeal.shouldAttemptMustAlign(
-                reason: .acceptanceFailed,
-                receipt: withRep,
-                forbiddenViolations: [],
-                alreadyAmendedThisChapter: false
-            )
-        )
-        // 缺 2 条 must → 不改
-        let two = NovelGhostwriteFailureReceipt.make(
-            reason: .acceptanceFailed,
-            summary: "缺两条",
-            missingMustHappen: ["A", "B"],
-            attemptIndex: 3,
-            sourceCandidateID: nil,
-            planDigest: "d"
-        )
-        XCTAssertFalse(
-            NovelGhostwriteHeal.shouldAttemptMustAlign(
-                reason: .acceptanceFailed,
-                receipt: two,
-                forbiddenViolations: [],
-                alreadyAmendedThisChapter: false
-            )
-        )
-
-        let planMust = ["主角觉得京娘有点碍事、心里不爽", "章末钩子落地"]
-        let rephrase = NovelGhostwriteHeal.rephraseSingleMust(
-            planMustHappen: planMust,
-            missingItem: "主角觉得京娘有点碍事、心里不爽",
-            acceptanceSummary: "已写出吃醋，未点明碍事"
-        )
-        XCTAssertEqual(rephrase?.index, 0)
-        XCTAssertTrue(rephrase?.rewritten.contains("允许等价") == true)
-        XCTAssertTrue(rephrase?.rewritten.contains("吃醋") == true)
-        // 已放宽过不再叠
-        let again = NovelGhostwriteHeal.rephraseSingleMust(
-            planMustHappen: [rephrase!.rewritten],
-            missingItem: rephrase!.rewritten,
-            acceptanceSummary: "再来"
-        )
-        XCTAssertNil(again)
-        XCTAssertEqual(
-            NovelGhostwriteContractAmendment.Kind.alignSingleMust.rawValue,
-            "alignSingleMust"
-        )
-    }
-
     func testGhostwriteRevisionBriefPrefillsFromReceipt() {
         let receipt = NovelGhostwriteFailureReceipt.make(
             reason: .obviousRepetition,
@@ -2092,7 +1950,7 @@ final class NovelCollaborationModeTests: XCTestCase {
             binding: binding,
             phase: .writing,
             pauseReason: nil,
-            detailMessage: "验收未过，自动改写 1/3…",
+            detailMessage: "验收未过，自动定向改写 1/2…",
             candidateID: failedID,
             chapterPlanDigest: "digest",
             autoCollectedCandidateIDs: [NovelCandidateID()],
@@ -2140,9 +1998,11 @@ final class NovelCollaborationModeTests: XCTestCase {
         let restored = decoded.makeProgress()
         // 写稿中杀进程 → 冷启动收成暂停可续。
         XCTAssertEqual(restored.phase, .paused)
-        XCTAssertEqual(restored.pauseReason, .userPaused)
+        XCTAssertEqual(restored.pauseReason, .backgroundInterrupted)
         XCTAssertEqual(restored.completedChapterCount, 2)
         XCTAssertTrue(restored.shouldContinueSameBatch)
+        XCTAssertTrue(restored.canResumeWithoutConfirmedPlan)
+        XCTAssertTrue(restored.mustRewriteCandidateOnResume)
         XCTAssertTrue(restored.detailMessage?.contains("恢复") == true)
 
         var pending = encoded
@@ -2532,6 +2392,208 @@ final class NovelCollaborationModeTests: XCTestCase {
             injectionReceipt: injection,
             generationReceipt: generation
         )
+    }
+
+    @MainActor
+    private func assertGhostwriteBatchCompletes(
+        targetChapterCount: Int
+    ) async throws {
+        var document = try seedGhostwriteMaterials(in: NovelTestFixtures.document())
+        let branchID = try XCTUnwrap(document.branches.first?.id)
+        document = try NovelReducer.apply(.setCollaborationMode(
+            NovelSetCollaborationModeCommand(
+                context: NovelTestFixtures.context(
+                    configRevision: document.project.configRevision
+                ),
+                projectID: document.project.id,
+                branchID: branchID,
+                mode: .ghostwrite
+            )
+        ), to: document).document
+
+        // 宿主只 seed 一次首章合同；批内后续合同必须来自联合审查的原子轮换。
+        let initialPlanID = NovelChapterPlanID()
+        document = try NovelReducer.apply(.upsertChapterPlan(
+            NovelUpsertChapterPlanCommand(
+                context: NovelTestFixtures.context(
+                    configRevision: document.project.configRevision
+                ),
+                projectID: document.project.id,
+                branchID: branchID,
+                planID: initialPlanID,
+                status: .confirmed,
+                outlinePlacement: "第 1 章",
+                goalAndConflict: "逐章推进唯一线索",
+                mustHappen: ["林晚必须留下本章独有的线索"],
+                mustNotHappen: ["提前结束全书"],
+                endingHook: "线索指向下一章",
+                visibleFacts: []
+            )
+        ), to: document).document
+        XCTAssertEqual(document.confirmedChapterPlan(for: branchID)?.id, initialPlanID)
+
+        var scripts: [NovelModelScript] = []
+        var evidenceTokens: [String] = []
+        for chapterNumber in 1...targetChapterCount {
+            let token = "batch-\(targetChapterCount)-chapter-\(chapterNumber)-evidence"
+            let candidate = "第\(chapterNumber)章正文：林晚沿着旧墙前行，\(token) 终于在石缝里找到新的线索。"
+            evidenceTokens.append(token)
+            scripts.append(NovelModelScript(steps: [.delta(candidate), .complete]))
+            scripts.append(NovelModelScript(steps: [
+                .delta(try makeBatchAdjudicationJSON(
+                    chapterNumber: chapterNumber,
+                    targetChapterCount: targetChapterCount,
+                    candidate: candidate,
+                    evidenceToken: token
+                )),
+                .complete,
+            ]))
+        }
+
+        let adapter = ScriptedNovelModelAdapter(
+            resolvedModel: NovelResolvedModel(
+                providerID: "batch-test-provider",
+                ownerProviderID: "batch-test-owner",
+                modelID: "batch-test-model",
+                wireModelID: "batch-test-wire",
+                displayName: "Batch Test Model",
+                contextWindowTokens: 128_000
+            ),
+            scripts: scripts
+        )
+        let repository = InMemoryNovelProjectRepository()
+        _ = try await repository.createProject(document)
+        let workspace = NovelCreationViewModel(creation: DefaultNovelCreation(
+            repository: repository,
+            modelRunner: adapter
+        ))
+        await workspace.loadProjects(selecting: document.project.id)
+        let session = NovelSessionViewModel(workspace: workspace)
+        await session.bindToCurrentSelection()
+
+        XCTAssertTrue(session.canStartGhostwriteChapter)
+        XCTAssertTrue(session.startGhostwriteChapter(targetChapterCount: targetChapterCount))
+
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if let progress = session.ghostwriteProgress,
+               progress.pauseReason != nil,
+               !session.isGhostwriting {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+
+        let progress = try XCTUnwrap(session.ghostwriteProgress)
+        XCTAssertFalse(session.isGhostwriting)
+        XCTAssertEqual(progress.phase, .waitingUser)
+        XCTAssertEqual(progress.pauseReason, .batchCompleted)
+        XCTAssertEqual(progress.completedChapterCount, targetChapterCount)
+
+        let project = try XCTUnwrap(workspace.projectSnapshot)
+        let branch = try XCTUnwrap(
+            workspace.branchSnapshot?.branch,
+            "The batch did not leave a durable branch snapshot."
+        )
+        let collected = project.candidates.filter { $0.status == .collected }
+        XCTAssertEqual(collected.count, targetChapterCount)
+        XCTAssertEqual(branch.workingChapterSelections.count, targetChapterCount)
+        XCTAssertNil(project.confirmedChapterPlan(for: branchID))
+        XCTAssertEqual(branch.syncStatus, .synchronized)
+
+        // 每个 stateDelta 都用本章唯一 evidence；若宿主绕过候选证据校验，批次不会完整结束。
+        for token in evidenceTokens {
+            let matchingCandidates = collected.filter { $0.content.contains(token) }
+            XCTAssertEqual(matchingCandidates.count, 1, "Candidate evidence is not unique: \(token)")
+            let matchingEvents = project.events.filter { $0.summary.contains(token) }
+            XCTAssertEqual(matchingEvents.count, 1, "State evidence did not land once: \(token)")
+            XCTAssertEqual(Set(matchingEvents.map(\.id)).count, matchingEvents.count)
+        }
+        XCTAssertEqual(Set(collected.map(\.content)).count, targetChapterCount)
+
+        let requests = await adapter.requests
+        XCTAssertEqual(
+            requests.count,
+            targetChapterCount * 2,
+            "Each chapter must make exactly prose + one combined adjudication request."
+        )
+        for chapterNumber in 2...targetChapterCount {
+            let priorToken = evidenceTokens[chapterNumber - 2]
+            let proseRequest = requests[(chapterNumber - 1) * 2]
+            XCTAssertTrue(
+                proseRequest.messages.contains {
+                    $0.content.contains(
+                        "第\(chapterNumber - 1)章落地 \(priorToken)。"
+                    )
+                },
+                "The next chapter must inject the state committed by the prior adjudication."
+            )
+        }
+    }
+
+    private func makeBatchAdjudicationJSON(
+        chapterNumber: Int,
+        targetChapterCount: Int,
+        candidate: String,
+        evidenceToken: String
+    ) throws -> String {
+        let nextChapterNumber = chapterNumber + 1
+        var root: [String: Any] = [
+            "schemaVersion": 2,
+            "acceptance": [
+                "schemaVersion": 2,
+                "accepted": true,
+                "missingMustHappen": [],
+                "forbiddenViolations": [],
+                "obviousRepetition": [],
+                "summary": "第\(chapterNumber)章按合同完成。",
+            ],
+            "continuity": [
+                "schemaVersion": 1,
+                "consistent": true,
+                "issues": [],
+            ],
+            "stateDelta": [
+                "schemaVersion": 1,
+                "stateSummary": "第\(chapterNumber)章落地 \(evidenceToken)。",
+                "events": [[
+                    "id": "\(evidenceToken)-event",
+                    "kind": "discovery",
+                    "summary": "第\(chapterNumber)章发现 \(evidenceToken)。",
+                    "entityReferences": ["林晚"],
+                    "evidence": evidenceToken,
+                ]],
+                "characterChanges": [],
+                "relationshipChanges": [],
+                "foreshadowingChanges": [],
+                "unresolvedEntityNames": [],
+                "branchOutlinePatch": "继续追查 \(evidenceToken)。",
+                "settingProposals": [],
+            ],
+        ]
+
+        if chapterNumber < targetChapterCount {
+            root["nextPlan"] = [
+                "schemaVersion": 1,
+                "outlinePlacement": "第 \(nextChapterNumber) 章",
+                "goalAndConflict": "围绕 \(evidenceToken) 推进下一章冲突",
+                "mustHappen": ["林晚必须核对 \(evidenceToken)"],
+                "mustNotHappen": ["提前结束全书"],
+                "endingHook": "新的线索继续指向远方",
+                "visibleFacts": [evidenceToken],
+            ]
+        } else {
+            root["nextPlan"] = NSNull()
+        }
+
+        let data = try JSONSerialization.data(
+            withJSONObject: root,
+            options: [.sortedKeys]
+        )
+        // Keep the candidate argument in the helper's contract so every evidence
+        // token is intentionally authored from the exact chapter body under test.
+        XCTAssertTrue(candidate.contains(evidenceToken))
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func seedGhostwriteMaterials(

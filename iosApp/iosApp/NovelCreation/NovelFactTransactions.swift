@@ -207,6 +207,85 @@ enum NovelFactTransactionReducer {
         let markLaterStale: Bool
     }
 
+    /// Ghostwrite's accepted candidate path: collect the selected prose and
+    /// its state delta while consuming the exact confirmed plan that produced
+    /// the candidate. The pending record is an in-memory transaction input;
+    /// it is never appended to the returned document.
+    static func commitGhostwriteAdjudication(
+        _ command: NovelCollectCandidateCommand,
+        payloadSHA256: String,
+        planID: NovelChapterPlanID,
+        planDigest: String,
+        nextPlanID: NovelChapterPlanID? = nil,
+        nextPlan: NovelChapterPlanProposalV1? = nil,
+        delta: NovelStateDeltaV1,
+        artifacts: NovelFactTransactionReceiptArtifacts,
+        in document: NovelProjectDocumentV1,
+        now: Date = Date()
+    ) throws -> NovelFactTransactionResult {
+        try requireProject(command.projectID, in: document)
+        try requirePayloadHash(payloadSHA256)
+        guard command.source == .systemAutoCollect else {
+            throw NovelError.invalidInput(
+                "Ghostwrite adjudication must use the system collection source."
+            )
+        }
+        guard document.branches.contains(where: { $0.id == command.branchID }) else {
+            throw NovelError.branchNotFound(command.branchID)
+        }
+        guard let plan = document.confirmedChapterPlan(for: command.branchID),
+              plan.id == planID,
+              plan.contentDigest == planDigest else {
+            throw NovelError.invalidInput(
+                "The current confirmed chapter plan does not match the adjudication."
+            )
+        }
+        guard let candidate = document.candidates.first(where: {
+            $0.id == command.candidateID && $0.branchID == command.branchID
+        }),
+        candidate.ghostwritePlanID == plan.id,
+        candidate.chapterPlanDigest == plan.contentDigest else {
+            throw NovelError.invalidInput(
+                "The candidate does not match the current confirmed chapter plan."
+            )
+        }
+        guard (nextPlanID == nil) == (nextPlan == nil) else {
+            throw NovelError.invalidInput(
+                "The replacement chapter plan is incomplete."
+            )
+        }
+        let replacementPlan = try nextPlan.map { proposal in
+            guard let nextPlanID, nextPlanID != plan.id else {
+                throw NovelError.invalidInput(
+                    "The next chapter plan must use a new identity."
+                )
+            }
+            return try confirmedChapterPlan(
+                id: nextPlanID,
+                branchID: command.branchID,
+                proposal: proposal,
+                now: now
+            )
+        }
+        let pending = try makeCollectionPending(
+            command,
+            payloadSHA256: payloadSHA256,
+            in: document,
+            now: now
+        )
+        return try commitStateDeltaCollection(
+            pending: pending,
+            validatedDelta: try validate(delta),
+            retryCommand: nil,
+            artifacts: artifacts,
+            in: document,
+            now: now,
+            acceptEmptyFacts: false,
+            consumeChapterPlanID: plan.id,
+            replacementChapterPlan: replacementPlan
+        )
+    }
+
     private static func commitPreparedCollection(
         _ pending: NovelPendingOperationRecord,
         retryCommand: NovelRetryPendingCommand?,
@@ -488,10 +567,8 @@ enum NovelFactTransactionReducer {
             // 替换只能落到**这个候选自己重写的那一章**。此前该约束只存在于
             // 收录面板,任何绕过 UI 的调用方都能拿一段无关正文整章覆盖。
             guard let sourceVersionID = candidate.sourceChapterVersionID,
-                  document.chapterVersions.contains(where: {
-                      $0.id == sourceVersionID && $0.chapterID == chapterID
-                  }) else {
-                throw NovelError.invalidInput("The candidate did not rewrite this chapter.")
+                  sourceVersionID == selection.versionID else {
+                throw NovelError.invalidInput("The rewritten chapter changed after this candidate was generated.")
             }
             proposedVersion = NovelChapterVersionRecord(
                 id: command.proposedChapterVersionID,
@@ -582,9 +659,34 @@ enum NovelFactTransactionReducer {
         now: Date = Date(),
         acceptEmptyFacts: Bool = false
     ) throws -> NovelFactTransactionResult {
-        var validatedDelta = try validate(delta)
+        let validatedDelta = try validate(delta)
         let pending = try requirePending(pendingID, kind: .collection, in: document)
         try validateRetry(retryCommand, for: pending, in: document)
+        return try commitStateDeltaCollection(
+            pending: pending,
+            validatedDelta: validatedDelta,
+            retryCommand: retryCommand,
+            artifacts: artifacts,
+            in: document,
+            now: now,
+            acceptEmptyFacts: acceptEmptyFacts,
+            consumeChapterPlanID: nil,
+            replacementChapterPlan: nil
+        )
+    }
+
+    private static func commitStateDeltaCollection(
+        pending: NovelPendingOperationRecord,
+        validatedDelta: NovelStateDeltaV1,
+        retryCommand: NovelRetryPendingCommand?,
+        artifacts: NovelFactTransactionReceiptArtifacts,
+        in document: NovelProjectDocumentV1,
+        now: Date,
+        acceptEmptyFacts: Bool,
+        consumeChapterPlanID: NovelChapterPlanID?,
+        replacementChapterPlan: NovelChapterPlanRecord?
+    ) throws -> NovelFactTransactionResult {
+        var validatedDelta = validatedDelta
         let branchIndex = try requireBranch(pending.branchID, in: document)
         let branch = document.branches[branchIndex]
         try requirePendingGuards(
@@ -751,12 +853,93 @@ enum NovelFactTransactionReducer {
             now: now
         )
         next.pendingOperations.removeAll { $0.id == pending.id }
+        if let consumeChapterPlanID {
+            guard next.chapterPlans.contains(where: {
+                $0.branchID == branch.id && $0.id == consumeChapterPlanID
+            }) else {
+                throw NovelError.invalidInput("The confirmed chapter plan changed before collection.")
+            }
+            next.chapterPlans.removeAll {
+                $0.branchID == branch.id && $0.id == consumeChapterPlanID
+            }
+            if let replacementChapterPlan {
+                guard replacementChapterPlan.branchID == branch.id,
+                      replacementChapterPlan.id != consumeChapterPlanID,
+                      replacementChapterPlan.isConfirmed,
+                      !next.chapterPlans.contains(where: { $0.branchID == branch.id }) else {
+                    throw NovelError.invalidInput("The next chapter plan is invalid.")
+                }
+                next.chapterPlans.append(replacementChapterPlan)
+            }
+            next.project.configRevision += 1
+        } else if replacementChapterPlan != nil {
+            throw NovelError.invalidInput(
+                "A replacement chapter plan requires consuming the current plan."
+            )
+        }
         advanceProjectRevision(in: &next, now: now)
         guard next.project.revision == finalRevision else {
             throw NovelError.invalidInput("Collection revision accounting failed.")
         }
-        try validateTransition(from: document, to: next)
+        if consumeChapterPlanID == nil {
+            try validateTransition(from: document, to: next)
+        } else {
+            // The ephemeral pending is not part of the caller's persisted
+            // document. Include it only as the transition witness so the
+            // existing receipt lifecycle validator can verify this atomic
+            // finalization without making the pending Codable/durable.
+            var validationBase = document
+            validationBase.pendingOperations.append(pending)
+            try validateTransition(from: validationBase, to: next)
+        }
         return (next, outcome)
+    }
+
+    private static func confirmedChapterPlan(
+        id: NovelChapterPlanID,
+        branchID: NovelBranchID,
+        proposal: NovelChapterPlanProposalV1,
+        now: Date
+    ) throws -> NovelChapterPlanRecord {
+        let outlinePlacement = proposal.outlinePlacement.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let goalAndConflict = proposal.goalAndConflict.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let endingHook = proposal.endingHook.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mustHappen = NovelChapterPlanRecord.normalizedLines(proposal.mustHappen)
+        let mustNotHappen = NovelChapterPlanRecord.normalizedLines(proposal.mustNotHappen)
+        let visibleFacts = NovelChapterPlanRecord.normalizedLines(proposal.visibleFacts)
+        guard proposal.schemaVersion == NovelChapterPlanProposalV1.currentSchemaVersion,
+              outlinePlacement.count <= 500,
+              !goalAndConflict.isEmpty,
+              goalAndConflict.count <= 8_000,
+              endingHook.count <= 4_000,
+              !mustHappen.isEmpty,
+              mustHappen.count <= 32,
+              mustNotHappen.count <= 32,
+              visibleFacts.count <= 32 else {
+            throw NovelError.invalidInput("The next chapter plan is invalid.")
+        }
+        var record = NovelChapterPlanRecord(
+            id: id,
+            branchID: branchID,
+            status: .confirmed,
+            outlinePlacement: outlinePlacement,
+            goalAndConflict: goalAndConflict,
+            mustHappen: mustHappen,
+            mustNotHappen: mustNotHappen,
+            endingHook: endingHook,
+            visibleFacts: visibleFacts,
+            contentDigest: "",
+            updatedAt: now,
+            confirmedAt: now
+        )
+        record.contentDigest = NovelChapterPlanRecord.digest(
+            forCanonicalPayload: record.canonicalDigestPayload()
+        )
+        return record
     }
 
     static func saveManualEdit(

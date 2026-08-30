@@ -29,15 +29,19 @@ private let novelDiscussionProjectToolNames: [String] = [
 
 final class NovelLiveModelAdapterTests: XCTestCase {
     func testGlobalAndFixedPoliciesResolveStableProviderAndModelUUIDs() async throws {
-        let fixture = makeFixture(apiKey: "test-key")
+        let fixture = makeFixture(
+            apiKey: "test-key",
+            modelID: "deepseek-v4-flash",
+            contextWindowTokens: nil
+        )
         let adapter = makeAdapter(fixture: fixture)
 
         let global = try await adapter.resolveModel(for: .global)
         XCTAssertEqual(global.providerID, fixture.provider.id.description())
         XCTAssertEqual(global.ownerProviderID, fixture.provider.id.description())
         XCTAssertEqual(global.modelID, fixture.model.id.description())
-        XCTAssertEqual(global.wireModelID, "novel-live")
-        XCTAssertEqual(global.contextWindowTokens, 128_000)
+        XCTAssertEqual(global.wireModelID, "deepseek-v4-flash")
+        XCTAssertEqual(global.contextWindowTokens, 1_000_000)
 
         let fixed = try await adapter.resolveModel(for: .fixed(
             providerID: fixture.provider.id.description().uppercased(),
@@ -1329,8 +1333,17 @@ final class NovelLiveModelAdapterTests: XCTestCase {
         let catalog: NovelLiveModelCatalog
     }
 
-    private func makeFixture(apiKey: String, reasoning: Bool = false) -> Fixture {
-        let model = makeModel(reasoning: reasoning)
+    private func makeFixture(
+        apiKey: String,
+        reasoning: Bool = false,
+        modelID: String = "novel-live",
+        contextWindowTokens: Int? = 128_000
+    ) -> Fixture {
+        let model = makeModel(
+            modelID: modelID,
+            reasoning: reasoning,
+            contextWindowTokens: contextWindowTokens
+        )
         let provider = ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),
             enabled: true,
@@ -1382,7 +1395,8 @@ final class NovelLiveModelAdapterTests: XCTestCase {
     private func makeModel(
         modelID: String = "novel-live",
         reasoning: Bool = false,
-        customBodies: [CustomBody] = []
+        customBodies: [CustomBody] = [],
+        contextWindowTokens: Int? = 128_000
     ) -> Model {
         Model(
             modelId: modelID,
@@ -1395,7 +1409,7 @@ final class NovelLiveModelAdapterTests: XCTestCase {
             outputModalities: [],
             abilities: reasoning ? [.reasoning] : [],
             tools: Set<BuiltInTools>(),
-            contextWindowTokens: KotlinInt(value: 128_000),
+            contextWindowTokens: contextWindowTokens.map { KotlinInt(value: Int32($0)) },
             providerOverwrite: nil
         )
     }

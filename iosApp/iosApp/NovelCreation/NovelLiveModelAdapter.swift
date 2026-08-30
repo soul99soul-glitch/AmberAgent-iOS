@@ -609,7 +609,10 @@ actor NovelLiveModelAdapter: NovelDurableModelRunning {
                 modelID: model.id.description(),
                 wireModelID: wireModelID,
                 displayName: displayName.isEmpty ? wireModelID : displayName,
-                contextWindowTokens: model.contextWindowTokens.map { Int(truncating: $0) }
+                contextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
+                    modelWindow: model.contextWindowTokens.map { Int(truncating: $0) },
+                    modelId: wireModelID
+                )
             )
         )
     }

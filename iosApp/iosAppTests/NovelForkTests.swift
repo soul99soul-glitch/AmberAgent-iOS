@@ -282,6 +282,106 @@ final class NovelForkTests: XCTestCase {
             checkpoints: generated.document.checkpoints + [synchronizedHead],
             sourceMessage: sourceMessage
         ))
+
+        var pointerRelinkDocument = generated.document
+        pointerRelinkDocument.checkpoints.append(synchronizedHead)
+        pointerRelinkDocument.appliedOperations.append(NovelAppliedOperationRecord(
+            operationID: synchronizedHead.operationID,
+            kind: .workspacePlot,
+            payloadSHA256: String(repeating: "0", count: 64),
+            outcome: .workspacePlotCommitted(
+                projectID: pointerRelinkDocument.project.id,
+                branchID: branch.id,
+                checkpointID: synchronizedHead.id,
+                revision: pointerRelinkDocument.project.revision + 1
+            ),
+            appliedProjectRevision: pointerRelinkDocument.project.revision + 1,
+            appliedAt: synchronizedHead.createdAt
+        ))
+        XCTAssertTrue(NovelCandidateSemantics.collectionBaseMatches(
+            candidate,
+            targetCheckpointID: synchronizedHead.id,
+            targetHeadRevision: candidate.baseHeadRevision + 1,
+            in: pointerRelinkDocument
+        ))
+
+        var rebuiltDocument = pointerRelinkDocument
+        rebuiltDocument.appliedOperations[rebuiltDocument.appliedOperations.count - 1] =
+            NovelAppliedOperationRecord(
+                operationID: synchronizedHead.operationID,
+                kind: .syncManualEdits,
+                payloadSHA256: String(repeating: "0", count: 64),
+                outcome: .manualSyncCommitted(
+                    projectID: rebuiltDocument.project.id,
+                    branchID: branch.id,
+                    checkpointID: synchronizedHead.id,
+                    revision: rebuiltDocument.project.revision + 1
+                ),
+                appliedProjectRevision: rebuiltDocument.project.revision + 1,
+                appliedAt: synchronizedHead.createdAt
+            )
+        XCTAssertFalse(NovelCandidateSemantics.collectionBaseMatches(
+            candidate,
+            targetCheckpointID: synchronizedHead.id,
+            targetHeadRevision: candidate.baseHeadRevision + 1,
+            in: rebuiltDocument
+        ))
+
+        var changedSelections = base.chapterSelections
+        if let first = changedSelections.first {
+            changedSelections[0] = NovelChapterSelection(
+                chapterID: first.chapterID,
+                versionID: NovelChapterVersionID()
+            )
+        } else {
+            changedSelections.append(NovelChapterSelection(
+                chapterID: NovelChapterID(),
+                versionID: NovelChapterVersionID()
+            ))
+        }
+        let editedHead = NovelBranchCheckpointRecord(
+            id: NovelCheckpointID(),
+            kind: .manualSync,
+            createdOnBranchID: branch.id,
+            parentCheckpointID: base.id,
+            chapterSelections: changedSelections,
+            stateSnapshotID: NovelStateSnapshotID(),
+            sessionCursor: .through(sequence: sourceMessage.sequence),
+            branchOverrideRevisionIDs: base.branchOverrideRevisionIDs,
+            sourceCandidateID: nil,
+            baseHeadRevision: candidate.baseHeadRevision,
+            operationID: NovelOperationID(),
+            createdAt: sourceMessage.createdAt.addingTimeInterval(1)
+        )
+        XCTAssertFalse(NovelCandidateSemantics.collectionBaseMatches(
+            candidate,
+            targetCheckpointID: editedHead.id,
+            targetHeadRevision: candidate.baseHeadRevision + 1,
+            checkpoints: generated.document.checkpoints + [editedHead],
+            sourceMessage: sourceMessage
+        ))
+
+        let changedOverridesHead = NovelBranchCheckpointRecord(
+            id: NovelCheckpointID(),
+            kind: .manualSync,
+            createdOnBranchID: branch.id,
+            parentCheckpointID: base.id,
+            chapterSelections: base.chapterSelections,
+            stateSnapshotID: NovelStateSnapshotID(),
+            sessionCursor: .through(sequence: sourceMessage.sequence),
+            branchOverrideRevisionIDs: base.branchOverrideRevisionIDs + [NovelMaterialRevisionID()],
+            sourceCandidateID: nil,
+            baseHeadRevision: candidate.baseHeadRevision,
+            operationID: NovelOperationID(),
+            createdAt: sourceMessage.createdAt.addingTimeInterval(1)
+        )
+        XCTAssertFalse(NovelCandidateSemantics.collectionBaseMatches(
+            candidate,
+            targetCheckpointID: changedOverridesHead.id,
+            targetHeadRevision: candidate.baseHeadRevision + 1,
+            checkpoints: generated.document.checkpoints + [changedOverridesHead],
+            sourceMessage: sourceMessage
+        ))
     }
 
     func testParentAndChildWorkingStateEvolveIndependentlyAndFileRoundTrip() async throws {

@@ -567,6 +567,81 @@ final class NovelStructuredOutputTests: XCTestCase {
         XCTAssertEqual(categoryFailure.category, .invalidValue)
         XCTAssertFalse(categoryFailure.localizedDescription.isEmpty)
     }
+
+    func testChapterAdjudicationDecodesNestedContractsWithoutTrustingSummaryFlags() throws {
+        var object = adjudicationObject()
+        var acceptance = try XCTUnwrap(object["acceptance"] as? [String: Any])
+        acceptance["accepted"] = false
+        object["acceptance"] = acceptance
+        var continuity = try XCTUnwrap(object["continuity"] as? [String: Any])
+        continuity["consistent"] = false
+        object["continuity"] = continuity
+
+        let decoded = try NovelStructuredOutputDecoder.decodeChapterAdjudication(
+            from: try data(object)
+        )
+
+        XCTAssertFalse(decoded.acceptance.accepted)
+        XCTAssertTrue(decoded.acceptance.missingMustHappen.isEmpty)
+        XCTAssertFalse(decoded.continuity.consistent)
+        XCTAssertTrue(decoded.continuity.issues.isEmpty)
+        XCTAssertEqual(decoded.stateDelta.events.map(\.id), ["event-1"])
+        XCTAssertNil(decoded.nextPlan, "schema v1 remains readable without a next plan")
+
+        var versionTwo = adjudicationObject()
+        versionTwo["schemaVersion"] = 2
+        versionTwo["nextPlan"] = nextPlanObject()
+        let withNextPlan = try NovelStructuredOutputDecoder.decodeChapterAdjudication(
+            from: try data(versionTwo)
+        )
+        XCTAssertEqual(withNextPlan.nextPlan?.mustHappen, ["Open the lower archive."])
+    }
+
+    func testChapterAdjudicationRejectsUnknownNestedAndMissingOuterFields() throws {
+        var nestedUnknown = adjudicationObject()
+        var acceptance = try XCTUnwrap(nestedUnknown["acceptance"] as? [String: Any])
+        acceptance["invented"] = true
+        nestedUnknown["acceptance"] = acceptance
+        assertFailure(
+            category: .unknownField,
+            try NovelStructuredOutputDecoder.decodeChapterAdjudication(
+                from: try data(nestedUnknown)
+            )
+        )
+
+        var missing = adjudicationObject()
+        missing.removeValue(forKey: "stateDelta")
+        assertFailure(
+            category: .missingField,
+            try NovelStructuredOutputDecoder.decodeChapterAdjudication(
+                from: try data(missing)
+            )
+        )
+
+        var malformedNextPlan = adjudicationObject()
+        malformedNextPlan["schemaVersion"] = 2
+        var nextPlan = nextPlanObject()
+        nextPlan["invented"] = true
+        malformedNextPlan["nextPlan"] = nextPlan
+        assertFailure(
+            category: .unknownField,
+            try NovelStructuredOutputDecoder.decodeChapterAdjudication(
+                from: try data(malformedNextPlan)
+            )
+        )
+
+        var oversizedNextPlan = adjudicationObject()
+        oversizedNextPlan["schemaVersion"] = 2
+        var oversizedPlan = nextPlanObject()
+        oversizedPlan["mustHappen"] = ["One", "Two", "Three", "Four"]
+        oversizedNextPlan["nextPlan"] = oversizedPlan
+        assertFailure(
+            category: .invalidValue,
+            try NovelStructuredOutputDecoder.decodeChapterAdjudication(
+                from: try data(oversizedNextPlan)
+            )
+        )
+    }
 }
 
 private extension NovelStructuredOutputTests {
@@ -633,6 +708,38 @@ private extension NovelStructuredOutputTests {
                 "content": "Consider defining who can hear the archive bell.",
                 "evidence": "Only Lin reacted to both rings."
             ]]
+        ]
+    }
+
+    func adjudicationObject() -> [String: Any] {
+        [
+            "schemaVersion": 1,
+            "acceptance": [
+                "schemaVersion": 2,
+                "accepted": true,
+                "missingMustHappen": [],
+                "forbiddenViolations": [],
+                "obviousRepetition": [],
+                "summary": "The chapter follows the confirmed plan."
+            ],
+            "continuity": [
+                "schemaVersion": 1,
+                "consistent": true,
+                "issues": []
+            ],
+            "stateDelta": deltaObject()
+        ]
+    }
+
+    func nextPlanObject() -> [String: Any] {
+        [
+            "schemaVersion": 1,
+            "outlinePlacement": "Chapter Two",
+            "goalAndConflict": "Reach the lower archive before dawn.",
+            "mustHappen": ["Open the lower archive."],
+            "mustNotHappen": ["Leave the city."],
+            "endingHook": "A second bell rings.",
+            "visibleFacts": ["The upper archive is open."]
         ]
     }
 

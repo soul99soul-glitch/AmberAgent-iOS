@@ -365,6 +365,9 @@ struct ChatGenerationBindings {
     /// P1-c: run 终态回传钩子——编排服务据此向父线程 mailbox 投递 FINAL_ANSWER
     /// （conversationId、runId、终态消息快照）。默认空实现零开销。
     var onRunTerminal: @MainActor (KotlinUuid?, String, [UIMessage]) async -> Void = { _, _, _ in }
+    /// Surfaces the existing reconciliation card for a live side effect whose
+    /// executor could not determine whether it applied.
+    var setToolOutcomeUnknown: @MainActor (IOSToolOutcomeUnknownDescriptor) -> Void = { _ in }
     /// 管线闭环修复：每轮组装前刷新编排链接缓存（spawn 发生在 run 中途、邮件
     /// 在边界到达——只在会话切换时刷新会让这些轮次漏掉编排语境注入）。
     /// 默认空实现零影响。

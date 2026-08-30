@@ -98,6 +98,40 @@ final class NovelInjectionPlannerTests: XCTestCase {
         }
     }
 
+    func testRequiredContentUsesHardLimitWhileOptionalContentStopsAtPackingLimit() throws {
+        var document = try NovelTestFixtures.document()
+        let smart = addMaterial(
+            to: &document,
+            kind: .world,
+            title: "Dragon Archive",
+            content: String(repeating: "dragon record ", count: 500),
+            tags: ["dragon"],
+            mode: .smart
+        )
+        let plan = try NovelInjectionPlanner.plan(
+            document: document,
+            request: NovelInjectionPlanningRequest(
+                branchID: document.branches[0].id,
+                promptKind: .discussion,
+                userText: String(repeating: "dragon evidence ", count: 1_000),
+                optionalPackingLimitTokens: 1_000,
+                budget: NovelInjectionBudget(
+                    maxEstimatedInputTokens: 10_000,
+                    chapterTailCharacterLimit: 100,
+                    maximumRecentSessionMessages: 0
+                )
+            )
+        )
+
+        XCTAssertGreaterThan(plan.estimatedInputTokens, 1_000)
+        XCTAssertLessThanOrEqual(plan.estimatedInputTokens, 10_000)
+        let decision = try XCTUnwrap(plan.materialDecisions.first {
+            $0.materialID == smart.materialID
+        })
+        XCTAssertFalse(decision.included)
+        XCTAssertEqual(decision.reason, .budgetTrimmed)
+    }
+
     func testBranchOverrideIsRequiredAndCannotBeForceExcluded() throws {
         var document = try NovelTestFixtures.document()
         let materialID = NovelMaterialID()

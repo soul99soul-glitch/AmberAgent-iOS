@@ -1605,6 +1605,12 @@ private final class RecipeRouteExecutor: IOSToolExecutor {
             return .needsApproval("Recipe step requires approval.")
         case .durabilityFailure(let message):
             return .durabilityFailure(message)
+        case .outcomeUnknown(let messages):
+            let output = messages.flatMap(\.parts)
+                .compactMap { $0 as? UIMessagePart.Tool }
+                .first { $0.toolCallId == toolCall.toolCallId }?
+                .output ?? []
+            return .outcomeUnknown(output)
         }
     }
 }

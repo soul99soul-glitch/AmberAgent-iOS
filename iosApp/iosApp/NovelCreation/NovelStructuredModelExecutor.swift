@@ -7,6 +7,7 @@ enum NovelStructuredModelTaskKind: String, Codable, Equatable, CaseIterable, Sen
     case polishDrift
     case continuityAudit
     case chapterPlanAcceptance
+    case chapterAdjudication
     case chapterPlanProposal
     case workspacePlot
 }
@@ -20,6 +21,13 @@ enum NovelStructuredModelTask: Equatable, Sendable {
     /// 首块传空串。`manuscript` 是本块正文,含 `# Chapter N: 标题` 标头。
     case continuityAudit(priorFindings: String, manuscript: String)
     case chapterPlanAcceptance(plan: String, candidate: String, recentHighlights: String)
+    case chapterAdjudication(
+        context: String,
+        priorManuscript: String,
+        candidate: String,
+        prepareNextPlan: Bool,
+        nextPlanContext: String
+    )
     case chapterPlanProposal(context: String)
     case workspacePlot(previousSummary: String, chapterTitle: String, chapterContent: String)
 }
@@ -37,6 +45,7 @@ enum NovelStructuredModelOutput: Equatable, Sendable {
     case polishDrift(NovelPolishDriftV1)
     case continuityAudit(NovelContinuityAuditV1)
     case chapterPlanAcceptance(NovelChapterPlanAcceptanceV1)
+    case chapterAdjudication(NovelChapterAdjudicationV1)
     case chapterPlanProposal(NovelChapterPlanProposalV1)
     case workspacePlot(NovelWorkspacePlotDraft)
 }
@@ -97,14 +106,10 @@ extension NovelStructuredModelExecutionFailure: LocalizedError {
     /// transport errors have no new output — do not reuse an older draft.
     var allowsOutputRepair: Bool {
         switch failure.code {
-        case "cancelled",
-             "structured_no_output_timeout",
-             "model_stream_failed",
-             "model_start_failed",
-             "model_unavailable":
-            false
-        default:
+        case "invalid_structured_output", "state_facts_evidence_unmatched":
             true
+        default:
+            false
         }
     }
 }
@@ -164,7 +169,7 @@ private final class NovelStructuredModelNoOutputHeartbeat: @unchecked Sendable {
 /// handling and strict decoding before a reducer can see model output.
 struct NovelStructuredModelExecutor: Sendable {
     static let maximumInternalInputBudgetTokens = 64_000
-    static let unknownWindowFallbackInputBudgetTokens = 16_000
+    static let unknownWindowFallbackInputBudgetTokens = 24_000
 
     let modelRunner: any NovelModelRunning
     /// 剧情同步是否允许推理。默认读小说设置；测试可注入。
@@ -665,6 +670,7 @@ private extension NovelStructuredModelTask {
         case .polishDrift: .polishDrift
         case .continuityAudit: .continuityAudit
         case .chapterPlanAcceptance: .chapterPlanAcceptance
+        case .chapterAdjudication: .chapterAdjudication
         case .chapterPlanProposal: .chapterPlanProposal
         case .workspacePlot: .workspacePlot
         }
@@ -678,6 +684,7 @@ private extension NovelStructuredModelTask {
         case .polishDrift: .polishDriftV1
         case .continuityAudit: .continuityAuditV1
         case .chapterPlanAcceptance: .chapterPlanAcceptanceV1
+        case .chapterAdjudication: .chapterAdjudicationV1
         case .chapterPlanProposal: .chapterPlanProposalV1
         case .workspacePlot: .workspacePlotV1
         }
@@ -692,6 +699,8 @@ private extension NovelStructuredModelTask {
         case .continuityAudit: .continuityAudit
         // Reuse state-extraction purpose tagging; runtime model policy is `.review`.
         case .chapterPlanAcceptance: .stateExtraction
+        // The adjudication is a review gate whose state delta is committed only with the accepted prose.
+        case .chapterAdjudication: .continuityAudit
         // Proposal uses creation model policy; purpose tag stays light-weight.
         case .chapterPlanProposal: .stateExtraction
         case .workspacePlot: .stateExtraction
@@ -749,6 +758,31 @@ private extension NovelStructuredModelTask {
                         "\n\nWHOLE-CHAPTER CANDIDATE\n" + candidate
                 ),
             ]
+        case .chapterAdjudication(
+            let context,
+            let priorManuscript,
+            let candidate,
+            let prepareNextPlan,
+            let nextPlanContext
+        ):
+            let trimmedContext = context.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedPriorManuscript = priorManuscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            let boundedNextPlanContext = Self.boundedNextPlanContext(nextPlanContext)
+            var system = prompt.systemText
+            if !trimmedContext.isEmpty {
+                system += "\n\nAUTHORITATIVE CONTEXT\n" + trimmedContext
+            }
+            if !trimmedPriorManuscript.isEmpty {
+                system += "\n\nRECENT MANUSCRIPT FOR CONTINUITY\n" + trimmedPriorManuscript
+            }
+            system += "\n\nPREPARE NEXT CHAPTER PLAN\n" + (prepareNextPlan ? "true" : "false")
+            if !boundedNextPlanContext.isEmpty {
+                system += "\n\nNEXT CHAPTER PLAN CONTEXT (BOUNDED)\n" + boundedNextPlanContext
+            }
+            return [
+                .init(role: .system, content: system),
+                .init(role: .user, content: "WHOLE-CHAPTER CANDIDATE\n" + candidate),
+            ]
         case .chapterPlanProposal(let context):
             return [
                 .init(role: .system, content: prompt.systemText),
@@ -797,6 +831,10 @@ private extension NovelStructuredModelTask {
             .chapterPlanAcceptance(
                 try NovelStructuredOutputDecoder.decodeChapterPlanAcceptance(from: text)
             )
+        case .chapterAdjudication:
+            .chapterAdjudication(
+                try NovelStructuredOutputDecoder.decodeChapterAdjudication(from: text)
+            )
         case .chapterPlanProposal:
             .chapterPlanProposal(
                 try NovelStructuredOutputDecoder.decodeChapterPlanProposal(from: text)
@@ -804,6 +842,18 @@ private extension NovelStructuredModelTask {
         case .workspacePlot:
             .workspacePlot(try NovelWorkspacePlotDraft.parse(text))
         }
+    }
+}
+
+private extension NovelStructuredModelTask {
+    /// The lifecycle supplies a token-budgeted context. Keep an additional
+    /// local ceiling so a malformed caller cannot turn the system message into
+    /// an unbounded second manuscript input.
+    static func boundedNextPlanContext(_ context: String) -> String {
+        let trimmed = context.trimmingCharacters(in: .whitespacesAndNewlines)
+        let maximumCharacters = 24_000
+        guard trimmed.count > maximumCharacters else { return trimmed }
+        return String(trimmed.prefix(maximumCharacters)) + "\n[context truncated]"
     }
 }
 
@@ -818,7 +868,7 @@ extension NovelStructuredModelTaskKind {
         switch self {
         case .stateRebuild: 8_192
         case .stateDelta, .discussionArchive, .polishDrift, .continuityAudit,
-             .chapterPlanAcceptance, .chapterPlanProposal, .workspacePlot:
+             .chapterPlanAcceptance, .chapterAdjudication, .chapterPlanProposal, .workspacePlot:
             4_096
         }
     }
@@ -857,7 +907,7 @@ extension NovelStructuredModelTaskKind {
                 maxOutputTokens: nil,
                 reasoningLevel: .off
             )
-        case .polishDrift, .continuityAudit, .chapterPlanAcceptance:
+        case .polishDrift, .continuityAudit, .chapterPlanAcceptance, .chapterAdjudication:
             .init(
                 temperature: 0,
                 topP: 1,

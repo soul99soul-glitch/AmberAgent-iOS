@@ -151,7 +151,44 @@ enum NovelGenerationDocumentValidator {
                     (($0.kind == .collectCandidate && link.kind == .stateDelta) ||
                         ($0.kind == .syncManualEdits && link.kind == .manualRebuild))
             })
-        if !factFinalization {
+        // Ghostwrite adjudication creates its collection pending in memory after the
+        // single model response, then commits prose, facts, receipts and the exact
+        // confirmed plan together. Accept only that narrowly identified transition;
+        // legacy collection still requires a durable pending owner above.
+        let atomicGhostwriteFinalization: Bool = {
+            guard link.kind == .stateDelta,
+                  let owner = next.appliedOperations.first(where: {
+                      $0.operationID == link.ownerOperationID && $0.kind == .collectCandidate
+                  }),
+                  case let .candidateCollected(
+                      _, outcomeBranchID, candidateID, checkpointID, _, outcomeRevision
+                  ) = owner.outcome,
+                  outcomeBranchID == injection.branchID,
+                  outcomeRevision == next.project.revision,
+                  owner.appliedProjectRevision == next.project.revision,
+                  next.project.revision == current.project.revision + 1,
+                  next.project.configRevision == current.project.configRevision + 1,
+                  current.pendingOperations == next.pendingOperations,
+                  let beforeCandidate = current.candidates.first(where: {
+                      $0.id == candidateID && $0.branchID == outcomeBranchID
+                  }),
+                  beforeCandidate.status == .available || beforeCandidate.status == .interrupted,
+                  let planID = beforeCandidate.ghostwritePlanID,
+                  let planDigest = beforeCandidate.chapterPlanDigest,
+                  let currentPlan = current.confirmedChapterPlan(for: outcomeBranchID),
+                  currentPlan.id == planID,
+                  currentPlan.contentDigest == planDigest,
+                  !next.chapterPlans.contains(where: {
+                      $0.branchID == outcomeBranchID && $0.id == planID
+                  }),
+                  let collectedCandidate = next.candidates.first(where: { $0.id == candidateID }),
+                  collectedCandidate.status == .collected,
+                  collectedCandidate.collectedCheckpointID == checkpointID else {
+                return false
+            }
+            return true
+        }()
+        if !factFinalization && !atomicGhostwriteFinalization {
             issues.append("A fact request receipt pair was appended outside its lifecycle transition.")
         }
     }
@@ -264,6 +301,11 @@ enum NovelGenerationDocumentValidator {
                 // 老项目判成损坏(2026-07-25 真机事故,见 acceptedVersions 注释)。
                 // 末章手改快路径用 stateDelta 提示词，receipt 仍记 manualRebuild。
                 var allowed = NovelPromptCatalog.acceptedVersions(for: expectedPrompt)
+                if factTransaction.kind == .stateDelta {
+                    allowed.formUnion(
+                        NovelPromptCatalog.acceptedVersions(for: .chapterAdjudicationV1)
+                    )
+                }
                 if factTransaction.kind == .manualRebuild {
                     allowed.formUnion(NovelPromptCatalog.acceptedVersions(for: .stateDeltaV1))
                 }

@@ -630,9 +630,7 @@ struct NovelSessionView: View {
                     projectID: projectID,
                     branchID: branchID
                 )
-            } else if viewModel.retryableBranchPendingOperations.contains(where: {
-                $0.kind != .manualSync
-            }) && !viewModel.isBusy {
+            } else if !viewModel.retryableBranchPendingOperations.isEmpty && !viewModel.isBusy {
                 synchronizationBanner
             } else if workspace.hasStalePlot && !viewModel.needsSync && !viewModel.isBusy
                         && !viewModel.isRunning {
@@ -751,9 +749,7 @@ struct NovelSessionView: View {
                 .foregroundStyle(AmberTheme.foreground2)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let pending = viewModel.retryableBranchPendingOperations.first(where: {
-                $0.kind != .manualSync
-            }) {
+            if let pending = viewModel.retryableBranchPendingOperations.first {
                 Button("重试") {
                     Task { @MainActor in
                         await viewModel.retryPending(pending.id)
@@ -1048,7 +1044,11 @@ struct NovelSessionView: View {
         }()
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 12) {
-                Image(systemName: viewModel.isGhostwriting ? "pencil.and.scribble" : "pause.circle")
+                Image(
+                    systemName: viewModel.isGhostwriting
+                        ? "pencil.and.scribble"
+                        : (progress.pauseReason == .backgroundInterrupted ? "arrow.clockwise.circle" : "pause.circle")
+                )
                     .font(.body)
                     .foregroundStyle(AmberTheme.accentAmber)
                     .frame(width: 22, alignment: .center)
@@ -1579,9 +1579,7 @@ struct NovelSessionView: View {
     }
 
     private var syncBannerText: String {
-        if let pending = viewModel.retryableBranchPendingOperations.first(where: {
-            $0.kind != .manualSync
-        }) {
+        if let pending = viewModel.retryableBranchPendingOperations.first {
             let failure = pending.lastError?.trimmingCharacters(in: .whitespacesAndNewlines)
             if let failure, !failure.isEmpty {
                 let reason = NovelPresentation.stateSyncFailureMessage(failure)

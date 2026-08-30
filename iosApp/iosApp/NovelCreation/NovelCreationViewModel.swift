@@ -330,6 +330,7 @@ final class NovelCreationViewModel {
     /// commits in one agent turn). Serial full-project reloads freeze large novels.
     @ObservationIgnored private var pendingExternalMutationProjectIDs: Set<NovelProjectID> = []
     @ObservationIgnored private var externalMutationRefreshTask: Task<Void, Never>?
+    @ObservationIgnored private var ghostwriteProgressWriteTask: Task<Bool, Never>?
 
     init(creation: any NovelCreation) {
         self.creation = creation
@@ -368,27 +369,52 @@ final class NovelCreationViewModel {
 
     /// 跨进程：写入本批代笔进度 sidecar；不该保留时删除。
     func persistGhostwriteBatchProgress(_ progress: NovelGhostwriteProgress) {
-        let record = NovelGhostwriteBatchProgressRecord.from(progress: progress)
-        Task { @MainActor in
-            do {
-                if record.shouldPersist {
-                    try await creation.saveGhostwriteBatchProgress(record)
-                } else {
-                    try await creation.removeGhostwriteBatchProgress(
-                        projectID: record.projectID,
-                        branchID: record.branchID
-                    )
-                }
-            } catch {
-                // 进度落盘失败不挡代笔主路径；下次 mutate 会再试。
-            }
+        _ = enqueueGhostwriteProgressWrite { [weak self] in
+            await self?.writeGhostwriteBatchProgress(progress) ?? false
         }
+    }
+
+    /// 系统即将收回执行机会时使用：确认最新 sidecar 已完成原子写入再取消编排。
+    func flushGhostwriteBatchProgress(_ progress: NovelGhostwriteProgress) async -> Bool {
+        await enqueueGhostwriteProgressWrite { [weak self] in
+            await self?.writeGhostwriteBatchProgress(progress) ?? false
+        }.value
+    }
+
+    private func writeGhostwriteBatchProgress(_ progress: NovelGhostwriteProgress) async -> Bool {
+        let record = NovelGhostwriteBatchProgressRecord.from(progress: progress)
+        do {
+            if record.shouldPersist {
+                try await creation.saveGhostwriteBatchProgress(record)
+            } else {
+                try await creation.removeGhostwriteBatchProgress(
+                    projectID: record.projectID,
+                    branchID: record.branchID
+                )
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private func enqueueGhostwriteProgressWrite(
+        _ operation: @escaping @MainActor () async -> Bool
+    ) -> Task<Bool, Never> {
+        let previous = ghostwriteProgressWriteTask
+        let task = Task { @MainActor in
+            _ = await previous?.value
+            return await operation()
+        }
+        ghostwriteProgressWriteTask = task
+        return task
     }
 
     func loadGhostwriteBatchProgress(
         projectID: NovelProjectID,
         branchID: NovelBranchID
     ) async -> NovelGhostwriteProgress? {
+        _ = await ghostwriteProgressWriteTask?.value
         do {
             guard let record = try await creation.loadGhostwriteBatchProgress(
                 projectID: projectID,
@@ -404,11 +430,17 @@ final class NovelCreationViewModel {
         projectID: NovelProjectID,
         branchID: NovelBranchID
     ) {
-        Task { @MainActor in
-            try? await creation.removeGhostwriteBatchProgress(
-                projectID: projectID,
-                branchID: branchID
-            )
+        _ = enqueueGhostwriteProgressWrite { [weak self] in
+            guard let self else { return false }
+            do {
+                try await self.creation.removeGhostwriteBatchProgress(
+                    projectID: projectID,
+                    branchID: branchID
+                )
+                return true
+            } catch {
+                return false
+            }
         }
     }
 
@@ -763,7 +795,7 @@ final class NovelCreationViewModel {
             if queuedAutomaticStateSyncTarget == target {
                 queuedAutomaticStateSyncTarget = nil
             }
-            startWorkspacePlotRelink(target)
+            startAutomaticStateSync(target)
             return
         }
 
@@ -2290,6 +2322,26 @@ final class NovelCreationViewModel {
         )
     }
 
+    func adjudicateAndCollectGhostwriteChapter(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        candidateID: NovelCandidateID,
+        prepareNextPlan: Bool
+    ) async throws -> NovelGhostwriteChapterAdjudicationResult {
+        let result = try await creation.adjudicateAndCollectGhostwriteChapter(
+            projectID: projectID,
+            branchID: branchID,
+            candidateID: candidateID,
+            prepareNextPlan: prepareNextPlan
+        )
+        // A refresh failure after the atomic commit must not turn into another
+        // adjudication/model request. The session performs its own durable refresh too.
+        if result.didCollect {
+            try? await refreshCurrentSelection(projectID: projectID)
+        }
+        return result
+    }
+
     func proposeAndConfirmNextChapterPlan(
         projectID: NovelProjectID,
         branchID: NovelBranchID,
@@ -2513,42 +2565,47 @@ final class NovelCreationViewModel {
         let branchPending = project.pendingOperations.filter {
             $0.branchID == branch.branch.id
         }
-        // Leftover plot-relink jobs are the work to consume, not a write lock.
-        guard branchPending.allSatisfy(\.isPlotRelinkJob) else { return }
-        startWorkspacePlotRelink(
-            NovelAutomaticStateSyncTarget(
-                projectID: project.project.id,
-                branchID: branch.branch.id
-            )
+        let resumableManualSync = branchPending.count == 1 &&
+            branchPending[0].kind == .manualSync &&
+            (branchPending[0].status == .pending || branchPending[0].status == .retryable)
+        guard branchPending.isEmpty || resumableManualSync else { return }
+        scheduleAutomaticStateSync(
+            projectID: project.project.id,
+            branchID: branch.branch.id
         )
     }
 
-    /// Deterministic pointer commit: finish leftover JSON extract or rebuild
-    /// plot/current.md from the working manuscript. No model call.
+    /// Await the branch's state alignment. The driver uses a deterministic
+    /// relink only when no chapter version changed; otherwise it resumes the
+    /// durable model rebuild.
     func finishPlotRelinkIfNeeded() async {
         guard let project = projectSnapshot,
               let branch = branchSnapshot else { return }
-        let leftover = project.pendingOperations.filter {
-            $0.branchID == branch.branch.id && $0.isPlotRelinkJob
+        let branchPending = project.pendingOperations.filter {
+            $0.branchID == branch.branch.id
         }
-        let writePending = project.pendingOperations.contains {
-            $0.branchID == branch.branch.id && !$0.isPlotRelinkJob
-        }
-        guard !writePending else { return }
-        guard branch.branch.syncStatus == .needsSync || !leftover.isEmpty else { return }
+        let resumableManualSync = branchPending.count == 1 &&
+            branchPending[0].kind == .manualSync &&
+            (branchPending[0].status == .pending || branchPending[0].status == .retryable)
+        guard branchPending.isEmpty || resumableManualSync else { return }
+        guard branch.branch.syncStatus == .needsSync else { return }
         let target = NovelAutomaticStateSyncTarget(
             projectID: project.project.id,
             branchID: branch.branch.id
         )
-        if let task = automaticStateSyncTask,
-           automaticStateSyncTarget == target {
+        // This is reached from an explicit collect action. If the user stopped
+        // an earlier automatic attempt, collecting authorizes this bounded relink.
+        userSuppressedStateSyncTargets.remove(target)
+        if let task = automaticStateSyncTask {
+            if automaticStateSyncTarget != target {
+                queuedAutomaticStateSyncTarget = target
+            }
             await task.value
-            return
         }
-        if automaticStateSyncTask == nil, automaticStateSyncTarget == target {
+        if automaticStateSyncTask == nil {
             automaticStateSyncTarget = nil
+            startAutomaticStateSync(target)
         }
-        startWorkspacePlotRelink(target)
         if let task = automaticStateSyncTask, automaticStateSyncTarget == target {
             await task.value
         }
@@ -3408,61 +3465,11 @@ final class NovelCreationViewModel {
         )
     }
 
-    private func startWorkspacePlotRelink(_ target: NovelAutomaticStateSyncTarget) {
-        guard automaticStateSyncTask == nil,
-              target != automaticStateSyncTarget else { return }
-        automaticStateSyncTarget = target
-        automaticStateSyncPresentationTarget = target
-        if automaticStateSyncFailure?.target == target {
-            automaticStateSyncFailure = nil
-        }
-        automaticStateSyncTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                if self.automaticStateSyncTarget == target {
-                    self.automaticStateSyncTarget = nil
-                }
-                if self.automaticStateSyncPresentationTarget == target {
-                    self.automaticStateSyncPresentationTarget = nil
-                }
-                self.automaticStateSyncTask = nil
-                if let queued = self.queuedAutomaticStateSyncTarget {
-                    self.queuedAutomaticStateSyncTarget = nil
-                    self.startWorkspacePlotRelink(queued)
-                }
-            }
-            guard !Task.isCancelled else { return }
-            do {
-                try await self.creation.applyWorkspacePlotRelink(
-                    projectID: target.projectID,
-                    branchID: target.branchID
-                )
-                if self.automaticStateSyncFailure?.target == target {
-                    self.automaticStateSyncFailure = nil
-                }
-                if self.selectedProjectID == target.projectID {
-                    self.projectSnapshot = try await self.project(id: target.projectID)
-                    if self.selectedBranchID == target.branchID {
-                        self.branchSnapshot = try await self.branch(
-                            projectID: target.projectID,
-                            branchID: target.branchID
-                        )
-                    }
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                self.publishAutomaticStateSyncFailure(
-                    target: target,
-                    message: NovelPresentation.stateSyncFailureMessage(
-                        "剧情指针未能按章回填。\(error.localizedDescription)"
-                    )
-                )
-            }
-        }
-    }
-
     private func startAutomaticStateSync(_ target: NovelAutomaticStateSyncTarget) {
+        guard automaticStateSyncTask == nil else {
+            queuedAutomaticStateSyncTarget = target
+            return
+        }
         guard !userSuppressedStateSyncTargets.contains(target) else { return }
         if let failure = automaticStateSyncFailure, failure.target == target {
             if errorMessage == failure.message {
@@ -3558,10 +3565,13 @@ final class NovelCreationViewModel {
             let branchPending = projectSnapshot.pendingOperations.filter {
                 $0.branchID == target.branchID
             }
-            guard branchPending.allSatisfy(\.isPlotRelinkJob) else {
+            let resumableManualSync = branchPending.count == 1 &&
+                branchPending[0].kind == .manualSync &&
+                (branchPending[0].status == .pending || branchPending[0].status == .retryable)
+            guard branchPending.isEmpty || resumableManualSync else {
                 // Previously returned silently — retry looked broken with no new banner.
                 let message: String
-                if branchPending.contains(where: { !$0.isPlotRelinkJob }) {
+                if branchPending.contains(where: { $0.kind != .manualSync }) {
                     message = "当前还有未完成的正文操作，请先处理后再重试剧情同步。"
                 } else if branchPending.count > 1 {
                     message = "当前有多个未完成的同步任务，请重新打开项目后再试。"
@@ -3577,6 +3587,38 @@ final class NovelCreationViewModel {
             }
             guard !Task.isCancelled,
                   !userSuppressedStateSyncTargets.contains(target) else { return }
+
+            if branchPending.isEmpty,
+               NovelWorkspaceLedger.canRelinkWithoutModel(
+                   branch: branchSnapshot.branch,
+                   checkpoints: projectSnapshot.checkpoints
+               ) {
+                do {
+                    try await creation.applyWorkspacePlotRelink(
+                        projectID: target.projectID,
+                        branchID: target.branchID
+                    )
+                    if automaticStateSyncFailure?.target == target {
+                        automaticStateSyncFailure = nil
+                    }
+                    continue
+                } catch is CancellationError {
+                    return
+                } catch {
+                    healAttempts += 1
+                    if healAttempts < NovelGhostwriteHeal.defaultMaxInfraRetries {
+                        try? await Task.sleep(for: .milliseconds(200))
+                        continue
+                    }
+                    publishAutomaticStateSyncFailure(
+                        target: target,
+                        message: NovelPresentation.stateSyncFailureMessage(
+                            "剧情指针未能按章回填。\(error.localizedDescription)"
+                        )
+                    )
+                    return
+                }
+            }
 
             let ghostwriteLeaseID = novelGhostwriteBackgroundLeaseID(
                 projectID: target.projectID,

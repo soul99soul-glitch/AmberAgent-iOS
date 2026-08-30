@@ -162,8 +162,8 @@ struct NovelSessionBubble: View {
         } else if transientPhase == .interrupted ||
                     runStatus == .interrupted ||
                     kind == .interruptedDraft {
-            let canCollect = actions.contains {
-                if case .collectProse = $0.action { return true }
+            let canCollect = effectiveActions.contains {
+                if case .collectProse = $0.action { return $0.isEnabled }
                 return false
             }
             Label(
@@ -714,7 +714,9 @@ private struct NovelGhostwritePlanCard: View {
                 if !proposal.visibleFacts.isEmpty {
                     planListSection(title: "视角可知事实", items: proposal.visibleFacts)
                 }
-                planListSection(title: "后续剧情参考", items: proposal.upcomingArc)
+                if !proposal.upcomingArc.isEmpty {
+                    planListSection(title: "后续剧情参考", items: proposal.upcomingArc)
+                }
             }
 
             if let response = presentation.response {
@@ -723,6 +725,7 @@ private struct NovelGhostwritePlanCard: View {
                     .foregroundStyle(AmberTheme.foreground2)
             } else {
                 chapterCountControl
+                    .disabled(blocker != nil)
 
                 if let blocker {
                     Text(blocker.displayName)
@@ -769,7 +772,7 @@ private struct NovelGhostwritePlanCard: View {
                 Text("这批代笔")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
-                Text("完成一章后会按后续剧情参考继续规划")
+                Text("批内尚未完成时会自动规划下一章，有后续参考时优先采用")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.foreground2)
             }
@@ -1287,6 +1290,7 @@ extension NovelSessionActionBlocker {
         case .branchInactive: "分支已不可编辑"
         case .branchNeedsSync: "剧情状态同步未完成"
         case .chapterPlanRequired: "代笔写整章前，请先确认本章计划"
+        case .ghostwriteReviewRequired: "代笔稿需通过审核后由代笔流程收录"
         case .ghostwriteRequirementsMissing: "代笔条件尚未满足"
         case .generationRunning: "请先停止当前生成"
         case .pendingOperation: "有正文操作正在处理"

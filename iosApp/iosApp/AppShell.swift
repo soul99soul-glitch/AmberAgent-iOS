@@ -20,6 +20,7 @@ struct AppShell: View {
     @State private var chatViewModel: ChatViewModel
     @State private var councilChatViewModel: CouncilChatViewModel
     @State private var novelCreationViewModel: NovelCreationViewModel?
+    @State private var novelSessionViewModel: NovelSessionViewModel?
     @State private var novelLifecycleCoordinator: NovelWorkspaceLifecycleCoordinator
     @State private var novelCreationErrorMessage: String?
     @State private var rootRouter = RouterPath()
@@ -61,15 +62,19 @@ struct AppShell: View {
             durableRunStore: IOSDurableRunStore()
         )
         let novelCreationViewModel: NovelCreationViewModel?
+        let novelSessionViewModel: NovelSessionViewModel?
         let novelCreationErrorMessage: String?
         do {
-            novelCreationViewModel = try NovelCreationComposition.makeViewModel(
+            let workspace = try NovelCreationComposition.makeViewModel(
                 sharedSettings: sharedSettingsStore,
                 toolRuntime: backgroundToolRuntime
             )
+            novelCreationViewModel = workspace
+            novelSessionViewModel = NovelSessionViewModel(workspace: workspace)
             novelCreationErrorMessage = nil
         } catch {
             novelCreationViewModel = nil
+            novelSessionViewModel = nil
             novelCreationErrorMessage = error.localizedDescription
         }
         self.settingsStore = settingsStore
@@ -85,6 +90,7 @@ struct AppShell: View {
         self._chatViewModel = State(initialValue: chatViewModel)
         self._councilChatViewModel = State(initialValue: councilChatViewModel)
         self._novelCreationViewModel = State(initialValue: novelCreationViewModel)
+        self._novelSessionViewModel = State(initialValue: novelSessionViewModel)
         self._novelLifecycleCoordinator = State(
             initialValue: NovelWorkspaceLifecycleCoordinator()
         )
@@ -130,6 +136,7 @@ struct AppShell: View {
                     chatViewModel: chatViewModel,
                     councilChatViewModel: councilChatViewModel,
                     novelCreationViewModel: novelCreationViewModel,
+                    novelSessionViewModel: novelSessionViewModel,
                     novelCreationErrorMessage: novelCreationErrorMessage,
                     router: rootRouter
                 )
@@ -237,9 +244,17 @@ struct AppShell: View {
                     ownedRunIds: backgroundRunIds
                 )
                 IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
+                if scenePhase == .active {
+                    IOSChatBackgroundGenerationCoordinator.shared
+                        .resumeRecoverableJobsIfNeeded()
+                }
                 finalizeStaleBackgroundJobsIfNeeded()
-                if scenePhase == .active, let novelCreationViewModel {
-                    await novelCreationViewModel.resumeDetachedBackgroundGeneration()
+                if scenePhase == .active {
+                    if let novelCreationViewModel {
+                        await novelCreationViewModel.resumeDetachedBackgroundGeneration()
+                        _ = await novelSessionViewModel?
+                            .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
+                    }
                 }
             } else {
                 await conversationStore.bootstrap()
@@ -327,9 +342,12 @@ struct AppShell: View {
             if let novelCreationViewModel {
                 Task {
                     await novelCreationViewModel.resumeDetachedBackgroundGeneration()
+                    _ = await novelSessionViewModel?
+                        .resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
                 }
             }
             IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
+            IOSChatBackgroundGenerationCoordinator.shared.resumeRecoverableJobsIfNeeded()
             finalizeStaleBackgroundJobsIfNeeded()
         case .inactive:
             break
@@ -619,6 +637,7 @@ private extension View {
         chatViewModel: ChatViewModel,
         councilChatViewModel: CouncilChatViewModel,
         novelCreationViewModel: NovelCreationViewModel?,
+        novelSessionViewModel: NovelSessionViewModel?,
         novelCreationErrorMessage: String?,
         router: RouterPath
     ) -> some View {
@@ -800,9 +819,10 @@ private extension View {
                     )
                 }
             case .novelProject(let projectID):
-                if let novelCreationViewModel {
+                if let novelCreationViewModel, let novelSessionViewModel {
                     NovelProjectWorkspaceView(
                         viewModel: novelCreationViewModel,
+                        sessionViewModel: novelSessionViewModel,
                         sharedSettings: sharedSettings,
                         projectID: projectID
                     )

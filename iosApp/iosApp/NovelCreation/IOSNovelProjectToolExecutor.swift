@@ -375,7 +375,7 @@ final class IOSNovelProjectToolExecutor: IOSToolExecutor {
     ) async -> Result<NovelAskUserPrompt, NovelProjectToolIssue> {
         guard let args: PrepareGhostwriteArguments = decode(arguments) else {
             return .failure(.init(
-                "novel_prepare_ghostwrite 参数无效：需要完整本章计划、upcoming_arc 和 suggested_chapter_count。"
+                "novel_prepare_ghostwrite 参数无效：需要完整本章计划和 suggested_chapter_count。"
             ))
         }
         let placement = args.outline_placement.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -403,13 +403,12 @@ final class IOSNovelProjectToolExecutor: IOSToolExecutor {
               visibleFacts.count <= 32 else {
             return .failure(.init("代笔计划字段过长或条目过多，请精简后重试。"))
         }
-        guard !upcomingArc.isEmpty,
-              upcomingArc.count <= NovelUpcomingArcRecord.maxBeats,
+        guard upcomingArc.count <= NovelUpcomingArcRecord.maxBeats,
               upcomingArc.allSatisfy({
                   !$0.isEmpty && $0.count <= NovelUpcomingArcRecord.maxBeatCharacterCount
               }) else {
             return .failure(.init(
-                "upcoming_arc 需要 1–\(NovelUpcomingArcRecord.maxBeats) 条非空节拍，每条最多 \(NovelUpcomingArcRecord.maxBeatCharacterCount) 字。"
+                "upcoming_arc 可留空；非空时最多 \(NovelUpcomingArcRecord.maxBeats) 条，每条最多 \(NovelUpcomingArcRecord.maxBeatCharacterCount) 字。"
             ))
         }
         guard args.suggested_chapter_count == NovelGhostwriteBatch.clamp(

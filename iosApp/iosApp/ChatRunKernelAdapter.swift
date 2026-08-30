@@ -55,6 +55,9 @@ final class ChatRunKernelAdapter {
         /// B1: provider/上传准备失败的原始错误串,先于 onRunTerminal(.failed)
         /// 上报——Host 据此产出 CGC presentStreamError 同款的用户向错误泡。
         var onProviderFailure: (String) -> Void = { _ in }
+        /// A side-effect tool reported that it may have applied but could not
+        /// be verified. The host surfaces the existing reconciliation card.
+        var onToolOutcomeUnknown: (IOSToolOutcomeUnknownSignal) -> Void = { _ in }
         /// B2 流式投影:引擎回调的 MainActor 转递(取消后一律忽略)。
         var onAssistantTurnStarted: () -> Void = {}
         var onToolExecutionStarted: (String, String) -> Void = { _, _ in }
@@ -133,6 +136,7 @@ final class ChatRunKernelAdapter {
     /// terminal recording path. If that durable terminal write fails, cancel
     /// the driver and keep the run recoverable instead of publishing output.
     private var durabilityFailureMessage: String?
+    private var toolOutcomeUnknownSignal: IOSToolOutcomeUnknownSignal?
     /// 当前 run 的 citation tracker(run() 开始时取自 request;cancel() 的
     /// remainder 折入需要它)。
     private var activeCitationTracker: IOSMemoryCitationTracker?
@@ -158,6 +162,7 @@ final class ChatRunKernelAdapter {
         // 直接以初始消息返回(Host 的终态序列走 cancel 分支)。
         if isStoppedByHost { return request.initialMessages }
         durabilityFailureMessage = nil
+        toolOutcomeUnknownSignal = nil
         activeCitationTracker = request.citationTracker
         // CGC 首轮头消费:mailbox(:1928)先于 steer(:2141);后续轮边界由
         // 引擎钩子承担(引擎内同序 :1199-1216)。
@@ -185,6 +190,9 @@ final class ChatRunKernelAdapter {
         let baseMessagesProvider: @MainActor @Sendable () -> [UIMessage] = { [weak self] in
             self?.working ?? []
         }
+        let nestedOutcomeUnknownProvider: @MainActor () -> IOSToolOutcomeUnknownSignal? = { [weak self] in
+            self?.toolOutcomeUnknownSignal
+        }
 
         while true {
             if isStoppedByHost { return working }
@@ -199,7 +207,8 @@ final class ChatRunKernelAdapter {
                 params: effectiveParams,
                 promptBox: promptBox,
                 baseMessagesProvider: baseMessagesProvider,
-                nestedToolRunner: nestedToolRunner
+                nestedToolRunner: nestedToolRunner,
+                nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider
             )
             // @Sendable 钩子只携带 Sendable 快照(名字集/目录/计数),不捕获执行器表。
             let executorNames = KernelExecutorNamesBox(Set(executors.keys))
@@ -226,7 +235,8 @@ final class ChatRunKernelAdapter {
                         params: newParams,
                         promptBox: promptBox,
                         baseMessagesProvider: baseMessagesProvider,
-                        nestedToolRunner: nestedToolRunner
+                        nestedToolRunner: nestedToolRunner,
+                        nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider
                     )
                     executorNames.replace(with: Set(rebuilt.keys))
                     return rebuilt
@@ -383,6 +393,15 @@ final class ChatRunKernelAdapter {
                 callbacks.onRunTerminal(AgentRunStatus.recoveryPending.wireName)
                 return working
             }
+            if let unknown = toolOutcomeUnknownSignal ?? result.toolOutcomeUnknown {
+                working = result.messages
+                lastAppliedSnapshotSeq = .max
+                callbacks.onMessagesUpdated(result.messages)
+                callbacks.onToolOutcomeUnknown(unknown)
+                didReportTerminal = true
+                callbacks.onRunTerminal(AgentRunStatus.outcomeUnknown.wireName)
+                return working
+            }
 
             if result.hitOutputLimit {
                 // A4 截断收口(CG-C completeTruncatedStream :2802 语义,适配器侧
@@ -438,7 +457,10 @@ final class ChatRunKernelAdapter {
                 if isStoppedByHost { return working }
                 if !didContinue {
                     didReportTerminal = true
-                    if let durabilityFailureMessage {
+                    if let unknown = toolOutcomeUnknownSignal {
+                        callbacks.onToolOutcomeUnknown(unknown)
+                        callbacks.onRunTerminal(AgentRunStatus.outcomeUnknown.wireName)
+                    } else if let durabilityFailureMessage {
                         callbacks.onProviderFailure(durabilityFailureMessage)
                         callbacks.onRunTerminal(AgentRunStatus.recoveryPending.wireName)
                     } else {
@@ -518,7 +540,8 @@ final class ChatRunKernelAdapter {
         params: TextGenerationParams,
         promptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox,
         baseMessagesProvider: @escaping @MainActor @Sendable () -> [UIMessage],
-        nestedToolRunner: IosExecNestedToolRunner?
+        nestedToolRunner: IosExecNestedToolRunner?,
+        nestedOutcomeUnknownProvider: @escaping @MainActor () -> IOSToolOutcomeUnknownSignal?
     ) -> [String: any IOSToolExecutor] {
         runtime.foregroundToolExecutors(
             providerSetting: request.providerSetting,
@@ -531,6 +554,7 @@ final class ChatRunKernelAdapter {
             baseMessagesProvider: baseMessagesProvider,
             approvalPromptBox: promptBox,
             nestedToolRunner: nestedToolRunner,
+            nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
             recipeCatalogSnapshot: request.recipeCatalogSnapshot,
             executionPolicy: request.executionPolicy
         )
@@ -541,6 +565,9 @@ final class ChatRunKernelAdapter {
     private func makeNestedExecToolRunner(request: RunRequest) -> IosExecNestedToolRunner {
         { [weak self] name, arguments in
             guard let self else {
+                return Self.nestedExecToolUnavailable(name: name)
+            }
+            guard self.toolOutcomeUnknownSignal == nil else {
                 return Self.nestedExecToolUnavailable(name: name)
             }
             return await self.runNestedExecTool(
@@ -656,6 +683,22 @@ final class ChatRunKernelAdapter {
         case .durabilityFailure:
             markDurabilityFailure()
             return Self.nestedExecToolUnavailable(name: name)
+        case .outcomeUnknown(let messages):
+            guard await ledger.recordToolCallRecoveryTransition(
+                runId: request.runId,
+                toolCallId: toolCall.toolCallId,
+                expected: .started,
+                to: .outcomeUnknown,
+                outcome: "executor_reported_unknown_after_action"
+            ) else {
+                markDurabilityFailure()
+                return Self.nestedExecToolUnavailable(name: name)
+            }
+            toolOutcomeUnknownSignal = IOSToolOutcomeUnknownSignal(
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName
+            )
+            return Self.nestedExecToolOutputText(from: messages, toolCallId: toolCall.toolCallId)
         }
     }
 
@@ -690,6 +733,15 @@ final class ChatRunKernelAdapter {
                 )
             case .rePause(let nextPrompt):
                 prompt = nextPrompt
+            case .outcomeUnknown(let messages):
+                toolOutcomeUnknownSignal = IOSToolOutcomeUnknownSignal(
+                    toolCallId: pending.toolCall.toolCallId,
+                    toolName: pending.toolCall.toolName
+                )
+                return Self.nestedExecToolOutputText(
+                    from: messages,
+                    toolCallId: pending.toolCall.toolCallId
+                )
             case .failed:
                 return Self.nestedExecToolUnavailable(name: pending.toolCall.toolName)
             }
@@ -737,6 +789,7 @@ final class ChatRunKernelAdapter {
         case resumed([UIMessage])
         /// recipe mutation step 命中下一步暂停:同一 toolCallId 带新请求重进暂停。
         case rePause(ChatToolApprovalPrompt)
+        case outcomeUnknown([UIMessage])
         /// 诚实失败,run 以 failed 收口。
         case failed
     }
@@ -789,6 +842,14 @@ final class ChatRunKernelAdapter {
                 return true
             case .rePause(let nextPrompt):
                 prompt = nextPrompt
+            case .outcomeUnknown(let messages):
+                working = messages
+                callbacks.onMessagesUpdated(messages)
+                toolOutcomeUnknownSignal = IOSToolOutcomeUnknownSignal(
+                    toolCallId: approval.toolCallId,
+                    toolName: approval.toolName
+                )
+                return false
             case .failed:
                 return false
             }
@@ -860,6 +921,24 @@ final class ChatRunKernelAdapter {
                 pending: pending,
                 candidates: candidates
             )
+            if case .webMount = prompt,
+               allow,
+               runtime.isWebMountOutcomeUnknown(
+                   in: messages,
+                   toolCallId: pending.toolCall.toolCallId
+               ) {
+                guard await ledger.recordToolCallRecoveryTransition(
+                    runId: pending.runId,
+                    toolCallId: pending.toolCall.toolCallId,
+                    expected: .started,
+                    to: .outcomeUnknown,
+                    outcome: "executor_reported_unknown_after_action"
+                ) else {
+                    markDurabilityFailure()
+                    return .failed
+                }
+                return .outcomeUnknown(messages)
+            }
             guard await recordToolTerminal(
                 runId: pending.runId,
                 toolCallId: pending.toolCall.toolCallId,
@@ -1019,6 +1098,18 @@ final class ChatRunKernelAdapter {
                     case .durabilityFailure:
                         markDurabilityFailure()
                         return .failed
+                    case .outcomeUnknown(let messages):
+                        guard await ledger.recordToolCallRecoveryTransition(
+                            runId: pending.runId,
+                            toolCallId: pending.toolCall.toolCallId,
+                            expected: .started,
+                            to: .outcomeUnknown,
+                            outcome: "recipe_step_outcome_unknown"
+                        ) else {
+                            markDurabilityFailure()
+                            return .failed
+                        }
+                        return .outcomeUnknown(messages)
                     }
                 }
             }

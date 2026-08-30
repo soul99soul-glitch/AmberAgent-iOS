@@ -160,7 +160,8 @@ fun createNovelPrepareGhostwriteToolDeclaration(): Tool = Tool(
         after the discussion has reached a concrete direction and the author is ready to review it.
         The host shows an approval card with the full plan and a 1-10 chapter selector; nothing is
         written and ghostwriting does not start until the author approves. Do not use ask_user to
-        ask whether to start after calling this tool. `must_happen` and `upcoming_arc` must be non-empty.
+        ask whether to start after calling this tool. `must_happen` must be non-empty;
+        `upcoming_arc` may be empty when the discussion has no reliable later-chapter direction.
     """.trimIndent(),
     parameters = { novelPrepareGhostwriteParameters() },
     needsApproval = true,
@@ -2590,9 +2591,8 @@ private fun novelPrepareGhostwriteParameters(): InputSchema = InputSchema.Obj(
         })
         put("upcoming_arc", buildJsonObject {
             put("type", "array")
-            put("description", "1-8 short soft-direction beats for the chapters after the first")
+            put("description", "0-8 short soft-direction beats for the chapters after the first; use an empty array when no reliable direction is settled")
             put("items", buildJsonObject { put("type", "string") })
-            put("minItems", 1)
             put("maxItems", 8)
         })
         put("suggested_chapter_count", buildJsonObject {

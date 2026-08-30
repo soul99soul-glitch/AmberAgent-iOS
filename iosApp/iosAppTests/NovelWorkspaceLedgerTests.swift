@@ -447,6 +447,38 @@ final class NovelWorkspaceLedgerTests: XCTestCase {
         XCTAssertEqual(next.branches[0].syncStatus, .synchronized)
     }
 
+    func testApplyRelinkDoesNotConsumeDurableManualSync() throws {
+        var document = try makeNovelWorkspaceBackupFixture()
+        let branch = document.branches[0]
+        let pending = NovelPendingOperationRecord(
+            id: NovelPendingOperationID(),
+            kind: .manualSync,
+            status: .retryable,
+            branchID: branch.id,
+            operationID: NovelOperationID(),
+            payloadSHA256: NovelTestFixtures.hashA,
+            baseCheckpointID: branch.headCheckpointID,
+            baseHeadRevision: branch.headRevision,
+            baseWorkingRevision: branch.workingRevision,
+            candidateID: nil,
+            collectionTarget: nil,
+            selectedText: "[]",
+            proposedChapterVersion: nil,
+            proposedCheckpointID: NovelCheckpointID(),
+            proposedStateSnapshotID: NovelStateSnapshotID(),
+            createdAt: document.project.updatedAt,
+            lastError: "上次同步中断"
+        )
+        document.pendingOperations.append(pending)
+        document.branches[0].syncStatus = .needsSync
+
+        XCTAssertThrowsError(try NovelWorkspacePlotCommit.applyRelink(
+            to: document,
+            branchID: branch.id
+        ))
+        XCTAssertEqual(document.pendingOperations, [pending])
+    }
+
     func testApplyRelinkOnDeviceZhaoDaPackage() throws {
         let package = URL(fileURLWithPath: "/tmp/amber-repro-pkg")
         let layout = package.appendingPathComponent("layout.json")

@@ -145,6 +145,7 @@ final class ChatKernelRunHost {
     /// provider/上传准备失败的原始错误串(适配器 onProviderFailure 或
     /// Host 自己的暂停持久化失败),failed 终态据此产出用户向错误泡。
     private var lastFailureMessage: String?
+    private var toolOutcomeUnknownSignal: IOSToolOutcomeUnknownSignal?
 
     // MARK: - 审批挂起状态
 
@@ -1410,6 +1411,10 @@ final class ChatKernelRunHost {
             guard let self, self.currentRunId == runId else { return }
             self.lastFailureMessage = message
         }
+        callbacks.onToolOutcomeUnknown = { [weak self] signal in
+            guard let self, self.currentRunId == runId else { return }
+            self.toolOutcomeUnknownSignal = signal
+        }
         callbacks.onAssistantTurnStarted = { [weak self] in
             guard let self, self.currentRunId == runId else { return }
             self.didReportFirstDeltaThisRound = false
@@ -1799,11 +1804,54 @@ final class ChatKernelRunHost {
         switch terminalWireName {
         case AgentRunStatus.completed.wireName:
             await completedTerminal(runId: runId)
+        case AgentRunStatus.outcomeUnknown.wireName:
+            await outcomeUnknownTerminal(runId: runId)
         case AgentRunStatus.recoveryPending.wireName:
             await failedTerminal(runId: runId, requiresRecovery: true)
         default:
             await failedTerminal(runId: runId)
         }
+    }
+
+    private func outcomeUnknownTerminal(runId: String) async {
+        projection.discardProvisionalAssistant()
+        let startedAt = currentStartedAt
+        let inputDigest = currentInputDigest
+        let conversationId = currentConversationIdForRun
+        let conversationHex = conversationId?.toHexDashString()
+        let finalMessages = bindings.getMessages()
+        let didPersist = await bindings.persistMessages(conversationId)
+        let didRecordRun = await bindings.recordRun(
+            runId,
+            startedAt,
+            didPersist ? .outcomeUnknown : .recoveryPending,
+            inputDigest,
+            conversationHex,
+            nil
+        )
+        guard didRecordRun else {
+            releaseLocalRunAfterTerminalRecordFailure(runId: runId)
+            return
+        }
+        if didPersist,
+           let signal = toolOutcomeUnknownSignal,
+           let conversationHex {
+            bindings.setToolOutcomeUnknown(IOSToolOutcomeUnknownDescriptor(
+                runId: runId,
+                conversationId: conversationHex,
+                toolCallId: signal.toolCallId,
+                toolName: signal.toolName
+            ))
+        }
+        WatchTaskCoordinator.shared.publish(
+            runId: runId,
+            conversationId: conversationHex,
+            presentation: .failed(),
+            summary: "网页操作结果待确认。"
+        )
+        await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
+        bindings.setMessages(finalMessages)
+        teardownRun(runId: runId, terminalEvent: .generationFailed)
     }
 
     /// completed(CG-C handleCompletedStream 正常分支 :2732-2797 +
@@ -2184,6 +2232,7 @@ final class ChatKernelRunHost {
         cancelBaseline = nil
         terminalWireName = nil
         lastFailureMessage = nil
+        toolOutcomeUnknownSignal = nil
         pendingApprovalToolCallId = nil
         pendingPrompt = nil
         approvalWaiter = nil

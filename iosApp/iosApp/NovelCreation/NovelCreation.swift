@@ -668,10 +668,20 @@ actor DefaultNovelCreation: NovelCreation {
     }
 
     private func publishMutation(_ action: NovelAction) {
-        guard !mutationContinuations.isEmpty else { return }
-        let event = NovelProjectMutationEvent(
+        publishMutation(
             projectID: action.projectID,
             operationID: action.context.operationID
+        )
+    }
+
+    func publishMutation(
+        projectID: NovelProjectID,
+        operationID: NovelOperationID
+    ) {
+        guard !mutationContinuations.isEmpty else { return }
+        let event = NovelProjectMutationEvent(
+            projectID: projectID,
+            operationID: operationID
         )
         for continuation in mutationContinuations.values {
             continuation.yield(event)

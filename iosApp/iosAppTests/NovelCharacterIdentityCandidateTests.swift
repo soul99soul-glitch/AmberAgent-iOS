@@ -6,7 +6,10 @@ import XCTest
 final class NovelCharacterIdentityCandidateTests: XCTestCase {
 
     func testChineseToponymsAreNotCharacterIdentityCandidates() {
-        let places = ["澶州", "汴京", "开封府", "东京", "西京", "河北路", "白马寺", "黄河渡"]
+        let places = [
+            "澶州", "汴京", "开封府", "东京", "西京", "河北路", "白马寺",
+            "黄河", "黄河渡", "澶州渡口",
+        ]
         for name in places {
             XCTAssertFalse(
                 NovelCharacterIdentityResolver.isLikelyCharacterIdentityCandidate(name),
@@ -36,7 +39,10 @@ final class NovelCharacterIdentityCandidateTests: XCTestCase {
     }
 
     func testPureJobTitlesAndCrowdLabelsAreNotCharacterIdentityCandidates() {
-        let roles = ["军需官", "县令", "店小二", "殿前军需官", "路人", "众人", "捕快", "士卒"]
+        let roles = [
+            "军需官", "县令", "店小二", "殿前军需官", "路人", "众人", "捕快", "士卒",
+            "北岸合股敌军",
+        ]
         for name in roles {
             XCTAssertFalse(
                 NovelCharacterIdentityResolver.isLikelyCharacterIdentityCandidate(name),
@@ -95,24 +101,25 @@ final class NovelCharacterIdentityCandidateTests: XCTestCase {
         let document = try NovelTestFixtures.document()
         let branch = document.branches[0]
         let baseState = try XCTUnwrap(document.stateSnapshots.first)
-        let manuscript = "赵匡胤自澶州起兵，柴荣按剑而立。"
+        let manuscript = "赵匡胤沿黄河抵达澶州渡口，北岸合股敌军列阵，柴荣按剑而立。"
+        let rejectedMentions = ["黄河", "澶州渡口", "北岸合股敌军"]
         let delta = NovelStateDeltaV1(
             schemaVersion: 1,
-            stateSummary: "赵匡胤与柴荣在澶州。",
+            stateSummary: "赵匡胤与柴荣在澶州渡口迎敌。",
             events: [
                 NovelStateEventV1(
                     id: "e-place",
                     kind: "travel",
-                    summary: "行至澶州",
-                    entityReferences: ["澶州", "赵匡胤"],
-                    evidence: "赵匡胤自澶州起兵，柴荣按剑而立。"
+                    summary: "沿黄河行至澶州渡口",
+                    entityReferences: rejectedMentions + ["赵匡胤", "柴荣"],
+                    evidence: manuscript
                 )
             ],
             characterChanges: [],
             relationshipChanges: [],
             foreshadowingChanges: [],
-            unresolvedEntityNames: ["澶州", "赵匡胤", "柴荣"],
-            branchOutlinePatch: "赵匡胤在澶州。",
+            unresolvedEntityNames: rejectedMentions + ["赵匡胤", "柴荣"],
+            branchOutlinePatch: "赵匡胤与柴荣在澶州渡口迎敌。",
             settingProposals: []
         )
         let sanitized = try NovelFactTransactionReducer.sanitizedCollectionDelta(
@@ -122,13 +129,15 @@ final class NovelCharacterIdentityCandidateTests: XCTestCase {
             baseState: baseState,
             document: document
         )
-        XCTAssertFalse(
-            sanitized.unresolvedEntityNames.contains(where: {
-                NovelCharacterIdentityResolver.normalize($0) ==
-                    NovelCharacterIdentityResolver.normalize("澶州")
-            }),
-            "place must not enter unresolved character list: \(sanitized.unresolvedEntityNames)"
-        )
+        for mention in rejectedMentions {
+            XCTAssertFalse(
+                sanitized.unresolvedEntityNames.contains(where: {
+                    NovelCharacterIdentityResolver.normalize($0) ==
+                        NovelCharacterIdentityResolver.normalize(mention)
+                }),
+                "\(mention) must not enter unresolved character list: \(sanitized.unresolvedEntityNames)"
+            )
+        }
         XCTAssertTrue(
             sanitized.unresolvedEntityNames.contains(where: {
                 NovelCharacterIdentityResolver.normalize($0) ==

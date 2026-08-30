@@ -47,6 +47,16 @@ private extension IOSLocalToolExecutionOutput {
             false
         }
     }
+
+    var isWebMountOutcomeUnknown: Bool {
+        guard case .webMountResult(let text) = self,
+              let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return false
+        }
+        return object["status"] as? String == "unknown_after_action" &&
+            object["may_have_applied"] as? Bool == true
+    }
 }
 
 enum ChatPendingToolKind {
@@ -108,6 +118,8 @@ private enum RecipeAdvanceOutcome {
     case needsApproval(RecipeToolApprovalRequest)
     /// A step side effect returned, but its own durable terminal did not.
     case durabilityFailure(String)
+    /// A step was dispatched but its outcome cannot be inferred.
+    case outcomeUnknown([UIMessage])
 }
 
 /// Result of the recipe step approval finisher.
@@ -117,6 +129,7 @@ enum RecipeApprovalFinishResult {
     /// The approved step ran and a LATER mutation step needs another card.
     case pausedForNextStep(RecipeToolApprovalRequest)
     case durabilityFailure(String)
+    case outcomeUnknown([UIMessage])
 }
 
 /// Per-step approval gate verdict.
@@ -131,6 +144,7 @@ private enum RecipePrimitiveStepResult {
     case output(String)
     case failure(String)
     case needsApproval(reason: String)
+    case outcomeUnknown(String)
 }
 
 /// In-flight execution state of one `recipe__*` call. Lives in
@@ -228,6 +242,7 @@ enum ChatToolRuntimeResult {
     case completed([UIMessage])
     case waitingForApproval(ChatToolApprovalPrompt)
     case durabilityFailure(String)
+    case outcomeUnknown([UIMessage])
 }
 
 private enum ChatCodexImageConfig {
@@ -585,7 +600,11 @@ final class ChatToolRuntime {
                     if case .needsUserAction(let reason) = output {
                         return .denied("后台生成期间需要回到 App 确认 WebMount 操作：\(reason)")
                     }
-                    return .filled(ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output))
+                    let resultText = ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output)
+                    if output.isWebMountOutcomeUnknown {
+                        return .outcomeUnknown([UIMessagePart.Text(text: resultText, metadata: nil)])
+                    }
+                    return .filled(resultText)
                 }
             }
         }
@@ -989,6 +1008,7 @@ final class ChatToolRuntime {
         baseMessagesProvider: @escaping @MainActor @Sendable () -> [UIMessage],
         approvalPromptBox: IOSForegroundApprovalPromptBox,
         nestedToolRunner: IosExecNestedToolRunner? = nil,
+        nestedOutcomeUnknownProvider: (@MainActor () -> IOSToolOutcomeUnknownSignal?)? = nil,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil,
         executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) -> [String: any IOSToolExecutor] {
@@ -1010,6 +1030,7 @@ final class ChatToolRuntime {
                 baseMessagesProvider: baseMessagesProvider,
                 approvalPromptBox: approvalPromptBox,
                 nestedToolRunner: nestedToolRunner,
+                nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
                 recipeCatalogSnapshot: recipeCatalogSnapshot,
                 executionPolicy: executionPolicy
             )
@@ -2276,11 +2297,12 @@ final class ChatToolRuntime {
         }
 
         let resultText = ChatToolOutputFormatter.webMountResultText(for: pending.toolCall, output: output)
-        return .completed(messagesByFinishingToolCall(
+        let messages = messagesByFinishingToolCall(
             pending.toolCall,
             outputText: resultText,
             in: pending.baseMessages
-        ))
+        )
+        return output.isWebMountOutcomeUnknown ? .outcomeUnknown(messages) : .completed(messages)
     }
 
     private func executeMemoryToolCall(_ pending: ChatPendingToolApproval) -> ChatToolRuntimeResult {
@@ -2740,6 +2762,8 @@ final class ChatToolRuntime {
             return .waitingForApproval(.recipe(request))
         case .durabilityFailure(let message):
             return .durabilityFailure(message)
+        case .outcomeUnknown(let messages):
+            return .outcomeUnknown(messages)
         }
     }
 
@@ -2926,6 +2950,32 @@ final class ChatToolRuntime {
                 state.stepOutputs[step.id] = output
                 state.completedSteps.append(step.id)
                 state.nextStepIndex += 1
+            } catch let error as IOSRecipePrimitiveOutcomeUnknownError {
+                await recordRecipeLevelFinished(
+                    recipeName: state.recipeName,
+                    recipeVersion: state.recipeVersion,
+                    executionId: state.executionId,
+                    outcome: "outcome_unknown",
+                    outcomeKind: "unknown",
+                    errorCode: "unknown_after_action",
+                    runId: context.runId
+                )
+                let resultText = IOSWebMountController.json([
+                    "ok": false,
+                    "tool": context.toolCall.toolName,
+                    "status": "unknown_after_action",
+                    "error_code": "unknown_after_action",
+                    "may_have_applied": true,
+                    "failed_step": step.id,
+                    "completed_steps": state.completedSteps,
+                    "reason": "Recipe 中的 WebMount 操作已发出，但无法确认是否生效；后续步骤已停止。",
+                    "step_output": error.outputText
+                ])
+                return .outcomeUnknown(finishRecipeCall(
+                    state: state,
+                    context: context,
+                    outputText: resultText
+                ))
             } catch is IOSRecipeToolTerminalPersistenceError {
                 discardPreparedRecipeExecution(toolCallId: state.toolCallId)
                 return .durabilityFailure("tool result ledger write failed")
@@ -3088,6 +3138,8 @@ final class ChatToolRuntime {
                 return .pausedForNextStep(request)
             case .durabilityFailure(let message):
                 return .durabilityFailure(message)
+            case .outcomeUnknown(let messages):
+                return .outcomeUnknown(messages)
             }
         }
 
@@ -3211,6 +3263,8 @@ final class ChatToolRuntime {
                         stepId: "", tool: tool,
                         message: "步骤需要批准但未通过审批前置检查。"
                     )
+                case .outcomeUnknown(let outputText):
+                    throw IOSRecipePrimitiveOutcomeUnknownError(outputText: outputText)
                 }
             },
             ledger: ledger,
@@ -3270,6 +3324,9 @@ final class ChatToolRuntime {
             let output = await webMountToolExecutionOutput(toolCall, isUserInitiated: isUserInitiated)
             if case .needsUserAction(let reason) = output {
                 return .needsApproval(reason: reason)
+            }
+            if output.isWebMountOutcomeUnknown {
+                return .outcomeUnknown(ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output))
             }
             return .output(ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output))
         case .sessionRead:
@@ -3759,6 +3816,28 @@ final class ChatToolRuntime {
     private func dispatchWebMountToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
         let output = await webMountToolExecutionOutput(toolCall, isUserInitiated: false)
         return ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output)
+    }
+
+    func isWebMountOutcomeUnknown(
+        in messages: [UIMessage],
+        toolCallId: String
+    ) -> Bool {
+        for message in messages where message.role == MessageRole.assistant {
+            for case let tool as UIMessagePart.Tool in message.parts
+            where tool.toolCallId == toolCallId {
+                for case let text as UIMessagePart.Text in tool.output {
+                    guard let data = text.text.data(using: .utf8),
+                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                        continue
+                    }
+                    if object["status"] as? String == "unknown_after_action" &&
+                        object["may_have_applied"] as? Bool == true {
+                        return true
+                    }
+                }
+            }
+        }
+        return false
     }
 
     private func webMountToolExecutionOutput(
@@ -4843,6 +4922,7 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
     private let baseMessagesProvider: @MainActor @Sendable () -> [UIMessage]
     private let approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox
     private let nestedToolRunner: IosExecNestedToolRunner?
+    private let nestedOutcomeUnknownProvider: (@MainActor () -> IOSToolOutcomeUnknownSignal?)?
     private let recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     private let executionPolicy: IOSExecutionPolicySnapshot?
 
@@ -4859,6 +4939,7 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
         baseMessagesProvider: @escaping @MainActor @Sendable () -> [UIMessage],
         approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox,
         nestedToolRunner: IosExecNestedToolRunner?,
+        nestedOutcomeUnknownProvider: (@MainActor () -> IOSToolOutcomeUnknownSignal?)?,
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
         executionPolicy: IOSExecutionPolicySnapshot?
     ) {
@@ -4874,6 +4955,7 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
         self.baseMessagesProvider = baseMessagesProvider
         self.approvalPromptBox = approvalPromptBox
         self.nestedToolRunner = nestedToolRunner
+        self.nestedOutcomeUnknownProvider = nestedOutcomeUnknownProvider
         self.recipeCatalogSnapshot = recipeCatalogSnapshot
         self.executionPolicy = executionPolicy
     }
@@ -4923,12 +5005,27 @@ private final class IOSForegroundKernelToolExecutor: IOSToolExecutor, @unchecked
                 for part in message.parts {
                     guard let toolPart = part as? UIMessagePart.Tool,
                           toolPart.toolCallId == tool.toolCallId else { continue }
-                    return toolPart.output.isEmpty
-                        ? .failed("foreground tool produced no output")
-                        : .filledParts(toolPart.output)
+                    guard !toolPart.output.isEmpty else {
+                        return .failed("foreground tool produced no output")
+                    }
+                    if nestedOutcomeUnknownProvider?() != nil {
+                        return .outcomeUnknown(toolPart.output)
+                    }
+                    return .filledParts(toolPart.output)
                 }
             }
             return .failed("foreground tool output not found in completed messages")
+        case .outcomeUnknown(let messages):
+            for message in messages where message.role == MessageRole.assistant {
+                for part in message.parts {
+                    guard let toolPart = part as? UIMessagePart.Tool,
+                          toolPart.toolCallId == tool.toolCallId else { continue }
+                    return toolPart.output.isEmpty
+                        ? .durabilityFailure("WebMount outcome-unknown output was not persisted in the transcript.")
+                        : .outcomeUnknown(toolPart.output)
+                }
+            }
+            return .durabilityFailure("WebMount outcome-unknown tool output was not found.")
         case .waitingForApproval(let prompt):
             approvalPromptBox.put(tool.toolCallId, prompt)
             return .needsApproval(prompt.toolTitle)

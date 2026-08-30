@@ -71,6 +71,13 @@ enum IOSRecipeRunError: Error, Equatable, Sendable {
 
 struct IOSRecipeToolTerminalPersistenceError: Error, Sendable {}
 
+/// A primitive side effect was dispatched, but its terminal result is
+/// unknowable. Production recipe orchestration must stop and surface
+/// reconciliation instead of collapsing this into an ordinary step failure.
+struct IOSRecipePrimitiveOutcomeUnknownError: Error, Sendable {
+    let outputText: String
+}
+
 enum IOSRecipeRunOutcome: Equatable {
     /// All steps completed and every output binding resolved.
     case succeeded(outputs: [String: IOSRecipeJSONValue], completedSteps: [String])
@@ -303,6 +310,12 @@ struct IOSRecipeRunner: Sendable {
         let output: String
         do {
             output = try await executeStepWithTimeout(step, argsJSON: argsJSON)
+        } catch let error as IOSRecipePrimitiveOutcomeUnknownError {
+            let didFinish = await recordOutcomeUnknown(
+                toolCallId: toolCallId
+            )
+            guard didFinish else { throw IOSRecipeToolTerminalPersistenceError() }
+            throw error
         } catch let error as IOSRecipeRunError {
             let didFinish = await recordFinished(
                 plan: plan, executionId: executionId, toolCallId: toolCallId, step: step,
@@ -457,6 +470,11 @@ struct IOSRecipeRunner: Sendable {
     }
 
     private func executeStepWithTimeout(_ step: IOSRecipePlanStep, argsJSON: String) async throws -> String {
+        // `wm_open` owns an internal, intentionally non-cancellable WKWebView
+        // deadline. Keep the recipe deadline behind it so a recipe timeout
+        // cannot close the ledger as an ordinary failure while that
+        // side-effect's outcome is still unknowable.
+        let timeoutSeconds = effectiveTimeoutSeconds(for: step, argsJSON: argsJSON)
         do {
             return try await withThrowingTaskGroup(of: String.self) { group in
                 group.addTask { [executePrimitive] in
@@ -467,7 +485,7 @@ struct IOSRecipeRunner: Sendable {
                     try await executePrimitive(step.tool, argsJSON)
                 }
                 group.addTask {
-                    try await Task.sleep(for: .seconds(Double(step.timeoutSeconds)))
+                    try await Task.sleep(for: .seconds(Double(timeoutSeconds)))
                     throw IOSRecipeRunError.stepTimeout(
                         stepId: step.id, tool: step.tool, timeoutSeconds: step.timeoutSeconds
                     )
@@ -479,6 +497,8 @@ struct IOSRecipeRunner: Sendable {
                 group.cancelAll()
                 return first
             }
+        } catch let error as IOSRecipePrimitiveOutcomeUnknownError {
+            throw error
         } catch let error as IOSRecipeRunError {
             throw error
         } catch {
@@ -492,6 +512,37 @@ struct IOSRecipeRunner: Sendable {
                 stepId: step.id, tool: step.tool, message: error.localizedDescription
             )
         }
+    }
+
+    private func effectiveTimeoutSeconds(for step: IOSRecipePlanStep, argsJSON: String) -> Int {
+        guard step.tool == "wm_open" else { return step.timeoutSeconds }
+        let internalTimeoutSeconds = Self.webMountOpenTimeoutSeconds(argsJSON: argsJSON)
+        return max(step.timeoutSeconds, internalTimeoutSeconds + 1)
+    }
+
+    private static func webMountOpenTimeoutSeconds(argsJSON: String) -> Int {
+        let defaultTimeoutMillis = 30_000
+        guard let data = argsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let requestedMillis = object["timeout_ms"] as? Int else {
+            return defaultTimeoutMillis / 1_000
+        }
+        let timeoutMillis = requestedMillis.clamped(to: 1_000...60_000)
+        return (timeoutMillis + 999) / 1_000
+    }
+
+    @discardableResult
+    private func recordOutcomeUnknown(
+        toolCallId: String
+    ) async -> Bool {
+        guard let ledger else { return true }
+        return await ledger.recordToolCallRecoveryTransition(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: .started,
+            to: .outcomeUnknown,
+            outcome: "executor_reported_unknown_after_action"
+        )
     }
 
     @discardableResult

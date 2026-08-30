@@ -296,6 +296,7 @@ enum NovelSessionActionBlocker: String, Hashable, Sendable {
     case branchInactive
     case branchNeedsSync
     case chapterPlanRequired
+    case ghostwriteReviewRequired
     case ghostwriteRequirementsMissing
     case generationRunning
     case pendingOperation
@@ -1075,8 +1076,7 @@ private struct NovelSessionProjectionIndex {
     }
 
     func pendingOperationBlocker(
-        excluding pendingID: NovelPendingOperationID?,
-        ignoringPlotRelinkJobs: Bool = false
+        excluding pendingID: NovelPendingOperationID?
     ) -> NovelSessionActionBlocker? {
         let excludesPending = pendingID.map(branchPendingOperationIDs.contains) == true
         let remainingCount = branchPendingOperationIDs.count - (excludesPending ? 1 : 0)
@@ -1086,7 +1086,7 @@ private struct NovelSessionProjectionIndex {
         let remainingManualSyncCount = branchManualSyncPendingOperationIDs.count -
             (excludesManualSync ? 1 : 0)
         if remainingCount == remainingManualSyncCount {
-            return ignoringPlotRelinkJobs ? nil : .branchNeedsSync
+            return .branchNeedsSync
         }
         return .pendingOperation
     }
@@ -1702,10 +1702,16 @@ private extension NovelSessionPresentation {
             input: input,
             index: index,
             includePending: true,
-            excludingRunID: tail.runID,
-            ignoringPlotRelinkJobs: true
+            excludingRunID: tail.runID
         ) {
             return blocker
+        }
+        if input.branch.syncStatus == .needsSync,
+           !NovelWorkspaceLedger.isPointerOnlyRelink(
+               branch: input.branch,
+               checkpoints: input.checkpoints
+           ) {
+            return .branchNeedsSync
         }
         guard let run = index.runByID[tail.runID],
               run.baseCheckpointID == input.branch.headCheckpointID,
@@ -1724,13 +1730,20 @@ private extension NovelSessionPresentation {
         if let blocker = baseMutationBlocker(
             input: input,
             index: index,
-            includePending: true,
-            ignoringPlotRelinkJobs: candidate.kind == .prose
+            includePending: true
         ) {
             return blocker
         }
-        if candidate.kind != .prose, input.branch.syncStatus == .needsSync {
-            return .branchNeedsSync
+        if candidate.kind == .prose, candidate.ghostwritePlanID != nil {
+            return .ghostwriteReviewRequired
+        }
+        if input.branch.syncStatus == .needsSync {
+            let pointerOnlyRelink = candidate.kind == .prose &&
+                NovelWorkspaceLedger.isPointerOnlyRelink(
+                    branch: input.branch,
+                    checkpoints: input.checkpoints
+                )
+            if !pointerOnlyRelink { return .branchNeedsSync }
         }
         if requiresCurrentBase {
             let baseMatches: Bool
@@ -1770,8 +1783,7 @@ private extension NovelSessionPresentation {
         includePending: Bool,
         excludingPendingID: NovelPendingOperationID? = nil,
         excludingPolishTransactionID: NovelPendingOperationID? = nil,
-        excludingRunID: NovelRunID? = nil,
-        ignoringPlotRelinkJobs: Bool = false
+        excludingRunID: NovelRunID? = nil
     ) -> NovelSessionActionBlocker? {
         if input.access != .readWrite { return .projectReadOnly }
         if input.branch.lifecycle != .active { return .branchInactive }
@@ -1787,8 +1799,7 @@ private extension NovelSessionPresentation {
         }
         if includePending {
             if let blocker = index.pendingOperationBlocker(
-                excluding: excludingPendingID,
-                ignoringPlotRelinkJobs: ignoringPlotRelinkJobs
+                excluding: excludingPendingID
             ) {
                 return blocker
             }

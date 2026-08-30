@@ -1671,6 +1671,18 @@ struct NovelDiscussionArchiveDraft: Equatable, Sendable {
     let decisions: [NovelDiscussionArchiveDraftDecision]
 }
 
+/// One review-model pass over a ghostwritten chapter. The host, rather than the
+/// model's summary booleans, decides whether the candidate can enter canon.
+struct NovelGhostwriteChapterAdjudicationResult: Equatable, Sendable {
+    let adjudication: NovelChapterAdjudicationV1
+    let blockingContinuityIssues: [NovelContinuityIssue]
+    let droppedContinuityIssueCount: Int
+    /// Present only when prose, state delta, and plan consumption committed together.
+    let collectionOutcome: NovelOutcome?
+
+    var didCollect: Bool { collectionOutcome != nil }
+}
+
 struct NovelRun: Sendable {
     let id: NovelRunID
     let events: AsyncStream<NovelRunEvent>
@@ -1776,6 +1788,14 @@ protocol NovelCreation: Sendable {
         branchID: NovelBranchID,
         candidateID: NovelCandidateID
     ) async throws -> NovelChapterPlanAcceptanceV1
+    /// 代笔单章联合审查：一次模型调用完成计划验收、近距连续性检查与状态增量；
+    /// 通过硬门后，正文、状态与本章计划在同一提交中落盘。
+    func adjudicateAndCollectGhostwriteChapter(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        candidateID: NovelCandidateID,
+        prepareNextPlan: Bool
+    ) async throws -> NovelGhostwriteChapterAdjudicationResult
     /// 代笔多章：自动拟定并确认下一章合同（创作模型）。批内第 2～N 章走此路径。
     func proposeAndConfirmNextChapterPlan(
         projectID: NovelProjectID,
@@ -1937,6 +1957,15 @@ extension NovelCreation {
         candidateID: NovelCandidateID
     ) async throws -> NovelChapterPlanAcceptanceV1 {
         throw NovelError.invalidInput("This novel runtime cannot accept chapter-plan candidates.")
+    }
+
+    func adjudicateAndCollectGhostwriteChapter(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        candidateID: NovelCandidateID,
+        prepareNextPlan: Bool
+    ) async throws -> NovelGhostwriteChapterAdjudicationResult {
+        throw NovelError.invalidInput("This novel runtime cannot adjudicate ghostwritten chapters.")
     }
 
     func proposeAndConfirmNextChapterPlan(

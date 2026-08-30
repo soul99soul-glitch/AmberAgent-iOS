@@ -135,6 +135,8 @@ enum NovelGhostwritePauseReason: String, Codable, Equatable, Sendable {
     case planProposedForNewBatch
     /// 基建失败（传输/取消外的模型执行故障等）：不是质量判定，候选不背锅。
     case infrastructureFailed
+    /// 系统收回本次后台执行机会；sidecar 已保留，回到前台后自动续跑。
+    case backgroundInterrupted
 
     var displayMessage: String {
         switch self {
@@ -163,26 +165,33 @@ enum NovelGhostwritePauseReason: String, Codable, Equatable, Sendable {
             "自动改写已达上限仍未过关。建议按审稿意见润修，或整章重写 / 改本章计划。"
         case .infrastructureFailed:
             "模型调用失败（非质量判定）。继续将从当前阶段重试，已产候选不丢弃。"
+        case .backgroundInterrupted:
+            "系统已暂停后台代笔，当前批次进度已保存；回到前台后将自动继续。"
         }
     }
 
-    /// 后台租约到期时：若本章已有质量失败回执，保留质量原因，避免把「验收不过」
-    /// 盖成基建失败，导致继续时误留同一篇旧稿再验。
+    /// 后台租约到期只产生可恢复的系统暂停。已进入真实停机态时保留原原因，
+    /// 避免迟到的 expiration 回调覆盖质量 / 同步错误。
     static func afterBackgroundExpiration(
-        current: NovelGhostwritePauseReason?,
-        lastFailure: NovelGhostwriteFailureReceipt?
+        current: NovelGhostwritePauseReason?
     ) -> NovelGhostwritePauseReason {
-        if let quality = lastFailure?.reason, quality.requiresRewriteOnContinue {
-            return quality
+        if let current {
+            switch current {
+            case .syncFailed, .infrastructureFailed, .healBudgetExhausted:
+                return current
+            default:
+                if current.requiresRewriteOnContinue { return current }
+            }
         }
-        if current == .syncFailed { return .syncFailed }
-        return .infrastructureFailed
+        return .backgroundInterrupted
     }
 
     /// 合同已消费、但本批仍可续跑时，继续不要求已确认合同。
     var resumesWithoutConfirmedPlan: Bool {
         switch self {
-        case .syncFailed, .planProposalFailed, .infrastructureFailed, .planProposedForNewBatch: true
+        case .syncFailed, .planProposalFailed, .infrastructureFailed,
+             .backgroundInterrupted, .planProposedForNewBatch:
+            true
         default: false
         }
     }
@@ -197,7 +206,7 @@ enum NovelGhostwritePauseReason: String, Codable, Equatable, Sendable {
         case .userPaused, .continuityAuditIncomplete, .collectFailed, .syncFailed,
              .planProposalFailed, .planProposedForNewBatch,
              .chapterCompleted, .batchCompleted, .cancelled,
-             .infrastructureFailed:
+             .infrastructureFailed, .backgroundInterrupted:
             return false
         }
     }
@@ -339,7 +348,7 @@ struct NovelGhostwriteFailureReceipt: Codable, Equatable, Sendable {
 
 enum NovelGhostwriteHeal {
     static let defaultMaxQualityAttempts = 3
-    static let maxQualityAttemptsClamp = 1...5
+    static let maxQualityAttemptsClamp = 1...3
     /// 基建（同步）自动重试次数。
     static let defaultMaxInfraRetries = 3
     /// 连续相同失败指纹达到该次数则熔断（含本次）。
@@ -372,21 +381,6 @@ enum NovelGhostwriteHeal {
         return tail.allSatisfy { $0 == first }
     }
 
-    /// 纯复读且预算/指纹用尽时，可薄升级：把撞车 beat 写入 mustNot。
-    static func shouldAttemptMustNotAmend(
-        reason: NovelGhostwritePauseReason,
-        receipt: NovelGhostwriteFailureReceipt,
-        alreadyAmendedThisChapter: Bool
-    ) -> Bool {
-        guard !alreadyAmendedThisChapter else { return false }
-        guard reason == .obviousRepetition || !receipt.repetitionBeats.isEmpty else { return false }
-        return !receipt.repetitionBeats.isEmpty
-    }
-
-    /// 确认合同不能空 must；去掉已落地节拍后若清空，换成一条只推进、不重演的义务。
-    static let alreadyLandedMustFallback =
-        "承接上一章已落地的事件，按本章目标向前推进，不要重演近期已写节拍。"
-
     /// 复读节拍与某条 must 指同一件事时，must 视为已在书里落地。
     /// 单凭一个三字地名不够：要包含关系、或 ≥4 字公共子串、或至少两个三字片段重合。
     static func sameStoryEvent(_ a: String, _ b: String) -> Bool {
@@ -399,53 +393,6 @@ enum NovelGhostwriteHeal {
         let lcs = longestCommonSubstringLength(left, right)
         if lcs >= 4 { return true }
         return sharedNgramCount(left, right, length: 3) >= 2
-    }
-
-    /// 自愈追加的「不要重演已写事件」禁令，不是作者写的「不写柴荣离京」纪律项。
-    static func isRestageBan(_ mustNot: String) -> Bool {
-        let text = mustNot.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return false }
-        return text.contains("同一事件")
-            || text.contains("近期已写")
-            || text.contains("上一章已写")
-    }
-
-    /// 复读自愈：禁止重演已写节拍，同时从 must 里拿掉同一件事，避免「必须写 / 不准写」打结。
-    static func resolvedContract(
-        mustHappen: [String],
-        mustNotHappen: [String],
-        repetitionBeats: [String]
-    ) -> (mustHappen: [String], mustNotHappen: [String], droppedMustHappen: [String]) {
-        let beats = NovelChapterPlanRecord.normalizedLines(repetitionBeats)
-        let existingMustNot = Set(NovelChapterPlanRecord.normalizedLines(mustNotHappen))
-        var additions: [String] = []
-        for beat in beats {
-            let alreadyBanned = existingMustNot.contains { old in
-                sameStoryEvent(old, beat)
-            } || additions.contains { sameStoryEvent($0, beat) }
-            if !alreadyBanned {
-                additions.append(beat)
-            }
-        }
-
-        var dropped: [String] = []
-        var kept: [String] = []
-        for item in NovelChapterPlanRecord.normalizedLines(mustHappen) {
-            let landed = beats.contains { sameStoryEvent(item, $0) }
-            if landed {
-                dropped.append(item)
-            } else {
-                kept.append(item)
-            }
-        }
-        if kept.isEmpty {
-            kept = [alreadyLandedMustFallback]
-        }
-        return (
-            mustHappen: kept,
-            mustNotHappen: NovelChapterPlanRecord.normalizedLines(mustNotHappen) + additions,
-            droppedMustHappen: dropped
-        )
     }
 
     /// 下一弧里已经写进正史的节拍：按「第 N 章」序数或已有章名剔除，避免拟合同再要求重演。
@@ -533,82 +480,6 @@ enum NovelGhostwriteHeal {
         return best
     }
 
-    /// 仅缺 1 条 must、无禁止项/复读、且本章未薄升级时，可放宽该条措辞后再写一轮。
-    static func shouldAttemptMustAlign(
-        reason: NovelGhostwritePauseReason,
-        receipt: NovelGhostwriteFailureReceipt,
-        forbiddenViolations: [String],
-        alreadyAmendedThisChapter: Bool
-    ) -> Bool {
-        guard !alreadyAmendedThisChapter else { return false }
-        guard reason == .acceptanceFailed else { return false }
-        guard receipt.missingMustHappen.count == 1 else { return false }
-        let missing = receipt.missingMustHappen[0]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !missing.isEmpty else { return false }
-        // 有禁止项违反或明显复读时不改 must（避免放水）。
-        let hasForbidden = forbiddenViolations.contains {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-        guard !hasForbidden else { return false }
-        guard receipt.repetitionBeats.isEmpty else { return false }
-        return true
-    }
-
-    /// 把合同中对应的那一条 must 改成「保留意图 + 允许等价表达」。
-    /// 找不到匹配项且 must 多于 1 条时返回 nil（宁可不改）。
-    static func rephraseSingleMust(
-        planMustHappen: [String],
-        missingItem: String,
-        acceptanceSummary: String
-    ) -> (index: Int, original: String, rewritten: String)? {
-        let missing = missingItem.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !missing.isEmpty else { return nil }
-
-        var matchIndex: Int?
-        for (index, item) in planMustHappen.enumerated() {
-            let text = item.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
-            if text == missing
-                || text.contains(missing)
-                || missing.contains(text) {
-                matchIndex = index
-                break
-            }
-        }
-        if matchIndex == nil, planMustHappen.count == 1 {
-            matchIndex = 0
-        }
-        guard let index = matchIndex else { return nil }
-
-        let original = planMustHappen[index]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !original.isEmpty else { return nil }
-        // 已放过宽则不再叠字，防止 digest 空转。
-        if original.contains("允许等价") || original.contains("可辨认写出") {
-            return nil
-        }
-
-        let hint = acceptanceSummary
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let hintClip: String = {
-            guard !hint.isEmpty else { return "" }
-            if hint.count <= 100 { return hint }
-            return String(hint.prefix(100)) + "…"
-        }()
-
-        var rewritten =
-            "\(original)（须在正文可辨认写出；允许等价情绪/动作措辞，不必与合同字面完全一致）"
-        if !hintClip.isEmpty {
-            rewritten += " 审稿摘要：\(hintClip)"
-        }
-        if rewritten.count > 220 {
-            rewritten = String(rewritten.prefix(220)) + "…"
-        }
-        guard rewritten != original else { return nil }
-        return (index, original, rewritten)
-    }
-
     static func writeUserText(
         receipt: NovelGhostwriteFailureReceipt?,
         sourceDraft: String? = nil
@@ -678,13 +549,11 @@ struct NovelGhostwriteBatchProgressRecord: Codable, Equatable, Sendable {
     /// 冷启动：把进行中相位收成可继续的暂停/失败态。
     func normalizedForColdStart() -> NovelGhostwriteBatchProgressRecord {
         var next = self
-        let recoveryNote = "应用重启后已恢复本批代笔进度，可继续。"
+        let recoveryNote = "应用重启后已恢复本批代笔进度，回到前台后将自动继续。"
         switch phase {
         case .writing, .accepting, .collecting, .planning, .revising:
             next.phase = .paused
-            if next.pauseReason == nil || next.pauseReason == .cancelled {
-                next.pauseReason = .userPaused
-            }
+            next.pauseReason = .backgroundInterrupted
             next.detailMessage = Self.mergeDetail(next.detailMessage, recoveryNote)
         case .syncing:
             if next.pendingSyncChapterCredit {
@@ -696,7 +565,7 @@ struct NovelGhostwriteBatchProgressRecord: Codable, Equatable, Sendable {
                 )
             } else {
                 next.phase = .paused
-                next.pauseReason = next.pauseReason ?? .userPaused
+                next.pauseReason = .backgroundInterrupted
                 next.detailMessage = Self.mergeDetail(next.detailMessage, recoveryNote)
             }
         case .paused, .waitingUser, .failed:
@@ -865,7 +734,7 @@ struct NovelGhostwriteBatchProgressRecord: Codable, Equatable, Sendable {
 enum NovelGhostwriteContinuityGate {
     /// 批内软门默认只带最近已收正文章数 + 当前候选；全书深扫走手动入口。
     static let nearScopePriorChapterCount = 4
-    /// incomplete 后静默整次再扫次数（块内重试之外）；仍失败才停人。
+    /// incomplete 后静默整次再扫次数（块内重试之外）。
     static let incompleteSilentRerunCount = 1
 
     /// 是否应再静默跑一轮近距审计（纯规则，可单测）。
@@ -882,17 +751,13 @@ enum NovelGhostwriteContinuityGate {
             .filter { !$0.isEmpty }
     }
 
-    /// 有块失败则审计未结论；不得当作「无严重问题」放行。
+    /// 只有明确 blocking 会暂停；部分分块失败保留为 advisory。
     static func pauseDetail(for report: NovelContinuityAuditReport) -> String? {
-        if report.failedChunkCount > 0 {
-            return NovelGhostwritePauseReason.continuityAuditIncomplete.displayMessage
-        }
         let blocking = blockingIssueSummaries(in: report)
         return blocking.isEmpty ? nil : blocking.joined(separator: "；")
     }
 
     static func pauseReason(for report: NovelContinuityAuditReport) -> NovelGhostwritePauseReason? {
-        if report.failedChunkCount > 0 { return .continuityAuditIncomplete }
         return blockingIssueSummaries(in: report).isEmpty ? nil : .blockingContinuity
     }
 }
@@ -995,16 +860,19 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
         switch phase {
         case .writing:
             if qualityAttemptIndex > 0 {
-                return "代笔中\(batch) · 改写 \(qualityAttemptIndex)/\(maxQualityAttempts)"
+                return "代笔中\(batch) · 定向改写 \(qualityAttemptIndex)/\(max(1, maxQualityAttempts - 1))"
             }
             return "代笔中\(batch) · 写整章"
-        case .accepting: return "代笔中\(batch) · 核对计划"
+        case .accepting: return "代笔中\(batch) · 审核并收录"
         case .collecting: return "代笔中\(batch) · 自动收录"
         case .syncing: return "代笔中\(batch) · 剧情同步"
         case .planning: return "代笔中\(batch) · 拟定计划"
         case .revising: return "代笔中\(batch) · 按意见润修"
         case .paused:
             if pauseReason == .cancelled { return "代笔已取消\(batch)" }
+            if pauseReason == .backgroundInterrupted {
+                return "后台暂停\(batch) · 等待恢复"
+            }
             if pauseReason == .continuityAuditIncomplete {
                 return "代笔已暂停\(batch) · 检查未稳"
             }
@@ -1042,22 +910,22 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
         switch phase {
         case .writing:
             if qualityAttemptIndex > 0 {
-                return "改写 \(qualityAttemptIndex)/\(maxQualityAttempts)" + batchSuffix
+                return "定向改写 \(qualityAttemptIndex)/\(max(1, maxQualityAttempts - 1))" + batchSuffix
             }
             return "写整章中" + batchSuffix
         case .accepting:
-            return "写✓ · 验收中" + batchSuffix
+            return "写✓ · 审核收录中" + batchSuffix
         case .collecting:
-            return "写✓验✓ · 收录中" + batchSuffix
+            return "写✓审✓ · 收录中" + batchSuffix
         case .syncing:
-            return "写✓验✓收✓ · 同步中" + batchSuffix
+            return "写✓审✓收✓ · 同步确认" + batchSuffix
         case .planning:
             return "同✓ · 拟定下一章" + batchSuffix
         case .revising:
             return "润修中" + batchSuffix
         case .paused, .waitingUser, .failed:
             if pauseReason == .chapterCompleted || pauseReason == .batchCompleted {
-                return "写✓验✓收✓同✓" + batchSuffix
+                return "写✓审✓收✓同✓" + batchSuffix
             }
             if pauseReason == .planProposedForNewBatch {
                 return "同✓ · 计划已拟定" + batchSuffix
@@ -1070,6 +938,9 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
             }
             if pauseReason == .blockingContinuity {
                 return "已中断·情节硬伤" + batchSuffix
+            }
+            if pauseReason == .backgroundInterrupted {
+                return "后台暂停·等待恢复" + batchSuffix
             }
             if let reason = pauseReason, reason.requiresRewriteOnContinue {
                 return "已中断·将重写" + batchSuffix
@@ -1093,7 +964,8 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
         case .userPaused, .acceptanceFailed, .obviousRepetition, .blockingContinuity,
              .continuityAuditIncomplete, .collectFailed, .collectBaseStale, .syncFailed,
              .incompleteCandidate, .planMismatch, .planProposalFailed,
-             .planProposedForNewBatch, .healBudgetExhausted, .infrastructureFailed:
+             .planProposedForNewBatch, .healBudgetExhausted, .infrastructureFailed,
+             .backgroundInterrupted:
             return true
         }
     }
@@ -1150,7 +1022,7 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
         if canHeal {
             phase = .writing
             pauseReason = nil
-            detailMessage = "验收未过，自动改写 \(qualityAttemptIndex)/\(maxQualityAttempts)…"
+            detailMessage = "审核发现缺口，自动定向改写 \(qualityAttemptIndex)/\(max(1, maxQualityAttempts - 1))…"
             return (true, false)
         }
         return (false, stuck)
@@ -1165,25 +1037,6 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
         revisionBriefOverride = nil
         didThinContractAmendThisChapter = false
         infraRetryCount = 0
-    }
-
-    /// Tier2 薄升级成功后：重置质量 attempt，再给一轮自动写。
-    mutating func prepareAfterThinContractAmend(
-        amendment: NovelGhostwriteContractAmendment,
-        newPlanDigest: String?
-    ) {
-        contractAmendments.append(amendment)
-        didThinContractAmendThisChapter = true
-        // 薄升级后只再给一轮自动写：下次质量失败即停（不再整段 Tier1 预算）。
-        qualityAttemptIndex = max(0, maxQualityAttempts - 1)
-        recentFailureFingerprints = []
-        chapterPlanDigest = newPlanDigest
-        phase = .writing
-        pauseReason = nil
-        detailMessage = amendment.kind == .alignSingleMust
-            ? "已放宽 1 条必发生措辞，再写一轮…"
-            : "已把复读节拍写入禁止项，再写一轮…"
-        // revisionBriefOverride 由调用方设置；此处不强制清空。
     }
 
     /// 是否适合展示「按审稿意见润修」入口。

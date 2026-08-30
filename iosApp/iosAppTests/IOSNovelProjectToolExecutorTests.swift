@@ -382,7 +382,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
         XCTAssertEqual(version.title, "同行")
         XCTAssertEqual(version.content, "第一章正文。")
         XCTAssertTrue(snapshot.appliedOperations.contains { $0.kind == .saveManualEdit })
-        XCTAssertEqual(snapshot.branches.first?.syncStatus, .needsSync)
+        XCTAssertEqual(snapshot.branches.first?.syncStatus, .synchronized)
     }
 
     func testSetChapterTitleByOrdinalAndRejectsMissingManuscript() async throws {
@@ -511,7 +511,7 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
             "第一段。\n\n第二段已经改掉了那个矛盾。\n\n第三段。"
         )
         XCTAssertTrue(snapshot.appliedOperations.contains { $0.kind == .saveManualEdit })
-        XCTAssertEqual(snapshot.branches.first?.syncStatus, .needsSync)
+        XCTAssertEqual(snapshot.branches.first?.syncStatus, .synchronized)
     }
 
     func testReviseChapterRejectsInvalidRangeWithoutWriting() async throws {
@@ -850,6 +850,23 @@ final class IOSNovelProjectToolExecutorTests: XCTestCase {
         XCTAssertEqual(prompt.ghostwritePlan?.suggestedChapterCount, 3)
         XCTAssertEqual(prompt.ghostwritePlan?.upcomingArc, ["追查签名来源", "父亲的旧同僚开始阻挠"])
         XCTAssertEqual(prompt.ghostwritePlan?.mustHappen, ["林晚拿到被篡改的卷宗"])
+
+        let emptyArcArguments = jsonArgs([
+            "outline_placement": "第 3 章 · 中段转折",
+            "goal_and_conflict": "林晚潜入档案馆夺回证据",
+            "must_happen": ["林晚拿到被篡改的卷宗"],
+            "must_not_happen": ["幕后主使立刻现身"],
+            "ending_hook": "卷宗上的签名来自失踪多年的父亲",
+            "visible_facts": ["林晚只知道卷宗被替换过"],
+            "upcoming_arc": [],
+            "suggested_chapter_count": 3,
+        ])
+        switch await harness.executor.ghostwritePlanApprovalPrompt(from: emptyArcArguments) {
+        case .failure(let issue):
+            XCTFail(issue.message)
+        case .success(let value):
+            XCTAssertEqual(value.ghostwritePlan?.upcomingArc, [])
+        }
 
         let snapshot = try await harness.snapshot()
         XCTAssertNil(snapshot.chapterPlan(for: harness.branchID), "审批前不得保存计划")

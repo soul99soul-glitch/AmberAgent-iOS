@@ -687,6 +687,53 @@ struct NovelContinuityAuditV1: Codable, Equatable, Sendable {
     let issues: [NovelContinuityIssueV1]
 }
 
+/// Joint pre-collection adjudication for one whole-chapter candidate.
+/// The nested contracts remain independently strict so acceptance, continuity,
+/// and state extraction cannot silently diverge at the commit boundary.
+struct NovelChapterAdjudicationV1: Codable, Equatable, Sendable {
+    static let legacySchemaVersion = 1
+    static let currentSchemaVersion = 2
+
+    let schemaVersion: Int
+    let acceptance: NovelChapterPlanAcceptanceV1
+    let continuity: NovelContinuityAuditV1
+    let stateDelta: NovelStateDeltaV1
+    /// Optional so a legacy response, an unavailable next-plan proposal, or a
+    /// final chapter can still collect after the current chapter passes review.
+    let nextPlan: NovelChapterPlanProposalV1?
+
+    init(
+        schemaVersion: Int = currentSchemaVersion,
+        acceptance: NovelChapterPlanAcceptanceV1,
+        continuity: NovelContinuityAuditV1,
+        stateDelta: NovelStateDeltaV1,
+        nextPlan: NovelChapterPlanProposalV1? = nil
+    ) {
+        self.schemaVersion = schemaVersion
+        self.acceptance = acceptance
+        self.continuity = continuity
+        self.stateDelta = stateDelta
+        self.nextPlan = nextPlan
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case acceptance
+        case continuity
+        case stateDelta
+        case nextPlan
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        acceptance = try container.decode(NovelChapterPlanAcceptanceV1.self, forKey: .acceptance)
+        continuity = try container.decode(NovelContinuityAuditV1.self, forKey: .continuity)
+        stateDelta = try container.decode(NovelStateDeltaV1.self, forKey: .stateDelta)
+        nextPlan = try container.decodeIfPresent(NovelChapterPlanProposalV1.self, forKey: .nextPlan)
+    }
+}
+
 struct NovelDiscussionArchiveDecisionV1: Codable, Equatable, Sendable {
     let topic: String
     let decision: String
@@ -843,6 +890,21 @@ enum NovelStructuredOutputDecoder {
         try StrictJSON.validateChapterPlanAcceptance(root.object)
         let value: NovelChapterPlanAcceptanceV1 = try decode(
             NovelChapterPlanAcceptanceV1.self,
+            from: root.data
+        )
+        try NovelStructuredOutputValidation.validate(value)
+        return value
+    }
+
+    static func decodeChapterAdjudication(from text: String) throws -> NovelChapterAdjudicationV1 {
+        try decodeChapterAdjudication(from: Data(text.utf8))
+    }
+
+    static func decodeChapterAdjudication(from data: Data) throws -> NovelChapterAdjudicationV1 {
+        let root = try StrictJSON.rootObject(from: data)
+        try StrictJSON.validateChapterAdjudication(root.object)
+        let value: NovelChapterAdjudicationV1 = try decode(
+            NovelChapterAdjudicationV1.self,
             from: root.data
         )
         try NovelStructuredOutputValidation.validate(value)
@@ -1097,7 +1159,10 @@ private enum NovelStructuredOutputValidation {
         }
     }
 
-    static func validate(_ value: NovelChapterPlanAcceptanceV1) throws {
+    static func validate(
+        _ value: NovelChapterPlanAcceptanceV1,
+        enforceDecisionFlag: Bool = true
+    ) throws {
         guard value.schemaVersion == NovelChapterPlanAcceptanceV1.legacySchemaVersion ||
             value.schemaVersion == NovelChapterPlanAcceptanceV1.currentSchemaVersion else {
             throw failure(
@@ -1117,14 +1182,14 @@ private enum NovelStructuredOutputValidation {
             try required(item, path: "$.obviousRepetition[\(index)]")
         }
         let hasViolation = !value.missingMustHappen.isEmpty || !value.forbiddenViolations.isEmpty
-        if value.accepted && hasViolation {
+        if enforceDecisionFlag && value.accepted && hasViolation {
             throw failure(
                 .invalidValue,
                 path: "$",
                 message: "An accepted chapter-plan result cannot list contract violations."
             )
         }
-        if !value.accepted && !hasViolation {
+        if enforceDecisionFlag && !value.accepted && !hasViolation {
             throw failure(
                 .invalidValue,
                 path: "$",
@@ -1188,7 +1253,10 @@ private enum NovelStructuredOutputValidation {
         }
     }
 
-    static func validate(_ value: NovelContinuityAuditV1) throws {
+    static func validate(
+        _ value: NovelContinuityAuditV1,
+        enforceDecisionFlag: Bool = true
+    ) throws {
         try schemaVersion(
             value.schemaVersion,
             expected: NovelContinuityAuditV1.currentSchemaVersion
@@ -1218,19 +1286,53 @@ private enum NovelStructuredOutputValidation {
                 try required(reference.evidence, path: referencePath + ".evidence")
             }
         }
-        if value.consistent && !value.issues.isEmpty {
+        if enforceDecisionFlag && value.consistent && !value.issues.isEmpty {
             throw failure(
                 .invalidValue,
                 path: "$.issues",
                 message: "A consistent audit cannot report issues."
             )
         }
-        if !value.consistent && value.issues.isEmpty {
+        if enforceDecisionFlag && !value.consistent && value.issues.isEmpty {
             throw failure(
                 .invalidValue,
                 path: "$.issues",
                 message: "An inconsistent audit must describe at least one issue."
             )
+        }
+    }
+
+    static func validate(_ value: NovelChapterAdjudicationV1) throws {
+        guard value.schemaVersion == NovelChapterAdjudicationV1.legacySchemaVersion ||
+            value.schemaVersion == NovelChapterAdjudicationV1.currentSchemaVersion else {
+            throw failure(
+                .unsupportedVersion,
+                path: "$.schemaVersion",
+                message: "The model returned unsupported chapter-adjudication schema version \(value.schemaVersion)."
+            )
+        }
+        if value.schemaVersion == NovelChapterAdjudicationV1.legacySchemaVersion,
+           value.nextPlan != nil {
+            throw failure(
+                .invalidValue,
+                path: "$.nextPlan",
+                message: "Legacy chapter-adjudication output cannot contain nextPlan."
+            )
+        }
+        // The outer host gates on concrete evidence arrays/issues. Summary booleans
+        // are advisory in this combined pass and cannot block collection alone.
+        try validate(value.acceptance, enforceDecisionFlag: false)
+        try validate(value.continuity, enforceDecisionFlag: false)
+        try validate(value.stateDelta)
+        if let nextPlan = value.nextPlan {
+            try validate(nextPlan)
+            guard NovelChapterPlanRecord.normalizedLines(nextPlan.mustHappen).count <= 3 else {
+                throw failure(
+                    .invalidValue,
+                    path: "$.nextPlan.mustHappen",
+                    message: "An adjudication next plan may contain at most three must-happen items."
+                )
+            }
         }
     }
 
@@ -1824,6 +1926,50 @@ private enum StrictJSON {
                 try string(reference["chapterTitle"], path: referencePath + ".chapterTitle")
                 try string(reference["evidence"], path: referencePath + ".evidence")
             }
+        }
+    }
+
+    static func validateChapterAdjudication(_ object: Object) throws {
+        guard let number = object["schemaVersion"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite,
+              number.doubleValue.rounded() == number.doubleValue else {
+            throw typeFailure(path: "$.schemaVersion", expected: "an integer")
+        }
+        let version = number.intValue
+        guard version == NovelChapterAdjudicationV1.legacySchemaVersion ||
+            version == NovelChapterAdjudicationV1.currentSchemaVersion else {
+            throw NovelStructuredOutputFailure(
+                category: .unsupportedVersion,
+                path: "$.schemaVersion",
+                message: "The model returned unsupported chapter-adjudication schema version \(version)."
+            )
+        }
+        try keys(
+            object,
+            path: "$",
+            required: ["schemaVersion", "acceptance", "continuity", "stateDelta"],
+            optional: version == NovelChapterAdjudicationV1.currentSchemaVersion
+                ? ["nextPlan"]
+                : []
+        )
+        guard let acceptance = object["acceptance"] as? Object else {
+            throw typeFailure(path: "$.acceptance", expected: "an object")
+        }
+        try validateChapterPlanAcceptance(acceptance)
+        guard let continuity = object["continuity"] as? Object else {
+            throw typeFailure(path: "$.continuity", expected: "an object")
+        }
+        try validateContinuityAudit(continuity)
+        guard let stateDelta = object["stateDelta"] as? Object else {
+            throw typeFailure(path: "$.stateDelta", expected: "an object")
+        }
+        try validateStateDelta(stateDelta)
+        if let nextPlan = object["nextPlan"], !(nextPlan is NSNull) {
+            guard let nextPlan = nextPlan as? Object else {
+                throw typeFailure(path: "$.nextPlan", expected: "an object or null")
+            }
+            try validateChapterPlanProposal(nextPlan)
         }
     }
 

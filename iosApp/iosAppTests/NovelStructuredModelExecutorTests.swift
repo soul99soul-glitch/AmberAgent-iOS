@@ -344,6 +344,31 @@ final class NovelStructuredModelExecutorTests: XCTestCase {
         )
     }
 
+    func testUnknownModelWindowUsesExpandedBoundedInputFallback() async throws {
+        let adapter = ScriptedNovelModelAdapter(
+            resolvedModel: NovelResolvedModel(
+                providerID: "transport-provider",
+                ownerProviderID: "owner-provider",
+                modelID: "model-uuid",
+                wireModelID: "wire-model",
+                displayName: "Unknown Window Model",
+                contextWindowTokens: nil
+            )
+        )
+        let preparation = try await NovelStructuredModelExecutor(modelRunner: adapter).prepare(
+            modelPolicy: .global,
+            taskKind: .chapterAdjudication,
+            requestedInputBudgetTokens: NovelStructuredModelExecutor
+                .maximumInternalInputBudgetTokens
+        )
+
+        XCTAssertEqual(preparation.effectiveInputBudgetTokens, 24_000)
+        XCTAssertLessThan(
+            preparation.effectiveInputBudgetTokens,
+            NovelStructuredModelExecutor.maximumInternalInputBudgetTokens
+        )
+    }
+
     /// 剧情同步默认关推理；设置打开后才用 automatic。
     func testStateSyncStructuredTasksRespectReasoningPreference() {
         XCTAssertEqual(

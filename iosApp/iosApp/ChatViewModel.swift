@@ -455,6 +455,12 @@ final class ChatViewModel {
         return IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: currentConversationId)
     }
 
+    var isBackgroundGenerationWaitingForForegroundResume: Bool {
+        guard let currentConversationId else { return false }
+        return IOSChatBackgroundGenerationCoordinator.shared
+            .isWaitingForForegroundResume(conversationId: currentConversationId)
+    }
+
     func isGenerationActive(conversationId: KotlinUuid) -> Bool {
 #if DEBUG
         if generationActiveOverrideForTesting?(conversationId) == true { return true }
@@ -902,6 +908,12 @@ final class ChatViewModel {
                 finalMessages: finalMessages
             )
         }
+        IOSChatBackgroundGenerationCoordinator.shared.onToolOutcomeUnknown = {
+            [weak self] descriptor in
+            guard let self,
+                  !self.toolOutcomeUnknownDescriptors.contains(descriptor) else { return }
+            self.toolOutcomeUnknownDescriptors.append(descriptor)
+        }
     }
 
     /// 前台路径唯一 Host；dependencies/bindings 集中装配消息、审批卡、持久化、
@@ -1074,6 +1086,11 @@ final class ChatViewModel {
                         finalMessages: finalMessages
                     )
                 },
+                setToolOutcomeUnknown: { [weak self] descriptor in
+                    guard let self,
+                          !self.toolOutcomeUnknownDescriptors.contains(descriptor) else { return }
+                    self.toolOutcomeUnknownDescriptors.append(descriptor)
+                },
                 refreshOrchestrationLinks: { [weak self] in
                     await self?.refreshCurrentConversationOrchestratedStatus()
                 }
@@ -1229,6 +1246,9 @@ final class ChatViewModel {
             ) else {
                 continue
             }
+            let unknownToolCallIds = ledgerActions.actions.compactMap { toolCallId, action -> String? in
+                action == .markUnknown ? toolCallId : nil
+            }
             var recoveredMessages = IOSToolCallRecoveryApplier.apply(ledgerActions, to: storedMessages)
             var didMutateRecovered = !ledgerActions.isEmpty
 
@@ -1281,12 +1301,37 @@ final class ChatViewModel {
                     plan: ledgerActions,
                     dao: agentRuntimeDao
                 )
+                if !unknownToolCallIds.isEmpty {
+                    _ = try? await runStore.transitionFromAnyActive(
+                        runId: descriptor.runId,
+                        to: .outcomeUnknown,
+                        detail: "tool_outcome_unknown"
+                    )
+                    for toolCallId in unknownToolCallIds.sorted() {
+                        guard let toolName = recoveredMessages
+                            .flatMap(\.parts)
+                            .compactMap({ $0 as? UIMessagePart.Tool })
+                            .first(where: { $0.toolCallId == toolCallId })?.toolName
+                            ?? ledgerActions.toolNames[toolCallId] else { continue }
+                        let unknown = IOSToolOutcomeUnknownDescriptor(
+                            runId: descriptor.runId,
+                            conversationId: descriptor.conversationId,
+                            toolCallId: toolCallId,
+                            toolName: toolName
+                        )
+                        if !toolOutcomeUnknownDescriptors.contains(unknown) {
+                            toolOutcomeUnknownDescriptors.append(unknown)
+                        }
+                    }
+                }
                 didUpdateCurrentConversation = didUpdateCurrentConversation || currentConversationId == conversationId
             }
-            await IOSRunRecovery.completePendingApprovalRecovery(
-                runId: descriptor.runId,
-                runStore: runStore
-            )
+            if unknownToolCallIds.isEmpty {
+                await IOSRunRecovery.completePendingApprovalRecovery(
+                    runId: descriptor.runId,
+                    runStore: runStore
+                )
+            }
         }
 
         if didUpdateCurrentConversation {

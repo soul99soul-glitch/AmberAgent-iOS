@@ -474,7 +474,7 @@ struct NovelCollectCandidateSheet: View {
                     Button("收录") {
                         NovelTextInputCommitter.perform(fieldBank: imeBank) { collect() }
                     }
-                        .disabled(isSubmitting || hasDurablePending)
+                        .disabled(isSubmitting || hasDurablePending || !canCollect)
                 }
             }
             .overlay {
@@ -901,7 +901,6 @@ struct NovelWritingContextSheet: View {
     @State private var materialChoices: [NovelMaterialID: MaterialChoice]
     @State private var previewSignature: String?
     @State private var selectedMode: NovelCollaborationMode
-    @State private var pauseOnBlockingContinuity: Bool
     @State private var planPlacement: String
     @State private var planGoal: String
     @State private var planMustHappen: String
@@ -910,7 +909,6 @@ struct NovelWritingContextSheet: View {
     @State private var planVisibleFacts: String
     @State private var upcomingArcBeats: String
     @State private var modeSwitchMessage: String?
-    @State private var pauseToggleMessage: String?
     @State private var planMessage: String?
     @State private var isPresentingGhostwriteRevision = false
     @State private var planMessageIsError = false
@@ -962,9 +960,6 @@ struct NovelWritingContextSheet: View {
         self._previewSignature = State(initialValue: nil)
         let existingMode = workspace.projectSnapshot?.project.collaborationMode ?? .cocreation
         self._selectedMode = State(initialValue: existingMode)
-        self._pauseOnBlockingContinuity = State(
-            initialValue: workspace.projectSnapshot?.project.pauseGhostwriteOnBlockingContinuity ?? true
-        )
         let existingPlan = workspace.selectedBranchID.flatMap {
             workspace.projectSnapshot?.chapterPlan(for: $0)
         }
@@ -1266,21 +1261,9 @@ struct NovelWritingContextSheet: View {
                 }
 
                 Section {
-                    Toggle("代笔收录前做连续性检查", isOn: $pauseOnBlockingContinuity)
-                        .disabled(!workspace.canMutate || workspace.isPerforming || session.isGhostwriting)
-                        .onChange(of: pauseOnBlockingContinuity) { _, enabled in
-                            Task { await setPauseOnBlockingContinuity(enabled) }
-                        }
-                        .onChange(of: storedPauseOnBlockingContinuity) { _, enabled in
-                            if pauseOnBlockingContinuity != enabled {
-                                pauseOnBlockingContinuity = enabled
-                            }
-                        }
-                    if let pauseToggleMessage, !pauseToggleMessage.isEmpty {
-                        Label(pauseToggleMessage, systemImage: "exclamationmark.triangle")
-                            .font(.footnote)
-                            .foregroundStyle(AmberTheme.accentRed)
-                    }
+                    Label("每章收录前都会检查连续性硬伤", systemImage: "checkmark.shield")
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.foreground2)
 
                     Stepper(
                         value: Binding(
@@ -1754,10 +1737,6 @@ struct NovelWritingContextSheet: View {
         workspace.projectSnapshot?.project.collaborationMode ?? .cocreation
     }
 
-    private var storedPauseOnBlockingContinuity: Bool {
-        workspace.projectSnapshot?.project.pauseGhostwriteOnBlockingContinuity ?? true
-    }
-
     /// Workspace 合同身份变化时（清除 / 换稿）驱动本地字段回填。
     private var chapterPlanFieldSyncToken: String {
         guard let plan = currentChapterPlan else { return "none" }
@@ -1777,7 +1756,7 @@ struct NovelWritingContextSheet: View {
                         || session.ghostwriteProgress?.pauseReason == .chapterCompleted {
                 parts.append("上一批已完成。在下方「代笔」区点按钮开始下一批。")
             } else {
-                parts.append("可用「开始代笔」按批自动写整章并验收收录；也可以继续自己点。")
+                parts.append("可用「开始代笔」按批自动写整章并审核收录；也可以继续自己点。")
             }
         }
         return parts.joined(separator: " ")
@@ -1812,14 +1791,17 @@ struct NovelWritingContextSheet: View {
             return "已自动拟定下一章计划。确认后开始写本章，批内后续章节全自动连写。"
         }
         if shouldShowContinueGhostwrite {
+            if session.ghostwriteProgress?.pauseReason == .backgroundInterrupted {
+                return "系统暂停了后台代笔，回到前台会自动继续；若仍停在这里，可手动继续本批。"
+            }
             if session.ghostwriteProgress?.shouldOfferRevisionSheet == true {
                 return "建议先「按审稿意见润修」（可改要求）；也可整章重写或先改本章计划。不会用旧稿再验。"
             }
             if session.ghostwriteProgress?.pauseReason == .continuityAuditIncomplete {
-                return "检查链路未扫稳（不是剧情硬伤）。继续会对同一已验收稿再检，不会重写。"
+                return "检查链路未扫稳（不是剧情硬伤）。继续会对同一篇候选稿再检，不会重写。"
             }
             if session.ghostwriteProgress?.mustRewriteCandidateOnResume == true {
-                return "继续将重写本章，不会用同一篇旧稿再验收。"
+                return "继续将重写本章，不会用同一篇旧稿再审核。"
             }
             return "继续本批：先处理同步或拟定计划，再往下写。"
         }
@@ -2016,16 +1998,6 @@ struct NovelWritingContextSheet: View {
         } else {
             selectedMode = collaborationMode
             modeSwitchMessage = workspace.errorMessage ?? "模式切换失败，请重试。"
-        }
-    }
-
-    private func setPauseOnBlockingContinuity(_ enabled: Bool) async {
-        guard enabled != storedPauseOnBlockingContinuity else { return }
-        pauseToggleMessage = nil
-        let saved = await workspace.setPauseGhostwriteOnBlockingContinuity(enabled)
-        if !saved {
-            pauseOnBlockingContinuity = storedPauseOnBlockingContinuity
-            pauseToggleMessage = workspace.errorMessage ?? "未能更新连续性暂停设置。"
         }
     }
 
@@ -2696,7 +2668,7 @@ struct NovelGhostwriteRevisionSheet: View {
                 } header: {
                     Text("润修要求")
                 } footer: {
-                    Text("会按本章合同重写整章，并重新验收；不会把失败旧稿整篇塞进上下文。")
+                    Text("会保留上一稿可用部分，按审稿意见修改并重新审核收录。")
                 }
             }
             .scrollContentBackground(.hidden)

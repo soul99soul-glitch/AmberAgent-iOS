@@ -155,12 +155,33 @@ enum IOSRunRecovery {
                 .map(\.toolCallId)
         )
         let ledger = IOSAgentRunLedger(dao: dao)
-        let transactions = await ledger.toolTransactions(runId: runId)
+        guard let transactions = await ledger.toolTransactions(runId: runId) else {
+            return nil
+        }
+
+        // Read both ledger generations before mutating either one. Otherwise a
+        // legacy-read failure after a modern STARTED -> OUTCOME_UNKNOWN CAS can
+        // leave the caller without the plan needed to present confirmation.
+        let rows: [IOSToolCallLedgerRow]? = await withCheckedContinuation { continuation in
+            dao.listEventsForRun(id: runId) { result, error in
+                guard error == nil, let result else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let decoded = result.compactMap {
+                    IOSToolCallLedgerRow.decode(type: $0.type, seq: $0.seq, payload: $0.payload)
+                }
+                continuation.resume(returning: decoded)
+            }
+        }
+        guard let rows else {
+            return nil
+        }
+
         var actions: [String: IOSToolCallRecoveryAction] = [:]
         var toolNames: [String: String] = [:]
         var transactionToolCallIds = Set<String>()
-        if let transactions {
-            for transaction in transactions {
+        for transaction in transactions {
                 transactionToolCallIds.insert(transaction.toolCallId)
                 toolNames[transaction.toolCallId] = transaction.toolName
                 switch transaction.state {
@@ -232,28 +253,12 @@ enum IOSRunRecovery {
                     }
                 }
             }
-        }
 
         // Older installations have event rows but no transaction rows. Keep
         // their established recovery path. A run can contain both old event-only
         // calls and newer transaction-backed calls after an app upgrade, so merge
         // by toolCallId instead of skipping the entire legacy ledger as soon as
         // one transaction exists.
-        let rows: [IOSToolCallLedgerRow]? = await withCheckedContinuation { continuation in
-            dao.listEventsForRun(id: runId) { result, error in
-                guard error == nil, let result else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                let decoded = result.compactMap {
-                    IOSToolCallLedgerRow.decode(type: $0.type, seq: $0.seq, payload: $0.payload)
-                }
-                continuation.resume(returning: decoded)
-            }
-        }
-        guard let rows else {
-            return transactions == nil ? nil : IOSToolCallRecoveryPlan(actions: actions, toolNames: toolNames)
-        }
         let legacyActions = IOSToolCallRecoveryPlanner.plan(rows: rows) {
             !completedOutputToolCallIds.contains($0)
         }

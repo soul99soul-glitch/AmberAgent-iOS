@@ -878,6 +878,26 @@ final class NovelSessionReplayTests: XCTestCase {
             [.init(action: .collectProse(candidateID), blocker: nil)]
         )
 
+        let ghostwritePlanID = NovelChapterPlanID()
+        let ghostwriteCandidate = makeCandidate(
+            fixture: fixture,
+            id: candidateID,
+            sourceMessageID: prose.id,
+            kind: .prose,
+            status: .available,
+            content: prose.content,
+            ghostwritePlanID: ghostwritePlanID
+        )
+        let reviewRequired = NovelSessionPresentation.project(makeInput(
+            fixture: fixture,
+            session: session,
+            candidates: [ghostwriteCandidate]
+        ))
+        XCTAssertEqual(
+            reviewRequired.rows[1].actions.first?.blocker,
+            .ghostwriteReviewRequired
+        )
+
         let readOnly = NovelSessionPresentation.project(makeInput(
             fixture: fixture,
             session: session,
@@ -953,9 +973,9 @@ final class NovelSessionReplayTests: XCTestCase {
             candidates: [candidate],
             pending: [manualSyncPending]
         ))
-        XCTAssertNil(
+        XCTAssertEqual(
             blockedByStateSync.rows[1].actions.first?.blocker,
-            "Leftover plot-relink is not a write lock; prose collect stays available."
+            .branchNeedsSync
         )
         XCTAssertEqual(retryable.rows[0].digest, available.rows[0].digest)
         XCTAssertNotEqual(retryable.rows[1].digest, available.rows[1].digest)
@@ -1743,13 +1763,12 @@ final class NovelSessionReplayTests: XCTestCase {
             runs: [run],
             pending: [manualSync]
         ))
-        XCTAssertNil(
+        XCTAssertEqual(
             blocked.rows[0].actions.first?.blocker,
-            "Leftover plot-relink must not grey out collect on an already-generated candidate."
+            .branchNeedsSync
         )
         XCTAssertNil(
-            NovelSessionBubble.sharedActionBarBlocker(blocked.rows[0].actions),
-            "Enabled collect must not inherit a sibling action's sync caption."
+            NovelSessionBubble.sharedActionBarBlocker(blocked.rows[0].actions)
         )
 
         let transientRun = makeRun(
@@ -2577,7 +2596,8 @@ private extension NovelSessionReplayTests {
         status: NovelCandidateStatus,
         content: String,
         sourceVersionID: NovelChapterVersionID? = nil,
-        collectedCheckpointID: NovelCheckpointID? = nil
+        collectedCheckpointID: NovelCheckpointID? = nil,
+        ghostwritePlanID: NovelChapterPlanID? = nil
     ) -> NovelCandidateRecord {
         NovelCandidateRecord(
             id: id,
@@ -2591,6 +2611,7 @@ private extension NovelSessionReplayTests {
             content: content,
             sourceChapterVersionID: sourceVersionID,
             collectedCheckpointID: collectedCheckpointID,
+            ghostwritePlanID: ghostwritePlanID,
             createdAt: Self.now
         )
     }

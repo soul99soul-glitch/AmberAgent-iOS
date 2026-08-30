@@ -7,6 +7,17 @@ enum NovelCandidateSemantics {
         targetHeadRevision: Int64,
         in document: NovelProjectDocumentV1
     ) -> Bool {
+        if candidate.baseCheckpointID == targetCheckpointID,
+           candidate.baseHeadRevision == targetHeadRevision {
+            return true
+        }
+        guard let checkpoint = document.checkpoints.first(where: {
+            $0.id == targetCheckpointID
+        }), document.appliedOperations.contains(where: {
+            $0.operationID == checkpoint.operationID && $0.kind == .workspacePlot
+        }) else {
+            return false
+        }
         let sourceMessage = document.sessions
             .first(where: { $0.id == candidate.sessionID })?
             .messages.first(where: { $0.id == candidate.sourceMessageID })
@@ -31,19 +42,20 @@ enum NovelCandidateSemantics {
             return true
         }
 
-        // Leftover plot-relink (and a completed manual sync sitting directly on
-        // the candidate's parent) is not a manuscript write. Collect still
-        // applies onto the working chapter; a covering sessionCursor must not
-        // treat the uncollected draft as stale.
+        // A pointer-only relink may advance HEAD without changing the manuscript.
+        // A real manual sync after an edit must make the older candidate stale.
         guard candidate.kind == .prose,
               candidate.clonedFromCandidateID == nil,
               targetHeadRevision == candidate.baseHeadRevision + 1,
               sourceMessage != nil,
               let checkpoint = checkpoints.first(where: { $0.id == targetCheckpointID }),
+              let base = checkpoints.first(where: { $0.id == candidate.baseCheckpointID }),
               checkpoint.kind == .manualSync,
               checkpoint.createdOnBranchID == candidate.branchID,
               checkpoint.parentCheckpointID == candidate.baseCheckpointID,
-              checkpoint.baseHeadRevision == candidate.baseHeadRevision else {
+              checkpoint.baseHeadRevision == candidate.baseHeadRevision,
+              checkpoint.chapterSelections == base.chapterSelections,
+              checkpoint.branchOverrideRevisionIDs == base.branchOverrideRevisionIDs else {
             return false
         }
         return true
