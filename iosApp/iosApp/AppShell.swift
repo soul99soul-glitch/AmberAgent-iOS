@@ -32,6 +32,8 @@ struct AppShell: View {
     @State private var isResolvingThemeTryOn = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
+    @AppStorage(IOSAppLanguagePreference.defaultsKey)
+    private var appLanguage = IOSAppLanguage.system.rawValue
 
     init(settingsStore: SettingsStore) {
         let permissionStore = IOSPermissionStore()
@@ -150,6 +152,7 @@ struct AppShell: View {
         .environment(chatViewModel)
         .environment(documentAccessStore)
         .environment(workspaceStore)
+        .environment(\.locale, selectedLanguage.resolvedLocale())
         .tint(AmberTheme.accent)
         .preferredColorScheme(preferredColorScheme)
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -319,6 +322,10 @@ struct AppShell: View {
 
     private var preferredColorScheme: ColorScheme? {
         (IOSAppearanceMode(rawValue: appearanceMode) ?? .light).colorScheme
+    }
+
+    private var selectedLanguage: IOSAppLanguage {
+        IOSAppLanguage(storedValue: appLanguage)
     }
 
     private func handleScenePhaseChange(_ phase: ScenePhase) {
