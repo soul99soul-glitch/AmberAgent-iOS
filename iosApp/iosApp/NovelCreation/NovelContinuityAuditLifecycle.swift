@@ -55,6 +55,22 @@ extension DefaultNovelCreation {
             candidateChapterID: candidateChapterID
         )
     }
+
+    /// 块级尝试次数:1 次初试 + 1 次可恢复重试。常量而非配置,避免旋钮膨胀。
+    /// 矛盾修复与检查共用同一口径。
+    var continuityAuditChunkMaxAttempts: Int { 2 }
+
+    func isRetryableContinuityChunkFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let structured = error as? NovelStructuredModelExecutionFailure {
+            return structured.failure.isRetryable
+                && structured.failure.code != "cancelled"
+        }
+        if let model = error as? NovelModelFailure {
+            return model.isRetryable
+        }
+        return false
+    }
 }
 
 private extension DefaultNovelCreation {
@@ -164,21 +180,6 @@ private extension DefaultNovelCreation {
                 }
             }
         }
-    }
-
-    /// 块级尝试次数:1 次初试 + 1 次可恢复重试。常量而非配置,避免旋钮膨胀。
-    var continuityAuditChunkMaxAttempts: Int { 2 }
-
-    func isRetryableContinuityChunkFailure(_ error: Error) -> Bool {
-        if error is CancellationError { return false }
-        if let structured = error as? NovelStructuredModelExecutionFailure {
-            return structured.failure.isRetryable
-                && structured.failure.code != "cancelled"
-        }
-        if let model = error as? NovelModelFailure {
-            return model.isRetryable
-        }
-        return false
     }
 
     func runContinuityAuditChunk(

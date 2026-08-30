@@ -101,7 +101,11 @@ struct AppearanceSettingsView: View {
         .sheet(item: $exportItem) { item in
             AppearanceThemeShareSheet(url: item.url) { completed in
                 if completed {
-                    transferBanner = "已导出：\(item.displayName)"
+                    transferBanner = IOSAppLocalization.formatted(
+                        "已导出：%@",
+                        defaultValue: "已导出：%@",
+                        arguments: [item.displayName]
+                    )
                 }
             }
         }
@@ -192,7 +196,11 @@ struct AppearanceSettingsView: View {
             let removed = try library.remove(ids: selectedRemovableIds)
             selectedRemovableIds = []
             if removed > 0 {
-                transferBanner = "已移除 \(removed) 个主题"
+                transferBanner = IOSAppLocalization.formatted(
+                    "已移除 %lld 个主题",
+                    defaultValue: "已移除 %lld 个主题",
+                    arguments: [Int64(removed)]
+                )
             }
             if library.installed.isEmpty {
                 exitThemeManagement()
@@ -204,7 +212,7 @@ struct AppearanceSettingsView: View {
 
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
+            Text(verbatim: IOSAppLocalization.string(title, defaultValue: title))
                 .font(AmberChromeFont.settings(size: 12, weight: .semibold))
                 .foregroundStyle(AmberTheme.muted)
                 .accessibilityAddTraits(.isHeader)
@@ -308,7 +316,8 @@ struct AppearanceSettingsView: View {
         HStack(spacing: 0) {
             ForEach(IOSAppearanceMode.allCases) { mode in
                 let isSel = selectedMode == mode
-                Text(mode.title)
+                let title = IOSAppLocalization.string(mode.title, defaultValue: mode.title)
+                Text(verbatim: title)
                     .font(.subheadline.weight(isSel ? .semibold : .regular))
                     .foregroundStyle(isSel ? AmberTheme.foreground : AmberTheme.muted)
                     .frame(maxWidth: .infinity)
@@ -325,7 +334,7 @@ struct AppearanceSettingsView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { appearanceMode = mode.rawValue }
                     .accessibilityElement()
-                    .accessibilityLabel(mode.title)
+                    .accessibilityLabel(title)
                     .accessibilityAddTraits(isSel ? [.isButton, .isSelected] : .isButton)
             }
         }
@@ -518,7 +527,7 @@ struct AppearanceSettingsView: View {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
                     .font(.system(size: 14, weight: .semibold))
-                Text(title)
+                Text(verbatim: IOSAppLocalization.string(title, defaultValue: title))
                     .font(.subheadline.weight(.semibold))
             }
             .foregroundStyle(AmberTheme.foreground)
@@ -531,7 +540,7 @@ struct AppearanceSettingsView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
+        .accessibilityLabel(IOSAppLocalization.string(title, defaultValue: title))
     }
 
     private func exportCurrentTheme() {
@@ -574,9 +583,17 @@ struct AppearanceSettingsView: View {
                 if transferError != nil { return }
                 switch outcome {
                 case .installed:
-                    transferBanner = "已导入并加入主题库：\(document.displayName)"
+                    transferBanner = IOSAppLocalization.formatted(
+                        "已导入并加入主题库：%@",
+                        defaultValue: "已导入并加入主题库：%@",
+                        arguments: [document.displayName]
+                    )
                 case .builtinIdentity:
-                    transferBanner = "已应用内置配方：\(document.displayName)"
+                    transferBanner = IOSAppLocalization.formatted(
+                        "已应用内置配方：%@",
+                        defaultValue: "已应用内置配方：%@",
+                        arguments: [document.displayName]
+                    )
                 }
             } catch {
                 transferError = userFacingTransferError(error)
@@ -592,20 +609,20 @@ struct AppearanceSettingsView: View {
         case .fileTooLarge:
             return e.localizedDescription
         case .invalidJSON, .invalidFormat:
-            return "不是 Amber 主题配方"
+            return IOSAppLocalization.string("不是 Amber 主题配方", defaultValue: "不是 Amber 主题配方")
         case .unsupportedVersion:
-            return "主题版本不支持"
+            return IOSAppLocalization.string("主题版本不支持", defaultValue: "主题版本不支持")
         case .immersivePaper:
-            return "沉浸色画布暂不可导入"
+            return IOSAppLocalization.string("沉浸色画布暂不可导入", defaultValue: "沉浸色画布暂不可导入")
         case .unknownPaper, .unknownCanvasStyle, .unknownBrandMark,
                 .unknownShortcutIconStyle, .unknownChromeTypeface, .unknownOptionalSlot:
-            return "配方含不支持的选项"
+            return IOSAppLocalization.string("配方含不支持的选项", defaultValue: "配方含不支持的选项")
         case .invalidHex:
-            return "配方颜色无效"
+            return IOSAppLocalization.string("配方颜色无效", defaultValue: "配方颜色无效")
         case .insufficientContrast:
             return e.localizedDescription
         case .missingField:
-            return "配方字段不完整"
+            return IOSAppLocalization.string("配方字段不完整", defaultValue: "配方字段不完整")
         }
     }
 }

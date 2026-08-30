@@ -565,6 +565,7 @@ enum Route: Hashable {
     case account
     case settings
     case appearance
+    case language
     case displayFont
     case conversationStorage
     case syncBackup
@@ -677,6 +678,8 @@ private extension View {
                 SettingsHomeView(settingsStore: settingsStore, sharedSettings: sharedSettings)
             case .appearance:
                 AppearanceSettingsView()
+            case .language:
+                LanguageSettingsView()
             case .displayFont:
                 DisplayFontSettingsView(sharedSettings: sharedSettings)
             case .conversationStorage:

@@ -29,7 +29,13 @@ final class WatchTaskViewModel: ObservableObject {
             if let snapshot = result.snapshot {
                 self.snapshot = snapshot
             }
-            self.statusMessage = result.message
+            self.statusMessage = result.message.map {
+                WatchTaskLocalization.string(
+                    $0,
+                    defaultValue: $0,
+                    languageCode: self.snapshot.languageCode
+                )
+            }
             if result.accepted {
                 self.draftAnswer = ""
                 self.isDictating = false
@@ -67,7 +73,7 @@ final class WatchTaskViewModel: ObservableObject {
     func submitDraftAnswer() {
         let text = draftAnswer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
-            statusMessage = "请先输入或语音识别内容"
+            statusMessage = localized("请先输入或语音识别内容")
             return
         }
         send(action: .answer, text: text)
@@ -87,7 +93,7 @@ final class WatchTaskViewModel: ObservableObject {
         text: String? = nil
     ) {
         guard snapshot.isActive || action == .refresh else {
-            statusMessage = "当前没有任务"
+            statusMessage = localized("当前没有任务")
             return
         }
         isSending = true
@@ -105,5 +111,13 @@ final class WatchTaskViewModel: ObservableObject {
             createdAt: Date()
         )
         bridge.sendAction(request)
+    }
+
+    private func localized(_ key: String) -> String {
+        WatchTaskLocalization.string(
+            key,
+            defaultValue: key,
+            languageCode: snapshot.languageCode
+        )
     }
 }

@@ -1,0 +1,58 @@
+"agent.activity.kind.research" = "詳細調査";
+"agent.activity.kind.response" = "回答";
+"agent.activity.kind.imageGeneration" = "画像生成";
+"agent.activity.kind.document" = "文書タスク";
+"agent.activity.kind.web" = "Webタスク";
+"agent.activity.kind.memory" = "メモリ更新";
+"agent.activity.kind.command" = "コマンドタスク";
+"agent.activity.kind.workflow" = "エージェントタスク";
+
+"agent.activity.stage.preparing" = "準備中";
+"agent.activity.stage.thinking" = "思考中";
+"agent.activity.stage.searching" = "検索中";
+"agent.activity.stage.readingSources" = "情報源を閲覧中";
+"agent.activity.stage.readingWeb" = "Webを閲覧中";
+"agent.activity.stage.generating" = "生成中";
+"agent.activity.stage.generatingImage" = "画像を生成中";
+"agent.activity.stage.organizing" = "結果を整理中";
+"agent.activity.stage.readingDocument" = "文書を読み込み中";
+"agent.activity.stage.updatingMemory" = "メモリを更新中";
+"agent.activity.stage.runningTool" = "処理中";
+"agent.activity.stage.waitingForConfirmation" = "確認待ち";
+"agent.activity.stage.reconnecting" = "再接続中";
+"agent.activity.stage.stale" = "ステータスが期限切れ";
+"agent.activity.stage.completed" = "完了";
+"agent.activity.stage.failed" = "未完了";
+"agent.activity.stage.cancelled" = "停止";
+
+"agent.activity.action.openTask" = "チャットを開く";
+"agent.activity.action.openConfirmation" = "確認を開く";
+"agent.activity.action.viewResult" = "結果を表示";
+
+"agent.activity.fact.waiting" = "確認が必要";
+"agent.activity.fact.stale" = "期限切れ";
+"agent.activity.fact.reconnecting" = "再接続中";
+"agent.activity.fact.completed" = "完了";
+"agent.activity.fact.failed" = "未完了";
+"agent.activity.fact.cancelled" = "停止";
+
+"agent.activity.compact.preparing" = "準備中";
+"agent.activity.compact.thinking" = "思考中";
+"agent.activity.compact.searching" = "検索中";
+"agent.activity.compact.readingSources" = "閲覧中";
+"agent.activity.compact.readingWeb" = "Web閲覧中";
+"agent.activity.compact.generating" = "生成中";
+"agent.activity.compact.generatingImage" = "描画中";
+"agent.activity.compact.organizing" = "整理中";
+"agent.activity.compact.readingDocument" = "ファイル読込中";
+"agent.activity.compact.updatingMemory" = "更新中";
+"agent.activity.compact.runningTool" = "処理中";
+
+"agent.activity.metric.source.count" = "%ld件の情報源を閲覧済み";
+"agent.activity.metric.source.progress" = "%ld / %ld件の情報源";
+"agent.activity.metric.file.count" = "%ld件のファイルを処理済み";
+"agent.activity.metric.file.progress" = "%ld / %ld件のファイル";
+"agent.activity.metric.image.count" = "%ld枚の画像を生成済み";
+"agent.activity.metric.image.progress" = "%ld / %ld枚の画像";
+"agent.activity.metric.item.count" = "%ld件の項目を処理済み";
+"agent.activity.metric.item.progress" = "%ld / %ld件の項目";

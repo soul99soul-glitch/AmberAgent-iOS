@@ -683,6 +683,266 @@ final class NovelContinuityAuditTests: XCTestCase {
         )
     }
 
+    // MARK: - 一键修复
+
+    func testRepairPlannerTargetsTheLaterChapterAndMergesSameChapterJobs() {
+        let early = NovelChapterID()
+        let later = NovelChapterID()
+        let first = issue(
+            id: "issue-a",
+            early: (early, 1, "渡口", "两个人交换了姓名"),
+            later: (later, 3, "茶馆", "谁也不认得谁")
+        )
+        let second = issue(
+            id: "issue-b",
+            early: (early, 1, "渡口", "约好第二天再见"),
+            later: (later, 3, "茶馆", "初次见面")
+        )
+
+        let jobs = NovelContinuityRepairPlanner.jobs(from: [first, second])
+        XCTAssertEqual(jobs.count, 1)
+        XCTAssertEqual(jobs[0].chapterID, later)
+        XCTAssertEqual(jobs[0].chapterOrdinal, 3)
+        XCTAssertEqual(jobs[0].issues.map(\.id), ["issue-a", "issue-b"])
+        XCTAssertEqual(
+            NovelContinuityRepairPlanner.targetReference(in: first)?.chapterID,
+            later
+        )
+    }
+
+    func testRepairPlannerSkipsIssuesWithoutAnEarlierCanonicalChapter() {
+        let only = NovelChapterID()
+        let issue = NovelContinuityIssue(
+            id: "solo",
+            category: .contradiction,
+            severity: .minor,
+            summary: "同一章里的两处说法对不上，没有更早的先文可对齐。",
+            references: [
+                NovelContinuityReference(
+                    chapterID: only,
+                    chapterOrdinal: 2,
+                    chapterTitle: "雨夜",
+                    evidence: "独自守在渡口"
+                ),
+                NovelContinuityReference(
+                    chapterID: only,
+                    chapterOrdinal: 2,
+                    chapterTitle: "雨夜",
+                    evidence: "把湿透的外衣拧了又拧"
+                ),
+            ]
+        )
+
+        XCTAssertNil(NovelContinuityRepairPlanner.targetReference(in: issue))
+        XCTAssertTrue(NovelContinuityRepairPlanner.jobs(from: [issue]).isEmpty)
+    }
+
+    func testRepairPlannerHonorsAnIssueIDFilter() {
+        let early = NovelChapterID()
+        let later = NovelChapterID()
+        let kept = issue(
+            id: "keep",
+            early: (early, 1, "渡口", "交换了姓名"),
+            later: (later, 3, "茶馆", "初次见面")
+        )
+        let dropped = issue(
+            id: "skip",
+            early: (early, 1, "渡口", "约好第二天再见"),
+            later: (later, 3, "茶馆", "谁也不认得谁")
+        )
+
+        let jobs = NovelContinuityRepairPlanner.jobs(
+            from: [kept, dropped],
+            issueIDs: ["keep"]
+        )
+        XCTAssertEqual(jobs.count, 1)
+        XCTAssertEqual(jobs[0].issues.map(\.id), ["keep"])
+    }
+
+    func testPatchApplierReplacesAUniqueSpan() {
+        let applied = NovelContinuityRepairPatchApplier.apply(
+            [
+                NovelContinuityRepairPatchV1(
+                    issueId: "issue-1",
+                    oldText: "两人都说这是初次见面，谁也不认得谁",
+                    newText: "林岸一眼认出苏未晚，谁也没再装成初见"
+                ),
+            ],
+            to: thirdChapterContent,
+            allowedIssueIDs: ["issue-1"]
+        )
+
+        XCTAssertEqual(applied.appliedIssueIDs, ["issue-1"])
+        XCTAssertEqual(applied.droppedCount, 0)
+        XCTAssertTrue(applied.content.contains("林岸一眼认出苏未晚"))
+        XCTAssertFalse(applied.content.contains("谁也不认得谁"))
+        XCTAssertTrue(applied.content.hasPrefix("林岸推开茶馆的门"))
+    }
+
+    func testPatchApplierDropsDuplicateMissingOverlappingAndUnchangedSpans() {
+        let content = "ABCDEF"
+
+        let duplicate = NovelContinuityRepairPatchApplier.apply(
+            [
+                NovelContinuityRepairPatchV1(
+                    issueId: "dup",
+                    oldText: "AB",
+                    newText: "XX"
+                ),
+            ],
+            to: "ABAB",
+            allowedIssueIDs: ["dup"]
+        )
+        XCTAssertTrue(duplicate.appliedIssueIDs.isEmpty)
+        XCTAssertEqual(duplicate.content, "ABAB")
+
+        let missing = NovelContinuityRepairPatchApplier.apply(
+            [
+                NovelContinuityRepairPatchV1(
+                    issueId: "miss",
+                    oldText: "不存在的原文",
+                    newText: "改写"
+                ),
+            ],
+            to: content,
+            allowedIssueIDs: ["miss"]
+        )
+        XCTAssertTrue(missing.appliedIssueIDs.isEmpty)
+
+        let overlapping = NovelContinuityRepairPatchApplier.apply(
+            [
+                NovelContinuityRepairPatchV1(
+                    issueId: "first",
+                    oldText: "ABC",
+                    newText: "XXX"
+                ),
+                NovelContinuityRepairPatchV1(
+                    issueId: "second",
+                    oldText: "CDE",
+                    newText: "YYY"
+                ),
+            ],
+            to: content,
+            allowedIssueIDs: ["first", "second"]
+        )
+        XCTAssertEqual(overlapping.appliedIssueIDs, ["first"])
+        XCTAssertEqual(overlapping.droppedCount, 1)
+        XCTAssertEqual(overlapping.content, "XXXDEF")
+
+        let unchanged = NovelContinuityRepairPatchApplier.apply(
+            [
+                NovelContinuityRepairPatchV1(
+                    issueId: "same",
+                    oldText: "ABC",
+                    newText: "ABC"
+                ),
+            ],
+            to: content,
+            allowedIssueIDs: ["same"]
+        )
+        XCTAssertTrue(unchanged.appliedIssueIDs.isEmpty)
+    }
+
+    func testRepairDecoderRejectsUnknownKeysAndUnchangedPatches() {
+        XCTAssertThrowsError(try NovelStructuredOutputDecoder.decodeContinuityRepair(from: """
+        {"schemaVersion": 1, "patches": [], "confidence": 0.9}
+        """))
+        XCTAssertThrowsError(try NovelStructuredOutputDecoder.decodeContinuityRepair(from: """
+        {
+          "schemaVersion": 1,
+          "patches": [{
+            "issueId": "issue-1",
+            "oldText": "谁也不认得谁",
+            "newText": "谁也不认得谁"
+          }]
+        }
+        """))
+        XCTAssertNoThrow(
+            try NovelStructuredOutputDecoder.decodeContinuityRepair(from: emptyRepairJSON)
+        )
+        XCTAssertNoThrow(
+            try NovelStructuredOutputDecoder.decodeContinuityRepair(from: identityDriftRepairJSON)
+        )
+    }
+
+    func testRepairRewritesOnlyTheLaterChapterAndLeavesEarlierTextUntouched() async throws {
+        let harness = try await makeHarness(scripts: [
+            script(identityDriftJSON),
+            script(identityDriftRepairJSON),
+        ])
+
+        let report = try await harness.creation.auditContinuity(
+            projectID: harness.projectID,
+            branchID: harness.branchID
+        )
+        XCTAssertEqual(report.issues.map(\.id), ["chunk-0-issue-1"])
+
+        let repair = try await harness.creation.repairContinuity(
+            projectID: harness.projectID,
+            branchID: harness.branchID,
+            report: report,
+            issueIDs: nil
+        )
+
+        XCTAssertEqual(repair.repairedIssueIDs, ["chunk-0-issue-1"])
+        XCTAssertTrue(repair.skippedIssueIDs.isEmpty)
+        XCTAssertEqual(repair.repairedChapterCount, 1)
+        XCTAssertEqual(repair.failedChapterCount, 0)
+
+        let first = try await chapterContent(in: harness, at: 0)
+        let second = try await chapterContent(in: harness, at: 1)
+        let third = try await chapterContent(in: harness, at: 2)
+        XCTAssertEqual(first, firstChapterContent)
+        XCTAssertEqual(second, secondChapterContent)
+        XCTAssertTrue(third.contains("林岸一眼认出苏未晚"))
+        XCTAssertFalse(third.contains("谁也不认得谁"))
+
+        let requests = await harness.adapter.requests
+        XCTAssertEqual(requests.count, 2)
+        let repairUser = try XCTUnwrap(requests[1].messages.first { $0.role == .user }?.content)
+        XCTAssertTrue(repairUser.contains("TARGET CHAPTER"))
+        XCTAssertTrue(repairUser.contains("# Chapter 3: 茶馆"))
+        XCTAssertTrue(repairUser.contains("Canonical Chapter 1 渡口"))
+        XCTAssertTrue(repairUser.contains("chunk-0-issue-1"))
+        XCTAssertFalse(repairUser.contains("# Chapter 1: 渡口\n林岸在渡口第一次见到苏未晚"))
+
+        do {
+            _ = try await harness.creation.repairContinuity(
+                projectID: harness.projectID,
+                branchID: harness.branchID,
+                report: report,
+                issueIDs: nil
+            )
+            XCTFail("改过正文之后必须先重扫，不能继续用这份过期报告修复")
+        } catch NovelError.invalidInput(let message) {
+            XCTAssertTrue(message.contains("重新检查"))
+        }
+    }
+
+    func testRepairLeavesTheManuscriptAloneWhenTheModelReturnsNoSafePatch() async throws {
+        let harness = try await makeHarness(scripts: [
+            script(identityDriftJSON),
+            script(emptyRepairJSON),
+        ])
+        let report = try await harness.creation.auditContinuity(
+            projectID: harness.projectID,
+            branchID: harness.branchID
+        )
+
+        let repair = try await harness.creation.repairContinuity(
+            projectID: harness.projectID,
+            branchID: harness.branchID,
+            report: report,
+            issueIDs: nil
+        )
+
+        XCTAssertTrue(repair.repairedIssueIDs.isEmpty)
+        XCTAssertEqual(repair.skippedIssueIDs, ["chunk-0-issue-1"])
+        XCTAssertEqual(repair.repairedChapterCount, 0)
+        let third = try await chapterContent(in: harness, at: 2)
+        XCTAssertEqual(third, thirdChapterContent)
+    }
+
     // MARK: - 脚手架
 
     private struct Harness {
@@ -839,7 +1099,61 @@ final class NovelContinuityAuditTests: XCTestCase {
         NovelModelScript(steps: [.delta(json), .complete])
     }
 
+    private func chapterContent(in harness: Harness, at index: Int) async throws -> String {
+        let document = try await harness.repository.loadProject(id: harness.projectID).document
+        let selection = document.branches[0].workingChapterSelections[index]
+        return try XCTUnwrap(
+            document.chapterVersions.first { $0.id == selection.versionID }
+        ).content
+    }
+
+    private func issue(
+        id: String,
+        early: (NovelChapterID, Int, String, String),
+        later: (NovelChapterID, Int, String, String)
+    ) -> NovelContinuityIssue {
+        NovelContinuityIssue(
+            id: id,
+            category: .identityDrift,
+            severity: .major,
+            summary: "后文与先文打架。",
+            references: [
+                NovelContinuityReference(
+                    chapterID: early.0,
+                    chapterOrdinal: early.1,
+                    chapterTitle: early.2,
+                    evidence: early.3
+                ),
+                NovelContinuityReference(
+                    chapterID: later.0,
+                    chapterOrdinal: later.1,
+                    chapterTitle: later.2,
+                    evidence: later.3
+                ),
+            ]
+        )
+    }
+
     // MARK: - 模型输出样本
+
+    private var emptyRepairJSON: String {
+        """
+        {"schemaVersion": 1, "patches": []}
+        """
+    }
+
+    private var identityDriftRepairJSON: String {
+        """
+        {
+          "schemaVersion": 1,
+          "patches": [{
+            "issueId": "chunk-0-issue-1",
+            "oldText": "两人都说这是初次见面，谁也不认得谁",
+            "newText": "林岸一眼认出苏未晚，谁也没再装成初见"
+          }]
+        }
+        """
+    }
 
     private var identityDriftJSON: String {
         """

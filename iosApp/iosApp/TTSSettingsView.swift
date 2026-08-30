@@ -6,8 +6,26 @@ struct TTSSettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var ttsPlayer = IOSTTSPlayer()
+    @AppStorage(IOSAppLanguagePreference.defaultsKey)
+    private var appLanguage = IOSAppLanguage.system.rawValue
 
     @State private var systemSpeechRate: TTSSpeed = .normal
+
+    private var selectedLanguage: IOSAppLanguage {
+        IOSAppLanguage(storedValue: appLanguage)
+    }
+
+    private var previewLanguage: String {
+        IOSTTSPlayer.resolvedAppLanguageCode(selectedLanguage: selectedLanguage)
+    }
+
+    private var previewSpeechText: String {
+        IOSAppLocalization.string(
+            "你好，这是 AmberAgent 的语音试听。系统 TTS 可用。",
+            defaultValue: "你好，这是 AmberAgent 的语音试听。系统 TTS 可用。",
+            language: selectedLanguage
+        )
+    }
 
     var body: some View {
         ZStack {
@@ -34,7 +52,12 @@ struct TTSSettingsView: View {
 
     private var header: some View {
         HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回设置", size: 44, symbolSize: 20) {
+            AmberGlassCircleButton(
+                systemImage: "chevron.left",
+                accessibilityLabel: IOSAppLocalization.string("返回设置", defaultValue: "返回设置"),
+                size: 44,
+                symbolSize: 20
+            ) {
                 dismiss()
             }
 
@@ -71,9 +94,12 @@ struct TTSSettingsView: View {
 
             AmberFormGroup {
                 TTSCurrentEngineRow(
-                    title: "系统 TTS",
-                    subtitle: "使用 iOS AVSpeechSynthesizer，本机可直接试听",
-                    status: "可用"
+                    title: IOSAppLocalization.string("系统 TTS", defaultValue: "系统 TTS"),
+                    subtitle: IOSAppLocalization.string(
+                        "使用 iOS AVSpeechSynthesizer，本机可直接试听",
+                        defaultValue: "使用 iOS AVSpeechSynthesizer，本机可直接试听"
+                    ),
+                    status: IOSAppLocalization.string("可用", defaultValue: "可用")
                 )
             }
         }
@@ -83,7 +109,10 @@ struct TTSSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "试听")
             AmberFormGroup {
-                TTSMenuRow(title: "语速", value: systemSpeechRate.title) {
+                TTSMenuRow(
+                    title: IOSAppLocalization.string("语速", defaultValue: "语速"),
+                    value: systemSpeechRate.title
+                ) {
                     ForEach(TTSSpeed.allCases) { speed in
                         Button(speed.title) { systemSpeechRate = speed }
                     }
@@ -96,8 +125,8 @@ struct TTSSettingsView: View {
                         ttsPlayer.stop()
                     } else {
                         ttsPlayer.speak(
-                            text: "你好，这是 AmberAgent 的语音试听。系统 TTS 可用。",
-                            language: "zh-CN",
+                            text: previewSpeechText,
+                            language: previewLanguage,
                             rate: systemSpeechRate.avSpeechRate
                         )
                     }
@@ -105,7 +134,10 @@ struct TTSSettingsView: View {
                     TTSPreviewRow(isSpeaking: ttsPlayer.isSpeaking)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(ttsPlayer.isSpeaking ? "停止试听" : "系统 TTS 试听")
+                .accessibilityLabel(IOSAppLocalization.string(
+                    ttsPlayer.isSpeaking ? "停止试听" : "系统 TTS 试听",
+                    defaultValue: ttsPlayer.isSpeaking ? "停止试听" : "系统 TTS 试听"
+                ))
             }
         }
     }
@@ -128,14 +160,20 @@ struct TTSSettingsView: View {
                             }.frame(maxWidth: .infinity, alignment: .leading)
                             Button { sharedSettings.removeTtsEngine(at: index) } label: {
                                 Image(systemName: "minus.circle.fill").font(.system(size: 18)).foregroundStyle(AmberTheme.accentRed)
-                            }.buttonStyle(.plain)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                         }.frame(minHeight: 48).padding(.horizontal, 14).padding(.vertical, 4)
                         if index < engines.count - 1 { TTSSettingsDivider() }
                     }
                 }
             }
 
-            TTSSettingsNote("这里仅保留历史自定义记录；接入播放链路后再启用选择和试听。")
+            TTSSettingsNote(IOSAppLocalization.string(
+                "这里仅保留历史自定义记录；接入播放链路后再启用选择和试听。",
+                defaultValue: "这里仅保留历史自定义记录；接入播放链路后再启用选择和试听。"
+            ))
         }
     }
 
@@ -240,7 +278,7 @@ private struct TTSCurrentEngineRow: View {
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -301,7 +339,7 @@ private struct TTSUnavailableCloudRow: View {
                 Text("不会参与当前试听或聊天朗读；历史配置仅用于保留记录。")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

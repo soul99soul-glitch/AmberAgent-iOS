@@ -199,6 +199,7 @@ final class WatchTaskSnapshotTests: XCTestCase {
         )
         let snapshot = WatchTaskSnapshot(
             runId: "run-123",
+            languageCode: IOSAppLanguage.japanese.rawValue,
             conversationId: "01234567-89ab-cdef-0123-456789abcdef",
             kind: AgentActivityKind.research.rawValue,
             phase: AgentActivityPhase.waitingForUser.rawValue,
@@ -216,6 +217,7 @@ final class WatchTaskSnapshotTests: XCTestCase {
         let data = try WatchTaskCodec.encodeSnapshot(snapshot)
         let decoded = try WatchTaskCodec.decodeSnapshot(data)
         XCTAssertEqual(decoded, snapshot)
+        XCTAssertEqual(decoded.languageCode, IOSAppLanguage.japanese.rawValue)
 
         let message = try WatchTaskCodec.snapshotMessage(for: snapshot)
         XCTAssertEqual(message[WatchConnectivityPayloadKey.type] as? String, WatchConnectivityPayloadKey.typeSnapshot)
@@ -223,6 +225,19 @@ final class WatchTaskSnapshotTests: XCTestCase {
             message[WatchConnectivityPayloadKey.protocolVersion] as? Int,
             WatchConnectivityPayloadKey.currentProtocolVersion
         )
+    }
+
+    func testCodecDecodesLegacySnapshotWithoutLanguageCode() throws {
+        let data = Data(
+            #"{"actions":[],"conversationId":null,"detail":null,"headline":"Amber","isStale":false,"kind":"workflow","metricText":null,"phase":"idle","runId":"","stage":"idle","summary":null,"updatedAt":"1970-01-01T00:00:00Z"}"#.utf8
+        )
+
+        let decoded = try WatchTaskCodec.decodeSnapshot(data)
+
+        XCTAssertNil(decoded.languageCode)
+        XCTAssertEqual(decoded.runId, "")
+        XCTAssertEqual(decoded.phase, "idle")
+        XCTAssertEqual(decoded.headline, "Amber")
     }
 
     func testBuilderApprovalDecisionDoesNotLeakRawToolPayload() {

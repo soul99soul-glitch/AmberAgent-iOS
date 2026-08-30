@@ -166,11 +166,16 @@ enum IOSMcpConnectionStatus: Equatable {
 
     var title: String {
         switch self {
-        case .idle: "未连接"
-        case .connecting: "连接中"
-        case .connected: "已连接"
-        case .reconnecting: "重连中"
-        case .error: "连接失败"
+        case .idle:
+            IOSAppLocalization.string("未连接", defaultValue: "未连接")
+        case .connecting:
+            IOSAppLocalization.string("连接中", defaultValue: "连接中")
+        case .connected:
+            IOSAppLocalization.string("已连接", defaultValue: "已连接")
+        case .reconnecting:
+            IOSAppLocalization.string("重连中", defaultValue: "重连中")
+        case .error:
+            IOSAppLocalization.string("连接失败", defaultValue: "连接失败")
         }
     }
 }

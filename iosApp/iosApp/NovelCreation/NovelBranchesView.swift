@@ -1,5 +1,13 @@
 import SwiftUI
 
+private func localized(_ key: String) -> String {
+    IOSAppLocalization.string(key, defaultValue: key)
+}
+
+private func localizedNumber(_ value: Int) -> String {
+    value.formatted(.number.locale(IOSAppLanguagePreference.selected().resolvedLocale()))
+}
+
 struct NovelBranchesView: View {
     let viewModel: NovelCreationViewModel
     let isSelectionDisabled: Bool
@@ -24,7 +32,11 @@ struct NovelBranchesView: View {
         .background(AmberTheme.background)
         .alert(item: $pendingDelete) { candidate in
             Alert(
-                title: Text("删除“\(candidate.branch.name)”？"),
+                title: Text(verbatim: IOSAppLocalization.formatted(
+                    "删除“%@”？",
+                    defaultValue: "删除“%@”？",
+                    arguments: [candidate.branch.name]
+                )),
                 message: Text("不会级联删除它的子分支，但这条分支将不再出现在项目中。"),
                 primaryButton: .destructive(Text("删除")) {
                     Task { await viewModel.deleteBranch(candidate.branch.id) }
@@ -33,7 +45,11 @@ struct NovelBranchesView: View {
             )
         }
         .confirmationDialog(
-            "\(undoTitle)？",
+            IOSAppLocalization.formatted(
+                "%@？",
+                defaultValue: "%@？",
+                arguments: [undoTitle]
+            ),
             isPresented: Binding(
                 get: { pendingUndoCheckpointID != nil },
                 set: { if !$0 { pendingUndoCheckpointID = nil } }
@@ -83,10 +99,10 @@ struct NovelBranchesView: View {
 
     private func branchAccessibilityValue(_ branch: NovelBranchRecord, isMain: Bool) -> String {
         var values: [String] = []
-        if isMain { values.append("主分支") }
-        values.append(branch.syncStatus.displayName)
-        if branch.activeRunID != nil { values.append("生成中") }
-        return values.joined(separator: "，")
+        if isMain { values.append(localized("主分支")) }
+        values.append(localized(branch.syncStatus.displayName))
+        if branch.activeRunID != nil { values.append(localized("生成中")) }
+        return values.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -174,7 +190,7 @@ struct NovelBranchesView: View {
                                 .frame(width: 28)
 
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(effective?.title ?? material.kind.displayName)
+                                Text(verbatim: effective?.title ?? localized(material.kind.displayName))
                                     .font(.body)
                                     .foregroundStyle(AmberTheme.foreground)
                                     .lineLimit(1)
@@ -206,7 +222,7 @@ struct NovelBranchesView: View {
     private var branchStateSection: some View {
         if let snapshot = viewModel.branchSnapshot {
             Section("当前剧情状态") {
-                LabeledContent("同步状态", value: snapshot.branch.syncStatus.displayName)
+                LabeledContent("同步状态", value: localized(snapshot.branch.syncStatus.displayName))
                     .foregroundStyle(
                         snapshot.branch.syncStatus == .synchronized
                             ? AmberTheme.foreground
@@ -306,25 +322,25 @@ struct NovelBranchesView: View {
     }
 
     private var undoTitle: String {
-        guard let kind = semanticUndoKind else { return "撤销上一次操作" }
+        guard let kind = semanticUndoKind else { return localized("撤销上一次操作") }
         return switch kind {
-        case .collection: "撤销上一次收录"
-        case .polish: "撤销上一次润色"
-        case .manualSync: "撤销上一次同步"
-        case .discussionArchive: "撤销上一次讨论归档"
-        case .identityClarification: "撤销上一次人物说明"
-        case .restore: "撤销上一次恢复"
-        case .initial: "撤销上一次操作"
+        case .collection: localized("撤销上一次收录")
+        case .polish: localized("撤销上一次润色")
+        case .manualSync: localized("撤销上一次同步")
+        case .discussionArchive: localized("撤销上一次讨论归档")
+        case .identityClarification: localized("撤销上一次人物说明")
+        case .restore: localized("撤销上一次恢复")
+        case .initial: localized("撤销上一次操作")
         }
     }
 
     private var undoBlockReason: String? {
-        guard canWrite else { return "项目正在处理其他操作，暂时不能撤销。" }
+        guard canWrite else { return localized("项目正在处理其他操作，暂时不能撤销。") }
         if let branch = selectedBranch,
            branch.headCheckpointID == branch.forkOrigin?.checkpointID {
-            return "当前分支还没有可撤销的创作记录。"
+            return localized("当前分支还没有可撤销的创作记录。")
         }
-        guard checkpointLineage.count >= 2 else { return "当前分支还没有可撤销的创作记录。" }
+        guard checkpointLineage.count >= 2 else { return localized("当前分支还没有可撤销的创作记录。") }
         guard let project = viewModel.projectSnapshot,
               let branch = selectedBranch,
               let head = checkpointLineage.first,
@@ -333,10 +349,10 @@ struct NovelBranchesView: View {
                   branch: branch,
                   checkpoints: project.checkpoints
               ) else {
-            return "请先同步手动改写，再撤销上一次操作。"
+            return localized("请先同步手动改写，再撤销上一次操作。")
         }
         if hasReducerBlockingBranchOperation {
-            return "当前分支还有未完成的正文操作。"
+            return localized("当前分支还有未完成的正文操作。")
         }
         return nil
     }
@@ -385,8 +401,8 @@ private struct NovelBranchRow: View {
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
                 HStack(spacing: 6) {
-                    Text(branch.syncStatus.displayName)
-                    if branch.activeRunID != nil { Text("生成中") }
+                    Text(verbatim: localized(branch.syncStatus.displayName))
+                    if branch.activeRunID != nil { Text(localized("生成中")) }
                 }
                 .font(.caption)
                 .foregroundStyle(branch.syncStatus == .synchronized ? AmberTheme.muted : AmberTheme.foreground2)
@@ -427,7 +443,7 @@ struct NovelBranchRenameSheet: View {
                     .foregroundStyle(AmberTheme.muted)
                 NovelIMETextField(
                     text: $name,
-                    placeholder: "分支名称",
+                    placeholder: localized("分支名称"),
                     isEnabled: !isSubmitting,
                     bank: imeBank
                 )
@@ -480,7 +496,7 @@ struct NovelBranchRenameSheet: View {
             await viewModel.renameBranch(branch.id, name: name)
             isSubmitting = false
             guard viewModel.errorMessage == nil else {
-                failureMessage = viewModel.errorMessage ?? "分支名称没有保存，请稍后重试。"
+                failureMessage = viewModel.errorMessage ?? localized("分支名称没有保存，请稍后重试。")
                 return
             }
             dismiss()
@@ -509,7 +525,11 @@ struct NovelBranchForkSheet: View {
         self.viewModel = viewModel
         self.branch = branch
         self.onCreated = onCreated
-        self._name = State(initialValue: "\(branch.name) · 新走向")
+        self._name = State(initialValue: IOSAppLocalization.formatted(
+            "%@ · %@",
+            defaultValue: "%@ · %@",
+            arguments: [branch.name, localized("新走向")]
+        ))
         self._checkpointID = State(initialValue: branch.headCheckpointID)
     }
 
@@ -526,7 +546,7 @@ struct NovelBranchForkSheet: View {
                 Section("新分支") {
                     NovelIMETextField(
                         text: $name,
-                        placeholder: "分支名称",
+                        placeholder: localized("分支名称"),
                         bank: imeBank
                     )
                     .frame(minHeight: 36)
@@ -583,15 +603,51 @@ struct NovelBranchForkSheet: View {
             )
         }
         let action = switch checkpoint.kind {
-        case .collection: chapterNumber.map { "第 \($0) 章收录后" } ?? "正文收录后"
-        case .polish: chapterNumber.map { "第 \($0) 章润色后" } ?? "正文润色后"
-        case .manualSync: "剧情同步后"
-        case .discussionArchive: chapterNumber.map { "第 \($0) 章讨论归档后" } ?? "讨论归档后"
-        case .identityClarification: "人物说明后"
-        case .restore: chapterNumber.map { "第 \($0) 章恢复后" } ?? "章节恢复后"
-        case .initial: "项目开始"
+        case .collection:
+            chapterNumber.map {
+                IOSAppLocalization.formatted(
+                    "第 %@ 章收录后",
+                    defaultValue: "第 %@ 章收录后",
+                    arguments: [localizedNumber($0)]
+                )
+            } ?? localized("正文收录后")
+        case .polish:
+            chapterNumber.map {
+                IOSAppLocalization.formatted(
+                    "第 %@ 章润色后",
+                    defaultValue: "第 %@ 章润色后",
+                    arguments: [localizedNumber($0)]
+                )
+            } ?? localized("正文润色后")
+        case .manualSync: localized("剧情同步后")
+        case .discussionArchive:
+            chapterNumber.map {
+                IOSAppLocalization.formatted(
+                    "第 %@ 章讨论归档后",
+                    defaultValue: "第 %@ 章讨论归档后",
+                    arguments: [localizedNumber($0)]
+                )
+            } ?? localized("讨论归档后")
+        case .identityClarification: localized("人物说明后")
+        case .restore:
+            chapterNumber.map {
+                IOSAppLocalization.formatted(
+                    "第 %@ 章恢复后",
+                    defaultValue: "第 %@ 章恢复后",
+                    arguments: [localizedNumber($0)]
+                )
+            } ?? localized("章节恢复后")
+        case .initial: localized("项目开始")
         }
-        return "\(action) · \(checkpoint.createdAt.formatted(date: .abbreviated, time: .shortened))"
+        let dateText = checkpoint.createdAt.formatted(
+            Date.FormatStyle(date: .abbreviated, time: .shortened)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
+        return IOSAppLocalization.formatted(
+            "%@ · %@",
+            defaultValue: "%@ · %@",
+            arguments: [action, dateText]
+        )
     }
 
     private func fork() {
@@ -607,7 +663,7 @@ struct NovelBranchForkSheet: View {
             )
             isSubmitting = false
             guard branchID != nil else {
-                failureMessage = viewModel.presentedMessage ?? "分支没有创建完成，请重新载入项目后再试。"
+                failureMessage = viewModel.presentedMessage ?? localized("分支没有创建完成，请重新载入项目后再试。")
                 return
             }
             dismiss()
@@ -720,7 +776,7 @@ struct NovelBranchOverrideEditorSheet: View {
                 Section("覆盖方式") {
                     Picker("覆盖方式", selection: $mode) {
                         ForEach(NovelBranchOverrideMode.allCases) { value in
-                            Text(value.displayName).tag(value)
+                            Text(verbatim: localized(value.displayName)).tag(value)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -730,7 +786,11 @@ struct NovelBranchOverrideEditorSheet: View {
                     Section("历史版本") {
                         Picker("资料版本", selection: $selectedRevisionID) {
                             ForEach(revisions, id: \.id) { revision in
-                                Text("版本 \(revision.revision) · \(revision.title)")
+                                Text(verbatim: IOSAppLocalization.formatted(
+                                    "版本 %@ · %@",
+                                    defaultValue: "版本 %@ · %@",
+                                    arguments: [localizedNumber(Int(revision.revision)), revision.title]
+                                ))
                                     .tag(revision.id as NovelMaterialRevisionID?)
                             }
                         }
@@ -739,26 +799,26 @@ struct NovelBranchOverrideEditorSheet: View {
                     Section("分支版本") {
                         NovelIMETextField(
                             text: $title,
-                            placeholder: "标题",
+                            placeholder: localized("标题"),
                             bank: imeBank
                         )
                         .frame(minHeight: 36)
                         NovelIMETextEditor(
                             text: $content,
-                            placeholder: "内容",
+                            placeholder: localized("内容"),
                             minHeight: 220,
                             bank: imeBank
                         )
                         .frame(minHeight: 220)
                         NovelIMETextField(
                             text: $tags,
-                            placeholder: "标签，用逗号分隔",
+                            placeholder: localized("标签，用逗号分隔"),
                             bank: imeBank
                         )
                         .frame(minHeight: 36)
                         Picker("默认注入", selection: $injectionMode) {
                             ForEach(NovelInjectionMode.allCases, id: \.self) { value in
-                                Text(value.displayName).tag(value)
+                                Text(verbatim: localized(value.displayName)).tag(value)
                             }
                         }
                         .pickerStyle(.segmented)
@@ -873,8 +933,8 @@ struct NovelBranchOverrideEditorSheet: View {
         }
         guard canSave else {
             failureMessage = mode == .existing
-                ? "请选择一个资料版本。"
-                : "请填写完整的资料标题和内容。"
+                ? localized("请选择一个资料版本。")
+                : localized("请填写完整的资料标题和内容。")
             return
         }
         let change: NovelBranchMaterialOverrideChange
@@ -903,7 +963,7 @@ struct NovelBranchOverrideEditorSheet: View {
             )
             isSubmitting = false
             guard saved else {
-                failureMessage = viewModel.presentedMessage ?? "分支设定没有保存，请稍后重试。"
+                failureMessage = viewModel.presentedMessage ?? localized("分支设定没有保存，请稍后重试。")
                 return
             }
             dismiss()

@@ -196,9 +196,17 @@ targets:
       - path: ActivityWidget
       - path: iosApp/AgentActivityModels.swift
       - path: iosApp/ThinkingOrbEngine.swift
+      - path: iosApp/IOSAppLanguage.swift
+      - path: iosApp/Localizable.xcstrings
+        buildPhase: resources
       - path: iosApp/AgentActivity.strings
         buildPhase: resources
+      - path: iosApp/en.lproj
       - path: iosApp/zh-Hans.lproj
+      - path: iosApp/zh-Hant.lproj
+      - path: iosApp/ja.lproj
+      - path: iosApp/ko.lproj
+      - path: iosApp/ru.lproj
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.activity
@@ -217,9 +225,17 @@ targets:
       - path: ActivityWidget
       - path: iosApp/AgentActivityModels.swift
       - path: iosApp/ThinkingOrbEngine.swift
+      - path: iosApp/IOSAppLanguage.swift
+      - path: iosApp/Localizable.xcstrings
+        buildPhase: resources
       - path: iosApp/AgentActivity.strings
         buildPhase: resources
+      - path: iosApp/en.lproj
       - path: iosApp/zh-Hans.lproj
+      - path: iosApp/zh-Hant.lproj
+      - path: iosApp/ja.lproj
+      - path: iosApp/ko.lproj
+      - path: iosApp/ru.lproj
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl.activity
@@ -356,6 +372,9 @@ targets:
       - path: WatchApp
       - path: SharedWatch/WatchTaskModels.swift
       - path: SharedWatch/WatchConnectivityBridge.swift
+      - path: iosApp/IOSAppLanguage.swift
+      - path: iosApp/Localizable.xcstrings
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.watchkitapp
@@ -381,6 +400,9 @@ targets:
       - path: WatchApp
       - path: SharedWatch/WatchTaskModels.swift
       - path: SharedWatch/WatchConnectivityBridge.swift
+      - path: iosApp/IOSAppLanguage.swift
+      - path: iosApp/Localizable.xcstrings
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl.watchkitapp

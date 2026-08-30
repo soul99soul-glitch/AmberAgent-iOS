@@ -5,6 +5,8 @@ struct AgentActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable {
         var presentation: AgentActivityPresentation
         var updatedAt: Date
+        /// 已解析的 App 语言代码。可选以兼容已有 ActivityKit 状态。
+        var languageCode: String? = nil
     }
 
     let runId: String
@@ -449,11 +451,24 @@ enum AgentActivityOrbAnimationTiming {
 }
 
 enum AgentActivityCopy {
-    static func text(_ key: String) -> String {
-        NSLocalizedString(
+    static func text(_ key: String, languageCode: String? = nil) -> String {
+        let bundle: Bundle
+        if let languageCode,
+           let localizationPath = Bundle.main.path(
+               forResource: languageCode,
+               ofType: "lproj"
+           ),
+           let localizedBundle = Bundle(path: localizationPath) {
+            bundle = localizedBundle
+        } else {
+            // Keep the pre-locale behavior for legacy states and for the base
+            // AgentActivity.strings resource, which is not in an lproj folder.
+            bundle = .main
+        }
+        return NSLocalizedString(
             key,
             tableName: "AgentActivity",
-            bundle: .main,
+            bundle: bundle,
             value: key,
             comment: ""
         )
@@ -462,7 +477,14 @@ enum AgentActivityCopy {
 
 extension AgentActivityKind {
     var title: String {
-        AgentActivityCopy.text("agent.activity.kind.\(rawValue)")
+        localizedTitle(languageCode: nil)
+    }
+
+    func localizedTitle(languageCode: String?) -> String {
+        AgentActivityCopy.text(
+            "agent.activity.kind.\(rawValue)",
+            languageCode: languageCode
+        )
     }
 
     var symbolName: String {
@@ -489,34 +511,73 @@ extension AgentActivityKind {
 
 extension AgentActivityStage {
     var title: String {
-        AgentActivityCopy.text("agent.activity.stage.\(rawValue)")
+        localizedTitle(languageCode: nil)
+    }
+
+    func localizedTitle(languageCode: String?) -> String {
+        AgentActivityCopy.text(
+            "agent.activity.stage.\(rawValue)",
+            languageCode: languageCode
+        )
     }
 
     var compactTitle: String {
+        localizedCompactTitle(languageCode: nil)
+    }
+
+    func localizedCompactTitle(languageCode: String?) -> String {
         switch self {
         case .preparing, .thinking, .searching, .readingSources, .readingWeb,
              .generating, .generatingImage, .organizing, .readingDocument,
              .updatingMemory, .runningTool:
-            AgentActivityCopy.text("agent.activity.compact.\(rawValue)")
+            AgentActivityCopy.text(
+                "agent.activity.compact.\(rawValue)",
+                languageCode: languageCode
+            )
         case .waitingForConfirmation:
-            AgentActivityCopy.text("agent.activity.fact.waiting")
+            AgentActivityCopy.text(
+                "agent.activity.fact.waiting",
+                languageCode: languageCode
+            )
         case .reconnecting:
-            AgentActivityCopy.text("agent.activity.fact.reconnecting")
+            AgentActivityCopy.text(
+                "agent.activity.fact.reconnecting",
+                languageCode: languageCode
+            )
         case .stale:
-            AgentActivityCopy.text("agent.activity.fact.stale")
+            AgentActivityCopy.text(
+                "agent.activity.fact.stale",
+                languageCode: languageCode
+            )
         case .completed:
-            AgentActivityCopy.text("agent.activity.fact.completed")
+            AgentActivityCopy.text(
+                "agent.activity.fact.completed",
+                languageCode: languageCode
+            )
         case .failed:
-            AgentActivityCopy.text("agent.activity.fact.failed")
+            AgentActivityCopy.text(
+                "agent.activity.fact.failed",
+                languageCode: languageCode
+            )
         case .cancelled:
-            AgentActivityCopy.text("agent.activity.fact.cancelled")
+            AgentActivityCopy.text(
+                "agent.activity.fact.cancelled",
+                languageCode: languageCode
+            )
         }
     }
 }
 
 extension AgentActivityAction {
     var title: String {
-        AgentActivityCopy.text("agent.activity.action.\(rawValue)")
+        localizedTitle(languageCode: nil)
+    }
+
+    func localizedTitle(languageCode: String?) -> String {
+        AgentActivityCopy.text(
+            "agent.activity.action.\(rawValue)",
+            languageCode: languageCode
+        )
     }
 
     /// 整张 Live Activity 已通过 widgetURL 打开对话，普通运行态不再重复显示 CTA。
@@ -543,13 +604,18 @@ extension AgentActivityAction {
 
 extension AgentActivityMetric {
     var shortText: String? {
+        localizedShortText(languageCode: nil)
+    }
+
+    func localizedShortText(languageCode: String?) -> String? {
         switch validated {
         case .none:
             nil
         case let .count(completed, unit):
             String(
                 format: AgentActivityCopy.text(
-                    "agent.activity.metric.\(unit.rawValue).count"
+                    "agent.activity.metric.\(unit.rawValue).count",
+                    languageCode: languageCode
                 ),
                 completed
             )
@@ -559,20 +625,26 @@ extension AgentActivityMetric {
     }
 
     var detailText: String? {
+        localizedDetailText(languageCode: nil)
+    }
+
+    func localizedDetailText(languageCode: String?) -> String? {
         switch validated {
         case .none:
             nil
         case let .count(completed, unit):
             String(
                 format: AgentActivityCopy.text(
-                    "agent.activity.metric.\(unit.rawValue).count"
+                    "agent.activity.metric.\(unit.rawValue).count",
+                    languageCode: languageCode
                 ),
                 completed
             )
         case let .progress(completed, total, unit):
             String(
                 format: AgentActivityCopy.text(
-                    "agent.activity.metric.\(unit.rawValue).progress"
+                    "agent.activity.metric.\(unit.rawValue).progress",
+                    languageCode: languageCode
                 ),
                 completed,
                 total

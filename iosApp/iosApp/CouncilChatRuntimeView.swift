@@ -265,7 +265,7 @@ struct CouncilChatRuntimeView: View {
             HStack(spacing: 12) {
                 ChatToolbarIconButton(
                     systemImage: "chevron.left",
-                    accessibilityLabel: "返回",
+                    accessibilityLabel: IOSAppLocalization.string("返回", defaultValue: "返回"),
                     size: ChatTopBarLayout.toolbarButtonDiameter,
                     symbolSize: 18
                 ) {
@@ -277,18 +277,23 @@ struct CouncilChatRuntimeView: View {
 
                 ChatToolbarIconButton(
                     systemImage: "clock.arrow.circlepath",
-                    accessibilityLabel: "历史议会",
+                    accessibilityLabel: IOSAppLocalization.string("历史议会", defaultValue: "历史议会"),
                     size: ChatTopBarLayout.toolbarButtonDiameter,
                     symbolSize: 16
                 ) {
                     viewModel.showHistory()
                 }
                 .disabled(viewModel.isRunning)
-                .accessibilityHint(viewModel.isRunning ? "讨论结束后可查看历史议会" : "")
+                .accessibilityHint(viewModel.isRunning
+                    ? IOSAppLocalization.string(
+                        "讨论结束后可查看历史议会",
+                        defaultValue: "讨论结束后可查看历史议会"
+                    )
+                    : "")
 
                 ChatToolbarIconButton(
                     systemImage: "gearshape",
-                    accessibilityLabel: "议会设置",
+                    accessibilityLabel: IOSAppLocalization.string("议会设置", defaultValue: "议会设置"),
                     size: ChatTopBarLayout.toolbarButtonDiameter,
                     symbolSize: 16
                 ) {
@@ -313,7 +318,7 @@ struct CouncilChatRuntimeView: View {
             // the ZStack proposal and paint a full-gutter-width capsule.
             VStack(spacing: 1) {
                 HStack(spacing: 3) {
-                    Text(viewModel.selectedMode.title)
+                    Text(viewModel.selectedMode.localizedTitle)
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(1)
@@ -321,7 +326,14 @@ struct CouncilChatRuntimeView: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(AmberTheme.muted)
                 }
-                Text("\(viewModel.participants.count) 位成员 · 第 \(viewModel.discussionRound) 轮")
+                Text(IOSAppLocalization.formatted(
+                    "%lld 位成员 · 第 %lld 轮",
+                    defaultValue: "%lld 位成员 · 第 %lld 轮",
+                    arguments: [
+                        Int64(viewModel.participants.count),
+                        Int64(viewModel.discussionRound)
+                    ]
+                ))
                     .font(.system(size: 10.5))
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(1)
@@ -334,9 +346,15 @@ struct CouncilChatRuntimeView: View {
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
         .fixedSize(horizontal: true, vertical: false)
-        .accessibilityLabel(
-            "\(viewModel.selectedMode.title)，\(viewModel.participants.count) 位成员，第 \(viewModel.discussionRound) 轮"
-        )
+        .accessibilityLabel(IOSAppLocalization.formatted(
+            "%@，%lld 位成员，第 %lld 轮",
+            defaultValue: "%@，%lld 位成员，第 %lld 轮",
+            arguments: [
+                viewModel.selectedMode.localizedAccessibilityLabel,
+                Int64(viewModel.participants.count),
+                Int64(viewModel.discussionRound)
+            ]
+        ))
     }
 
     private var transcript: some View {
@@ -644,14 +662,14 @@ struct CouncilChatRuntimeView: View {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(AmberTheme.muted)
-            Text("历史议会 · 只读")
+            Text(IOSAppLocalization.string("历史议会 · 只读", defaultValue: "历史议会 · 只读"))
                 .font(.subheadline)
                 .foregroundStyle(AmberTheme.muted)
             Spacer(minLength: 8)
             Button {
                 viewModel.startFreshRoom()
             } label: {
-                Text("开新议会")
+                Text(IOSAppLocalization.string("开新议会", defaultValue: "开新议会"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.accent)
                     .padding(.horizontal, 16)
@@ -691,7 +709,10 @@ struct CouncilChatRuntimeView: View {
                     fileName: file.fileName,
                     byteSummary: Self.byteSummary(for: file),
                     isTruncated: file.isTruncated,
-                    footnote: "发送后，解析文本会注入议题完善与调研。",
+                    footnote: IOSAppLocalization.string(
+                        "发送后，解析文本会注入议题完善与调研。",
+                        defaultValue: "发送后，解析文本会注入议题完善与调研。"
+                    ),
                     onRemove: { viewModel.removePendingFile(file.id) }
                 )
             }
@@ -784,23 +805,28 @@ struct CouncilChatRuntimeView: View {
     private var councilImageAttachmentStatus: ComposerAttachmentStatus? {
         // Council always recognizes images into text (runner is text-only).
         guard !viewModel.pendingImages.isEmpty else { return nil }
-        return .muted("图片将先经视觉模型识别，再注入议题", systemImage: "wand.and.stars")
+        return .muted(
+            IOSAppLocalization.string(
+                "图片将先经视觉模型识别，再注入议题",
+                defaultValue: "图片将先经视觉模型识别，再注入议题"
+            ),
+            systemImage: "wand.and.stars"
+        )
     }
 
     private static func byteSummary(for file: CouncilPendingFile) -> String {
-        let bytes = file.totalBytes
-        if bytes >= 1024 * 1024 {
-            return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
-        }
-        if bytes >= 1024 {
-            return String(format: "%.0f KB", Double(bytes) / 1024)
-        }
-        return "\(bytes) B"
+        file.totalBytes.formatted(
+            .byteCount(style: .file)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
     }
 
     private func presentCamera() {
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-            viewModel.attachmentErrorMessage = "此设备不支持相机。"
+            viewModel.attachmentErrorMessage = IOSAppLocalization.string(
+                "此设备不支持相机。",
+                defaultValue: "此设备不支持相机。"
+            )
             return
         }
         isCameraPresented = true
@@ -808,7 +834,10 @@ struct CouncilChatRuntimeView: View {
 
     private func attachPickedImage(_ image: UIImage) {
         guard let encoded = ChatImageEncoder.encode(image) else {
-            viewModel.attachmentErrorMessage = "图片处理失败。"
+            viewModel.attachmentErrorMessage = IOSAppLocalization.string(
+                "图片处理失败。",
+                defaultValue: "图片处理失败。"
+            )
             return
         }
         viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
@@ -838,7 +867,11 @@ struct CouncilChatRuntimeView: View {
             }
             photoPickerItems = []
             if failed > 0 {
-                viewModel.attachmentErrorMessage = "有 \(failed) 张图片处理失败。"
+                viewModel.attachmentErrorMessage = IOSAppLocalization.formatted(
+                    "有 %lld 张图片处理失败。",
+                    defaultValue: "有 %lld 张图片处理失败。",
+                    arguments: [Int64(failed)]
+                )
             }
         }
     }
@@ -847,12 +880,19 @@ struct CouncilChatRuntimeView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else {
-                viewModel.attachmentErrorMessage = "没有选择文件。"
+                viewModel.attachmentErrorMessage = IOSAppLocalization.string(
+                    "没有选择文件。",
+                    defaultValue: "没有选择文件。"
+                )
                 return
-            }
-            viewModel.attachPickedFile(url: url)
+        }
+        viewModel.attachPickedFile(url: url)
         case .failure(let error):
-            viewModel.attachmentErrorMessage = "文件选择失败：\(error.localizedDescription)"
+            viewModel.attachmentErrorMessage = IOSAppLocalization.formatted(
+                "文件选择失败：%@",
+                defaultValue: "文件选择失败：%@",
+                arguments: [error.localizedDescription]
+            )
         }
     }
 
@@ -886,7 +926,7 @@ private struct CouncilMessageRow: View, Equatable {
     private var content: some View {
         switch message.kind {
         case .divider:
-            Text(message.body)
+            Text(message.displayBody)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.muted)
                 .padding(.horizontal, 10)
@@ -926,23 +966,29 @@ private struct CouncilMessageRow: View, Equatable {
         Button {
             UIPasteboard.general.string = message.body
         } label: {
-            Label("复制", systemImage: "doc.on.doc")
+            Label(IOSAppLocalization.string("复制", defaultValue: "复制"), systemImage: "doc.on.doc")
         }
         ShareLink(item: message.body) {
-            Label("分享", systemImage: "square.and.arrow.up")
+            Label(IOSAppLocalization.string("分享", defaultValue: "分享"), systemImage: "square.and.arrow.up")
         }
         if message.kind == .user {
             Divider()
             Button {
                 onRestart(message.body)
             } label: {
-                Label("以此为题重开", systemImage: "arrow.counterclockwise")
+                Label(
+                    IOSAppLocalization.string("以此为题重开", defaultValue: "以此为题重开"),
+                    systemImage: "arrow.counterclockwise"
+                )
             }
             Button {
                 editDraft = message.body
                 editing = true
             } label: {
-                Label("编辑重开", systemImage: "square.and.pencil")
+                Label(
+                    IOSAppLocalization.string("编辑重开", defaultValue: "编辑重开"),
+                    systemImage: "square.and.pencil"
+                )
             }
         }
     }
@@ -957,14 +1003,14 @@ private struct CouncilMessageRow: View, Equatable {
                     .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .padding(16)
             }
-            .navigationTitle("编辑议题")
+            .navigationTitle(IOSAppLocalization.string("编辑议题", defaultValue: "编辑议题"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { editing = false }
+                    Button(IOSAppLocalization.string("取消", defaultValue: "取消")) { editing = false }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("重开") {
+                    Button(IOSAppLocalization.string("重开", defaultValue: "重开")) {
                         editing = false
                         onRestart(editDraft)
                     }
@@ -989,11 +1035,11 @@ private struct CouncilMessageRow: View, Equatable {
 
     private var metaLine: some View {
         HStack(spacing: 6) {
-            Text(message.author)
+            Text(message.displayAuthor)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(message.kind == .host ? AmberTheme.accent : AmberTheme.muted)
             if let subtitle = message.subtitle, !subtitle.isEmpty {
-                Text(subtitle)
+                Text(message.displaySubtitle ?? subtitle)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(AmberTheme.muted2)
                     .lineLimit(1)
@@ -1056,7 +1102,7 @@ private struct CouncilDiscussionDetailSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("议会详情")
+                    Text(IOSAppLocalization.string("议会详情", defaultValue: "议会详情"))
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
                     Text(detail.statusLine)
@@ -1064,10 +1110,22 @@ private struct CouncilDiscussionDetailSheet: View {
                         .foregroundStyle(AmberTheme.muted)
                 }
 
-                CouncilDetailGroup(title: "目标", bodyText: detail.objective)
-                CouncilDetailGroup(title: "席位", bodyText: detail.participantSummary)
-                CouncilDetailGroup(title: "运行", bodyText: detail.budgetSummary)
-                CouncilDetailGroup(title: "记录", bodyText: detail.transcript)
+                CouncilDetailGroup(
+                    title: IOSAppLocalization.string("目标", defaultValue: "目标"),
+                    bodyText: detail.objective
+                )
+                CouncilDetailGroup(
+                    title: IOSAppLocalization.string("席位", defaultValue: "席位"),
+                    bodyText: detail.participantSummary
+                )
+                CouncilDetailGroup(
+                    title: IOSAppLocalization.string("运行", defaultValue: "运行"),
+                    bodyText: detail.budgetSummary
+                )
+                CouncilDetailGroup(
+                    title: IOSAppLocalization.string("记录", defaultValue: "记录"),
+                    bodyText: detail.transcript
+                )
             }
             .padding(20)
         }
@@ -1084,7 +1142,9 @@ private struct CouncilDetailGroup: View {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.muted)
-            Text(bodyText.isEmpty ? "暂无" : bodyText)
+            Text(bodyText.isEmpty
+                 ? IOSAppLocalization.string("暂无", defaultValue: "暂无")
+                 : bodyText)
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.foreground2)
                 .textSelection(.enabled)
@@ -1099,12 +1159,21 @@ private struct CouncilDetailGroup: View {
 enum CouncilMembersCopy {
     static func seatSectionFooter(isRunning: Bool, dynamicSeatGeneration: Bool) -> String {
         if isRunning {
-            return "本轮议会运行中，模式与席位下一轮生效。"
+            return IOSAppLocalization.string(
+                "本轮议会运行中，模式与席位下一轮生效。",
+                defaultValue: "本轮议会运行中，模式与席位下一轮生效。"
+            )
         }
         if dynamicSeatGeneration {
-            return "席位由主持人按议题联网调研后动态组建。"
+            return IOSAppLocalization.string(
+                "席位由主持人按议题联网调研后动态组建。",
+                defaultValue: "席位由主持人按议题联网调研后动态组建。"
+            )
         }
-        return "席位来自设置中已添加的固定角色。"
+        return IOSAppLocalization.string(
+            "席位来自设置中已添加的固定角色。",
+            defaultValue: "席位来自设置中已添加的固定角色。"
+        )
     }
 }
 
@@ -1124,18 +1193,21 @@ private struct CouncilMembersSheet: View {
         NavigationStack {
             List {
                 Section {
-                    Picker("讨论模式", selection: $selectedMode) {
+                    Picker(
+                        IOSAppLocalization.string("讨论模式", defaultValue: "讨论模式"),
+                        selection: $selectedMode
+                    ) {
                         ForEach(CouncilDiscussionMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
+                            Text(mode.localizedTitle).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
                     .disabled(isRunning)
                     .listRowBackground(AmberTheme.surface)
                 } header: {
-                    Text("模式")
+                    Text(IOSAppLocalization.string("模式", defaultValue: "模式"))
                 } footer: {
-                    Text(selectedMode.intent)
+                    Text(selectedMode.localizedIntent)
                 }
 
                 Section {
@@ -1148,16 +1220,27 @@ private struct CouncilMembersSheet: View {
                                 .background(participant.tint.opacity(0.13), in: Circle())
 
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(participant.displayName)
+                                Text(participant.displayNameForDisplay)
                                     .font(.body.weight(.semibold))
-                                Text(participant.isHost ? "主持 · \(currentModelId)" : participant.roleDescription)
+                                Text(participant.isHost
+                                     ? IOSAppLocalization.formatted(
+                                         "主持 · %@",
+                                         defaultValue: "主持 · %@",
+                                         arguments: [currentModelId]
+                                     )
+                                     : IOSAppLocalization.string(
+                                         participant.roleDescription,
+                                         defaultValue: participant.roleDescription
+                                     ))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Text(failedSpeakerIds.contains(participant.id) ? "失败" : stateProvider(participant).label)
+                            Text(failedSpeakerIds.contains(participant.id)
+                                 ? IOSAppLocalization.string("失败", defaultValue: "失败")
+                                 : stateProvider(participant).localizedLabel)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(failedSpeakerIds.contains(participant.id) ? Color.red : .secondary)
                         }
@@ -1165,7 +1248,11 @@ private struct CouncilMembersSheet: View {
                         .listRowBackground(AmberTheme.surface)
                     }
                 } header: {
-                    Text("席位成员（\(participants.count)）")
+                    Text(IOSAppLocalization.formatted(
+                        "席位成员（%lld）",
+                        defaultValue: "席位成员（%lld）",
+                        arguments: [Int64(participants.count)]
+                    ))
                 } footer: {
                     Text(CouncilMembersCopy.seatSectionFooter(
                         isRunning: isRunning,
@@ -1177,16 +1264,19 @@ private struct CouncilMembersSheet: View {
             // 统一用主题底色,颜色不再随高度变化。
             .scrollContentBackground(.hidden)
             .background(AmberTheme.background)
-            .navigationTitle("模型议会")
+            .navigationTitle(IOSAppLocalization.string("模型议会", defaultValue: "模型议会"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("完成") { dismiss() }
+                    Button(IOSAppLocalization.string("完成", defaultValue: "完成")) { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     // 纯文字「重开」:清空当前议会、回到空白开场(即便正在运行也先停掉再清),
                     // 不再用刷新图标,也不再是「重跑上一题」(那个会因 lastRunObjective 为空而点了没反应)。
-                    Button("重开", role: .destructive) {
+                    Button(
+                        IOSAppLocalization.string("重开", defaultValue: "重开"),
+                        role: .destructive
+                    ) {
                         restartAction()
                         dismiss()
                     }
@@ -1210,22 +1300,30 @@ private struct CouncilRoomSettingsSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("议会设置")
+                    Text(IOSAppLocalization.string("议会设置", defaultValue: "议会设置"))
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
-                    Text(isReadOnly ? "运行中只读，下一轮生效。" : "设置会保存到本机，下一轮议会使用。")
+                    Text(IOSAppLocalization.string(
+                        isReadOnly ? "运行中只读，下一轮生效。" : "设置会保存到本机，下一轮议会使用。",
+                        defaultValue: isReadOnly ? "运行中只读，下一轮生效。" : "设置会保存到本机，下一轮议会使用。"
+                    ))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                 }
 
-                settingsGroup(title: "模型连通性") {
+                settingsGroup(
+                    title: IOSAppLocalization.string("模型连通性", defaultValue: "模型连通性")
+                ) {
                     Button(action: testCurrentCouncilModels) {
                         HStack(spacing: 10) {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundStyle(AmberTheme.accent)
                                 .frame(width: 28)
-                            Text(connectivityState.isTesting ? "正在测试当前议会模型" : "测试当前议会模型")
+                            Text(IOSAppLocalization.string(
+                                connectivityState.isTesting ? "正在测试当前议会模型" : "测试当前议会模型",
+                                defaultValue: connectivityState.isTesting ? "正在测试当前议会模型" : "测试当前议会模型"
+                            ))
                                 .font(.body.weight(.medium))
                                 .foregroundStyle(AmberTheme.foreground)
                             Spacer(minLength: 8)
@@ -1274,20 +1372,22 @@ private struct CouncilRoomSettingsSheet: View {
                     }
                 }
 
-                settingsGroup(title: "主持人") {
+                settingsGroup(
+                    title: IOSAppLocalization.string("主持人", defaultValue: "主持人")
+                ) {
                     modelMenu(
-                        title: "主持模型",
+                        title: IOSAppLocalization.string("主持模型", defaultValue: "主持模型"),
                         value: roomSettingsStore.settings.host.modelId,
                         setValue: { roomSettingsStore.updateHost(modelId: $0) }
                     )
                     Divider().overlay(AmberTheme.borderSoft)
                     reasoningMenu(
-                        title: "思考档位",
+                        title: IOSAppLocalization.string("思考档位", defaultValue: "思考档位"),
                         value: roomSettingsStore.settings.host.reasoning,
                         setValue: { roomSettingsStore.updateHost(reasoning: $0) }
                     )
                     Divider().overlay(AmberTheme.borderSoft)
-                    TextField("主持人提示词", text: Binding(
+                    TextField(IOSAppLocalization.string("主持人提示词", defaultValue: "主持人提示词"), text: Binding(
                         get: { roomSettingsStore.settings.host.prompt },
                         set: { roomSettingsStore.updateHost(prompt: $0) }
                     ), axis: .vertical)
@@ -1299,18 +1399,25 @@ private struct CouncilRoomSettingsSheet: View {
                     .disabled(isReadOnly)
                 }
 
-                settingsGroup(title: "动态席位生成") {
+                settingsGroup(
+                    title: IOSAppLocalization.string("动态席位生成", defaultValue: "动态席位生成")
+                ) {
                     Toggle(isOn: Binding(
                         get: { roomSettingsStore.dynamicSeatGeneration },
                         set: { roomSettingsStore.dynamicSeatGeneration = $0 }
                     )) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("主持人动态生成席位")
+                            Text(IOSAppLocalization.string("主持人动态生成席位", defaultValue: "主持人动态生成席位"))
                                 .font(.body)
                                 .foregroundStyle(AmberTheme.foreground)
-                            Text(roomSettingsStore.dynamicSeatGeneration
-                                 ? "开：主持人按议题联网调研后自由组建席位。"
-                                 : "关：只在下方你添加的席位中选择角色。")
+                            Text(IOSAppLocalization.string(
+                                roomSettingsStore.dynamicSeatGeneration
+                                    ? "开：主持人按议题联网调研后自由组建席位。"
+                                    : "关：只在下方你添加的席位中选择角色。",
+                                defaultValue: roomSettingsStore.dynamicSeatGeneration
+                                    ? "开：主持人按议题联网调研后自由组建席位。"
+                                    : "关：只在下方你添加的席位中选择角色。"
+                            ))
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1322,18 +1429,25 @@ private struct CouncilRoomSettingsSheet: View {
                     .disabled(isReadOnly)
                 }
 
-                settingsGroup(title: "席位联网查证") {
+                settingsGroup(
+                    title: IOSAppLocalization.string("席位联网查证", defaultValue: "席位联网查证")
+                ) {
                     Toggle(isOn: Binding(
                         get: { roomSettingsStore.seatWebSearch },
                         set: { roomSettingsStore.seatWebSearch = $0 }
                     )) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("允许席位联网搜索")
+                            Text(IOSAppLocalization.string("允许席位联网搜索", defaultValue: "允许席位联网搜索"))
                                 .font(.body)
                                 .foregroundStyle(AmberTheme.foreground)
-                            Text(roomSettingsStore.seatWebSearch
-                                 ? "开：每位议员发言前先联网查证一轮，更慢更耗；需同时开启全局联网搜索。"
-                                 : "关：议员纯推理发言（推荐，速度更快）。")
+                            Text(IOSAppLocalization.string(
+                                roomSettingsStore.seatWebSearch
+                                    ? "开：每位议员发言前先联网查证一轮，更慢更耗；需同时开启全局联网搜索。"
+                                    : "关：议员纯推理发言（推荐，速度更快）。",
+                                defaultValue: roomSettingsStore.seatWebSearch
+                                    ? "开：每位议员发言前先联网查证一轮，更慢更耗；需同时开启全局联网搜索。"
+                                    : "关：议员纯推理发言（推荐，速度更快）。"
+                            ))
                                 .font(.caption)
                                 .foregroundStyle(AmberTheme.muted)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -1345,11 +1459,20 @@ private struct CouncilRoomSettingsSheet: View {
                     .disabled(isReadOnly)
                 }
 
-                settingsGroup(title: "席位（\(roomSettingsStore.settings.seats.count)）") {
+                settingsGroup(title: IOSAppLocalization.formatted(
+                    "席位（%lld）",
+                    defaultValue: "席位（%lld）",
+                    arguments: [Int64(roomSettingsStore.settings.seats.count)]
+                )) {
                     if roomSettingsStore.settings.seats.isEmpty {
-                        Text(roomSettingsStore.dynamicSeatGeneration
-                             ? "未添加固定席位。动态生成开启时由主持人按议题组建。"
-                             : "还没有添加席位。点下方「添加席位」从预制角色中选择。")
+                        Text(IOSAppLocalization.string(
+                            roomSettingsStore.dynamicSeatGeneration
+                                ? "未添加固定席位。动态生成开启时由主持人按议题组建。"
+                                : "还没有添加席位。点下方「添加席位」从预制角色中选择。",
+                            defaultValue: roomSettingsStore.dynamicSeatGeneration
+                                ? "未添加固定席位。动态生成开启时由主持人按议题组建。"
+                                : "还没有添加席位。点下方「添加席位」从预制角色中选择。"
+                        ))
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1359,10 +1482,10 @@ private struct CouncilRoomSettingsSheet: View {
                         ForEach(roomSettingsStore.settings.seats) { seat in
                             HStack(spacing: 10) {
                                 VStack(alignment: .leading, spacing: 3) {
-                                    Text(seat.name)
+                                    Text(IOSAppLocalization.string(seat.name, defaultValue: seat.name))
                                         .font(.body.weight(.medium))
                                         .foregroundStyle(AmberTheme.foreground)
-                                    Text(seat.rolePrompt)
+                                    Text(IOSAppLocalization.string(seat.rolePrompt, defaultValue: seat.rolePrompt))
                                         .font(.caption)
                                         .foregroundStyle(AmberTheme.muted)
                                         .lineLimit(2)
@@ -1386,18 +1509,21 @@ private struct CouncilRoomSettingsSheet: View {
 
                     Menu {
                         if availablePresets.isEmpty {
-                            Text("预制角色已全部添加")
+                            Text(IOSAppLocalization.string("预制角色已全部添加", defaultValue: "预制角色已全部添加"))
                         } else {
                             ForEach(availablePresets) { preset in
                                 Button {
                                     roomSettingsStore.addOrUpdateSeat(preset.asSeat(), currentModelId: currentModelId)
                                 } label: {
-                                    Text("\(preset.name) · \(preset.rolePrompt)")
+                                    Text("\(IOSAppLocalization.string(preset.name, defaultValue: preset.name)) · \(IOSAppLocalization.string(preset.rolePrompt, defaultValue: preset.rolePrompt))")
                                 }
                             }
                         }
                     } label: {
-                        Label("添加席位", systemImage: "plus.circle.fill")
+                        Label(
+                            IOSAppLocalization.string("添加席位", defaultValue: "添加席位"),
+                            systemImage: "plus.circle.fill"
+                        )
                             .font(.body.weight(.medium))
                             .foregroundStyle(AmberTheme.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1407,9 +1533,15 @@ private struct CouncilRoomSettingsSheet: View {
                     .disabled(isReadOnly)
                 }
 
-                settingsGroup(title: "功能限制") {
+                settingsGroup(
+                    title: IOSAppLocalization.string("功能限制", defaultValue: "功能限制")
+                ) {
                     Stepper(
-                        "最大席位 \(roomSettingsStore.settings.limits.maxSeats)",
+                        IOSAppLocalization.formatted(
+                            "最大席位 %lld",
+                            defaultValue: "最大席位 %lld",
+                            arguments: [Int64(roomSettingsStore.settings.limits.maxSeats)]
+                        ),
                         value: Binding(
                             get: { roomSettingsStore.settings.limits.maxSeats },
                             set: { roomSettingsStore.updateLimits(maxSeats: $0) }
@@ -1423,7 +1555,11 @@ private struct CouncilRoomSettingsSheet: View {
                     Divider().overlay(AmberTheme.borderSoft)
 
                     Stepper(
-                        "默认轮数 \(roomSettingsStore.settings.limits.defaultRounds)",
+                        IOSAppLocalization.formatted(
+                            "默认轮数 %lld",
+                            defaultValue: "默认轮数 %lld",
+                            arguments: [Int64(roomSettingsStore.settings.limits.defaultRounds)]
+                        ),
                         value: Binding(
                             get: { roomSettingsStore.settings.limits.defaultRounds },
                             set: { roomSettingsStore.updateLimits(defaultRounds: $0) }
@@ -1437,7 +1573,11 @@ private struct CouncilRoomSettingsSheet: View {
                     Divider().overlay(AmberTheme.borderSoft)
 
                     Stepper(
-                        "单次模型无输出超时 \(roomSettingsStore.settings.limits.seatTimeoutSeconds)s",
+                        IOSAppLocalization.formatted(
+                            "单次模型无输出超时 %llds",
+                            defaultValue: "单次模型无输出超时 %llds",
+                            arguments: [Int64(roomSettingsStore.settings.limits.seatTimeoutSeconds)]
+                        ),
                         value: Binding(
                             get: { roomSettingsStore.settings.limits.seatTimeoutSeconds },
                             set: { roomSettingsStore.updateLimits(seatTimeoutSeconds: $0) }
@@ -1452,7 +1592,11 @@ private struct CouncilRoomSettingsSheet: View {
                     Divider().overlay(AmberTheme.borderSoft)
 
                     Stepper(
-                        "输出预算 \(roomSettingsStore.settings.limits.outputBudgetCharacters)",
+                        IOSAppLocalization.formatted(
+                            "输出预算 %lld",
+                            defaultValue: "输出预算 %lld",
+                            arguments: [Int64(roomSettingsStore.settings.limits.outputBudgetCharacters)]
+                        ),
                         value: Binding(
                             get: { roomSettingsStore.settings.limits.outputBudgetCharacters },
                             set: { roomSettingsStore.updateLimits(outputBudgetCharacters: $0) }
@@ -1502,7 +1646,11 @@ private struct CouncilRoomSettingsSheet: View {
                 Button(modelId) { setValue(modelId) }
             }
         } label: {
-            settingsRow(title: title, value: value.trimmedOr(currentModelId), systemImage: "cpu")
+            settingsRow(
+                title: title,
+                value: value.trimmedOr(currentModelId),
+                systemImage: "cpu"
+            )
         }
         .buttonStyle(.plain)
         .disabled(isReadOnly || availableModelIds.isEmpty)
@@ -1511,10 +1659,14 @@ private struct CouncilRoomSettingsSheet: View {
     private func reasoningMenu(title: String, value: IOSCouncilReasoningPreset, setValue: @escaping (IOSCouncilReasoningPreset) -> Void) -> some View {
         Menu {
             ForEach(IOSCouncilReasoningPreset.allCases) { option in
-                Button(option.title) { setValue(option) }
+                Button(IOSAppLocalization.string(option.title, defaultValue: option.title)) { setValue(option) }
             }
         } label: {
-            settingsRow(title: title, value: value.title, systemImage: "brain.head.profile")
+            settingsRow(
+                title: title,
+                value: IOSAppLocalization.string(value.title, defaultValue: value.title),
+                systemImage: "brain.head.profile"
+            )
         }
         .buttonStyle(.plain)
         .disabled(isReadOnly)
@@ -1546,7 +1698,10 @@ private struct CouncilRoomSettingsSheet: View {
     private func testCurrentCouncilModels() {
         connectivityTask?.cancel()
         guard let provider = sharedSettings.resolveCurrentProviderSetting() else {
-            connectivityState = .failure("当前没有可用的聊天服务商或模型。")
+            connectivityState = .failure(IOSAppLocalization.string(
+                "当前没有可用的聊天服务商或模型。",
+                defaultValue: "当前没有可用的聊天服务商或模型。"
+            ))
             return
         }
         let settings = roomSettingsStore.settings
@@ -1745,8 +1900,13 @@ final class CouncilChatViewModel {
         keepAliveReleaseTask?.cancel()
         BackgroundGenerationKeepAlive.shared.begin(
             leaseId,
-            title: "Amber 议会讨论中",
-            subtitle: currentObjective.isEmpty ? "模型议会" : currentObjective,
+            title: IOSAppLocalization.string(
+                "Amber 议会讨论中",
+                defaultValue: "Amber 议会讨论中"
+            ),
+            subtitle: currentObjective.isEmpty
+                ? IOSAppLocalization.string("模型议会", defaultValue: "模型议会")
+                : currentObjective,
             onExpire: { [weak self] in
                 self?.handleBackgroundKeepAliveExpiration(for: discussionID)
             },
@@ -1818,17 +1978,28 @@ final class CouncilChatViewModel {
 
     /// Composer 旁展示；与 `canSend` 共用同一配置判定，避免灰掉发送却无说明。
     var configurationErrorMessage: String? {
-        currentConfigurationIssue?.message
+        currentConfigurationIssue.map { issue in
+            IOSAppLocalization.string(issue.message, defaultValue: issue.message)
+        }
     }
 
     var composerPlaceholder: String {
         if canContinueCurrentCouncil {
-            return "输入补充或追问，再讨论一轮"
+            return IOSAppLocalization.string(
+                "输入补充或追问，再讨论一轮",
+                defaultValue: "输入补充或追问，再讨论一轮"
+            )
         }
         if hasPendingMaterials {
-            return "补充说明（可选），或直接发送从材料生成议题"
+            return IOSAppLocalization.string(
+                "补充说明（可选），或直接发送从材料生成议题",
+                defaultValue: "补充说明（可选），或直接发送从材料生成议题"
+            )
         }
-        return "输入议题开始，或上传文件/图片"
+        return IOSAppLocalization.string(
+            "输入议题开始，或上传文件/图片",
+            defaultValue: "输入议题开始，或上传文件/图片"
+        )
     }
 
     var currentModelId: String {
@@ -1838,7 +2009,7 @@ final class CouncilChatViewModel {
     }
 
     var hostDisplayName: String {
-        participants.first(where: \.isHost)?.displayName ?? Self.hostName(for: currentModelId)
+        participants.first(where: \.isHost)?.displayNameForDisplay ?? Self.hostName(for: currentModelId)
     }
 
     /// 当前若处于只读重放,返回被重放那场的 taskId(供历史列表高亮),否则 nil。
@@ -2020,14 +2191,24 @@ final class CouncilChatViewModel {
 
     func attachPickedFile(url: URL) {
         guard canAttachMaterials else {
-            attachmentErrorMessage = "当前只能在新议题里附加材料；追问请用文字补充。"
+            attachmentErrorMessage = IOSAppLocalization.string(
+                "当前只能在新议题里附加材料；追问请用文字补充。",
+                defaultValue: "当前只能在新议题里附加材料；追问请用文字补充。"
+            )
             return
         }
         guard pendingFiles.count < CouncilMaterialLimits.maxFiles else {
-            attachmentErrorMessage = "一次最多附加 \(CouncilMaterialLimits.maxFiles) 个文件"
+            attachmentErrorMessage = IOSAppLocalization.formatted(
+                "一次最多附加 %lld 个文件",
+                defaultValue: "一次最多附加 %lld 个文件",
+                arguments: [Int64(CouncilMaterialLimits.maxFiles)]
+            )
             return
         }
-        let generation = beginMaterialsPreparation(status: "正在解析文件…")
+        let generation = beginMaterialsPreparation(status: IOSAppLocalization.string(
+            "正在解析文件…",
+            defaultValue: "正在解析文件…"
+        ))
         materialsPreparationTask = Task { [weak self] in
             let outcome = await CouncilFileMaterialLoader.load(url: url)
             await MainActor.run {
@@ -2037,7 +2218,11 @@ final class CouncilChatViewModel {
                 case .success(let file):
                     // Re-check caps after async gap (another file may have landed).
                     if self.pendingFiles.count >= CouncilMaterialLimits.maxFiles {
-                        self.attachmentErrorMessage = "一次最多附加 \(CouncilMaterialLimits.maxFiles) 个文件"
+                        self.attachmentErrorMessage = IOSAppLocalization.formatted(
+                            "一次最多附加 %lld 个文件",
+                            defaultValue: "一次最多附加 %lld 个文件",
+                            arguments: [Int64(CouncilMaterialLimits.maxFiles)]
+                        )
                         return
                     }
                     self.pendingFiles.append(file)
@@ -2075,7 +2260,10 @@ final class CouncilChatViewModel {
         let files = pendingFiles
         let images = pendingImages
         let generation = beginMaterialsPreparation(
-            status: images.isEmpty ? "正在整理材料…" : "正在识别图片…"
+            status: IOSAppLocalization.string(
+                images.isEmpty ? "正在整理材料…" : "正在识别图片…",
+                defaultValue: images.isEmpty ? "正在整理材料…" : "正在识别图片…"
+            )
         )
         materialsPreparationTask = Task { [weak self] in
             guard let self else { return }
@@ -2298,7 +2486,11 @@ final class CouncilChatViewModel {
         } else {
             archiveErrorMessage = archiveStore.save(room)
                 ? nil
-                : "议会已完成，但归档失败：\(archiveStore.lastErrorDescription ?? "未知错误")"
+                : IOSAppLocalization.formatted(
+                    "议会已完成，但归档失败：%@",
+                    defaultValue: "议会已完成，但归档失败：%@",
+                    arguments: [archiveStore.lastErrorDescription ?? IOSAppLocalization.string("未知错误", defaultValue: "未知错误")]
+                )
         }
     }
 
@@ -2459,7 +2651,12 @@ final class CouncilChatViewModel {
         invitedSpeakerIds.removeAll()
         updateBackgroundProgress(
             completed: summary.status == .completed ? 4 : 3,
-            subtitle: summary.status == .completed ? "议会已完成" : summary.status.title
+            subtitle: summary.status == .completed
+                ? IOSAppLocalization.string("议会已完成", defaultValue: "议会已完成")
+                : IOSAppLocalization.string(
+                    summary.status.title,
+                    defaultValue: summary.status.title
+                )
         )
         endBackgroundKeepAlive(for: discussionID)
         isRunning = false
@@ -2564,7 +2761,10 @@ final class CouncilChatViewModel {
         switch event {
         case .taskStarted(let id):
             currentTaskId = id
-            updateBackgroundProgress(completed: 0, subtitle: "准备议会")
+            updateBackgroundProgress(
+                completed: 0,
+                subtitle: IOSAppLocalization.string("准备议会", defaultValue: "准备议会")
+            )
             persistTranscript()
             archiveCurrentRoom()
         case .state(let state):
@@ -2581,7 +2781,10 @@ final class CouncilChatViewModel {
             } else {
                 completed = 1
             }
-            updateBackgroundProgress(completed: completed, subtitle: state)
+            updateBackgroundProgress(
+                completed: completed,
+                subtitle: CouncilDisplayCopy.status(state)
+            )
         case .roster(let speakers, let activeId, let failedIds):
             participants = speakers.map(CouncilParticipant.init(speaker:))
             activeSpeakerId = activeId
@@ -2679,18 +2882,58 @@ final class CouncilChatViewModel {
     }
 
     private func makeDetail(status: String) -> CouncilDiscussionDetail {
-        CouncilDiscussionDetail(
-            statusLine: "\(status) · \(selectedMode.title) · host \(hostDisplayName)",
+        let limits = roomSettingsStore.settings.limits
+        let providerName = sharedSettings.resolveCurrentProviderSetting()?.name
+            ?? CouncilDisplayCopy.localized("未配置")
+        let localizedStatus = selectedMode.runningState == status
+            ? selectedMode.localizedRunningState
+            : CouncilDisplayCopy.status(status)
+        return CouncilDiscussionDetail(
+            statusLine: "\(localizedStatus) · \(selectedMode.localizedTitle) · \(CouncilDisplayCopy.localized("主持人")) \(hostDisplayName)",
             objective: currentObjective,
             participantSummary: participants
                 .filter { $0.isHost || invitedSpeakerIds.contains($0.id) }
                 .map { participant in
                     participant.isHost
-                        ? "主持：\(participant.displayName)（\(currentModelId)）"
-                        : "\(participant.displayName)：\(participant.roleDescription)（\(modelLabel(for: participant))）"
+                        ? CouncilDisplayCopy.formatted(
+                            "主持：%@（%@）",
+                            arguments: [participant.displayNameForDisplay, currentModelId]
+                        )
+                        : CouncilDisplayCopy.formatted(
+                            "%@：%@（%@）",
+                            arguments: [
+                                participant.displayNameForDisplay,
+                                CouncilDisplayCopy.localized(participant.roleDescription),
+                                modelLabel(for: participant)
+                            ]
+                        )
                 }
                 .joined(separator: "\n"),
-            budgetSummary: "模式：\(selectedMode.title)\n最大席位：\(roomSettingsStore.settings.limits.maxSeats)\n默认轮数：\(roomSettingsStore.settings.limits.defaultRounds)\n单次模型无输出超时：\(roomSettingsStore.settings.limits.seatTimeoutSeconds)s\n输出预算：\(roomSettingsStore.settings.limits.outputBudgetCharacters)\n提供商：\(sharedSettings.resolveCurrentProviderSetting()?.name ?? "未配置")\n主持模型：\(roomSettingsStore.settings.host.modelId.trimmedOr(currentModelId))",
+            budgetSummary: [
+                "\(CouncilDisplayCopy.localized("模式"))：\(selectedMode.localizedTitle)",
+                IOSAppLocalization.formatted(
+                    "最大席位 %lld",
+                    defaultValue: "最大席位 %lld",
+                    arguments: [Int64(limits.maxSeats)]
+                ),
+                IOSAppLocalization.formatted(
+                    "默认轮数 %lld",
+                    defaultValue: "默认轮数 %lld",
+                    arguments: [Int64(limits.defaultRounds)]
+                ),
+                IOSAppLocalization.formatted(
+                    "单次模型无输出超时 %llds",
+                    defaultValue: "单次模型无输出超时 %llds",
+                    arguments: [Int64(limits.seatTimeoutSeconds)]
+                ),
+                IOSAppLocalization.formatted(
+                    "输出预算 %lld",
+                    defaultValue: "输出预算 %lld",
+                    arguments: [Int64(limits.outputBudgetCharacters)]
+                ),
+                "\(CouncilDisplayCopy.localized("提供商"))：\(providerName)",
+                "\(CouncilDisplayCopy.localized("主持模型"))：\(roomSettingsStore.settings.host.modelId.trimmedOr(currentModelId))"
+            ].joined(separator: "\n"),
             transcript: roomTranscript(limit: 80)
         )
     }
@@ -2706,7 +2949,8 @@ final class CouncilChatViewModel {
     }
 
     private func modelLabel(for participant: CouncilParticipant) -> String {
-        participant.modelId?.trimmedNilIfBlank ?? participant.modelHint
+        participant.modelId?.trimmedNilIfBlank
+            ?? CouncilDisplayCopy.localized(participant.modelHint)
     }
 
     private static func hostName(for modelId: String) -> String {
@@ -2805,7 +3049,10 @@ final class CouncilChatViewModel {
         materialsPreparationStatus = ""
         endMaterialsKeepAlive()
         if showCancelledMessage {
-            attachmentErrorMessage = "已取消材料解析"
+            attachmentErrorMessage = IOSAppLocalization.string(
+                "已取消材料解析",
+                defaultValue: "已取消材料解析"
+            )
         }
     }
 
@@ -2819,8 +3066,13 @@ final class CouncilChatViewModel {
         }
         BackgroundGenerationKeepAlive.shared.begin(
             materialsKeepAliveLeaseId(),
-            title: "Amber 议会准备中",
-            subtitle: materialsPreparationStatus.isEmpty ? "解析材料" : materialsPreparationStatus,
+            title: IOSAppLocalization.string(
+                "Amber 议会准备中",
+                defaultValue: "Amber 议会准备中"
+            ),
+            subtitle: materialsPreparationStatus.isEmpty
+                ? IOSAppLocalization.string("解析材料", defaultValue: "解析材料")
+                : materialsPreparationStatus,
             onExpire: expire,
             onSystemTaskExpiration: expire
         )
@@ -2933,11 +3185,19 @@ enum CouncilDiscussionMode: String, CaseIterable, Identifiable {
         }
     }
 
+    var localizedTitle: String {
+        IOSAppLocalization.string(title, defaultValue: title)
+    }
+
     var accessibilityLabel: String {
         switch self {
         case .freeChat: "自由群聊模式"
         case .debate: "辩论模式"
         }
+    }
+
+    var localizedAccessibilityLabel: String {
+        IOSAppLocalization.string(accessibilityLabel, defaultValue: accessibilityLabel)
     }
 
     var intent: String {
@@ -2947,6 +3207,10 @@ enum CouncilDiscussionMode: String, CaseIterable, Identifiable {
         }
     }
 
+    var localizedIntent: String {
+        IOSAppLocalization.string(intent, defaultValue: intent)
+    }
+
     var runningState: String {
         switch self {
         case .freeChat: "群聊中"
@@ -2954,11 +3218,19 @@ enum CouncilDiscussionMode: String, CaseIterable, Identifiable {
         }
     }
 
+    var localizedRunningState: String {
+        IOSAppLocalization.string(runningState, defaultValue: runningState)
+    }
+
     var openingDivider: String {
         switch self {
         case .freeChat: "自由群聊 · 开场"
         case .debate: "辩论 · 交叉回应"
         }
+    }
+
+    var localizedOpeningDivider: String {
+        IOSAppLocalization.string(openingDivider, defaultValue: openingDivider)
     }
 
     var systemImage: String {
@@ -3036,6 +3308,10 @@ struct CouncilParticipant: Identifiable {
             modelId: speaker.modelId,
             providerId: speaker.providerId
         )
+    }
+
+    var displayNameForDisplay: String {
+        CouncilDisplayCopy.participantName(self)
     }
 
     static func defaults(hostName: String) -> [CouncilParticipant] {
@@ -3150,6 +3426,172 @@ enum CouncilParticipantState: String {
         case .failed: "失败"
         }
     }
+
+    var localizedLabel: String {
+        IOSAppLocalization.string(label, defaultValue: label)
+    }
+}
+
+private enum CouncilDisplayCopy {
+    static func localized(_ value: String) -> String {
+        IOSAppLocalization.string(value, defaultValue: value)
+    }
+
+    static func formatted(_ key: String, arguments: [CVarArg]) -> String {
+        IOSAppLocalization.formatted(key, defaultValue: key, arguments: arguments)
+    }
+
+    static func participantName(_ participant: CouncilParticipant) -> String {
+        guard participant.isHost else {
+            return localized(participant.displayName)
+        }
+        if let modelId = participant.modelId?.trimmedNilIfBlank {
+            return formatted("主持 · %@", arguments: [modelId])
+        }
+        let legacyHostPrefix = "Host · "
+        if participant.displayName.hasPrefix(legacyHostPrefix) {
+            return formatted(
+                "主持 · %@",
+                arguments: [String(participant.displayName.dropFirst(legacyHostPrefix.count))]
+            )
+        }
+        return localized(participant.displayName)
+    }
+
+    static func status(_ value: String) -> String {
+        let speakingSuffix = " 发言中"
+        guard value.hasSuffix(speakingSuffix) else { return localized(value) }
+        let name = String(value.dropLast(speakingSuffix.count))
+        guard !name.isEmpty else { return localized(value) }
+        return formatted("%@ 发言中", arguments: [name])
+    }
+
+    static func subtitle(_ value: String) -> String {
+        if value.hasPrefix("主持 · ") {
+            return formatted("主持 · %@", arguments: [String(value.dropFirst("主持 · ".count))])
+        }
+        if value.hasPrefix("总结 · ") {
+            return formatted("总结 · %@", arguments: [String(value.dropFirst("总结 · ".count))])
+        }
+        let reviewMarker = " 轮点评 · "
+        if value.hasPrefix("第 "), let marker = value.range(of: reviewMarker) {
+            let roundText = String(value[value.index(value.startIndex, offsetBy: 2)..<marker.lowerBound])
+            let modelId = String(value[marker.upperBound...])
+            if let round = Int64(roundText), !modelId.isEmpty {
+                return formatted("第 %lld 轮点评 · %@", arguments: [round, modelId])
+            }
+        }
+        let followUpPrefix = "追问 · 第 "
+        if value.hasPrefix(followUpPrefix), value.hasSuffix(" 轮") {
+            let roundText = value.dropFirst(followUpPrefix.count).dropLast(2)
+            if let round = Int64(roundText) {
+                return formatted("追问 · 第 %lld 轮", arguments: [round])
+            }
+        }
+        if let separator = value.range(of: " · ", options: .backwards) {
+            let modelId = String(value[..<separator.lowerBound])
+            let reasoning = String(value[separator.upperBound...])
+            if !modelId.isEmpty,
+               IOSCouncilReasoningPreset.allCases.contains(where: { $0.title == reasoning }) {
+                return IOSAppLocalization.formatted(
+                    "%@ · %@",
+                    defaultValue: "%@ · %@",
+                    arguments: [modelId, localized(reasoning)]
+                )
+            }
+        }
+        return localized(value)
+    }
+
+    static func messageBody(
+        _ body: String,
+        status: CouncilMessageStatus,
+        pendingPhaseLabels: Set<String>
+    ) -> String {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        if status == .speaking && trimmed.isEmpty {
+            return localized("思考中...")
+        }
+        if pendingPhaseLabels.contains(trimmed) {
+            return status == .speaking ? localized(trimmed) : localized("未生成内容")
+        }
+
+        switch trimmed {
+        case "主持调研", "自由群聊开始", "辩论开始", "主持人轮末点评", "主持总结",
+             "主持人未返回议题。", "主持人未返回总结。", "已停止", "就绪",
+             "配置阻塞", "启动失败", "已取消", "已超时", "运行失败",
+             "上次讨论已中断，可以继续补充或重新发起。", "本轮议会已停止。",
+             "无法保存运行状态，本轮议会未启动。", "模型议会已取消。",
+             "发言未完成（应用中断）":
+            return localized(trimmed)
+        case "自由群聊 · 开场", "辩论 · 交叉回应":
+            return CouncilDiscussionMode.allCases.first(where: { $0.openingDivider == trimmed })?
+                .localizedOpeningDivider ?? localized(trimmed)
+        default:
+            break
+        }
+
+        let roundPrefix = "第 "
+        if trimmed.hasPrefix(roundPrefix), trimmed.hasSuffix(" 轮") {
+            let roundText = trimmed.dropFirst(roundPrefix.count).dropLast(2)
+            if let round = Int64(roundText) {
+                return formatted("第 %lld 轮", arguments: [round])
+            }
+        }
+
+        let followUpPrefix = "追问 · 第 "
+        if trimmed.hasPrefix(followUpPrefix), trimmed.hasSuffix(" 轮") {
+            let roundText = trimmed.dropFirst(followUpPrefix.count).dropLast(2)
+            if let round = Int64(roundText) {
+                return formatted("追问 · 第 %lld 轮", arguments: [round])
+            }
+        }
+
+        if let counted = countedList(
+            trimmed,
+            prefix: "已组建 ",
+            marker: " 位议员："
+        ) {
+            return formatted("已组建 %lld 位议员：%@", arguments: [counted.count, counted.items])
+        }
+        if trimmed.hasPrefix("本轮议员（已添加席位）：") {
+            let names = String(trimmed.dropFirst("本轮议员（已添加席位）：".count))
+            return formatted("本轮议员（已添加席位）：%@", arguments: [names])
+        }
+        if trimmed.hasPrefix("模型联通检查已替换不可用模型：") {
+            let names = String(trimmed.dropFirst("模型联通检查已替换不可用模型：".count))
+            return formatted("模型联通检查已替换不可用模型：%@", arguments: [names])
+        }
+        if trimmed.hasPrefix("沿用本议会席位：") {
+            let names = String(trimmed.dropFirst("沿用本议会席位：".count))
+            return formatted("沿用本议会席位：%@", arguments: [names])
+        }
+        if trimmed.hasPrefix("动态组席未返回有效席位，已沿用默认席位：") {
+            let names = String(trimmed.dropFirst("动态组席未返回有效席位，已沿用默认席位：".count))
+            return formatted("动态组席未返回有效席位，已沿用默认席位：%@", arguments: [names])
+        }
+        for (prefix, key) in [
+            ("席位失败：", "席位失败：%@"),
+            ("点评失败：", "点评失败：%@")
+        ] where trimmed.hasPrefix(prefix) {
+            return formatted(key, arguments: [String(trimmed.dropFirst(prefix.count))])
+        }
+        return body
+    }
+
+    private static func countedList(
+        _ value: String,
+        prefix: String,
+        marker: String
+    ) -> (count: Int64, items: String)? {
+        guard value.hasPrefix(prefix),
+              let markerRange = value.range(of: marker),
+              markerRange.lowerBound > value.index(value.startIndex, offsetBy: prefix.count),
+              let count = Int64(value[value.index(value.startIndex, offsetBy: prefix.count)..<markerRange.lowerBound]) else {
+            return nil
+        }
+        return (count, String(value[markerRange.upperBound...]))
+    }
 }
 
 struct CouncilChatMessage: Identifiable {
@@ -3187,14 +3629,29 @@ struct CouncilChatMessage: Identifiable {
     }
 
     var displayBody: String {
-        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        if status == .speaking && trimmed.isEmpty {
-            return "思考中..."
+        guard kind != .user else { return body }
+        let localizedBody = CouncilDisplayCopy.messageBody(
+            body,
+            status: status,
+            pendingPhaseLabels: Self.pendingPhaseLabels
+        )
+        return kind == .system
+            ? CouncilDisplayCopy.localized(localizedBody)
+            : localizedBody
+    }
+
+    var displayAuthor: String {
+        switch author {
+        case "你", "议会", "主持人":
+            return CouncilDisplayCopy.localized(author)
+        default:
+            return author
         }
-        if Self.pendingPhaseLabels.contains(trimmed), status != .speaking {
-            return "未生成内容"
-        }
-        return body
+    }
+
+    var displaySubtitle: String? {
+        guard let subtitle, !subtitle.isEmpty else { return nil }
+        return CouncilDisplayCopy.subtitle(subtitle)
     }
 
     /// Runner phase labels are UI chrome, not generated Markdown. Keeping them
@@ -3790,11 +4247,11 @@ private struct CouncilHistorySheet: View {
                     .scrollIndicators(.hidden)
                 }
             }
-            .navigationTitle("历史议会")
+            .navigationTitle(IOSAppLocalization.string("历史议会", defaultValue: "历史议会"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { dismiss() }
+                    Button(IOSAppLocalization.string("完成", defaultValue: "完成")) { dismiss() }
                 }
             }
         }
@@ -3805,10 +4262,13 @@ private struct CouncilHistorySheet: View {
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(AmberTheme.muted2)
-            Text("暂无可重开的历史议会")
+            Text(IOSAppLocalization.string("暂无可重开的历史议会", defaultValue: "暂无可重开的历史议会"))
                 .font(.subheadline)
                 .foregroundStyle(AmberTheme.muted)
-            Text("完成一场议会后，这里会列出可重开的讨论。")
+            Text(IOSAppLocalization.string(
+                "完成一场议会后，这里会列出可重开的讨论。",
+                defaultValue: "完成一场议会后，这里会列出可重开的讨论。"
+            ))
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted2)
                 .multilineTextAlignment(.center)
@@ -3828,7 +4288,7 @@ private struct CouncilHistorySheet: View {
                     .font(.body.weight(.medium))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
-                Text("\(task.status.title) · \(task.objective)")
+                Text("\(CouncilDisplayCopy.localized(task.status.title)) · \(task.objective)")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(1)

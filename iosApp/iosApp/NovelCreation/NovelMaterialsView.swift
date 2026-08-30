@@ -287,12 +287,12 @@ enum NovelMaterialKindChoice: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .world: "世界观"
-        case .character: "人物档案"
-        case .relationship: "人物关系"
-        case .masterOutline: "总剧情大纲"
-        case .writingRequirements: "写作要求"
-        case .custom: "自定义"
+        case .world: IOSAppLocalization.string("世界观", defaultValue: "世界观")
+        case .character: IOSAppLocalization.string("人物档案", defaultValue: "人物档案")
+        case .relationship: IOSAppLocalization.string("人物关系", defaultValue: "人物关系")
+        case .masterOutline: IOSAppLocalization.string("总剧情大纲", defaultValue: "总剧情大纲")
+        case .writingRequirements: IOSAppLocalization.string("写作要求", defaultValue: "写作要求")
+        case .custom: IOSAppLocalization.string("自定义", defaultValue: "自定义")
         }
     }
 
@@ -1016,9 +1016,9 @@ private enum NovelPreviewMaterialOverride: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .automatic: "按默认"
-        case .include: "本次加入"
-        case .exclude: "本次排除"
+        case .automatic: IOSAppLocalization.string("按默认", defaultValue: "按默认")
+        case .include: IOSAppLocalization.string("本次加入", defaultValue: "本次加入")
+        case .exclude: IOSAppLocalization.string("本次排除", defaultValue: "本次排除")
         }
     }
 }
@@ -1109,7 +1109,14 @@ struct NovelInjectionPreviewSheet: View {
             .frame(minHeight: 72)
 
             Stepper(value: $budgetTokens, in: 2_000...64_000, step: 2_000) {
-                LabeledContent("上下文长度", value: "约 \(budgetTokens.formatted()) 单位")
+                LabeledContent(
+                    "上下文长度",
+                    value: IOSAppLocalization.formatted(
+                        "约 %lld 单位",
+                        defaultValue: "约 %lld 单位",
+                        arguments: [Int64(budgetTokens)]
+                    )
+                )
             }
         }
     }
@@ -1140,16 +1147,34 @@ struct NovelInjectionPreviewSheet: View {
             LabeledContent("模型", value: preview.resolvedModel.displayName)
             LabeledContent(
                 "预计输入",
-                value: "\(preview.plan.estimatedInputTokens.formatted()) / \(preview.effectiveInputBudgetTokens.formatted())"
+                value: IOSAppLocalization.formatted(
+                    "%lld / %lld",
+                    defaultValue: "%lld / %lld",
+                    arguments: [
+                        Int64(preview.plan.estimatedInputTokens),
+                        Int64(preview.effectiveInputBudgetTokens),
+                    ]
+                )
             )
-            LabeledContent("上下文段", value: "\(preview.plan.sections.count)")
+            LabeledContent(
+                "上下文段",
+                value: IOSAppLocalization.formatted(
+                    "%lld",
+                    defaultValue: "%lld",
+                    arguments: [Int64(preview.plan.sections.count)]
+                )
+            )
 
             ForEach(Array(preview.plan.sections.enumerated()), id: \.offset) { _, section in
                 VStack(alignment: .leading, spacing: 3) {
                     Text(section.label)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
-                    Text("\(section.reason.displayName) · 约 \(section.estimatedTokens) 上下文单位")
+                    Text(verbatim: IOSAppLocalization.formatted(
+                        "%@ · 约 %lld 上下文单位",
+                        defaultValue: "%@ · 约 %lld 上下文单位",
+                        arguments: [section.reason.displayName, Int64(section.estimatedTokens)]
+                    ))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                 }

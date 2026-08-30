@@ -31,12 +31,19 @@ struct IOSConversationIOError: Identifiable, Equatable {
     let detail: String           // human-readable summary
 
     var message: String {
-        "会话存储「\(operation)」失败：\(detail)。请检查存储空间后重试。"
+        IOSAppLocalization.formatted(
+            "会话存储「%@」失败：%@。请检查存储空间后重试。",
+            defaultValue: "会话存储「%@」失败：%@。请检查存储空间后重试。",
+            arguments: [
+                IOSAppLocalization.string(operation, defaultValue: operation),
+                detail,
+            ]
+        )
     }
 
     var userVisibleError: IOSUserVisibleError {
         IOSUserVisibleError(
-            title: "会话存储出错",
+            title: IOSAppLocalization.string("会话存储出错", defaultValue: "会话存储出错"),
             message: message,
             severity: .error
         )
@@ -460,7 +467,10 @@ final class IOSConversationStore {
                     // 磁盘差异只是后台自己折入的信封：无用户侧新内容，不插 notice。
                     nextMessages = current + freshSuffix
                 } else {
-                    let notice = UIMessage.companion.assistant(prompt: "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。")
+                    let notice = UIMessage.companion.assistant(prompt: IOSAppLocalization.string(
+                        "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。",
+                        defaultValue: "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。"
+                    ))
                     nextMessages = current + [notice] + freshSuffix
                 }
             }
@@ -542,7 +552,10 @@ final class IOSConversationStore {
                 if patched.didApply {
                     nextMessages = patched.messages
                 } else {
-                    let notice = UIMessage.companion.assistant(prompt: "后台工具执行已完成；当前会话期间已有新内容，以下是后台完成的结果。")
+                    let notice = UIMessage.companion.assistant(prompt: IOSAppLocalization.string(
+                        "后台工具执行已完成；当前会话期间已有新内容，以下是后台完成的结果。",
+                        defaultValue: "后台工具执行已完成；当前会话期间已有新内容，以下是后台完成的结果。"
+                    ))
                     let toolMessages = Self.messagesContainingToolOutputs(outputs, in: completedMessages)
                     nextMessages = current + [notice] + toolMessages
                 }

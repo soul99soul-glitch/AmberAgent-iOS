@@ -336,7 +336,10 @@ private struct StorageUsageBar: View {
     private func formatBytes(_ bytes: Int64) -> String {
         // 用静态形式 + 默认单位集（含 bytes），与 SyncBackupView 一致；
         // 避免 allowedUnits 排除 bytes 导致 < 1KB 时显示 "Zero KB"。
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        bytes.formatted(
+            .byteCount(style: .file)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
     }
 }
 

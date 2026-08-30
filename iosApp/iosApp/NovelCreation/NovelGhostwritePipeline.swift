@@ -852,7 +852,11 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
     }
 
     var batchProgressLabel: String {
-        "第 \(min(currentChapterIndex, targetChapterCount))/\(targetChapterCount) 章"
+        IOSAppLocalization.formatted(
+            "第 %lld/%lld 章",
+            defaultValue: "第 %lld/%lld 章",
+            arguments: [min(currentChapterIndex, targetChapterCount), targetChapterCount]
+        )
     }
 
     var statusLabel: String {
@@ -860,44 +864,124 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
         switch phase {
         case .writing:
             if qualityAttemptIndex > 0 {
-                return "代笔中\(batch) · 定向改写 \(qualityAttemptIndex)/\(max(1, maxQualityAttempts - 1))"
+                return IOSAppLocalization.formatted(
+                    "代笔中%@ · 定向改写 %lld/%lld",
+                    defaultValue: "代笔中%@ · 定向改写 %lld/%lld",
+                    arguments: [
+                        batch,
+                        qualityAttemptIndex,
+                        max(1, maxQualityAttempts - 1),
+                    ]
+                )
             }
-            return "代笔中\(batch) · 写整章"
-        case .accepting: return "代笔中\(batch) · 审核并收录"
-        case .collecting: return "代笔中\(batch) · 自动收录"
-        case .syncing: return "代笔中\(batch) · 剧情同步"
-        case .planning: return "代笔中\(batch) · 拟定计划"
-        case .revising: return "代笔中\(batch) · 按意见润修"
+            return IOSAppLocalization.formatted(
+                "代笔中%@ · 写整章",
+                defaultValue: "代笔中%@ · 写整章",
+                arguments: [batch]
+            )
+        case .accepting:
+            return IOSAppLocalization.formatted(
+                "代笔中%@ · 审核并收录",
+                defaultValue: "代笔中%@ · 审核并收录",
+                arguments: [batch]
+            )
+        case .collecting:
+            return IOSAppLocalization.formatted(
+                "代笔中%@ · 自动收录",
+                defaultValue: "代笔中%@ · 自动收录",
+                arguments: [batch]
+            )
+        case .syncing:
+            return IOSAppLocalization.formatted(
+                "代笔中%@ · 剧情同步",
+                defaultValue: "代笔中%@ · 剧情同步",
+                arguments: [batch]
+            )
+        case .planning:
+            return IOSAppLocalization.formatted(
+                "代笔中%@ · 拟定计划",
+                defaultValue: "代笔中%@ · 拟定计划",
+                arguments: [batch]
+            )
+        case .revising:
+            return IOSAppLocalization.formatted(
+                "代笔中%@ · 按意见润修",
+                defaultValue: "代笔中%@ · 按意见润修",
+                arguments: [batch]
+            )
         case .paused:
-            if pauseReason == .cancelled { return "代笔已取消\(batch)" }
+            if pauseReason == .cancelled {
+                return IOSAppLocalization.formatted(
+                    "代笔已取消%@",
+                    defaultValue: "代笔已取消%@",
+                    arguments: [batch]
+                )
+            }
             if pauseReason == .backgroundInterrupted {
-                return "后台暂停\(batch) · 等待恢复"
+                return IOSAppLocalization.formatted(
+                    "后台暂停%@ · 等待恢复",
+                    defaultValue: "后台暂停%@ · 等待恢复",
+                    arguments: [batch]
+                )
             }
             if pauseReason == .continuityAuditIncomplete {
-                return "代笔已暂停\(batch) · 检查未稳"
+                return IOSAppLocalization.formatted(
+                    "代笔已暂停%@ · 检查未稳",
+                    defaultValue: "代笔已暂停%@ · 检查未稳",
+                    arguments: [batch]
+                )
             }
             if pauseReason == .blockingContinuity {
-                return "代笔已暂停\(batch) · 情节硬伤"
+                return IOSAppLocalization.formatted(
+                    "代笔已暂停%@ · 情节硬伤",
+                    defaultValue: "代笔已暂停%@ · 情节硬伤",
+                    arguments: [batch]
+                )
             }
-            return "代笔已暂停\(batch)"
+            return IOSAppLocalization.formatted(
+                "代笔已暂停%@",
+                defaultValue: "代笔已暂停%@",
+                arguments: [batch]
+            )
         case .waitingUser:
             switch pauseReason {
             case .batchCompleted:
                 let done = targetChapterCount > 1
-                    ? " · \(completedChapterCount)/\(targetChapterCount) 章"
+                    ? IOSAppLocalization.formatted(
+                        " · %lld/%lld 章",
+                        defaultValue: " · %lld/%lld 章",
+                        arguments: [completedChapterCount, targetChapterCount]
+                    )
                     : ""
-                return "本批已完成\(done)"
+                return IOSAppLocalization.formatted(
+                    "本批已完成%@",
+                    defaultValue: "本批已完成%@",
+                    arguments: [done]
+                )
             case .chapterCompleted:
-                return "本章已完成"
+                return IOSAppLocalization.string("本章已完成", defaultValue: "本章已完成")
             case .planProposedForNewBatch:
-                return "已拟定计划 · 待确认"
+                return IOSAppLocalization.string("已拟定计划 · 待确认", defaultValue: "已拟定计划 · 待确认")
             case .healBudgetExhausted:
-                return "代笔待润修\(batch)"
+                return IOSAppLocalization.formatted(
+                    "代笔待润修%@",
+                    defaultValue: "代笔待润修%@",
+                    arguments: [batch]
+                )
             default:
                 // incomplete/blocking 走 .paused，不进 waitingUser。
-                return "代笔等待继续\(batch)"
+                return IOSAppLocalization.formatted(
+                    "代笔等待继续%@",
+                    defaultValue: "代笔等待继续%@",
+                    arguments: [batch]
+                )
             }
-        case .failed: return "代笔失败\(batch)"
+        case .failed:
+            return IOSAppLocalization.formatted(
+                "代笔失败%@",
+                defaultValue: "代笔失败%@",
+                arguments: [batch]
+            )
         }
     }
 
@@ -905,47 +989,115 @@ struct NovelGhostwriteProgress: Equatable, Sendable {
     var boardStepSummary: String {
         // 「已收 k/N」与 statusLabel 的「第 i/N 章」区分，避免两行两套 x/5 误解。
         let batchSuffix = targetChapterCount > 1
-            ? " · 已收\(completedChapterCount)/\(targetChapterCount)"
+            ? IOSAppLocalization.formatted(
+                " · 已收%lld/%lld",
+                defaultValue: " · 已收%lld/%lld",
+                arguments: [completedChapterCount, targetChapterCount]
+            )
             : ""
         switch phase {
         case .writing:
             if qualityAttemptIndex > 0 {
-                return "定向改写 \(qualityAttemptIndex)/\(max(1, maxQualityAttempts - 1))" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "定向改写 %lld/%lld%@",
+                    defaultValue: "定向改写 %lld/%lld%@",
+                    arguments: [
+                        qualityAttemptIndex,
+                        max(1, maxQualityAttempts - 1),
+                        batchSuffix,
+                    ]
+                )
             }
-            return "写整章中" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "写整章中%@",
+                defaultValue: "写整章中%@",
+                arguments: [batchSuffix]
+            )
         case .accepting:
-            return "写✓ · 审核收录中" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "写✓ · 审核收录中%@",
+                defaultValue: "写✓ · 审核收录中%@",
+                arguments: [batchSuffix]
+            )
         case .collecting:
-            return "写✓审✓ · 收录中" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "写✓审✓ · 收录中%@",
+                defaultValue: "写✓审✓ · 收录中%@",
+                arguments: [batchSuffix]
+            )
         case .syncing:
-            return "写✓审✓收✓ · 同步确认" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "写✓审✓收✓ · 同步确认%@",
+                defaultValue: "写✓审✓收✓ · 同步确认%@",
+                arguments: [batchSuffix]
+            )
         case .planning:
-            return "同✓ · 拟定下一章" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "同✓ · 拟定下一章%@",
+                defaultValue: "同✓ · 拟定下一章%@",
+                arguments: [batchSuffix]
+            )
         case .revising:
-            return "润修中" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "润修中%@",
+                defaultValue: "润修中%@",
+                arguments: [batchSuffix]
+            )
         case .paused, .waitingUser, .failed:
             if pauseReason == .chapterCompleted || pauseReason == .batchCompleted {
-                return "写✓审✓收✓同✓" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "写✓审✓收✓同✓%@",
+                    defaultValue: "写✓审✓收✓同✓%@",
+                    arguments: [batchSuffix]
+                )
             }
             if pauseReason == .planProposedForNewBatch {
-                return "同✓ · 计划已拟定" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "同✓ · 计划已拟定%@",
+                    defaultValue: "同✓ · 计划已拟定%@",
+                    arguments: [batchSuffix]
+                )
             }
             if pauseReason == .healBudgetExhausted {
-                return "待润修" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "待润修%@",
+                    defaultValue: "待润修%@",
+                    arguments: [batchSuffix]
+                )
             }
             if pauseReason == .continuityAuditIncomplete {
-                return "已中断·将再检" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "已中断·将再检%@",
+                    defaultValue: "已中断·将再检%@",
+                    arguments: [batchSuffix]
+                )
             }
             if pauseReason == .blockingContinuity {
-                return "已中断·情节硬伤" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "已中断·情节硬伤%@",
+                    defaultValue: "已中断·情节硬伤%@",
+                    arguments: [batchSuffix]
+                )
             }
             if pauseReason == .backgroundInterrupted {
-                return "后台暂停·等待恢复" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "后台暂停·等待恢复%@",
+                    defaultValue: "后台暂停·等待恢复%@",
+                    arguments: [batchSuffix]
+                )
             }
             if let reason = pauseReason, reason.requiresRewriteOnContinue {
-                return "已中断·将重写" + batchSuffix
+                return IOSAppLocalization.formatted(
+                    "已中断·将重写%@",
+                    defaultValue: "已中断·将重写%@",
+                    arguments: [batchSuffix]
+                )
             }
-            return "已中断" + batchSuffix
+            return IOSAppLocalization.formatted(
+                "已中断%@",
+                defaultValue: "已中断%@",
+                arguments: [batchSuffix]
+            )
         }
     }
 

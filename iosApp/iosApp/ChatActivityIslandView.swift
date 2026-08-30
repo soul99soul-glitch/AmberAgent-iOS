@@ -69,7 +69,7 @@ struct ChatActivityIslandState: Equatable {
     func failedCopy() -> ChatActivityIslandState {
         ChatActivityIslandState(
             kind: kind,
-            title: "未完成",
+            title: IOSAppLocalization.string("未完成", defaultValue: "未完成"),
             detail: title,
             systemImage: systemImage,
             isActive: true,

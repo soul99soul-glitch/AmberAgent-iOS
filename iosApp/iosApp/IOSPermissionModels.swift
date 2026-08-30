@@ -1685,6 +1685,32 @@ private extension IOSPlatformCapability {
     }
 }
 
+extension IOSPlatformCapability {
+    /// `title` remains the canonical capability label used by policy snapshots
+    /// and tool execution; this variant is for user-facing display only.
+    var localizedTitle: String {
+        IOSAppLocalization.string(title, defaultValue: title)
+    }
+}
+
+extension IOSAgentPermissionPolicy {
+    /// `title` remains the canonical policy label; this variant is for settings UI.
+    var localizedTitle: String {
+        let key: String
+        switch self {
+        case .disabled:
+            key = "禁用"
+        case .askEveryTime, .allowOncePerRun:
+            key = "每次询问"
+        case .autoApprove:
+            key = "自动批准"
+        case .autoApproveHighRisk:
+            key = "自动批准·高风险"
+        }
+        return IOSAppLocalization.string(key, defaultValue: key)
+    }
+}
+
 enum IOSToolApprovalAction: String, Codable, Equatable, Identifiable {
     case allowed
     case denied

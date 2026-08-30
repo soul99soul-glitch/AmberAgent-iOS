@@ -311,6 +311,7 @@ final class NovelPromptCatalogTests: XCTestCase {
         let archive = NovelPromptCatalog.template(for: .discussionArchiveV1).systemText
         let drift = NovelPromptCatalog.template(for: .polishDriftV1).systemText
         let continuity = NovelPromptCatalog.template(for: .continuityAuditV1).systemText
+        let repair = NovelPromptCatalog.template(for: .continuityRepairV1).systemText
 
         for field in [
             "schemaVersion", "overview", "world", "characters", "masterOutline",
@@ -367,7 +368,17 @@ final class NovelPromptCatalogTests: XCTestCase {
                 "Continuity audit Prompt does not publish category \(category.rawValue)"
             )
         }
-        for prompt in [state, rebuild, drift, continuity] {
+        for field in ["schemaVersion", "patches", "issueId", "oldText", "newText"] {
+            XCTAssertTrue(
+                repair.contains("\"\(field)\""),
+                "Continuity repair Prompt is missing \(field)"
+            )
+        }
+        XCTAssertEqual(
+            NovelPromptCatalog.template(for: .continuityRepairV1).version,
+            "novel.continuity-repair.v1"
+        )
+        for prompt in [state, rebuild, drift, continuity, repair] {
             XCTAssertTrue(prompt.contains("Return exactly one raw JSON object"))
             XCTAssertTrue(prompt.contains("Do not use Markdown fences"))
             XCTAssertTrue(prompt.contains("Do not add unknown keys"))

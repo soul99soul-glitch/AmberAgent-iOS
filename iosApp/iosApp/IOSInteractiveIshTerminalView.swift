@@ -236,25 +236,25 @@ struct IOSInteractiveIshTerminalView: View {
 
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
-                    terminalKeyButton("Ctrl-C", accessibilityLabel: "发送 Ctrl-C") {
+                    terminalKeyButton("Ctrl-C", accessibilityLabel: localized("发送 Ctrl-C")) {
                         model.interrupt()
                     }
-                    terminalKeyButton("Tab", accessibilityLabel: "发送 Tab") {
+                    terminalKeyButton("Tab", accessibilityLabel: localized("发送 Tab")) {
                         model.sendKey(.tab)
                     }
-                    terminalKeyButton("Esc", accessibilityLabel: "发送 Escape") {
+                    terminalKeyButton("Esc", accessibilityLabel: localized("发送 Escape")) {
                         model.sendKey(.escape)
                     }
-                    terminalKeyButton("←", accessibilityLabel: "发送左方向键") {
+                    terminalKeyButton("←", accessibilityLabel: localized("发送左方向键")) {
                         model.sendKey(.left)
                     }
-                    terminalKeyButton("↑", accessibilityLabel: "发送上方向键") {
+                    terminalKeyButton("↑", accessibilityLabel: localized("发送上方向键")) {
                         model.sendKey(.up)
                     }
-                    terminalKeyButton("↓", accessibilityLabel: "发送下方向键") {
+                    terminalKeyButton("↓", accessibilityLabel: localized("发送下方向键")) {
                         model.sendKey(.down)
                     }
-                    terminalKeyButton("→", accessibilityLabel: "发送右方向键") {
+                    terminalKeyButton("→", accessibilityLabel: localized("发送右方向键")) {
                         model.sendKey(.right)
                     }
                 }
@@ -325,9 +325,9 @@ struct IOSInteractiveIshTerminalView: View {
         }
         switch model.state {
         case .starting:
-            return "正在准备 iSH rootfs 与 /workspace…"
+            return localized("正在准备 iSH rootfs 与 /workspace…")
         case .stopping:
-            return "正在停止 iSH 会话…"
+            return localized("正在停止 iSH 会话…")
         case .failed(let message):
             return "iSH 启动失败\n\(message)"
         case .idle, .running, .stopped, .exited:
@@ -355,15 +355,20 @@ struct IOSInteractiveIshTerminalView: View {
 
     private var stateLabel: String {
         switch model.state {
-        case .idle: "准备启动"
-        case .starting: "正在启动"
-        case .running: "运行中 · 前台会话"
-        case .stopping: "正在停止"
-        case .stopped: "已停止"
+        case .idle: return localized("准备启动")
+        case .starting: return localized("正在启动")
+        case .running: return localized("运行中 · 前台会话")
+        case .stopping: return localized("正在停止")
+        case .stopped: return localized("已停止")
         case .exited(let exitCode, let signal):
-            signal == 0 ? "已退出 · code \(exitCode)" : "已退出 · signal \(signal)"
-        case .failed: "会话失败"
+            let exitStatus = signal == 0 ? "code \(exitCode)" : "signal \(signal)"
+            return "\(localized("已退出")) · \(exitStatus)"
+        case .failed: return localized("会话失败")
         }
+    }
+
+    private func localized(_ key: String) -> String {
+        IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private var stateColor: Color {

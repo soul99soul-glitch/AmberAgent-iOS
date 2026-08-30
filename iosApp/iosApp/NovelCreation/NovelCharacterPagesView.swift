@@ -154,9 +154,16 @@ struct NovelCharacterPagesView: View {
                     Text(title)
                         .font(.body.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
-                    Text(latest.map {
-                        "最近经历 · \($0.createdAt.formatted(date: .abbreviated, time: .omitted))"
-                    } ?? "暂无经历")
+                    Text(verbatim: latest.map {
+                        IOSAppLocalization.formatted(
+                            "最近经历 · %@",
+                            defaultValue: "最近经历 · %@",
+                            arguments: [$0.createdAt.formatted(
+                                Date.FormatStyle(date: .abbreviated, time: .omitted)
+                                    .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+                            )]
+                        )
+                    } ?? IOSAppLocalization.string("暂无经历", defaultValue: "暂无经历"))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                 }
@@ -238,7 +245,10 @@ private struct NovelCharacterDetailView: View {
                                     HStack {
                                         Text(event.kind)
                                         Spacer()
-                                        Text(event.createdAt.formatted(date: .abbreviated, time: .omitted))
+                                        Text(verbatim: event.createdAt.formatted(
+                                            Date.FormatStyle(date: .abbreviated, time: .omitted)
+                                                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+                                        ))
                                     }
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)

@@ -217,18 +217,42 @@ struct ChatReasoningCard: View {
 
     private func titleText(elapsed: Int?) -> String {
         if isThinking {
-            if let elapsed { return "思考中 \(elapsed) 秒\(levelSuffix)" }
-            return "思考中\(levelSuffix)"
+            if let elapsed {
+                return IOSAppLocalization.formatted(
+                    "思考中 %lld 秒%@",
+                    defaultValue: "思考中 %lld 秒%@",
+                    arguments: [Int64(elapsed), levelSuffix]
+                )
+            }
+            return IOSAppLocalization.formatted(
+                "思考中%@",
+                defaultValue: "思考中%@",
+                arguments: [levelSuffix]
+            )
         }
-        if let finishedSeconds { return "思考了 \(Self.formatFinishedSeconds(finishedSeconds)) 秒\(levelSuffix)" }
-        return "思考过程\(levelSuffix)"
+        if let finishedSeconds {
+            return IOSAppLocalization.formatted(
+                "思考了 %@ 秒%@",
+                defaultValue: "思考了 %@ 秒%@",
+                arguments: [Self.formatFinishedSeconds(finishedSeconds), levelSuffix]
+            )
+        }
+        return IOSAppLocalization.formatted(
+            "思考过程%@",
+            defaultValue: "思考过程%@",
+            arguments: [levelSuffix]
+        )
     }
 
     /// 不足 1 秒按 0.1 精度显示(最小 0.1,避免「0 秒」/「0.0 秒」);≥1 秒显示整数。
     private static func formatFinishedSeconds(_ seconds: Double) -> String {
         let rounded = (seconds * 10).rounded() / 10
         if rounded >= 1 { return "\(Int(rounded.rounded()))" }
-        return String(format: "%.1f", max(0.1, rounded))
+        return String(
+            format: "%.1f",
+            locale: IOSAppLanguagePreference.selected().resolvedLocale(),
+            max(0.1, rounded)
+        )
     }
 
     @ViewBuilder

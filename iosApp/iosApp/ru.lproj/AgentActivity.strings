@@ -1,0 +1,58 @@
+"agent.activity.kind.research" = "Глубокое исследование";
+"agent.activity.kind.response" = "Ответ";
+"agent.activity.kind.imageGeneration" = "Генерация изображений";
+"agent.activity.kind.document" = "Работа с документом";
+"agent.activity.kind.web" = "Веб-задача";
+"agent.activity.kind.memory" = "Обновление памяти";
+"agent.activity.kind.command" = "Командная задача";
+"agent.activity.kind.workflow" = "Задача агента";
+
+"agent.activity.stage.preparing" = "Подготовка";
+"agent.activity.stage.thinking" = "Размышление";
+"agent.activity.stage.searching" = "Поиск";
+"agent.activity.stage.readingSources" = "Чтение источников";
+"agent.activity.stage.readingWeb" = "Чтение веб-страниц";
+"agent.activity.stage.generating" = "Генерация";
+"agent.activity.stage.generatingImage" = "Генерация изображения";
+"agent.activity.stage.organizing" = "Сортировка результатов";
+"agent.activity.stage.readingDocument" = "Чтение документа";
+"agent.activity.stage.updatingMemory" = "Обновление памяти";
+"agent.activity.stage.runningTool" = "Выполняется";
+"agent.activity.stage.waitingForConfirmation" = "Ожидание подтверждения";
+"agent.activity.stage.reconnecting" = "Переподключение";
+"agent.activity.stage.stale" = "Статус истёк";
+"agent.activity.stage.completed" = "Завершено";
+"agent.activity.stage.failed" = "Не завершено";
+"agent.activity.stage.cancelled" = "Остановлено";
+
+"agent.activity.action.openTask" = "Открыть чат";
+"agent.activity.action.openConfirmation" = "Открыть подтверждение";
+"agent.activity.action.viewResult" = "Посмотреть результат";
+
+"agent.activity.fact.waiting" = "Подтвердить";
+"agent.activity.fact.stale" = "Просрочено";
+"agent.activity.fact.reconnecting" = "Переподкл.";
+"agent.activity.fact.completed" = "Завершено";
+"agent.activity.fact.failed" = "Не завершено";
+"agent.activity.fact.cancelled" = "Остановлено";
+
+"agent.activity.compact.preparing" = "Подготовка";
+"agent.activity.compact.thinking" = "Размышление";
+"agent.activity.compact.searching" = "Поиск";
+"agent.activity.compact.readingSources" = "Чтение";
+"agent.activity.compact.readingWeb" = "Чтение веба";
+"agent.activity.compact.generating" = "Генерация";
+"agent.activity.compact.generatingImage" = "Рисование";
+"agent.activity.compact.organizing" = "Сортировка";
+"agent.activity.compact.readingDocument" = "Чтение файла";
+"agent.activity.compact.updatingMemory" = "Обновление";
+"agent.activity.compact.runningTool" = "В работе";
+
+"agent.activity.metric.source.count" = "Просмотрено источников: %ld";
+"agent.activity.metric.source.progress" = "%ld / %ld источников";
+"agent.activity.metric.file.count" = "Обработано файлов: %ld";
+"agent.activity.metric.file.progress" = "%ld / %ld файлов";
+"agent.activity.metric.image.count" = "Создано изображений: %ld";
+"agent.activity.metric.image.progress" = "%ld / %ld изображений";
+"agent.activity.metric.item.count" = "Обработано элементов: %ld";
+"agent.activity.metric.item.progress" = "%ld / %ld элементов";

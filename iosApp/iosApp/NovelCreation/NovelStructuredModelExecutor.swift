@@ -6,6 +6,7 @@ enum NovelStructuredModelTaskKind: String, Codable, Equatable, CaseIterable, Sen
     case discussionArchive
     case polishDrift
     case continuityAudit
+    case continuityRepair
     case chapterPlanAcceptance
     case chapterAdjudication
     case chapterPlanProposal
@@ -20,6 +21,8 @@ enum NovelStructuredModelTask: Equatable, Sendable {
     /// 剧情矛盾检查。`priorFindings` 是前几块已报出的问题摘要,让后一块能与前文对照;
     /// 首块传空串。`manuscript` 是本块正文,含 `# Chapter N: 标题` 标头。
     case continuityAudit(priorFindings: String, manuscript: String)
+    /// 按检查结果改一章。`brief` 含目标章全文与要对齐的先文证据。
+    case continuityRepair(brief: String)
     case chapterPlanAcceptance(plan: String, candidate: String, recentHighlights: String)
     case chapterAdjudication(
         context: String,
@@ -44,6 +47,7 @@ enum NovelStructuredModelOutput: Equatable, Sendable {
     case discussionArchive(NovelDiscussionArchiveV1)
     case polishDrift(NovelPolishDriftV1)
     case continuityAudit(NovelContinuityAuditV1)
+    case continuityRepair(NovelContinuityRepairV1)
     case chapterPlanAcceptance(NovelChapterPlanAcceptanceV1)
     case chapterAdjudication(NovelChapterAdjudicationV1)
     case chapterPlanProposal(NovelChapterPlanProposalV1)
@@ -669,6 +673,7 @@ private extension NovelStructuredModelTask {
         case .discussionArchive: .discussionArchive
         case .polishDrift: .polishDrift
         case .continuityAudit: .continuityAudit
+        case .continuityRepair: .continuityRepair
         case .chapterPlanAcceptance: .chapterPlanAcceptance
         case .chapterAdjudication: .chapterAdjudication
         case .chapterPlanProposal: .chapterPlanProposal
@@ -683,6 +688,7 @@ private extension NovelStructuredModelTask {
         case .discussionArchive: .discussionArchiveV1
         case .polishDrift: .polishDriftV1
         case .continuityAudit: .continuityAuditV1
+        case .continuityRepair: .continuityRepairV1
         case .chapterPlanAcceptance: .chapterPlanAcceptanceV1
         case .chapterAdjudication: .chapterAdjudicationV1
         case .chapterPlanProposal: .chapterPlanProposalV1
@@ -697,6 +703,7 @@ private extension NovelStructuredModelTask {
         case .discussionArchive: .stateExtraction
         case .polishDrift: .driftCheck
         case .continuityAudit: .continuityAudit
+        case .continuityRepair: .continuityAudit
         // Reuse state-extraction purpose tagging; runtime model policy is `.review`.
         case .chapterPlanAcceptance: .stateExtraction
         // The adjudication is a review gate whose state delta is committed only with the accepted prose.
@@ -745,6 +752,11 @@ private extension NovelStructuredModelTask {
             return [
                 .init(role: .system, content: system),
                 .init(role: .user, content: "MANUSCRIPT UNDER AUDIT\n" + manuscript)
+            ]
+        case .continuityRepair(let brief):
+            return [
+                .init(role: .system, content: prompt.systemText),
+                .init(role: .user, content: brief)
             ]
         case .chapterPlanAcceptance(let plan, let candidate, let recentHighlights):
             let beats = recentHighlights.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -827,6 +839,8 @@ private extension NovelStructuredModelTask {
             .polishDrift(try NovelStructuredOutputDecoder.decodePolishDrift(from: text))
         case .continuityAudit:
             .continuityAudit(try NovelStructuredOutputDecoder.decodeContinuityAudit(from: text))
+        case .continuityRepair:
+            .continuityRepair(try NovelStructuredOutputDecoder.decodeContinuityRepair(from: text))
         case .chapterPlanAcceptance:
             .chapterPlanAcceptance(
                 try NovelStructuredOutputDecoder.decodeChapterPlanAcceptance(from: text)
@@ -868,7 +882,8 @@ extension NovelStructuredModelTaskKind {
         switch self {
         case .stateRebuild: 8_192
         case .stateDelta, .discussionArchive, .polishDrift, .continuityAudit,
-             .chapterPlanAcceptance, .chapterAdjudication, .chapterPlanProposal, .workspacePlot:
+             .continuityRepair, .chapterPlanAcceptance, .chapterAdjudication,
+             .chapterPlanProposal, .workspacePlot:
             4_096
         }
     }
@@ -907,7 +922,7 @@ extension NovelStructuredModelTaskKind {
                 maxOutputTokens: nil,
                 reasoningLevel: .off
             )
-        case .polishDrift, .continuityAudit, .chapterPlanAcceptance, .chapterAdjudication:
+        case .polishDrift, .continuityAudit, .continuityRepair, .chapterPlanAcceptance, .chapterAdjudication:
             .init(
                 temperature: 0,
                 topP: 1,

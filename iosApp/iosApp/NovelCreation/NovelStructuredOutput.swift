@@ -687,6 +687,20 @@ struct NovelContinuityAuditV1: Codable, Equatable, Sendable {
     let issues: [NovelContinuityIssueV1]
 }
 
+/// 针对单章的最小补丁。`oldText` 必须是目标章里只出现一次的连续原文。
+struct NovelContinuityRepairPatchV1: Codable, Equatable, Sendable {
+    let issueId: String
+    let oldText: String
+    let newText: String
+}
+
+struct NovelContinuityRepairV1: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = 1
+
+    let schemaVersion: Int
+    let patches: [NovelContinuityRepairPatchV1]
+}
+
 /// Joint pre-collection adjudication for one whole-chapter candidate.
 /// The nested contracts remain independently strict so acceptance, continuity,
 /// and state extraction cannot silently diverge at the commit boundary.
@@ -926,6 +940,21 @@ enum NovelStructuredOutputDecoder {
         try StrictJSON.validateChapterPlanProposal(root.object)
         let value: NovelChapterPlanProposalV1 = try decode(
             NovelChapterPlanProposalV1.self,
+            from: root.data
+        )
+        try NovelStructuredOutputValidation.validate(value)
+        return value
+    }
+
+    static func decodeContinuityRepair(from text: String) throws -> NovelContinuityRepairV1 {
+        try decodeContinuityRepair(from: Data(text.utf8))
+    }
+
+    static func decodeContinuityRepair(from data: Data) throws -> NovelContinuityRepairV1 {
+        let root = try StrictJSON.rootObject(from: data)
+        try StrictJSON.validateContinuityRepair(root.object)
+        let value: NovelContinuityRepairV1 = try decode(
+            NovelContinuityRepairV1.self,
             from: root.data
         )
         try NovelStructuredOutputValidation.validate(value)
@@ -1299,6 +1328,27 @@ private enum NovelStructuredOutputValidation {
                 path: "$.issues",
                 message: "An inconsistent audit must describe at least one issue."
             )
+        }
+    }
+
+    static func validate(_ value: NovelContinuityRepairV1) throws {
+        try schemaVersion(
+            value.schemaVersion,
+            expected: NovelContinuityRepairV1.currentSchemaVersion
+        )
+        var identifiers: Set<String> = []
+        for (index, patch) in value.patches.enumerated() {
+            let base = "$.patches[\(index)]"
+            try identifier(patch.issueId, path: base + ".issueId", identifiers: &identifiers)
+            try required(patch.oldText, path: base + ".oldText")
+            try required(patch.newText, path: base + ".newText")
+            if patch.oldText == patch.newText {
+                throw failure(
+                    .invalidValue,
+                    path: base,
+                    message: "A continuity repair patch must change the cited text."
+                )
+            }
         }
     }
 
@@ -1891,6 +1941,23 @@ private enum StrictJSON {
         try stringArray(object["mustHappen"], path: "$.mustHappen")
         try stringArray(object["mustNotHappen"], path: "$.mustNotHappen")
         try stringArray(object["visibleFacts"], path: "$.visibleFacts")
+    }
+
+    static func validateContinuityRepair(_ object: Object) throws {
+        try keys(object, path: "$", required: ["schemaVersion", "patches"])
+        try schemaVersion(
+            object["schemaVersion"],
+            expected: NovelContinuityRepairV1.currentSchemaVersion
+        )
+        try objectArray(
+            object["patches"],
+            path: "$.patches",
+            requiredKeys: ["issueId", "oldText", "newText"]
+        ) { item, path in
+            try string(item["issueId"], path: path + ".issueId")
+            try string(item["oldText"], path: path + ".oldText")
+            try string(item["newText"], path: path + ".newText")
+        }
     }
 
     static func validateContinuityAudit(_ object: Object) throws {

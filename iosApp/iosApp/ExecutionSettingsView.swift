@@ -143,7 +143,7 @@ struct ExecutionSettingsView: View {
             AmberFormGroup {
                 ExecutionToggleRow(
                     systemImage: "capsule",
-                    title: "灵动岛实时活动",
+                    title: "聊天灵动岛实时活动",
                     isOn: liveActivity
                 ) {
                     liveActivity.toggle()
@@ -332,11 +332,16 @@ private struct ExecutionToggleRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn ? "已开启" : "已关闭")
+        .accessibilityHint("双击切换")
     }
 }
 
 private struct ExecutionSwitch: View {
     let isOn: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Capsule()
@@ -349,6 +354,6 @@ private struct ExecutionSwitch: View {
                     .shadow(color: .black.opacity(0.16), radius: 3, y: 1)
                     .padding(2)
             }
-            .animation(.snappy(duration: 0.18), value: isOn)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: isOn)
     }
 }

@@ -4,6 +4,9 @@ import Foundation
 /// Watch only renders this snapshot and returns user intents.
 struct WatchTaskSnapshot: Codable, Hashable, Sendable {
     var runId: String
+    /// Resolved on iPhone and carried with the snapshot so Watch renders its
+    /// fixed copy in the same language as the companion app.
+    var languageCode: String? = nil
     var conversationId: String?
     var kind: String
     var phase: String
@@ -143,6 +146,41 @@ enum WatchTaskText {
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\t", with: " ")
         return Self.clipped(collapsed, maxLength: maxLength)
+    }
+}
+
+/// Resolves only fixed Watch copy. Dynamic task content must be passed through
+/// unchanged by callers.
+enum WatchTaskLocalization {
+    static func language(for languageCode: String?) -> IOSAppLanguage {
+        guard let languageCode, !languageCode.isEmpty else { return .system }
+        return IOSAppLanguage(storedValue: languageCode)
+    }
+
+    static func string(
+        _ key: String,
+        defaultValue: String? = nil,
+        languageCode: String?
+    ) -> String {
+        IOSAppLocalization.string(
+            key,
+            defaultValue: defaultValue ?? key,
+            language: language(for: languageCode)
+        )
+    }
+
+    static func formatted(
+        _ key: String,
+        defaultValue: String? = nil,
+        arguments: [CVarArg],
+        languageCode: String?
+    ) -> String {
+        IOSAppLocalization.formatted(
+            key,
+            defaultValue: defaultValue ?? key,
+            arguments: arguments,
+            language: language(for: languageCode)
+        )
     }
 }
 

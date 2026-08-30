@@ -447,8 +447,12 @@ final class IOSMiniAppBridgeRuntime {
                     throw BridgeError.denied("Amber.ai is not available in this MiniApp runner.")
                 }
                 try await confirmSensitive(
-                    title: "允许 AI 生成？",
-                    message: "「\(currentAppTitle)」想调用当前聊天模型生成文本。",
+                    title: IOSAppLocalization.string("允许 AI 生成？", defaultValue: "允许 AI 生成？"),
+                    message: IOSAppLocalization.formatted(
+                        "「%@」想调用当前聊天模型生成文本。",
+                        defaultValue: "「%@」想调用当前聊天模型生成文本。",
+                        arguments: [currentAppTitle]
+                    ),
                     permission: .aiGenerate
                 )
                 try consumeDailyAIBudget()
@@ -491,8 +495,15 @@ final class IOSMiniAppBridgeRuntime {
                     throw BridgeError.denied("MiniApp launch is not available in this runner.")
                 }
                 try await confirmSensitive(
-                    title: "打开另一个小应用？",
-                    message: "「\(currentAppTitle)」想打开小应用 \(targetAppId)。",
+                    title: IOSAppLocalization.string(
+                        "打开另一个小应用？",
+                        defaultValue: "打开另一个小应用？"
+                    ),
+                    message: IOSAppLocalization.formatted(
+                        "「%@」想打开小应用 %@。",
+                        defaultValue: "「%@」想打开小应用 %@。",
+                        arguments: [currentAppTitle, targetAppId]
+                    ),
                     permission: .launch
                 )
                 guard repository.get(targetAppId) != nil else {
@@ -508,8 +519,15 @@ final class IOSMiniAppBridgeRuntime {
                     throw BridgeError.denied("Clipboard reading is not available in this runner.")
                 }
                 try await confirmSensitive(
-                    title: "允许读取剪贴板？",
-                    message: "「\(currentAppTitle)」想读取当前剪贴板文本。",
+                    title: IOSAppLocalization.string(
+                        "允许读取剪贴板？",
+                        defaultValue: "允许读取剪贴板？"
+                    ),
+                    message: IOSAppLocalization.formatted(
+                        "「%@」想读取当前剪贴板文本。",
+                        defaultValue: "「%@」想读取当前剪贴板文本。",
+                        arguments: [currentAppTitle]
+                    ),
                     permission: .clipboardRead
                 )
                 try audit(method: method, permission: .clipboardRead, summary: "clipboard.read", payload: ["requested": true])
@@ -521,9 +539,20 @@ final class IOSMiniAppBridgeRuntime {
                     throw BridgeError.denied("Location is not available in this runner.")
                 }
                 let accuracy = stringParamOrNil("accuracy", params) == "fine" ? "fine" : "coarse"
+                let accuracyTitle = IOSAppLocalization.string(
+                    accuracy == "fine" ? "精确位置" : "大致位置",
+                    defaultValue: accuracy == "fine" ? "精确位置" : "大致位置"
+                )
                 try await confirmSensitive(
-                    title: "允许读取位置？",
-                    message: "「\(currentAppTitle)」想读取 \(accuracy) 位置。",
+                    title: IOSAppLocalization.string(
+                        "允许读取位置？",
+                        defaultValue: "允许读取位置？"
+                    ),
+                    message: IOSAppLocalization.formatted(
+                        "「%@」想读取 %@ 位置。",
+                        defaultValue: "「%@」想读取 %@ 位置。",
+                        arguments: [currentAppTitle, accuracyTitle]
+                    ),
                     permission: .location
                 )
                 try audit(method: method, permission: .location, summary: "location.getCurrent", payload: ["accuracy": accuracy])
@@ -538,8 +567,15 @@ final class IOSMiniAppBridgeRuntime {
                 let intervalMs = max(250, intParam("intervalMs", params, defaultValue: 500, range: 250...60_000))
                 let subscriptionId = UUID().uuidString
                 try await confirmSensitive(
-                    title: "允许读取传感器？",
-                    message: "「\(currentAppTitle)」想订阅 \(type) 传感器。",
+                    title: IOSAppLocalization.string(
+                        "允许读取传感器？",
+                        defaultValue: "允许读取传感器？"
+                    ),
+                    message: IOSAppLocalization.formatted(
+                        "「%@」想订阅 %@ 传感器。",
+                        defaultValue: "「%@」想订阅 %@ 传感器。",
+                        arguments: [currentAppTitle, type]
+                    ),
                     permission: .sensor
                 )
                 try sensorSubscribeHandler(subscriptionId, type, intervalMs) { [weak self] payload in
