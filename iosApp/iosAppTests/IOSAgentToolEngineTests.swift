@@ -253,8 +253,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
     private func fullIosDeclarations() -> [Tool] {
         let names =
             IOSWorkspaceToolCatalog.supportedToolNames
-            .union(IOSIshToolCatalog.supportedToolNames)
-            .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            .union(IOSAgentTerminalToolCatalog.supportedToolNames)
             .union(IOSWebMountToolCatalog.supportedToolNames)
             .union(IOSSkillToolCatalog.toolNames)
             .union(IOSMcpManagementToolCatalog.toolNames)

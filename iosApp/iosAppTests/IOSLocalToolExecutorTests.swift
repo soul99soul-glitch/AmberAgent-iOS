@@ -72,7 +72,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(subAgent.lastApprovalAction, IOSToolApprovalAction.allowed.title)
         XCTAssertFalse(subAgent.lastApprovalReason?.contains("secret") == true)
         XCTAssertTrue(remote.uiActionNames.contains("remote_command_cancel"))
-        XCTAssertTrue(remote.modelToolNames.isEmpty)
+        XCTAssertTrue(remote.modelToolNames.contains("terminal_execute"))
     }
 
     func testFilePickIsDeniedBecauseItIsUIOnly() async {
@@ -99,7 +99,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             "location_current",
             "sms_read",
             "notification_list",
-            "terminal_execute"
+            "terminal_session_exec"
         ]
 
         for toolName in toolNames {
@@ -1828,6 +1828,81 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             }
             XCTAssertTrue(reason.contains("Unknown iOS tool"))
         }
+    }
+
+    func testTerminalJobReadUsesEmbeddedCapabilityForEmbeddedRecord() async throws {
+        let defaults = isolatedDefaults()
+        let permissionStore = IOSPermissionStore(userDefaults: defaults)
+        let remoteCapability = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.remote.command" }
+        )
+        permissionStore.setPolicy(.disabled, for: remoteCapability)
+        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "terminal-jobs")
+        taskStore.startTask(
+            id: "embedded-job",
+            kind: .embeddedIsh,
+            title: "Embedded job",
+            objective: "echo amber",
+            sourceToolName: "ios_ish_execute",
+            metadata: [
+                "terminal_job": "true",
+                "runtime": IOSTerminalRuntimeKind.ishExperimental.rawValue,
+                "stdout_tail": "amber\n",
+            ]
+        )
+        taskStore.updateTask(id: "embedded-job", status: .completed)
+        let executor = IOSLocalToolExecutor(
+            permissionStore: permissionStore,
+            documentStore: DocumentAccessStore(),
+            terminalTaskStore: taskStore
+        )
+
+        let output = await executor.execute(IOSLocalToolExecutionRequest(
+            toolName: IOSRemoteTerminalToolCatalog.jobReadToolName,
+            operation: #"{"job_id":"embedded-job"}"#,
+            scopeDigest: "",
+            payloadDigest: "",
+            isUserInitiated: false
+        ))
+
+        if IOSEmbeddedIshToolCatalog.supportedToolNames.isEmpty {
+            guard case .denied = output else {
+                return XCTFail("Stable target must fail closed for an embedded iSH job record")
+            }
+        } else {
+            guard case .terminalResult(let text) = output else {
+                return XCTFail("Embedded job read should not inherit the disabled Remote SSH policy: \(output)")
+            }
+            let object = try jsonObject(text)
+            XCTAssertEqual(object["runtime"] as? String, IOSTerminalRuntimeKind.ishExperimental.rawValue)
+            XCTAssertEqual(object["stdout"] as? String, "amber\n")
+        }
+    }
+
+    func testRemoteTerminalApprovalPreviewUsesRemoteModeAndBoundedCommand() throws {
+        let profile = IOSSSHProfile(
+            id: "profile-1234567890",
+            name: "Terminal Test",
+            host: "example.com",
+            username: "amber"
+        )
+        let settings = SettingsStore(userDefaults: isolatedDefaults(), storageKey: "terminal-preview")
+        try settings.upsertSSHProfile(profile, password: nil)
+        settings.sshDefaultProfileId = profile.id
+        let preview = try XCTUnwrap(IOSRemoteTerminalExecuteExecutor.approvalPreview(
+            input: #"{"command":"uname -a","profile_id":"profile-1234567890","purpose":"inspect host"}"#,
+            settingsStore: settings
+        ))
+
+        XCTAssertEqual(preview.mode, .remoteSSH)
+        XCTAssertEqual(preview.title, "执行 Remote SSH")
+        XCTAssertEqual(preview.commandPreview, "uname -a")
+        XCTAssertTrue(preview.filename.contains("Terminal Test"))
+        XCTAssertTrue(preview.filename.contains("amber@example.com:22"))
+        XCTAssertEqual(preview.remoteProfileId, profile.id)
+        XCTAssertNotNil(preview.remoteTargetDigest)
+        XCTAssertEqual(preview.primaryChip.title, "远程执行")
+        XCTAssertEqual(preview.secondaryChip.title, "回传输出")
     }
 
     private func makeExecutor(

@@ -24,6 +24,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
     static func resolve(toolName: String) -> ChatToolVisualKind {
         let name = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.contains("subagent_dispatch") { return .subagent }
+        if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(name) { return .terminal }
         switch name {
         case "search_web": return .search
         case "scrape_web": return .web
@@ -31,7 +32,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
         case "mcp_call": return .mcp
         case "model_council_run": return .council
         case "generate_image": return .image
-        case "ish_handoff", "ios_ish_execute": return .terminal
+        case "terminal_execute", "ish_handoff", "ios_ish_execute": return .terminal
         case "workspace_file_write": return .workspaceWrite
         case "workspace_artifact_delete": return .workspaceDelete
         case "workspace_file_read", "workspace_artifact_read": return .workspaceRead
@@ -121,6 +122,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
 enum ChatToolStepState: Equatable {
     case done
     case active
+    case cancelled
     case failed
 
     var iconName: String {
@@ -129,6 +131,8 @@ enum ChatToolStepState: Equatable {
             "checkmark"
         case .active:
             "circle.fill"
+        case .cancelled:
+            "minus"
         case .failed:
             "exclamationmark"
         }
@@ -136,7 +140,7 @@ enum ChatToolStepState: Equatable {
 
     var iconSize: CGFloat {
         switch self {
-        case .done, .failed:
+        case .done, .cancelled, .failed:
             11
         case .active:
             7
@@ -149,6 +153,8 @@ enum ChatToolStepState: Equatable {
             AmberTheme.accentGreen
         case .active:
             AmberTheme.accent
+        case .cancelled:
+            AmberTheme.muted
         case .failed:
             AmberTheme.accentRed
         }
@@ -160,6 +166,8 @@ enum ChatToolStepState: Equatable {
             AmberTheme.accent.opacity(0.08)
         case .active:
             AmberTheme.accent.opacity(0.10)
+        case .cancelled:
+            AmberTheme.muted.opacity(0.08)
         case .failed:
             AmberTheme.accentRed.opacity(0.10)
         }
@@ -171,6 +179,8 @@ enum ChatToolStepState: Equatable {
             AmberTheme.accentGreen.opacity(0.10)
         case .active:
             AmberTheme.accentTint
+        case .cancelled:
+            AmberTheme.muted.opacity(0.10)
         case .failed:
             AmberTheme.accentRed.opacity(0.10)
         }
@@ -182,8 +192,19 @@ enum ChatToolStepState: Equatable {
             AmberTheme.accent.opacity(0.16)
         case .active:
             AmberTheme.accent.opacity(0.20)
+        case .cancelled:
+            AmberTheme.muted.opacity(0.18)
         case .failed:
             AmberTheme.accentRed.opacity(0.22)
+        }
+    }
+
+    var accessibilityTitle: String {
+        switch self {
+        case .done: "已完成"
+        case .active: "进行中"
+        case .cancelled: "已取消"
+        case .failed: "执行失败"
         }
     }
 }
@@ -353,13 +374,90 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "ios_ish_execute" {
             let executed = !tool.output.isEmpty
+            let object = Self.firstJSONObject(in: tool.output)
+            let status = object?["status"] as? String
             let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let launchedJob = object?["background"] as? Bool == true
+                && status == IOSTerminalJobStatus.running.rawValue
+            let title = status == IOSTerminalJobStatus.cancelled.rawValue
+                ? "内置 iSH 已取消"
+                : (failed
+                    ? "内置 iSH 执行失败"
+                    : (launchedJob ? "内置 iSH 作业已启动" : (executed ? "内置 iSH 已执行" : "准备执行内置 iSH")))
             self.init(
                 id: stableID,
                 visualKind: .terminal,
-                title: failed ? "内置 iSH 执行失败" : (executed ? "内置 iSH 已执行" : "准备执行内置 iSH"),
+                title: title,
                 detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
-                state: failed ? .failed : (executed ? .done : .active)
+                state: Self.terminalState(status: status, executed: executed, failed: failed)
+            )
+            return
+        }
+
+        if tool.toolName == "terminal_execute" {
+            let executed = !tool.output.isEmpty
+            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let status = Self.firstJSONObject(in: tool.output)?["status"] as? String
+            let title: String
+            switch status?.lowercased() {
+            case IOSTerminalJobStatus.timedOut.rawValue:
+                title = "Remote SSH 已超时"
+            case IOSTerminalJobStatus.cancelled.rawValue:
+                title = "Remote SSH 已取消"
+            default:
+                title = failed ? "Remote SSH 执行失败" : (executed ? "Remote SSH 已执行" : "准备执行 Remote SSH")
+            }
+            self.init(
+                id: stableID,
+                visualKind: .terminal,
+                title: title,
+                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                state: Self.terminalState(status: status, executed: executed, failed: failed)
+            )
+            return
+        }
+
+        if IOSRemoteTerminalToolCatalog.jobToolNames.contains(tool.toolName) {
+            let executed = !tool.output.isEmpty
+            let object = Self.firstJSONObject(in: tool.output)
+            let status = object?["status"] as? String
+            let runtime = object?["runtime"] as? String
+            let runtimeTitle: String
+            if runtime == IOSTerminalRuntimeKind.ishExperimental.rawValue {
+                runtimeTitle = "内置 iSH"
+            } else if runtime == IOSTerminalRuntimeKind.remoteSSH.rawValue
+                        || tool.toolName == IOSRemoteTerminalToolCatalog.jobStartToolName {
+                runtimeTitle = "Remote SSH"
+            } else {
+                runtimeTitle = "终端"
+            }
+            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let action: String
+            switch tool.toolName {
+            case IOSRemoteTerminalToolCatalog.jobStartToolName:
+                action = status == IOSTerminalJobStatus.running.rawValue ? "Remote SSH 作业已启动" : "启动 Remote SSH 作业"
+            case IOSRemoteTerminalToolCatalog.jobStopToolName:
+                action = "停止 \(runtimeTitle) 作业"
+            case IOSRemoteTerminalToolCatalog.jobWaitToolName:
+                action = "等待 \(runtimeTitle) 作业"
+            default:
+                action = "读取 \(runtimeTitle) 作业"
+            }
+            let statusTitle: String?
+            switch status {
+            case IOSTerminalJobStatus.completed.rawValue: statusTitle = "已完成"
+            case IOSTerminalJobStatus.cancelled.rawValue: statusTitle = "已取消"
+            case IOSTerminalJobStatus.timedOut.rawValue: statusTitle = "已超时"
+            case IOSTerminalJobStatus.interrupted.rawValue: statusTitle = "已中断"
+            case IOSTerminalJobStatus.failed.rawValue: statusTitle = "失败"
+            default: statusTitle = nil
+            }
+            self.init(
+                id: stableID,
+                visualKind: .terminal,
+                title: statusTitle.map { "\(action) · \($0)" } ?? action,
+                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
             return
         }
@@ -446,6 +544,7 @@ struct ChatToolStepModel: Identifiable {
             "permissions_status": "查看权限状态",
             "tools_list": "列出可用工具",
             "subagent_report": "子智能体汇报",
+            "terminal_execute": "Remote SSH 执行",
             "ish_handoff": "iSH 交接",
             "read_health": "读取健康数据",
             "provider_config_status": "查看模型配置",
@@ -746,12 +845,46 @@ struct ChatToolStepModel: Identifiable {
                 ?? (object["stderr"] as? String)?.nilIfBlank
                 ?? "执行失败"
         }
-        let exitCode = object["exit_code"] as? Int ?? 0
+        let status = (object["status"] as? String)?.lowercased()
         let stdout = (object["stdout"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let stdout, !stdout.isEmpty {
-            return "exit \(exitCode) · \(String(stdout.prefix(80)))"
+        let stderr = (object["stderr"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if status == "queued" || status == IOSTerminalJobStatus.running.rawValue {
+            if let stdout, !stdout.isEmpty {
+                return "运行中 · \(String(stdout.prefix(80)))"
+            }
+            if let stderr, !stderr.isEmpty {
+                return "运行中 · stderr: \(String(stderr.prefix(80)))"
+            }
+            return "运行中"
         }
-        return "exit \(exitCode) · 无输出"
+        let exitCode = object["exit_code"] as? Int
+        if let stdout, !stdout.isEmpty {
+            return exitCode.map { "exit \($0) · \(String(stdout.prefix(80)))" }
+                ?? String(stdout.prefix(80))
+        }
+        if let stderr, !stderr.isEmpty {
+            return exitCode.map { "exit \($0) · stderr: \(String(stderr.prefix(80)))" }
+                ?? "stderr: \(String(stderr.prefix(80)))"
+        }
+        return exitCode.map { "exit \($0) · 无输出" }
+            ?? (status == IOSTerminalJobStatus.completed.rawValue ? "已完成 · 无输出" : "无输出")
+    }
+
+    private static func terminalState(status: String?, executed: Bool, failed: Bool) -> ChatToolStepState {
+        switch status?.lowercased() {
+        case "queued", IOSTerminalJobStatus.running.rawValue:
+            return .active
+        case IOSTerminalJobStatus.completed.rawValue:
+            return .done
+        case IOSTerminalJobStatus.cancelled.rawValue:
+            return .cancelled
+        case IOSTerminalJobStatus.failed.rawValue,
+             IOSTerminalJobStatus.timedOut.rawValue,
+             IOSTerminalJobStatus.interrupted.rawValue:
+            return .failed
+        default:
+            return failed ? .failed : (executed ? .done : .active)
+        }
     }
 
     private static func ishToolResultIndicatesFailure(_ output: [UIMessagePart]) -> Bool {
@@ -759,7 +892,7 @@ struct ChatToolStepModel: Identifiable {
         if let ok = object["ok"] as? Bool { return !ok }
         if let denied = object["denied"] as? Bool, denied { return true }
         if let status = object["status"] as? String {
-            return ["failed", "error", "denied", "timed_out"].contains(status.lowercased())
+            return ["failed", "error", "denied", "timed_out", "cancelled"].contains(status.lowercased())
         }
         if let exitCode = object["exit_code"] as? Int {
             return exitCode != 0
@@ -874,6 +1007,10 @@ struct ChatToolTimeline: View {
                 if tappable {
                     Button { onTapStep?(step) } label: { row(step, chevron: true) }
                         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.98, haptic: .selection))
+                        .frame(minHeight: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(step.title)，状态：\(step.state.accessibilityTitle)")
                 } else {
                     row(step, chevron: false)
                 }
@@ -969,6 +1106,11 @@ struct ChatToolTimeline: View {
                 ProgressView()
                     .controlSize(.mini)
                     .tint(AmberTheme.accent)
+            case .cancelled:
+                Image(systemName: "minus")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(AmberTheme.muted)
+                    .contentTransition(.symbolEffect(.replace.downUp))
             case .failed:
                 Image(systemName: "exclamationmark")
                     .font(.system(size: 12, weight: .bold))

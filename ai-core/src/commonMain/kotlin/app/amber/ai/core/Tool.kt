@@ -614,13 +614,70 @@ fun createIshHandoffToolDeclaration(): Tool = Tool(
 fun createIosIshExecuteToolDeclaration(): Tool = Tool(
     name = "ios_ish_execute",
     description = """
-        Execute a POSIX shell command or script inside AmberAgent iOS's embedded experimental iSH runtime.
-        This is not the external iSH app: Amber owns the runtime process and returns stdout, stderr,
-        exit_code, timeout, and status in the tool result. Available only in the iOS ExperimentalGPL
-        build after explicit foreground approval. Use for short, bounded proof commands; do not start
-        long-running interactive programs unless the user explicitly asks.
+        Execute a POSIX shell command or script inside AmberAgent iOS's isolated embedded iSH guest.
+        Available only in the iOS ExperimentalGPL build after explicit foreground approval. Foreground
+        mode returns stdout, stderr, exit_code, timeout, and status. Set background=true for a process-local,
+        asynchronous non-PTY job with no stdin; it returns job_id for terminal_job_read, terminal_job_wait,
+        or terminal_job_stop. Background here means Agent-asynchronous, not durable iOS background execution:
+        app relaunch marks unfinished jobs interrupted. Scripts may use pipes, redirects, package installation,
+        and the writable /workspace guest directory. Captured stdout and stderr tails are capped at 128 KiB each.
     """.trimIndent().replace("\n", " "),
     parameters = { iosIshExecuteParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createTerminalExecuteToolDeclaration(): Tool = Tool(
+    name = "terminal_execute",
+    description = """
+        Execute one bounded, non-interactive command on a trusted Remote SSH profile configured in AmberAgent iOS.
+        The command runs in the foreground after explicit approval and returns separate stdout, stderr, exit_code,
+        timeout, and status fields. This tool does not allocate a PTY, keep an interactive session, install packages,
+        or create a durable background job. Omit profile_id to use the selected default SSH profile.
+    """.trimIndent().replace("\n", " "),
+    parameters = { terminalExecuteParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createTerminalJobStartToolDeclaration(): Tool = Tool(
+    name = "terminal_job_start",
+    description = """
+        Start one bounded, asynchronous, non-PTY command on a trusted Remote SSH profile configured in AmberAgent iOS.
+        Returns a process-local job_id immediately so terminal_job_read or terminal_job_wait can observe stdout, stderr,
+        status, and exit code, and terminal_job_stop can cancel the process while this app process still owns it. Amber persists
+        a snapshot for inspection, but app relaunch marks an unfinished job interrupted because Remote SSH process recovery is
+        not available. Explicit foreground approval is required.
+    """.trimIndent().replace("\n", " "),
+    parameters = { terminalJobStartParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createTerminalJobReadToolDeclaration(): Tool = Tool(
+    name = "terminal_job_read",
+    description = "Read the persisted snapshot and output tails for one AmberAgent iOS terminal job_id returned by Remote SSH terminal_job_start or background embedded iSH execution. This is read-only and does not allocate a PTY or change the job.",
+    parameters = { terminalJobIdParameters() },
+    execute = { emptyList() }
+)
+
+fun createTerminalJobWaitToolDeclaration(): Tool = Tool(
+    name = "terminal_job_wait",
+    description = "Wait briefly for one AmberAgent iOS Remote SSH or embedded iSH job to finish or change, then return its current snapshot. Observer timeout never stops the underlying job.",
+    parameters = { terminalJobWaitParameters() },
+    execute = { emptyList() }
+)
+
+fun createTerminalJobStopToolDeclaration(): Tool = Tool(
+    name = "terminal_job_stop",
+    description = "Stop one running AmberAgent iOS Remote SSH or embedded iSH job while this app process still owns it. Repeated stop calls are idempotent. Explicit foreground approval is required.",
+    parameters = { terminalJobIdParameters() },
     needsApproval = true,
     mandatoryApproval = true,
     allowsAutoApproval = false,
@@ -1074,6 +1131,11 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "file_read_selected" to ::createSelectedFileReadToolDeclaration,
     "ish_handoff" to ::createIshHandoffToolDeclaration,
     "ios_ish_execute" to ::createIosIshExecuteToolDeclaration,
+    "terminal_execute" to ::createTerminalExecuteToolDeclaration,
+    "terminal_job_start" to ::createTerminalJobStartToolDeclaration,
+    "terminal_job_read" to ::createTerminalJobReadToolDeclaration,
+    "terminal_job_wait" to ::createTerminalJobWaitToolDeclaration,
+    "terminal_job_stop" to ::createTerminalJobStopToolDeclaration,
     "permissions_status" to ::createPermissionsStatusToolDeclaration,
     "tools_list" to ::createToolsListToolDeclaration,
     "subagent_report" to ::createSubAgentReportToolDeclaration,
@@ -2199,23 +2261,89 @@ private fun iosIshExecuteParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         put("command", buildJsonObject {
             put("type", "string")
+            put("maxLength", 32000)
             put("description", "Single POSIX shell command to execute with /bin/sh -lc. Use either command or script, not both.")
         })
         put("script", buildJsonObject {
             put("type", "string")
+            put("maxLength", 32000)
             put("description", "Full POSIX /bin/sh script content to execute. Use either script or command, not both.")
+        })
+        put("background", buildJsonObject {
+            put("type", "boolean")
+            put("description", "Optional. When true, start a process-local asynchronous non-PTY job and return job_id. Defaults to false. This does not grant stdin or durable iOS background execution.")
         })
         put("timeout_seconds", buildJsonObject {
             put("type", "integer")
             put("minimum", 1)
-            put("maximum", 180)
-            put("description", "Execution timeout in seconds. Default 60, maximum 180.")
+            put("maximum", 3600)
+            put("description", "Execution timeout in seconds. Foreground default 60 and maximum 180; background default 900 and maximum 3600.")
         })
         put("purpose", buildJsonObject {
             put("type", "string")
             put("description", "Short user-facing reason for this embedded iSH execution.")
         })
+        put("cwd", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional absolute POSIX working directory inside embedded iSH. Defaults to /workspace.")
+        })
     }
+)
+
+private fun terminalExecuteParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("command", buildJsonObject {
+            put("type", "string")
+            put("description", "Required. One bounded shell command to execute on the Remote SSH host without a PTY.")
+        })
+        put("profile_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional SSH profile UUID. Omit to use AmberAgent's selected default SSH profile.")
+        })
+        put("timeout_seconds", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 1)
+            put("maximum", 180)
+            put("description", "Optional foreground execution timeout in seconds. Default 60, maximum 180.")
+        })
+        put("purpose", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional short user-facing reason for this Remote SSH command.")
+        })
+        put("cwd", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional absolute POSIX working directory on the Remote SSH host. Omit to use the SSH account default directory.")
+        })
+    },
+    required = listOf("command")
+)
+
+private fun terminalJobStartParameters(): InputSchema = terminalExecuteParameters()
+
+private fun terminalJobIdParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("job_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Required opaque job handle returned by terminal_job_start.")
+        })
+    },
+    required = listOf("job_id")
+)
+
+private fun terminalJobWaitParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("job_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Required opaque job handle returned by terminal_job_start.")
+        })
+        put("wait_timeout_seconds", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 1)
+            put("maximum", 30)
+            put("description", "Optional observer wait. Default 10 seconds; timeout does not stop the underlying job.")
+        })
+    },
+    required = listOf("job_id")
 )
 
 private fun webMountTool(

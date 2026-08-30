@@ -1136,8 +1136,12 @@ final class ChatRunKernelAdapter {
             )
         case .workspace:
             return await runtime.finishWorkspaceApproval(pending: pending, allow: allow)
-        case .ish:
-            return await runtime.finishIshHandoffApproval(pending: pending, allow: allow)
+        case .ish(let request):
+            return await runtime.finishIshHandoffApproval(
+                pending: pending,
+                allow: allow,
+                approvalRequest: request
+            )
         case .mcp:
             return await runtime.finishMcpApproval(
                 pending: pending,
@@ -1253,9 +1257,7 @@ final class ChatRunKernelAdapter {
         }
         if IOSSearchExecutor.supportedToolNames.contains(toolName) { return 1 }
         if IOSWorkspaceToolCatalog.supportedToolNames.contains(toolName) { return 2 }
-        let ishNames = IOSIshToolCatalog.supportedToolNames
-            .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
-        if ishNames.contains(toolName) { return 3 }
+        if IOSAgentTerminalToolCatalog.supportedToolNames.contains(toolName) { return 3 }
         let webMountNames = IOSWebMountToolCatalog.supportedToolNames
             .union(IOSWebMountToolCatalog.unsupportedToolNames)
         if webMountNames.contains(toolName) { return 4 }

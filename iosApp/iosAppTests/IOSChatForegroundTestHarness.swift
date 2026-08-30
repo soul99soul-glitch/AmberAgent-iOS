@@ -357,6 +357,7 @@ final class IOSChatForegroundHarness {
 
     // Host 生命周期测试只需要搜索审批卡。
     private(set) var pendingSearchApproval: SearchToolApprovalRequest?
+    private(set) var pendingIshHandoffApproval: IshHandoffToolApprovalRequest?
 
     /// run 终态时 steer leftover 的处理记录(autoContinue 标志)。
     private(set) var terminalSteerAutoContinue: [Bool] = []
@@ -377,7 +378,8 @@ final class IOSChatForegroundHarness {
         exposedToolNames: [String] = [],
         seedMessages: [UIMessage]? = nil,
         searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport(),
-        chatMaxToolResumeCount: Int? = nil
+        chatMaxToolResumeCount: Int? = nil,
+        localToolExecutor: IOSLocalToolExecutor? = nil
     ) {
         let suite = "app.amber.ios.tests.foreground.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -420,7 +422,7 @@ final class IOSChatForegroundHarness {
         let dependencies = ChatGenerationDependencies(
             settingsStore: settingsStore,
             sharedSettings: sharedSettings,
-            localToolExecutor: nil,
+            localToolExecutor: localToolExecutor,
             searchTransport: searchTransport,
             liveActivityController: .shared,
             // 生产为 true:审批恢复后要续跑到下一轮模型(resumeAfterApproval
@@ -450,7 +452,10 @@ final class IOSChatForegroundHarness {
             },
             setPendingWebMountApproval: { _ in },
             setPendingWorkspaceApproval: { _ in },
-            setPendingIshHandoffApproval: { _ in },
+            setPendingIshHandoffApproval: { [weak self] request in
+                self?.pendingIshHandoffApproval = request
+                if request != nil { log.append(.approvalRequested(kind: "ish")) }
+            },
             setPendingMcpApproval: { _ in },
             setPendingCouncilApproval: { _ in },
             setPendingAskUser: { _ in },
@@ -517,6 +522,15 @@ final class IOSChatForegroundHarness {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             if let pendingSearchApproval { return pendingSearchApproval }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return nil
+    }
+
+    func waitForPendingIshHandoffApproval(timeoutSeconds: Double = 10) async -> IshHandoffToolApprovalRequest? {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            if let pendingIshHandoffApproval { return pendingIshHandoffApproval }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         return nil

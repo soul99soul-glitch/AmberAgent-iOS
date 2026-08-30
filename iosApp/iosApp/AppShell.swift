@@ -45,7 +45,8 @@ struct AppShell: View {
             permissionStore: permissionStore,
             documentStore: documentAccessStore,
             workspaceStore: workspaceStore,
-            systemPermissionCoordinator: systemPermissionCoordinator
+            systemPermissionCoordinator: systemPermissionCoordinator,
+            settingsStore: settingsStore
         )
         let chatViewModel = ChatViewModel(
             settingsStore: settingsStore,
@@ -196,6 +197,8 @@ struct AppShell: View {
             if !didRunStartupRecovery {
                 didRunStartupRecovery = true
                 let interruptedCouncilTaskIds = IOSAdvancedTaskStore.shared.markInterruptedCouncilTasks()
+                IOSAdvancedTaskStore.shared.markInterruptedRemoteCommandTasks()
+                IOSAdvancedTaskStore.shared.markInterruptedEmbeddedIshTasks()
                 CouncilRoomArchiveStore.shared.markInterrupted(taskIds: interruptedCouncilTaskIds)
                 councilChatViewModel.recoverInterruptedTasks(interruptedCouncilTaskIds)
                 await councilChatViewModel.reconcileDurableRuns()

@@ -1364,12 +1364,12 @@ struct IOSCapabilityRegistry {
         capability(
             id: "ios.embedded.ish_runtime",
             title: "内置 iSH Runtime",
-            summary: "Run short Linux shell commands inside AmberAgent's experimental embedded iSH runtime and return stdout/stderr/exit code. Linked only in the ExperimentalGPL target.",
+            summary: "Run approved non-PTY Linux scripts or process-local asynchronous jobs inside AmberAgent's isolated embedded iSH guest. Shared terminal_job_read/wait/stop tools control those jobs. Jobs have no stdin or relaunch recovery. Linked only in the ExperimentalGPL target.",
             domain: .networkAndConnectivity,
             status: IOSEmbeddedIshToolCatalog.capabilityStatus,
             risk: .high,
             requestKind: IOSEmbeddedIshToolCatalog.supportedToolNames.isEmpty ? .unsupported : .foregroundSession,
-            requestEntryPoint: "Chat ios_ish_execute approval",
+            requestEntryPoint: "Chat ios_ish_execute; terminal_job_read/wait/stop for embedded jobs",
             modelToolNames: Array(IOSEmbeddedIshToolCatalog.supportedToolNames).sorted(),
             unavailableReason: IOSEmbeddedIshToolCatalog.unavailableReason,
             defaultEnabled: true,
@@ -1449,13 +1449,14 @@ struct IOSCapabilityRegistry {
         capability(
             id: "ios.remote.command",
             title: "远程命令",
-            summary: "Run a single command on a trusted Remote SSH profile from foreground UI. Model-dispatched terminal tools remain blocked on iOS.",
+            summary: "Run bounded, non-PTY commands and observable asynchronous jobs on a trusted Remote SSH profile. Agent start/stop require explicit approval; app relaunch marks unfinished jobs interrupted rather than claiming recovery.",
             domain: .networkAndConnectivity,
             status: .supported,
             risk: .high,
             requestKind: .foregroundSession,
-            requestEntryPoint: "Remote Execution screen",
+            requestEntryPoint: "Remote Execution screen / Chat terminal execute or job start-stop approval",
             uiActionNames: ["remote_command_run", "remote_command_cancel"],
+            modelToolNames: Array(IOSRemoteTerminalToolCatalog.supportedToolNames).sorted(),
             defaultEnabled: true,
             gate: freshHighRiskGate
         ),
@@ -1499,7 +1500,7 @@ struct IOSCapabilityRegistry {
         unsupported(
             id: "android.terminal",
             title: "外部终端进程",
-            toolNames: ["terminal_execute", "terminal_job_start", "terminal_session_exec"],
+            toolNames: ["terminal_session_exec"],
             reason: "iOS does not support Termux-style external process execution."
         ),
         unsupported(

@@ -287,6 +287,11 @@ struct CouncilToolApprovalRequest: Identifiable, Equatable {
 enum IshToolApprovalMode: String, Equatable {
     case handoff
     case embeddedExecute
+    case remoteSSH
+    case remoteJobStart
+    case remoteJobStop
+    case embeddedJobStart
+    case embeddedJobStop
 }
 
 struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
@@ -295,11 +300,19 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
     let commandPreview: String
     let filename: String
     let reason: String
+    var contextLines: [String] = []
+    var remoteProfileId: String? = nil
+    var remoteTargetDigest: String? = nil
 
     var title: String {
         switch mode {
         case .handoff: "交接到 iSH"
         case .embeddedExecute: "执行内置 iSH"
+        case .remoteSSH: "执行 Remote SSH"
+        case .remoteJobStart: "启动 Remote SSH 作业"
+        case .remoteJobStop: "停止 Remote SSH 作业"
+        case .embeddedJobStart: "启动内置 iSH 作业"
+        case .embeddedJobStop: "停止内置 iSH 作业"
         }
     }
 
@@ -307,6 +320,11 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
         switch mode {
         case .handoff: ("doc.on.clipboard", "复制到剪贴板")
         case .embeddedExecute: ("terminal", "本地执行")
+        case .remoteSSH: ("desktopcomputer", "远程执行")
+        case .remoteJobStart: ("play.fill", "启动作业")
+        case .remoteJobStop: ("stop.fill", "停止作业")
+        case .embeddedJobStart: ("play.fill", "异步启动")
+        case .embeddedJobStop: ("stop.fill", "停止作业")
         }
     }
 
@@ -314,6 +332,22 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
         switch mode {
         case .handoff: ("hand.tap", "需手动粘贴")
         case .embeddedExecute: ("arrowshape.turn.up.left", "回传输出")
+        case .remoteSSH: ("arrowshape.turn.up.left", "回传输出")
+        case .remoteJobStart: ("number", "返回 Job ID")
+        case .remoteJobStop: ("checkmark.circle", "幂等取消")
+        case .embeddedJobStart: ("number", "返回 Job ID")
+        case .embeddedJobStop: ("checkmark.circle", "幂等取消")
+        }
+    }
+
+    var commandReviewAccessibilityHint: String {
+        switch mode {
+        case .handoff:
+            "审批前检查将交接到外部 iSH 的完整命令"
+        case .embeddedExecute, .embeddedJobStart, .embeddedJobStop:
+            "审批前检查内置 iSH 的完整命令"
+        case .remoteSSH, .remoteJobStart, .remoteJobStop:
+            "审批前检查完整的 Remote SSH 命令"
         }
     }
 }
@@ -508,8 +542,27 @@ enum ChatToolApprovalRequestBuilder {
     @MainActor
     static func ishHandoff(
         for toolCall: UIMessagePart.Tool,
-        reason: String
+        reason: String,
+        localToolExecutor: IOSLocalToolExecutor? = nil
     ) -> IshHandoffToolApprovalRequest? {
+        if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolCall.toolName) {
+            guard let preview = localToolExecutor?.remoteTerminalApprovalPreview(
+                toolName: toolCall.toolName,
+                input: toolCall.input
+            ) ?? IOSRemoteTerminalExecuteExecutor.approvalPreview(input: toolCall.input) else {
+                return nil
+            }
+            return IshHandoffToolApprovalRequest(
+                id: ChatToolCallParsing.requestId(for: toolCall),
+                mode: preview.mode,
+                commandPreview: preview.commandPreview,
+                filename: preview.filename,
+                reason: reason,
+                contextLines: preview.contextLines,
+                remoteProfileId: preview.remoteProfileId,
+                remoteTargetDigest: preview.remoteTargetDigest
+            )
+        }
         if IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolCall.toolName) {
             guard let preview = IOSEmbeddedIshExecuteExecutor.approvalPreview(input: toolCall.input) else {
                 return nil
@@ -519,7 +572,8 @@ enum ChatToolApprovalRequestBuilder {
                 mode: preview.mode,
                 commandPreview: preview.commandPreview,
                 filename: preview.filename,
-                reason: reason
+                reason: reason,
+                contextLines: preview.contextLines
             )
         }
         guard let preview = IOSIshHandoffExecutor.approvalPreview(input: toolCall.input) else {
@@ -710,7 +764,7 @@ enum ChatToolOutputFormatter {
                 "platform": snapshot.platform,
                 "capabilities": capabilities
             ]))
-        case .workspaceResult(let result), .webMountResult(let result), .ishExecuteResult(let result), .ishHandoffResult(let result):
+        case .workspaceResult(let result), .webMountResult(let result), .terminalResult(let result), .ishExecuteResult(let result), .ishHandoffResult(let result):
             return .filled(result)
         case .needsUserAction(let reason):
             return .denied(reason)
@@ -743,6 +797,8 @@ enum ChatToolOutputFormatter {
     ) -> String {
         switch output {
         case .workspaceResult(let result):
+            return result
+        case .terminalResult(let result):
             return result
         case .ishExecuteResult(let result):
             return result
@@ -793,8 +849,11 @@ enum ChatToolOutputFormatter {
         for toolCall: UIMessagePart.Tool,
         output: IOSLocalToolExecutionOutput
     ) -> String {
-        let canReturnExecutionOutput = IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolCall.toolName)
+        let canReturnExecutionOutput = IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolCall.toolName)
+            || IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolCall.toolName)
         switch output {
+        case .terminalResult(let result):
+            return result
         case .ishExecuteResult(let result):
             return result
         case .ishHandoffResult(let result):
@@ -832,7 +891,7 @@ enum ChatToolOutputFormatter {
             return IOSWorkspaceStore.json([
                 "ok": false,
                 "tool": toolCall.toolName,
-                "error": "Unexpected output for iSH handoff tool.",
+                "error": "Unexpected output for terminal tool.",
                 "stdout_available": canReturnExecutionOutput,
                 "stderr_available": canReturnExecutionOutput,
                 "exit_code_available": false
@@ -847,7 +906,7 @@ enum ChatToolOutputFormatter {
         switch output {
         case .webMountResult(let result):
             return result
-        case .ishExecuteResult, .ishHandoffResult:
+        case .terminalResult, .ishExecuteResult, .ishHandoffResult:
             return IOSWebMountController.json([
                 "ok": false,
                 "tool": toolCall.toolName,

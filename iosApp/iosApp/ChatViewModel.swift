@@ -2475,8 +2475,8 @@ final class ChatViewModel {
                 presentation: .selectedFileReadFailed,
                 dismissalDelay: 6
             )
-        case .ishExecuteResult, .ishHandoffResult:
-            selectedFileContextError = "iSH tool output cannot be attached to a chat message."
+        case .terminalResult, .ishExecuteResult, .ishHandoffResult:
+            selectedFileContextError = "Terminal tool output cannot be attached to a chat message."
             await liveActivityController.end(
                 runId: activityRunId,
                 presentation: .selectedFileReadFailed,
@@ -2634,12 +2634,12 @@ final class ChatViewModel {
         kernelRunHost.denyPendingWorkspaceTool()
     }
 
-    func approvePendingIshHandoffTool() {
-        kernelRunHost.approvePendingIshHandoffTool()
+    func approvePendingIshHandoffTool(requestId: String) {
+        kernelRunHost.approvePendingIshHandoffTool(requestId: requestId)
     }
 
-    func denyPendingIshHandoffTool() {
-        kernelRunHost.denyPendingIshHandoffTool()
+    func denyPendingIshHandoffTool(requestId: String) {
+        kernelRunHost.denyPendingIshHandoffTool(requestId: requestId)
     }
 
     func approvePendingMcpTool(requestId: String) {
@@ -2688,8 +2688,8 @@ final class ChatViewModel {
             approvePendingWebMountTool(requestId: request.id)
         } else if pendingWorkspaceApproval != nil {
             approvePendingWorkspaceTool()
-        } else if pendingIshHandoffApproval != nil {
-            approvePendingIshHandoffTool()
+        } else if let request = pendingIshHandoffApproval {
+            approvePendingIshHandoffTool(requestId: request.id)
         } else if let request = pendingMcpApproval {
             // Slice B 同款纪律:Watch 路径把 UI 展示的 request id 传回核对。
             approvePendingMcpTool(requestId: request.id)
@@ -2711,8 +2711,8 @@ final class ChatViewModel {
             denyPendingWebMountTool(requestId: request.id)
         } else if pendingWorkspaceApproval != nil {
             denyPendingWorkspaceTool()
-        } else if pendingIshHandoffApproval != nil {
-            denyPendingIshHandoffTool()
+        } else if let request = pendingIshHandoffApproval {
+            denyPendingIshHandoffTool(requestId: request.id)
         } else if let request = pendingMcpApproval {
             denyPendingMcpTool(requestId: request.id)
         } else if pendingCouncilApproval != nil {
@@ -3758,9 +3758,7 @@ final class ChatViewModel {
     }
 
     private func ishToolNamesForCurrentTurn() -> [String] {
-        enabledModelToolNames(
-            IOSEmbeddedIshToolCatalog.supportedToolNames.union(IOSIshToolCatalog.supportedToolNames)
-        )
+        enabledModelToolNames(IOSAgentTerminalToolCatalog.supportedToolNames)
     }
 
     #if DEBUG

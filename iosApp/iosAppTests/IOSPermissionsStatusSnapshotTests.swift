@@ -98,7 +98,8 @@ final class IOSPermissionsStatusSnapshotTests: XCTestCase {
 
         XCTAssertTrue(smsRead.blockedToolNames.contains("sms_read"))
         XCTAssertTrue(notificationRead.blockedToolNames.contains("notification_list"))
-        XCTAssertTrue(terminal.blockedToolNames.contains("terminal_execute"))
+        XCTAssertTrue(terminal.blockedToolNames.contains("terminal_session_exec"))
+        XCTAssertFalse(terminal.blockedToolNames.contains("terminal_job_start"))
         XCTAssertEqual(smsRead.domain, "Unavailable on iOS")
         XCTAssertFalse(smsRead.executable)
         XCTAssertFalse(notificationRead.executable)
@@ -141,7 +142,7 @@ final class IOSPermissionsStatusSnapshotTests: XCTestCase {
             XCTAssertTrue(embeddedIsh.reason?.contains("ExperimentalGPL") == true)
         }
         XCTAssertTrue(remote.executable)
-        XCTAssertTrue(remote.modelToolNames.isEmpty)
+        XCTAssertTrue(remote.modelToolNames.contains("terminal_execute"))
         XCTAssertTrue(remote.uiActionNames.contains("remote_command_run"))
         XCTAssertEqual(remote.lastApprovalAction, IOSToolApprovalAction.allowed.title)
         XCTAssertFalse(remote.lastApprovalReason?.contains("secret") == true)

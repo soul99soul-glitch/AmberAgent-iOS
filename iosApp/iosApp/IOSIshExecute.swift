@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 enum IOSEmbeddedIshToolCatalog {
     #if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
@@ -17,54 +18,74 @@ struct IOSEmbeddedIshExecuteRequest {
     let script: String?
     let timeoutSeconds: TimeInterval
     let purpose: String?
+    let workingDirectory: String
+    let background: Bool
 }
 
 @MainActor
 enum IOSEmbeddedIshExecuteExecutor {
     private static let maxScriptLength = 32_000
     private static let defaultTimeout: TimeInterval = 60
-    private static let maxTimeout: TimeInterval = 180
+    private static let maxForegroundTimeout: TimeInterval = 180
+    private static let defaultBackgroundTimeout: TimeInterval = 900
+    private static let maxBackgroundTimeout: TimeInterval = 3_600
 
-    static func execute(input: String) async -> String {
+    static func execute(
+        input: String,
+        runtime: IOSTerminalRuntime = .shared,
+        taskStore: IOSAdvancedTaskStore = .shared
+    ) async -> String {
         do {
             let request = try parseRequest(input)
-            let command = try normalizedCommand(command: request.command, script: request.script)
+            let rawCommand = try normalizedCommand(command: request.command, script: request.script)
+            let command: String
+            switch IOSEmbeddedIshCommandPolicy.validate(rawCommand) {
+            case .success(let validated):
+                command = validated
+            case .failure(let message):
+                throw IOSEmbeddedIshExecuteError.commandRejected(message)
+            }
+            if request.background {
+        return await IOSAgentTerminalJobExecutor.startEmbeddedJob(
+                    command: command,
+                    purpose: request.purpose,
+                    workingDirectory: request.workingDirectory,
+                    timeoutSeconds: request.timeoutSeconds,
+                    runtime: runtime,
+                    taskStore: taskStore
+                )
+            }
             let result = await IOSEmbeddedIshRuntime.shared.run(
                 command: command,
+                workingDirectory: request.workingDirectory,
                 timeoutSeconds: request.timeoutSeconds
             )
-            let cancelled = Task.isCancelled && result.error == nil
-            let status: String
-            if cancelled {
-                status = "cancelled"
-            } else if result.timedOut {
-                status = "timed_out"
-            } else if let exitCode = result.exitCode, exitCode == 0, result.error == nil {
-                status = "completed"
-            } else {
-                status = "failed"
-            }
+            let status = executionStatus(result: result, taskCancelled: Task.isCancelled)
             let exitCodeValue: Any = result.exitCode.map { $0 as Any } ?? NSNull()
             return IOSWorkspaceStore.json([
-                "ok": status == "completed",
+                "ok": status == .completed,
                 "tool": "ios_ish_execute",
-                "runtime": "embedded_ish",
-                "status": status,
+                "runtime": IOSTerminalRuntimeKind.ishExperimental.rawValue,
+                "status": status.rawValue,
+                "background": false,
                 "purpose": request.purpose ?? "",
+                "cwd": request.workingDirectory,
                 "exit_code": exitCodeValue,
                 "stdout": result.stdout,
                 "stderr": result.stderr,
                 "stdout_available": true,
                 "stderr_available": true,
+                "stdout_truncated": result.stdoutTruncated,
+                "stderr_truncated": result.stderrTruncated,
                 "exit_code_available": result.exitCode != nil,
                 "timed_out": result.timedOut,
-                "error": cancelled ? "Embedded iSH command was cancelled." : result.error ?? ""
+                "error": status == .cancelled ? "Embedded iSH command was cancelled." : result.error ?? ""
             ])
         } catch {
             return IOSWorkspaceStore.json([
                 "ok": false,
                 "tool": "ios_ish_execute",
-                "runtime": "embedded_ish",
+                "runtime": IOSTerminalRuntimeKind.ishExperimental.rawValue,
                 "status": "failed",
                 "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
                 "stdout": "",
@@ -77,19 +98,23 @@ enum IOSEmbeddedIshExecuteExecutor {
     }
 
     static func approvalPreview(input: String) -> IshHandoffToolApprovalRequest? {
-        let parsed = (try? parseRequest(input)) ?? IOSEmbeddedIshExecuteRequest(
-            command: input,
-            script: nil,
-            timeoutSeconds: defaultTimeout,
-            purpose: nil
-        )
-        let previewSource = parsed.script?.nilIfBlank ?? parsed.command?.nilIfBlank ?? input
+        guard let parsed = try? parseRequest(input) else { return nil }
+        let previewSource = nonBlankValue(parsed.script) ?? nonBlankValue(parsed.command) ?? input
         return IshHandoffToolApprovalRequest(
             id: chatInputDigest(for: input),
-            mode: .embeddedExecute,
-            commandPreview: truncated(previewSource, maxLength: 1_200),
-            filename: "embedded iSH · /bin/sh",
-            reason: "内置 iSH 会在 Amber 沙盒内执行 Linux 命令，并把 stdout/stderr/exit code 回传给 Agent。"
+            mode: parsed.background ? .embeddedJobStart : .embeddedExecute,
+            commandPreview: previewSource,
+            filename: "ExperimentalGPL 内置 iSH · \(parsed.workingDirectory)",
+            reason: parsed.background
+                ? "内置 iSH 会启动进程内异步非 PTY 作业并返回 Job ID；App 重启后未完成作业会标记为中断。"
+                : "内置 iSH 会在隔离 guest 内执行 Linux 命令，并把 stdout/stderr/exit code 回传给 Agent。",
+            contextLines: [
+                "模式：\(parsed.background ? "异步 Job（无 PTY、无 stdin）" : "前台非 PTY 执行")",
+                "工作目录：\(parsed.workingDirectory)",
+                "超时：\(Int(parsed.timeoutSeconds)) 秒",
+                "脚本：\(previewSource.count) 个字符",
+                parsed.background ? "生命周期：当前 App 进程；重启后标记中断" : "生命周期：等待本次执行结束",
+            ]
         )
     }
 
@@ -102,21 +127,38 @@ enum IOSEmbeddedIshExecuteExecutor {
                 command: trimmed,
                 script: nil,
                 timeoutSeconds: defaultTimeout,
-                purpose: nil
+                purpose: nil,
+                workingDirectory: IOSPOSIXWorkingDirectory.embeddedDefault,
+                background: false
             )
         }
-        let timeoutValue = numericValue(object["timeout_seconds"]) ?? defaultTimeout
+        let background = try backgroundValue(object["background"])
+        let defaultTimeoutValue = background ? defaultBackgroundTimeout : defaultTimeout
+        let maxTimeoutValue = background ? maxBackgroundTimeout : maxForegroundTimeout
+        let timeoutValue = numericValue(object["timeout_seconds"]) ?? defaultTimeoutValue
         return IOSEmbeddedIshExecuteRequest(
             command: stringValue(object["command"]),
             script: stringValue(object["script"]),
-            timeoutSeconds: min(max(1, timeoutValue), maxTimeout),
-            purpose: stringValue(object["purpose"])
+            timeoutSeconds: min(max(1, timeoutValue), maxTimeoutValue),
+            purpose: stringValue(object["purpose"]),
+            workingDirectory: try workingDirectory(from: object),
+            background: background
         )
     }
 
+    static func executionStatus(
+        result: IOSEmbeddedIshCommandResult,
+        taskCancelled: Bool
+    ) -> IOSTerminalJobStatus {
+        if result.cancelled || taskCancelled { return .cancelled }
+        if result.timedOut { return .timedOut }
+        if result.exitCode == 0, result.error == nil { return .completed }
+        return .failed
+    }
+
     private static func normalizedCommand(command: String?, script: String?) throws -> String {
-        let rawCommand = command?.nilIfBlank
-        let rawScript = script?.nilIfBlank
+        let rawCommand = nonBlankValue(command)
+        let rawScript = nonBlankValue(script)
         if rawCommand != nil, rawScript != nil {
             throw IOSEmbeddedIshExecuteError.ambiguousInput
         }
@@ -129,10 +171,31 @@ enum IOSEmbeddedIshExecuteExecutor {
         return value
     }
 
+    private static func nonBlankValue(_ value: String?) -> String? {
+        guard let value,
+              !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return value
+    }
+
     private static func stringValue(_ value: Any?) -> String? {
         guard let string = value as? String else { return nil }
         let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : string
+    }
+
+    private static func workingDirectory(from object: [String: Any]) throws -> String {
+        guard let value = object["cwd"] else {
+            return IOSPOSIXWorkingDirectory.embeddedDefault
+        }
+        guard let string = value as? String else {
+            throw IOSEmbeddedIshExecuteError.invalidArguments("cwd must be a string.")
+        }
+        return try IOSPOSIXWorkingDirectory.normalized(
+            string,
+            default: IOSPOSIXWorkingDirectory.embeddedDefault
+        ) ?? IOSPOSIXWorkingDirectory.embeddedDefault
     }
 
     private static func numericValue(_ value: Any?) -> TimeInterval? {
@@ -143,9 +206,13 @@ enum IOSEmbeddedIshExecuteExecutor {
         return nil
     }
 
-    private static func truncated(_ value: String, maxLength: Int) -> String {
-        guard value.count > maxLength else { return value }
-        return String(value.prefix(maxLength)) + "\n..."
+    private static func backgroundValue(_ value: Any?) throws -> Bool {
+        guard let value else { return false }
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) == CFBooleanGetTypeID() else {
+            throw IOSEmbeddedIshExecuteError.invalidArguments("background must be a boolean.")
+        }
+        return number.boolValue
     }
 }
 
@@ -153,6 +220,8 @@ enum IOSEmbeddedIshExecuteError: LocalizedError {
     case emptyInput
     case ambiguousInput
     case scriptTooLarge(Int)
+    case invalidArguments(String)
+    case commandRejected(String)
 
     var errorDescription: String? {
         switch self {
@@ -162,6 +231,8 @@ enum IOSEmbeddedIshExecuteError: LocalizedError {
             "Provide command or script, not both."
         case .scriptTooLarge(let maxLength):
             "Embedded iSH script is too large. Maximum length is \(maxLength) characters."
+        case .invalidArguments(let message), .commandRejected(let message):
+            message
         }
     }
 }

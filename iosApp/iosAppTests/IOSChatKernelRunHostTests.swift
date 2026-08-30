@@ -94,14 +94,16 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         exposedToolNames: [String] = [],
         searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport(),
         chatMaxToolResumeCount: Int? = nil,
-        seedMessages: [UIMessage]? = nil
+        seedMessages: [UIMessage]? = nil,
+        localToolExecutor: IOSLocalToolExecutor? = nil
     ) -> IOSChatForegroundHarness {
         // Host 不驱动 CGC;harness 的 rounds 剧本留空(dispatch 不启动)。
         IOSChatForegroundHarness(
             exposedToolNames: exposedToolNames,
             seedMessages: seedMessages,
             searchTransport: searchTransport,
-            chatMaxToolResumeCount: chatMaxToolResumeCount
+            chatMaxToolResumeCount: chatMaxToolResumeCount,
+            localToolExecutor: localToolExecutor
         )
     }
 
@@ -316,6 +318,43 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertTrue(deniedLanded, "approvalDenied 必须落地")
         XCTAssertEqual(provider.callCount, 2)
         XCTAssertEqual(harness.messages.last?.toText(), "已记录")
+    }
+
+    func testStaleIshApprovalRequestCannotResolveCurrentPrompt() async {
+        let defaults = UserDefaults(suiteName: "terminal-approval-\(UUID().uuidString)")!
+        let localExecutor = IOSLocalToolExecutor(
+            permissionStore: IOSPermissionStore(userDefaults: defaults),
+            documentStore: DocumentAccessStore(),
+            workspaceStore: IOSWorkspaceStore(
+                baseDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            )
+        )
+        let harness = makeHarness(
+            exposedToolNames: ["ish_handoff"],
+            localToolExecutor: localExecutor
+        )
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("ish-approval-1", "ish_handoff", #"{"script":"printf amber"}"#),
+            textRound("已拒绝"),
+        ])
+        let host = makeHost(harness: harness, provider: provider)
+        start(host, harness: harness)
+
+        guard let current = await harness.waitForPendingIshHandoffApproval() else {
+            return XCTFail("终端审批卡必须发布")
+        }
+
+        host.approvePendingIshHandoffTool(requestId: "stale-request")
+
+        XCTAssertEqual(harness.pendingIshHandoffApproval?.id, current.id)
+        XCTAssertTrue(host.hasPendingToolApproval)
+        XCTAssertEqual(provider.callCount, 1)
+
+        host.denyPendingIshHandoffTool(requestId: current.id)
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, "completed")
+        XCTAssertNil(harness.pendingIshHandoffApproval)
+        XCTAssertEqual(provider.callCount, 2)
     }
 
     func testSearchApprovalTerminalFailureStopsBeforeNextProviderRound() async {

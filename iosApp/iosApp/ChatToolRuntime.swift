@@ -41,7 +41,7 @@ private final class IOSClosureToolExecutor: IOSToolExecutor {
 private extension IOSLocalToolExecutionOutput {
     var isSuccessfulToolResult: Bool {
         switch self {
-        case .selectedFilePreview, .permissionsStatus, .ishExecuteResult, .ishHandoffResult, .workspaceResult, .webMountResult:
+        case .selectedFilePreview, .permissionsStatus, .terminalResult, .ishExecuteResult, .ishHandoffResult, .workspaceResult, .webMountResult:
             true
         case .needsUserAction, .denied, .failed:
             false
@@ -576,14 +576,14 @@ final class ChatToolRuntime {
                 }
             }
 
-            for name in IOSIshToolCatalog.supportedToolNames.union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            for name in IOSAgentTerminalToolCatalog.supportedToolNames
             where availableToolNames.contains(name) {
                 executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.ishToolExecutionOutput(toolCall, isUserInitiated: false)
                     if case .needsUserAction(let reason) = output {
-                        return .denied("后台生成期间需要回到 App 确认 iSH 操作：\(reason)")
+                        return .denied("后台生成期间需要回到 App 确认终端操作：\(reason)")
                     }
                     return .filled(ChatToolOutputFormatter.ishHandoffResultText(for: toolCall, output: output))
                 }
@@ -960,9 +960,7 @@ final class ChatToolRuntime {
         if IOSSearchExecutor.supportedToolNames.contains(name) { return .search }
         if localToolExecutor != nil {
             if IOSWorkspaceToolCatalog.supportedToolNames.contains(name) { return .workspace }
-            let ishNames = IOSIshToolCatalog.supportedToolNames
-                .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
-            if ishNames.contains(name) { return .ish }
+            if IOSAgentTerminalToolCatalog.supportedToolNames.contains(name) { return .ish }
         }
         if isWebMountRuntimeEnabled {
             let webMountNames = IOSWebMountToolCatalog.supportedToolNames
@@ -1169,14 +1167,14 @@ final class ChatToolRuntime {
     /// the discovery tool, and `ask_user` (its HITL card cannot be re-entered
     /// from inside an evaluation). Single source for the engine's function
     /// injection AND the coordinator's nested-runner classification.
-    static let execNestedToolExclusions: Set<String> = [
+    static let execNestedToolExclusions: Set<String> = Set([
         "exec", "spawn_agent", "list_agents", "interrupt_agent",
         "send_message", "followup_task", "wait_agent", "tool_search", "ask_user",
         // Nested exec only sees a synthetic assistant message — pad-image enrich
         // cannot resolve user attachments, and image gen is a paid side effect.
         "generate_image",
         "theme_pack_import",
-    ]
+    ]).union(IOSRemoteTerminalToolCatalog.jobToolNames)
 
     /// P3-b: whitelist for one evaluation's `tools` object = the current
     /// round's visible tool set minus the exec exclusions. Same source for
@@ -1444,14 +1442,20 @@ final class ChatToolRuntime {
 
     func finishIshHandoffApproval(
         pending: ChatPendingToolApproval,
-        allow: Bool
+        allow: Bool,
+        approvalRequest: IshHandoffToolApprovalRequest? = nil
     ) async -> [UIMessage] {
-        let isEmbeddedIshExecution = IOSEmbeddedIshToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
+        let capabilityId = approvalRequest?.mode == .embeddedJobStop
+            ? "ios.embedded.ish_runtime"
+            : (IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
+                ?? "ios.external.ish_handoff")
+        let canReturnExecutionOutput = IOSRemoteTerminalToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
+            || IOSEmbeddedIshToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
         recordToolApproval(
-            capabilityId: isEmbeddedIshExecution ? "ios.embedded.ish_runtime" : "ios.external.ish_handoff",
+            capabilityId: capabilityId,
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
-            reason: allow ? "User approved iSH tool." : "User denied iSH tool.",
+            reason: allow ? "User approved terminal tool." : "User denied terminal tool.",
             runId: pending.runId,
             executionPolicy: pending.executionPolicy
         )
@@ -1461,7 +1465,8 @@ final class ChatToolRuntime {
             let output = await ishToolExecutionOutput(
                 pending.toolCall,
                 isUserInitiated: true,
-                executionPolicy: pending.executionPolicy
+                executionPolicy: pending.executionPolicy,
+                approvalRequest: approvalRequest
             )
             resultText = ChatToolOutputFormatter.ishHandoffResultText(for: pending.toolCall, output: output)
         } else {
@@ -1470,9 +1475,9 @@ final class ChatToolRuntime {
                 "tool": pending.toolCall.toolName,
                 "denied": true,
                 "policy": "user_denied",
-                "reason": "User denied iSH tool.",
-                "stdout_available": isEmbeddedIshExecution,
-                "stderr_available": isEmbeddedIshExecution,
+                "reason": "User denied terminal tool.",
+                "stdout_available": canReturnExecutionOutput,
+                "stderr_available": canReturnExecutionOutput,
                 "exit_code_available": false
             ])
         }
@@ -1870,12 +1875,10 @@ final class ChatToolRuntime {
         availableToolNames: Set<String>
     ) -> UIMessagePart.Tool? {
         guard localToolExecutor != nil else { return nil }
-        let ishNames = IOSIshToolCatalog.supportedToolNames
-            .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
         for message in messages.reversed() where message.role == MessageRole.assistant {
             if let toolCall = message.parts.compactMap({ $0 as? UIMessagePart.Tool })
                 .first(where: {
-                    ishNames.contains($0.toolName)
+                    IOSAgentTerminalToolCatalog.supportedToolNames.contains($0.toolName)
                         && availableToolNames.contains($0.toolName)
                         && $0.output.isEmpty
                 }) {
@@ -2338,7 +2341,11 @@ final class ChatToolRuntime {
     private func executeIshToolCall(_ pending: ChatPendingToolApproval) async -> ChatToolRuntimeResult {
         let output = await ishToolExecutionOutput(pending.toolCall, isUserInitiated: false)
         if case .needsUserAction(let reason) = output,
-           let request = ChatToolApprovalRequestBuilder.ishHandoff(for: pending.toolCall, reason: reason) {
+           let request = ChatToolApprovalRequestBuilder.ishHandoff(
+               for: pending.toolCall,
+               reason: reason,
+               localToolExecutor: localToolExecutor
+           ) {
             return .waitingForApproval(.ish(request))
         }
 
@@ -3474,7 +3481,7 @@ final class ChatToolRuntime {
         case .ish:
             // The iSH gates require explicit foreground approval for every
             // non-user-initiated call (no auto-approve bypass) — mirror.
-            return .approvalRequired(reason: "iSH 执行需要显式批准。")
+            return .approvalRequired(reason: "终端执行需要显式批准。")
         case .webMount:
             return await webMountRecipeStepGate(
                 toolName: tool,
@@ -3926,7 +3933,8 @@ final class ChatToolRuntime {
     private func ishToolExecutionOutput(
         _ toolCall: UIMessagePart.Tool,
         isUserInitiated: Bool,
-        executionPolicy: IOSExecutionPolicySnapshot? = nil
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
+        approvalRequest: IshHandoffToolApprovalRequest? = nil
     ) async -> IOSLocalToolExecutionOutput {
         guard let localToolExecutor else {
             return .failed("Local iOS tool executor is unavailable.")
@@ -3935,7 +3943,9 @@ final class ChatToolRuntime {
             toolName: toolCall.toolName,
             operation: toolCall.input,
             isUserInitiated: isUserInitiated,
-            executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
+            executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot,
+            approvedRemoteProfileId: approvalRequest?.remoteProfileId,
+            approvedRemoteTargetDigest: approvalRequest?.remoteTargetDigest
         ))
     }
 

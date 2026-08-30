@@ -850,10 +850,10 @@ enum IOSToolEffectClassMapping {
         if IOSWorkspaceToolCatalog.supportedToolNames.contains(toolName) {
             return .sideEffect
         }
-        if IOSIshToolCatalog.supportedToolNames.contains(toolName) {
-            return .sideEffect
+        if IOSRemoteTerminalToolCatalog.readOnlyToolNames.contains(toolName) {
+            return .pure
         }
-        if IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolName) {
+        if IOSAgentTerminalToolCatalog.supportedToolNames.contains(toolName) {
             return .sideEffect
         }
         if IOSWebMountToolCatalog.supportedToolNames.contains(toolName)

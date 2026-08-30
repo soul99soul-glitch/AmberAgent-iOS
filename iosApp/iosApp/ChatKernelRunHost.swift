@@ -1282,12 +1282,12 @@ final class ChatKernelRunHost {
         _ = resolvePendingApproval(decision: .deny, category: .workspace)
     }
 
-    func approvePendingIshHandoffTool() {
-        _ = resolvePendingApproval(decision: .approve, category: .ish)
+    func approvePendingIshHandoffTool(requestId: String) {
+        _ = resolvePendingApproval(decision: .approve, category: .ish, requestId: requestId)
     }
 
-    func denyPendingIshHandoffTool() {
-        _ = resolvePendingApproval(decision: .deny, category: .ish)
+    func denyPendingIshHandoffTool(requestId: String) {
+        _ = resolvePendingApproval(decision: .deny, category: .ish, requestId: requestId)
     }
 
     func approvePendingMcpTool(requestId: String? = nil) {

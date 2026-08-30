@@ -157,8 +157,17 @@ struct ChatToolDetailSheet: View {
 
     private var friendlyName: String {
         if isSubAgent { return "子智能体" }
+        if tool.toolName == "terminal_execute" { return "Remote SSH 执行" }
         if tool.toolName == "ish_handoff" { return "iSH 交接" }
         if tool.toolName == "ios_ish_execute" { return "内置 iSH 执行" }
+        if IOSRemoteTerminalToolCatalog.jobToolNames.contains(tool.toolName) {
+            let runtime = ChatToolStepModel.firstJSONObject(in: tool.output)?["runtime"] as? String
+            return runtime == IOSTerminalRuntimeKind.ishExperimental.rawValue
+                ? "内置 iSH 作业控制"
+                : (runtime == IOSTerminalRuntimeKind.remoteSSH.rawValue
+                    ? "Remote SSH 作业控制"
+                    : "终端作业控制")
+        }
         if tool.toolName.isEmpty { return "工具调用" }
         return tool.toolName
     }

@@ -29,7 +29,7 @@ class IosToolExposureBridgeTest {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    /** Every tool name `iosToolDeclaration` can materialize (56 names). */
+    /** Pinned iOS product catalog used to verify lazy exposure. */
     private val fullIosToolNames: List<String> = listOf(
         "ask_user", "search_web", "scrape_web", "memory_tool",
         "workspace_file_read", "workspace_file_write", "workspace_file_edit",
@@ -44,7 +44,8 @@ class IosToolExposureBridgeTest {
         "mcp_call", "mcp_list", "mcp_test", "mcp_describe_tool", "mcp_import_from_skill",
         "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
         "subagent_dispatch", "model_council_run", "file_read_selected",
-        "ish_handoff", "ios_ish_execute",
+        "ish_handoff", "ios_ish_execute", "terminal_execute",
+        "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "permissions_status", "tools_list", "subagent_report",
     )
 
@@ -63,7 +64,8 @@ class IosToolExposureBridgeTest {
 
     private val deferredNames = setOf(
         "wm_stations", "wm_click", "wm_type", "wm_screenshot",
-        "ish_handoff", "ios_ish_execute",
+        "ish_handoff", "ios_ish_execute", "terminal_execute",
+        "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "mcp_test", "mcp_import_from_skill",
         "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
         "subagent_report",

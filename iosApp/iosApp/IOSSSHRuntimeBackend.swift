@@ -34,7 +34,7 @@ final class IOSSSHRuntimeBackend: IOSSSHRuntimeBackendProtocol, @unchecked Senda
         profile: IOSSSHProfile,
         password: String,
         timeout: TimeInterval,
-        output: @escaping @Sendable (String) -> Void
+        output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
     ) async throws -> IOSSSHCommandResult {
         let validated = try profile.validated()
         guard !password.isEmpty else { throw IOSSSHError.missingPassword }
@@ -70,10 +70,17 @@ private final class IOSSSHActiveSessionRegistry: @unchecked Sendable {
     private var channels: [ObjectIdentifier: Channel] = [:]
     private var cancelled = false
 
-    func register(_ channel: Channel) {
+    @discardableResult
+    func register(_ channel: Channel) -> Bool {
         lock.lock()
+        guard !cancelled else {
+            lock.unlock()
+            channel.close(promise: nil)
+            return false
+        }
         channels[ObjectIdentifier(channel)] = channel
         lock.unlock()
+        return true
     }
 
     func unregister(_ channel: Channel) {
@@ -108,6 +115,8 @@ private enum IOSSSHClientError: Error {
 }
 
 private enum IOSSSHExecClient {
+    private static let maximumConnectTimeout: TimeInterval = 15
+
     static func probe(
         profile: IOSSSHProfile,
         password: String,
@@ -131,7 +140,7 @@ private enum IOSSSHExecClient {
         profile: IOSSSHProfile,
         password: String,
         timeout: TimeInterval,
-        output: @escaping @Sendable (String) -> Void,
+        output: @escaping @Sendable (IOSSSHOutputChunk) -> Void,
         registry: IOSSSHActiveSessionRegistry
     ) throws -> IOSSSHCommandResult {
         let result = try connect(
@@ -145,11 +154,11 @@ private enum IOSSSHExecClient {
             registry: registry
         )
         if case .trusted = result.trustState {
-            return result.commandResult ?? IOSSSHCommandResult(output: "", exitCode: nil)
+            return result.commandResult ?? IOSSSHCommandResult(stdout: "", stderr: "", exitCode: nil)
         } else {
             switch result.trustState {
             case .trusted:
-                return result.commandResult ?? IOSSSHCommandResult(output: "", exitCode: nil)
+                return result.commandResult ?? IOSSSHCommandResult(stdout: "", stderr: "", exitCode: nil)
             case .needsTrust(let fingerprint):
                 throw IOSSSHError.hostKeyNotTrusted(fingerprint)
             case .mismatch(let expected, let actual):
@@ -162,7 +171,7 @@ private enum IOSSSHExecClient {
         profile: IOSSSHProfile,
         password: String,
         command: String?,
-        output: (@Sendable (String) -> Void)?,
+        output: (@Sendable (IOSSSHOutputChunk) -> Void)?,
         enforceHostKey: Bool,
         abortAfterHostKey: Bool,
         timeout: TimeInterval,
@@ -201,18 +210,30 @@ private enum IOSSSHExecClient {
             }
             .channelOption(ChannelOptions.socket(SocketOptionLevel(SOL_SOCKET), SO_REUSEADDR), value: 1)
             .channelOption(ChannelOptions.socket(SocketOptionLevel(IPPROTO_TCP), TCP_NODELAY), value: 1)
-            .channelOption(ChannelOptions.connectTimeout, value: .milliseconds(Int64(max(timeout, 0.1) * 1000)))
+            .channelOption(
+                ChannelOptions.connectTimeout,
+                value: .milliseconds(Int64(max(min(timeout, maximumConnectTimeout), 0.1) * 1000))
+            )
 
         let channel: Channel
         do {
             channel = try bootstrap.connect(host: profile.host, port: profile.port).wait()
         } catch {
+            if registry.isCancelled {
+                throw IOSSSHError.commandCancelled
+            }
             if let probeResult = waitForProbeResult(from: hostDelegate, timeout: 2) {
                 return (probeResult.fingerprint, probeResult.trustState, nil)
             }
+            if let channelError = error as? ChannelError,
+               case .connectTimeout = channelError {
+                throw IOSSSHError.commandTimedOut
+            }
             throw error
         }
-        registry.register(channel)
+        guard registry.register(channel) else {
+            throw IOSSSHError.commandCancelled
+        }
         defer { registry.unregister(channel) }
 
         let timeoutTask = command == nil
@@ -277,7 +298,9 @@ private enum IOSSSHExecClient {
             resultPromise.fail(error)
             throw error
         }
-        registry.register(childChannel)
+        guard registry.register(childChannel) else {
+            throw IOSSSHError.commandCancelled
+        }
         defer { registry.unregister(childChannel) }
 
         let commandResult: IOSSSHCommandResult
@@ -466,14 +489,15 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
     private static let outputTailLimit = 128 * 1024
 
     private let command: String
-    private let output: (@Sendable (String) -> Void)?
+    private let output: (@Sendable (IOSSSHOutputChunk) -> Void)?
     private var completePromise: EventLoopPromise<IOSSSHCommandResult>?
-    private var outputBuffer = ""
+    private var stdoutBuffer = ""
+    private var stderrBuffer = ""
     private var exitCode: Int?
 
     init(
         command: String,
-        output: (@Sendable (String) -> Void)?,
+        output: (@Sendable (IOSSSHOutputChunk) -> Void)?,
         completePromise: EventLoopPromise<IOSSSHCommandResult>,
         timeout: TimeInterval
     ) {
@@ -503,8 +527,15 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
         guard case .byteBuffer(var bytes) = data.data else { return }
         let chunk = bytes.readString(length: bytes.readableBytes) ?? ""
         guard !chunk.isEmpty else { return }
-        outputBuffer = limitedTail(outputBuffer + chunk)
-        output?(chunk)
+        switch data.type {
+        case .channel:
+            stdoutBuffer = limitedTail(stdoutBuffer + chunk)
+        case .stdErr:
+            stderrBuffer = limitedTail(stderrBuffer + chunk)
+        default:
+            stdoutBuffer = limitedTail(stdoutBuffer + chunk)
+        }
+        output?(IOSSSHOutputChunk(text: chunk, isStderr: data.type == .stdErr))
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -521,11 +552,20 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
         completeIfNeeded()
     }
 
+    func errorCaught(context: ChannelHandlerContext, error: Error) {
+        failIfNeeded(error)
+        context.close(promise: nil)
+    }
+
     private func completeIfNeeded() {
         guard let completePromise else { return }
         self.completePromise = nil
         timeoutTask?.cancel()
-        completePromise.succeed(IOSSSHCommandResult(output: outputBuffer, exitCode: exitCode))
+        completePromise.succeed(IOSSSHCommandResult(
+            stdout: stdoutBuffer,
+            stderr: stderrBuffer,
+            exitCode: exitCode
+        ))
     }
 
     private func failIfNeeded(_ error: Error) {

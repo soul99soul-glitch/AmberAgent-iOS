@@ -9,6 +9,29 @@ struct IOSEmbeddedIshCommandResult: Equatable, Sendable {
     let stderr: String
     let timedOut: Bool
     let error: String?
+    let cancelled: Bool
+    let stdoutTruncated: Bool
+    let stderrTruncated: Bool
+
+    init(
+        exitCode: Int?,
+        stdout: String,
+        stderr: String,
+        timedOut: Bool,
+        error: String?,
+        cancelled: Bool = false,
+        stdoutTruncated: Bool = false,
+        stderrTruncated: Bool = false
+    ) {
+        self.exitCode = exitCode
+        self.stdout = stdout
+        self.stderr = stderr
+        self.timedOut = timedOut
+        self.error = error
+        self.cancelled = cancelled
+        self.stdoutTruncated = stdoutTruncated
+        self.stderrTruncated = stderrTruncated
+    }
 }
 
 /// One incremental output piece emitted while an embedded iSH command is
@@ -102,6 +125,7 @@ enum IOSEmbeddedIshRuntimeError: LocalizedError {
     case missingBundledRootfs
     case invalidBundledRootfs(URL)
     case rootfsCopyFailed(String)
+    case workspacePreparationFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -113,12 +137,15 @@ enum IOSEmbeddedIshRuntimeError: LocalizedError {
             "Embedded iSH rootfs is incomplete at \(url.path)."
         case .rootfsCopyFailed(let message):
             "Failed to prepare embedded iSH rootfs: \(message)"
+        case .workspacePreparationFailed(let message):
+            "Failed to prepare embedded iSH /workspace: \(message)"
         }
     }
 }
 
 actor IOSEmbeddedIshRuntime {
     static let shared = IOSEmbeddedIshRuntime()
+    static let maximumCapturedStreamBytes = 128 * 1024
 
     private static let rootfsVersion = "v0.3.3"
     private static let bundledRootfsName = "fs"
@@ -127,6 +154,8 @@ actor IOSEmbeddedIshRuntime {
     /// In-flight boot work, so concurrent first runs share one rootfs copy +
     /// kernel boot instead of racing each other. Cleared on completion.
     private var bootTask: Task<Void, Error>?
+    private var workspacePrepared = false
+    private var workspaceTask: Task<Void, Error>?
 
     private init() {}
 
@@ -140,6 +169,7 @@ actor IOSEmbeddedIshRuntime {
     /// SIGTERM → 143), which is also what a cancelled command reports.
     func run(
         command: String,
+        workingDirectory: String = IOSPOSIXWorkingDirectory.embeddedDefault,
         timeoutSeconds: TimeInterval = 60,
         onOutput: (@Sendable (IOSEmbeddedIshOutputChunk) -> Void)? = nil
     ) async -> IOSEmbeddedIshCommandResult {
@@ -154,8 +184,29 @@ actor IOSEmbeddedIshRuntime {
             )
         }
 
+        let normalizedWorkingDirectory: String
+        do {
+            normalizedWorkingDirectory = try IOSPOSIXWorkingDirectory.normalized(
+                workingDirectory,
+                default: IOSPOSIXWorkingDirectory.embeddedDefault
+            ) ?? IOSPOSIXWorkingDirectory.embeddedDefault
+        } catch {
+            return IOSEmbeddedIshCommandResult(
+                exitCode: 64,
+                stdout: "",
+                stderr: "",
+                timedOut: false,
+                error: error.localizedDescription
+            )
+        }
+
         #if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
-        return await runSpawned(command: trimmed, timeoutSeconds: timeoutSeconds, onOutput: onOutput)
+        return await runSpawned(
+            command: trimmed,
+            workingDirectory: normalizedWorkingDirectory,
+            timeoutSeconds: timeoutSeconds,
+            onOutput: onOutput
+        )
         #else
         return IOSEmbeddedIshCommandResult(
             exitCode: nil,
@@ -220,8 +271,66 @@ actor IOSEmbeddedIshRuntime {
         return vm
     }
 
+    /// Starts the human-owned interactive shell used by the ExperimentalGPL
+    /// terminal screen. It shares the same booted rootfs and isolated
+    /// `/workspace` as `ios_ish_execute`, but owns a real PTY and is not part
+    /// of the Agent tool execution contract.
+    func startInteractiveTerminal(
+        rows: Int,
+        columns: Int
+    ) async throws -> IshTerminal {
+        try await bootIfNeeded()
+        try Task.checkCancellation()
+        let defaultVM = try resolvedDefaultVM()
+        try await prepareWorkspaceIfNeeded(chrootPath: defaultVM.guestPath)
+        try Task.checkCancellation()
+        return try IshTerminal.start(
+            in: defaultVM,
+            command: ["/bin/sh", "-i"],
+            options: IshTerminal.Options(
+                size: IshTerminal.Size(rows: rows, cols: columns),
+                scrollbackLimit: 2_000,
+                env: [
+                    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "HOME": "/root",
+                    "TERM": "xterm-256color",
+                ],
+                cwd: IOSPOSIXWorkingDirectory.embeddedDefault
+            )
+        )
+    }
+
+    private static func sessionContext(
+        _ session: IshSession
+    ) -> (lifecycle: IshSessionLifecycleBox, hooks: IOSEmbeddedIshSessionHooks) {
+        let lifecycle = IshSessionLifecycleBox(session)
+        let hooks = IOSEmbeddedIshSessionHooks(
+            read: { timeout in
+                switch try session.read(timeout: timeout) {
+                case .data(let data, let kind, _):
+                    return .data(data, isStderr: kind == .stderr)
+                case .exited(let code, _):
+                    return .exited(code)
+                }
+            },
+            terminate: { lifecycle.terminate() },
+            close: { lifecycle.close() },
+            isReadTimeout: { error in
+                if case IshError.raw(let code, _) = error {
+                    return code == Self.ishReadTimeoutCode
+                }
+                return false
+            },
+            describeFailure: { error in
+                (error as? IshError)?.description ?? error.localizedDescription
+            }
+        )
+        return (lifecycle, hooks)
+    }
+
     private func runSpawned(
         command: String,
+        workingDirectory: String,
         timeoutSeconds: TimeInterval,
         onOutput: (@Sendable (IOSEmbeddedIshOutputChunk) -> Void)?
     ) async -> IOSEmbeddedIshCommandResult {
@@ -232,46 +341,34 @@ actor IOSEmbeddedIshRuntime {
             // right away.
             try Task.checkCancellation()
             let defaultVM = try resolvedDefaultVM()
+            try await prepareWorkspaceIfNeeded(chrootPath: defaultVM.guestPath)
+            try Task.checkCancellation()
             let session = try IshInstance.shared.spawn(
                 IshSpawnOptions(
-                    argv: ["/bin/sh", "-lc", command],
-                    cwd: "/root",
+                    argv: [
+                        "/bin/sh",
+                        "-lc",
+                        IOSPOSIXWorkingDirectory.embeddedCommand(
+                            command,
+                            workingDirectory: workingDirectory
+                        ),
+                    ],
+                    cwd: workingDirectory,
                     chrootPath: defaultVM.guestPath
                 )
             )
-            let lifecycle = IshSessionLifecycleBox(session)
-            let hooks = IOSEmbeddedIshSessionHooks(
-                read: { timeout in
-                    switch try session.read(timeout: timeout) {
-                    case .data(let data, let kind, _):
-                        return .data(data, isStderr: kind == .stderr)
-                    case .exited(let code, _):
-                        return .exited(code)
-                    }
-                },
-                terminate: { lifecycle.terminate() },
-                close: { lifecycle.close() },
-                isReadTimeout: { error in
-                    if case IshError.raw(let code, _) = error {
-                        return code == Self.ishReadTimeoutCode
-                    }
-                    return false
-                },
-                describeFailure: { error in
-                    (error as? IshError)?.description ?? error.localizedDescription
-                }
-            )
+            let context = Self.sessionContext(session)
             let effectiveTimeout = max(1, timeoutSeconds)
             return await withTaskCancellationHandler {
                 await Task.detached(priority: .userInitiated) {
                     Self.readSessionEvents(
-                        hooks: hooks,
+                        hooks: context.hooks,
                         timeoutSeconds: effectiveTimeout,
                         onOutput: onOutput
                     )
                 }.value
             } onCancel: {
-                lifecycle.terminate()
+                context.lifecycle.terminate()
             }
         } catch is CancellationError {
             return IOSEmbeddedIshCommandResult(
@@ -279,7 +376,8 @@ actor IOSEmbeddedIshRuntime {
                 stdout: "",
                 stderr: "",
                 timedOut: false,
-                error: "Embedded iSH command was cancelled."
+                error: "Embedded iSH command was cancelled.",
+                cancelled: true
             )
         } catch {
             return IOSEmbeddedIshCommandResult(
@@ -289,6 +387,42 @@ actor IOSEmbeddedIshRuntime {
                 timedOut: false,
                 error: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             )
+        }
+    }
+
+    private func prepareWorkspaceIfNeeded(chrootPath: String) async throws {
+        guard !workspacePrepared else { return }
+        if let workspaceTask {
+            return try await workspaceTask.value
+        }
+        let task = Task.detached(priority: .userInitiated) {
+            let session = try IshInstance.shared.spawn(
+                IshSpawnOptions(
+                    argv: ["/bin/mkdir", "-p", IOSPOSIXWorkingDirectory.embeddedDefault],
+                    cwd: "/",
+                    chrootPath: chrootPath
+                )
+            )
+            let context = Self.sessionContext(session)
+            let result = Self.readSessionEvents(
+                hooks: context.hooks,
+                timeoutSeconds: 10,
+                onOutput: nil
+            )
+            guard result.exitCode == 0, result.error == nil else {
+                throw IOSEmbeddedIshRuntimeError.workspacePreparationFailed(
+                    result.error ?? "mkdir exited with \(result.exitCode ?? -1)."
+                )
+            }
+        }
+        workspaceTask = task
+        do {
+            try await task.value
+            workspacePrepared = true
+            workspaceTask = nil
+        } catch {
+            workspaceTask = nil
+            throw error
         }
     }
 
@@ -472,6 +606,8 @@ extension IOSEmbeddedIshRuntime {
         var exitCode: Int?
         var timedOut = false
         var failure: String?
+        var stdoutTruncated = false
+        var stderrTruncated = false
         let deadline = Date().addingTimeInterval(timeoutSeconds)
 
         eventLoop: while true {
@@ -491,6 +627,8 @@ extension IOSEmbeddedIshRuntime {
                             stdout: &stdout,
                             stderr: &stderr,
                             decoder: &stderrDecoder,
+                            stdoutTruncated: &stdoutTruncated,
+                            stderrTruncated: &stderrTruncated,
                             onOutput: onOutput
                         )
                     } else {
@@ -500,6 +638,8 @@ extension IOSEmbeddedIshRuntime {
                             stdout: &stdout,
                             stderr: &stderr,
                             decoder: &stdoutDecoder,
+                            stdoutTruncated: &stdoutTruncated,
+                            stderrTruncated: &stderrTruncated,
                             onOutput: onOutput
                         )
                     }
@@ -520,7 +660,9 @@ extension IOSEmbeddedIshRuntime {
             stdout: String(decoding: stdout, as: UTF8.self),
             stderr: String(decoding: stderr, as: UTF8.self),
             timedOut: timedOut,
-            error: timedOut ? "Embedded iSH command timed out." : failure
+            error: timedOut ? "Embedded iSH command timed out." : failure,
+            stdoutTruncated: stdoutTruncated,
+            stderrTruncated: stderrTruncated
         )
     }
 
@@ -547,13 +689,17 @@ extension IOSEmbeddedIshRuntime {
         stdout: inout Data,
         stderr: inout Data,
         decoder: inout IOSEmbeddedIshUTF8StreamDecoder,
+        stdoutTruncated: inout Bool,
+        stderrTruncated: inout Bool,
         onOutput: (@Sendable (IOSEmbeddedIshOutputChunk) -> Void)?
     ) {
         guard !data.isEmpty else { return }
         if isStderr {
             stderr.append(data)
+            stderrTruncated = trimCapturedTail(&stderr) || stderrTruncated
         } else {
             stdout.append(data)
+            stdoutTruncated = trimCapturedTail(&stdout) || stdoutTruncated
         }
         let text = decoder.decode(appending: data)
         guard !text.isEmpty else { return }
@@ -562,14 +708,26 @@ extension IOSEmbeddedIshRuntime {
             isStderr: isStderr
         ))
     }
+
+    private static func trimCapturedTail(_ data: inout Data) -> Bool {
+        guard data.count > maximumCapturedStreamBytes else { return false }
+        data = Data(data.suffix(maximumCapturedStreamBytes))
+        return true
+    }
 }
 
 extension IOSEmbeddedIshRuntime: IOSEmbeddedIshJobBackend {
     func runJob(
         command: String,
+        workingDirectory: String,
         timeoutSeconds: TimeInterval,
         onOutput: @escaping @Sendable (IOSEmbeddedIshOutputChunk) -> Void
     ) async -> IOSEmbeddedIshCommandResult {
-        await run(command: command, timeoutSeconds: timeoutSeconds, onOutput: onOutput)
+        await run(
+            command: command,
+            workingDirectory: workingDirectory,
+            timeoutSeconds: timeoutSeconds,
+            onOutput: onOutput
+        )
     }
 }

@@ -7,6 +7,108 @@ import XCTest
 /// test bundle against a fake backend.
 @MainActor
 final class IOSEmbeddedIshJobRuntimeTests: XCTestCase {
+    func testEmbeddedIshApprovalShowsActualWorkingDirectoryAndRejectsInvalidPath() throws {
+        let defaultPreview = try XCTUnwrap(
+            IOSEmbeddedIshExecuteExecutor.approvalPreview(input: #"{"command":"pwd"}"#)
+        )
+        let explicitPreview = try XCTUnwrap(
+            IOSEmbeddedIshExecuteExecutor.approvalPreview(
+                input: #"{"command":"pwd","cwd":"/workspace/project"}"#
+            )
+        )
+
+        XCTAssertTrue(defaultPreview.filename.contains("/workspace"))
+        XCTAssertTrue(explicitPreview.filename.contains("/workspace/project"))
+        XCTAssertNil(
+            IOSEmbeddedIshExecuteExecutor.approvalPreview(
+                input: #"{"command":"pwd","cwd":"../outside"}"#
+            )
+        )
+        XCTAssertNil(
+            IOSEmbeddedIshExecuteExecutor.approvalPreview(
+                input: #"{"command":"pwd","cwd":42}"#
+            )
+        )
+        XCTAssertNil(
+            IOSEmbeddedIshExecuteExecutor.approvalPreview(
+                input: #"{"command":"pwd","background":1}"#
+            )
+        )
+
+        let longScript = String(repeating: "echo amber\n", count: 240)
+        let backgroundInput = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: [
+            "script": longScript,
+            "background": true,
+            "timeout_seconds": 600,
+        ]), encoding: .utf8))
+        let backgroundPreview = try XCTUnwrap(
+            IOSEmbeddedIshExecuteExecutor.approvalPreview(input: backgroundInput)
+        )
+        XCTAssertEqual(backgroundPreview.commandPreview, longScript)
+        XCTAssertEqual(backgroundPreview.mode, .embeddedJobStart)
+        XCTAssertTrue(backgroundPreview.contextLines.contains { $0.contains("异步 Job") })
+        XCTAssertTrue(backgroundPreview.contextLines.contains { $0.contains("600 秒") })
+    }
+
+    func testEmbeddedIshDirectExecutionRejectsBlockedCommandBeforeRuntime() async throws {
+        let text = await IOSEmbeddedIshExecuteExecutor.execute(
+            input: #"{"command":"rm -rf /"}"#
+        )
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+        )
+
+        XCTAssertEqual(object["status"] as? String, IOSTerminalJobStatus.failed.rawValue)
+        XCTAssertTrue((object["error"] as? String)?.contains("destroy or stop") == true)
+        if case .failure = IOSEmbeddedIshCommandPolicy.validate("rm -rf -- /") {
+            // Expected: exact guest-root destruction remains blocked.
+        } else {
+            XCTFail("embedded policy must reject exact guest-root destruction")
+        }
+        if case .success = IOSEmbeddedIshCommandPolicy.validate("rm -rf /workspace/build && apk add git") {
+            // Expected: ordinary workspace writes and package installation are allowed.
+        } else {
+            XCTFail("embedded policy should allow mutations inside /workspace")
+        }
+        XCTAssertNotNil(IOSEmbeddedIshCommandPolicy.validate(String(repeating: "echo x\n", count: 300)).successValue)
+    }
+
+    func testEmbeddedIshDirectStatusHonorsExplicitPreSpawnCancellation() {
+        let result = IOSEmbeddedIshCommandResult(
+            exitCode: nil,
+            stdout: "",
+            stderr: "",
+            timedOut: false,
+            error: "Embedded iSH command was cancelled.",
+            cancelled: true
+        )
+
+        XCTAssertEqual(
+            IOSEmbeddedIshExecuteExecutor.executionStatus(result: result, taskCancelled: false),
+            .cancelled
+        )
+    }
+
+    func testEmbeddedIshJobDefaultsToIsolatedWorkspace() async {
+        let backend = MockEmbeddedIshBackend(result: IOSEmbeddedIshCommandResult(
+            exitCode: 0,
+            stdout: "/workspace\n",
+            stderr: "",
+            timedOut: false,
+            error: nil
+        ))
+        let runtime = makeRuntime(embeddedIshBackend: backend)
+
+        let started = await runtime.startJob(
+            command: "pwd",
+            runtime: .ishExperimental,
+            experimentalEnabled: true
+        )
+        _ = await runtime.waitJob(id: started.id, timeoutSeconds: 2)
+
+        XCTAssertEqual(backend.lastWorkingDirectory, "/workspace")
+    }
+
     func testEmbeddedIshJobStreamsOutputBeforeCompletion() async {
         let backend = MockEmbeddedIshBackend(
             result: IOSEmbeddedIshCommandResult(
@@ -43,6 +145,125 @@ final class IOSEmbeddedIshJobRuntimeTests: XCTestCase {
         XCTAssertEqual(finished?.status, IOSTerminalJobStatus.completed.rawValue)
         XCTAssertEqual(finished?.exitCode, 0)
         XCTAssertTrue(finished?.outputTail.contains("final-chunk") == true)
+        XCTAssertTrue(finished?.stdoutTail.contains("final-chunk") == true)
+    }
+
+    func testAgentBackgroundEmbeddedJobUsesSharedReadWaitControlPlane() async throws {
+        let backend = MockEmbeddedIshBackend(
+            result: IOSEmbeddedIshCommandResult(
+                exitCode: 0,
+                stdout: "partial\ndone\n",
+                stderr: "",
+                timedOut: false,
+                error: nil
+            ),
+            midRunChunks: [IOSEmbeddedIshOutputChunk(text: "partial\n", isStderr: false)],
+            chunkDelayNanoseconds: 20_000_000,
+            completionDelayNanoseconds: 120_000_000
+        )
+        let runtime = makeRuntime(embeddedIshBackend: backend)
+        let defaultsName = "IOSEmbeddedIshJobRuntimeTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "jobs")
+
+        let launch = try jsonObject(await IOSEmbeddedIshExecuteExecutor.execute(
+            input: #"{"command":"echo partial; sleep 1; echo done","background":true,"timeout_seconds":30}"#,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        let jobId = try XCTUnwrap(launch["job_id"] as? String)
+        XCTAssertEqual(launch["status"] as? String, IOSTerminalJobStatus.running.rawValue)
+        XCTAssertEqual(launch["runtime"] as? String, IOSTerminalRuntimeKind.ishExperimental.rawValue)
+        XCTAssertEqual(taskStore.task(id: jobId)?.kind, .embeddedIsh)
+        XCTAssertEqual(runtime.readJob(id: jobId)?.id, jobId)
+
+        _ = await eventuallyOutput(jobId: jobId, contains: "partial", runtime: runtime, timeoutSeconds: 1)
+        let read = try jsonObject(await IOSAgentTerminalJobExecutor.execute(
+            toolName: IOSRemoteTerminalToolCatalog.jobReadToolName,
+            input: #"{"job_id":"\#(jobId)"}"#,
+            settingsStore: nil,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        XCTAssertEqual(read["runtime"] as? String, IOSTerminalRuntimeKind.ishExperimental.rawValue)
+        XCTAssertTrue((read["stdout"] as? String)?.contains("partial") == true)
+
+        let waited = try jsonObject(await IOSAgentTerminalJobExecutor.execute(
+            toolName: IOSRemoteTerminalToolCatalog.jobWaitToolName,
+            input: #"{"job_id":"\#(jobId)","wait_timeout_seconds":2}"#,
+            settingsStore: nil,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        XCTAssertEqual(waited["status"] as? String, IOSTerminalJobStatus.completed.rawValue)
+        XCTAssertEqual(waited["command_ok"] as? Bool, true)
+        XCTAssertNil(runtime.readJob(id: jobId))
+
+        let persistedRead = try jsonObject(await IOSAgentTerminalJobExecutor.execute(
+            toolName: IOSRemoteTerminalToolCatalog.jobReadToolName,
+            input: #"{"job_id":"\#(jobId)"}"#,
+            settingsStore: nil,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        XCTAssertEqual(persistedRead["status"] as? String, IOSTerminalJobStatus.completed.rawValue)
+        XCTAssertEqual(persistedRead["persisted_snapshot"] as? Bool, true)
+    }
+
+    func testAgentCanStopEmbeddedJobAndRelaunchSweepIsHonest() async throws {
+        let backend = MockEmbeddedIshBackend(
+            result: IOSEmbeddedIshCommandResult(
+                exitCode: 0,
+                stdout: "late",
+                stderr: "",
+                timedOut: false,
+                error: nil
+            ),
+            completionDelayNanoseconds: 5_000_000_000
+        )
+        let runtime = makeRuntime(embeddedIshBackend: backend)
+        let defaultsName = "IOSEmbeddedIshJobRuntimeTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: defaultsName))
+        defer { defaults.removePersistentDomain(forName: defaultsName) }
+        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "jobs")
+
+        let launch = try jsonObject(await IOSEmbeddedIshExecuteExecutor.execute(
+            input: #"{"command":"sleep 60","background":true}"#,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        let jobId = try XCTUnwrap(launch["job_id"] as? String)
+        let stopInput = #"{"job_id":"\#(jobId)"}"#
+        let stopped = try jsonObject(await IOSAgentTerminalJobExecutor.execute(
+            toolName: IOSRemoteTerminalToolCatalog.jobStopToolName,
+            input: stopInput,
+            settingsStore: nil,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        let repeated = try jsonObject(await IOSAgentTerminalJobExecutor.execute(
+            toolName: IOSRemoteTerminalToolCatalog.jobStopToolName,
+            input: stopInput,
+            settingsStore: nil,
+            runtime: runtime,
+            taskStore: taskStore
+        ))
+        XCTAssertEqual(stopped["status"] as? String, IOSTerminalJobStatus.cancelled.rawValue)
+        XCTAssertEqual(repeated["already_terminal"] as? Bool, true)
+        XCTAssertNil(runtime.readJob(id: jobId))
+
+        taskStore.startTask(
+            id: "interrupted-ish",
+            kind: .embeddedIsh,
+            title: "running",
+            objective: "sleep 60",
+            sourceToolName: "ios_ish_execute",
+            metadata: ["terminal_job": "true", "runtime": IOSTerminalRuntimeKind.ishExperimental.rawValue]
+        )
+        XCTAssertEqual(taskStore.markInterruptedEmbeddedIshTasks(), ["interrupted-ish"])
+        XCTAssertEqual(taskStore.task(id: "interrupted-ish")?.status, .interrupted)
+        XCTAssertEqual(taskStore.task(id: "interrupted-ish")?.metadata["outcome"], "unknown")
     }
 
     func testStopEmbeddedIshJobCancelsAndDropsLateCompletion() async {
@@ -171,6 +392,17 @@ final class IOSEmbeddedIshJobRuntimeTests: XCTestCase {
         }
         return runtime.readJob(id: jobId)?.outputTail.contains(text) == true
     }
+
+    private func jsonObject(_ text: String) throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    }
+}
+
+private extension IOSRemoteCommandPolicyResult {
+    var successValue: String? {
+        if case .success(let value) = self { return value }
+        return nil
+    }
 }
 
 private final class MockEmbeddedIshBackend: IOSEmbeddedIshJobBackend, @unchecked Sendable {
@@ -181,6 +413,7 @@ private final class MockEmbeddedIshBackend: IOSEmbeddedIshJobBackend, @unchecked
     private let ignoresCancellation: Bool
     private(set) var runCallCount = 0
     private(set) var observedCancellation = false
+    private(set) var lastWorkingDirectory: String?
 
     init(
         result: IOSEmbeddedIshCommandResult,
@@ -198,10 +431,12 @@ private final class MockEmbeddedIshBackend: IOSEmbeddedIshJobBackend, @unchecked
 
     func runJob(
         command: String,
+        workingDirectory: String,
         timeoutSeconds: TimeInterval,
         onOutput: @escaping @Sendable (IOSEmbeddedIshOutputChunk) -> Void
     ) async -> IOSEmbeddedIshCommandResult {
         runCallCount += 1
+        lastWorkingDirectory = workingDirectory
         for chunk in midRunChunks {
             await sleepSlice(chunkDelayNanoseconds)
             if noteCancellation(), !ignoresCancellation {

@@ -252,8 +252,8 @@ private fun recipeApprovalFlags(effectClass: String): Pair<Boolean, Boolean> = w
 /**
  * Pinned iOS resident tool policy. Exact-name allowlist (no prefix rules) —
  * mirrors the real iOS declaration names from `iosToolDeclaration` in
- * ai-core/Tool.kt. Everything NOT in this set (wm_*, ish_handoff,
- * ios_ish_execute, mcp_test, mcp_import_from_skill, skill_validate,
+ * ai-core/Tool.kt. Everything NOT in this set (wm_*, terminal_execute,
+ * ish_handoff, ios_ish_execute, mcp_test, mcp_import_from_skill, skill_validate,
  * skill_import, soul_import, skill_enable, skill_disable, subagent_report) is deferred
  * until `tool_search` exposes it.
  */

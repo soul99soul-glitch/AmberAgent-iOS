@@ -240,6 +240,7 @@ private struct ExecutionTaskRow: View {
         case .subAgent: "person.2.wave.2.fill"
         case .modelCouncil: "bubble.left.and.bubble.right.fill"
         case .remoteCommand: "terminal.fill"
+        case .embeddedIsh: "shippingbox.fill"
         case .toolApproval: "hand.raised.fill"
         }
     }

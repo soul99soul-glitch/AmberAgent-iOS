@@ -13,6 +13,7 @@ struct RuntimeEnvironmentView: View {
     @State private var sshPortDraft = "22"
     @State private var sshStatus: SSHStatus = .idle
     @State private var remoteCommand = "echo amber-remote-task"
+    @State private var remoteWorkingDirectory = ""
     @State private var remoteCommandResult: IOSTerminalJobSnapshot?
     @State private var remoteCommandJobId: String?
     @State private var remoteCommandTaskId: String?
@@ -20,6 +21,13 @@ struct RuntimeEnvironmentView: View {
     @State private var permissionStore = IOSPermissionStore()
     @State private var showsCapabilityMatrix = false
     @State private var activeSheet: RuntimeEnvironmentSheet?
+    @State private var selectedTerminalTask: SelectedTerminalTask?
+    @State private var showsInteractiveIshTerminal = false
+    @State private var interactiveIshTerminal = IOSInteractiveIshTerminalModel()
+
+    private struct SelectedTerminalTask: Identifiable {
+        let id: String
+    }
 
     private enum RuntimeEnvironmentSheet: String, Identifiable {
         case runtime
@@ -42,7 +50,7 @@ struct RuntimeEnvironmentView: View {
             switch self {
             case .runtime: "选择前台测试和远程命令使用的执行环境。"
             case .sshProfile: "编辑 Remote SSH 连接信息，并完成 Host 信任检查。"
-            case .ishTools: "查看聊天中可暴露给 Agent 的 iSH 工具边界。"
+            case .ishTools: "查看 Agent 的非 PTY iSH 执行、异步作业与人类 PTY 边界。"
             case .diagnostics: "运行 Smoke Test、查看能力矩阵，或手动触发一次远程命令。"
             }
         }
@@ -94,6 +102,14 @@ struct RuntimeEnvironmentView: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+            .sheet(item: $selectedTerminalTask) { selection in
+                TerminalTaskDetailView(taskStore: taskStore, taskId: selection.id)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
+            .fullScreenCover(isPresented: $showsInteractiveIshTerminal) {
+                IOSInteractiveIshTerminalView(model: interactiveIshTerminal)
+            }
         }
     }
 
@@ -120,7 +136,7 @@ struct RuntimeEnvironmentView: View {
     }
 
     private var intro: some View {
-        Text("配置 Amber 执行命令与 iSH 工具的边界。默认 Runtime 负责前台验证和远程命令；聊天里的 Agent 工具会独立走审批。")
+        Text("配置 Amber 执行命令与 iSH 工具的边界。默认 Runtime 负责前台验证和远程命令；Agent 的内置 iSH 执行与异步作业会独立走审批。")
             .font(.footnote)
             .foregroundStyle(AmberTheme.muted)
             .lineSpacing(3)
@@ -135,6 +151,7 @@ struct RuntimeEnvironmentView: View {
             sshProfileName: settingsStore.defaultSSHProfile?.displayName,
             embeddedIshAvailable: embeddedIshAvailable,
             externalIshAvailable: externalIshAvailable,
+            experimentalRuntimesLinked: IOSTerminalBuildPolicy.experimentalRuntimesLinked,
             experimentalEnabled: settingsStore.terminalExperimentalRuntimesEnabled
         )
         .padding(.horizontal, 16)
@@ -213,7 +230,9 @@ struct RuntimeEnvironmentView: View {
             AmberFormGroup {
                 RuntimeNavigationRow(
                     title: "iSH 工具能力",
-                    subtitle: "聊天中审批后调用；内置执行可回传，外部 iSH 为手动交接",
+                    subtitle: embeddedIshAvailable
+                        ? "审批后可运行复杂非 PTY 脚本或异步 Job；外部 iSH 为手动交接"
+                        : "当前 target 未链接内置 iSH；外部 iSH 仅支持手动交接",
                     value: ishToolsSummary,
                     systemImage: "shippingbox",
                     accent: embeddedIshAvailable ? AmberTheme.accentGreen : AmberTheme.accentAmber
@@ -284,7 +303,7 @@ struct RuntimeEnvironmentView: View {
                 AmberFormGroup {
                     RuntimeToggleRow(
                         title: "显示实验 Runtime",
-                        subtitle: "允许把 Remote Mosh / iSH Experimental 设为默认 Runtime",
+                        subtitle: "允许把已接入的 iSH Experimental 设为默认 Runtime",
                         isOn: settingsStore.terminalExperimentalRuntimesEnabled,
                         isEnabled: true
                     ) {
@@ -376,7 +395,7 @@ struct RuntimeEnvironmentView: View {
                 RuntimeInfoRow(
                     title: "内置 iSH 执行",
                     subtitle: embeddedIshAvailable
-                        ? "聊天中审批后调用 ios_ish_execute，在 Amber 沙盒内执行短命令并回传 stdout、stderr、exit code。"
+                        ? "聊天中审批后调用 ios_ish_execute；可运行最多 32K 的非 PTY 脚本，前台回传结果，或异步返回 Job ID 供读取、等待和停止。"
                         : "当前 target 未链接 embedded iSH，不会向模型暴露 ios_ish_execute。",
                     value: embeddedIshAvailable ? "可回传" : "未链接",
                     systemImage: embeddedIshAvailable ? "shippingbox" : "lock",
@@ -393,14 +412,48 @@ struct RuntimeEnvironmentView: View {
                 RuntimeDivider()
                 RuntimeInfoRow(
                     title: "安全边界",
-                    subtitle: "两条 iSH 链路都需要前台审批；外部 iSH 不回传结果，内置 iSH 没有 PTY、stdin、长会话和即时取消。",
+                    subtitle: IOSTerminalBuildPolicy.experimentalRuntimesLinked
+                        ? "Agent 启动执行与停止作业仍需逐次前台审批；异步 Job 没有 PTY 或 stdin，ExperimentalGPL 的持续 PTY 只由你直接操作。"
+                        : "两条 iSH 链路都需要前台审批；外部 iSH 不回传结果，稳定 target 不链接内置 PTY。",
                     value: "每次审批",
                     systemImage: "hand.raised",
                     accent: AmberTheme.accentAmber
                 )
             }
 
-            Text("这两项是聊天工具能力，不等同于默认 Runtime。Remote SSH 仍是稳定远程任务主线；iSH 更适合短命令、手动交接或本地 Linux 能力验证。")
+            if IOSTerminalBuildPolicy.experimentalRuntimesLinked {
+                AmberFormGroup {
+                    RuntimeActionRow(title: "打开 iSH 交互终端", color: AmberTheme.accentGreen) {
+                        showsInteractiveIshTerminal = true
+                    }
+                }
+                .padding(.top, 10)
+
+                Text("交互终端是 ExperimentalGPL 的人类前台会话：支持键盘、Ctrl-C 和窗口 resize；切到后台或关闭页面时会停止，不保存或恢复 shell。")
+                    .runtimeFootnote()
+            }
+
+            let recentEmbeddedTasks = taskStore.recent(kind: .embeddedIsh, limit: 3)
+            if !recentEmbeddedTasks.isEmpty {
+                AmberSectionLabel(text: "最近 Agent iSH 作业")
+                    .padding(.top, 10)
+                AmberFormGroup {
+                    ForEach(Array(recentEmbeddedTasks.enumerated()), id: \.element.id) { index, task in
+                        Button {
+                            selectedTerminalTask = SelectedTerminalTask(id: task.id)
+                        } label: {
+                            TerminalTaskRow(task: task, showsChevron: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(terminalTaskAccessibilityLabel(task))
+                        if index < recentEmbeddedTasks.count - 1 {
+                            RuntimeDivider()
+                        }
+                    }
+                }
+            }
+
+            Text("异步只表示 Agent 不必阻塞等待，并非 iOS 后台常驻：App 重启会把未完成作业标记为已中断。Amber 聊天 workspace、Remote SSH 的 cwd 与内置 iSH 的 /workspace 是三个隔离文件域，不会自动同步。")
                 .runtimeFootnote()
         }
     }
@@ -464,13 +517,13 @@ struct RuntimeEnvironmentView: View {
                     .padding(.top, 10)
             }
 
-            Text("Smoke Test 会验证当前默认 Runtime：Remote SSH 执行 echo amber-terminal-smoke，本地工具执行 pwd。")
+            Text("Smoke Test 会验证当前默认 Runtime：Remote SSH 执行 echo amber-terminal-smoke，本地工具与 iSH 执行 pwd。iSH 的 /workspace 位于内置 rootfs，与 Amber 聊天 workspace、Remote SSH cwd 隔离，不会自动同步。")
                 .runtimeFootnote()
 
             if showsCapabilityMatrix {
                 VStack(spacing: 8) {
-                    ForEach(IOSTerminalRuntimeCapabilities.all) { capability in
-                        RuntimeMatrixCard(capability: capability)
+                    ForEach(IOSTerminalBuildPolicy.selectableRuntimes) { runtime in
+                        RuntimeMatrixCard(capability: IOSTerminalRuntimeCapabilities.capability(for: runtime))
                     }
                 }
                 .padding(.top, 10)
@@ -490,11 +543,19 @@ struct RuntimeEnvironmentView: View {
                     monospace: true
                 )
                 RuntimeDivider()
+                RuntimeTextFieldRow(
+                    title: "工作目录",
+                    text: $remoteWorkingDirectory,
+                    placeholder: "登录默认目录（可选）",
+                    monospace: true
+                )
+                RuntimeDivider()
                 RuntimeValueRow(
                     title: "连接",
                     subtitle: "只使用默认 Remote SSH profile",
                     value: settingsStore.defaultSSHProfile?.displayName ?? "未选择",
-                    systemImage: "terminal"
+                    systemImage: "terminal",
+                    showsChevron: false
                 )
                 RuntimeDivider()
                 RuntimeActionRow(
@@ -521,7 +582,13 @@ struct RuntimeEnvironmentView: View {
             if !recent.isEmpty {
                 AmberFormGroup {
                     ForEach(Array(recent.enumerated()), id: \.element.id) { index, task in
-                        RemoteTaskRow(task: task)
+                        Button {
+                            selectedTerminalTask = SelectedTerminalTask(id: task.id)
+                        } label: {
+                            TerminalTaskRow(task: task, showsChevron: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(terminalTaskAccessibilityLabel(task))
                         if index < recent.count - 1 {
                             RuntimeDivider()
                         }
@@ -556,7 +623,7 @@ struct RuntimeEnvironmentView: View {
         guard IOSTerminalBuildPolicy.experimentalRuntimesLinked else {
             return [.remoteSSH, .localIOSTools]
         }
-        return IOSTerminalRuntimeKind.allCases
+        return IOSTerminalBuildPolicy.selectableRuntimes
     }
 
     private var shouldShowRuntimeOptionsRow: Bool {
@@ -565,9 +632,12 @@ struct RuntimeEnvironmentView: View {
     }
 
     private var experimentalRuntimeSubtitle: String {
-        IOSTerminalBuildPolicy.experimentalRuntimesLinked
-            ? "Remote Mosh / iSH Experimental 默认隐藏，按需打开"
-            : "当前构建没有链接实验 Runtime"
+        guard IOSTerminalBuildPolicy.experimentalRuntimesLinked else {
+            return "当前构建没有链接实验 Runtime"
+        }
+        return settingsStore.terminalExperimentalRuntimesEnabled
+            ? "iSH Experimental 已显示；仅 ExperimentalGPL target，需 GPL 审核"
+            : "iSH Experimental 默认隐藏；仅 ExperimentalGPL target，需 GPL 审核"
     }
 
     private var experimentalRuntimeValue: String {
@@ -635,10 +705,10 @@ struct RuntimeEnvironmentView: View {
             return "远程命令正在运行，可进入查看输出或取消"
         }
         if let remoteCommandResult {
-            return "最近远程命令：\(remoteCommandResult.status)"
+            return "最近远程命令：\(terminalStatusTitle(remoteCommandResult.status))"
         }
         if let terminalSmokeResult {
-            return "最近 Smoke Test：\(terminalSmokeResult.status)"
+            return "最近 Smoke Test：\(terminalStatusTitle(terminalSmokeResult.status))"
         }
         return "验证当前 Runtime，或手动运行一次 Remote SSH 命令"
     }
@@ -648,10 +718,10 @@ struct RuntimeEnvironmentView: View {
             return "运行中"
         }
         if let remoteCommandResult {
-            return remoteCommandResult.status
+            return terminalStatusTitle(remoteCommandResult.status)
         }
         if let terminalSmokeResult {
-            return terminalSmokeResult.status
+            return terminalStatusTitle(terminalSmokeResult.status)
         }
         return "打开"
     }
@@ -664,8 +734,10 @@ struct RuntimeEnvironmentView: View {
         switch IOSTerminalJobStatus(rawValue: status ?? "") {
         case .completed:
             return AmberTheme.accentGreen
-        case .failed, .timedOut, .cancelled:
+        case .failed, .timedOut, .interrupted:
             return AmberTheme.accentRed
+        case .cancelled:
+            return AmberTheme.muted2
         case .queued, .running:
             return AmberTheme.accentAmber
         case nil:
@@ -684,6 +756,15 @@ struct RuntimeEnvironmentView: View {
         return remoteCommandResult.status == IOSTerminalJobStatus.running.rawValue
     }
 
+    private func terminalStatusTitle(_ status: String) -> String {
+        IOSTerminalJobStatus(rawValue: status)?.title ?? status
+    }
+
+    private func terminalTaskAccessibilityLabel(_ task: IOSAdvancedTaskRecord) -> String {
+        let context = task.commandPreview.isEmpty ? task.connectionSummary : task.commandPreview
+        return "查看\(task.kind.title)详情：\(task.status.title)，\(String(context.prefix(80)))"
+    }
+
     private func testTerminalRuntime() {
         guard sharedSettings.isCapabilityGateEnabled(.remoteRuntime) else {
             terminalSmokeResult = IOSTerminalJobSnapshot(
@@ -699,7 +780,12 @@ struct RuntimeEnvironmentView: View {
             return
         }
         terminalSmokeResult = nil
-        let command = settingsStore.terminalDefaultRuntime == .localIOSTools ? "pwd" : "echo amber-terminal-smoke"
+        let command = switch settingsStore.terminalDefaultRuntime {
+        case .localIOSTools, .ishExperimental:
+            "pwd"
+        case .remoteSSH, .remoteMosh:
+            "echo amber-terminal-smoke"
+        }
         Task {
             let started = await IOSTerminalRuntime.shared.startJob(
                 command: command,
@@ -710,6 +796,7 @@ struct RuntimeEnvironmentView: View {
             )
             if started.status == IOSTerminalJobStatus.running.rawValue {
                 terminalSmokeResult = await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 65)
+                _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
             } else {
                 terminalSmokeResult = started
             }
@@ -756,6 +843,12 @@ struct RuntimeEnvironmentView: View {
 
         let profile = settingsStore.defaultSSHProfile
         let password = profile.flatMap { settingsStore.passwordForSSHProfile(id: $0.id) }
+        let workingDirectory = remoteWorkingDirectory.nilIfBlank
+        var taskMetadata = ["runtime": IOSTerminalRuntimeKind.remoteSSH.rawValue]
+        if let workingDirectory {
+            taskMetadata["cwd"] = workingDirectory
+        }
+        let approvalPayloadDigest = "\(validatedCommand)\n\(workingDirectory ?? "")".hashValue
         let task = taskStore.startTask(
             kind: .remoteCommand,
             title: "Remote SSH · \(validatedCommand.prefix(34))",
@@ -763,7 +856,7 @@ struct RuntimeEnvironmentView: View {
             connectionSummary: profile?.displayName ?? "no profile",
             commandPreview: validatedCommand,
             sourceToolName: "remote_command_run",
-            metadata: ["runtime": IOSTerminalRuntimeKind.remoteSSH.rawValue]
+            metadata: taskMetadata
         )
         remoteCommandTaskId = task.id
         permissionStore.recordApproval(
@@ -772,7 +865,7 @@ struct RuntimeEnvironmentView: View {
             action: .allowed,
             reason: "User started a foreground Remote SSH command.",
             runId: task.id,
-            payloadDigest: "\(validatedCommand.hashValue)"
+            payloadDigest: "\(approvalPayloadDigest)"
         )
 
         Task {
@@ -780,6 +873,7 @@ struct RuntimeEnvironmentView: View {
                 command: validatedCommand,
                 runtime: .remoteSSH,
                 experimentalEnabled: false,
+                workingDirectory: workingDirectory,
                 sshProfile: profile,
                 sshPassword: password,
                 timeoutSeconds: 60
@@ -798,7 +892,27 @@ struct RuntimeEnvironmentView: View {
             )
             guard started.status == IOSTerminalJobStatus.running.rawValue else { return }
 
-            let finished = await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 65)
+            let deadline = Date().addingTimeInterval(65)
+            var finished = IOSTerminalRuntime.shared.readJob(id: started.id)
+            while let current = finished,
+                  current.status == IOSTerminalJobStatus.running.rawValue,
+                  Date() < deadline {
+                remoteCommandResult = current
+                _ = taskStore.updateTask(
+                    id: task.id,
+                    status: .running,
+                    resultSummary: "",
+                    logTail: current.outputTail,
+                    error: "",
+                    retryable: false,
+                    cancelCapability: true
+                )
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                finished = IOSTerminalRuntime.shared.readJob(id: started.id)
+            }
+            if finished?.status == IOSTerminalJobStatus.running.rawValue {
+                finished = await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 0)
+            }
             if let finished {
                 remoteCommandResult = finished
                 _ = taskStore.updateTask(
@@ -810,6 +924,7 @@ struct RuntimeEnvironmentView: View {
                     retryable: finished.status != IOSTerminalJobStatus.completed.rawValue,
                     cancelCapability: false
                 )
+                _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
             }
         }
     }
@@ -854,6 +969,8 @@ struct RuntimeEnvironmentView: View {
             return .cancelled
         case .timedOut:
             return .timedOut
+        case .interrupted:
+            return .interrupted
         case nil:
             return .failed
         }
@@ -980,7 +1097,9 @@ struct RuntimeEnvironmentView: View {
         let finished = started.status == IOSTerminalJobStatus.running.rawValue
             ? await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 20)
             : started
-        return finished?.status == IOSTerminalJobStatus.completed.rawValue && finished?.exitCode == 0
+        let succeeded = finished?.status == IOSTerminalJobStatus.completed.rawValue && finished?.exitCode == 0
+        _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
+        return succeeded
     }
 
     private func resetSSHProfileDraft() {
@@ -1024,7 +1143,7 @@ private struct RuntimeSheetChrome<Content: View>: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        AmberGlassCircleButton(systemImage: "xmark", accessibilityLabel: "关闭", size: 38, symbolSize: 15) {
+                        AmberGlassCircleButton(systemImage: "xmark", accessibilityLabel: "关闭", size: 44, symbolSize: 15) {
                             dismiss()
                         }
                     }
@@ -1046,6 +1165,7 @@ private struct RuntimeStatusCard: View {
     let sshProfileName: String?
     let embeddedIshAvailable: Bool
     let externalIshAvailable: Bool
+    let experimentalRuntimesLinked: Bool
     let experimentalEnabled: Bool
 
     var body: some View {
@@ -1098,7 +1218,12 @@ private struct RuntimeStatusCard: View {
 
     private var strategySummary: String {
         let profile = sshProfileName ?? "未选择 SSH Profile"
-        let experimental = experimentalEnabled ? "实验 Runtime 已显示" : "实验 Runtime 已隐藏"
+        let experimental: String
+        if !experimentalRuntimesLinked {
+            experimental = "当前构建未链接实验 Runtime"
+        } else {
+            experimental = experimentalEnabled ? "实验 Runtime 已显示" : "实验 Runtime 已隐藏"
+        }
         return "\(profile) · \(experimental)。聊天中的 iSH 工具会单独走前台审批。"
     }
 }
@@ -1241,6 +1366,7 @@ private struct RuntimeToggleRow: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.58)
+        .accessibilityValue(isOn ? "开启" : "关闭")
     }
 }
 
@@ -1299,6 +1425,7 @@ private struct RuntimeValueRow: View {
     let subtitle: String
     let value: String
     let systemImage: String
+    var showsChevron = true
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1321,9 +1448,11 @@ private struct RuntimeValueRow: View {
                 .font(.subheadline)
                 .foregroundStyle(AmberTheme.muted)
 
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(AmberTheme.muted2)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted2)
+            }
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)
@@ -1369,8 +1498,9 @@ private struct RuntimeInfoRow: View {
     }
 }
 
-private struct RemoteTaskRow: View {
+private struct TerminalTaskRow: View {
     let task: IOSAdvancedTaskRecord
+    var showsChevron = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1381,16 +1511,23 @@ private struct RemoteTaskRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(task.commandPreview.isEmpty ? task.title : task.commandPreview)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.system(.footnote, design: .monospaced))
                     .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                Text("\(task.status.title) · \(task.connectionSummary)\n\(task.compactSummary)")
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("\(task.status.title) · \(task.connectionSummary)\n\(summary)")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted2)
+            }
         }
         .frame(minHeight: 62)
         .padding(.horizontal, 14)
@@ -1413,6 +1550,13 @@ private struct RemoteTaskRow: View {
         case .cancelled: AmberTheme.muted2
         default: AmberTheme.accentAmber
         }
+    }
+
+    private var summary: String {
+        if task.status == .running, !task.logTail.isEmpty {
+            return task.logTail
+        }
+        return task.compactSummary
     }
 }
 
@@ -1437,6 +1581,7 @@ private struct RuntimeTextFieldRow: View {
                 .keyboardType(keyboardType)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+                .accessibilityLabel(title)
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)
@@ -1461,6 +1606,7 @@ private struct RuntimeSecureFieldRow: View {
                 .foregroundStyle(AmberTheme.foreground)
                 .multilineTextAlignment(.trailing)
                 .textInputAutocapitalization(.never)
+                .accessibilityLabel(title)
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)
@@ -1502,7 +1648,10 @@ private struct SmokeResultCard: View {
                 Text(result.runtime.displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
-                RuntimePill(text: result.status, color: result.exitCode == 0 ? AmberTheme.accentGreen : AmberTheme.accentCyan)
+                RuntimePill(
+                    text: IOSTerminalJobStatus(rawValue: result.status)?.title ?? result.status,
+                    color: statusColor
+                )
             }
 
             Text("退出码 \(result.exitCode.map(String.init) ?? "…")")
@@ -1529,6 +1678,136 @@ private struct SmokeResultCard: View {
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private var statusColor: Color {
+        switch IOSTerminalJobStatus(rawValue: result.status) {
+        case .completed: AmberTheme.accentGreen
+        case .queued, .running: AmberTheme.accentAmber
+        case .failed, .timedOut, .interrupted: AmberTheme.accentRed
+        case .cancelled: AmberTheme.muted2
+        case nil: AmberTheme.accent
+        }
+    }
+}
+
+private struct TerminalTaskDetailView: View {
+    @Bindable var taskStore: IOSAdvancedTaskStore
+    let taskId: String
+
+    var body: some View {
+        RuntimeSheetChrome(
+            title: taskStore.task(id: taskId)?.kind == .embeddedIsh ? "内置 iSH Agent 作业" : "Remote SSH 作业",
+            subtitle: "进程内作业会保留状态与输出尾部；应用重启后未完成作业会如实标记为已中断。"
+        ) {
+            if let task = taskStore.task(id: taskId) {
+                VStack(spacing: 12) {
+                    AmberFormGroup {
+                        RemoteTaskDetailRow(title: "状态", value: task.status.title, color: statusColor(task.status))
+                        RuntimeDivider()
+                        RemoteTaskDetailRow(
+                            title: task.kind == .embeddedIsh ? "运行环境" : "连接",
+                            value: task.connectionSummary
+                        )
+                        if let workingDirectory = task.metadata["cwd"]?.nilIfBlank {
+                            RuntimeDivider()
+                            RemoteTaskDetailRow(title: "工作目录", value: workingDirectory, monospaced: true)
+                        }
+                        if let timeout = task.metadata["command_timeout_seconds"]?.nilIfBlank {
+                            RuntimeDivider()
+                            RemoteTaskDetailRow(title: "超时", value: "\(timeout) 秒")
+                        }
+                        if task.kind == .embeddedIsh {
+                            RuntimeDivider()
+                            RemoteTaskDetailRow(title: "模式", value: "异步非 PTY · 无 stdin")
+                        }
+                        RuntimeDivider()
+                        RemoteTaskDetailRow(title: "Job ID", value: task.id, monospaced: true)
+                    }
+
+                    RemoteTaskTextCard(title: "命令", text: task.commandPreview)
+                    if !task.logTail.isEmpty {
+                        RemoteTaskTextCard(title: "输出尾部", text: task.logTail)
+                    }
+                    if let stderr = task.metadata["stderr_tail"]?.nilIfBlank {
+                        RemoteTaskTextCard(title: "stderr 尾部", text: stderr, isError: true)
+                    }
+                    if !task.error.isEmpty {
+                        Text(task.error)
+                            .font(.footnote)
+                            .foregroundStyle(AmberTheme.accentRed)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                    }
+                }
+                .padding(.top, 16)
+            } else {
+                Text("该作业记录已不存在。")
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+        }
+    }
+
+    private func statusColor(_ status: IOSAdvancedTaskStatus) -> Color {
+        switch status {
+        case .completed: AmberTheme.accentGreen
+        case .failed, .timedOut, .interrupted: AmberTheme.accentRed
+        case .cancelled: AmberTheme.muted2
+        case .queued, .running, .approvalRequired: AmberTheme.accentAmber
+        }
+    }
+}
+
+private struct RemoteTaskDetailRow: View {
+    let title: String
+    let value: String
+    var color: Color = AmberTheme.foreground2
+    var monospaced = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(AmberTheme.foreground)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(monospaced ? .system(.footnote, design: .monospaced) : .footnote.weight(.semibold))
+                .foregroundStyle(color)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .frame(minHeight: 52)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+    }
+}
+
+private struct RemoteTaskTextCard: View {
+    let title: String
+    let text: String
+    var isError = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+            Text(text)
+                .font(.system(.footnote, design: .monospaced))
+                .foregroundStyle(isError ? AmberTheme.accentRed : AmberTheme.foreground2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+        .padding(12)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
         }
         .padding(.horizontal, 16)
@@ -1612,7 +1891,7 @@ private struct RuntimeMatrixCard: View {
                 Text(capability.runtime.displayName)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
-                RuntimePill(text: capability.tier.rawValue, color: capability.tier == .stable ? AmberTheme.accentGreen : AmberTheme.muted)
+                RuntimePill(text: capability.tier.displayName, color: capability.tier == .stable ? AmberTheme.accentGreen : AmberTheme.muted)
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 7) {
@@ -1625,7 +1904,7 @@ private struct RuntimeMatrixCard: View {
                 RuntimeCapabilityLine(title: "上架安全", state: capability.appStoreSafeByDefault)
             }
 
-            Text("License: \(capability.licenseClass.rawValue)")
+            Text("License: \(capability.licenseClass.displayName)")
                 .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(AmberTheme.muted2)
         }
@@ -1651,6 +1930,9 @@ private struct RuntimeCapabilityLine: View {
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityValue(state ? "支持" : "不支持")
     }
 }
 
@@ -1728,7 +2010,7 @@ private struct RuntimeFilledButtonStyle: ButtonStyle {
         configuration.label
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(.white)
-            .frame(height: 38)
+            .frame(minHeight: 44)
             .padding(.horizontal, 18)
             .background(AmberTheme.accent, in: Capsule())
             .opacity(isEnabled ? 1 : 0.42)
@@ -1743,7 +2025,7 @@ private struct RuntimeGlassButtonStyle: ButtonStyle {
         configuration.label
             .font(.subheadline.weight(.semibold))
             .foregroundStyle(AmberTheme.accent)
-            .frame(height: 38)
+            .frame(minHeight: 44)
             .padding(.horizontal, 18)
             .background(AmberTheme.glass, in: Capsule())
             .overlay {

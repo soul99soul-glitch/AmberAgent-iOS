@@ -13,3 +13,7 @@ runtime package changes.
 
 This resource must stay out of the stable `iosApp` target. It is bundled only by `iosAppExperimentalGPL` because the
 iSH-derived runtime requires explicit GPL/license review before distribution.
+
+AmberAgent lazily creates `/workspace` once after the writable, versioned rootfs boots, then passes each embedded
+command's requested guest working directory to IshEmbed. This guest path is isolated from AmberAgent's iOS workspace and from any Remote SSH host;
+changing the bundled rootfs version creates a new writable rootfs rather than silently migrating guest files.

@@ -33,6 +33,29 @@ final class IOSEmbeddedIshEventLoopTests: XCTestCase {
         XCTAssertEqual(recorder.terminateCallCount, 0)
     }
 
+    func testLoopCapsCapturedStreamTailAndMarksTruncation() {
+        let recorder = HookRecorder()
+        let excess = 17
+        let hooks = makeHooks(recorder: recorder, script: [
+            .event(.data(
+                Data(repeating: 0x78, count: IOSEmbeddedIshRuntime.maximumCapturedStreamBytes + excess),
+                isStderr: false
+            )),
+            .event(.exited(0))
+        ])
+
+        let result = IOSEmbeddedIshRuntime.readSessionEvents(
+            hooks: hooks,
+            timeoutSeconds: 5,
+            onOutput: nil
+        )
+
+        XCTAssertEqual(result.stdout.utf8.count, IOSEmbeddedIshRuntime.maximumCapturedStreamBytes)
+        XCTAssertTrue(result.stdoutTruncated)
+        XCTAssertFalse(result.stderrTruncated)
+        XCTAssertEqual(recorder.closeCallCount, 1)
+    }
+
     func testLoopDeadlineTerminatesAndPreservesPartialOutput() {
         let recorder = HookRecorder()
         // One data event, then a quiet guest that never exits: every further

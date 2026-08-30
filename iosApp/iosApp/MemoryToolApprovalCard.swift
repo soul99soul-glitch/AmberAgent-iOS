@@ -1128,6 +1128,12 @@ struct IshHandoffToolApprovalCard: View {
     let request: IshHandoffToolApprovalRequest
     let onApprove: () -> Void
     let onDeny: () -> Void
+    @State private var showsFullCommand = false
+
+    private var commandNeedsExpansion: Bool {
+        request.commandPreview.count > 240
+            || request.commandPreview.split(separator: "\n", omittingEmptySubsequences: false).count > 4
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1157,12 +1163,41 @@ struct IshHandoffToolApprovalCard: View {
                 Text(request.filename)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(1)
-                Text(request.commandPreview)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(4)
+                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
+                ForEach(request.contextLines, id: \.self) { line in
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if showsFullCommand {
+                    ScrollView(.vertical) {
+                        Text(request.commandPreview)
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 260)
+                    .accessibilityLabel("完整命令，共 \(request.commandPreview.count) 个字符")
+                } else {
+                    Text(request.commandPreview)
+                        .font(.system(.footnote, design: .monospaced))
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if commandNeedsExpansion {
+                    Button(showsFullCommand ? "收起完整命令" : "展开完整命令") {
+                        showsFullCommand.toggle()
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                    .buttonStyle(.plain)
+                    .frame(minHeight: 44, alignment: .leading)
+                    .accessibilityHint(request.commandReviewAccessibilityHint)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
@@ -1186,24 +1221,24 @@ struct IshHandoffToolApprovalCard: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground2)
                         .padding(.horizontal, 12)
-                        .frame(height: 32)
+                        .frame(minHeight: 32)
                         .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .chatApprovalHitTarget()
-                .accessibilityLabel("拒绝 iSH 工具")
+                .accessibilityLabel("拒绝\(request.title)")
 
                 Button(action: onApprove) {
                     Label("批准", systemImage: "checkmark")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 13)
-                        .frame(height: 32)
+                        .frame(minHeight: 32)
                         .background(AmberTheme.accent, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .chatApprovalHitTarget()
-                .accessibilityLabel("批准 iSH 工具")
+                .accessibilityLabel("批准\(request.title)")
             }
         }
         .padding(12)

@@ -91,8 +91,32 @@ struct IOSSSHConnectionProbeResult: Equatable, Sendable {
 }
 
 struct IOSSSHCommandResult: Equatable, Sendable {
-    let output: String
+    let stdout: String
+    let stderr: String
     let exitCode: Int?
+
+    init(output: String, exitCode: Int?) {
+        self.stdout = output
+        self.stderr = ""
+        self.exitCode = exitCode
+    }
+
+    init(stdout: String, stderr: String, exitCode: Int?) {
+        self.stdout = stdout
+        self.stderr = stderr
+        self.exitCode = exitCode
+    }
+
+    var output: String {
+        guard !stderr.isEmpty else { return stdout }
+        guard !stdout.isEmpty else { return "[stderr]\n\(stderr)" }
+        return stdout + (stdout.hasSuffix("\n") ? "" : "\n") + "[stderr]\n" + stderr
+    }
+}
+
+struct IOSSSHOutputChunk: Equatable, Sendable {
+    let text: String
+    let isStderr: Bool
 }
 
 enum IOSSSHProbePolicy {

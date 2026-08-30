@@ -98,10 +98,11 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             "ish_handoff"
         ]).union(IOSWebMountToolCatalog.supportedToolNames)
             .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            .union(IOSRemoteTerminalToolCatalog.supportedToolNames)
         XCTAssertEqual(IOSCapabilityRegistry.executableToolNames, expected)
     }
 
-    func testAdvancedExecutionCapabilitiesKeepRemoteCommandForegroundOnly() throws {
+    func testAdvancedExecutionCapabilitiesKeepRemoteCommandForegroundAndApproved() throws {
         let subAgent = try XCTUnwrap(
             IOSCapabilityRegistry.capabilities.first { $0.id == "ios.agent.subagent_dispatch" }
         )
@@ -136,9 +137,14 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             XCTAssertTrue(embeddedIsh.unavailableReason?.contains("ExperimentalGPL") == true)
         }
         XCTAssertTrue(remote.uiActionNames.contains("remote_command_run"))
-        XCTAssertTrue(remote.modelToolNames.isEmpty)
-        XCTAssertFalse(IOSCapabilityRegistry.executableToolNames.contains("terminal_execute"))
+        XCTAssertEqual(remote.modelToolNames, Array(IOSRemoteTerminalToolCatalog.supportedToolNames).sorted())
+        XCTAssertEqual(remote.requestKind, .foregroundSession)
+        XCTAssertTrue(remote.gate.requiresFreshUserPresence)
+        XCTAssertTrue(IOSCapabilityRegistry.executableToolNames.contains("terminal_execute"))
+        XCTAssertFalse(IOSCapabilityRegistry.blockedToolNames.contains("terminal_execute"))
         XCTAssertEqual(IOSCapabilityRegistry.capability(forUIActionName: "remote_command_run")?.id, "ios.remote.command")
+        XCTAssertEqual(IOSCapabilityRegistry.capability(forToolName: "terminal_execute")?.id, "ios.remote.command")
+        XCTAssertEqual(IOSCapabilityRegistry.capability(forToolName: "terminal_job_read")?.id, "ios.remote.command")
     }
 
     @MainActor
@@ -147,6 +153,7 @@ final class IOSCapabilityRegistryTests: XCTestCase {
         XCTAssertEqual(role.id, "oracle")
         XCTAssertTrue(role.toolAllowlist.contains("file_read_selected"))
         XCTAssertFalse(role.toolAllowlist.contains("terminal_execute"))
+        XCTAssertTrue(role.toolAllowlist.allSatisfy { !IOSRemoteTerminalToolCatalog.jobToolNames.contains($0) })
         XCTAssertGreaterThan(role.outputBudgetChars, 0)
 
         let defaults = isolatedDefaults()
@@ -206,7 +213,7 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             "call_log_list",
             "notification_list",
             "usage_stats_list",
-            "terminal_execute",
+            "terminal_session_exec",
             "apps_installed_list",
             "location_current",
             "camera_capture",

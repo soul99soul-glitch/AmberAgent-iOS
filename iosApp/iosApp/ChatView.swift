@@ -823,6 +823,8 @@ struct ChatView: View {
             return .red
         case .done:
             return .green
+        case .cancelled:
+            return .neutral
         case .active:
             return step.visualKind.activeIslandTint
         }
@@ -972,10 +974,10 @@ struct ChatView: View {
                 IshHandoffToolApprovalCard(
                     request: request,
                     onApprove: {
-                        viewModel.approvePendingIshHandoffTool()
+                        viewModel.approvePendingIshHandoffTool(requestId: request.id)
                     },
                     onDeny: {
-                        viewModel.denyPendingIshHandoffTool()
+                        viewModel.denyPendingIshHandoffTool(requestId: request.id)
                     }
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))

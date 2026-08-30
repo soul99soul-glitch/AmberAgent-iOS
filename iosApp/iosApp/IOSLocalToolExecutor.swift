@@ -19,6 +19,8 @@ struct IOSLocalToolExecutionRequest: Equatable {
     let runId: String
     let conversationId: String
     let executionPolicy: IOSExecutionPolicySnapshot?
+    let approvedRemoteProfileId: String?
+    let approvedRemoteTargetDigest: String?
 
     init(
         toolName: String,
@@ -28,7 +30,9 @@ struct IOSLocalToolExecutionRequest: Equatable {
         isUserInitiated: Bool,
         runId: String = "",
         conversationId: String = "",
-        executionPolicy: IOSExecutionPolicySnapshot? = nil
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
+        approvedRemoteProfileId: String? = nil,
+        approvedRemoteTargetDigest: String? = nil
     ) {
         self.toolName = toolName
         self.operation = operation
@@ -38,12 +42,15 @@ struct IOSLocalToolExecutionRequest: Equatable {
         self.runId = runId
         self.conversationId = conversationId
         self.executionPolicy = executionPolicy
+        self.approvedRemoteProfileId = approvedRemoteProfileId
+        self.approvedRemoteTargetDigest = approvedRemoteTargetDigest
     }
 }
 
 enum IOSLocalToolExecutionOutput: Equatable {
     case selectedFilePreview(SelectedDocumentReadResult)
     case permissionsStatus(IOSPermissionsStatusSnapshot)
+    case terminalResult(String)
     case ishExecuteResult(String)
     case ishHandoffResult(String)
     case webMountResult(String)
@@ -135,6 +142,9 @@ final class IOSLocalToolExecutor {
     private let runtime: IOSToolRuntime
     private let webMountController: IOSWebMountController
     private let workspaceStore: IOSWorkspaceStore
+    private let settingsStore: SettingsStore?
+    private let terminalRuntime: IOSTerminalRuntime
+    private let terminalTaskStore: IOSAdvancedTaskStore
 
     /// 全局自动批准：开启后普通工具自动放行。
     static var isGlobalAutoApproveEnabled: Bool {
@@ -151,7 +161,10 @@ final class IOSLocalToolExecutor {
         documentStore: DocumentAccessStore,
         workspaceStore: IOSWorkspaceStore = .shared,
         systemPermissionCoordinator: IOSSystemPermissionCoordinator? = nil,
-        webMountController: IOSWebMountController? = nil
+        webMountController: IOSWebMountController? = nil,
+        settingsStore: SettingsStore? = nil,
+        terminalRuntime: IOSTerminalRuntime = .shared,
+        terminalTaskStore: IOSAdvancedTaskStore = .shared
     ) {
         self.permissionStore = permissionStore
         self.documentStore = documentStore
@@ -159,6 +172,9 @@ final class IOSLocalToolExecutor {
         self.systemPermissionCoordinator = systemPermissionCoordinator ?? IOSSystemPermissionCoordinator()
         self.runtime = IOSToolRuntime(permissionStore: permissionStore, documentStore: documentStore)
         self.webMountController = webMountController ?? IOSWebMountController.shared
+        self.settingsStore = settingsStore
+        self.terminalRuntime = terminalRuntime
+        self.terminalTaskStore = terminalTaskStore
     }
 
     func executionPolicySnapshot(
@@ -184,7 +200,9 @@ final class IOSLocalToolExecutor {
         isUserInitiated: Bool,
         runId: String = "",
         conversationId: String = "",
-        executionPolicy: IOSExecutionPolicySnapshot? = nil
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
+        approvedRemoteProfileId: String? = nil,
+        approvedRemoteTargetDigest: String? = nil
     ) -> IOSLocalToolExecutionRequest {
         if toolName == "file_read_selected" {
             let selected = requestForCurrentSelectedFile(isUserInitiated: isUserInitiated)
@@ -196,7 +214,9 @@ final class IOSLocalToolExecutor {
                 isUserInitiated: selected.isUserInitiated,
                 runId: runId,
                 conversationId: conversationId,
-                executionPolicy: executionPolicy
+                executionPolicy: executionPolicy,
+                approvedRemoteProfileId: approvedRemoteProfileId,
+                approvedRemoteTargetDigest: approvedRemoteTargetDigest
             )
         }
 
@@ -227,7 +247,9 @@ final class IOSLocalToolExecutor {
             isUserInitiated: isUserInitiated,
             runId: runId,
             conversationId: conversationId,
-            executionPolicy: executionPolicy
+            executionPolicy: executionPolicy,
+            approvedRemoteProfileId: approvedRemoteProfileId,
+            approvedRemoteTargetDigest: approvedRemoteTargetDigest
         )
     }
 
@@ -238,13 +260,59 @@ final class IOSLocalToolExecutor {
         if request.toolName == "permissions_status" {
             return .permissionsStatus(permissionsStatus(now: now))
         }
+        if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(request.toolName) {
+            guard let capability = terminalCapability(
+                toolName: request.toolName,
+                input: request.operation
+            ) else {
+                return .denied("Unknown terminal tool: \(request.toolName)")
+            }
+            let gate: IOSPlatformGateDecision
+            if IOSRemoteTerminalToolCatalog.readOnlyToolNames.contains(request.toolName) {
+                let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
+                gate = policy == .disabled
+                    ? .deny(reason: "Disabled by AmberAgent \(capability.title) policy")
+                    : .allow(capabilityId: capability.id)
+            } else {
+                gate = resolveTerminalExecution(request: request, capability: capability)
+            }
+            switch gate {
+            case .allow:
+                if IOSRemoteTerminalToolCatalog.jobToolNames.contains(request.toolName) {
+                    return .terminalResult(await IOSAgentTerminalJobExecutor.execute(
+                        toolName: request.toolName,
+                        input: request.operation,
+                        settingsStore: settingsStore,
+                        runtime: terminalRuntime,
+                        taskStore: terminalTaskStore,
+                        expectedProfileId: request.approvedRemoteProfileId,
+                        expectedTargetDigest: request.approvedRemoteTargetDigest
+                    ))
+                }
+                return .terminalResult(await IOSRemoteTerminalExecuteExecutor.execute(
+                    input: request.operation,
+                    settingsStore: settingsStore,
+                    runtime: terminalRuntime,
+                    expectedProfileId: request.approvedRemoteProfileId,
+                    expectedTargetDigest: request.approvedRemoteTargetDigest
+                ))
+            case .needsUserAction(let reason):
+                return .needsUserAction(reason)
+            case .deny(let reason):
+                return .denied(reason)
+            }
+        }
         if IOSEmbeddedIshToolCatalog.supportedToolNames.contains(request.toolName) {
             guard let capability = IOSCapabilityRegistry.capability(forToolName: request.toolName) else {
                 return .denied("Unknown embedded iSH tool: \(request.toolName)")
             }
             switch resolveEmbeddedIshExecute(request: request, capability: capability) {
             case .allow:
-                return .ishExecuteResult(await IOSEmbeddedIshExecuteExecutor.execute(input: request.operation))
+                return .ishExecuteResult(await IOSEmbeddedIshExecuteExecutor.execute(
+                    input: request.operation,
+                    runtime: terminalRuntime,
+                    taskStore: terminalTaskStore
+                ))
             case .needsUserAction(let reason):
                 return .needsUserAction(reason)
             case .deny(let reason):
@@ -447,6 +515,38 @@ final class IOSLocalToolExecutor {
             return .needsUserAction(reason: "Embedded iSH executes local Linux commands and returns stdout/stderr/exit code. It requires explicit foreground approval.")
         }
         return .allow(capabilityId: capability.id)
+    }
+
+    private func resolveTerminalExecution(
+        request: IOSLocalToolExecutionRequest,
+        capability: IOSPlatformCapability
+    ) -> IOSPlatformGateDecision {
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
+        if policy == .disabled {
+            return .deny(reason: "Disabled by AmberAgent \(capability.title) policy")
+        }
+        guard request.isUserInitiated else {
+            if request.toolName == IOSRemoteTerminalToolCatalog.jobStopToolName {
+                return .needsUserAction(reason: "Stopping a terminal job requires explicit foreground approval.")
+            }
+            if request.toolName == IOSRemoteTerminalToolCatalog.jobStartToolName {
+                return .needsUserAction(reason: "Starting a Remote SSH job on the selected trusted host requires explicit foreground approval.")
+            }
+            return .needsUserAction(reason: "Remote SSH executes a command on the selected trusted host and returns stdout/stderr/exit code. It requires explicit foreground approval.")
+        }
+        return .allow(capabilityId: capability.id)
+    }
+
+    private func terminalCapability(toolName: String, input: String) -> IOSPlatformCapability? {
+        if toolName == IOSRemoteTerminalToolCatalog.jobReadToolName
+            || toolName == IOSRemoteTerminalToolCatalog.jobWaitToolName
+            || toolName == IOSRemoteTerminalToolCatalog.jobStopToolName,
+           let jobId = Self.toolInputObject(input)["job_id"] as? String,
+           terminalTaskStore.task(id: jobId)?.kind == .embeddedIsh {
+            guard !IOSEmbeddedIshToolCatalog.supportedToolNames.isEmpty else { return nil }
+            return IOSCapabilityRegistry.capabilities.first { $0.id == "ios.embedded.ish_runtime" }
+        }
+        return IOSCapabilityRegistry.capability(forToolName: toolName)
     }
 
     private func resolveIshHandoff(
@@ -778,6 +878,27 @@ final class IOSLocalToolExecutor {
             return "\(reason) Target: \(IOSWebMountRedactor.redactedText(label))."
         }
         return reason
+    }
+
+    func remoteTerminalApprovalPreview(
+        toolName: String,
+        input: String
+    ) -> IshHandoffToolApprovalRequest? {
+        guard IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolName) else {
+            return nil
+        }
+        if IOSRemoteTerminalToolCatalog.jobToolNames.contains(toolName) {
+            return IOSAgentTerminalJobExecutor.approvalPreview(
+                toolName: toolName,
+                input: input,
+                settingsStore: settingsStore,
+                taskStore: terminalTaskStore
+            )
+        }
+        return IOSRemoteTerminalExecuteExecutor.approvalPreview(
+            input: input,
+            settingsStore: settingsStore
+        )
     }
 
     func workspaceApprovalPreview(toolName: String, input: String) -> IOSWorkspaceToolApprovalPreview? {

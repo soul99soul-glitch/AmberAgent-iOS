@@ -152,6 +152,74 @@ final class ChatMessageProjectionTests: XCTestCase {
         XCTAssertEqual(model.detail, "用户拒绝搜索。")
     }
 
+    func testRemoteTerminalStepDistinguishesTimeoutAndCancellation() {
+        func model(status: String) -> ChatToolStepModel {
+            ChatToolStepModel(tool: UIMessagePart.Tool(
+                toolCallId: status,
+                toolName: "terminal_execute",
+                input: #"{"command":"sleep 10"}"#,
+                output: [
+                    UIMessagePart.Text(
+                        text: #"{"ok":false,"status":"\#(status)","error":"stopped"}"#,
+                        metadata: nil
+                    )
+                ],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ))
+        }
+
+        let timedOut = model(status: IOSTerminalJobStatus.timedOut.rawValue)
+        XCTAssertEqual(timedOut.title, "Remote SSH 已超时")
+        XCTAssertEqual(timedOut.state, .failed)
+
+        let cancelled = model(status: IOSTerminalJobStatus.cancelled.rawValue)
+        XCTAssertEqual(cancelled.title, "Remote SSH 已取消")
+        XCTAssertEqual(cancelled.state, .cancelled)
+    }
+
+    func testEmbeddedTerminalJobLaunchRemainsActiveWithoutFakeExitCode() {
+        let model = ChatToolStepModel(tool: UIMessagePart.Tool(
+            toolCallId: "ish-job-running",
+            toolName: "ios_ish_execute",
+            input: #"{"command":"sleep 10","background":true}"#,
+            output: [
+                UIMessagePart.Text(
+                    text: #"{"ok":true,"background":true,"status":"running","runtime":"ish_experimental","job_id":"job-1"}"#,
+                    metadata: nil
+                )
+            ],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        ))
+
+        XCTAssertEqual(model.title, "内置 iSH 作业已启动")
+        XCTAssertEqual(model.detail, "运行中")
+        XCTAssertEqual(model.state, .active)
+    }
+
+    func testEmbeddedTerminalCancellationUsesNeutralStateAndTitle() {
+        let model = ChatToolStepModel(tool: UIMessagePart.Tool(
+            toolCallId: "ish-cancelled",
+            toolName: "ios_ish_execute",
+            input: #"{"command":"sleep 10"}"#,
+            output: [
+                UIMessagePart.Text(
+                    text: #"{"ok":false,"status":"cancelled","error":"stopped"}"#,
+                    metadata: nil
+                )
+            ],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        ))
+
+        XCTAssertEqual(model.title, "内置 iSH 已取消")
+        XCTAssertEqual(model.state, .cancelled)
+    }
+
     func testChatMarkdownOpenURLPolicyAllowsOnlyWebAndMailtoSchemes() throws {
         XCTAssertTrue(ChatMarkdownOpenURLPolicy.isAllowed(try XCTUnwrap(URL(string: "https://example.com/a"))))
         XCTAssertTrue(ChatMarkdownOpenURLPolicy.isAllowed(try XCTUnwrap(URL(string: "http://example.com/a"))))

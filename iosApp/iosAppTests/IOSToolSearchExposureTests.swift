@@ -32,6 +32,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
         "wm_screenshot", "wm_back", "wm_forward", "wm_clear_session", "wm_site_add",
         "wm_site_remove", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
         "wm_select", "wm_find", "wm_wait",
+        "terminal_execute", "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "ish_handoff", "ios_ish_execute",
         "mcp_test", "mcp_import_from_skill",
         "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
@@ -41,8 +42,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
     private func fullIosDeclarations() -> [Tool] {
         let names =
             IOSWorkspaceToolCatalog.supportedToolNames
-            .union(IOSIshToolCatalog.supportedToolNames)
-            .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            .union(IOSAgentTerminalToolCatalog.supportedToolNames)
             .union(IOSWebMountToolCatalog.supportedToolNames)
             .union(IOSSkillToolCatalog.toolNames)
             .union(IOSMcpManagementToolCatalog.toolNames)
@@ -106,6 +106,33 @@ final class IOSToolSearchExposureTests: XCTestCase {
         let nextRoundParams = viewModel.textGenerationParamsForTesting().replacingTools(bridge.visibleTools())
         XCTAssertTrue(nextRoundParams.tools.map(\.name).contains("wm_type"))
         XCTAssertFalse(nextRoundParams.tools.map(\.name).contains("wm_screenshot"))
+    }
+
+    func testTerminalToolsAreDeferredUntilToolSearchHit() throws {
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
+            localToolExecutor: localToolExecutor(),
+            autoGenerateResponses: false
+        )
+        let terminalNames: Set<String> = [
+            "terminal_execute", "terminal_job_start", "terminal_job_read",
+            "terminal_job_wait", "terminal_job_stop",
+        ]
+        XCTAssertTrue(terminalNames.isDisjoint(with: Set(viewModel.currentToolDeclarationNames())))
+        let bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
+        XCTAssertTrue(terminalNames.isSubset(of: Set(bridge.fullToolDeclarations().map(\.name))))
+
+        let executePayload = bridge.executeToolSearch(argumentsJson: #"{"query":"Remote SSH command","limit":3}"#)
+        XCTAssertTrue(executePayload.contains("terminal_execute"))
+        XCTAssertTrue(Set(bridge.visibleTools().map(\.name)).contains("terminal_execute"))
+
+        let payload = bridge.executeToolSearch(argumentsJson: #"{"query":"terminal_job","limit":10}"#)
+
+        for name in terminalNames where name != "terminal_execute" {
+            XCTAssertTrue(payload.contains(name), "tool_search 必须命中 \(name)")
+            XCTAssertTrue(Set(bridge.visibleTools().map(\.name)).contains(name))
+        }
     }
 
     // MARK: - S1: P1-d 三工具进生产目录（bridge 全目录 → tool_search 命中 → 可路由）

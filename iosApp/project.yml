@@ -344,7 +344,7 @@ targets:
       - package: ish-arm64-pkg
         product: IshEmbed
       - target: AmberAgentActivityWidgetExperimentalGPL
-      - target: AmberWatchApp
+      - target: AmberWatchAppExperimentalGPL
         embed: true
     scheme:
       gatherCoverageData: false
@@ -359,6 +359,32 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.watchkitapp
+        AMBER_COMPANION_APP_BUNDLE_IDENTIFIER: app.amber.ios
+        INFOPLIST_FILE: WatchApp/Info.plist
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "4"
+        SDKROOT: watchos
+        SKIP_INSTALL: "YES"
+        GENERATE_INFOPLIST_FILE: "NO"
+        WATCHOS_DEPLOYMENT_TARGET: "11.0"
+        SUPPORTED_PLATFORMS:
+          - watchos
+          - watchsimulator
+    scheme:
+      gatherCoverageData: false
+
+  AmberWatchAppExperimentalGPL:
+    type: application
+    platform: watchOS
+    sources:
+      - path: WatchApp
+      - path: SharedWatch/WatchTaskModels.swift
+      - path: SharedWatch/WatchConnectivityBridge.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl.watchkitapp
+        AMBER_COMPANION_APP_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl
         INFOPLIST_FILE: WatchApp/Info.plist
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
