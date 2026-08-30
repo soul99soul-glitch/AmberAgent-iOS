@@ -24,6 +24,52 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
+    func testAudioKeepAliveIsWiredThroughExecutionSettings() throws {
+        let view = try source("iosApp/ExecutionSettingsView.swift")
+        let keys = try source("iosApp/AgentLiveActivityController.swift")
+        let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
+        let info = try source("iosApp/Info.plist")
+
+        XCTAssertTrue(view.contains("@AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive)"))
+        XCTAssertTrue(view.contains("聊天、小说、议会、深度阅读"))
+        XCTAssertTrue(view.contains("BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()"))
+        XCTAssertTrue(keys.contains("static let audioKeepAlive = \"app.amber.ios.execution.audioKeepAlive\""))
+        XCTAssertTrue(keepAlive.contains("isAudioKeepAlivePreferenceEnabled"))
+        XCTAssertTrue(keepAlive.contains("audioKeepAlive.start()"))
+        XCTAssertTrue(info.contains("<string>audio</string>"))
+        XCTAssertTrue(info.contains("<string>processing</string>"))
+    }
+
+    func testAudioKeepAliveCoversNovelCouncilDeepReadAndChatBackground() throws {
+        let novel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
+        let session = try source("iosApp/NovelCreation/NovelSessionViewModel.swift")
+        let lifecycle = try source("iosApp/NovelCreation/NovelGenerationLifecycle.swift")
+        let council = try source("iosApp/CouncilChatRuntimeView.swift")
+        let deepRead = try source("iosApp/DeepReadCreateView.swift")
+        let chatBackground = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
+        let chatHost = try source("iosApp/ChatKernelRunHost.swift")
+        let miniApp = try source("iosApp/MiniAppRunnerView.swift")
+        let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
+
+        XCTAssertTrue(novel.contains("beginBackgroundGeneration(for: request)"))
+        XCTAssertTrue(novel.contains("beginStateSyncBackgroundLease("))
+        XCTAssertTrue(novel.contains("beginContinuityBackgroundLease("))
+        XCTAssertTrue(session.contains("beginGhostwriteBackgroundLease("))
+        XCTAssertTrue(lifecycle.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(council.contains("beginBackgroundKeepAlive(for: discussionID)"))
+        XCTAssertTrue(council.contains("beginMaterialsKeepAlive()"))
+        XCTAssertTrue(deepRead.contains("BackgroundGenerationKeepAlive.shared.begin("))
+        XCTAssertTrue(chatHost.contains("backgroundExecution.begin("))
+        XCTAssertTrue(chatBackground.contains("beginChatBackgroundAudioKeepAlive("))
+        XCTAssertTrue(chatBackground.contains("submitSystemTask: false"))
+        XCTAssertTrue(keepAlive.contains("handoffBridgeLeaseId"))
+        XCTAssertTrue(keepAlive.contains(".handoff-bridge"))
+        XCTAssertTrue(chatBackground.contains("必须在派发前就把音频腿拉起来"))
+        let miniAppBegin = try XCTUnwrap(miniApp.range(of: "BackgroundGenerationKeepAlive.shared.begin("))
+        let miniAppEnsure = try XCTUnwrap(miniApp.range(of: "durableRunStore.ensureRunning("))
+        XCTAssertLessThan(miniAppBegin.lowerBound, miniAppEnsure.lowerBound)
+    }
+
     func testChatComposerSendAndStopReachTheCurrentConversationRun() throws {
         let chat = try source("iosApp/ChatView.swift")
         let viewModel = try source("iosApp/ChatViewModel.swift")

@@ -1724,7 +1724,11 @@ final class CouncilChatViewModel {
 
     /// 讨论还在跑就拿后台执行权，跑完自动还回去。
     /// 议会没有「后台重跑」那一路，执行权被系统收走时取消当前 owner 并保留可重试快照。
+    /// 讨论还在跑、或还在解析材料，就拿后台执行权。
     private func beginBackgroundKeepAliveIfRunning() {
+        if isPreparingMaterials {
+            beginMaterialsKeepAlive()
+        }
         guard let discussionID = activeDiscussionID else { return }
         beginBackgroundKeepAlive(for: discussionID)
     }
@@ -2778,6 +2782,7 @@ final class CouncilChatViewModel {
         isPreparingMaterials = true
         materialsPreparationStatus = status
         attachmentErrorMessage = nil
+        beginMaterialsKeepAlive()
         return materialsPrepGeneration
     }
 
@@ -2788,6 +2793,7 @@ final class CouncilChatViewModel {
         materialsPreparationTask = nil
         isPreparingMaterials = false
         materialsPreparationStatus = ""
+        endMaterialsKeepAlive()
         return true
     }
 
@@ -2797,9 +2803,31 @@ final class CouncilChatViewModel {
         materialsPreparationTask = nil
         isPreparingMaterials = false
         materialsPreparationStatus = ""
+        endMaterialsKeepAlive()
         if showCancelledMessage {
             attachmentErrorMessage = "已取消材料解析"
         }
+    }
+
+    private func materialsKeepAliveLeaseId() -> String {
+        "council-materials"
+    }
+
+    private func beginMaterialsKeepAlive() {
+        let expire: () -> Void = { [weak self] in
+            self?.invalidateMaterialsPreparation(showCancelledMessage: false)
+        }
+        BackgroundGenerationKeepAlive.shared.begin(
+            materialsKeepAliveLeaseId(),
+            title: "Amber 议会准备中",
+            subtitle: materialsPreparationStatus.isEmpty ? "解析材料" : materialsPreparationStatus,
+            onExpire: expire,
+            onSystemTaskExpiration: expire
+        )
+    }
+
+    private func endMaterialsKeepAlive() {
+        BackgroundGenerationKeepAlive.shared.end(materialsKeepAliveLeaseId())
     }
 
     private func stopAndCheckpointActiveDiscussion(

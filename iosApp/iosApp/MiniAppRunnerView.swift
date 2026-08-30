@@ -745,6 +745,22 @@ struct MiniAppRunnerView: View {
             let inputDigest = IOSDurableRunStore.inputDigest(
                 "\(request.system)\n\(request.prompt)\n\(request.maxOutputChars)\n\(request.temperature ?? -1)"
             )
+            var didExpire = false
+            var operation: Task<IOSMiniAppJSONValue, Error>?
+            BackgroundGenerationKeepAlive.shared.begin(
+                leaseId,
+                title: "\(appTitle) 正在生成",
+                subtitle: "MiniApp AI",
+                onExpire: {
+                    didExpire = true
+                    operation?.cancel()
+                },
+                onSystemTaskExpiration: {
+                    didExpire = true
+                    operation?.cancel()
+                }
+            )
+            defer { BackgroundGenerationKeepAlive.shared.end(leaseId) }
             guard try await durableRunStore.ensureRunning(
                 runId: runId,
                 descriptorId: IOSDurableRunStore.Descriptor.miniAppAI,
@@ -754,29 +770,15 @@ struct MiniAppRunnerView: View {
             ) else {
                 throw MiniAppRunnerAIError.denied("无法保存 AI 运行状态，已停止生成。")
             }
-            var didExpire = false
-            let operation = Task {
+            let runningOperation = Task {
                 try await Self.runMiniAppAI(request: request, sharedSettings: sharedSettings)
             }
-            BackgroundGenerationKeepAlive.shared.begin(
-                leaseId,
-                title: "\(appTitle) 正在生成",
-                subtitle: "MiniApp AI",
-                onExpire: {
-                    didExpire = true
-                    operation.cancel()
-                },
-                onSystemTaskExpiration: {
-                    didExpire = true
-                    operation.cancel()
-                }
-            )
-            defer { BackgroundGenerationKeepAlive.shared.end(leaseId) }
+            operation = runningOperation
             do {
                 let result = try await withTaskCancellationHandler {
-                    try await operation.value
+                    try await runningOperation.value
                 } onCancel: {
-                    operation.cancel()
+                    runningOperation.cancel()
                 }
                 _ = try? await durableRunStore.transitionFromAnyActive(
                     runId: runId,

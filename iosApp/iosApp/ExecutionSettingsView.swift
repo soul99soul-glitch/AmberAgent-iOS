@@ -8,6 +8,7 @@ struct ExecutionSettingsView: View {
     @Environment(RouterPath.self) private var router
 
     @AppStorage(IOSExecutionPreferenceKeys.liveActivity) private var liveActivity = true
+    @AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive) private var audioKeepAlive = true
     @AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)
     private var chatMaxToolResumeCount = SettingsStore.defaultChatMaxToolResumeCount
     @AppStorage(IOSExecutionPreferenceKeys.execJavaScriptEnabled)
@@ -26,6 +27,7 @@ struct ExecutionSettingsView: View {
                     execJavaScriptSection
                     recentTasksSection
                     liveActivitySection
+                    audioKeepAliveSection
                 }
                 .padding(.bottom, 36)
             }
@@ -152,6 +154,23 @@ struct ExecutionSettingsView: View {
                     }
                 }
 
+            }
+        }
+    }
+
+    private var audioKeepAliveSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "后台续跑")
+            AmberFormGroup {
+                ExecutionToggleRow(
+                    systemImage: "waveform",
+                    title: "音频保活",
+                    subtitle: "聊天、小说、议会、深度阅读进入后台时循环一段听不见的音频，避免 30 秒后被挂起。锁屏时可能暂停其它音乐，控制中心也可能出现播放指示。",
+                    isOn: audioKeepAlive
+                ) {
+                    audioKeepAlive.toggle()
+                    BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()
+                }
             }
         }
     }

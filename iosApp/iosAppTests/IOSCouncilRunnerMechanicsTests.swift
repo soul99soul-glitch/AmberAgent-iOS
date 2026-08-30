@@ -35,6 +35,8 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         XCTAssertFalse(shell.contains("councilChatViewModel.runtimeDidBecomeActive()"))
         XCTAssertTrue(start.contains("beginBackgroundKeepAlive(for: discussionID)"))
         XCTAssertTrue(begin.contains("let leaseId = keepAliveLeaseId(for: discussionID)"))
+        XCTAssertTrue(runtime.contains("beginMaterialsKeepAlive()"))
+        XCTAssertTrue(runtime.contains("\"council-materials\""))
         let expirationCallbacks = begin.components(separatedBy: "handleBackgroundKeepAliveExpiration(for: discussionID)")
         XCTAssertEqual(expirationCallbacks.count - 1, 2)
         XCTAssertTrue(expiration.contains("stopAndCheckpointActiveDiscussion("))

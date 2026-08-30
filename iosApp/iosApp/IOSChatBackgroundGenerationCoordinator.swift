@@ -510,8 +510,21 @@ final class IOSChatBackgroundGenerationCoordinator {
         saveMiniAppIfPresent: (@MainActor ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?)? = nil
     ) -> Bool {
         if handoff.mode == .resumeResponse {
-            guard checkpointDurableResponse(handoff) else { return false }
-            activeJobs[requestIdentifier(for: handoff.runId)] = runtimeJob(
+            let requestId = requestIdentifier(for: handoff.runId)
+            let alreadyHeldAudio = BackgroundGenerationKeepAlive.shared.holdsLease(
+                chatBackgroundAudioLeaseId(for: requestId)
+            )
+            beginChatBackgroundAudioKeepAlive(
+                requestId: requestId,
+                subtitle: handoff.params.model.displayName
+            )
+            guard checkpointDurableResponse(handoff) else {
+                if !alreadyHeldAudio {
+                    endChatBackgroundAudioKeepAlive(requestId: requestId)
+                }
+                return false
+            }
+            activeJobs[requestId] = runtimeJob(
                 handoff: handoff,
                 conversationStore: conversationStore,
                 toolRuntime: toolRuntime,
@@ -523,11 +536,26 @@ final class IOSChatBackgroundGenerationCoordinator {
         configure()
 
         let requestId = requestIdentifier(for: handoff.runId)
-        guard register(requestId: requestId) else { return false }
+        let alreadyHeldAudio = BackgroundGenerationKeepAlive.shared.holdsLease(
+            chatBackgroundAudioLeaseId(for: requestId)
+        )
+        beginChatBackgroundAudioKeepAlive(
+            requestId: requestId,
+            subtitle: handoff.params.model.displayName
+        )
+        guard register(requestId: requestId) else {
+            if !alreadyHeldAudio {
+                endChatBackgroundAudioKeepAlive(requestId: requestId)
+            }
+            return false
+        }
 
         do {
             try persist(handoff: handoff, requestId: requestId)
         } catch {
+            if !alreadyHeldAudio {
+                endChatBackgroundAudioKeepAlive(requestId: requestId)
+            }
             NSLog("[AmberChatBG] Failed to persist background payload: \(error)")
             return false
         }
@@ -559,8 +587,13 @@ final class IOSChatBackgroundGenerationCoordinator {
             return true
         } catch {
             // 提交失败 = 这一轮没交出去，所有权仍在前台（调用方看到 false 就不会
-            // 清 currentRunId）。所以只回滚后台侧刚登记的东西，租约绝不能还——
-            // 还了前台这一轮就失去保活，等于白白退化。
+            // 清 currentRunId）。所以只回滚后台侧刚登记的东西。音频腿若是本次
+            // start() 新挂上的必须还，避免 transfer 恢复通用租约后留下 chat-bg
+            // 幽灵租约；若分离回复已经占着同一条腿，则留给 persistExpirationFailure
+            // / finish 拆，避免提交失败后的终态落盘掉进无执行权窗口。
+            if !alreadyHeldAudio {
+                endChatBackgroundAudioKeepAlive(requestId: requestId)
+            }
             activeJobs.removeValue(forKey: requestId)
             var map = taskMap()
             map.removeValue(forKey: requestId)
@@ -615,8 +648,17 @@ final class IOSChatBackgroundGenerationCoordinator {
                   job.responseId != nil else {
                 continue
             }
+            // Task { @MainActor } 要等下一拍才跑；退后台时这一拍就会被挂起。
+            // 必须在派发前就把音频腿拉起来，不能等 resumeDetachedResponse 的首个 await。
+            beginChatBackgroundAudioKeepAlive(
+                requestId: requestId,
+                subtitle: job.params.model.displayName
+            )
             activeDetachedResponseTasks[requestId] = Task { @MainActor [weak self] in
                 guard let self else { return }
+                if Task.isCancelled {
+                    return
+                }
                 await self.resumeDetachedResponse(job: job, requestId: requestId)
                 self.activeDetachedResponseTasks.removeValue(forKey: requestId)
                 self.activeDetachedResponseJobs.removeValue(forKey: requestId)
@@ -913,11 +955,23 @@ final class IOSChatBackgroundGenerationCoordinator {
     ) async {
         guard let openAI = job.providerSetting as? ProviderSetting.OpenAI,
               let responseId = job.responseId else {
+            endChatBackgroundAudioKeepAlive(requestId: requestId)
             return
         }
+        if Task.isCancelled {
+            return
+        }
+        beginChatBackgroundAudioKeepAlive(
+            requestId: requestId,
+            subtitle: job.params.model.displayName
+        )
         do {
-            guard let snapshot = try await runStore.snapshot(runId: job.runId) else { return }
+            guard let snapshot = try await runStore.snapshot(runId: job.runId) else {
+                endChatBackgroundAudioKeepAlive(requestId: requestId)
+                return
+            }
             if snapshot.status == .awaitingPermission {
+                endChatBackgroundAudioKeepAlive(requestId: requestId)
                 return
             }
             if snapshot.status == .recoveryPending {
@@ -925,12 +979,16 @@ final class IOSChatBackgroundGenerationCoordinator {
                     runId: job.runId,
                     expected: .recoveryPending,
                     to: .running
-                ) else { return }
+                ) else {
+                    endChatBackgroundAudioKeepAlive(requestId: requestId)
+                    return
+                }
             } else if snapshot.status != .running {
                 finish(runId: job.runId, requestId: requestId)
                 return
             }
         } catch {
+            endChatBackgroundAudioKeepAlive(requestId: requestId)
             return
         }
         let runState = activeRunStates[requestId] ?? IOSChatBackgroundRunState()
@@ -1166,6 +1224,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             )
             await job.liveActivityController.end(runId: job.runId, presentation: .failed())
             activeRunStates[requestId] = IOSChatBackgroundRunState()
+            endChatBackgroundAudioKeepAlive(requestId: requestId)
         }
     }
 
@@ -1198,6 +1257,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         IOSBackgroundLifecycleLog.record(
             "bgTaskStarted(run=\(job.runId.prefix(8)))",
             detail: lifecycleSnapshotDetail
+        )
+        beginChatBackgroundAudioKeepAlive(
+            requestId: backgroundTask.identifier,
+            subtitle: job.params.model.displayName
         )
         let assistantTextSnapshot = IOSChatBackgroundAssistantTextSnapshot()
         let progress = backgroundTask.progress
@@ -2166,6 +2229,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         activeJobs.removeValue(forKey: requestId)
         activeRunStates.removeValue(forKey: requestId)
         activeBackgroundTasks.removeValue(forKey: requestId)
+        endChatBackgroundAudioKeepAlive(requestId: requestId)
     }
 
     private func job(for requestId: String) -> IOSChatBackgroundRuntimeJob? {
@@ -2761,6 +2825,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             activeRunStates.removeValue(forKey: requestId)
             activeBackgroundTasks.removeValue(forKey: requestId)
             map.removeValue(forKey: requestId)
+            endChatBackgroundAudioKeepAlive(requestId: requestId)
             if shouldRemovePayload {
                 removePayload(requestId: requestId)
             }
@@ -2773,6 +2838,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 activeRunStates.removeValue(forKey: requestId)
                 activeBackgroundTasks.removeValue(forKey: requestId)
                 map.removeValue(forKey: requestId)
+                endChatBackgroundAudioKeepAlive(requestId: requestId)
                 if shouldRemovePayload {
                     removePayload(requestId: requestId)
                 }
@@ -2801,5 +2867,23 @@ final class IOSChatBackgroundGenerationCoordinator {
         dependencies?.sharedSettings.snapshot.providers.first {
             $0.id.toHexDashString().caseInsensitiveCompare(providerId) == .orderedSame
         }
+    }
+
+    private func chatBackgroundAudioLeaseId(for requestId: String) -> String {
+        "chat-bg-\(requestId)"
+    }
+
+    /// 专用后台 job 自己挂系统卡；这里只借 KeepAlive 的音频腿，避免再出第二张进度卡。
+    private func beginChatBackgroundAudioKeepAlive(requestId: String, subtitle: String) {
+        BackgroundGenerationKeepAlive.shared.begin(
+            chatBackgroundAudioLeaseId(for: requestId),
+            title: "Amber 后台生成",
+            subtitle: subtitle,
+            submitSystemTask: false
+        )
+    }
+
+    private func endChatBackgroundAudioKeepAlive(requestId: String) {
+        BackgroundGenerationKeepAlive.shared.end(chatBackgroundAudioLeaseId(for: requestId))
     }
 }

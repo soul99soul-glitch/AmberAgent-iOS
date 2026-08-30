@@ -412,7 +412,9 @@ final class IOSChatForegroundHarness {
             endBackgroundTask: { _ in },
             submitTaskRequest: { _ in },
             cancelTaskRequest: { _ in },
-            registerLaunchHandler: { _, _ in true }
+            registerLaunchHandler: { _, _ in true },
+            audioKeepAlive: NoOpBackgroundAudioKeepAlive(),
+            isAudioKeepAliveEnabled: { false }
         )
 
         let dependencies = ChatGenerationDependencies(
@@ -520,4 +522,16 @@ final class IOSChatForegroundHarness {
         return nil
     }
 
+}
+
+final class NoOpBackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
+    var isActive = false
+
+    func start() {
+        isActive = true
+    }
+
+    func stop() {
+        isActive = false
+    }
 }

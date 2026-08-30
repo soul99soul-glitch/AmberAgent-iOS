@@ -1083,7 +1083,7 @@ final class ChatKernelRunHost {
         if detachDurableResponse(runId: runId) { return true }
         if honorKeepAliveLease {
             switch backgroundExecution.executionAssertion(for: runId) {
-            case .uiOnly, .submitted, .adopted:
+            case .uiOnly, .submitted, .adopted, .audio:
                 pendingBackgroundConversationStore = conversationStore
                 return false
             case .none:
