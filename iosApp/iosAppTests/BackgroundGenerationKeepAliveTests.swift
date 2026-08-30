@@ -3,7 +3,7 @@ import UIKit
 import XCTest
 @testable import iosApp
 
-/// 机制层的红绿门禁。三条腿都靠闭包注入替身验证，不需要真机——
+/// 机制层的红绿门禁。短窗与两条可选长腿都靠闭包注入替身验证，不需要真机——
 /// 唯一测不到的是 `adopt`（`BGContinuedProcessingTask` 无法构造），
 /// 那一段只能靠设备验证。音频腿在测试里用 spy，不真正开 AVAudioSession。
 @MainActor
@@ -30,7 +30,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         func makeKeepAlive(
             systemSubmitRetryDelayNanoseconds: UInt64 = 1_500_000_000,
             isApplicationForeground: @escaping () -> Bool = { true },
-            isAudioKeepAliveEnabled: @escaping () -> Bool = { true }
+            isAudioKeepAliveEnabled: @escaping () -> Bool = { false }
         ) -> BackgroundGenerationKeepAlive {
             BackgroundGenerationKeepAlive(
                 beginBackgroundTask: { [self] name, expiration in
@@ -76,12 +76,13 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
     @MainActor
     private final class AudioSpy: BackgroundAudioKeepAliveControlling {
         var isActive = false
+        var startSucceeds = true
         var startCount = 0
         var stopCount = 0
 
         func start() {
             startCount += 1
-            isActive = true
+            isActive = startSucceeds
         }
 
         func stop() {
@@ -320,7 +321,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
 
     func testTransferKeepsAudioAliveUntilDedicatedLeaseBegins() {
         let spy = SystemSpy()
-        let keepAlive = spy.makeKeepAlive()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
         keepAlive.begin("run-1", title: "t", subtitle: "s")
         XCTAssertTrue(spy.audio.isActive)
 
@@ -527,7 +528,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
 
     func testSnapshotDetailReportsLeaseCounts() {
         let spy = SystemSpy()
-        let keepAlive = spy.makeKeepAlive()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0")
         keepAlive.begin("run-1", title: "t", subtitle: "s")
@@ -540,11 +541,16 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
 
     func testBeginStartsAudioAndEndStopsIt() {
         let spy = SystemSpy()
-        let keepAlive = spy.makeKeepAlive()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         keepAlive.begin("run-1", title: "t", subtitle: "s")
         XCTAssertTrue(spy.audio.isActive)
         XCTAssertEqual(spy.audio.startCount, 1)
+        XCTAssertTrue(spy.submittedRequests.isEmpty)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .uiOnly)
+
+        keepAlive.promoteSystemTaskIfNeeded("run-1", subtitle: "有可见输出")
+        XCTAssertTrue(spy.submittedRequests.isEmpty)
 
         keepAlive.end("run-1")
         XCTAssertFalse(spy.audio.isActive)
@@ -553,7 +559,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
 
     func testSecondLeaseKeepsAudioUntilLastEnd() {
         let spy = SystemSpy()
-        let keepAlive = spy.makeKeepAlive()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         keepAlive.begin("run-1", title: "t", subtitle: "s")
         keepAlive.begin("run-2", title: "t", subtitle: "s")
@@ -577,16 +583,30 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
     }
 
-    func testUITaskExpirationWithAudioKeepsLeaseInsteadOfKillingRun() {
+    func testAudioStartFailureFallsBackToQueuedSystemTask() {
         let spy = SystemSpy()
-        spy.submitError = SubmitFailure()
-        let keepAlive = spy.makeKeepAlive()
+        spy.audio.startSucceeds = false
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
+
+        keepAlive.begin("run-1", title: "t", subtitle: "s")
+
+        XCTAssertEqual(spy.audio.startCount, 1)
+        XCTAssertFalse(spy.audio.isActive)
+        XCTAssertEqual(spy.submittedRequests.count, 1)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
+    }
+
+    func testUITaskExpirationRearmsStoppedAudioInsteadOfKillingRun() {
+        let spy = SystemSpy()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
         var expired = 0
 
         keepAlive.begin("run-1", title: "t", subtitle: "s") { expired += 1 }
+        spy.audio.isActive = false
         spy.expirationHandlers.first?()
 
         XCTAssertEqual(expired, 0)
+        XCTAssertEqual(spy.audio.startCount, 2)
         XCTAssertTrue(keepAlive.holdsLease("run-1"))
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
         XCTAssertTrue(spy.audio.isActive)
@@ -631,22 +651,20 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertFalse(spy.audio.isActive)
     }
 
-    func testForegroundResubmitsSystemTaskAfterAudioHold() async {
+    func testAudioOwnedLeaseDoesNotSubmitSystemTaskAfterForeground() async {
         let spy = SystemSpy()
-        spy.submitError = SubmitFailure()
-        let keepAlive = spy.makeKeepAlive()
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         keepAlive.begin("run-1", title: "t", subtitle: "s")
         spy.expirationHandlers.first?()
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
         XCTAssertTrue(spy.submittedRequests.isEmpty)
 
-        spy.submitError = nil
         NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
         try? await Task.sleep(nanoseconds: 80_000_000)
 
-        XCTAssertEqual(spy.submittedRequests.map(\.identifier), [keepAlive.identifier(for: "run-1")])
-        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
+        XCTAssertTrue(spy.submittedRequests.isEmpty)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
         XCTAssertTrue(keepAlive.holdsLease("run-1"))
     }
 

@@ -14,20 +14,15 @@ import UIKit
 /// - 深度阅读整条 pipeline
 /// - MiniApp AI
 ///
-/// 默认使用三条腿：
+/// 默认先拿 UIKit 短窗，再从两条长执行腿中选一条：
 /// - `beginBackgroundTask`：调用即生效，覆盖「提交」到「系统真正调度」之间的
 ///   空窗。没有它，App 可能在 BG 任务启动前就被挂起。上限约 30 秒。
-/// - `BGContinuedProcessingTask`：系统调度后接管，提供长执行窗口。它的 handler
-///   里不干活，只是挂起等 `end`——执行权借给正在跑的那条流。
-/// - 极轻音频循环：`audio` 后台模式。系统任务没提交/没接管、或 30 秒短窗先到期时，
-///   靠「正在播放」把进程留住。前台 mix，后台独占。生成结束立刻停。
+/// - 音频偏好开启且播放器真实启动时，使用极轻音频循环。前台 mix，后台独占，
+///   生成结束立刻停；此时不再同时创建 continued-processing 系统任务卡。
+/// - 音频关闭或启动失败时，才提交 `BGContinuedProcessingTask` 作为长窗。
 ///
-/// 前两条腿互为兜底：BG 任务提交失败时，第一条腿仍然撑住有限收尾窗口；
-/// 已排队但还没 adopt 时，系统仍保有该 request，UIKit 短窗只负责提交时的空窗。
-/// BG 任务一旦接管，第一条腿立刻释放，不白占系统配额。
-/// 第三条腿是最后手段：短窗到期且系统还没接管时，不再把租约摘掉，让生成继续跑。
-/// 不适合出现在系统 continued-processing UI 的调用方可显式关闭第二条腿；短腿与
-/// 到期回调仍保持同一租约语义。音频腿可在设置里关掉。
+/// 系统任务提交失败时，UIKit 短窗仍覆盖有限收尾；已排队但还没 adopt 时，
+/// request 仍留给系统接管。调用方也可显式关闭系统任务，只保留短窗和音频语义。
 @MainActor
 final class BackgroundGenerationKeepAlive {
     enum ExecutionAssertion: Equatable {
@@ -47,14 +42,14 @@ final class BackgroundGenerationKeepAlive {
 
     static let shared = BackgroundGenerationKeepAlive()
 
-    /// 一次生成占用的执行权。两条腿的句柄都挂在这里，终态时一起释放。
+    /// 一次生成占用的执行权。相关句柄都挂在这里，终态时一起释放。
     private struct Lease {
         var uiTaskId: UIBackgroundTaskIdentifier
         var systemTask: BGContinuedProcessingTask?
         let systemTaskCompletion: SystemTaskCompletion
         var title: String
         var subtitle: String
-        /// Whether a system continued-processing task should be submitted.
+        /// Whether a system continued-processing fallback is allowed.
         var submitSystemTask: Bool
         /// True after a system request was handed to BGTaskScheduler. This is diagnostic
         /// state only; execution is protected only after `systemTask` is adopted.
@@ -205,8 +200,9 @@ final class BackgroundGenerationKeepAlive {
     ///   只还 UIKit 腿，不触发。正常跑完也不会触发。
     /// - Parameter onSystemTaskExpiration: 系统进度活动被取消或终止时回调。
     ///   未提供时沿用 `onExpire`，保持既有非 Chat 调用方语义。
-    /// - Parameter submitSystemTask: 是否提交系统 continued-processing task。
-    ///   关闭时仍持有 UIKit 短任务；短窗到期时若音频腿还在则继续跑，否则执行 `onExpire`。
+    /// - Parameter submitSystemTask: 音频没有真实启动时，是否允许提交系统
+    ///   continued-processing task。关闭时仍持有 UIKit 短任务；短窗到期时若
+    ///   音频腿还在则继续跑，否则执行 `onExpire`。
     func begin(
         _ leaseId: String,
         title: String,
@@ -239,10 +235,17 @@ final class BackgroundGenerationKeepAlive {
             heldByAudio: false
         )
 
-        if submitSystemTask {
-            submitContinuedTask(leaseId, title: title, subtitle: subtitle)
-        }
         syncAudioKeepAlive()
+        if submitSystemTask {
+            if audioKeepAlive.isActive {
+                IOSBackgroundLifecycleLog.record(
+                    "keepAliveSystemSuppressedByAudio(\(leaseId))",
+                    detail: snapshotDetail
+                )
+            } else {
+                submitContinuedTask(leaseId, title: title, subtitle: subtitle)
+            }
+        }
         IOSBackgroundLifecycleLog.record("keepAliveBegin(\(leaseId))", detail: snapshotDetail)
     }
 
@@ -300,7 +303,7 @@ final class BackgroundGenerationKeepAlive {
         expireAudioOnlyLeases()
     }
 
-    /// 首 token 后再提交系统 continued-processing 进度卡。
+    /// 首 token 后允许升级系统 continued-processing 进度卡。
     ///
     /// 小说在「等待模型」阶段若提前挂系统卡，用户/系统关掉进度卡会立刻
     /// `onSystemTaskExpiration` → 空正文硬中断（「生成在输出内容前已中断」）。
@@ -317,6 +320,13 @@ final class BackgroundGenerationKeepAlive {
         if let subtitle { lease.subtitle = subtitle }
         lease.submitSystemTask = true
         leases[leaseId] = lease
+        if audioKeepAlive.isActive {
+            IOSBackgroundLifecycleLog.record(
+                "keepAlivePromoteHeldByAudio(\(leaseId))",
+                detail: snapshotDetail
+            )
+            return
+        }
         submitContinuedTask(leaseId, title: lease.title, subtitle: lease.subtitle)
         IOSBackgroundLifecycleLog.record("keepAlivePromoteSystem(\(leaseId))", detail: snapshotDetail)
     }
@@ -442,6 +452,14 @@ final class BackgroundGenerationKeepAlive {
     // MARK: - 内部
 
     private func submitContinuedTask(_ leaseId: String, title: String, subtitle: String) {
+        guard !audioKeepAlive.isActive else {
+            cancelSystemSubmitRetry(for: leaseId)
+            IOSBackgroundLifecycleLog.record(
+                "keepAliveSystemSuppressedByAudio(\(leaseId))",
+                detail: snapshotDetail
+            )
+            return
+        }
         guard isApplicationForeground() else {
             IOSBackgroundLifecycleLog.record(
                 "keepAliveSubmitSkippedBackground(\(leaseId))",
@@ -594,6 +612,9 @@ final class BackgroundGenerationKeepAlive {
             )
             return
         }
+        if isAudioKeepAliveEnabled(), !audioKeepAlive.isActive {
+            audioKeepAlive.start()
+        }
         if audioKeepAlive.isActive {
             if lease.uiTaskId != .invalid {
                 endBackgroundTask(lease.uiTaskId)
@@ -692,8 +713,9 @@ final class BackgroundGenerationKeepAlive {
         }
     }
 
-    /// 音频腿把进程撑过后台后，回到前台再补交系统长窗。
+    /// 音频腿失效但进程已回到前台时，再补交系统长窗。
     private func resubmitSystemTasksAfterForeground() {
+        guard !audioKeepAlive.isActive else { return }
         let pending = leases.compactMap { leaseId, lease -> (String, String, String)? in
             guard lease.heldByAudio,
                   lease.submitSystemTask,
