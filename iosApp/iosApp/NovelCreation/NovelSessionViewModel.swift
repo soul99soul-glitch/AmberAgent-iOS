@@ -335,7 +335,7 @@ final class NovelSessionViewModel {
     @ObservationIgnored private var transientRunRecord: NovelActiveRunRecord?
     @ObservationIgnored private var terminalAwaitingRefresh = false
     @ObservationIgnored private var cancelledStartRunIDs: Set<NovelRunID> = []
-    @ObservationIgnored private var answeringAskUserMessageID: NovelMessageID?
+    private(set) var answeringAskUserMessageID: NovelMessageID?
     /// Session-local card close after 写入正文. Not a durable message; leaving
     /// the project drops it. Avoids starting a follow-up model turn that locks the UI.
     private var locallyResolvedAskUser: [NovelMessageID: NovelAskUserResponse] = [:]

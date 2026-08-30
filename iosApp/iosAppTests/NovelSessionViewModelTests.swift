@@ -3499,6 +3499,70 @@ final class NovelSessionViewModelTests: XCTestCase {
         )
     }
 
+    func testChapterRevisionApprovalPublishesSubmittingStateUntilCommitCompletes() async throws {
+        let fixture = try documentWithChapter(
+            content: "第一段。\n\n第二段有矛盾。\n\n第三段。"
+        )
+        let promptMessageID = NovelMessageID()
+        let prompt = NovelAskUserPrompt(
+            question: "将第 1 章《第一章》第 2 段写入正文？",
+            options: NovelChapterRevisionApproval.options,
+            chapterRevision: NovelChapterRevisionProposal(
+                chapterID: fixture.chapterID,
+                chapterOrdinal: 1,
+                chapterTitle: "第一章",
+                startParagraph: 2,
+                endParagraph: 2,
+                oldText: "第二段有矛盾。",
+                newText: "第二段已经改掉了那个矛盾。",
+                reason: "事实自相矛盾"
+            )
+        )
+        var document = fixture.document
+        document.sessions[0].messages = [
+            NovelSessionMessageRecord(
+                id: promptMessageID,
+                sequence: 0,
+                role: .assistant,
+                mode: .discussPlan,
+                kind: .discussion,
+                content: "这段和前面的设定对不上。",
+                createdAt: document.project.updatedAt,
+                runID: nil,
+                candidateID: nil,
+                interaction: .askUser(prompt)
+            )
+        ]
+        document.sessions[0].revision = 1
+        try NovelDocumentValidator.validate(document)
+
+        let repository = NovelSessionFailingRepository()
+        let harness = try await makeHarness(
+            repository: repository,
+            document: document,
+            scripts: []
+        )
+        await repository.blockNextCommit()
+
+        let answerTask = Task { @MainActor in
+            await harness.session.answerAskUser(
+                promptMessageID: promptMessageID,
+                answer: NovelChapterRevisionApproval.approveOption
+            )
+        }
+        let submitting = await eventually {
+            await repository.commitIsBlocked() &&
+                harness.session.answeringAskUserMessageID == promptMessageID
+        }
+        XCTAssertTrue(submitting)
+        XCTAssertTrue(harness.session.isBusy)
+
+        await repository.resumeBlockedCommit()
+        let didAnswer = await answerTask.value
+        XCTAssertTrue(didAnswer)
+        XCTAssertNil(harness.session.answeringAskUserMessageID)
+    }
+
     func testAutomaticManualSyncDoesNotCallModelForLeftoverValidationScripts() async throws {
         let fixture = try persistedManualSync(status: .pending)
         let truncated = #"{"schemaVersion":1,"stateSummary":"Mara entered"#

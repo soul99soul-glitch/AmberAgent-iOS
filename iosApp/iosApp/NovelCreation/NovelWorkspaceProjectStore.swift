@@ -276,6 +276,37 @@ enum NovelWorkspaceProjectStore {
         fileManager: FileManager = .default
     ) throws {
         let files = try NovelWorkspaceBackup.export(document, exportedAt: exportedAt)
+        try publish(
+            files: files,
+            document: document,
+            projectDirectory: projectDirectory,
+            fileManager: fileManager
+        )
+    }
+
+    /// Persistence-only entry point for a document covered by a validated
+    /// repository transition. Standalone workspace operations use `publish`.
+    static func publishValidatedDocument(
+        document: NovelProjectDocumentV1,
+        projectDirectory: URL,
+        exportedAt: Date = Date(),
+        fileManager: FileManager = .default
+    ) throws {
+        let files = NovelWorkspaceBackup.exportValidated(document, exportedAt: exportedAt)
+        try publish(
+            files: files,
+            document: document,
+            projectDirectory: projectDirectory,
+            fileManager: fileManager
+        )
+    }
+
+    private static func publish(
+        files: [NovelWorkspaceBackup.File],
+        document: NovelProjectDocumentV1,
+        projectDirectory: URL,
+        fileManager: FileManager
+    ) throws {
         try writeObjects(for: files, in: projectDirectory, fileManager: fileManager)
         try NovelWorkspaceBackup.writeWorkspaceTree(
             files,

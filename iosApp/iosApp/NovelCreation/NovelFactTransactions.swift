@@ -36,6 +36,12 @@ struct NovelFactTransactionReceiptArtifacts: Equatable, Sendable {
 typealias NovelPendingFactTransactionResult = (document: NovelProjectDocumentV1, pending: NovelPendingOperationRecord)
 typealias NovelFactTransactionResult = (document: NovelProjectDocumentV1, outcome: NovelOutcome)
 
+struct NovelValidatedFactTransactionResult: Sendable {
+    let document: NovelProjectDocumentV1
+    let outcome: NovelOutcome
+    let transition: NovelValidatedProjectTransition?
+}
+
 /// Manual-sync may finish without a model call when the working manuscript is
 /// already fully described by a compatible rebuild base (e.g. trailing chapter
 /// delete only).
@@ -872,7 +878,7 @@ enum NovelFactTransactionReducer {
         summaryOverride: String?,
         in document: NovelProjectDocumentV1,
         now: Date = Date()
-    ) throws -> NovelFactTransactionResult {
+    ) throws -> NovelValidatedFactTransactionResult {
         try requireProject(command.projectID, in: document)
         try requirePayloadHash(payloadSHA256)
         if let outcome = try replayOutcome(
@@ -881,7 +887,11 @@ enum NovelFactTransactionReducer {
             payloadSHA256: payloadSHA256,
             in: document
         ) {
-            return (document, outcome)
+            return NovelValidatedFactTransactionResult(
+                document: document,
+                outcome: outcome,
+                transition: nil
+            )
         }
         try requireUnusedOperation(command.context.operationID, in: document)
         let branchIndex = try requireBranch(command.branchID, in: document)
@@ -1011,8 +1021,15 @@ enum NovelFactTransactionReducer {
             appliedAt: now
         ))
         advanceProjectRevision(in: &next, now: now)
-        try validateTransition(from: document, to: next)
-        return (next, outcome)
+        let transition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+            from: document,
+            to: next
+        )
+        return NovelValidatedFactTransactionResult(
+            document: next,
+            outcome: outcome,
+            transition: transition
+        )
     }
 
     static func prepareManualSync(

@@ -23,6 +23,7 @@ struct NovelSessionBubble: View {
     let isAdoptingPolish: Bool
     let committedChange: NovelSessionCommittedChangeSummary?
     let askUser: NovelAskUserPresentation?
+    var isSubmittingChapterRevision: Bool = false
     var askUserBlocker: NovelSessionActionBlocker? = nil
     var runtimeActionBlocker: NovelSessionActionBlocker? = nil
     var retryingPolishTransactionID: NovelPendingOperationID? = nil
@@ -120,6 +121,7 @@ struct NovelSessionBubble: View {
                 if let askUser {
                     NovelAskUserCard(
                         presentation: askUser,
+                        isSubmittingChapterRevision: isSubmittingChapterRevision,
                         blocker: askUserBlocker
                     ) { answers in
                         onAnswerAskUser(messageID, answers)
@@ -476,6 +478,7 @@ private struct NovelSessionActionButtons: View {
 
 private struct NovelAskUserCard: View {
     let presentation: NovelAskUserPresentation
+    let isSubmittingChapterRevision: Bool
     let blocker: NovelSessionActionBlocker?
     let onSubmit: (String) -> Void
 
@@ -494,6 +497,7 @@ private struct NovelAskUserCard: View {
         } else if presentation.prompt.chapterRevision != nil {
             NovelChapterRevisionCard(
                 presentation: presentation,
+                isSubmitting: isSubmittingChapterRevision,
                 blocker: blocker,
                 onSubmit: onSubmit
             )
@@ -841,6 +845,7 @@ private struct NovelGhostwritePlanCard: View {
 
 private struct NovelChapterRevisionCard: View {
     let presentation: NovelAskUserPresentation
+    let isSubmitting: Bool
     let blocker: NovelSessionActionBlocker?
     let onSubmit: (String) -> Void
 
@@ -878,7 +883,11 @@ private struct NovelChapterRevisionCard: View {
             }
 
             if presentation.response == nil {
-                if let blocker {
+                if isSubmitting {
+                    ProgressView("正在保存改写")
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                } else if let blocker {
                     Text(blocker.displayName)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
@@ -902,7 +911,7 @@ private struct NovelChapterRevisionCard: View {
                     .buttonStyle(.borderedProminent)
                     .contentShape(Rectangle())
                 }
-                .disabled(blocker != nil)
+                .disabled(blocker != nil || isSubmitting)
             }
         }
         .padding(16)

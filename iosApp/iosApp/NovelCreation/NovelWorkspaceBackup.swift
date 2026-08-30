@@ -14,6 +14,15 @@ enum NovelWorkspaceBackup {
         exportedAt: Date = Date()
     ) throws -> [File] {
         try NovelDocumentValidator.validate(document)
+        return exportValidated(document, exportedAt: exportedAt)
+    }
+
+    /// Renders a document that was validated immediately before persistence.
+    /// Recovery/import/export callers must continue using `export(_:)`.
+    static func exportValidated(
+        _ document: NovelProjectDocumentV1,
+        exportedAt: Date = Date()
+    ) -> [File] {
         var files: [File] = []
         var usedPaths: Set<String> = []
         let passthrough = document.workspacePassthrough

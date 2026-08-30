@@ -160,20 +160,31 @@ extension DefaultNovelCreation {
         // revision step. The module is the DETERMINISTIC excerpt — the model
         // plot draft is retired for new writes (consistency now rides on the
         // workspace brief); the manual full-sync tool remains as rescue.
-        let reduced = try NovelFactTransactionReducer.saveManualEditWithPlot(
-            command,
-            payloadSHA256: payloadSHA256,
-            moduleText: nil,
-            summaryOverride: nil,
-            in: loaded.document,
-            now: now()
-        )
+        let savedAt = now()
+        let reduced = try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<NovelValidatedFactTransactionResult, Error>) in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(with: Result {
+                    try NovelFactTransactionReducer.saveManualEditWithPlot(
+                        command,
+                        payloadSHA256: payloadSHA256,
+                        moduleText: nil,
+                        summaryOverride: nil,
+                        in: loaded.document,
+                        now: savedAt
+                    )
+                })
+            }
+        }
         guard reduced.document != loaded.document else {
             return reduced.outcome
         }
+        guard let transition = reduced.transition else {
+            throw NovelError.storageIndeterminate(command.projectID)
+        }
         let committed = try await repository.commitProject(
-            reduced.document,
-            expectedRevision: loaded.document.project.revision
+            transition,
+            authorization: nil
         )
         guard committed.document == reduced.document ||
               committed.document == NovelWorkspaceProjectStore.persistableAtRest(reduced.document) else {

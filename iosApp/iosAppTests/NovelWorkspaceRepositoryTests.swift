@@ -888,6 +888,56 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
         XCTAssertEqual(final.access, .readWrite)
     }
 
+    func testCreationActorManualEditPersistsAtomicPlotCommit() async throws {
+        let root = try makeRoot()
+        let document = try NovelBranchTestFixtures.documentWithCollectedCandidate(
+            content: "陈桥驿的风先到。"
+        )
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        _ = try await repository.createProject(document, workspaceNative: true)
+        let creation = DefaultNovelCreation(repository: repository)
+        let loaded = try await repository.loadProject(id: document.project.id).document
+        let branch = try XCTUnwrap(loaded.branches.first)
+        let selection = try XCTUnwrap(branch.workingChapterSelections.first)
+        let version = try XCTUnwrap(loaded.chapterVersions.first {
+            $0.id == selection.versionID && $0.chapterID == selection.chapterID
+        })
+        let command = NovelSaveManualEditCommand(
+            context: NovelMutationContext(
+                operationID: NovelOperationID(),
+                expectedProjectRevision: loaded.project.revision,
+                expectedConfigRevision: loaded.project.configRevision,
+                expectedBranchHeadRevision: branch.headRevision
+            ),
+            projectID: loaded.project.id,
+            branchID: branch.id,
+            chapterID: selection.chapterID,
+            versionID: NovelChapterVersionID(),
+            title: version.title,
+            content: version.content + "\n手动补写：风向已经变了。",
+            factCompatibilityID: UUID(),
+            expectedWorkingRevision: branch.workingRevision
+        )
+
+        _ = try await creation.perform(.saveManualEdit(command))
+
+        let restarted = NovelFileProjectRepository(rootDirectory: root)
+        let committed = try await restarted.loadProject(id: loaded.project.id).document
+        let committedBranch = try XCTUnwrap(committed.branches.first { $0.id == branch.id })
+        let committedSelection = try XCTUnwrap(
+            committedBranch.workingChapterSelections.first { $0.chapterID == selection.chapterID }
+        )
+        let committedVersion = try XCTUnwrap(committed.chapterVersions.first {
+            $0.id == committedSelection.versionID && $0.chapterID == selection.chapterID
+        })
+        XCTAssertTrue(committedVersion.content.contains("手动补写：风向已经变了。"))
+        XCTAssertEqual(
+            committed.checkpoints.first { $0.id == committedBranch.headCheckpointID }?.kind,
+            .manualSync
+        )
+        XCTAssertNoThrow(try NovelDocumentValidator.validate(committed))
+    }
+
     // MARK: - Interrupted runs block pruning (F1 contract)
 
     func testInterruptedRunWithLaterCompletedRunStaysLoadable() async throws {

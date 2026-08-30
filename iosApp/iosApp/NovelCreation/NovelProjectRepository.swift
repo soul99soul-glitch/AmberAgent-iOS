@@ -246,12 +246,12 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         }
         let project = packageURL(for: projectID)
         do {
-            try NovelWorkspaceProjectStore.writeEngineSections(
+            sectionCaches[projectID] = try NovelWorkspaceProjectStore.writeEngineSections(
                 document: document,
                 projectDirectory: project,
                 fileManager: fileManager
             )
-            try NovelWorkspaceProjectStore.publish(
+            try NovelWorkspaceProjectStore.publishValidatedDocument(
                 document: document,
                 projectDirectory: project,
                 fileManager: fileManager
@@ -299,6 +299,84 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
             throw NovelError.invalidDocument(["A commit must advance project revision exactly once."])
         }
         try NovelDocumentValidator.validateTransition(from: loaded.document, to: document)
+        return try installValidatedCommit(
+            document,
+            expectedRevision: expectedRevision,
+            authorization: authorization
+        )
+    }
+
+    func commitProject(
+        _ transition: NovelValidatedProjectTransition,
+        authorization: NovelRepositoryCommitAuthorization?
+    ) async throws -> NovelLoadedProject {
+        try ensureDirectories()
+        let current = transition.current
+        let document = transition.document
+        let projectID = document.project.id
+        guard current.project.id == projectID,
+              !isDeletionTombstoned(projectID),
+              !isReplacementMarked(projectID) else {
+            throw NovelError.projectNotFound(projectID)
+        }
+        let expectedRevision = current.project.revision
+        guard document.project.revision == expectedRevision + 1 else {
+            throw NovelError.invalidDocument(["A commit must advance project revision exactly once."])
+        }
+
+        // The normal save path can reuse the exact, validated document that
+        // populated the repository's section cache. A small layout check proves
+        // the engine did not change behind that cache; checkout reconciliation
+        // still protects out-of-band markdown edits. Any uncertainty falls back
+        // to the original full load + transition validation path.
+        guard canCommitValidatedTransitionFromCache(transition) else {
+            return try await commitProject(
+                document,
+                expectedRevision: expectedRevision,
+                authorization: authorization
+            )
+        }
+        let reconciled = try NovelWorkspaceProjectStore.reconcileBookTree(
+            document: current,
+            projectDirectory: packageURL(for: projectID),
+            fileManager: fileManager
+        )
+        guard reconciled.project.revision == expectedRevision else {
+            sectionCaches[projectID] = nil
+            throw NovelError.staleProjectRevision(
+                expected: expectedRevision,
+                actual: reconciled.project.revision
+            )
+        }
+        // Reconciliation may have attempted to adopt an out-of-band chapter
+        // edit. If it changed the engine before a later publish failure, the
+        // returned document can still be `current`; re-check disk freshness so
+        // this save cannot overwrite that adopted revision.
+        guard let cache = sectionCaches[projectID],
+              engineLayoutMatchesCache(
+                  projectID: projectID,
+                  revision: expectedRevision,
+                  cache: cache
+              ) else {
+            return try await commitProject(
+                document,
+                expectedRevision: expectedRevision,
+                authorization: authorization
+            )
+        }
+        return try installValidatedCommit(
+            document,
+            expectedRevision: expectedRevision,
+            authorization: authorization
+        )
+    }
+
+    private func installValidatedCommit(
+        _ document: NovelProjectDocumentV1,
+        expectedRevision: Int64,
+        authorization: NovelRepositoryCommitAuthorization?
+    ) throws -> NovelLoadedProject {
+        let projectID = document.project.id
         try failIfRequested(.beforePrimaryInstall)
         try authorization?.claim()
 
@@ -1118,7 +1196,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
             if NovelProjectShardedStorage.checkoutSidecarNeedsRefresh(previous: cache, next: nextCache)
                 || pointerFingerprints[projectID] != pointerFingerprint(document) {
                 do {
-                    try NovelWorkspaceProjectStore.publish(
+                    try NovelWorkspaceProjectStore.publishValidatedDocument(
                         document: document,
                         projectDirectory: package,
                         fileManager: fileManager
@@ -1220,6 +1298,57 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                 )
                 throw error
             }
+        }
+    }
+
+    private func canCommitValidatedTransitionFromCache(
+        _ transition: NovelValidatedProjectTransition
+    ) -> Bool {
+        let current = transition.current
+        let projectID = current.project.id
+        guard isWorkspaceNative(projectID),
+              let cache = sectionCaches[projectID],
+              NovelProjectShardedStorage.SectionKey.allCases.allSatisfy({ key in
+                  cache[key.rawValue]?.fingerprint ==
+                      NovelProjectShardedStorage.fingerprint(for: key, document: current)
+              }),
+              engineLayoutMatchesCache(
+                  projectID: projectID,
+                  revision: current.project.revision,
+                  cache: cache
+              ) else {
+            return false
+        }
+        return true
+    }
+
+    private func engineLayoutMatchesCache(
+        projectID: NovelProjectID,
+        revision: Int64,
+        cache: NovelProjectShardedStorage.SectionCache
+    ) -> Bool {
+        let engine = engineStorageDirectory(for: projectID)
+        guard let layoutData = try? Data(
+            contentsOf: NovelProjectShardedStorage.layoutURL(in: engine),
+            options: [.mappedIfSafe]
+        ),
+        let layout = try? makeDecoder().decode(
+            NovelProjectShardedStorage.LayoutV2.self,
+            from: layoutData
+        ),
+        layout.schemaVersion == NovelProjectShardedStorage.layoutSchemaVersion,
+        layout.documentSchemaVersion == NovelProjectDocumentV1.currentSchemaVersion,
+        layout.projectID == projectID,
+        layout.revision == revision else {
+            return false
+        }
+
+        return NovelProjectShardedStorage.SectionKey.allCases.allSatisfy { key in
+            guard let ref = layout.sections[key.rawValue],
+                  let entry = cache[key.rawValue] else {
+                return false
+            }
+            return ref.digest == entry.digest && ref.byteCount == entry.data.count
         }
     }
 

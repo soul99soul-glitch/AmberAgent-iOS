@@ -9,6 +9,10 @@ protocol NovelProjectPersisting: AnyObject, Sendable {
         expectedRevision: Int64,
         authorization: NovelRepositoryCommitAuthorization?
     ) async throws -> NovelLoadedProject
+    func commitProject(
+        _ transition: NovelValidatedProjectTransition,
+        authorization: NovelRepositoryCommitAuthorization?
+    ) async throws -> NovelLoadedProject
     func replaceProject(
         _ document: NovelProjectDocumentV1,
         expectedRevision: Int64
@@ -73,6 +77,17 @@ extension NovelProjectPersisting {
             document,
             expectedRevision: expectedRevision,
             authorization: nil
+        )
+    }
+
+    func commitProject(
+        _ transition: NovelValidatedProjectTransition,
+        authorization: NovelRepositoryCommitAuthorization?
+    ) async throws -> NovelLoadedProject {
+        try await commitProject(
+            transition.document,
+            expectedRevision: transition.current.project.revision,
+            authorization: authorization
         )
     }
 

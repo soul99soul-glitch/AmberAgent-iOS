@@ -556,6 +556,7 @@ struct NovelSessionView: View {
             // Live tail + IDs that streamed this visit — not every assistant bubble.
             hasEverStreamed: hasEverStreamed,
             adoptingPolishCandidateID: viewModel.adoptingPolishCandidateID,
+            isSubmittingChapterRevision: viewModel.answeringAskUserMessageID == row.id,
             askUserBlocker: askUserBlocker,
             runtimeActionBlocker: NovelSessionComposerPolicy.runtimeActionBlocker(
                 requiresReload: workspace.requiresReload,
@@ -2120,6 +2121,7 @@ private struct NovelSessionRowView: View, Equatable {
     /// True only for the row that actually streamed in this presentation.
     var hasEverStreamed: Bool = false
     let adoptingPolishCandidateID: NovelCandidateID?
+    let isSubmittingChapterRevision: Bool
     let askUserBlocker: NovelSessionActionBlocker?
     let runtimeActionBlocker: NovelSessionActionBlocker?
     let polishRetryTransactionID: NovelPendingOperationID?
@@ -2132,6 +2134,7 @@ private struct NovelSessionRowView: View, Equatable {
         lhs.row.id == rhs.row.id && lhs.row.digest == rhs.row.digest &&
             lhs.hasEverStreamed == rhs.hasEverStreamed &&
             lhs.adoptingPolishCandidateID == rhs.adoptingPolishCandidateID &&
+            lhs.isSubmittingChapterRevision == rhs.isSubmittingChapterRevision &&
             lhs.askUserBlocker == rhs.askUserBlocker &&
             lhs.runtimeActionBlocker == rhs.runtimeActionBlocker &&
             lhs.polishRetryTransactionID == rhs.polishRetryTransactionID
@@ -2162,6 +2165,7 @@ private struct NovelSessionRowView: View, Equatable {
                 isAdoptingPolish: row.candidate?.id == adoptingPolishCandidateID,
                 committedChange: row.committedChange,
                 askUser: row.askUser,
+                isSubmittingChapterRevision: isSubmittingChapterRevision,
                 askUserBlocker: askUserBlocker,
                 runtimeActionBlocker: runtimeActionBlocker,
                 retryingPolishTransactionID: polishRetryTransactionID,

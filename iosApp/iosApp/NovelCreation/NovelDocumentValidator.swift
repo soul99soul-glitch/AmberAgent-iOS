@@ -1,6 +1,19 @@
 import CryptoKit
 import Foundation
 
+struct NovelValidatedProjectTransition: Sendable {
+    let current: NovelProjectDocumentV1
+    let document: NovelProjectDocumentV1
+
+    fileprivate init(
+        current: NovelProjectDocumentV1,
+        document: NovelProjectDocumentV1
+    ) {
+        self.current = current
+        self.document = document
+    }
+}
+
 enum NovelDocumentValidator {
     static func validate(_ document: NovelProjectDocumentV1) throws {
         guard document.schemaVersion == NovelProjectDocumentV1.currentSchemaVersion else {
@@ -62,6 +75,17 @@ enum NovelDocumentValidator {
         to next: NovelProjectDocumentV1
     ) throws {
         try validate(current)
+        _ = try validateTransitionFromValidatedCurrent(from: current, to: next)
+    }
+
+    /// Validates a new revision when `current` came from a successful repository
+    /// load or commit. The full next document and every transition invariant are
+    /// still checked; only the redundant re-validation of the known-good base is
+    /// skipped.
+    static func validateTransitionFromValidatedCurrent(
+        from current: NovelProjectDocumentV1,
+        to next: NovelProjectDocumentV1
+    ) throws -> NovelValidatedProjectTransition {
         try validate(next)
 
         var issues: [String] = []
@@ -147,6 +171,7 @@ enum NovelDocumentValidator {
         if !issues.isEmpty {
             throw NovelError.invalidDocument(Array(Set(issues)).sorted())
         }
+        return NovelValidatedProjectTransition(current: current, document: next)
     }
 
     private static func validateNewUndoTransitions(
