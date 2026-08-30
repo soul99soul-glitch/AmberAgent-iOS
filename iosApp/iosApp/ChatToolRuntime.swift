@@ -296,6 +296,11 @@ final class ChatToolRuntime {
     /// 注入持久化（storage 写 + baseline 守卫）；nil = 不置位（零行为变化）。置位
     /// 判定（工具名 + 成功输出）在本 runtime 收口处完成，不经过模型。
     private let memoryPollutionMarker: ((KotlinUuid, String) -> Void)?
+    /// 当前进程内的终端 session 授权按能力隔离，不落盘；global run scope
+    /// 只用于桥接本轮已冻结的 execution-policy snapshot。
+    private var ishAutoApprovedConversationCapabilities: Set<String> = []
+    private var ishAutoApprovedRunCapabilities: Set<String> = []
+    private var ishAutoApprovedRunIds: Set<String> = []
     private lazy var subAgentRunner = SubAgentRunner()
     private lazy var councilRunner = CouncilRunner()
     /// Agent 自配置 provider/model（SharedSettings 真源；密钥永不进 tool result）。
@@ -343,6 +348,77 @@ final class ChatToolRuntime {
     private var effectiveHighRiskAutoApproveEnabled: Bool {
         IOSExecutionPolicyContext.snapshot?.highRiskAutoApproveEnabled
             ?? IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+    }
+
+    func autoApproveIshForSession(
+        runId: String,
+        conversationId: KotlinUuid?,
+        capabilityId: String
+    ) {
+        if let conversationId {
+            ishAutoApprovedConversationCapabilities.insert(
+                ishApprovalKey(scopeId: conversationId.toHexDashString(), capabilityId: capabilityId)
+            )
+        } else {
+            ishAutoApprovedRunCapabilities.insert(
+                ishApprovalKey(scopeId: runId, capabilityId: capabilityId)
+            )
+        }
+    }
+
+    func autoApproveIshForRun(_ runId: String) {
+        ishAutoApprovedRunIds.insert(runId)
+    }
+
+    private func isIshAutoApproved(
+        toolName: String,
+        input: String,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) -> Bool {
+        if ishAutoApprovedRunIds.contains(runId) { return true }
+        guard let capabilityId = localToolExecutor?.terminalApprovalCapabilityId(
+            toolName: toolName,
+            input: input
+        ) ?? IOSCapabilityRegistry.capability(forToolName: toolName)?.id else {
+            return false
+        }
+        if ishAutoApprovedRunCapabilities.contains(
+            ishApprovalKey(scopeId: runId, capabilityId: capabilityId)
+        ) {
+            return true
+        }
+        guard let conversationId else { return false }
+        return ishAutoApprovedConversationCapabilities.contains(
+            ishApprovalKey(scopeId: conversationId.toHexDashString(), capabilityId: capabilityId)
+        )
+    }
+
+    private func ishApprovalKey(scopeId: String, capabilityId: String) -> String {
+        "\(scopeId)|\(capabilityId)"
+    }
+
+    private func isIshToolAutoApproved(
+        toolName: String,
+        input: String,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) -> Bool {
+        if isIshAutoApproved(
+            toolName: toolName,
+            input: input,
+            runId: runId,
+            conversationId: conversationId
+        )
+            || effectiveHighRiskAutoApproveEnabled {
+            return true
+        }
+        guard let capability = IOSCapabilityRegistry.capability(forToolName: toolName) else {
+            return false
+        }
+        let policy = IOSExecutionPolicyContext.snapshot?.policy(for: capability)
+            ?? localToolExecutor?.permissionPolicy(capabilityId: capability.id)
+        return policy == .autoApproveHighRisk
     }
 
     private var effectiveExecJavaScriptEnabled: Bool {
@@ -581,7 +657,15 @@ final class ChatToolRuntime {
                 executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
-                    let output = await self.ishToolExecutionOutput(toolCall, isUserInitiated: false)
+                    let output = await self.ishToolExecutionOutput(
+                        toolCall,
+                        isUserInitiated: self.isIshAutoApproved(
+                            toolName: toolName,
+                            input: arguments,
+                            runId: runId,
+                            conversationId: conversationId
+                        )
+                    )
                     if case .needsUserAction(let reason) = output {
                         return .denied("后台生成期间需要回到 App 确认终端操作：\(reason)")
                     }
@@ -1445,10 +1529,9 @@ final class ChatToolRuntime {
         allow: Bool,
         approvalRequest: IshHandoffToolApprovalRequest? = nil
     ) async -> [UIMessage] {
-        let capabilityId = approvalRequest?.mode == .embeddedJobStop
-            ? "ios.embedded.ish_runtime"
-            : (IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
-                ?? "ios.external.ish_handoff")
+        let capabilityId = approvalRequest?.capabilityId
+            ?? IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
+            ?? "ios.external.ish_handoff"
         let canReturnExecutionOutput = IOSRemoteTerminalToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
             || IOSEmbeddedIshToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
         recordToolApproval(
@@ -2339,12 +2422,21 @@ final class ChatToolRuntime {
     }
 
     private func executeIshToolCall(_ pending: ChatPendingToolApproval) async -> ChatToolRuntimeResult {
-        let output = await ishToolExecutionOutput(pending.toolCall, isUserInitiated: false)
+        let output = await ishToolExecutionOutput(
+            pending.toolCall,
+            isUserInitiated: isIshAutoApproved(
+                toolName: pending.toolCall.toolName,
+                input: pending.toolCall.input,
+                runId: pending.runId,
+                conversationId: pending.conversationId
+            )
+        )
         if case .needsUserAction(let reason) = output,
            let request = ChatToolApprovalRequestBuilder.ishHandoff(
                for: pending.toolCall,
                reason: reason,
-               localToolExecutor: localToolExecutor
+               localToolExecutor: localToolExecutor,
+               runId: pending.runId
            ) {
             return .waitingForApproval(.ish(request))
         }
@@ -3398,10 +3490,14 @@ final class ChatToolRuntime {
             return .output(dispatchMemoryToolCall(toolCall, writePolicy: policy))
         case .ish:
             let output = await ishToolExecutionOutput(toolCall, isUserInitiated: isUserInitiated)
-            if case .needsUserAction(let reason) = output {
+            switch output {
+            case .needsUserAction(let reason):
                 return .needsApproval(reason: reason)
+            case .denied(let reason), .failed(let reason):
+                return .failure(reason)
+            default:
+                return .output(ChatToolOutputFormatter.ishHandoffResultText(for: toolCall, output: output))
             }
-            return .output(ChatToolOutputFormatter.ishHandoffResultText(for: toolCall, output: output))
         case .webMount:
             let output = await webMountToolExecutionOutput(
                 toolCall,
@@ -3479,8 +3575,14 @@ final class ChatToolRuntime {
             }
             return .proceed
         case .ish:
-            // The iSH gates require explicit foreground approval for every
-            // non-user-initiated call (no auto-approve bypass) — mirror.
+            if isIshToolAutoApproved(
+                toolName: tool,
+                input: argsJSON,
+                runId: context.runId,
+                conversationId: context.conversationId
+            ) {
+                return .proceed
+            }
             return .approvalRequired(reason: "终端执行需要显式批准。")
         case .webMount:
             return await webMountRecipeStepGate(

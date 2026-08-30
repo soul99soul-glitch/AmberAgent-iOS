@@ -1282,11 +1282,43 @@ final class ChatKernelRunHost {
         _ = resolvePendingApproval(decision: .deny, category: .workspace)
     }
 
-    func approvePendingIshHandoffTool(requestId: String) {
-        _ = resolvePendingApproval(decision: .approve, category: .ish, requestId: requestId)
+    func approvePendingIshHandoffTool(
+        requestId: String,
+        requestRunId: String?,
+        scope: IshToolApprovalScope = .once
+    ) {
+        let runId = currentRunId
+        let conversationId = currentConversationIdForRun
+        guard case .ish(let approvalRequest) = pendingPrompt,
+              approvalRequest.runId == requestRunId else { return }
+        guard resolvePendingApproval(
+            decision: .approve,
+            category: .ish,
+            requestId: requestId
+        ) else { return }
+
+        switch scope {
+        case .once:
+            break
+        case .session:
+            if let runId {
+                toolRuntime.autoApproveIshForSession(
+                    runId: runId,
+                    conversationId: conversationId,
+                    capabilityId: approvalRequest.capabilityId
+                )
+            }
+        case .global:
+            IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(true)
+            if let runId {
+                toolRuntime.autoApproveIshForRun(runId)
+            }
+        }
     }
 
-    func denyPendingIshHandoffTool(requestId: String) {
+    func denyPendingIshHandoffTool(requestId: String, requestRunId: String?) {
+        guard case .ish(let approvalRequest) = pendingPrompt,
+              approvalRequest.runId == requestRunId else { return }
         _ = resolvePendingApproval(decision: .deny, category: .ish, requestId: requestId)
     }
 
@@ -1340,6 +1372,9 @@ final class ChatKernelRunHost {
               Self.category(of: prompt) == category else { return false }
         if let requestId, Self.requestId(of: prompt) != requestId { return false }
         if case .webMount(let request) = prompt,
+           let requestRunId = request.runId,
+           requestRunId != runId { return false }
+        if case .ish(let request) = prompt,
            let requestRunId = request.runId,
            requestRunId != runId { return false }
         projection.clearApproval(prompt)

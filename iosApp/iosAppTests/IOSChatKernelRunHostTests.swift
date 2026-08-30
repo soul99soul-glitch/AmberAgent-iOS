@@ -120,6 +120,17 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         )
     }
 
+    private func makeIshLocalExecutor() -> IOSLocalToolExecutor {
+        let defaults = UserDefaults(suiteName: "terminal-approval-\(UUID().uuidString)")!
+        return IOSLocalToolExecutor(
+            permissionStore: IOSPermissionStore(userDefaults: defaults),
+            documentStore: DocumentAccessStore(),
+            workspaceStore: IOSWorkspaceStore(
+                baseDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            )
+        )
+    }
+
     private func start(_ host: ChatKernelRunHost, harness: IOSChatForegroundHarness) {
         host.start(
             providerSetting: harness.providerSetting,
@@ -321,6 +332,9 @@ final class IOSChatKernelRunHostTests: XCTestCase {
     }
 
     func testStaleIshApprovalRequestCannotResolveCurrentPrompt() async {
+        let previousHighRiskAutoApprove = IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+        IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(false)
+        defer { IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(previousHighRiskAutoApprove) }
         let defaults = UserDefaults(suiteName: "terminal-approval-\(UUID().uuidString)")!
         let localExecutor = IOSLocalToolExecutor(
             permissionStore: IOSPermissionStore(userDefaults: defaults),
@@ -344,17 +358,100 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             return XCTFail("终端审批卡必须发布")
         }
 
-        host.approvePendingIshHandoffTool(requestId: "stale-request")
+        host.approvePendingIshHandoffTool(
+            requestId: current.id,
+            requestRunId: "stale-run",
+            scope: .global
+        )
 
         XCTAssertEqual(harness.pendingIshHandoffApproval?.id, current.id)
         XCTAssertTrue(host.hasPendingToolApproval)
         XCTAssertEqual(provider.callCount, 1)
+        XCTAssertFalse(IOSLocalToolExecutor.isHighRiskAutoApproveEnabled)
 
-        host.denyPendingIshHandoffTool(requestId: current.id)
+        host.denyPendingIshHandoffTool(requestId: current.id, requestRunId: current.runId)
         let terminal = await harness.waitForTerminal()
         XCTAssertEqual(terminal, "completed")
         XCTAssertNil(harness.pendingIshHandoffApproval)
         XCTAssertEqual(provider.callCount, 2)
+    }
+
+    func testIshSessionApprovalPersistsAcrossRunsInSameConversation() async {
+        let previousHighRiskAutoApprove = IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+        IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(false)
+        defer { IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(previousHighRiskAutoApprove) }
+        let harness = makeHarness(
+            exposedToolNames: ["ish_handoff"],
+            localToolExecutor: makeIshLocalExecutor()
+        )
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("ish-session-1", "ish_handoff", #"{"script":"printf one"}"#),
+            textRound("第一轮完成"),
+            toolRound("ish-session-2", "ish_handoff", #"{"script":"printf two"}"#),
+            textRound("第二轮完成"),
+        ])
+        let host = makeHost(harness: harness, provider: provider)
+        start(host, harness: harness)
+
+        guard let first = await harness.waitForPendingIshHandoffApproval() else {
+            return XCTFail("首个终端调用必须发布审批卡")
+        }
+        host.approvePendingIshHandoffTool(
+            requestId: first.id,
+            requestRunId: first.runId,
+            scope: .session
+        )
+
+        let firstRunFinished = await waitForCondition {
+            provider.callCount == 2 && !host.isRunning
+        }
+        XCTAssertTrue(firstRunFinished)
+
+        start(host, harness: harness)
+        let secondRunFinished = await waitForCondition {
+            provider.callCount == 4 && !host.isRunning
+        }
+        XCTAssertTrue(secondRunFinished)
+        XCTAssertEqual(
+            harness.log.snapshot().filter { $0 == .approvalRequested(kind: "ish") }.count,
+            1
+        )
+        XCTAssertFalse(IOSLocalToolExecutor.isHighRiskAutoApproveEnabled)
+    }
+
+    func testIshGlobalApprovalEnablesHighRiskSettingAndBridgesCurrentRun() async {
+        let previousHighRiskAutoApprove = IOSLocalToolExecutor.isHighRiskAutoApproveEnabled
+        IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(false)
+        defer { IOSLocalToolExecutor.setHighRiskAutoApproveEnabled(previousHighRiskAutoApprove) }
+        let harness = makeHarness(
+            exposedToolNames: ["ish_handoff"],
+            localToolExecutor: makeIshLocalExecutor()
+        )
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("ish-global-1", "ish_handoff", #"{"script":"printf one"}"#),
+            toolRound("ish-global-2", "ish_handoff", #"{"script":"printf two"}"#),
+            textRound("已完成"),
+        ])
+        let host = makeHost(harness: harness, provider: provider)
+        start(host, harness: harness)
+
+        guard let first = await harness.waitForPendingIshHandoffApproval() else {
+            return XCTFail("首个终端调用必须发布审批卡")
+        }
+        host.approvePendingIshHandoffTool(
+            requestId: first.id,
+            requestRunId: first.runId,
+            scope: .global
+        )
+
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, AgentRunStatus.completed.wireName)
+        XCTAssertTrue(IOSLocalToolExecutor.isHighRiskAutoApproveEnabled)
+        XCTAssertEqual(provider.callCount, 3)
+        XCTAssertEqual(
+            harness.log.snapshot().filter { $0 == .approvalRequested(kind: "ish") }.count,
+            1
+        )
     }
 
     func testSearchApprovalTerminalFailureStopsBeforeNextProviderRound() async {

@@ -156,6 +156,10 @@ final class IOSLocalToolExecutor {
         UserDefaults.standard.bool(forKey: "app.amber.ios.highRiskAutoApprove")
     }
 
+    static func setHighRiskAutoApproveEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: "app.amber.ios.highRiskAutoApprove")
+    }
+
     init(
         permissionStore: IOSPermissionStore,
         documentStore: DocumentAccessStore,
@@ -511,7 +515,7 @@ final class IOSLocalToolExecutor {
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent embedded iSH policy")
         }
-        guard request.isUserInitiated else {
+        guard terminalAutoApprovalEnabled(for: request, policy: policy) else {
             return .needsUserAction(reason: "Embedded iSH executes local Linux commands and returns stdout/stderr/exit code. It requires explicit foreground approval.")
         }
         return .allow(capabilityId: capability.id)
@@ -525,7 +529,7 @@ final class IOSLocalToolExecutor {
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent \(capability.title) policy")
         }
-        guard request.isUserInitiated else {
+        guard terminalAutoApprovalEnabled(for: request, policy: policy) else {
             if request.toolName == IOSRemoteTerminalToolCatalog.jobStopToolName {
                 return .needsUserAction(reason: "Stopping a terminal job requires explicit foreground approval.")
             }
@@ -549,6 +553,10 @@ final class IOSLocalToolExecutor {
         return IOSCapabilityRegistry.capability(forToolName: toolName)
     }
 
+    func terminalApprovalCapabilityId(toolName: String, input: String) -> String? {
+        terminalCapability(toolName: toolName, input: input)?.id
+    }
+
     private func resolveIshHandoff(
         request: IOSLocalToolExecutionRequest,
         capability: IOSPlatformCapability
@@ -557,10 +565,19 @@ final class IOSLocalToolExecutor {
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent iSH handoff policy")
         }
-        guard request.isUserInitiated else {
+        guard terminalAutoApprovalEnabled(for: request, policy: policy) else {
             return .needsUserAction(reason: "iSH handoff prepares a paste-ready command for another app. It requires explicit foreground approval.")
         }
         return .allow(capabilityId: capability.id)
+    }
+
+    private func terminalAutoApprovalEnabled(
+        for request: IOSLocalToolExecutionRequest,
+        policy: IOSAgentPermissionPolicy
+    ) -> Bool {
+        request.isUserInitiated
+            || policy == .autoApproveHighRisk
+            || highRiskAutoApproveEnabled(for: request)
     }
 
     private func resolveWorkspace(

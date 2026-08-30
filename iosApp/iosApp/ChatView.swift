@@ -970,18 +970,33 @@ struct ChatView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            if let request = viewModel.pendingIshHandoffApproval {
-                IshHandoffToolApprovalCard(
-                    request: request,
-                    onApprove: {
-                        viewModel.approvePendingIshHandoffTool(requestId: request.id)
-                    },
-                    onDeny: {
-                        viewModel.denyPendingIshHandoffTool(requestId: request.id)
-                    }
-                )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+            Group {
+                if let request = viewModel.pendingIshHandoffApproval {
+                    IshHandoffToolApprovalCard(
+                        request: request,
+                        onApprove: { scope in
+                            viewModel.approvePendingIshHandoffTool(
+                                requestId: request.id,
+                                requestRunId: request.runId,
+                                scope: scope
+                            )
+                        },
+                        onDeny: {
+                            viewModel.denyPendingIshHandoffTool(
+                                requestId: request.id,
+                                requestRunId: request.runId
+                            )
+                        }
+                    )
+                    .id(request.presentationId)
+                    .transition(ishApprovalTransition)
+                    .zIndex(2)
+                }
             }
+            .animation(
+                ishApprovalVisibilityAnimation,
+                value: viewModel.pendingIshHandoffApproval?.presentationId
+            )
 
             if let request = viewModel.pendingMcpApproval {
                 McpToolApprovalCard(
@@ -1249,6 +1264,26 @@ struct ChatView: View {
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
         // 布局动画，高度连续变化，滚动层逐帧重锚，内容平滑上移。
         .animation(.easeOut(duration: 0.2), value: viewModel.chatSuggestions.isEmpty)
+    }
+
+    private var ishApprovalTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .offset(y: 10))
+                .combined(with: .scale(scale: 0.985, anchor: .bottom)),
+            removal: .opacity
+                .combined(with: .offset(y: 4))
+                .combined(with: .scale(scale: 0.995, anchor: .bottom))
+        )
+    }
+
+    private var ishApprovalVisibilityAnimation: Animation? {
+        if reduceMotion { return .easeOut(duration: 0.12) }
+        if viewModel.pendingIshHandoffApproval == nil {
+            return .easeIn(duration: 0.16)
+        }
+        return .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
     }
 
     private var sendEnabled: Bool {

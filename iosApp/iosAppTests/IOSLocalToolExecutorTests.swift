@@ -1749,7 +1749,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertThrowsError(try workspaceStore.artifactContent(id: artifact.id))
     }
 
-    func testIshHandoffRequiresApprovalAndPreparesClipboard() async throws {
+    func testIshHandoffRequiresApprovalAndHighRiskAutoApprovePreparesClipboard() async throws {
         let executor = makeExecutor()
         let input = #"{"command":"echo amber-ish","filename":"demo.sh","purpose":"smoke"}"#
 
@@ -1773,7 +1773,14 @@ final class IOSLocalToolExecutorTests: XCTestCase {
                 operation: input,
                 scopeDigest: "",
                 payloadDigest: "",
-                isUserInitiated: true
+                isUserInitiated: false,
+                executionPolicy: IOSExecutionPolicySnapshot(
+                    capabilityPolicies: [:],
+                    globalAutoApproveEnabled: false,
+                    highRiskAutoApproveEnabled: true,
+                    execJavaScriptEnabled: false,
+                    webSearchEnabled: false
+                )
             ),
             now: Date(timeIntervalSince1970: 1_700_000_000)
         )

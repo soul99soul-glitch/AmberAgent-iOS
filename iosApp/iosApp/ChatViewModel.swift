@@ -2634,12 +2634,23 @@ final class ChatViewModel {
         kernelRunHost.denyPendingWorkspaceTool()
     }
 
-    func approvePendingIshHandoffTool(requestId: String) {
-        kernelRunHost.approvePendingIshHandoffTool(requestId: requestId)
+    func approvePendingIshHandoffTool(
+        requestId: String,
+        requestRunId: String?,
+        scope: IshToolApprovalScope = .once
+    ) {
+        kernelRunHost.approvePendingIshHandoffTool(
+            requestId: requestId,
+            requestRunId: requestRunId,
+            scope: scope
+        )
     }
 
-    func denyPendingIshHandoffTool(requestId: String) {
-        kernelRunHost.denyPendingIshHandoffTool(requestId: requestId)
+    func denyPendingIshHandoffTool(requestId: String, requestRunId: String?) {
+        kernelRunHost.denyPendingIshHandoffTool(
+            requestId: requestId,
+            requestRunId: requestRunId
+        )
     }
 
     func approvePendingMcpTool(requestId: String) {
@@ -2689,7 +2700,7 @@ final class ChatViewModel {
         } else if pendingWorkspaceApproval != nil {
             approvePendingWorkspaceTool()
         } else if let request = pendingIshHandoffApproval {
-            approvePendingIshHandoffTool(requestId: request.id)
+            approvePendingIshHandoffTool(requestId: request.id, requestRunId: request.runId)
         } else if let request = pendingMcpApproval {
             // Slice B 同款纪律:Watch 路径把 UI 展示的 request id 传回核对。
             approvePendingMcpTool(requestId: request.id)
@@ -2712,7 +2723,7 @@ final class ChatViewModel {
         } else if pendingWorkspaceApproval != nil {
             denyPendingWorkspaceTool()
         } else if let request = pendingIshHandoffApproval {
-            denyPendingIshHandoffTool(requestId: request.id)
+            denyPendingIshHandoffTool(requestId: request.id, requestRunId: request.runId)
         } else if let request = pendingMcpApproval {
             denyPendingMcpTool(requestId: request.id)
         } else if pendingCouncilApproval != nil {

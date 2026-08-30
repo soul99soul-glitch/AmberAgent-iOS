@@ -294,6 +294,12 @@ enum IshToolApprovalMode: String, Equatable {
     case embeddedJobStop
 }
 
+enum IshToolApprovalScope: Equatable {
+    case once
+    case session
+    case global
+}
+
 struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
     let id: String
     let mode: IshToolApprovalMode
@@ -303,6 +309,22 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
     var contextLines: [String] = []
     var remoteProfileId: String? = nil
     var remoteTargetDigest: String? = nil
+    var runId: String? = nil
+
+    var capabilityId: String {
+        switch mode {
+        case .handoff:
+            "ios.external.ish_handoff"
+        case .embeddedExecute, .embeddedJobStart, .embeddedJobStop:
+            "ios.embedded.ish_runtime"
+        case .remoteSSH, .remoteJobStart, .remoteJobStop:
+            "ios.remote.command"
+        }
+    }
+
+    var presentationId: String {
+        "\(runId ?? "unscoped")|\(capabilityId)|\(id)"
+    }
 
     var title: String {
         switch mode {
@@ -543,7 +565,8 @@ enum ChatToolApprovalRequestBuilder {
     static func ishHandoff(
         for toolCall: UIMessagePart.Tool,
         reason: String,
-        localToolExecutor: IOSLocalToolExecutor? = nil
+        localToolExecutor: IOSLocalToolExecutor? = nil,
+        runId: String? = nil
     ) -> IshHandoffToolApprovalRequest? {
         if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolCall.toolName) {
             guard let preview = localToolExecutor?.remoteTerminalApprovalPreview(
@@ -560,7 +583,8 @@ enum ChatToolApprovalRequestBuilder {
                 reason: reason,
                 contextLines: preview.contextLines,
                 remoteProfileId: preview.remoteProfileId,
-                remoteTargetDigest: preview.remoteTargetDigest
+                remoteTargetDigest: preview.remoteTargetDigest,
+                runId: runId
             )
         }
         if IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolCall.toolName) {
@@ -573,7 +597,8 @@ enum ChatToolApprovalRequestBuilder {
                 commandPreview: preview.commandPreview,
                 filename: preview.filename,
                 reason: reason,
-                contextLines: preview.contextLines
+                contextLines: preview.contextLines,
+                runId: runId
             )
         }
         guard let preview = IOSIshHandoffExecutor.approvalPreview(input: toolCall.input) else {
@@ -584,7 +609,8 @@ enum ChatToolApprovalRequestBuilder {
             mode: .handoff,
             commandPreview: preview.commandPreview,
             filename: preview.filename,
-            reason: reason
+            reason: reason,
+            runId: runId
         )
     }
 
