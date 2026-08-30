@@ -634,11 +634,20 @@ struct NativeChatTimelineView: View {
                       tool.toolName == "generate_image",
                       tool.toolCallId == toolCallID else { continue }
                 if tool.output.contains(where: { $0 is UIMessagePart.Image }) {
-                    return "已定位到生成图片"
+                    return IOSAppLocalization.string(
+                        "已定位到生成图片",
+                        defaultValue: "已定位到生成图片"
+                    )
                 }
                 return tool.output.isEmpty
-                    ? "已定位到正在生成的图片"
-                    : "已定位到图片生成失败结果"
+                    ? IOSAppLocalization.string(
+                        "已定位到正在生成的图片",
+                        defaultValue: "已定位到正在生成的图片"
+                    )
+                    : IOSAppLocalization.string(
+                        "已定位到图片生成失败结果",
+                        defaultValue: "已定位到图片生成失败结果"
+                    )
             }
         }
         return nil
@@ -1094,17 +1103,17 @@ private struct ChatConfigurationNoticeCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: compact ? 10 : 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(issue.title)
+                Text(verbatim: localized(issue.title))
                     .font(compact ? .subheadline.weight(.semibold) : .headline)
                     .foregroundStyle(AmberTheme.foreground)
-                Text(issue.message)
+                Text(verbatim: localized(issue.message))
                     .font(.footnote)
                     .foregroundStyle(AmberTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 8) {
-                Button(primaryTitle, action: onPrimary)
+                Button(localized(primaryTitle), action: onPrimary)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(AmberTheme.accent)
@@ -1141,6 +1150,10 @@ private struct ChatConfigurationNoticeCard: View {
         case .grokNotSignedIn: "登录 Grok"
         case .geminiNotSignedIn: "登录 Antigravity"
         }
+    }
+
+    private func localized(_ key: String) -> String {
+        IOSAppLocalization.string(key, defaultValue: key)
     }
 }
 

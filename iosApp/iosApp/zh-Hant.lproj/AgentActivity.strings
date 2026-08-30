@@ -1,0 +1,58 @@
+"agent.activity.kind.research" = "深入研究";
+"agent.activity.kind.response" = "回覆";
+"agent.activity.kind.imageGeneration" = "產生圖片";
+"agent.activity.kind.document" = "文件任務";
+"agent.activity.kind.web" = "網頁任務";
+"agent.activity.kind.memory" = "記憶更新";
+"agent.activity.kind.command" = "指令任務";
+"agent.activity.kind.workflow" = "智慧任務";
+
+"agent.activity.stage.preparing" = "準備中";
+"agent.activity.stage.thinking" = "思考中";
+"agent.activity.stage.searching" = "搜尋中";
+"agent.activity.stage.readingSources" = "閱讀來源中";
+"agent.activity.stage.readingWeb" = "閱讀網頁中";
+"agent.activity.stage.generating" = "產生中";
+"agent.activity.stage.generatingImage" = "產生圖片中";
+"agent.activity.stage.organizing" = "整理結果中";
+"agent.activity.stage.readingDocument" = "閱讀文件中";
+"agent.activity.stage.updatingMemory" = "更新記憶中";
+"agent.activity.stage.runningTool" = "處理中";
+"agent.activity.stage.waitingForConfirmation" = "等待確認";
+"agent.activity.stage.reconnecting" = "重新連線中";
+"agent.activity.stage.stale" = "狀態已過期";
+"agent.activity.stage.completed" = "已完成";
+"agent.activity.stage.failed" = "未完成";
+"agent.activity.stage.cancelled" = "已停止";
+
+"agent.activity.action.openTask" = "開啟對話";
+"agent.activity.action.openConfirmation" = "前往確認";
+"agent.activity.action.viewResult" = "查看結果";
+
+"agent.activity.fact.waiting" = "需要確認";
+"agent.activity.fact.stale" = "已過期";
+"agent.activity.fact.reconnecting" = "重新連線中";
+"agent.activity.fact.completed" = "已完成";
+"agent.activity.fact.failed" = "未完成";
+"agent.activity.fact.cancelled" = "已停止";
+
+"agent.activity.compact.preparing" = "準備中";
+"agent.activity.compact.thinking" = "思考中";
+"agent.activity.compact.searching" = "搜尋中";
+"agent.activity.compact.readingSources" = "閱讀中";
+"agent.activity.compact.readingWeb" = "閱讀網頁";
+"agent.activity.compact.generating" = "產生中";
+"agent.activity.compact.generatingImage" = "繪圖中";
+"agent.activity.compact.organizing" = "整理中";
+"agent.activity.compact.readingDocument" = "讀取檔案";
+"agent.activity.compact.updatingMemory" = "更新中";
+"agent.activity.compact.runningTool" = "處理中";
+
+"agent.activity.metric.source.count" = "已查看 %ld 個來源";
+"agent.activity.metric.source.progress" = "%ld / %ld 個來源";
+"agent.activity.metric.file.count" = "已處理 %ld 個檔案";
+"agent.activity.metric.file.progress" = "%ld / %ld 個檔案";
+"agent.activity.metric.image.count" = "已產生 %ld 張圖片";
+"agent.activity.metric.image.progress" = "%ld / %ld 張圖片";
+"agent.activity.metric.item.count" = "已處理 %ld 個項目";
+"agent.activity.metric.item.progress" = "%ld / %ld 個項目";

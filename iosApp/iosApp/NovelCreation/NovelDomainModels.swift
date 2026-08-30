@@ -66,15 +66,21 @@ enum NovelCollaborationMode: String, Codable, CaseIterable, Sendable {
 
     var displayName: String {
         switch self {
-        case .cocreation: "共创模式"
-        case .ghostwrite: "代笔模式"
+        case .cocreation: IOSAppLocalization.string("共创模式", defaultValue: "共创模式")
+        case .ghostwrite: IOSAppLocalization.string("代笔模式", defaultValue: "代笔模式")
         }
     }
 
     var shortSummary: String {
         switch self {
-        case .cocreation: "一起商量，你点收录才进书"
-        case .ghostwrite: "先定好这一章要写什么，再按章代笔；过关后自动进书"
+        case .cocreation: IOSAppLocalization.string(
+            "一起商量，你点收录才进书",
+            defaultValue: "一起商量，你点收录才进书"
+        )
+        case .ghostwrite: IOSAppLocalization.string(
+            "先定好这一章要写什么，再按章代笔；过关后自动进书",
+            defaultValue: "先定好这一章要写什么，再按章代笔；过关后自动进书"
+        )
         }
     }
 }
@@ -170,15 +176,42 @@ enum NovelGhostwriteReadinessIssue: String, Equatable, Hashable, Sendable, CaseI
 
     var displayName: String {
         switch self {
-        case .mainBranchRequired: "代笔仅支持当前主分支"
-        case .missingMasterOutline: "缺少总剧情大纲"
-        case .missingCharacter: "至少需要一名人物档案"
-        case .missingWritingRequirements: "缺少写作要求"
-        case .branchNeedsSync: "当前分支资料待同步"
-        case .unresolvedPlot: NovelWorkspaceLedger.unresolvedPlotGateMessage
-        case .pendingOperations: "仍有未完成的正文或同步操作"
-        case .activeRun: "当前还有进行中的生成"
-        case .missingChapterPlan: "还没有确认的本章计划"
+        case .mainBranchRequired: IOSAppLocalization.string(
+            "代笔仅支持当前主分支",
+            defaultValue: "代笔仅支持当前主分支"
+        )
+        case .missingMasterOutline: IOSAppLocalization.string(
+            "缺少总剧情大纲",
+            defaultValue: "缺少总剧情大纲"
+        )
+        case .missingCharacter: IOSAppLocalization.string(
+            "至少需要一名人物档案",
+            defaultValue: "至少需要一名人物档案"
+        )
+        case .missingWritingRequirements: IOSAppLocalization.string(
+            "缺少写作要求",
+            defaultValue: "缺少写作要求"
+        )
+        case .branchNeedsSync: IOSAppLocalization.string(
+            "当前分支资料待同步",
+            defaultValue: "当前分支资料待同步"
+        )
+        case .unresolvedPlot: IOSAppLocalization.string(
+            NovelWorkspaceLedger.unresolvedPlotGateMessage,
+            defaultValue: NovelWorkspaceLedger.unresolvedPlotGateMessage
+        )
+        case .pendingOperations: IOSAppLocalization.string(
+            "仍有未完成的正文或同步操作",
+            defaultValue: "仍有未完成的正文或同步操作"
+        )
+        case .activeRun: IOSAppLocalization.string(
+            "当前还有进行中的生成",
+            defaultValue: "当前还有进行中的生成"
+        )
+        case .missingChapterPlan: IOSAppLocalization.string(
+            "还没有确认的本章计划",
+            defaultValue: "还没有确认的本章计划"
+        )
         }
     }
 }

@@ -450,7 +450,7 @@ struct SyncBackupView: View {
                                             .font(.caption)
                                             .foregroundStyle(AmberTheme.foreground2)
                                         Spacer()
-                                        Text("\(dataset.recordCount) / \(ByteCountFormatter.string(fromByteCount: dataset.byteCount, countStyle: .file))")
+                                        Text("\(dataset.recordCount) / \(formatBytes(dataset.byteCount))")
                                             .font(.caption2.weight(.semibold))
                                             .foregroundStyle(AmberTheme.muted)
                                     }
@@ -681,13 +681,19 @@ struct SyncBackupView: View {
     }
 
     private func restorePreviewText(_ preview: IOSSyncPreview) -> String {
-        [
-            "版本 \(preview.manifest.appVersionName) (\(preview.manifest.appVersionCode))",
-            "设备 \(preview.manifest.deviceLabel.isEmpty ? "未知设备" : preview.manifest.deviceLabel)",
-            "模式 \(preview.manifest.mode)",
+        let device = preview.manifest.deviceLabel.isEmpty
+            ? IOSAppLocalization.string("未知设备", defaultValue: "未知设备")
+            : preview.manifest.deviceLabel
+        return [
+            "\(IOSAppLocalization.string("版本", defaultValue: "版本")) \(preview.manifest.appVersionName) (\(preview.manifest.appVersionCode))",
+            "\(IOSAppLocalization.string("设备", defaultValue: "设备")) \(device)",
+            "\(IOSAppLocalization.string("模式", defaultValue: "模式")) \(preview.manifest.mode)",
             formatEpoch(preview.manifest.createdAt),
-            ByteCountFormatter.string(fromByteCount: preview.sizeBytes, countStyle: .file),
-            preview.manifest.passphraseProtected ? "需要口令" : "未设置口令",
+            formatBytes(preview.sizeBytes),
+            IOSAppLocalization.string(
+                preview.manifest.passphraseProtected ? "需要口令" : "未设置口令",
+                defaultValue: preview.manifest.passphraseProtected ? "需要口令" : "未设置口令"
+            ),
         ].joined(separator: " · ")
     }
 
@@ -698,10 +704,21 @@ struct SyncBackupView: View {
     }
 
     private func formatEpoch(_ millis: Int64) -> String {
-        guard millis > 0 else { return "暂无" }
+        guard millis > 0 else {
+            return IOSAppLocalization.string("暂无", defaultValue: "暂无")
+        }
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
         return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(millis) / 1000))
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        bytes.formatted(
+            .byteCount(style: .file)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
     }
 }
 
@@ -743,7 +760,7 @@ private struct SyncRemoteSnapshotRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(ByteCountFormatter.string(fromByteCount: snapshot.sizeBytes, countStyle: .file))
+            Text(formatBytes(snapshot.sizeBytes))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground2)
         }
@@ -762,10 +779,21 @@ private struct SyncRemoteSnapshotRow: View {
     }
 
     private func formatEpoch(_ millis: Int64) -> String {
-        guard millis > 0 else { return "未知时间" }
+        guard millis > 0 else {
+            return IOSAppLocalization.string("未知时间", defaultValue: "未知时间")
+        }
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
         return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(millis) / 1000))
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        bytes.formatted(
+            .byteCount(style: .file)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
     }
 }
 

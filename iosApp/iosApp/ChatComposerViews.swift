@@ -748,7 +748,11 @@ struct ComposerProviderGroup: Identifiable {
         if rounded == rounded.rounded() {
             return "\(Int(rounded))"
         }
-        return String(format: "%.1f", rounded)
+        return String(
+            format: "%.1f",
+            locale: IOSAppLanguagePreference.selected().resolvedLocale(),
+            rounded
+        )
     }
 }
 
@@ -784,7 +788,7 @@ enum ComposerReasoningOption: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var title: String {
-        switch self {
+        let key: String = switch self {
         case .off: "关闭"
         case .auto: "自动"
         case .low: "低"
@@ -793,6 +797,7 @@ enum ComposerReasoningOption: String, CaseIterable, Identifiable {
         case .xhigh: "极高"
         case .max: "最高"
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     var reasoningLevel: ReasoningLevel {
@@ -977,16 +982,27 @@ private struct NovelInjectionPanelDetails: View {
                 VStack(spacing: 8) {
                     ComposerContextCompactStatRow(
                         label: "剧情状态",
-                        value: model.includesPlotState ? "已携带" : "未携带"
+                        value: IOSAppLocalization.string(
+                            model.includesPlotState ? "已携带" : "未携带",
+                            defaultValue: model.includesPlotState ? "已携带" : "未携带"
+                        )
                     )
                     ComposerContextCompactStatRow(
                         label: "会话窗口",
-                        value: "\(model.recentMessageRoundCount) 轮"
+                        value: IOSAppLocalization.formatted(
+                            "%lld 轮",
+                            defaultValue: "%lld 轮",
+                            arguments: [Int64(model.recentMessageRoundCount)]
+                        )
                     )
                     if model.budgetExcludedItemCount > 0 {
                         ComposerContextCompactStatRow(
                             label: "预算未纳入",
-                            value: "\(model.budgetExcludedItemCount) 项"
+                            value: IOSAppLocalization.formatted(
+                                "%lld 项",
+                                defaultValue: "%lld 项",
+                                arguments: [Int64(model.budgetExcludedItemCount)]
+                            )
                         )
                     }
                 }
@@ -1006,7 +1022,7 @@ struct ComposerContextCompactStatRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(label)
+            Text(IOSAppLocalization.string(label, defaultValue: label))
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
 
@@ -1121,7 +1137,7 @@ struct ComposerAttachmentGlassPanel: View {
                     .font(.system(size: 18, weight: .regular))
                     .foregroundStyle(AmberTheme.accent)
                     .frame(width: 24)
-                Text(title)
+                Text(IOSAppLocalization.string(title, defaultValue: title))
                     .font(.system(size: 16, weight: .regular))
                     .foregroundStyle(AmberTheme.foreground)
                 Spacer(minLength: 0)

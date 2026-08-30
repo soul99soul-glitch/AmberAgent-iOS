@@ -22,36 +22,51 @@ struct ToolPermissionsView: View {
                     selectedFileItem,
                     capabilityItem(
                         id: "ios.photos.library_read",
-                        title: "照片",
-                        subtitle: "申请访问照片和视频图库，也可以只允许部分照片",
+                        title: IOSAppLocalization.string("照片", defaultValue: "照片"),
+                        subtitle: IOSAppLocalization.string(
+                            "申请访问照片和视频图库，也可以只允许部分照片",
+                            defaultValue: "申请访问照片和视频图库，也可以只允许部分照片"
+                        ),
                         systemImage: "photo.on.rectangle",
                         color: AmberTheme.accentAmber
                     ),
                     capabilityItem(
                         id: "ios.camera.capture",
-                        title: "相机",
-                        subtitle: "用于拍照、摄像、扫描或视觉输入",
+                        title: IOSAppLocalization.string("相机", defaultValue: "相机"),
+                        subtitle: IOSAppLocalization.string(
+                            "用于拍照、摄像、扫描或视觉输入",
+                            defaultValue: "用于拍照、摄像、扫描或视觉输入"
+                        ),
                         systemImage: "camera",
                         color: AmberTheme.accent
                     ),
                     capabilityItem(
                         id: "ios.microphone.record",
-                        title: "麦克风",
-                        subtitle: "用于录音、语音输入或音视频采集",
+                        title: IOSAppLocalization.string("麦克风", defaultValue: "麦克风"),
+                        subtitle: IOSAppLocalization.string(
+                            "用于录音、语音输入或音视频采集",
+                            defaultValue: "用于录音、语音输入或音视频采集"
+                        ),
                         systemImage: "mic",
                         color: AmberTheme.accentRed
                     ),
                     capabilityItem(
                         id: "ios.location.when_in_use",
-                        title: "定位",
-                        subtitle: "仅在使用 Amber 时读取当前位置",
+                        title: IOSAppLocalization.string("定位", defaultValue: "定位"),
+                        subtitle: IOSAppLocalization.string(
+                            "仅在使用 Amber 时读取当前位置",
+                            defaultValue: "仅在使用 Amber 时读取当前位置"
+                        ),
                         systemImage: "location",
                         color: AmberTheme.accentGreen
                     ),
                     capabilityItem(
                         id: "ios.notifications.alerts",
-                        title: "通知",
-                        subtitle: "允许 Amber 发送提醒、声音和角标",
+                        title: IOSAppLocalization.string("通知", defaultValue: "通知"),
+                        subtitle: IOSAppLocalization.string(
+                            "允许 Amber 发送提醒、声音和角标",
+                            defaultValue: "允许 Amber 发送提醒、声音和角标"
+                        ),
                         systemImage: "bell",
                         color: AmberTheme.accentIndigo
                     )
@@ -62,36 +77,51 @@ struct ToolPermissionsView: View {
                 items: [
                     capabilityItem(
                         id: "ios.contacts.full",
-                        title: "通讯录",
-                        subtitle: "读取或更新联系人前会先申请系统授权",
+                        title: IOSAppLocalization.string("通讯录", defaultValue: "通讯录"),
+                        subtitle: IOSAppLocalization.string(
+                            "读取或更新联系人前会先申请系统授权",
+                            defaultValue: "读取或更新联系人前会先申请系统授权"
+                        ),
                         systemImage: "person.crop.circle.badge.checkmark",
                         color: AmberTheme.accentCyan
                     ),
                     capabilityItem(
                         id: "ios.calendar.full",
-                        title: "日历",
-                        subtitle: "读取和创建日历事件需要 EventKit 授权",
+                        title: IOSAppLocalization.string("日历", defaultValue: "日历"),
+                        subtitle: IOSAppLocalization.string(
+                            "读取和创建日历事件需要 EventKit 授权",
+                            defaultValue: "读取和创建日历事件需要 EventKit 授权"
+                        ),
                         systemImage: "calendar",
                         color: AmberTheme.accentAmber
                     ),
                     capabilityItem(
                         id: "ios.reminders.full",
-                        title: "提醒事项",
-                        subtitle: "读取和创建提醒事项需要系统授权",
+                        title: IOSAppLocalization.string("提醒事项", defaultValue: "提醒事项"),
+                        subtitle: IOSAppLocalization.string(
+                            "读取和创建提醒事项需要系统授权",
+                            defaultValue: "读取和创建提醒事项需要系统授权"
+                        ),
                         systemImage: "checklist",
                         color: AmberTheme.accentGreen
                     ),
                     capabilityItem(
                         id: "ios.speech.recognition",
-                        title: "语音识别",
-                        subtitle: "将语音转换成文字前申请 Apple Speech 授权",
+                        title: IOSAppLocalization.string("语音识别", defaultValue: "语音识别"),
+                        subtitle: IOSAppLocalization.string(
+                            "将语音转换成文字前申请 Apple Speech 授权",
+                            defaultValue: "将语音转换成文字前申请 Apple Speech 授权"
+                        ),
                         systemImage: "waveform",
                         color: AmberTheme.accent
                     ),
                     capabilityItem(
                         id: "ios.authentication.face_id",
-                        title: "Face ID",
-                        subtitle: "用系统生物识别完成一次本机身份验证",
+                        title: IOSAppLocalization.string("Face ID", defaultValue: "Face ID"),
+                        subtitle: IOSAppLocalization.string(
+                            "用系统生物识别完成一次本机身份验证",
+                            defaultValue: "用系统生物识别完成一次本机身份验证"
+                        ),
                         systemImage: "faceid",
                         color: AmberTheme.accentIndigo
                     )
@@ -102,22 +132,31 @@ struct ToolPermissionsView: View {
                 items: [
                     capabilityItem(
                         id: "ios.bluetooth.ble",
-                        title: "蓝牙",
-                        subtitle: "扫描、连接或访问附近蓝牙设备前申请",
+                        title: IOSAppLocalization.string("蓝牙", defaultValue: "蓝牙"),
+                        subtitle: IOSAppLocalization.string(
+                            "扫描、连接或访问附近蓝牙设备前申请",
+                            defaultValue: "扫描、连接或访问附近蓝牙设备前申请"
+                        ),
                         systemImage: "dot.radiowaves.left.and.right",
                         color: AmberTheme.accentCyan
                     ),
                     capabilityItem(
                         id: "ios.network.local",
-                        title: "本地网络",
-                        subtitle: "访问局域网设备时由 iOS 弹出确认",
+                        title: IOSAppLocalization.string("本地网络", defaultValue: "本地网络"),
+                        subtitle: IOSAppLocalization.string(
+                            "访问局域网设备时由 iOS 弹出确认",
+                            defaultValue: "访问局域网设备时由 iOS 弹出确认"
+                        ),
                         systemImage: "network",
                         color: AmberTheme.accentGreen
                     ),
                     capabilityItem(
                         id: "ios.webmount.browser",
-                        title: "WebMount",
-                        subtitle: "使用受限 WKWebView；高风险自动批准可访问任意公网网站",
+                        title: IOSAppLocalization.string("WebMount", defaultValue: "WebMount"),
+                        subtitle: IOSAppLocalization.string(
+                            "使用受限 WKWebView；高风险自动批准可访问任意公网网站",
+                            defaultValue: "使用受限 WKWebView；高风险自动批准可访问任意公网网站"
+                        ),
                         systemImage: "globe.badge.chevron.backward",
                         color: AmberTheme.accentIndigo
                     )
@@ -129,7 +168,7 @@ struct ToolPermissionsView: View {
     private var selectedFileItem: PermissionRequestItem {
         PermissionRequestItem(
             id: "selected-file",
-            title: "文件",
+            title: IOSAppLocalization.string("文件", defaultValue: "文件"),
             subtitle: selectedFileSubtitle,
             systemImage: "doc",
             color: AmberTheme.accent,
@@ -142,9 +181,16 @@ struct ToolPermissionsView: View {
             return error
         }
         if let grant = documentStore.grantSummary {
-            return "已选择 \(grant.fileName)"
+            return IOSAppLocalization.formatted(
+                "已选择 %@",
+                defaultValue: "已选择 %@",
+                arguments: [grant.fileName]
+            )
         }
-        return "打开系统文件选择器，只允许读取你选中的单个文件"
+        return IOSAppLocalization.string(
+            "打开系统文件选择器，只允许读取你选中的单个文件",
+            defaultValue: "打开系统文件选择器，只允许读取你选中的单个文件"
+        )
     }
 
     var body: some View {
@@ -174,14 +220,25 @@ struct ToolPermissionsView: View {
                 guard let url = urls.first else { return }
                 documentStore.registerPickedFile(url)
             case .failure(let error):
-                documentStore.recordSelectionError("文件选择失败：\(error.localizedDescription)")
+                documentStore.recordSelectionError(
+                    IOSAppLocalization.formatted(
+                        "文件选择失败：%@",
+                        defaultValue: "文件选择失败：%@",
+                        arguments: [error.localizedDescription]
+                    )
+                )
             }
         }
     }
 
     private var header: some View {
         HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回", size: 44, symbolSize: 20) {
+            AmberGlassCircleButton(
+                systemImage: "chevron.left",
+                accessibilityLabel: IOSAppLocalization.string("返回", defaultValue: "返回"),
+                size: 44,
+                symbolSize: 20
+            ) {
                 dismiss()
             }
 
@@ -214,7 +271,9 @@ struct ToolPermissionsView: View {
     private var permissionList: some View {
         VStack(spacing: 0) {
             ForEach(permissionSections) { section in
-                AmberSectionLabel(text: section.title)
+                AmberSectionLabel(
+                    verbatim: IOSAppLocalization.string(section.title, defaultValue: section.title)
+                )
                 AmberFormGroup {
                     ForEach(Array(section.items.enumerated()), id: \.element.id) { index, item in
                         PermissionRequestRow(
@@ -269,38 +328,74 @@ struct ToolPermissionsView: View {
         switch item.target {
         case .selectedFile:
             guard let grant = documentStore.grantSummary else {
-                return .init(text: "未选择", tone: .ready)
+                return .init(
+                    text: IOSAppLocalization.string("未选择", defaultValue: "未选择"),
+                    tone: .ready
+                )
             }
             if grant.usedCount >= grant.maxUses {
-                return .init(text: "已使用", tone: .neutral)
+                return .init(
+                    text: IOSAppLocalization.string("已使用", defaultValue: "已使用"),
+                    tone: .neutral
+                )
             }
             if grant.isExpired() {
-                return .init(text: "已过期", tone: .warning)
+                return .init(
+                    text: IOSAppLocalization.string("已过期", defaultValue: "已过期"),
+                    tone: .warning
+                )
             }
-            return .init(text: "已选择", tone: .allowed)
+            return .init(
+                text: IOSAppLocalization.string("已选择", defaultValue: "已选择"),
+                tone: .allowed
+            )
 
         case .capability(let capability):
             if requestingCapabilityId == capability.id {
-                return .init(text: "申请中", tone: .working)
+                return .init(
+                    text: IOSAppLocalization.string("申请中", defaultValue: "申请中"),
+                    tone: .working
+                )
             }
             let result = systemPermissionCoordinator.cachedStatus(for: capability)
             switch result.status {
             case .authorized:
-                return .init(text: "已允许", tone: .allowed)
+                return .init(
+                    text: IOSAppLocalization.string("已允许", defaultValue: "已允许"),
+                    tone: .allowed
+                )
             case .limited:
-                return .init(text: "部分允许", tone: .warning)
+                return .init(
+                    text: IOSAppLocalization.string("部分允许", defaultValue: "部分允许"),
+                    tone: .warning
+                )
             case .denied:
-                return .init(text: "已拒绝", tone: .denied)
+                return .init(
+                    text: IOSAppLocalization.string("已拒绝", defaultValue: "已拒绝"),
+                    tone: .denied
+                )
             case .restricted:
-                return .init(text: "受限制", tone: .denied)
+                return .init(
+                    text: IOSAppLocalization.string("受限制", defaultValue: "受限制"),
+                    tone: .denied
+                )
             case .notDetermined:
-                return .init(text: "可申请", tone: .ready)
+                return .init(
+                    text: IOSAppLocalization.string("可申请", defaultValue: "可申请"),
+                    tone: .ready
+                )
             case .unknown:
                 return .init(text: unknownStatusText(for: capability), tone: .ready)
             case .requiresSystemSettings:
-                return .init(text: "去设置", tone: .warning)
+                return .init(
+                    text: IOSAppLocalization.string("去设置", defaultValue: "去设置"),
+                    tone: .warning
+                )
             case .requiresEntitlement, .requiresExtensionTarget, .missingUsageDescription, .unavailableOnDevice:
-                return .init(text: "不可用", tone: .neutral)
+                return .init(
+                    text: IOSAppLocalization.string("不可用", defaultValue: "不可用"),
+                    tone: .neutral
+                )
             }
         }
     }
@@ -308,13 +403,13 @@ struct ToolPermissionsView: View {
     private func unknownStatusText(for capability: IOSPlatformCapability) -> String {
         switch capability.requestKind {
         case .picker:
-            "可选择"
+            IOSAppLocalization.string("可选择", defaultValue: "可选择")
         case .foregroundSystemUI:
-            "可打开"
+            IOSAppLocalization.string("可打开", defaultValue: "可打开")
         case .authenticationOperation:
-            "可验证"
+            IOSAppLocalization.string("可验证", defaultValue: "可验证")
         default:
-            "可申请"
+            IOSAppLocalization.string("可申请", defaultValue: "可申请")
         }
     }
 
@@ -440,11 +535,11 @@ private struct PermissionRequestRow: View {
                     .background(item.color.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(item.title)
+                    Text(verbatim: item.title)
                         .font(.body)
                         .foregroundStyle(AmberTheme.foreground)
 
-                    Text(item.subtitle)
+                    Text(verbatim: item.subtitle)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                 }

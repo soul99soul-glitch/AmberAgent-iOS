@@ -17,7 +17,10 @@ struct NovelProjectManagementView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(project.loadError == nil ? project.name : "无法读取的项目")
                             .foregroundStyle(AmberTheme.foreground)
-                        Text(project.updatedAt, format: .relative(presentation: .named))
+                        Text(verbatim: project.updatedAt.formatted(
+                            Date.RelativeFormatStyle(presentation: .named)
+                                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+                        ))
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                     }
@@ -202,7 +205,10 @@ struct NovelProjectSettingsDetailView: View {
                 sharedSettings: sharedSettings,
                 currentModel: selectedModelID(for: purpose),
                 title: purpose.pickerTitle,
-                fallbackTitle: "跟随小说默认",
+                fallbackTitle: IOSAppLocalization.string(
+                    "跟随小说默认",
+                    defaultValue: "跟随小说默认"
+                ),
                 onFallback: { setModelPolicy(.global, for: purpose) },
                 dismissesAfterFallback: false
             ) { option in
@@ -219,7 +225,10 @@ struct NovelProjectSettingsDetailView: View {
             ) {
                 Button("知道了", role: .cancel) { modelPolicyFailure = nil }
             } message: {
-                Text(modelPolicyFailure ?? "模型设置未能保存，请重试。")
+                Text(verbatim: modelPolicyFailure ?? IOSAppLocalization.string(
+                    "模型设置未能保存，请重试。",
+                    defaultValue: "模型设置未能保存，请重试。"
+                ))
             }
 
         case .renameProject:
@@ -295,7 +304,13 @@ struct NovelProjectSettingsDetailView: View {
             for: effectivePolicy(for: purpose),
             sharedSettings: sharedSettings
         )
-        if case .global = configured { return "小说默认 · \(name)" }
+        if case .global = configured {
+            return IOSAppLocalization.formatted(
+                "小说默认 · %@",
+                defaultValue: "小说默认 · %@",
+                arguments: [name]
+            )
+        }
         return name
     }
 
@@ -320,7 +335,10 @@ struct NovelProjectSettingsDetailView: View {
             if await viewModel.setModelPolicy(policy, for: purpose) {
                 activeSheet = nil
             } else {
-                modelPolicyFailure = viewModel.errorMessage ?? "模型设置未能保存，请重试。"
+                modelPolicyFailure = viewModel.errorMessage ?? IOSAppLocalization.string(
+                    "模型设置未能保存，请重试。",
+                    defaultValue: "模型设置未能保存，请重试。"
+                )
             }
         }
     }

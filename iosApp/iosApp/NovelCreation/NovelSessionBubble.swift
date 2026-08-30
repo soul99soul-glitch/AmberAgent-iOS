@@ -1,5 +1,13 @@
 import SwiftUI
 
+private func localized(_ key: String) -> String {
+    IOSAppLocalization.string(key, defaultValue: key)
+}
+
+private func localizedNumber(_ value: Int) -> String {
+    value.formatted(.number.locale(IOSAppLanguagePreference.selected().resolvedLocale()))
+}
+
 struct NovelSessionBubble: View {
     let messageID: NovelMessageID
     let role: NovelSessionRole
@@ -77,6 +85,14 @@ struct NovelSessionBubble: View {
         ChatReasoningCard.hasVisibleText(reasoningContent)
     }
 
+    private var displayedContent: String {
+        guard kind == .error ||
+                (kind == .interruptedDraft && runStatus == .failed) else {
+            return content
+        }
+        return NovelPresentation.localizedCachedErrorMessage(content)
+    }
+
     @ViewBuilder
     private var assistantBubble: some View {
         if isStreaming && content.isEmpty && !hasVisibleReasoning {
@@ -100,12 +116,12 @@ struct NovelSessionBubble: View {
                         Text(emptyAssistantText)
                             .foregroundStyle(AmberTheme.muted)
                     }
-                } else if !content.isEmpty {
+                } else if !displayedContent.isEmpty {
                     // Always parse markdown — never show raw `**` / `#` markers.
                     // Match Chat: isStreaming drives animation; hasEverStreamed (from
                     // parent sticky IDs) keeps block renderer across complete.
                     let markdown = Self.displayMarkdown(
-                        content,
+                        displayedContent,
                         kind: kind,
                         isStreaming: isStreaming
                     )
@@ -142,20 +158,20 @@ struct NovelSessionBubble: View {
     @ViewBuilder
     private var statusLine: some View {
         if case .some(.persistenceBlocked) = transientPhase {
-            Label("回复已生成，等待重试保存", systemImage: "externaldrive.badge.exclamationmark")
+            Label(localized("回复已生成，等待重试保存"), systemImage: "externaldrive.badge.exclamationmark")
                 .foregroundStyle(AmberTheme.foreground2)
         } else if transientPhase == .terminalAwaitingRefresh {
             // Prose/polish (incl. regenerate): dock strip owns this caption.
             // Discussion and other kinds have no strip — keep the bubble cue.
             if kind != .proseCandidate && kind != .polishCandidate {
-                Label("正在保存创作记录", systemImage: "arrow.triangle.2.circlepath")
+                Label(localized("正在保存创作记录"), systemImage: "arrow.triangle.2.circlepath")
                     .foregroundStyle(AmberTheme.muted)
             }
         } else if representsFailure {
             Label(
-                content.isEmpty
+                localized(content.isEmpty
                     ? "生成失败 · 正文与剧情状态未改变"
-                    : "生成失败 · 已保留草稿，正文与剧情状态未改变",
+                    : "生成失败 · 已保留草稿，正文与剧情状态未改变"),
                 systemImage: "exclamationmark.triangle"
             )
             .foregroundStyle(AmberTheme.accentRed)
@@ -167,7 +183,7 @@ struct NovelSessionBubble: View {
                 return false
             }
             Label(
-                canCollect ? "生成已中断 · 可收录已生成部分" : "生成已中断",
+                localized(canCollect ? "生成已中断 · 可收录已生成部分" : "生成已中断"),
                 systemImage: "pause.circle"
             )
             .foregroundStyle(AmberTheme.foreground2)
@@ -175,7 +191,7 @@ struct NovelSessionBubble: View {
             switch kind {
             case .proseCandidate:
                 if committedChange != nil {
-                    Label("已收录为正式正文", systemImage: "checkmark.circle.fill")
+                    Label(localized("已收录为正式正文"), systemImage: "checkmark.circle.fill")
                         .foregroundStyle(AmberTheme.accentGreen)
                 } else if !isStreaming {
                     // 生成中不在气泡里挂候选状态行:它跟在不断增长的正文下方,
@@ -185,7 +201,7 @@ struct NovelSessionBubble: View {
                 }
             case .polishCandidate:
                 if committedChange != nil {
-                    Label("润色版已采用", systemImage: "checkmark.seal.fill")
+                    Label(localized("润色版已采用"), systemImage: "checkmark.seal.fill")
                         .foregroundStyle(AmberTheme.accentGreen)
                 } else if !isStreaming {
                     // 与正文候选同一理由:生成中状态行跟在增长的正文下方会被
@@ -200,12 +216,12 @@ struct NovelSessionBubble: View {
 
     private var emptyAssistantText: String {
         if representsFailure {
-            return "生成失败，未输出正文"
+            return localized("生成失败，未输出正文")
         }
         if transientPhase == .interrupted || kind == .interruptedDraft {
-            return "生成在输出内容前已中断"
+            return localized("生成在输出内容前已中断")
         }
-        return "正在准备回复"
+        return localized("正在准备回复")
     }
 
     private var representsFailure: Bool {
@@ -227,7 +243,7 @@ struct NovelSessionBubble: View {
             }
 
             if let blocker = Self.sharedActionBarBlocker(effectiveActions) {
-                Text(blocker.displayName)
+                Text(localized(blocker.displayName))
                     .font(.caption)
                     .foregroundStyle(AmberTheme.foreground2)
             } else if committedChange?.branchSyncStatus == .synchronized {
@@ -236,7 +252,7 @@ struct NovelSessionBubble: View {
                 // comment in NovelSessionPresentation.swift for why this is a
                 // branch-level fact (shared by every committed row) rather than a
                 // per-row history stamp.
-                Label("剧情状态已同步", systemImage: "checkmark.circle.fill")
+                Label(localized("剧情状态已同步"), systemImage: "checkmark.circle.fill")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.accentGreen)
             }
@@ -282,16 +298,16 @@ struct NovelSessionBubble: View {
     private var proseCandidateStatus: some View {
         switch candidateStatus {
         case .collected:
-            Label("已收录为正式正文", systemImage: "checkmark.circle.fill")
+            Label(localized("已收录为正式正文"), systemImage: "checkmark.circle.fill")
                 .foregroundStyle(AmberTheme.accentGreen)
         case .inheritedReadOnly:
-            Label("继承的历史候选 · 仅供参考", systemImage: "clock.arrow.circlepath")
+            Label(localized("继承的历史候选 · 仅供参考"), systemImage: "clock.arrow.circlepath")
                 .foregroundStyle(AmberTheme.muted)
         case .superseded:
-            Label("候选已过期", systemImage: "clock.badge.exclamationmark")
+            Label(localized("候选已过期"), systemImage: "clock.badge.exclamationmark")
                 .foregroundStyle(AmberTheme.foreground2)
         case .interrupted:
-            Label("候选生成已中断", systemImage: "pause.circle")
+            Label(localized("候选生成已中断"), systemImage: "pause.circle")
                 .foregroundStyle(AmberTheme.foreground2)
         case .available, .adopted, nil:
             Label(proseCandidateLabel, systemImage: "doc.text")
@@ -300,14 +316,14 @@ struct NovelSessionBubble: View {
     }
 
     private var proseCandidateLabel: String {
-        if isRegeneration { return "重写本章 · 收录后替换原文" }
+        if isRegeneration { return localized("重写本章 · 收录后替换原文") }
         switch granularity {
         case .continuation:
-            return "正文片段 · 收录后进入本章"
+            return localized("正文片段 · 收录后进入本章")
         case .wholeChapter:
-            return "完整章节 · 收录后成为新章"
+            return localized("完整章节 · 收录后成为新章")
         case nil:
-            return "正文候选 · 收录后才进入正式剧情"
+            return localized("正文候选 · 收录后才进入正式剧情")
         }
     }
 
@@ -316,7 +332,7 @@ struct NovelSessionBubble: View {
         if isAdoptingPolish || isRetryingPolish {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
-                Text("正在检查剧情一致性…")
+                Text(localized("正在检查剧情一致性…"))
             }
             .font(.footnote)
             .foregroundStyle(AmberTheme.muted)
@@ -336,19 +352,19 @@ struct NovelSessionBubble: View {
     private var polishTransactionStatusView: some View {
         switch polishTransactionStatus {
         case .incompatible:
-            Label("检测到剧情漂移 · 不能按润色采用", systemImage: "exclamationmark.triangle.fill")
+            Label(localized("检测到剧情漂移 · 不能按润色采用"), systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(AmberTheme.accentRed)
         case .retryable:
-            Label("剧情一致性检查失败 · 可以重试", systemImage: "arrow.clockwise.circle")
+            Label(localized("剧情一致性检查失败 · 可以重试"), systemImage: "arrow.clockwise.circle")
                 .foregroundStyle(AmberTheme.foreground2)
         case .blocked:
-            Label("剧情一致性检查已阻止采用", systemImage: "hand.raised.fill")
+            Label(localized("剧情一致性检查已阻止采用"), systemImage: "hand.raised.fill")
                 .foregroundStyle(AmberTheme.accentRed)
         case .pending:
-            Label("正在检查剧情一致性", systemImage: "checkmark.shield")
+            Label(localized("正在检查剧情一致性"), systemImage: "checkmark.shield")
                 .foregroundStyle(AmberTheme.muted)
         case .abandoned:
-            Label("已放弃这次润色", systemImage: "xmark.circle")
+            Label(localized("已放弃这次润色"), systemImage: "xmark.circle")
                 .foregroundStyle(AmberTheme.muted)
         case .completed, nil:
             polishCandidateStatusByCandidate
@@ -359,19 +375,19 @@ struct NovelSessionBubble: View {
     private var polishCandidateStatusByCandidate: some View {
         switch candidateStatus {
         case .adopted:
-            Label("润色版已采用", systemImage: "checkmark.seal.fill")
+            Label(localized("润色版已采用"), systemImage: "checkmark.seal.fill")
                 .foregroundStyle(AmberTheme.accentGreen)
         case .superseded:
-            Label("润色候选已过期", systemImage: "clock.badge.exclamationmark")
+            Label(localized("润色候选已过期"), systemImage: "clock.badge.exclamationmark")
                 .foregroundStyle(AmberTheme.foreground2)
         case .interrupted:
-            Label("润色生成已中断", systemImage: "pause.circle")
+            Label(localized("润色生成已中断"), systemImage: "pause.circle")
                 .foregroundStyle(AmberTheme.foreground2)
         case .inheritedReadOnly:
-            Label("继承的历史润色候选", systemImage: "clock.arrow.circlepath")
+            Label(localized("继承的历史润色候选"), systemImage: "clock.arrow.circlepath")
                 .foregroundStyle(AmberTheme.muted)
         case .available, .collected, nil:
-            Label("整章润色候选", systemImage: "wand.and.sparkles")
+            Label(localized("整章润色候选"), systemImage: "wand.and.sparkles")
                 .foregroundStyle(AmberTheme.accent)
         }
     }
@@ -422,7 +438,7 @@ private struct NovelSessionActionButtons: View {
             HStack(spacing: 6) {
                 ProgressView()
                     .controlSize(.small)
-                Button("停止检查") {
+                Button(localized("停止检查")) {
                     onCancelPolishRetry()
                 }
                 .frame(minHeight: 44)
@@ -432,7 +448,7 @@ private struct NovelSessionActionButtons: View {
                 pendingAbandonTransactionID = transactionID
             }
             .confirmationDialog(
-                "放弃这次润色？",
+                localized("放弃这次润色？"),
                 isPresented: Binding(
                     get: { pendingAbandonTransactionID == transactionID },
                     set: { presented in
@@ -441,15 +457,15 @@ private struct NovelSessionActionButtons: View {
                 ),
                 titleVisibility: .visible
             ) {
-                Button("放弃润色", role: .destructive) {
+                Button(localized("放弃润色"), role: .destructive) {
                     pendingAbandonTransactionID = nil
                     onAction(item.action)
                 }
-                Button("取消", role: .cancel) {
+                Button(localized("取消"), role: .cancel) {
                     pendingAbandonTransactionID = nil
                 }
             } message: {
-                Text("候选气泡会保留在创作记录中，但不能再作为润色版采用。")
+                Text(localized("候选气泡会保留在创作记录中，但不能再作为润色版采用。"))
             }
         } else {
             baseButton(item) {
@@ -468,11 +484,12 @@ private struct NovelSessionActionButtons: View {
                 systemImage: item.action.systemImage
             )
             .font(.footnote.weight(.semibold))
-            .lineLimit(1)
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .controlSize(.small)
         .disabled(!item.isEnabled)
-        .accessibilityHint(item.blocker?.displayName ?? "")
+        .accessibilityHint(item.blocker.map { localized($0.displayName) } ?? "")
     }
 }
 
@@ -527,7 +544,7 @@ private struct NovelAskUserCard: View {
     private var askUserBody: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label(
-                presentation.isAnswered ? "已回答" : "需要你决定",
+                localized(presentation.isAnswered ? "已回答" : "需要你决定"),
                 systemImage: presentation.isAnswered
                     ? "checkmark.circle.fill"
                     : "questionmark.bubble.fill"
@@ -544,7 +561,7 @@ private struct NovelAskUserCard: View {
                     .disabled(blocker != nil)
 
                 if let blocker {
-                    Text(blocker.displayName)
+                    Text(localized(blocker.displayName))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                 }
@@ -555,7 +572,7 @@ private struct NovelAskUserCard: View {
                         .foregroundStyle(AmberTheme.accentRed)
                 }
 
-                Button("确认选择") {
+                Button(localized("确认选择")) {
                     NovelTextInputCommitter.perform(fieldBank: imeBank) { submit() }
                 }
                 .buttonStyle(.borderedProminent)
@@ -612,8 +629,8 @@ private struct NovelAskUserCard: View {
             NovelIMETextEditor(
                 text: customInput,
                 placeholder: presentation.prompt.options.isEmpty
-                    ? "输入你的想法"
-                    : "或者直接输入自己的选择",
+                    ? localized("输入你的想法")
+                    : localized("或者直接输入自己的选择"),
                 isEnabled: blocker == nil,
                 minHeight: 72,
                 bank: imeBank
@@ -639,7 +656,7 @@ private struct NovelAskUserCard: View {
     private func submit() {
         let committedAnswer = answer
         guard !committedAnswer.isEmpty else {
-            validationMessage = "请选择一个选项或输入你的想法。"
+            validationMessage = localized("请选择一个选项或输入你的想法。")
             return
         }
         validationMessage = nil
@@ -728,7 +745,7 @@ private struct NovelGhostwritePlanCard: View {
                     .disabled(blocker != nil)
 
                 if let blocker {
-                    Text(blocker.displayName)
+                    Text(localized(blocker.displayName))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                 }
@@ -737,7 +754,7 @@ private struct NovelGhostwritePlanCard: View {
                     Button {
                         onSubmit(NovelGhostwritePlanApproval.rejectOption)
                     } label: {
-                        Text(NovelGhostwritePlanApproval.rejectOption)
+                        Text(verbatim: localized(NovelGhostwritePlanApproval.rejectOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
@@ -748,7 +765,11 @@ private struct NovelGhostwritePlanCard: View {
                             chapterCount: selectedChapterCount
                         ))
                     } label: {
-                        Text("开始写 \(selectedChapterCount) 章")
+                        Text(verbatim: IOSAppLocalization.formatted(
+                            "开始写 %@ 章",
+                            defaultValue: "开始写 %@ 章",
+                            arguments: [localizedNumber(selectedChapterCount)]
+                        ))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
@@ -769,25 +790,33 @@ private struct NovelGhostwritePlanCard: View {
     private var chapterCountControl: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("这批代笔")
+                Text(localized("这批代笔"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
-                Text("批内尚未完成时会自动规划下一章，有后续参考时优先采用")
+                Text(localized("批内尚未完成时会自动规划下一章，有后续参考时优先采用"))
                     .font(.caption)
                     .foregroundStyle(AmberTheme.foreground2)
             }
             Spacer(minLength: 8)
-            Text("\(selectedChapterCount) 章")
+            Text(verbatim: IOSAppLocalization.formatted(
+                "%@ 章",
+                defaultValue: "%@ 章",
+                arguments: [localizedNumber(selectedChapterCount)]
+            ))
                 .font(.subheadline.monospacedDigit().weight(.semibold))
                 .foregroundStyle(AmberTheme.accent)
             Stepper(
-                "代笔章数",
+                localized("代笔章数"),
                 value: $selectedChapterCount,
                 in: NovelGhostwriteBatch.minChapterCount...NovelGhostwriteBatch.maxChapterCount
             )
             .labelsHidden()
-            .accessibilityLabel("代笔章数")
-            .accessibilityValue("\(selectedChapterCount) 章")
+            .accessibilityLabel(localized("代笔章数"))
+            .accessibilityValue(IOSAppLocalization.formatted(
+                "%@ 章",
+                defaultValue: "%@ 章",
+                arguments: [localizedNumber(selectedChapterCount)]
+            ))
         }
         .padding(12)
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10))
@@ -795,7 +824,7 @@ private struct NovelGhostwritePlanCard: View {
 
     private func planTextSection(title: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title)
+            Text(localized(title))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground2)
             Text(text)
@@ -807,7 +836,7 @@ private struct NovelGhostwritePlanCard: View {
 
     private func planListSection(title: String, items: [String]) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title)
+            Text(localized(title))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground2)
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -820,12 +849,16 @@ private struct NovelGhostwritePlanCard: View {
     }
 
     private var statusTitle: String {
-        guard let answer = presentation.response?.answer else { return "代笔计划审批" }
+        guard let answer = presentation.response?.answer else { return localized("代笔计划审批") }
         if let count = NovelGhostwritePlanApproval.approvedChapterCount(from: answer) {
-            return "已开始代笔 \(count) 章"
+            return IOSAppLocalization.formatted(
+                "已开始代笔 %@ 章",
+                defaultValue: "已开始代笔 %@ 章",
+                arguments: [localizedNumber(count)]
+            )
         }
-        if answer == NovelGhostwritePlanApproval.rejectOption { return "已暂不开始" }
-        return "已回答"
+        if answer == NovelGhostwritePlanApproval.rejectOption { return localized("已暂不开始") }
+        return localized("已回答")
     }
 
     private var statusSymbol: String {
@@ -891,7 +924,7 @@ private struct NovelChapterRevisionCard: View {
                         .font(.footnote)
                         .foregroundStyle(AmberTheme.muted)
                 } else if let blocker {
-                    Text(blocker.displayName)
+                    Text(localized(blocker.displayName))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                 }
@@ -899,7 +932,7 @@ private struct NovelChapterRevisionCard: View {
                     Button {
                         onSubmit(NovelChapterRevisionApproval.rejectOption)
                     } label: {
-                        Text(NovelChapterRevisionApproval.rejectOption)
+                        Text(verbatim: localized(NovelChapterRevisionApproval.rejectOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
@@ -908,7 +941,7 @@ private struct NovelChapterRevisionCard: View {
                     Button {
                         onSubmit(NovelChapterRevisionApproval.approveOption)
                     } label: {
-                        Text(NovelChapterRevisionApproval.approveOption)
+                        Text(verbatim: localized(NovelChapterRevisionApproval.approveOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
@@ -927,10 +960,10 @@ private struct NovelChapterRevisionCard: View {
     }
 
     private var statusTitle: String {
-        guard let answer = presentation.response?.answer else { return "改正文审批" }
-        if answer == NovelChapterRevisionApproval.approveOption { return "已写入正文" }
-        if answer == NovelChapterRevisionApproval.rejectOption { return "已拒绝这次修改" }
-        return "已回答"
+        guard let answer = presentation.response?.answer else { return localized("改正文审批") }
+        if answer == NovelChapterRevisionApproval.approveOption { return localized("已写入正文") }
+        if answer == NovelChapterRevisionApproval.rejectOption { return localized("已拒绝这次修改") }
+        return localized("已回答")
     }
 
     private var statusSymbol: String {
@@ -951,14 +984,33 @@ private struct NovelChapterRevisionCard: View {
 
     private func rangeCaption(_ revision: NovelChapterRevisionProposal) -> String {
         let range = revision.startParagraph == revision.endParagraph
-            ? "第 \(revision.startParagraph) 段"
-            : "第 \(revision.startParagraph)–\(revision.endParagraph) 段"
-        return "第 \(revision.chapterOrdinal) 章 · \(revision.chapterTitle) · \(range)"
+            ? IOSAppLocalization.formatted(
+                "第 %@ 段",
+                defaultValue: "第 %@ 段",
+                arguments: [localizedNumber(revision.startParagraph)]
+            )
+            : IOSAppLocalization.formatted(
+                "第 %@–%@ 段",
+                defaultValue: "第 %@–%@ 段",
+                arguments: [
+                    localizedNumber(revision.startParagraph),
+                    localizedNumber(revision.endParagraph)
+                ]
+            )
+        return IOSAppLocalization.formatted(
+            "第 %@ 章 · %@ · %@",
+            defaultValue: "第 %@ 章 · %@ · %@",
+            arguments: [
+                localizedNumber(revision.chapterOrdinal),
+                revision.chapterTitle,
+                range
+            ]
+        )
     }
 
     private func revisionBlock(title: String, text: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
+            Text(localized(title))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground2)
             ScrollView {
@@ -1004,7 +1056,7 @@ private struct NovelWorkspacePlotCard: View {
 
             if presentation.response == nil {
                 if let blocker {
-                    Text(blocker.displayName)
+                    Text(localized(blocker.displayName))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                 }
@@ -1012,7 +1064,7 @@ private struct NovelWorkspacePlotCard: View {
                     Button {
                         onSubmit(NovelWorkspacePlotApproval.rejectOption)
                     } label: {
-                        Text(NovelWorkspacePlotApproval.rejectOption)
+                        Text(verbatim: localized(NovelWorkspacePlotApproval.rejectOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
@@ -1021,7 +1073,7 @@ private struct NovelWorkspacePlotCard: View {
                     Button {
                         onSubmit(NovelWorkspacePlotApproval.approveOption)
                     } label: {
-                        Text(NovelWorkspacePlotApproval.approveOption)
+                        Text(verbatim: localized(NovelWorkspacePlotApproval.approveOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
@@ -1040,10 +1092,10 @@ private struct NovelWorkspacePlotCard: View {
     }
 
     private var statusTitle: String {
-        guard let answer = presentation.response?.answer else { return "写剧情审批" }
-        if answer == NovelWorkspacePlotApproval.approveOption { return "已写入剧情" }
-        if answer == NovelWorkspacePlotApproval.rejectOption { return "已拒绝这次修改" }
-        return "已回答"
+        guard let answer = presentation.response?.answer else { return localized("写剧情审批") }
+        if answer == NovelWorkspacePlotApproval.approveOption { return localized("已写入剧情") }
+        if answer == NovelWorkspacePlotApproval.rejectOption { return localized("已拒绝这次修改") }
+        return localized("已回答")
     }
 
     private var statusSymbol: String {
@@ -1088,7 +1140,7 @@ private struct NovelManuscriptRevertCard: View {
 
             if presentation.response == nil {
                 if let blocker {
-                    Text(blocker.displayName)
+                    Text(localized(blocker.displayName))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                 }
@@ -1096,7 +1148,7 @@ private struct NovelManuscriptRevertCard: View {
                     Button {
                         onSubmit(NovelManuscriptRevertApproval.rejectOption)
                     } label: {
-                        Text(NovelManuscriptRevertApproval.rejectOption)
+                        Text(verbatim: localized(NovelManuscriptRevertApproval.rejectOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
@@ -1105,7 +1157,7 @@ private struct NovelManuscriptRevertCard: View {
                     Button {
                         onSubmit(NovelManuscriptRevertApproval.approveOption)
                     } label: {
-                        Text(NovelManuscriptRevertApproval.approveOption)
+                        Text(verbatim: localized(NovelManuscriptRevertApproval.approveOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
@@ -1124,10 +1176,10 @@ private struct NovelManuscriptRevertCard: View {
     }
 
     private var statusTitle: String {
-        guard let answer = presentation.response?.answer else { return "回退章节审批" }
-        if answer == NovelManuscriptRevertApproval.approveOption { return "已回退这几章" }
-        if answer == NovelManuscriptRevertApproval.rejectOption { return "已取消回退" }
-        return "已回答"
+        guard let answer = presentation.response?.answer else { return localized("回退章节审批") }
+        if answer == NovelManuscriptRevertApproval.approveOption { return localized("已回退这几章") }
+        if answer == NovelManuscriptRevertApproval.rejectOption { return localized("已取消回退") }
+        return localized("已回答")
     }
 
     private var statusSymbol: String {
@@ -1172,7 +1224,7 @@ private struct NovelManuscriptDeleteCard: View {
 
             if presentation.response == nil {
                 if let blocker {
-                    Text(blocker.displayName)
+                    Text(localized(blocker.displayName))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                 }
@@ -1180,7 +1232,7 @@ private struct NovelManuscriptDeleteCard: View {
                     Button {
                         onSubmit(NovelManuscriptDeleteApproval.rejectOption)
                     } label: {
-                        Text(NovelManuscriptDeleteApproval.rejectOption)
+                        Text(verbatim: localized(NovelManuscriptDeleteApproval.rejectOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.bordered)
@@ -1189,7 +1241,7 @@ private struct NovelManuscriptDeleteCard: View {
                     Button {
                         onSubmit(NovelManuscriptDeleteApproval.approveOption)
                     } label: {
-                        Text(NovelManuscriptDeleteApproval.approveOption)
+                        Text(verbatim: localized(NovelManuscriptDeleteApproval.approveOption))
                             .frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .buttonStyle(.borderedProminent)
@@ -1208,10 +1260,10 @@ private struct NovelManuscriptDeleteCard: View {
     }
 
     private var statusTitle: String {
-        guard let answer = presentation.response?.answer else { return "抽章审批" }
-        if answer == NovelManuscriptDeleteApproval.approveOption { return "已从正文目录删除" }
-        if answer == NovelManuscriptDeleteApproval.rejectOption { return "已取消这次删除" }
-        return "已回答"
+        guard let answer = presentation.response?.answer else { return localized("抽章审批") }
+        if answer == NovelManuscriptDeleteApproval.approveOption { return localized("已从正文目录删除") }
+        if answer == NovelManuscriptDeleteApproval.rejectOption { return localized("已取消这次删除") }
+        return localized("已回答")
     }
 
     private var statusSymbol: String {
@@ -1241,21 +1293,22 @@ private extension NovelSessionRowAction {
         switch self {
         case .collectProse:
             switch granularity {
-            case .continuation: "收录到本章"
-            case .wholeChapter: "作为新章收录"
-            case nil: "收录正文"
+            case .continuation: localized("收录到本章")
+            case .wholeChapter: localized("作为新章收录")
+            case nil: localized("收录正文")
             }
-        case .adoptPolish: "采用润色版"
-        case .retryGeneration: "重新生成"
-        case .retryTerminalPersistence: "重试保存"
-        case .retryPending: "继续收录"
-        case .retryPolish: "重试检查"
-        case .abandonPolish: "放弃润色"
-        case .convertPolishToManualRewrite: "保存为剧情改写"
-        case .cloneCollectedProse: "再次收录"
-        case .forkFromCheckpoint: "从这里 Fork"
-        case .viewSettingProposals: "查看并确认设定建议"
-        case .undoCommittedChange(_, let kind): kind == .polish ? "撤销润色" : "撤销收录"
+        case .adoptPolish: localized("采用润色版")
+        case .retryGeneration: localized("重新生成")
+        case .retryTerminalPersistence: localized("重试保存")
+        case .retryPending: localized("继续收录")
+        case .retryPolish: localized("重试检查")
+        case .abandonPolish: localized("放弃润色")
+        case .convertPolishToManualRewrite: localized("保存为剧情改写")
+        case .cloneCollectedProse: localized("再次收录")
+        case .forkFromCheckpoint: localized("从这里 Fork")
+        case .viewSettingProposals: localized("查看并确认设定建议")
+        case .undoCommittedChange(_, let kind):
+            localized(kind == .polish ? "撤销润色" : "撤销收录")
         }
     }
 

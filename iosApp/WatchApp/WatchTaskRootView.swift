@@ -37,7 +37,11 @@ struct WatchTaskRootView: View {
                 Text(model.snapshot.headline)
                     .font(.headline)
                     .lineLimit(2)
-                Text(model.snapshot.detail ?? phaseTitle)
+                Text(
+                    model.snapshot.isActive
+                        ? (model.snapshot.detail ?? phaseTitle)
+                        : localized("没有进行中的任务")
+                )
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -60,7 +64,7 @@ struct WatchTaskRootView: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("没有进行中的任务")
+                Text(localized("没有进行中的任务"))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -87,10 +91,10 @@ struct WatchTaskRootView: View {
 
             if decision.type == .approval {
                 HStack(spacing: 8) {
-                    Button("拒绝") { model.deny() }
+                    Button(localized("拒绝")) { model.deny() }
                         .buttonStyle(.bordered)
                         .disabled(model.isSending)
-                    Button("允许") { model.approve() }
+                    Button(localized("允许")) { model.approve() }
                         .buttonStyle(.borderedProminent)
                         .tint(.orange)
                         .disabled(model.isSending)
@@ -106,7 +110,7 @@ struct WatchTaskRootView: View {
                     option.style == .choice || option.style == .deny || option.style == .dictate || option.style == .openOnPhone
                 }
             }) { option in
-                Button(option.title) {
+                Button(optionTitle(option, decisionType: decision.type)) {
                     model.choose(optionId: option.id)
                 }
                 .buttonStyle(.bordered)
@@ -120,7 +124,7 @@ struct WatchTaskRootView: View {
 
     private func summaryCard(_ summary: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("总结")
+            Text(localized("总结"))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
             Text(summary)
@@ -134,18 +138,18 @@ struct WatchTaskRootView: View {
 
     private var voiceCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("语音 / 短回答")
+            Text(localized("语音 / 短回答"))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(.secondary)
-            TextField("对 iPhone 说下一步…", text: $model.draftAnswer, axis: .vertical)
+            TextField(localized("对 iPhone 说下一步…"), text: $model.draftAnswer, axis: .vertical)
                 .lineLimit(2...4)
                 .textFieldStyle(.plain)
             HStack {
-                Button("提交") { model.submitDraftAnswer() }
+                Button(localized("提交")) { model.submitDraftAnswer() }
                     .buttonStyle(.borderedProminent)
                     .tint(.orange)
                     .disabled(model.isSending || model.draftAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button("收起") {
+                Button(localized("收起")) {
                     model.isDictating = false
                 }
                 .buttonStyle(.bordered)
@@ -159,15 +163,15 @@ struct WatchTaskRootView: View {
     private var actions: some View {
         VStack(spacing: 8) {
             if model.snapshot.actions.contains(.openOnPhone) {
-                Button("在 iPhone 打开") { model.openOnPhone() }
+                Button(localized("在 iPhone 打开")) { model.openOnPhone() }
                     .buttonStyle(.bordered)
                     .disabled(model.isSending)
             }
             if model.snapshot.actions.contains(.cancel) {
-                Button("取消任务", role: .destructive) { model.cancel() }
+                Button(localized("取消任务"), role: .destructive) { model.cancel() }
                     .disabled(model.isSending)
             }
-            Button("刷新") { model.refresh() }
+            Button(localized("刷新")) { model.refresh() }
                 .buttonStyle(.bordered)
                 .disabled(model.isSending)
         }
@@ -176,14 +180,14 @@ struct WatchTaskRootView: View {
 
     private var phaseTitle: String {
         switch model.snapshot.phase {
-        case "running": "进行中"
-        case "waitingForUser": "等待你"
-        case "reconnecting": "重连中"
-        case "completed": "已完成"
-        case "failed": "需要处理"
-        case "cancelled": "已取消"
-        case "stale": "状态过期"
-        default: "待命"
+        case "running": localized("进行中")
+        case "waitingForUser": localized("等待你")
+        case "reconnecting": localized("重连中")
+        case "completed": localized("已完成")
+        case "failed": localized("需要处理")
+        case "cancelled": localized("已取消")
+        case "stale": localized("状态过期")
+        default: localized("待命")
         }
     }
 
@@ -201,10 +205,33 @@ struct WatchTaskRootView: View {
 
     private func riskTitle(_ risk: WatchRiskLevel) -> String {
         switch risk {
-        case .low: "低风险"
-        case .medium: "需确认"
-        case .high: "高风险"
+        case .low: localized("低风险")
+        case .medium: localized("需确认")
+        case .high: localized("高风险")
         }
+    }
+
+    private func optionTitle(
+        _ option: WatchDecisionOption,
+        decisionType: WatchDecisionType
+    ) -> String {
+        switch option.id {
+        case "approve": localized("允许")
+        case "deny": localized(decisionType == .approval ? "拒绝" : "跳过")
+        case "skip": localized("跳过")
+        case "dictate": localized("语音回答")
+        case "open-phone":
+            localized(decisionType == .approval ? "在 iPhone 查看" : "在 iPhone 回答")
+        default: option.title
+        }
+    }
+
+    private func localized(_ key: String) -> String {
+        WatchTaskLocalization.string(
+            key,
+            defaultValue: key,
+            languageCode: model.snapshot.languageCode
+        )
     }
 
     private func riskColor(_ risk: WatchRiskLevel) -> Color {

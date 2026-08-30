@@ -536,7 +536,10 @@ private struct NovelProjectRow: View {
                         Text("读取失败")
                             .foregroundStyle(AmberTheme.accentRed)
                     } else {
-                        Text(project.updatedAt, format: .relative(presentation: .named))
+                        Text(verbatim: project.updatedAt.formatted(
+                            Date.RelativeFormatStyle(presentation: .named)
+                                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+                        ))
                         if project.isDegraded {
                             Text("只读恢复")
                                 .foregroundStyle(AmberTheme.foreground2)
@@ -834,9 +837,9 @@ struct NovelProjectImportSheet: View {
                     LabeledContent("项目版本", value: "\(preview.projectRevision)")
                     LabeledContent(
                         "项目大小",
-                        value: ByteCountFormatter.string(
-                            fromByteCount: Int64(preview.projectByteCount),
-                            countStyle: .file
+                        value: Int64(preview.projectByteCount).formatted(
+                            .byteCount(style: .file)
+                                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
                         )
                     )
                     if preview.runningRunCount > 0 {

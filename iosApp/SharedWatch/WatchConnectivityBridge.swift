@@ -151,8 +151,9 @@ final class WatchConnectivityBridge: NSObject {
         }
     }
 
-    func clear() {
+    func clear(languageCode: String? = nil) {
         var idle = WatchTaskSnapshot.idle
+        idle.languageCode = languageCode
         idle.updatedAt = Date()
         publish(idle)
     }
@@ -219,7 +220,11 @@ final class WatchConnectivityBridge: NSObject {
             requestId: request.requestId,
             runId: request.runId,
             accepted: false,
-            message: message,
+            message: WatchTaskLocalization.string(
+                message,
+                defaultValue: message,
+                languageCode: latestSnapshot.languageCode
+            ),
             snapshot: latestSnapshot
         ))
     }
@@ -237,7 +242,11 @@ final class WatchConnectivityBridge: NSObject {
                         requestId: request.requestId,
                         runId: request.runId,
                         accepted: false,
-                        message: "iPhone 当前无法处理手表操作",
+                        message: WatchTaskLocalization.string(
+                            "iPhone 当前无法处理手表操作",
+                            defaultValue: "iPhone 当前无法处理手表操作",
+                            languageCode: self.latestSnapshot.languageCode
+                        ),
                         snapshot: self.latestSnapshot
                     )
                 self.reply(with: result)

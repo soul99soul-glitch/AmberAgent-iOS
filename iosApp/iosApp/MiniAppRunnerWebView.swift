@@ -109,7 +109,11 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             onBridgeLog: onBridgeLog,
             onClose: onClose,
             onBlockedNavigation: { url in
-                onToast("已阻止小应用打开外部链接：\(url.host ?? url.absoluteString)")
+                onToast(IOSAppLocalization.formatted(
+                    "已阻止小应用打开外部链接：%@",
+                    defaultValue: "已阻止小应用打开外部链接：%@",
+                    arguments: [url.host ?? url.absoluteString]
+                ))
             }
         )
     }
@@ -121,7 +125,11 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             try MiniAppHtmlValidator.validate(html)
         } catch {
             context.coordinator.onValidationError(error.localizedDescription)
-            return makePlaceholderWebView(message: "HTML 校验失败：\(error.localizedDescription)")
+            return makePlaceholderWebView(message: IOSAppLocalization.formatted(
+                "HTML 校验失败：%@",
+                defaultValue: "HTML 校验失败：%@",
+                arguments: [error.localizedDescription]
+            ))
         }
 
         let externalImagesAllowed = allowsExternalImages

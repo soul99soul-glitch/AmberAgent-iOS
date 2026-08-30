@@ -14,12 +14,20 @@ enum NovelSessionPendingPresentation {
         switch phase {
         case .waitingForFirstToken:
             elapsed >= 2
-                ? "模型思考中 \(elapsed) 秒"
-                : "正在连接模型"
+                ? IOSAppLocalization.formatted(
+                    "模型思考中 %lld 秒",
+                    defaultValue: "模型思考中 %lld 秒",
+                    arguments: [Int64(elapsed)]
+                )
+                : IOSAppLocalization.string("正在连接模型", defaultValue: "正在连接模型")
         case .streaming:
             // 保留跳动的秒数:quickStart 全程内容为空,若文案恒定不变,用户仍会觉得
             // 界面卡死。秒数是这里唯一诚实且零成本的「还活着」信号(不做假进度条)。
-            "模型已开始生成 \(elapsed) 秒 · 正在整理输出"
+            IOSAppLocalization.formatted(
+                "模型已开始生成 %lld 秒 · 正在整理输出",
+                defaultValue: "模型已开始生成 %lld 秒 · 正在整理输出",
+                arguments: [Int64(elapsed)]
+            )
         case .terminalAwaitingRefresh, .interrupted, .failed, .persistenceBlocked, nil:
             // These phases don't render through the empty-content branch in practice
             // (content is non-empty, or the bubble takes a different branch entirely), but

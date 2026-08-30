@@ -86,7 +86,14 @@ struct MemoryEditView: View {
                 AmberFormGroup {
                     MemoryPreviewLine(label: "来源", value: IOSMemoryLibrary.sourceSummary(existingRecord))
                     MemoryEditDivider()
-                    MemoryPreviewLine(label: "置信度", value: String(format: "%.2f", existingRecord.confidence))
+                    MemoryPreviewLine(
+                        label: "置信度",
+                        value: String(
+                            format: "%.2f",
+                            locale: IOSAppLanguagePreference.selected().resolvedLocale(),
+                            existingRecord.confidence
+                        )
+                    )
                     MemoryEditDivider()
                     MemoryPreviewLine(label: "更新时间", value: dateText(existingRecord.updatedAt))
                     if let lastUsedAt = existingRecord.lastUsedAt?.int64Value {
@@ -369,7 +376,11 @@ struct MemoryEditView: View {
 
     private func dateText(_ millis: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(millis) / 1_000)
-        return DateFormatter.localizedString(from: date, dateStyle: .medium, timeStyle: .short)
+        let formatter = DateFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 
     private func nowMillis() -> Int64 {

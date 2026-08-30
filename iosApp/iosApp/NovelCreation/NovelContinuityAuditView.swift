@@ -80,10 +80,15 @@ struct NovelContinuityAuditSection: View {
             } else if let plan = viewModel.continuityAuditPlan {
                 // 预估直接摊在页面上,不弹窗:用户先看清这一趟要读多少、要发几次请求,
                 // 再决定要不要开始。
-                Text(
-                    "要通读 \(plan.chapterCount) 章、约 \(plan.totalCharacterCount) 字，"
-                        + "会分 \(plan.chunkCount) 次交给模型。检查期间不能生成正文。"
-                )
+                Text(verbatim: IOSAppLocalization.formatted(
+                    "要通读 %lld 章、约 %lld 字，会分 %lld 次交给模型。检查期间不能生成正文。",
+                    defaultValue: "要通读 %lld 章、约 %lld 字，会分 %lld 次交给模型。检查期间不能生成正文。",
+                    arguments: [
+                        Int64(plan.chapterCount),
+                        Int64(plan.totalCharacterCount),
+                        Int64(plan.chunkCount),
+                    ]
+                ))
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
                 Button("确认开始") {
@@ -258,7 +263,11 @@ private struct NovelContinuityIssueRow: View {
         isReachable: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("第 \(reference.chapterOrdinal) 章「\(reference.chapterTitle)」")
+            Text(verbatim: IOSAppLocalization.formatted(
+                "第 %lld 章「%@」",
+                defaultValue: "第 %lld 章「%@」",
+                arguments: [Int64(reference.chapterOrdinal), reference.chapterTitle]
+            ))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(isReachable ? AmberTheme.accent : AmberTheme.muted)
             Text(reference.evidence)
@@ -273,12 +282,12 @@ private struct NovelContinuityIssueRow: View {
 extension NovelContinuityIssueCategoryV1 {
     var displayName: String {
         switch self {
-        case .duplicatedPlot: "情节重复"
-        case .contradiction: "前后矛盾"
-        case .identityDrift: "人物关系对不上"
-        case .chronology: "时间线错乱"
-        case .statusConflict: "状态冲突"
-        case .other: "其他"
+        case .duplicatedPlot: IOSAppLocalization.string("情节重复", defaultValue: "情节重复")
+        case .contradiction: IOSAppLocalization.string("前后矛盾", defaultValue: "前后矛盾")
+        case .identityDrift: IOSAppLocalization.string("人物关系对不上", defaultValue: "人物关系对不上")
+        case .chronology: IOSAppLocalization.string("时间线错乱", defaultValue: "时间线错乱")
+        case .statusConflict: IOSAppLocalization.string("状态冲突", defaultValue: "状态冲突")
+        case .other: IOSAppLocalization.string("其他", defaultValue: "其他")
         }
     }
 }
@@ -286,9 +295,9 @@ extension NovelContinuityIssueCategoryV1 {
 extension NovelContinuityIssueSeverityV1 {
     var displayName: String {
         switch self {
-        case .blocking: "严重"
-        case .major: "明显"
-        case .minor: "轻微"
+        case .blocking: IOSAppLocalization.string("严重", defaultValue: "严重")
+        case .major: IOSAppLocalization.string("明显", defaultValue: "明显")
+        case .minor: IOSAppLocalization.string("轻微", defaultValue: "轻微")
         }
     }
 

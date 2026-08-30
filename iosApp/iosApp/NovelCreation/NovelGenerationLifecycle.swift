@@ -1086,7 +1086,10 @@ private extension DefaultNovelCreation {
         await updateBackgroundLease(
             runID: request.id,
             completed: 1,
-            subtitle: "等待模型响应"
+            subtitle: IOSAppLocalization.string(
+                "等待模型响应",
+                defaultValue: "等待模型响应"
+            )
         )
 
         do {
@@ -1349,8 +1352,14 @@ private extension DefaultNovelCreation {
             // 恢复时若已有 cursor，说明已有输出，可直接挂系统卡；否则等同首 token 前。
             BackgroundGenerationKeepAlive.shared.begin(
                 leaseID,
-                title: "Amber 小说创作中",
-                subtitle: "恢复后台生成",
+                title: IOSAppLocalization.string(
+                    "Amber 小说创作中",
+                    defaultValue: "Amber 小说创作中"
+                ),
+                subtitle: IOSAppLocalization.string(
+                    "恢复后台生成",
+                    defaultValue: "恢复后台生成"
+                ),
                 onExpire: onLoss,
                 onSystemTaskExpiration: onLoss,
                 submitSystemTask: hasCursor
@@ -1359,12 +1368,23 @@ private extension DefaultNovelCreation {
                 leaseID,
                 completed: hasCursor ? 2 : 1,
                 total: 4,
-                subtitle: hasCursor ? "恢复生成正文" : "恢复模型响应"
+                subtitle: hasCursor
+                    ? IOSAppLocalization.string(
+                        "恢复生成正文",
+                        defaultValue: "恢复生成正文"
+                    )
+                    : IOSAppLocalization.string(
+                        "恢复模型响应",
+                        defaultValue: "恢复模型响应"
+                    )
             )
             if hasCursor {
                 BackgroundGenerationKeepAlive.shared.promoteSystemTaskIfNeeded(
                     leaseID,
-                    subtitle: "恢复生成正文"
+                    subtitle: IOSAppLocalization.string(
+                        "恢复生成正文",
+                        defaultValue: "恢复生成正文"
+                    )
                 )
             }
         }
@@ -1522,7 +1542,10 @@ private extension DefaultNovelCreation {
                 await updateBackgroundLease(
                     runID: runID,
                     completed: 1,
-                    subtitle: "模型思考中"
+                    subtitle: IOSAppLocalization.string(
+                        "模型思考中",
+                        defaultValue: "模型思考中"
+                    )
                 )
             }
         case .textDelta(let text):
@@ -1534,7 +1557,10 @@ private extension DefaultNovelCreation {
                 await updateBackgroundLease(
                     runID: runID,
                     completed: 2,
-                    subtitle: "正在生成正文"
+                    subtitle: IOSAppLocalization.string(
+                        "正在生成正文",
+                        defaultValue: "正在生成正文"
+                    )
                 )
             }
             broadcast(.delta(text), runID: runID)
@@ -1547,7 +1573,10 @@ private extension DefaultNovelCreation {
                 await updateBackgroundLease(
                     runID: runID,
                     completed: 2,
-                    subtitle: "正在生成正文"
+                    subtitle: IOSAppLocalization.string(
+                        "正在生成正文",
+                        defaultValue: "正在生成正文"
+                    )
                 )
             }
             broadcast(.replaced(text), runID: runID)
@@ -1608,13 +1637,19 @@ private extension DefaultNovelCreation {
                 await updateBackgroundLease(
                     runID: runID,
                     completed: 2,
-                    subtitle: "正在生成正文"
+                    subtitle: IOSAppLocalization.string(
+                        "正在生成正文",
+                        defaultValue: "正在生成正文"
+                    )
                 )
             } else if hasReasoningOnlyActivity {
                 await updateBackgroundLease(
                     runID: runID,
                     completed: 1,
-                    subtitle: "模型思考中"
+                    subtitle: IOSAppLocalization.string(
+                        "模型思考中",
+                        defaultValue: "模型思考中"
+                    )
                 )
             }
             // The partial and its remote cursor move in one sidecar record. The
@@ -1805,7 +1840,7 @@ private extension DefaultNovelCreation {
         await updateBackgroundLease(
             runID: runID,
             completed: 3,
-            subtitle: "保存结果"
+            subtitle: IOSAppLocalization.string("保存结果", defaultValue: "保存结果")
         )
 
         _ = await flushRecoverySidecar(runID: runID, force: true)
@@ -1833,7 +1868,7 @@ private extension DefaultNovelCreation {
             await updateBackgroundLease(
                 runID: runID,
                 completed: 4,
-                subtitle: "已保存"
+                subtitle: IOSAppLocalization.string("已保存", defaultValue: "已保存")
             )
             await settleDurableNovelRun(
                 runID: runID,

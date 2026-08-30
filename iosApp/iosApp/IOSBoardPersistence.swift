@@ -2087,6 +2087,17 @@ enum IOSBoardDateFormatters {
         return formatter
     }()
 
+    /// Board rows are rendered after the app language may have changed. Keep
+    /// this display-only formatter separate from `monthDayTime`, which is also
+    /// used while assembling board signal content for the model.
+    static func localizedMonthDayTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
+        formatter.timeZone = TimeZone.current
+        formatter.setLocalizedDateFormatFromTemplate("MMMdHm")
+        return formatter.string(from: date)
+    }
+
     static func eventRange(start: Date, end: Date) -> String {
         let day = monthDayTime.string(from: start)
         let time = DateFormatter()
@@ -2119,6 +2130,12 @@ enum IOSDeepReadTaskStatus: String, Codable, CaseIterable, Sendable {
         case .unsupported: "不可用"
         }
     }
+
+    /// `title` is also used by persisted/generated content and therefore stays
+    /// in its canonical form. This variant is for display-only surfaces.
+    var localizedTitle: String {
+        IOSAppLocalization.string(title, defaultValue: title)
+    }
 }
 
 enum IOSDeepReadSourceKind: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -2140,6 +2157,12 @@ enum IOSDeepReadSourceKind: String, Codable, CaseIterable, Identifiable, Sendabl
         case .webMount: "WebMount"
         case .hotTopic: "热榜主题"
         }
+    }
+
+    /// `title` remains the canonical source label used by storage and prompts;
+    /// callers rendering a source label should use this display-only variant.
+    var localizedTitle: String {
+        IOSAppLocalization.string(title, defaultValue: title)
     }
 }
 
@@ -2444,7 +2467,11 @@ enum IOSDeepReadSourceNormalizationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .emptySource(let kind):
-            return "\(kind.title)没有可读取内容。"
+            return IOSAppLocalization.formatted(
+                "%@没有可读取内容。",
+                defaultValue: "%@没有可读取内容。",
+                arguments: [kind.localizedTitle]
+            )
         case .unsupported(let reason):
             return IOSDeepReadUserFacingText.sanitize(reason)
         }
@@ -2454,8 +2481,34 @@ enum IOSDeepReadSourceNormalizationError: LocalizedError, Equatable {
 /// 深度阅读用户可见文案：尽量中文，避免把系统/SDK 英文错误直接抛到界面。
 enum IOSDeepReadUserFacingText {
     static func fromError(_ error: Error) -> String {
+        if let sourceError = error as? IOSDeepReadSourceNormalizationError {
+            return sourceError.errorDescription ?? localized("操作失败，请稍后重试。")
+        }
         if let access = error as? DocumentAccessError {
-            return access.userMessageForDeepRead
+            switch access {
+            case .missingGrant:
+                return localized("请先选择文件。")
+            case .grantMismatch:
+                return localized("所选文件授权不匹配，请重新选择文件。")
+            case .expiredGrant:
+                return localized("文件授权已失效，请重新选择文件。")
+            case .fileMissing:
+                return localized("文件已不存在，请从文件 App 重新选择。")
+            case .fileTooLarge:
+                return localized("文件过大，超出导入限制。")
+            case .unknownFileSize:
+                return localized("无法确认文件大小，请选择普通文件后重试。")
+            case .alreadyReading:
+                return localized("正在读取该文件，请稍候。")
+            case .unsupportedFileType(let message), .noReadableText(let message):
+                return sanitize(message)
+            case .readFailed(let message):
+                return IOSAppLocalization.formatted(
+                    "读取文件失败：%@",
+                    defaultValue: "读取文件失败：%@",
+                    arguments: [sanitize(message)]
+                )
+            }
         }
         if let localized = error as? LocalizedError,
            let description = localized.errorDescription?
@@ -2466,62 +2519,101 @@ enum IOSDeepReadUserFacingText {
         return sanitize(error.localizedDescription)
     }
 
-    /// 清洗任意原始错误串；已是中文则保留，常见英文映射为中文，否则给通用句。
+    /// 清洗任意原始错误串；已知固定提示按当前语言返回，带详情的中文文案保留，常见英文映射为当前语言，否则给通用句。
     static func sanitize(_ raw: String) -> String {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return "操作失败，请稍后重试。" }
-        if containsCJK(text) {
-            // 去掉夹杂的 debug 英文尾巴（如 threw=2, unusable=1）
-            return text
-                .replacingOccurrences(
-                    of: #"\s*\(threw=\d+,\s*unusable=\d+\)"#,
-                    with: "",
-                    options: .regularExpression
-                )
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return localized("操作失败，请稍后重试。") }
+
+        // 去掉夹杂的 debug 英文尾巴（如 threw=2, unusable=1），再把已知的
+        // 固定中文提示重新映射到当前语言；带有任务/来源详情的文案仍原样保留。
+        let cleaned = text
+            .replacingOccurrences(
+                of: #"\s*\(threw=\d+,\s*unusable=\d+\)"#,
+                with: "",
+                options: .regularExpression
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        switch cleaned {
+        case "操作失败，请稍后重试。",
+             "网络不可用，请检查连接后重试。",
+             "请求超时，请稍后重试。",
+             "操作已取消。",
+             "鉴权失败，请检查 API Key 或登录状态。",
+             "没有权限执行此操作。",
+             "未找到相关资源。",
+             "请求过于频繁，请稍后重试。",
+             "服务暂时不可用，请稍后重试。",
+             "安全连接失败，请稍后重试。",
+             "返回内容无法解析。",
+             "文件不存在或无法读取。",
+             "Workspace 保存失败，请稍后重试。",
+             "文件中没有可读取文本。",
+             "当前 WebMount 页面没有可读取正文；请先打开站点并确认页面已加载。",
+             "深度阅读生成未在单轮内完成。",
+             "上次深度阅读生成被中断，可重试。",
+             "模型调用全部失败，请检查网络、API Key 或模型配置后重试。",
+             "未能生成可用的深度阅读内容，请换个来源或模型后重试。":
+            return localized(cleaned)
+        default:
+            break
+        }
+        let generationFailurePrefix = "深度阅读生成失败："
+        if cleaned.hasPrefix(generationFailurePrefix) {
+            return IOSAppLocalization.formatted(
+                "深度阅读生成失败：%@",
+                defaultValue: "深度阅读生成失败：%@",
+                arguments: [String(cleaned.dropFirst(generationFailurePrefix.count))]
+            )
+        }
+        if containsCJK(cleaned) {
+            return cleaned
         }
 
-        let lower = text.lowercased()
+        let lower = cleaned.lowercased()
         if lower.contains("network") || lower.contains("offline") || lower.contains("internet")
             || lower.contains("not connected") || lower.contains("connection") {
-            return "网络不可用，请检查连接后重试。"
+            return localized("网络不可用，请检查连接后重试。")
         }
         if lower.contains("timeout") || lower.contains("timed out") || lower.contains("time out") {
-            return "请求超时，请稍后重试。"
+            return localized("请求超时，请稍后重试。")
         }
         if lower.contains("cancel") {
-            return "操作已取消。"
+            return localized("操作已取消。")
         }
         if lower.contains("unauthorized") || lower.contains("api key") || lower.contains("401")
             || lower.contains("invalid api") || lower.contains("authentication") {
-            return "鉴权失败，请检查 API Key 或登录状态。"
+            return localized("鉴权失败，请检查 API Key 或登录状态。")
         }
         if lower.contains("forbidden") || lower.contains("403") || lower.contains("permission") {
-            return "没有权限执行此操作。"
+            return localized("没有权限执行此操作。")
         }
         if lower.contains("not found") || lower.contains("404") {
-            return "未找到相关资源。"
+            return localized("未找到相关资源。")
         }
         if lower.contains("429") || lower.contains("rate limit") || lower.contains("too many") {
-            return "请求过于频繁，请稍后重试。"
+            return localized("请求过于频繁，请稍后重试。")
         }
         if lower.contains("500") || lower.contains("502") || lower.contains("503")
             || lower.contains("server error") || lower.contains("internal error") {
-            return "服务暂时不可用，请稍后重试。"
+            return localized("服务暂时不可用，请稍后重试。")
         }
         if lower.contains("ssl") || lower.contains("certificate") || lower.contains("secure connection") {
-            return "安全连接失败，请稍后重试。"
+            return localized("安全连接失败，请稍后重试。")
         }
         if lower.contains("json") || lower.contains("decode") || lower.contains("parse") {
-            return "返回内容无法解析。"
+            return localized("返回内容无法解析。")
         }
         if lower.contains("no such file") || lower.contains("file") && lower.contains("exist") {
-            return "文件不存在或无法读取。"
+            return localized("文件不存在或无法读取。")
         }
         if lower.contains("workspace") {
-            return "Workspace 保存失败，请稍后重试。"
+            return localized("Workspace 保存失败，请稍后重试。")
         }
-        return "操作失败，请稍后重试。"
+        return localized("操作失败，请稍后重试。")
+    }
+
+    private static func localized(_ key: String) -> String {
+        IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private static func containsCJK(_ text: String) -> Bool {
@@ -2725,6 +2817,18 @@ struct IOSDeepReadTask: Codable, Equatable, Identifiable, Sendable {
             .mapValues(\.count)
             .sorted { $0.key.rawValue < $1.key.rawValue }
             .map { "\($0.key.title) \($0.value)" }
+        return counts.joined(separator: " · ")
+    }
+
+    /// Display-only counterpart of `sourceSummary`; the canonical summary is
+    /// retained for generated/persisted content.
+    var localizedSourceSummary: String {
+        let counts = Dictionary(grouping: sources, by: \.kind)
+            .mapValues(\.count)
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+            .map {
+                "\(IOSAppLocalization.string($0.key.title, defaultValue: $0.key.title)) \($0.value)"
+            }
         return counts.joined(separator: " · ")
     }
 
@@ -3064,7 +3168,7 @@ enum IOSDeepReadHTMLTemplateRenderer {
         let contentHTML = markdownToHTML(task.resultMarkdown.isEmpty ? IOSDeepReadDraftGenerator.generate(task: task) : task.resultMarkdown)
         let sourcesHTML = task.sources.map { source in
             let url = source.url.map { "<div class=\"source-url\">\(escapeHTML($0))</div>" } ?? ""
-            return "<li><strong>\(escapeHTML(source.kind.title))｜\(escapeHTML(source.title))</strong><p>\(escapeHTML(source.content.prefixString(420)))</p>\(url)</li>"
+            return "<li><strong>\(escapeHTML(source.kind.localizedTitle))｜\(escapeHTML(source.title))</strong><p>\(escapeHTML(source.content.prefixString(420)))</p>\(url)</li>"
         }.joined(separator: "\n")
         let replacements: [String: String] = [
             "{{title}}": escapeHTML(task.title),

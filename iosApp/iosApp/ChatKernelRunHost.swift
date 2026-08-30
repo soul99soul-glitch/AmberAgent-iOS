@@ -271,7 +271,12 @@ final class ChatKernelRunHost {
         )
         // 生成一开始就拿后台执行权(CG-C :1084-1104 同款纪律与注释语义)。
         beginKeepAlive(runId: runId, subtitle: params.model.displayName)
-        backgroundExecution.updateProgress(runId, completed: 0, total: 4, subtitle: "准备上下文")
+        backgroundExecution.updateProgress(
+            runId,
+            completed: 0,
+            total: 4,
+            subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
+        )
 
         let adapter = makeAdapter(runId: runId)
         self.adapter = adapter
@@ -294,7 +299,10 @@ final class ChatKernelRunHost {
                 runProtocolContext
             ) else {
                 await self.preambleFailed(
-                    rawMessage: "无法保存任务状态，生成未开始。",
+                    rawMessage: IOSAppLocalization.string(
+                        "无法保存任务状态，生成未开始。",
+                        defaultValue: "无法保存任务状态，生成未开始。"
+                    ),
                     modelId: params.model.modelId,
                     runId: runId
                 )
@@ -435,7 +443,10 @@ final class ChatKernelRunHost {
         bindings.startLiveActivity(runId, conversationId, imagePresentation)
         backgroundExecution.begin(
             runId,
-            title: "Amber 正在生成图片",
+            title: IOSAppLocalization.string(
+                "Amber 正在生成图片",
+                defaultValue: "Amber 正在生成图片"
+            ),
             subtitle: modelDisplayName,
             onExpire: { [weak self] in
                 guard let self, self.currentRunId == runId else { return }
@@ -446,7 +457,12 @@ final class ChatKernelRunHost {
                 self.cancel(cause: .backgroundInterruption)
             }
         )
-        backgroundExecution.updateProgress(runId, completed: 0, total: 3, subtitle: "准备图片请求")
+        backgroundExecution.updateProgress(
+            runId,
+            completed: 0,
+            total: 3,
+            subtitle: IOSAppLocalization.string("准备图片请求", defaultValue: "准备图片请求")
+        )
 
         let toolCall = toolRuntime.userInitiatedImageToolCall(input: input)
         activeImageToolCall = toolCall
@@ -493,7 +509,10 @@ final class ChatKernelRunHost {
                     startedAt: startedAt,
                     inputDigest: inputDigest,
                     conversationId: conversationId,
-                    reason: "无法保存任务状态，图片生成未开始。"
+                    reason: IOSAppLocalization.string(
+                        "无法保存任务状态，图片生成未开始。",
+                        defaultValue: "无法保存任务状态，图片生成未开始。"
+                    )
                 )
                 return
             }
@@ -536,7 +555,10 @@ final class ChatKernelRunHost {
                     startedAt: startedAt,
                     inputDigest: inputDigest,
                     conversationId: conversationId,
-                    reason: "无法保存工具执行前状态，请检查存储空间后重试。"
+                    reason: IOSAppLocalization.string(
+                        "无法保存工具执行前状态，请检查存储空间后重试。",
+                        defaultValue: "无法保存工具执行前状态，请检查存储空间后重试。"
+                    )
                 )
                 return
             }
@@ -573,7 +595,10 @@ final class ChatKernelRunHost {
                     startedAt: startedAt,
                     inputDigest: inputDigest,
                     conversationId: conversationId,
-                    reason: "无法保存工具执行前状态，请检查存储空间后重试。"
+                    reason: IOSAppLocalization.string(
+                        "无法保存工具执行前状态，请检查存储空间后重试。",
+                        defaultValue: "无法保存工具执行前状态，请检查存储空间后重试。"
+                    )
                 )
                 return
             }
@@ -622,7 +647,10 @@ final class ChatKernelRunHost {
                     startedAt: startedAt,
                     inputDigest: inputDigest,
                     conversationId: conversationId,
-                    reason: "无法保存工具执行前状态，请检查存储空间后重试。"
+                    reason: IOSAppLocalization.string(
+                        "无法保存工具执行前状态，请检查存储空间后重试。",
+                        defaultValue: "无法保存工具执行前状态，请检查存储空间后重试。"
+                    )
                 )
                 return
             }
@@ -721,7 +749,10 @@ final class ChatKernelRunHost {
                     conversationId: conversationHex,
                     presentation: .failed(),
                     summary: WatchTaskText.clipped(
-                        failureReason ?? "图片已生成，但结果保存失败。",
+                        failureReason ?? IOSAppLocalization.string(
+                            "图片已生成，但结果保存失败。",
+                            defaultValue: "图片已生成，但结果保存失败。"
+                        ),
                         maxLength: 200
                     )
                 )
@@ -808,7 +839,10 @@ final class ChatKernelRunHost {
     private func failImageToolDurability(runId: String) async {
         guard currentRunId == runId, !didFinalizeTerminal else { return }
         didFinalizeTerminal = true
-        lastFailureMessage = "tool result ledger write failed"
+        lastFailureMessage = IOSAppLocalization.string(
+            "tool result ledger write failed",
+            defaultValue: "tool result ledger write failed"
+        )
         await failedTerminal(runId: runId, requiresRecovery: true)
     }
 
@@ -1013,9 +1047,15 @@ final class ChatKernelRunHost {
         let toolFailureReason: String
         switch cause {
         case .user:
-            toolFailureReason = "User cancelled."
+            toolFailureReason = IOSAppLocalization.string(
+                "User cancelled.",
+                defaultValue: "User cancelled."
+            )
         case .backgroundInterruption:
-            toolFailureReason = "Generation interrupted by the system."
+            toolFailureReason = IOSAppLocalization.string(
+                "Generation interrupted by the system.",
+                defaultValue: "Generation interrupted by the system."
+            )
         }
         IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
         cancelRemoteDurableResponseIfNeeded()
@@ -1439,7 +1479,10 @@ final class ChatKernelRunHost {
                 // CG-C claimRunAfterPermission :4310-4325:认领失败 → 账本由
                 // 适配器补 Finished(not_executed_permission_claim_failed),
                 // 这里备好用户向错误串,failed 终态呈现。
-                self.lastFailureMessage = "无法恢复待确认任务，请重试。"
+                self.lastFailureMessage = IOSAppLocalization.string(
+                    "无法恢复待确认任务，请重试。",
+                    defaultValue: "无法恢复待确认任务，请重试。"
+                )
             }
             return didResume
         }
@@ -1463,7 +1506,12 @@ final class ChatKernelRunHost {
                 self.bindings.getMessages().clearingLastAssistantGenerationDuration()
             )
             self.projection.discardProvisionalAssistant()
-            self.backgroundExecution.updateProgress(runId, completed: 1, total: 4, subtitle: "正在生成回复")
+            self.backgroundExecution.updateProgress(
+                runId,
+                completed: 1,
+                total: 4,
+                subtitle: IOSAppLocalization.string("正在生成回复", defaultValue: "正在生成回复")
+            )
             // 审批恢复(含 recipe 再暂停恢复)后首轮:keepalive 已还在暂停时
             // 归还,这里拿回;LiveActivity/Watch 回到 generating(CG-C
             // continueAfterToolResult :3657-3668 同款)。
@@ -1489,7 +1537,12 @@ final class ChatKernelRunHost {
             guard let self, self.currentRunId == runId else { return }
             self.activeToolExecutionName = toolName
             self.activeToolEffectClass = IOSToolEffectClassMapping.forToolName(toolName, input: input)
-            self.backgroundExecution.updateProgress(runId, completed: 3, total: 4, subtitle: "正在执行工具")
+            self.backgroundExecution.updateProgress(
+                runId,
+                completed: 3,
+                total: 4,
+                subtitle: IOSAppLocalization.string("正在执行工具", defaultValue: "正在执行工具")
+            )
             let presentation = AgentActivityPresentation.runningTool(toolName: toolName)
             WatchTaskCoordinator.shared.publish(
                 runId: runId,
@@ -1526,7 +1579,12 @@ final class ChatKernelRunHost {
             self.streamClock.noteVisibleDelta()
             if !self.didReportFirstDeltaThisRound {
                 self.didReportFirstDeltaThisRound = true
-                self.backgroundExecution.updateProgress(runId, completed: 2, total: 4, subtitle: "正在接收回复")
+                self.backgroundExecution.updateProgress(
+                    runId,
+                    completed: 2,
+                    total: 4,
+                    subtitle: IOSAppLocalization.string("正在接收回复", defaultValue: "正在接收回复")
+                )
             }
         }
         callbacks.onAssistantReasoning = { [weak self] _ in
@@ -1536,7 +1594,12 @@ final class ChatKernelRunHost {
             self.streamClock.noteVisibleDelta()
             if !self.didReportFirstDeltaThisRound {
                 self.didReportFirstDeltaThisRound = true
-                self.backgroundExecution.updateProgress(runId, completed: 2, total: 4, subtitle: "正在接收回复")
+                self.backgroundExecution.updateProgress(
+                    runId,
+                    completed: 2,
+                    total: 4,
+                    subtitle: IOSAppLocalization.string("正在接收回复", defaultValue: "正在接收回复")
+                )
             }
         }
         callbacks.onAssistantMessageSnapshot = { [weak self] message in
@@ -1565,7 +1628,10 @@ final class ChatKernelRunHost {
         let didMark = await bindings.markRunAwaitingPermission(runId, toolCallId)
         guard currentRunId == runId, cancelCause == nil else { return nil }
         guard didMark else {
-            await pauseStorageFailed(rawMessage: "无法保存待确认恢复信息，请重试。")
+            await pauseStorageFailed(rawMessage: IOSAppLocalization.string(
+                "无法保存待确认恢复信息，请重试。",
+                defaultValue: "无法保存待确认恢复信息，请重试。"
+            ))
             return nil
         }
         // 脱敏快照持久化(CG-C :3817-3824):审批中快照不含敏感配置。
@@ -1573,7 +1639,10 @@ final class ChatKernelRunHost {
         let didPersist = await bindings.persistMessagesSnapshot(approvalMessages, conversationId, writeBaseline)
         guard currentRunId == runId, cancelCause == nil else { return nil }
         guard didPersist else {
-            await pauseStorageFailed(rawMessage: "无法保存待确认状态，请检查存储空间后重试。")
+            await pauseStorageFailed(rawMessage: IOSAppLocalization.string(
+                "无法保存待确认状态，请检查存储空间后重试。",
+                defaultValue: "无法保存待确认状态，请检查存储空间后重试。"
+            ))
             return nil
         }
 
@@ -1712,7 +1781,11 @@ final class ChatKernelRunHost {
             if currentRunId == runId {
                 applyCompactEvent(.failed(message: (error as NSError).localizedDescription))
             }
-            throw Self.uploadPrepError("上下文压缩失败：\((error as NSError).localizedDescription)")
+            throw Self.uploadPrepError(IOSAppLocalization.formatted(
+                "上下文压缩失败：%@",
+                defaultValue: "上下文压缩失败：%@",
+                arguments: [(error as NSError).localizedDescription]
+            ))
         }
         guard currentRunId == runId else { return messages }
         let promptedUploadMessages = Self.messagesByInjectingImageGenerationPromptIfNeeded(
@@ -1734,7 +1807,11 @@ final class ChatKernelRunHost {
             if currentRunId == runId {
                 applyCompactEvent(.failed(message: (error as NSError).localizedDescription))
             }
-            throw Self.uploadPrepError("上下文压缩失败：\((error as NSError).localizedDescription)")
+            throw Self.uploadPrepError(IOSAppLocalization.formatted(
+                "上下文压缩失败：%@",
+                defaultValue: "上下文压缩失败：%@",
+                arguments: [(error as NSError).localizedDescription]
+            ))
         }
         let finalUploadMessages = ChatRuntimeContextBuilder.coalescingSystemMessages(finalizedUploadMessages)
         // 召回标记(P2-b):不 force,去抖生效(CG-C :2049-2050)。
@@ -1887,7 +1964,10 @@ final class ChatKernelRunHost {
             runId: runId,
             conversationId: conversationHex,
             presentation: .failed(),
-            summary: "网页操作结果待确认。"
+            summary: IOSAppLocalization.string(
+                "网页操作结果待确认。",
+                defaultValue: "网页操作结果待确认。"
+            )
         )
         await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
         bindings.setMessages(finalMessages)
@@ -1942,8 +2022,14 @@ final class ChatKernelRunHost {
                     conversationId: conversationHex,
                     presentation: .failed(),
                     summary: miniAppExpected && didPersist
-                        ? "小应用生成失败：模型没有返回任何内容。"
-                        : "回复已生成，但最终结果保存失败。"
+                        ? IOSAppLocalization.string(
+                            "小应用生成失败：模型没有返回任何内容。",
+                            defaultValue: "小应用生成失败：模型没有返回任何内容。"
+                        )
+                        : IOSAppLocalization.string(
+                            "回复已生成，但最终结果保存失败。",
+                            defaultValue: "回复已生成，但最终结果保存失败。"
+                        )
                 )
             }
             await dependencies.liveActivityController.end(
@@ -2007,8 +2093,14 @@ final class ChatKernelRunHost {
                 conversationId: conversationHex,
                 presentation: .failed(),
                 summary: miniAppFailed && didPersist
-                    ? "小应用生成未完成，错误详情已保存在会话中。"
-                    : "回复已生成，但最终结果保存失败。"
+                    ? IOSAppLocalization.string(
+                        "小应用生成未完成，错误详情已保存在会话中。",
+                        defaultValue: "小应用生成未完成，错误详情已保存在会话中。"
+                    )
+                    : IOSAppLocalization.string(
+                        "回复已生成，但最终结果保存失败。",
+                        defaultValue: "回复已生成，但最终结果保存失败。"
+                    )
             )
         }
         await dependencies.liveActivityController.end(
@@ -2044,7 +2136,10 @@ final class ChatKernelRunHost {
             if toolRuntime.hasUnresolvedToolCall(in: updated) {
                 updated = toolRuntime.messagesByFailingPendingToolCalls(
                     in: updated,
-                    failureReason: "Generation failed before the tool call completed."
+                    failureReason: IOSAppLocalization.string(
+                        "Generation failed before the tool call completed.",
+                        defaultValue: "Generation failed before the tool call completed."
+                    )
                 )
             }
             // 引擎在 provider 失败时已在尾部追加 "[engine] provider error: …"
@@ -2164,7 +2259,10 @@ final class ChatKernelRunHost {
         let terminalSummary: String?
         if !didPersist {
             terminalPresentation = .failed()
-            terminalSummary = "已停止生成，但最终状态保存失败。"
+            terminalSummary = IOSAppLocalization.string(
+                "已停止生成，但最终状态保存失败。",
+                defaultValue: "已停止生成，但最终状态保存失败。"
+            )
         } else {
             switch cause {
             case .user:
@@ -2172,7 +2270,10 @@ final class ChatKernelRunHost {
                 terminalSummary = nil
             case .backgroundInterruption:
                 terminalPresentation = .failed()
-                terminalSummary = "后台生成被系统中断，可以重试。"
+                terminalSummary = IOSAppLocalization.string(
+                    "后台生成被系统中断，可以重试。",
+                    defaultValue: "后台生成被系统中断，可以重试。"
+                )
             }
         }
         WatchTaskCoordinator.shared.publish(
@@ -2204,7 +2305,12 @@ final class ChatKernelRunHost {
         let runConversationId = currentConversationIdForRun
         IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
         if terminalEvent == .generationCompleted {
-            backgroundExecution.updateProgress(runId, completed: 4, total: 4, subtitle: "回复已完成")
+            backgroundExecution.updateProgress(
+                runId,
+                completed: 4,
+                total: 4,
+                subtitle: IOSAppLocalization.string("回复已完成", defaultValue: "回复已完成")
+            )
         }
         backgroundExecution.end(runId)
         keepaliveHeld = false
@@ -2288,7 +2394,10 @@ final class ChatKernelRunHost {
     private func beginKeepAlive(runId: String, subtitle: String) {
         backgroundExecution.begin(
             runId,
-            title: "Amber 正在生成",
+            title: IOSAppLocalization.string(
+                "Amber 正在生成",
+                defaultValue: "Amber 正在生成"
+            ),
             subtitle: subtitle,
             onExpire: { [weak self] in
                 guard let self, self.currentRunId == runId else { return }

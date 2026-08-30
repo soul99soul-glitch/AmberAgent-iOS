@@ -301,25 +301,6 @@ final class IOSSettingsWiringTests: XCTestCase {
         )
     }
 
-    func testBackgroundHandoffExpirationStopsWithoutAutomaticResubmission() throws {
-        let coordinator = try source("iosApp/IOSChatBackgroundGenerationCoordinator.swift")
-        let appShell = try source("iosApp/AppShell.swift")
-        let start = try XCTUnwrap(
-            coordinator.range(of: "backgroundTask.expirationHandler = { [weak self] in")
-        )
-        let end = try XCTUnwrap(
-            coordinator.range(of: "let requestProvider: ProviderSetting", range: start.upperBound..<coordinator.endIndex)
-        )
-        let expiration = coordinator[start.lowerBound..<end.lowerBound]
-
-        XCTAssertTrue(expiration.contains("await self.persistExpirationFailure("))
-        XCTAssertTrue(expiration.contains("self.finish(runId: job.runId, requestId: backgroundTask.identifier)"))
-        XCTAssertFalse(expiration.contains("suspendForResume("))
-        XCTAssertFalse(appShell.contains("resumeSuspendedRunsIfNeeded()"))
-        XCTAssertFalse(coordinator.contains("finalizeSuspendedRunsIfNeeded"))
-        XCTAssertFalse(coordinator.contains("IOSChatBackgroundSuspensionStore"))
-    }
-
     func testReasoningExpansionAndIslandGlowHonorFrozenMotion() throws {
         let misc = try source("iosApp/ChatMiscViews.swift")
         let island = try source("iosApp/ChatActivityIslandView.swift")

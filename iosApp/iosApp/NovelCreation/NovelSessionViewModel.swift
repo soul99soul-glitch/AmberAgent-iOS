@@ -5283,8 +5283,9 @@ extension NovelSessionViewModel {
         )
         BackgroundGenerationKeepAlive.shared.begin(
             leaseID,
-            title: "Amber 代笔中",
-            subtitle: ghostwriteProgressStorage?.statusLabel ?? "准备代笔",
+            title: IOSAppLocalization.string("Amber 代笔中", defaultValue: "Amber 代笔中"),
+            subtitle: ghostwriteProgressStorage?.statusLabel
+                ?? IOSAppLocalization.string("准备代笔", defaultValue: "准备代笔"),
             onExpire: { [weak self] in
                 Task { @MainActor [weak self] in
                     await self?.expireGhostwriteBackgroundLease(
@@ -5306,7 +5307,8 @@ extension NovelSessionViewModel {
             leaseID,
             completed: 0,
             total: -1,
-            subtitle: ghostwriteProgressStorage?.statusLabel ?? "准备代笔"
+            subtitle: ghostwriteProgressStorage?.statusLabel
+                ?? IOSAppLocalization.string("准备代笔", defaultValue: "准备代笔")
         )
         advanceGhostwriteBackgroundProgress(by: 1)
     }

@@ -132,8 +132,10 @@ struct NovelStateSyncActivity: Equatable, Sendable {
 
     var statusTitle: String {
         switch phase {
-        case .preparing: "正在准备剧情状态"
-        case .analyzing: "正在同步剧情状态"
+        case .preparing:
+            IOSAppLocalization.string("正在准备剧情状态", defaultValue: "正在准备剧情状态")
+        case .analyzing:
+            IOSAppLocalization.string("正在同步剧情状态", defaultValue: "正在同步剧情状态")
         }
     }
 
@@ -147,7 +149,10 @@ struct NovelStateSyncActivity: Equatable, Sendable {
 
     var segmentedRebuildHint: String? {
         guard let estimatedTotalSegments, estimatedTotalSegments > 1 else { return nil }
-        return "分段读取正文并更新剧情状态，大项目会较久。"
+        return IOSAppLocalization.string(
+            "分段读取正文并更新剧情状态，大项目会较久。",
+            defaultValue: "分段读取正文并更新剧情状态，大项目会较久。"
+        )
     }
 
     /// Secondary copy for banners: chunk, word count, elapsed — always concrete
@@ -728,7 +733,10 @@ final class NovelCreationViewModel {
         if !projectSnapshot.settingProposals.contains(where: {
             $0.branchID == selectedBranchID
         }) {
-            return .failed(message: "尚未生成创作建议，可以重新生成。")
+            return .failed(message: IOSAppLocalization.string(
+                "尚未生成创作建议，可以重新生成。",
+                defaultValue: "尚未生成创作建议，可以重新生成。"
+            ))
         }
         return .idle
     }
@@ -1342,12 +1350,13 @@ final class NovelCreationViewModel {
             guard quickStartTaskRunIDs[owner] == request.id else { return }
             endBackgroundGeneration(for: request.id)
             if cancelledQuickStartRunIDs.contains(request.id) {
-                quickStartStatuses[owner] = .failed(
-                    message: "建议生成已中断，可以重新生成。"
-                )
+                quickStartStatuses[owner] = .failed(message: IOSAppLocalization.string(
+                    "建议生成已中断，可以重新生成。",
+                    defaultValue: "建议生成已中断，可以重新生成。"
+                ))
                 errorMessage = nil
             } else {
-                let message = errorDescription(error)
+                let message = NovelPresentation.operationErrorMessage(error)
                 quickStartStatuses[owner] = .failed(message: message)
                 report(error)
             }
@@ -1397,7 +1406,7 @@ final class NovelCreationViewModel {
     }
 
     private func reportQuickStartRefreshFailure(_ error: Error, owner: NovelQuickStartOwner) {
-        let message = errorDescription(error)
+        let message = NovelPresentation.operationErrorMessage(error)
         quickStartStatuses[owner] = .refreshFailed(message: message)
         report(error)
     }
@@ -1415,7 +1424,7 @@ final class NovelCreationViewModel {
             quickStartStatuses[owner] = nil
             errorMessage = nil
         } catch {
-            let message = errorDescription(error)
+            let message = NovelPresentation.operationErrorMessage(error)
             quickStartStatuses[owner] = .refreshFailed(message: message)
             report(error)
         }
@@ -1436,7 +1445,7 @@ final class NovelCreationViewModel {
             quickStartStatuses[owner] = nil
             errorMessage = nil
         } catch {
-            let message = errorDescription(error)
+            let message = NovelPresentation.operationErrorMessage(error)
             quickStartStatuses[owner] = .refreshFailed(message: message)
             report(error)
         }
@@ -1475,7 +1484,10 @@ final class NovelCreationViewModel {
                 finishQuickStartTask(owner: owner, runID: run.id)
                 return
             case .interrupted:
-                quickStartStatuses[owner] = .failed(message: "建议生成已中断，可以重新生成。")
+                quickStartStatuses[owner] = .failed(message: IOSAppLocalization.string(
+                    "建议生成已中断，可以重新生成。",
+                    defaultValue: "建议生成已中断，可以重新生成。"
+                ))
                 do {
                     try await refreshCurrentSelection(projectID: owner.projectID)
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
@@ -2230,7 +2242,7 @@ final class NovelCreationViewModel {
             BackgroundGenerationKeepAlive.shared.advanceProgress(
                 ghostwriteLeaseID,
                 by: 1,
-                subtitle: "正在生成正文"
+                subtitle: IOSAppLocalization.string("正在生成正文", defaultValue: "正在生成正文")
             )
             return
         }
@@ -2239,8 +2251,11 @@ final class NovelCreationViewModel {
         // 再提交会错过退后台后的申请窗口。
         BackgroundGenerationKeepAlive.shared.begin(
             leaseID,
-            title: "Amber 小说创作中",
-            subtitle: "准备生成",
+            title: IOSAppLocalization.string(
+                "Amber 小说创作中",
+                defaultValue: "Amber 小说创作中"
+            ),
+            subtitle: IOSAppLocalization.string("准备生成", defaultValue: "准备生成"),
             onExpire: { [weak self] in
                 Task { @MainActor [weak self] in
                     await self?.handleNovelGenerationKeepAliveLoss(
@@ -2264,7 +2279,7 @@ final class NovelCreationViewModel {
             leaseID,
             completed: 0,
             total: 4,
-            subtitle: "准备生成"
+            subtitle: IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
         )
     }
 
@@ -2433,7 +2448,10 @@ final class NovelCreationViewModel {
                 clearQuickStartTask(
                     owner: quickStartOwner,
                     runID: command.runID,
-                    status: .failed(message: "建议生成已中断，可以重新生成。")
+                    status: .failed(message: IOSAppLocalization.string(
+                        "建议生成已中断，可以重新生成。",
+                        defaultValue: "建议生成已中断，可以重新生成。"
+                    ))
                 )
                 return
             }
@@ -2497,7 +2515,7 @@ final class NovelCreationViewModel {
         do {
             try await refreshCurrentSelection(projectID: owner.projectID)
         } catch {
-            let message = errorDescription(error)
+            let message = NovelPresentation.operationErrorMessage(error)
             clearQuickStartTask(
                 owner: owner,
                 runID: runID,
@@ -2514,14 +2532,23 @@ final class NovelCreationViewModel {
         case .failed:
             status = .failed(
                 message: run?.terminalFailure.map(NovelPresentation.failureMessage)
-                    ?? "建议生成失败，可以重新生成。"
+                    ?? IOSAppLocalization.string(
+                        "建议生成失败，可以重新生成。",
+                        defaultValue: "建议生成失败，可以重新生成。"
+                    )
             )
         case .interrupted, nil:
-            status = .failed(message: "建议生成已中断，可以重新生成。")
+            status = .failed(message: IOSAppLocalization.string(
+                "建议生成已中断，可以重新生成。",
+                defaultValue: "建议生成已中断，可以重新生成。"
+            ))
         case .running:
             guard quickStartTaskRunIDs[owner] == runID else { return }
             quickStartStatuses[owner] = .refreshFailed(
-                message: "生成状态尚未收口，请重新载入后再继续。"
+                message: IOSAppLocalization.string(
+                    "生成状态尚未收口，请重新载入后再继续。",
+                    defaultValue: "生成状态尚未收口，请重新载入后再继续。"
+                )
             )
             releaseOperation(ownerID: runID.rawValue)
             return
@@ -2928,7 +2955,10 @@ final class NovelCreationViewModel {
         beginContinuityBackgroundLease(
             ownerID: ownerID,
             target: target,
-            subtitle: "剧情矛盾修复"
+            subtitle: IOSAppLocalization.string(
+                "剧情矛盾修复",
+                defaultValue: "剧情矛盾修复"
+            )
         )
         defer {
             isRepairingContinuity = false
@@ -3467,7 +3497,10 @@ final class NovelCreationViewModel {
             BackgroundGenerationKeepAlive.shared.advanceProgress(
                 ghostwriteLeaseID,
                 by: 1,
-                subtitle: "代笔中 · 剧情同步"
+                subtitle: IOSAppLocalization.string(
+                    "代笔中 · 剧情同步",
+                    defaultValue: "代笔中 · 剧情同步"
+                )
             )
             return
         }
@@ -3483,8 +3516,11 @@ final class NovelCreationViewModel {
         }
         BackgroundGenerationKeepAlive.shared.begin(
             leaseID,
-            title: "Amber 小说创作中",
-            subtitle: "剧情同步",
+            title: IOSAppLocalization.string(
+                "Amber 小说创作中",
+                defaultValue: "Amber 小说创作中"
+            ),
+            subtitle: IOSAppLocalization.string("剧情同步", defaultValue: "剧情同步"),
             onExpire: expire,
             onSystemTaskExpiration: expire
         )
@@ -3492,7 +3528,7 @@ final class NovelCreationViewModel {
             leaseID,
             completed: 0,
             total: -1,
-            subtitle: "剧情同步"
+            subtitle: IOSAppLocalization.string("剧情同步", defaultValue: "剧情同步")
         )
     }
 
@@ -3525,7 +3561,10 @@ final class NovelCreationViewModel {
             BackgroundGenerationKeepAlive.shared.advanceProgress(
                 ghostwriteLeaseID,
                 by: currentWork - previousWork,
-                subtitle: "代笔中 · 剧情同步"
+                subtitle: IOSAppLocalization.string(
+                    "代笔中 · 剧情同步",
+                    defaultValue: "代笔中 · 剧情同步"
+                )
             )
         }
     }
@@ -3545,7 +3584,10 @@ final class NovelCreationViewModel {
     private func beginContinuityBackgroundLease(
         ownerID: UUID,
         target: NovelAutomaticStateSyncTarget,
-        subtitle: String = "剧情矛盾检查"
+        subtitle: String = IOSAppLocalization.string(
+            "剧情矛盾检查",
+            defaultValue: "剧情矛盾检查"
+        )
     ) {
         let leaseID = novelContinuityBackgroundLeaseID(for: ownerID)
         let expire: () -> Void = { [weak self] in
@@ -3563,7 +3605,10 @@ final class NovelCreationViewModel {
         }
         BackgroundGenerationKeepAlive.shared.begin(
             leaseID,
-            title: "Amber 小说创作中",
+            title: IOSAppLocalization.string(
+                "Amber 小说创作中",
+                defaultValue: "Amber 小说创作中"
+            ),
             subtitle: subtitle,
             onExpire: expire,
             onSystemTaskExpiration: expire

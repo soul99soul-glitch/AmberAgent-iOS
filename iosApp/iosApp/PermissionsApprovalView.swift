@@ -86,8 +86,11 @@ struct PermissionsApprovalView: View {
                 AmberFormRow(
                     systemImage: "checkmark.shield",
                     iconColor: AmberTheme.accentCyan,
-                    title: "权限与能力",
-                    subtitle: "按能力管理：文件 / 媒体 / 健康 / 定位 / 通讯录等",
+                    title: IOSAppLocalization.string("权限与能力", defaultValue: "权限与能力"),
+                    subtitle: IOSAppLocalization.string(
+                        "按能力管理：文件 / 媒体 / 健康 / 定位 / 通讯录等",
+                        defaultValue: "按能力管理：文件 / 媒体 / 健康 / 定位 / 通讯录等"
+                    ),
                     showsChevron: true
                 ) {
                     router.navigate(to: .capabilities)
@@ -104,8 +107,8 @@ struct PermissionsApprovalView: View {
                 AmberFormRow(
                     systemImage: globalAutoApprove ? "checkmark.shield.fill" : "shield",
                     iconColor: globalAutoApprove ? AmberTheme.accentGreen : AmberTheme.muted,
-                    title: "全局自动批准",
-                    subtitle: "普通工具自动放行",
+                    title: IOSAppLocalization.string("全局自动批准", defaultValue: "全局自动批准"),
+                    subtitle: IOSAppLocalization.string("普通工具自动放行", defaultValue: "普通工具自动放行"),
                     trailing: nil,
                     showsChevron: false
                 ) {
@@ -123,8 +126,11 @@ struct PermissionsApprovalView: View {
                 AmberFormRow(
                     systemImage: highRiskAutoApprove ? "exclamationmark.shield.fill" : "exclamationmark.triangle",
                     iconColor: highRiskAutoApprove ? AmberTheme.accentRed : AmberTheme.muted,
-                    title: "高风险自动批准",
-                    subtitle: "含任意公网网站、远程命令等",
+                    title: IOSAppLocalization.string("高风险自动批准", defaultValue: "高风险自动批准"),
+                    subtitle: IOSAppLocalization.string(
+                        "含任意公网网站、远程命令等",
+                        defaultValue: "含任意公网网站、远程命令等"
+                    ),
                     trailing: nil,
                     showsChevron: false
                 ) {
@@ -211,7 +217,7 @@ private struct PermissionPolicyRow: View {
     var body: some View {
         Menu {
             ForEach(availablePolicies) { option in
-                Button(option.displayTitle) {
+                Button(option.localizedTitle) {
                     onSelect(option)
                 }
             }
@@ -223,10 +229,10 @@ private struct PermissionPolicyRow: View {
                     .frame(width: 28, height: 28)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(capability.title)
+                    Text(verbatim: capability.localizedTitle)
                         .font(.body)
                         .foregroundStyle(AmberTheme.foreground)
-                    Text(permissionSummary)
+                    Text(verbatim: permissionSummary)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted2)
                         .lineLimit(1)
@@ -234,7 +240,7 @@ private struct PermissionPolicyRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(policy.displayTitle)
+                Text(verbatim: policy.localizedTitle)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(policy == .disabled ? AmberTheme.muted : AmberTheme.accent)
                     .padding(.horizontal, 8)
@@ -252,7 +258,7 @@ private struct PermissionPolicyRow: View {
         }
         .disabled(availablePolicies.count <= 1)
         .opacity(availablePolicies.count <= 1 ? 0.72 : 1)
-        .accessibilityLabel("\(capability.title)，\(policy.displayTitle)")
+        .accessibilityLabel("\(capability.localizedTitle)，\(policy.localizedTitle)")
     }
 
     private var systemImage: String {
@@ -276,39 +282,27 @@ private struct PermissionPolicyRow: View {
         // 右侧胶囊已显示策略状态（禁用/询问/自动），这里不再重复拼接。
         switch capability.id {
         case "ios.files.selected_read":
-            return "读取用户选取的文件"
+            return IOSAppLocalization.string("读取用户选取的文件", defaultValue: "读取用户选取的文件")
         case "ios.workspace.file_read":
-            return "读取文件和产出"
+            return IOSAppLocalization.string("读取文件和产出", defaultValue: "读取文件和产出")
         case "ios.workspace.file_write":
-            return "写入文件、删除产出"
+            return IOSAppLocalization.string("写入文件、删除产出", defaultValue: "写入文件、删除产出")
         case "ios.agent.memory_write":
-            return "新增、编辑或删除记忆"
+            return IOSAppLocalization.string("新增、编辑或删除记忆", defaultValue: "新增、编辑或删除记忆")
         case "ios.network.search_tools":
-            return "联网搜索和网页抓取"
+            return IOSAppLocalization.string("联网搜索和网页抓取", defaultValue: "联网搜索和网页抓取")
         case "ios.mcp.tool_call":
-            return "调用已配置的 MCP 服务"
+            return IOSAppLocalization.string("调用已配置的 MCP 服务", defaultValue: "调用已配置的 MCP 服务")
         case "ios.webmount.browser":
-            return "读取或操作网页会话"
+            return IOSAppLocalization.string("读取或操作网页会话", defaultValue: "读取或操作网页会话")
         case "ios.remote.command":
-            return "SSH 远程执行单条命令"
+            return IOSAppLocalization.string("SSH 远程执行单条命令", defaultValue: "SSH 远程执行单条命令")
         case "ios.agent.subagent_dispatch":
-            return "委托任务给子代理"
+            return IOSAppLocalization.string("委托任务给子代理", defaultValue: "委托任务给子代理")
         case "ios.agent.model_council_run":
             return "发起议会讨论"
         default:
             return capability.summary
-        }
-    }
-}
-
-private extension IOSAgentPermissionPolicy {
-    var displayTitle: String {
-        switch self {
-        case .disabled: "禁用"
-        case .askEveryTime: "每次询问"
-        case .allowOncePerRun: "每次询问"
-        case .autoApprove: "自动批准"
-        case .autoApproveHighRisk: "自动批准·高风险"
         }
     }
 }

@@ -204,7 +204,10 @@ enum ChatComposerSendBlockReason: Equatable {
     var userVisibleMessage: String? {
         switch self {
         case .orchestratedThread:
-            return "此会话由父线程编排，暂不支持直接输入"
+            return IOSAppLocalization.string(
+                "此会话由父线程编排，暂不支持直接输入",
+                defaultValue: "此会话由父线程编排，暂不支持直接输入"
+            )
         case .configuration(let issue):
             return issue.message
         default:
@@ -292,7 +295,12 @@ final class ChatViewModel {
 
     /// 识别图片期间的总张数（>1 时才作为副标题事实展示）。
     private(set) var visionRecognitionImageCount = 0
-    private static let visionRecognitionPendingMessage = "图片识别中，请稍候"
+    private static var visionRecognitionPendingMessage: String {
+        IOSAppLocalization.string(
+            "图片识别中，请稍候",
+            defaultValue: "图片识别中，请稍候"
+        )
+    }
     @ObservationIgnored private var visionRecognitionTask: Task<Void, Never>?
     private var visionRecognitionRequestId: UUID?
     private var visionRecognitionConversationId: KotlinUuid?
@@ -573,8 +581,14 @@ final class ChatViewModel {
             // 渲染（homeContinueError）在 UI 层，这里只发布数据，不改 UI 文件。
             conversationStore?.publishUserVisibleError(
                 IOSUserVisibleError(
-                    title: "暂时无法切换会话",
-                    message: "当前会话仍在生成中，正在执行的工具完成后才能切换。",
+                    title: IOSAppLocalization.string(
+                        "暂时无法切换会话",
+                        defaultValue: "暂时无法切换会话"
+                    ),
+                    message: IOSAppLocalization.string(
+                        "当前会话仍在生成中，正在执行的工具完成后才能切换。",
+                        defaultValue: "当前会话仍在生成中，正在执行的工具完成后才能切换。"
+                    ),
                     severity: .warning
                 )
             )
@@ -1165,7 +1179,10 @@ final class ChatViewModel {
                 toolCall,
                 outputText: ChatToolOutputFormatter.toolFailureJSON(
                     toolName: toolCall.toolName,
-                    reason: "The previous generation ended before the tool call completed.",
+                    reason: IOSAppLocalization.string(
+                        "The previous generation ended before the tool call completed.",
+                        defaultValue: "The previous generation ended before the tool call completed."
+                    ),
                     cancelled: true
                 ),
                 in: messages
@@ -1267,7 +1284,10 @@ final class ChatViewModel {
             if let descriptorToolStillPending, ledgerActions[descriptor.toolCallId] == nil {
                 let failure = ChatToolOutputFormatter.toolFailureJSON(
                     toolName: descriptorToolStillPending.toolName,
-                    reason: "App restarted while waiting for confirmation.",
+                    reason: IOSAppLocalization.string(
+                        "App restarted while waiting for confirmation.",
+                        defaultValue: "App restarted while waiting for confirmation."
+                    ),
                     cancelled: true
                 )
                 recoveredMessages = runtime.messagesByFinishingToolCall(
@@ -1279,9 +1299,10 @@ final class ChatViewModel {
                 recoveredMessages.append(UIMessage(
                     id: noticeSeed.id,
                     role: noticeSeed.role,
-                    parts: [MessageKt.localGenerationErrorTextPart(
-                        text: "待确认操作因 App 重启已终止，请重新生成。"
-                    )],
+                    parts: [MessageKt.localGenerationErrorTextPart(text: IOSAppLocalization.string(
+                        "待确认操作因 App 重启已终止，请重新生成。",
+                        defaultValue: "待确认操作因 App 重启已终止，请重新生成。"
+                    ))],
                     annotations: noticeSeed.annotations,
                     createdAt: noticeSeed.createdAt,
                     finishedAt: noticeSeed.finishedAt,
@@ -1570,7 +1591,11 @@ final class ChatViewModel {
         // （不走 fallback 直发抢跑）。仅硬拦超张数，避免无模型时误杀入队。
         if isGenerationActive {
             if hasImages, pendingImages.count > Self.maxImagesPerMessage {
-                selectedFileContextError = "一次最多发送 \(Self.maxImagesPerMessage) 张图片"
+                selectedFileContextError = IOSAppLocalization.formatted(
+                    "一次最多发送 %lld 张图片",
+                    defaultValue: "一次最多发送 %lld 张图片",
+                    arguments: [Int64(Self.maxImagesPerMessage)]
+                )
                 return false
             }
             return enqueueSteerMessage(text: text)
@@ -1601,7 +1626,10 @@ final class ChatViewModel {
         guard !rejectVisionRecognitionMutationIfNeeded() else { return }
         guard !trimmedPrompt.isEmpty, !trimmedSource.isEmpty else { return }
         guard !isGenerationActive else {
-            selectedFileContextError = "请等当前回复结束后再修改图片"
+            selectedFileContextError = IOSAppLocalization.string(
+                "请等当前回复结束后再修改图片",
+                defaultValue: "请等当前回复结束后再修改图片"
+            )
             return
         }
 
@@ -1896,7 +1924,12 @@ final class ChatViewModel {
         visionRecognitionTask?.cancel()
         clearVisionRecognitionOperation()
         guard let ownerConversationId, let conversationStore else { return }
-        let notice = Self.visionRecognitionFailureMessage("图片识别已取消，请重新发送图片")
+        let notice = Self.visionRecognitionFailureMessage(
+            IOSAppLocalization.string(
+                "图片识别已取消，请重新发送图片",
+                defaultValue: "图片识别已取消，请重新发送图片"
+            )
+        )
         Task { @MainActor in
             _ = await conversationStore.saveBackgroundCompletion(
                 baseMessages: ownerMessages,
@@ -1911,7 +1944,10 @@ final class ChatViewModel {
         visionRecognitionTask?.cancel()
         clearVisionRecognitionOperation()
         clearVisionRecognitionPendingPrompt()
-        selectedFileContextError = "图片识别已取消，请重新发送图片"
+        selectedFileContextError = IOSAppLocalization.string(
+            "图片识别已取消，请重新发送图片",
+            defaultValue: "图片识别已取消，请重新发送图片"
+        )
     }
 
     private func clearVisionRecognitionOperation() {
@@ -2018,13 +2054,19 @@ final class ChatViewModel {
     ) async -> Result<[String: String], VisionRecognitionError> {
         let snapshot = sharedSettings.snapshot
         guard let visionModel = snapshot.findModelById(uuid: snapshot.ocrModelId) else {
-            return .failure(VisionRecognitionError(message: "请先在「默认模型 → 辅助任务」配置视觉识别模型"))
+            return .failure(VisionRecognitionError(message: IOSAppLocalization.string(
+                "请先在「默认模型 → 辅助任务」配置视觉识别模型",
+                defaultValue: "请先在「默认模型 → 辅助任务」配置视觉识别模型"
+            )))
         }
         guard let providerSetting = ChatProviderConfiguration.provider(
             for: visionModel,
             providers: snapshot.providers
         ), ChatProviderConfiguration.issue(for: visionModel, provider: providerSetting) == nil else {
-            return .failure(VisionRecognitionError(message: "视觉识别模型的服务商不可用"))
+            return .failure(VisionRecognitionError(message: IOSAppLocalization.string(
+                "视觉识别模型的服务商不可用",
+                defaultValue: "视觉识别模型的服务商不可用"
+            )))
         }
         let prompt = OcrPromptKt.resolveVisionRecognitionPrompt(prompt: snapshot.ocrPrompt)
         let assistant = snapshot.getCurrentAssistant()
@@ -2056,7 +2098,10 @@ final class ChatViewModel {
                 let text = chunk.choices.first?.message?.toText()
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 guard !text.isEmpty else {
-                    return .failure(VisionRecognitionError(message: "视觉识别模型没有返回可用内容"))
+                    return .failure(VisionRecognitionError(message: IOSAppLocalization.string(
+                        "视觉识别模型没有返回可用内容",
+                        defaultValue: "视觉识别模型没有返回可用内容"
+                    )))
                 }
                 results[image.dataUrl] = """
                 <image_context>
@@ -2066,7 +2111,11 @@ final class ChatViewModel {
                 * 若用户要根据这张附图做风格转换、改图或垫图生图，调用 generate_image 时必须设置 use_attached_image=true；宿主会注入原图像素，不要只根据文字描述重画。
                 """
             } catch {
-                return .failure(VisionRecognitionError(message: "视觉识别失败：\((error as NSError).localizedDescription)"))
+                return .failure(VisionRecognitionError(message: IOSAppLocalization.formatted(
+                    "视觉识别失败：%@",
+                    defaultValue: "视觉识别失败：%@",
+                    arguments: [(error as NSError).localizedDescription]
+                )))
             }
         }
         return .success(results)
@@ -2398,7 +2447,10 @@ final class ChatViewModel {
         }) else { return }
         guard !isAttachingSelectedFile else { return }
         guard let localToolExecutor else {
-            selectedFileContextError = "Local iOS tool executor is unavailable."
+            selectedFileContextError = IOSAppLocalization.string(
+                "Local iOS tool executor is unavailable.",
+                defaultValue: "Local iOS tool executor is unavailable."
+            )
             return
         }
 
@@ -2455,28 +2507,40 @@ final class ChatViewModel {
                 dismissalDelay: 6
             )
         case .permissionsStatus:
-            selectedFileContextError = "permissions_status cannot be attached to a chat message."
+            selectedFileContextError = IOSAppLocalization.string(
+                "permissions_status cannot be attached to a chat message.",
+                defaultValue: "permissions_status cannot be attached to a chat message."
+            )
             await liveActivityController.end(
                 runId: activityRunId,
                 presentation: .selectedFileReadFailed,
                 dismissalDelay: 6
             )
         case .webMountResult:
-            selectedFileContextError = "WebMount tool output cannot be attached to a chat message."
+            selectedFileContextError = IOSAppLocalization.string(
+                "WebMount tool output cannot be attached to a chat message.",
+                defaultValue: "WebMount tool output cannot be attached to a chat message."
+            )
             await liveActivityController.end(
                 runId: activityRunId,
                 presentation: .selectedFileReadFailed,
                 dismissalDelay: 6
             )
         case .workspaceResult:
-            selectedFileContextError = "Workspace tool output cannot be attached to a chat message."
+            selectedFileContextError = IOSAppLocalization.string(
+                "Workspace tool output cannot be attached to a chat message.",
+                defaultValue: "Workspace tool output cannot be attached to a chat message."
+            )
             await liveActivityController.end(
                 runId: activityRunId,
                 presentation: .selectedFileReadFailed,
                 dismissalDelay: 6
             )
         case .terminalResult, .ishExecuteResult, .ishHandoffResult:
-            selectedFileContextError = "Terminal tool output cannot be attached to a chat message."
+            selectedFileContextError = IOSAppLocalization.string(
+                "Terminal tool output cannot be attached to a chat message.",
+                defaultValue: "Terminal tool output cannot be attached to a chat message."
+            )
             await liveActivityController.end(
                 runId: activityRunId,
                 presentation: .selectedFileReadFailed,
@@ -2554,7 +2618,11 @@ final class ChatViewModel {
 
     func addPendingImage(dataUrl: String, previewData: Data) {
         guard pendingImages.count < Self.maxImagesPerMessage else {
-            selectedFileContextError = "一次最多发送 \(Self.maxImagesPerMessage) 张图片"
+            selectedFileContextError = IOSAppLocalization.formatted(
+                "一次最多发送 %lld 张图片",
+                defaultValue: "一次最多发送 %lld 张图片",
+                arguments: [Int64(Self.maxImagesPerMessage)]
+            )
             return
         }
         pendingImages.append(PendingChatImage(dataUrl: dataUrl, previewData: previewData))
@@ -2575,11 +2643,15 @@ final class ChatViewModel {
     var imageAttachmentState: ImageAttachmentState {
         guard !pendingImages.isEmpty else { return .none }
         if pendingImages.count > Self.maxImagesPerMessage {
-            return .blocked("一次最多发送 \(Self.maxImagesPerMessage) 张图片")
+            return .blocked(IOSAppLocalization.formatted(
+                "一次最多发送 %lld 张图片",
+                defaultValue: "一次最多发送 %lld 张图片",
+                arguments: [Int64(Self.maxImagesPerMessage)]
+            ))
         }
         let snapshot = sharedSettings.snapshot
         guard let model = snapshot.getCurrentChatModel() else {
-            return .blocked("请先选择模型")
+            return .blocked(IOSAppLocalization.string("请先选择模型", defaultValue: "请先选择模型"))
         }
         if Self.modelSupportsImageInput(model) { return .ready }
         // The user explicitly configured a vision model for this purpose — trust it
@@ -2590,7 +2662,10 @@ final class ChatViewModel {
            ChatProviderConfiguration.issue(for: vision, provider: provider) == nil {
             return .fallback
         }
-        return .blocked("当前模型不支持图片，请先在「默认模型 → 辅助任务」配置视觉识别模型")
+        return .blocked(IOSAppLocalization.string(
+            "当前模型不支持图片，请先在「默认模型 → 辅助任务」配置视觉识别模型",
+            defaultValue: "当前模型不支持图片，请先在「默认模型 → 辅助任务」配置视觉识别模型"
+        ))
     }
 
     private static func modelSupportsImageInput(_ model: Model) -> Bool {
@@ -3196,7 +3271,10 @@ final class ChatViewModel {
             updated[assistantIndex] = IOSMiniAppChatMessageFactory.parseFailureAssistant(
                 assistant,
                 textPartIndex: textPartIndex,
-                reason: "模型没有返回完整的 MiniApp JSON 或 HTML。请重试，或调高最大输出长度后重新生成。"
+                reason: IOSAppLocalization.string(
+                    "模型没有返回完整的 MiniApp JSON 或 HTML。请重试，或调高最大输出长度后重新生成。",
+                    defaultValue: "模型没有返回完整的 MiniApp JSON 或 HTML。请重试，或调高最大输出长度后重新生成。"
+                )
             )
             return ChatMiniAppOutputApplication(messages: updated, outcome: .failed)
         }
@@ -3247,8 +3325,16 @@ final class ChatViewModel {
             }
             let record = mutation.record
             let statusText = revisionAppId != nil
-                ? "已更新小应用：\(record.title) v\(record.version)"
-                : "已生成小应用：\(record.title)"
+                ? IOSAppLocalization.formatted(
+                    "已更新小应用：%@ v%lld",
+                    defaultValue: "已更新小应用：%@ v%lld",
+                    arguments: [record.title, Int64(record.version)]
+                )
+                : IOSAppLocalization.formatted(
+                    "已生成小应用：%@",
+                    defaultValue: "已生成小应用：%@",
+                    arguments: [record.title]
+                )
             var updated = messages
             updated[assistantIndex] = IOSMiniAppChatMessageFactory.updatedAssistant(
                 assistant,
@@ -3260,7 +3346,10 @@ final class ChatViewModel {
             rollbackMessages[assistantIndex] = IOSMiniAppChatMessageFactory.parseFailureAssistant(
                 assistant,
                 textPartIndex: textPartIndex,
-                reason: "会话保存失败，因此此次小应用生成未保留。请检查存储空间后重试。"
+                reason: IOSAppLocalization.string(
+                    "会话保存失败，因此此次小应用生成未保留。请检查存储空间后重试。",
+                    defaultValue: "会话保存失败，因此此次小应用生成未保留。请检查存储空间后重试。"
+                )
             )
             return ChatMiniAppOutputApplication(
                 messages: updated,
@@ -3297,7 +3386,11 @@ final class ChatViewModel {
                         failedMessages[assistantIndex] = IOSMiniAppChatMessageFactory.updatedAssistant(
                             assistant,
                             textPartIndex: textPartIndex,
-                            statusText: "\(statusText)\nWorkspace 同步失败：\(message)",
+                            statusText: statusText + "\n" + IOSAppLocalization.formatted(
+                                "Workspace 同步失败：%@",
+                                defaultValue: "Workspace 同步失败：%@",
+                                arguments: [message]
+                            ),
                             record: record
                         )
                         return ChatMiniAppWorkspaceSyncFailure(
@@ -3493,8 +3586,14 @@ final class ChatViewModel {
                 if !didRecord {
                     conversationStore?.publishUserVisibleError(
                         IOSUserVisibleError(
-                            title: "运行状态记录失败",
-                            message: "运行终态发生冲突，任务已保留等待恢复。",
+                            title: IOSAppLocalization.string(
+                                "运行状态记录失败",
+                                defaultValue: "运行状态记录失败"
+                            ),
+                            message: IOSAppLocalization.string(
+                                "运行终态发生冲突，任务已保留等待恢复。",
+                                defaultValue: "运行终态发生冲突，任务已保留等待恢复。"
+                            ),
                             severity: .error
                         )
                     )
@@ -3504,10 +3603,21 @@ final class ChatViewModel {
         } catch {
             // agent_run 是强杀恢复（applyToolCallLedgerRecovery）依赖的账本，
             // 写失败必须走用户可见错误通道，不能只 print 静默吞掉。
-            let detail = "未能写入运行账本：\(error)"
+            let detail = IOSAppLocalization.formatted(
+                "未能写入运行账本：%@",
+                defaultValue: "未能写入运行账本：%@",
+                arguments: [String(describing: error)]
+            )
             if let conversationStore {
                 conversationStore.publishUserVisibleError(
-                    IOSUserVisibleError(title: "运行状态记录失败", message: detail, severity: .error)
+                    IOSUserVisibleError(
+                        title: IOSAppLocalization.string(
+                            "运行状态记录失败",
+                            defaultValue: "运行状态记录失败"
+                        ),
+                        message: detail,
+                        severity: .error
+                    )
                 )
             } else {
                 chatLedgerLogger.error("\(detail)")
@@ -3842,20 +3952,35 @@ final class ChatViewModel {
         let lowercased = raw.lowercased()
         let prefix: String
         if lowercased.contains("request snapshot ledger write failed") {
-            prefix = "请求尚未发送，因为本地运行记录写入失败。请重试；若问题持续，请检查设备可用存储空间。"
+            prefix = IOSAppLocalization.string(
+                "请求尚未发送，因为本地运行记录写入失败。请重试；若问题持续，请检查设备可用存储空间。",
+                defaultValue: "请求尚未发送，因为本地运行记录写入失败。请重试；若问题持续，请检查设备可用存储空间。"
+            )
         } else if lowercased.contains("invalid api key") ||
             lowercased.contains("incorrect api key") ||
             lowercased.contains("unauthorized") ||
             lowercased.contains("401") {
-            prefix = "API Key 无效或没有权限。请回到「服务商」确认 Key 是否填写正确，并确认它有访问当前服务商的权限。"
+            prefix = IOSAppLocalization.string(
+                "API Key 无效或没有权限。请回到「服务商」确认 Key 是否填写正确，并确认它有访问当前服务商的权限。",
+                defaultValue: "API Key 无效或没有权限。请回到「服务商」确认 Key 是否填写正确，并确认它有访问当前服务商的权限。"
+            )
         } else if lowercased.contains("model_not_found") ||
                     lowercased.contains("model not found") ||
                     lowercased.contains("does not exist") ||
                     lowercased.contains("not found") ||
                     lowercased.contains("404") {
             let trimmedModelId = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let suffix = trimmedModelId.isEmpty ? "" : "当前 Model ID：\(trimmedModelId)。"
-            prefix = "模型不可用、模型不存在，或当前 Base URL 不支持这个聊天路径。请在「默认模型」选择当前服务商支持的模型。\(suffix)"
+            let suffix = trimmedModelId.isEmpty
+                ? ""
+                : IOSAppLocalization.formatted(
+                    "当前 Model ID：%@。",
+                    defaultValue: "当前 Model ID：%@。",
+                    arguments: [trimmedModelId]
+                )
+            prefix = IOSAppLocalization.string(
+                "模型不可用、模型不存在，或当前 Base URL 不支持这个聊天路径。请在「默认模型」选择当前服务商支持的模型。",
+                defaultValue: "模型不可用、模型不存在，或当前 Base URL 不支持这个聊天路径。请在「默认模型」选择当前服务商支持的模型。"
+            ) + suffix
         } else if lowercased.contains("network") ||
                     lowercased.contains("internet") ||
                     lowercased.contains("offline") ||
@@ -3866,13 +3991,23 @@ final class ChatViewModel {
                     lowercased.contains("dns") ||
                     lowercased.contains("connection refused") ||
                     lowercased.contains("nsurlerror") {
-            prefix = "网络连接失败。请检查网络、Base URL 和服务商状态后重试。"
+            prefix = IOSAppLocalization.string(
+                "网络连接失败。请检查网络、Base URL 和服务商状态后重试。",
+                defaultValue: "网络连接失败。请检查网络、Base URL 和服务商状态后重试。"
+            )
         } else {
-            prefix = "请求失败。请检查服务商配置后重试。"
+            prefix = IOSAppLocalization.string(
+                "请求失败。请检查服务商配置后重试。",
+                defaultValue: "请求失败。请检查服务商配置后重试。"
+            )
         }
 
         guard !raw.isEmpty else { return prefix }
-        return "\(prefix)\n\n原始错误：\(truncatedError(raw))"
+        return prefix + "\n\n" + IOSAppLocalization.formatted(
+            "原始错误：%@",
+            defaultValue: "原始错误：%@",
+            arguments: [truncatedError(raw)]
+        )
     }
 
     private static func truncatedError(_ value: String, maxLength: Int = 700) -> String {

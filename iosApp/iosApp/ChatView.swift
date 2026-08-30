@@ -465,14 +465,17 @@ struct ChatView: View {
         fileImporterConversationId = nil
         guard selectionConversationId == currentConversationIdString else { return }
         guard let documentStore else {
-            viewModel.selectedFileContextError = "文件选择器未连接。"
+            viewModel.selectedFileContextError = IOSAppLocalization.string(
+                "文件选择器未连接。",
+                defaultValue: "文件选择器未连接。"
+            )
             return
         }
 
         switch result {
         case .success(let urls):
             guard let url = urls.first else {
-                let message = "没有选择文件。"
+                let message = IOSAppLocalization.string("没有选择文件。", defaultValue: "没有选择文件。")
                 documentStore.recordSelectionError(message)
                 viewModel.selectedFileContextError = message
                 return
@@ -490,11 +493,19 @@ struct ChatView: View {
                     expectedConversationId: selectionConversationId
                 )
                 if let workspaceImportError, viewModel.selectedFileContextError == nil {
-                    viewModel.selectedFileContextError = "已附加到本条消息，但未保存到 Workspace：\(workspaceImportError)"
+                    viewModel.selectedFileContextError = IOSAppLocalization.formatted(
+                        "已附加到本条消息，但未保存到 Workspace：%@",
+                        defaultValue: "已附加到本条消息，但未保存到 Workspace：%@",
+                        arguments: [workspaceImportError]
+                    )
                 }
             }
         case .failure(let error):
-            let message = "文件选择失败：\(error.localizedDescription)"
+            let message = IOSAppLocalization.formatted(
+                "文件选择失败：%@",
+                defaultValue: "文件选择失败：%@",
+                arguments: [error.localizedDescription]
+            )
             documentStore.recordSelectionError(message)
             viewModel.selectedFileContextError = message
         }
@@ -523,7 +534,10 @@ struct ChatView: View {
 
     private func presentCamera() {
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-            viewModel.selectedFileContextError = "此设备不支持相机。"
+            viewModel.selectedFileContextError = IOSAppLocalization.string(
+                "此设备不支持相机。",
+                defaultValue: "此设备不支持相机。"
+            )
             return
         }
         isCameraPresented = true
@@ -560,7 +574,11 @@ struct ChatView: View {
             photoPickerItems = []
             guard selectionConversationId == currentConversationIdString else { return }
             if failedImageCount > 0 {
-                viewModel.selectedFileContextError = "有 \(failedImageCount) 张图片处理失败。"
+                viewModel.selectedFileContextError = IOSAppLocalization.formatted(
+                    "有 %lld 张图片处理失败。",
+                    defaultValue: "有 %lld 张图片处理失败。",
+                    arguments: [Int64(failedImageCount)]
+                )
             }
         }
     }
@@ -639,7 +657,10 @@ struct ChatView: View {
     /// Camera path (already on the main thread): compress + encode and attach.
     private func attachPickedImage(_ image: UIImage) {
         guard let encoded = ChatImageEncoder.encode(image) else {
-            viewModel.selectedFileContextError = "图片处理失败。"
+            viewModel.selectedFileContextError = IOSAppLocalization.string(
+                "图片处理失败。",
+                defaultValue: "图片处理失败。"
+            )
             return
         }
         viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
@@ -659,7 +680,13 @@ struct ChatView: View {
         case .blocked(let message):
             return .warning(message)
         case .fallback:
-            return .muted("当前模型不支持图片，将先用视觉模型识别后再发送", systemImage: "wand.and.stars")
+            return .muted(
+                IOSAppLocalization.string(
+                    "当前模型不支持图片，将先用视觉模型识别后再发送",
+                    defaultValue: "当前模型不支持图片，将先用视觉模型识别后再发送"
+                ),
+                systemImage: "wand.and.stars"
+            )
         case .ready, .none:
             return nil
         }
@@ -696,10 +723,12 @@ struct ChatView: View {
         if viewModel.hasPendingUserGate {
             return ChatActivityIslandState.activity(
                 kind: .awaitingUser,
-                title: "等待确认",
+                title: IOSAppLocalization.string("等待确认", defaultValue: "等待确认"),
                 detail: viewModel.pendingAskUser != nil
-                    ? "回答问题"
-                    : (viewModel.pendingToolOutcomeUnknown != nil ? "确认操作结果" : "工具审批"),
+                    ? IOSAppLocalization.string("回答问题", defaultValue: "回答问题")
+                    : (viewModel.pendingToolOutcomeUnknown != nil
+                        ? IOSAppLocalization.string("确认操作结果", defaultValue: "确认操作结果")
+                        : IOSAppLocalization.string("工具审批", defaultValue: "工具审批")),
                 systemImage: "checkmark.circle",
                 tint: .amber
             )
@@ -708,8 +737,11 @@ struct ChatView: View {
         if viewModel.isBackgroundGenerationWaitingForForegroundResume {
             return ChatActivityIslandState.activity(
                 kind: .waiting,
-                title: "正在恢复",
-                detail: "正在检查可安全恢复方式",
+                title: IOSAppLocalization.string("正在恢复", defaultValue: "正在恢复"),
+                detail: IOSAppLocalization.string(
+                    "正在检查可安全恢复方式",
+                    defaultValue: "正在检查可安全恢复方式"
+                ),
                 systemImage: "arrow.triangle.2.circlepath",
                 tint: .amber
             )
@@ -729,9 +761,13 @@ struct ChatView: View {
         if viewModel.isRecognizingImages {
             return ChatActivityIslandState.activity(
                 kind: .image,
-                title: "识别图片",
+                title: IOSAppLocalization.string("识别图片", defaultValue: "识别图片"),
                 detail: viewModel.visionRecognitionImageCount > 1
-                    ? "共 \(viewModel.visionRecognitionImageCount) 张" : nil,
+                    ? IOSAppLocalization.formatted(
+                        "共 %lld 张",
+                        defaultValue: "共 %lld 张",
+                        arguments: [Int64(viewModel.visionRecognitionImageCount)]
+                    ) : nil,
                 systemImage: "viewfinder",
                 tint: .cyan
             )
@@ -740,7 +776,7 @@ struct ChatView: View {
         if chatListSummary.awaitingFirstAssistantChunk {
             return ChatActivityIslandState.activity(
                 kind: .waiting,
-                title: "正在连接",
+                title: IOSAppLocalization.string("正在连接", defaultValue: "正在连接"),
                 detail: viewModel.islandModelDisplayName,
                 systemImage: "sparkles",
                 tint: .amber
@@ -751,14 +787,14 @@ struct ChatView: View {
             if chatListSummary.lastAssistantHasOpenReasoning {
                 return ChatActivityIslandState.activity(
                     kind: .thinking,
-                    title: "正在思考",
+                    title: IOSAppLocalization.string("正在思考", defaultValue: "正在思考"),
                     systemImage: "brain.head.profile",
                     tint: .amber
                 )
             }
             return ChatActivityIslandState.activity(
                 kind: .generating,
-                title: "正在生成回复",
+                title: IOSAppLocalization.string("正在生成回复", defaultValue: "正在生成回复"),
                 systemImage: "text.bubble",
                 tint: .accent
             )
@@ -1121,7 +1157,10 @@ struct ChatView: View {
                     fileName: preview.fileName,
                     byteSummary: preview.byteSummary,
                     isTruncated: preview.isTruncated,
-                    footnote: "发送后，已解析文本会保存进此会话上下文。",
+                    footnote: IOSAppLocalization.string(
+                        "发送后，已解析文本会保存进此会话上下文。",
+                        defaultValue: "发送后，已解析文本会保存进此会话上下文。"
+                    ),
                     onRemove: { viewModel.clearPendingSelectedFilePreview() }
                 )
             }
@@ -1389,7 +1428,7 @@ struct ChatView: View {
     }
 
     private var inputPlaceholder: String {
-        switch configurationIssue {
+        let key: String = switch configurationIssue {
         case .some(.missingAPIKey):
             "先添加 API Key"
         case .some(.invalidBaseURL):
@@ -1411,6 +1450,7 @@ struct ChatView: View {
         case .none:
             "发消息给 Amber..."
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private var hasPendingToolApproval: Bool {
@@ -1525,7 +1565,12 @@ struct ChatView: View {
     }
 
     private var reasoningAccessibilityValue: String {
-        reasoningIsAvailable ? selectedReasoningOption.title : "当前模型未标记 Reasoning"
+        reasoningIsAvailable
+            ? selectedReasoningOption.title
+            : IOSAppLocalization.string(
+                "当前模型未标记 Reasoning",
+                defaultValue: "当前模型未标记 Reasoning"
+            )
     }
 
     private func toggleComposerPanel(_ panel: ComposerPanel) {

@@ -1,5 +1,31 @@
 import SwiftUI
 
+private func localized(_ key: String) -> String {
+    IOSAppLocalization.string(key, defaultValue: key)
+}
+
+private func localizedNumber(_ value: Int) -> String {
+    value.formatted(.number.locale(IOSAppLanguagePreference.selected().resolvedLocale()))
+}
+
+private func localizedChapterTitle(
+    storedTitle: String,
+    content: String,
+    ordinal: Int
+) -> String {
+    let displayTitle = NovelPresentation.chapterDisplayTitle(
+        storedTitle: storedTitle,
+        content: content,
+        ordinal: ordinal
+    )
+    guard displayTitle == "第 \(ordinal) 章" else { return displayTitle }
+    return IOSAppLocalization.formatted(
+        "第 %@ 章",
+        defaultValue: "第 %@ 章",
+        arguments: [localizedNumber(ordinal)]
+    )
+}
+
 struct NovelChapterReaderRoute: Identifiable, Hashable {
     let selection: NovelChapterSelection
     var id: NovelChapterID { selection.chapterID }
@@ -55,11 +81,11 @@ struct NovelChapterReaderView: View {
                 }
                 Button("取消", role: .cancel) {}
             } message: {
-                Text(
+                Text(localized(
                     "会从当前分支的正文目录移除这一章，目录与生成都不再包含它。"
                         + "历史检查点里可能仍保留引用，不能撤销到「从未写过」；"
                         + "若只是暂时不想用，请用「废弃本章」。"
-                )
+                ))
             }
             .sheet(item: $activeSheet) { sheet in
                 switch sheet {
@@ -75,7 +101,7 @@ struct NovelChapterReaderView: View {
             )) {
                 Button("好") { failureMessage = nil }
             } message: {
-                Text(failureMessage ?? "请稍后重试。")
+                Text(failureMessage ?? localized("请稍后重试。"))
             }
     }
 
@@ -183,7 +209,7 @@ struct NovelChapterReaderView: View {
             NovelStateSyncProgressBanner(
                 title: currentStateSyncStatusTitle,
                 activity: currentStateSyncActivity,
-                secondaryHint: currentStateSyncActivity?.segmentedRebuildHint,
+                secondaryHint: currentStateSyncActivity?.segmentedRebuildHint.map(localized),
                 canStop: {
                     guard let projectID = viewModel.selectedProjectID,
                           let branchID = viewModel.selectedBranchID else { return false }
@@ -398,11 +424,11 @@ struct NovelChapterReaderView: View {
                projectID: projectID,
                branchID: branchID
            ) {
-            return title
+            return localized(title)
         }
         return currentStateSyncActivity?.phase == .analyzing
-            ? "正在同步剧情状态"
-            : "正在按正文对齐剧情指针"
+            ? localized("正在同步剧情状态")
+            : localized("正在按正文对齐剧情指针")
     }
 
     private var currentStateSyncRecoveryMessage: String? {
@@ -429,13 +455,17 @@ struct NovelChapterReaderView: View {
     }
 
     private var chapterOrdinalTitle: String {
-        guard currentIndex >= 0 else { return "正文" }
-        return "第 \(currentIndex + 1) 章"
+        guard currentIndex >= 0 else { return localized("正文") }
+        return IOSAppLocalization.formatted(
+            "第 %@ 章",
+            defaultValue: "第 %@ 章",
+            arguments: [localizedNumber(currentIndex + 1)]
+        )
     }
 
     private var currentChapterTitle: String {
-        guard let version = currentVersion, currentIndex >= 0 else { return "正文" }
-        return NovelPresentation.chapterDisplayTitle(
+        guard let version = currentVersion, currentIndex >= 0 else { return localized("正文") }
+        return localizedChapterTitle(
             storedTitle: version.title,
             content: version.content,
             ordinal: currentIndex + 1
@@ -444,7 +474,11 @@ struct NovelChapterReaderView: View {
 
     private var currentChapterWordCountTitle: String {
         guard let currentVersion else { return "" }
-        return "\(currentVersion.content.count.formatted()) 字"
+        return IOSAppLocalization.formatted(
+            "%@ 字",
+            defaultValue: "%@ 字",
+            arguments: [localizedNumber(currentVersion.content.count)]
+        )
     }
 
     private var editBlockReason: String? {
@@ -460,8 +494,12 @@ struct NovelChapterReaderView: View {
     }
 
     private var editMenuTitle: String {
-        guard let editBlockReason else { return "编辑本章" }
-        return "编辑本章（\(editBlockReason)）"
+        guard let editBlockReason else { return localized("编辑本章") }
+        return IOSAppLocalization.formatted(
+            "编辑本章（%@）",
+            defaultValue: "编辑本章（%@）",
+            arguments: [localized(editBlockReason)]
+        )
     }
 
     private var polishBlockReason: String? {
@@ -497,9 +535,13 @@ struct NovelChapterReaderView: View {
     }
 
     private var chapterDiscardMenuTitle: String {
-        let action = isCurrentChapterDiscarded ? "恢复本章" : "废弃本章"
+        let action = localized(isCurrentChapterDiscarded ? "恢复本章" : "废弃本章")
         guard let chapterDiscardBlockReason else { return action }
-        return "\(action)（\(chapterDiscardBlockReason)）"
+        return IOSAppLocalization.formatted(
+            "%@（%@）",
+            defaultValue: "%@（%@）",
+            arguments: [action, localized(chapterDiscardBlockReason)]
+        )
     }
 
     private var chapterDeleteBlockReason: String? {
@@ -507,8 +549,12 @@ struct NovelChapterReaderView: View {
     }
 
     private var chapterDeleteMenuTitle: String {
-        guard let chapterDeleteBlockReason else { return "删除本章" }
-        return "删除本章（\(chapterDeleteBlockReason)）"
+        guard let chapterDeleteBlockReason else { return localized("删除本章") }
+        return IOSAppLocalization.formatted(
+            "删除本章（%@）",
+            defaultValue: "删除本章（%@）",
+            arguments: [localized(chapterDeleteBlockReason)]
+        )
     }
 
     private var isProjectReadOnly: Bool {
@@ -525,14 +571,22 @@ struct NovelChapterReaderView: View {
     }
 
     private var polishMenuTitle: String {
-        guard let polishBlockReason else { return "整章润色" }
-        return "整章润色（\(polishBlockReason)）"
+        guard let polishBlockReason else { return localized("整章润色") }
+        return IOSAppLocalization.formatted(
+            "整章润色（%@）",
+            defaultValue: "整章润色（%@）",
+            arguments: [localized(polishBlockReason)]
+        )
     }
 
     /// 与润色共用前置条件(只读/生成中/待同步/有未完成正文操作时都不能发起)。
     private var regenerateMenuTitle: String {
-        guard let polishBlockReason else { return "整章重新生成" }
-        return "整章重新生成（\(polishBlockReason)）"
+        guard let polishBlockReason else { return localized("整章重新生成") }
+        return IOSAppLocalization.formatted(
+            "整章重新生成（%@）",
+            defaultValue: "整章重新生成（%@）",
+            arguments: [localized(polishBlockReason)]
+        )
     }
 
     private func moveChapter(by offset: Int) {
@@ -550,7 +604,7 @@ struct NovelChapterReaderView: View {
             defer { startingAction = nil }
             let started = await sessionViewModel.startWholeChapterRegeneration(chapterID: chapterID)
             guard started else {
-                failureMessage = sessionViewModel.errorMessage ?? "重新生成没有开始，请稍后重试。"
+                failureMessage = sessionViewModel.errorMessage ?? localized("重新生成没有开始，请稍后重试。")
                 return
             }
             dismiss()
@@ -565,7 +619,7 @@ struct NovelChapterReaderView: View {
             defer { startingAction = nil }
             let started = await sessionViewModel.startWholeChapterPolish(chapterID: chapterID)
             guard started else {
-                failureMessage = sessionViewModel.errorMessage ?? "润色没有开始，请稍后重试。"
+                failureMessage = sessionViewModel.errorMessage ?? localized("润色没有开始，请稍后重试。")
                 return
             }
             dismiss()
@@ -584,7 +638,7 @@ struct NovelChapterReaderView: View {
                 chapterID: chapterID
             )
             guard succeeded else {
-                failureMessage = viewModel.errorMessage ?? "章节状态没有更新，请稍后重试。"
+                failureMessage = viewModel.errorMessage ?? localized("章节状态没有更新，请稍后重试。")
                 return
             }
         }
@@ -598,7 +652,7 @@ struct NovelChapterReaderView: View {
             viewModel.clearError()
             let succeeded = await viewModel.deleteChapterFromManuscript(chapterID: chapterID)
             guard succeeded else {
-                failureMessage = viewModel.errorMessage ?? "章节没有从正文目录删除，请稍后重试。"
+                failureMessage = viewModel.errorMessage ?? localized("章节没有从正文目录删除，请稍后重试。")
                 return
             }
             dismiss()
@@ -615,11 +669,11 @@ private enum NovelChapterStartingAction {
 
     var progressTitle: String {
         switch self {
-        case .polish: "正在开始整章润色"
-        case .regenerate: "正在开始整章重写"
-        case .discard: "正在废弃本章"
-        case .restore: "正在恢复本章"
-        case .delete: "正在从正文目录删除"
+        case .polish: localized("正在开始整章润色")
+        case .regenerate: localized("正在开始整章重写")
+        case .discard: localized("正在废弃本章")
+        case .restore: localized("正在恢复本章")
+        case .delete: localized("正在从正文目录删除")
         }
     }
 }
@@ -663,7 +717,7 @@ private struct NovelChapterEditSheet: View {
                 Section("章节") {
                     NovelIMETextField(
                         text: $title,
-                        placeholder: "章节标题",
+                        placeholder: localized("章节标题"),
                         bank: imeBank
                     )
                     .frame(minHeight: 36)
@@ -756,7 +810,7 @@ private struct NovelChapterEditSheet: View {
         }
         guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            failureMessage = "请填写完整的章节标题和正文。"
+            failureMessage = localized("请填写完整的章节标题和正文。")
             return
         }
         isSaving = true
@@ -769,7 +823,7 @@ private struct NovelChapterEditSheet: View {
             )
             isSaving = false
             guard saved else {
-                failureMessage = viewModel.errorMessage ?? "改写没有保存，请稍后重试。"
+                failureMessage = viewModel.errorMessage ?? localized("改写没有保存，请稍后重试。")
                 return
             }
             dismiss()

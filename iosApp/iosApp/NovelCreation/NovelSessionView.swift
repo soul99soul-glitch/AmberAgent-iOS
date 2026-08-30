@@ -20,9 +20,12 @@ enum NovelComposerIntent: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .discuss: "讨论"
-        case .continueProse: "写一段"
-        case .wholeChapter: "写整章"
+        case .discuss:
+            IOSAppLocalization.string("讨论", defaultValue: "讨论")
+        case .continueProse:
+            IOSAppLocalization.string("写一段", defaultValue: "写一段")
+        case .wholeChapter:
+            IOSAppLocalization.string("写整章", defaultValue: "写整章")
         }
     }
 
@@ -553,6 +556,9 @@ struct NovelSessionView: View {
 
         return NovelSessionRowView(
             row: renderedRow,
+            languageCode: IOSAppLanguagePreference.selected()
+                .resolvedLanguage()
+                .rawValue,
             // Live tail + IDs that streamed this visit — not every assistant bubble.
             hasEverStreamed: hasEverStreamed,
             adoptingPolishCandidateID: viewModel.adoptingPolishCandidateID,
@@ -773,7 +779,10 @@ struct NovelSessionView: View {
         branchID: NovelBranchID
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(message, systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+            Label(
+                NovelPresentation.localizedCachedErrorMessage(message),
+                systemImage: "exclamationmark.arrow.triangle.2.circlepath"
+            )
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(AmberTheme.foreground2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -921,7 +930,16 @@ struct NovelSessionView: View {
         blocker: NovelSessionActionBlocker?
     ) -> String {
         if let blocker {
-            return "当前不可处理：\(blocker.displayName)"
+            return IOSAppLocalization.formatted(
+                "当前不可处理：%@",
+                defaultValue: "当前不可处理：%@",
+                arguments: [
+                    IOSAppLocalization.string(
+                        blocker.displayName,
+                        defaultValue: blocker.displayName
+                    )
+                ]
+            )
         }
         if let message = transaction.lastFailure?.message.trimmingCharacters(
             in: .whitespacesAndNewlines
@@ -929,8 +947,14 @@ struct NovelSessionView: View {
             return message
         }
         return transaction.status == .blocked
-            ? "这次润色已被阻止，可以放弃后继续创作。"
-            : "剧情一致性检查未完成，可以重试或放弃。"
+            ? IOSAppLocalization.string(
+                "这次润色已被阻止，可以放弃后继续创作。",
+                defaultValue: "这次润色已被阻止，可以放弃后继续创作。"
+            )
+            : IOSAppLocalization.string(
+                "剧情一致性检查未完成，可以重试或放弃。",
+                defaultValue: "剧情一致性检查未完成，可以重试或放弃。"
+            )
     }
 
     private func stateSyncLightweightBanner(
@@ -939,14 +963,23 @@ struct NovelSessionView: View {
     ) -> some View {
         NovelStateSyncProgressBanner(
             title: workspace.stateSyncStatusTitle(projectID: projectID, branchID: branchID)
-                ?? "正在按正文对齐剧情指针",
+                ?? IOSAppLocalization.string(
+                    "正在按正文对齐剧情指针",
+                    defaultValue: "正在按正文对齐剧情指针"
+                ),
             activity: nil,
             secondaryHint: workspace.isStateSyncStopping(
                 projectID: projectID,
                 branchID: branchID
             )
-                ? "正在停止，完成后可继续操作。"
-                : "正在准备同步请求…",
+                ? IOSAppLocalization.string(
+                    "正在停止，完成后可继续操作。",
+                    defaultValue: "正在停止，完成后可继续操作。"
+                )
+                : IOSAppLocalization.string(
+                    "正在准备同步请求…",
+                    defaultValue: "正在准备同步请求…"
+                ),
             canStop: workspace.canCancelAutomaticStateSync(
                 projectID: projectID,
                 branchID: branchID
@@ -981,18 +1014,20 @@ struct NovelSessionView: View {
     }
 
     private func errorBanner(_ message: String) -> some View {
-        HStack(spacing: 10) {
+        let displayedMessage = NovelPresentation.localizedCachedErrorMessage(message)
+        return HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle")
                 .foregroundStyle(AmberTheme.accentAmber)
-            Text(message)
+            Text(displayedMessage)
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.foreground2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             if viewModel.hasRefreshError
-                || message.contains("重新载入")
-                || message.contains("刷新后") {
+                || NovelPresentation.shouldOfferReload(for: message)
+                || displayedMessage.contains("重新载入")
+                || displayedMessage.contains("刷新后") {
                 Button("重新载入") {
                     Task { @MainActor in
                         _ = await viewModel.refresh()
@@ -1063,7 +1098,6 @@ struct NovelSessionView: View {
                         Text(detail)
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
-                            .lineLimit(3)
                             .multilineTextAlignment(.leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .fixedSize(horizontal: false, vertical: true)
@@ -1110,12 +1144,18 @@ struct NovelSessionView: View {
 
     private func ghostwriteStatusBarContinueTitle(_ progress: NovelGhostwriteProgress) -> String {
         switch progress.pauseReason {
-        case .continuityAuditIncomplete: return "再检查"
-        case .syncFailed: return "继续同步"
-        case .healBudgetExhausted: return "继续"
-        case .blockingContinuity: return "处理硬伤"
+        case .continuityAuditIncomplete:
+            return IOSAppLocalization.string("再检查", defaultValue: "再检查")
+        case .syncFailed:
+            return IOSAppLocalization.string("继续同步", defaultValue: "继续同步")
+        case .healBudgetExhausted:
+            return IOSAppLocalization.string("继续", defaultValue: "继续")
+        case .blockingContinuity:
+            return IOSAppLocalization.string("处理硬伤", defaultValue: "处理硬伤")
         default:
-            return progress.mustRewriteCandidateOnResume ? "重写" : "继续"
+            return progress.mustRewriteCandidateOnResume
+                ? IOSAppLocalization.string("重写", defaultValue: "重写")
+                : IOSAppLocalization.string("继续", defaultValue: "继续")
         }
     }
 
@@ -1159,14 +1199,15 @@ struct NovelSessionView: View {
     private func quickStartRecoveryBanner(
         _ recovery: NovelSessionQuickStartRecovery
     ) -> some View {
-        HStack(spacing: 10) {
+        let displayedMessage = NovelPresentation.localizedCachedErrorMessage(recovery.message)
+        return HStack(spacing: 10) {
             Image(systemName: "sparkles")
                 .foregroundStyle(AmberTheme.accentAmber)
-            Text(recovery.message)
+            Text(displayedMessage)
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.foreground2)
-                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             Button(recovery.actionTitle) {
                 Task { @MainActor in
                     switch recovery {
@@ -1243,6 +1284,8 @@ struct NovelSessionView: View {
                 Text(currentComposerIntent.title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .padding(.horizontal, 12)
                     .frame(height: 30)
                     .composerDockGlass(cornerRadius: 15)
@@ -1488,7 +1531,9 @@ struct NovelSessionView: View {
     }
 
     private var composerModelLabel: String {
-        guard workspace.projectSnapshot?.project != nil else { return "选择模型" }
+        guard workspace.projectSnapshot?.project != nil else {
+            return IOSAppLocalization.string("选择模型", defaultValue: "选择模型")
+        }
         _ = sharedSettings.revision
         return NovelPresentation.modelDisplayName(
             for: currentCreationModelPolicy,
@@ -1554,28 +1599,51 @@ struct NovelSessionView: View {
     }
 
     private var inputPlaceholder: String {
-        if viewModel.mode == .discussPlan { return "想聊哪段剧情、人物或设定？" }
+        if viewModel.mode == .discussPlan {
+            return IOSAppLocalization.string(
+                "想聊哪段剧情、人物或设定？",
+                defaultValue: "想聊哪段剧情、人物或设定？"
+            )
+        }
         if workspace.projectSnapshot?.project.collaborationMode == .ghostwrite,
            viewModel.granularity == .wholeChapter,
            let branchID = viewModel.binding?.branchID,
            workspace.projectSnapshot?.confirmedChapterPlan(for: branchID) == nil {
-            return "代笔写整章前，请先在标题面板确认本章计划"
+            return IOSAppLocalization.string(
+                "代笔写整章前，请先在标题面板确认本章计划",
+                defaultValue: "代笔写整章前，请先在标题面板确认本章计划"
+            )
         }
         if viewModel.ghostwriteProgress?.shouldContinueSameBatch == true,
            viewModel.ghostwriteContinueBlockerMessage != nil {
             return viewModel.granularity == .wholeChapter
-                ? "描述下一章的目标或关键事件"
-                : "描述接下来发生什么"
+                ? IOSAppLocalization.string(
+                    "描述下一章的目标或关键事件",
+                    defaultValue: "描述下一章的目标或关键事件"
+                )
+                : IOSAppLocalization.string(
+                    "描述接下来发生什么",
+                    defaultValue: "描述接下来发生什么"
+                )
         }
         if workspace.branchSnapshot?.currentState.hasStaleChapterPlots == true {
             return NovelWorkspaceLedger.unresolvedPlotGateMessage
         }
         if viewModel.needsSync {
-            return "剧情还在同步，可以先讨论规划"
+            return IOSAppLocalization.string(
+                "剧情还在同步，可以先讨论规划",
+                defaultValue: "剧情还在同步，可以先讨论规划"
+            )
         }
         return viewModel.granularity == .wholeChapter
-            ? "描述下一章的目标或关键事件"
-            : "描述接下来发生什么"
+            ? IOSAppLocalization.string(
+                "描述下一章的目标或关键事件",
+                defaultValue: "描述下一章的目标或关键事件"
+            )
+            : IOSAppLocalization.string(
+                "描述接下来发生什么",
+                defaultValue: "描述接下来发生什么"
+            )
     }
 
     private var syncBannerText: String {
@@ -1584,15 +1652,28 @@ struct NovelSessionView: View {
             if let failure, !failure.isEmpty {
                 let reason = NovelPresentation.stateSyncFailureMessage(failure)
                 if pending.kind == .manualSync {
-                    return "\(reason) 可继续讨论；写正文前请先重试同步。"
+                    return IOSAppLocalization.formatted(
+                        "%@ 可继续讨论；写正文前请先重试同步。",
+                        defaultValue: "%@ 可继续讨论；写正文前请先重试同步。",
+                        arguments: [reason]
+                    )
                 }
                 return reason
             }
             return pending.kind == .collection
-                ? "旧版收录的剧情状态同步未完成"
-                : "上次剧情同步未完成。可继续讨论；写正文前请先重试同步。"
+                ? IOSAppLocalization.string(
+                    "旧版收录的剧情状态同步未完成",
+                    defaultValue: "旧版收录的剧情状态同步未完成"
+                )
+                : IOSAppLocalization.string(
+                    "上次剧情同步未完成。可继续讨论；写正文前请先重试同步。",
+                    defaultValue: "上次剧情同步未完成。可继续讨论；写正文前请先重试同步。"
+                )
         }
-        return "剧情状态同步尚未完成。可继续讨论；写正文前请先完成同步。"
+        return IOSAppLocalization.string(
+            "剧情状态同步尚未完成。可继续讨论；写正文前请先完成同步。",
+            defaultValue: "剧情状态同步尚未完成。可继续讨论；写正文前请先完成同步。"
+        )
     }
 
     private func send() {
@@ -2019,14 +2100,32 @@ struct NovelSessionView: View {
     private var generationStatusText: String {
         // Same owner copy as bubble terminal chrome — do not invent a second story.
         if viewModel.isTerminalPresenting {
-            return "正在保存创作记录"
+            return IOSAppLocalization.string("正在保存创作记录", defaultValue: "正在保存创作记录")
         }
-        guard let kind = viewModel.activeRunKind else { return "正在生成" }
-        if kind == .regenerate { return "重写本章 · 收录后替换原文" }
-        if kind == .polish { return "正在润色本章 · 完成后检查剧情一致性" }
+        guard let kind = viewModel.activeRunKind else {
+            return IOSAppLocalization.string("正在生成", defaultValue: "正在生成")
+        }
+        if kind == .regenerate {
+            return IOSAppLocalization.string(
+                "重写本章 · 收录后替换原文",
+                defaultValue: "重写本章 · 收录后替换原文"
+            )
+        }
+        if kind == .polish {
+            return IOSAppLocalization.string(
+                "正在润色本章 · 完成后检查剧情一致性",
+                defaultValue: "正在润色本章 · 完成后检查剧情一致性"
+            )
+        }
         return viewModel.activeRunGranularity == .wholeChapter
-            ? "完整章节 · 收录后成为新章"
-            : "正文片段 · 收录后进入本章"
+            ? IOSAppLocalization.string(
+                "完整章节 · 收录后成为新章",
+                defaultValue: "完整章节 · 收录后成为新章"
+            )
+            : IOSAppLocalization.string(
+                "正文片段 · 收录后进入本章",
+                defaultValue: "正文片段 · 收录后进入本章"
+            )
     }
 
     private var generationStatusIcon: String {
@@ -2107,15 +2206,21 @@ private enum NovelSessionQuickStartRecovery {
 
     var actionTitle: String {
         switch self {
-        case .retry: "重新生成"
-        case .reload: "重新载入"
-        case .retryPersistence: "重试保存"
+        case .retry:
+            IOSAppLocalization.string("重新生成", defaultValue: "重新生成")
+        case .reload:
+            IOSAppLocalization.string("重新载入", defaultValue: "重新载入")
+        case .retryPersistence:
+            IOSAppLocalization.string("重试保存", defaultValue: "重试保存")
         }
     }
 }
 
 private struct NovelSessionRowView: View, Equatable {
     let row: NovelSessionRowModel
+    /// The row contains localized failure copy; rebuild it when the in-app
+    /// language changes even though the durable row digest is unchanged.
+    let languageCode: String
     /// True only for the row that actually streamed in this presentation.
     var hasEverStreamed: Bool = false
     let adoptingPolishCandidateID: NovelCandidateID?
@@ -2130,6 +2235,7 @@ private struct NovelSessionRowView: View, Equatable {
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.row.id == rhs.row.id && lhs.row.digest == rhs.row.digest &&
+            lhs.languageCode == rhs.languageCode &&
             lhs.hasEverStreamed == rhs.hasEverStreamed &&
             lhs.adoptingPolishCandidateID == rhs.adoptingPolishCandidateID &&
             lhs.isSubmittingChapterRevision == rhs.isSubmittingChapterRevision &&
@@ -2215,7 +2321,10 @@ private struct NovelDiscussionArchiveCard: View {
                     .foregroundStyle(AmberTheme.foreground2)
                     .multilineTextAlignment(.leading)
                 Label(
-                    archive.isExpanded ? "收起讨论" : "展开讨论",
+                    IOSAppLocalization.string(
+                        archive.isExpanded ? "收起讨论" : "展开讨论",
+                        defaultValue: archive.isExpanded ? "收起讨论" : "展开讨论"
+                    ),
                     systemImage: archive.isExpanded ? "chevron.up" : "chevron.down"
                 )
                 .font(.caption.weight(.semibold))
@@ -2404,7 +2513,10 @@ private struct NovelCharacterIdentityQuestionCard: View {
                         VStack(alignment: .trailing, spacing: 8) {
                             NovelIMETextEditor(
                                 text: $proposalGuidance,
-                                placeholder: "可选：补充身份、关系或剧情方向",
+                                placeholder: IOSAppLocalization.string(
+                                    "可选：补充身份、关系或剧情方向",
+                                    defaultValue: "可选：补充身份、关系或剧情方向"
+                                ),
                                 isEnabled: !isDisabled,
                                 minHeight: 72,
                                 bank: imeBank
@@ -2464,7 +2576,10 @@ private struct NovelCharacterIdentityQuestionCard: View {
                 VStack(alignment: .trailing, spacing: 8) {
                     NovelIMETextEditor(
                         text: $clarification,
-                        placeholder: "例如：一次性路人，不需要建档",
+                        placeholder: IOSAppLocalization.string(
+                            "例如：一次性路人，不需要建档",
+                            defaultValue: "例如：一次性路人，不需要建档"
+                        ),
                         isEnabled: !isDisabled,
                         minHeight: 64,
                         bank: imeBank

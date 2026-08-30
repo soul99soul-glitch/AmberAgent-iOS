@@ -169,7 +169,10 @@ struct NovelDiscussionArchiveSheet: View {
                     Section("讨论摘要") {
                         NovelIMETextEditor(
                             text: $summary,
-                            placeholder: "讨论摘要",
+                            placeholder: IOSAppLocalization.string(
+                                "讨论摘要",
+                                defaultValue: "讨论摘要"
+                            ),
                             minHeight: 90,
                             bank: imeBank
                         )
@@ -189,13 +192,19 @@ struct NovelDiscussionArchiveSheet: View {
                                 )
                                 NovelIMETextField(
                                     text: $decision.topic,
-                                    placeholder: "决定主题",
+                                    placeholder: IOSAppLocalization.string(
+                                        "决定主题",
+                                        defaultValue: "决定主题"
+                                    ),
                                     bank: imeBank
                                 )
                                 .frame(minHeight: 36)
                                 NovelIMETextEditor(
                                     text: $decision.decision,
-                                    placeholder: "决定内容",
+                                    placeholder: IOSAppLocalization.string(
+                                        "决定内容",
+                                        defaultValue: "决定内容"
+                                    ),
                                     minHeight: 72,
                                     bank: imeBank
                                 )
@@ -538,7 +547,12 @@ struct NovelCollectCandidateSheet: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(paragraph.text)
-                .accessibilityValue(selectedParagraphIDs.contains(paragraph.id) ? "已选择" : "未选择")
+                .accessibilityValue(
+                    IOSAppLocalization.string(
+                        selectedParagraphIDs.contains(paragraph.id) ? "已选择" : "未选择",
+                        defaultValue: selectedParagraphIDs.contains(paragraph.id) ? "已选择" : "未选择"
+                    )
+                )
             }
         } header: {
             HStack {
@@ -551,9 +565,17 @@ struct NovelCollectCandidateSheet: View {
             }
         } footer: {
             if hasEditedText {
-                Text("调整段落后会保留你的编辑；如需按当前选择重新生成正文，请点“按当前选择重置”。")
+                Text(IOSAppLocalization.string(
+                    "调整段落后会保留你的编辑；如需按当前选择重新生成正文，请点“按当前选择重置”。",
+                    defaultValue: "调整段落后会保留你的编辑；如需按当前选择重新生成正文，请点“按当前选择重置”。"
+                ))
+                .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("默认收录全部段落。未选择的段落仍保留在聊天气泡中。")
+                Text(IOSAppLocalization.string(
+                    "默认收录全部段落。未选择的段落仍保留在聊天气泡中。",
+                    defaultValue: "默认收录全部段落。未选择的段落仍保留在聊天气泡中。"
+                ))
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -562,7 +584,10 @@ struct NovelCollectCandidateSheet: View {
         Section {
             NovelIMETextEditor(
                 text: editedTextBinding,
-                placeholder: "收录前编辑",
+                placeholder: IOSAppLocalization.string(
+                    "收录前编辑",
+                    defaultValue: "收录前编辑"
+                ),
                 isEnabled: !selectedParagraphIDs.isEmpty && !isSubmitting,
                 minHeight: 190,
                 bank: imeBank
@@ -581,7 +606,11 @@ struct NovelCollectCandidateSheet: View {
         } header: {
             Text("收录前编辑")
         } footer: {
-            Text("这里的修改只影响本次收录，不会改写原聊天气泡。")
+            Text(IOSAppLocalization.string(
+                "这里的修改只影响本次收录，不会改写原聊天气泡。",
+                defaultValue: "这里的修改只影响本次收录，不会改写原聊天气泡。"
+            ))
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -591,11 +620,19 @@ struct NovelCollectCandidateSheet: View {
             if !chapters.isEmpty {
                 Picker("收录方式", selection: $targetChoice) {
                     if let regenerationTarget {
-                        Text("替换\(regenerationTarget.displayTitle)")
+                        Text(IOSAppLocalization.formatted(
+                            "替换%@",
+                            defaultValue: "替换%@",
+                            arguments: [regenerationTarget.displayTitle]
+                        ))
                             .tag(NovelCollectionTargetChoice.replaceChapter)
                     }
                     Text(appendCurrentLabel).tag(NovelCollectionTargetChoice.appendCurrent)
-                    Text("新开第 \(nextChapterOrdinal) 章")
+                    Text(IOSAppLocalization.formatted(
+                        "新开第 %lld 章",
+                        defaultValue: "新开第 %lld 章",
+                        arguments: [nextChapterOrdinal]
+                    ))
                         .tag(NovelCollectionTargetChoice.createNext)
                 }
                 .pickerStyle(.segmented)
@@ -613,7 +650,10 @@ struct NovelCollectCandidateSheet: View {
             } else {
                 NovelIMETextField(
                     text: $nextChapterTitle,
-                    placeholder: "章节标题",
+                    placeholder: IOSAppLocalization.string(
+                        "章节标题",
+                        defaultValue: "章节标题"
+                    ),
                     isEnabled: !isSubmitting,
                     bank: imeBank
                 )
@@ -657,12 +697,22 @@ struct NovelCollectCandidateSheet: View {
     }
 
     private var appendCurrentLabel: String {
-        guard let chapter = chapters.last else { return "并入当前章" }
+        guard let chapter = chapters.last else {
+            return IOSAppLocalization.string("并入当前章", defaultValue: "并入当前章")
+        }
         let title = chapter.version.title.trimmingCharacters(in: .whitespacesAndNewlines)
         if title.isEmpty || title == "第 \(chapter.ordinal) 章" {
-            return "并入第 \(chapter.ordinal) 章"
+            return IOSAppLocalization.formatted(
+                "并入第 %lld 章",
+                defaultValue: "并入第 %lld 章",
+                arguments: [chapter.ordinal]
+            )
         }
-        return "并入第 \(chapter.ordinal) 章《\(title)》"
+        return IOSAppLocalization.formatted(
+            "并入第 %lld 章《%@》",
+            defaultValue: "并入第 %lld 章《%@》",
+            arguments: [chapter.ordinal, title]
+        )
     }
 
     private var selectedText: String {
@@ -809,7 +859,11 @@ struct NovelSessionForkSheet: View {
         self.branchName = branchName
         self.checkpointID = checkpointID
         self.onCreated = onCreated
-        self._name = State(initialValue: "\(branchName) · 新走向")
+        self._name = State(initialValue: IOSAppLocalization.formatted(
+            "%@ · 新走向",
+            defaultValue: "%@ · 新走向",
+            arguments: [branchName]
+        ))
     }
 
     var body: some View {
@@ -825,7 +879,10 @@ struct NovelSessionForkSheet: View {
                 Section("新分支") {
                     NovelIMETextField(
                         text: $name,
-                        placeholder: "分支名称",
+                        placeholder: IOSAppLocalization.string(
+                            "分支名称",
+                            defaultValue: "分支名称"
+                        ),
                         bank: imeBank
                     )
                     .frame(minHeight: 36)
@@ -836,7 +893,11 @@ struct NovelSessionForkSheet: View {
                         .font(.subheadline)
                         .foregroundStyle(AmberTheme.foreground2)
                 } footer: {
-                    Text("新分支只继承该检查点以前的正文、剧情状态、分支设定和创作对话。")
+                    Text(IOSAppLocalization.string(
+                        "新分支只继承该检查点以前的正文、剧情状态、分支设定和创作对话。",
+                        defaultValue: "新分支只继承该检查点以前的正文、剧情状态、分支设定和创作对话。"
+                    ))
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -874,7 +935,10 @@ struct NovelSessionForkSheet: View {
             let branchID = await viewModel.forkFromCheckpoint(checkpointID, name: branchName)
             isSubmitting = false
             guard branchID != nil else {
-                failureMessage = viewModel.errorMessage ?? "分支没有创建完成，请重新载入项目后再试。"
+                failureMessage = viewModel.errorMessage ?? IOSAppLocalization.string(
+                    "分支没有创建完成，请重新载入项目后再试。",
+                    defaultValue: "分支没有创建完成，请重新载入项目后再试。"
+                )
                 return
             }
             dismiss()
@@ -1017,8 +1081,13 @@ struct NovelWritingContextSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(
-                        NovelGhostwriteSheetChrome.leadingActionTitle(
-                            canAbandonBatch: session.canCancelGhostwriteBatch
+                        IOSAppLocalization.string(
+                            NovelGhostwriteSheetChrome.leadingActionTitle(
+                                canAbandonBatch: session.canCancelGhostwriteBatch
+                            ),
+                            defaultValue: NovelGhostwriteSheetChrome.leadingActionTitle(
+                                canAbandonBatch: session.canCancelGhostwriteBatch
+                            )
                         )
                     ) {
                         if session.canCancelGhostwriteBatch {
@@ -1146,7 +1215,10 @@ struct NovelWritingContextSheet: View {
             Section {
                 Picker("创作模式", selection: $selectedMode) {
                     ForEach(NovelCollaborationMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
+                        Text(IOSAppLocalization.string(
+                            mode.displayName,
+                            defaultValue: mode.displayName
+                        )).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -1187,6 +1259,7 @@ struct NovelWritingContextSheet: View {
                 Text("创作模式")
             } footer: {
                 Text(modeSectionFooter)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if collaborationMode == .ghostwrite {
@@ -1207,11 +1280,22 @@ struct NovelWritingContextSheet: View {
                         // 多章时「进度」已有「已收 k/N」；仅待同步计章时单独标出。
                         if progress.pendingSyncChapterCredit {
                             let counted = progress.completedChapterCount + 1
-                            LabeledContent("本批已收录", value: "\(counted) 章（待同步计章）")
+                            LabeledContent(
+                                "本批已收录",
+                                value: IOSAppLocalization.formatted(
+                                    "%lld 章（待同步计章）",
+                                    defaultValue: "%lld 章（待同步计章）",
+                                    arguments: [counted]
+                                )
+                            )
                         } else if progress.targetChapterCount == 1 {
                             LabeledContent(
                                 "本批已收录",
-                                value: "\(progress.completedChapterCount) 章"
+                                value: IOSAppLocalization.formatted(
+                                    "%lld 章",
+                                    defaultValue: "%lld 章",
+                                    arguments: [progress.completedChapterCount]
+                                )
                             )
                         }
                         LabeledContent("审稿模型", value: reviewModelLabel)
@@ -1274,8 +1358,16 @@ struct NovelWritingContextSheet: View {
                     ) {
                         Text(
                             shouldShowContinueGhostwrite
-                                ? "本批固定 \(ghostwriteDisplayedTargetCount) 章"
-                                : "本批目标 \(ghostwriteDisplayedTargetCount) 章"
+                                ? IOSAppLocalization.formatted(
+                                    "本批固定 %lld 章",
+                                    defaultValue: "本批固定 %lld 章",
+                                    arguments: [ghostwriteDisplayedTargetCount]
+                                )
+                                : IOSAppLocalization.formatted(
+                                    "本批目标 %lld 章",
+                                    defaultValue: "本批目标 %lld 章",
+                                    arguments: [ghostwriteDisplayedTargetCount]
+                                )
                         )
                     }
                     // 进行中或本批未终态续跑：N 已锁定，禁止改 Stepper 误导用户。
@@ -1285,7 +1377,11 @@ struct NovelWritingContextSheet: View {
                             || shouldShowContinueGhostwrite
                     )
                     .accessibilityLabel("本批目标章数")
-                    .accessibilityValue("\(ghostwriteDisplayedTargetCount) 章")
+                    .accessibilityValue(IOSAppLocalization.formatted(
+                        "%lld 章",
+                        defaultValue: "%lld 章",
+                        arguments: [ghostwriteDisplayedTargetCount]
+                    ))
 
                     if !session.isGhostwriting,
                        let blocker = session.ghostwriteBlocker,
@@ -1383,9 +1479,22 @@ struct NovelWritingContextSheet: View {
                             Button {
                                 _ = session.startGhostwriteChapter(targetChapterCount: n)
                             } label: {
-                                Text(isStartingNextBatch
-                                    ? (n == 1 ? "代笔下一章" : "代笔下一批 · \(n) 章")
-                                    : (n == 1 ? "开始代笔本章" : "开始代笔 · \(n) 章")
+                                Text(
+                                    isStartingNextBatch
+                                        ? (n == 1
+                                            ? IOSAppLocalization.string("代笔下一章", defaultValue: "代笔下一章")
+                                            : IOSAppLocalization.formatted(
+                                                "代笔下一批 · %lld 章",
+                                                defaultValue: "代笔下一批 · %lld 章",
+                                                arguments: [n]
+                                            ))
+                                        : (n == 1
+                                            ? IOSAppLocalization.string("开始代笔本章", defaultValue: "开始代笔本章")
+                                            : IOSAppLocalization.formatted(
+                                                "开始代笔 · %lld 章",
+                                                defaultValue: "开始代笔 · %lld 章",
+                                                arguments: [n]
+                                            ))
                                 )
                                     .lineLimit(1)
                                     .minimumScaleFactor(0.8)
@@ -1401,17 +1510,21 @@ struct NovelWritingContextSheet: View {
                     Text(ghostwriteAdvanceSectionTitle)
                 } footer: {
                     Text(ghostwriteAdvanceSectionFooter)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Section {
                 LabeledContent("计划状态", value: planStatusLabel)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("与总纲的位置").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextField(
-                        text: planPlacementBinding,
-                        placeholder: "例如：第 3 章",
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("与总纲的位置").font(.footnote).foregroundStyle(AmberTheme.muted)
+                        NovelIMETextField(
+                            text: planPlacementBinding,
+                            placeholder: IOSAppLocalization.string(
+                                "例如：第 3 章",
+                                defaultValue: "例如：第 3 章"
+                            ),
                         isEnabled: canEditChapterPlan,
                         bank: planFieldBank
                     )
@@ -1421,7 +1534,10 @@ struct NovelWritingContextSheet: View {
                     Text("目标与冲突").font(.footnote).foregroundStyle(AmberTheme.muted)
                     NovelIMETextEditor(
                         text: planGoalBinding,
-                        placeholder: "本章要解决什么",
+                        placeholder: IOSAppLocalization.string(
+                            "本章要解决什么",
+                            defaultValue: "本章要解决什么"
+                        ),
                         isEnabled: canEditChapterPlan,
                         minHeight: 88,
                         bank: planFieldBank
@@ -1432,7 +1548,10 @@ struct NovelWritingContextSheet: View {
                     Text("必发生（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
                     NovelIMETextEditor(
                         text: planMustHappenBinding,
-                        placeholder: "至少一条",
+                        placeholder: IOSAppLocalization.string(
+                            "至少一条",
+                            defaultValue: "至少一条"
+                        ),
                         isEnabled: canEditChapterPlan,
                         minHeight: 72,
                         bank: planFieldBank
@@ -1443,7 +1562,7 @@ struct NovelWritingContextSheet: View {
                     Text("禁止发生（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
                     NovelIMETextEditor(
                         text: planMustNotHappenBinding,
-                        placeholder: "可空",
+                        placeholder: IOSAppLocalization.string("可空", defaultValue: "可空"),
                         isEnabled: canEditChapterPlan,
                         minHeight: 64,
                         bank: planFieldBank
@@ -1454,7 +1573,7 @@ struct NovelWritingContextSheet: View {
                     Text("章末钩子").font(.footnote).foregroundStyle(AmberTheme.muted)
                     NovelIMETextEditor(
                         text: planEndingHookBinding,
-                        placeholder: "可空",
+                        placeholder: IOSAppLocalization.string("可空", defaultValue: "可空"),
                         isEnabled: canEditChapterPlan,
                         minHeight: 56,
                         bank: planFieldBank
@@ -1465,7 +1584,7 @@ struct NovelWritingContextSheet: View {
                     Text("POV 可见要点（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
                     NovelIMETextEditor(
                         text: planVisibleFactsBinding,
-                        placeholder: "可空",
+                        placeholder: IOSAppLocalization.string("可空", defaultValue: "可空"),
                         isEnabled: canEditChapterPlan,
                         minHeight: 64,
                         bank: planFieldBank
@@ -1546,6 +1665,7 @@ struct NovelWritingContextSheet: View {
                 Text("本章计划")
             } footer: {
                 Text(chapterPlanSectionFooter)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Section {
@@ -1553,7 +1673,10 @@ struct NovelWritingContextSheet: View {
                     Text("后面几章想往哪走（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
                     NovelIMETextEditor(
                         text: upcomingArcBeatsBinding,
-                        placeholder: "例如：使者身份曝光",
+                        placeholder: IOSAppLocalization.string(
+                            "例如：使者身份曝光",
+                            defaultValue: "例如：使者身份曝光"
+                        ),
                         isEnabled: canEditUpcomingArc,
                         minHeight: 96,
                         bank: planFieldBank
@@ -1600,7 +1723,12 @@ struct NovelWritingContextSheet: View {
             } header: {
                 Text("往后几章")
             } footer: {
-                Text("最多 \(NovelUpcomingArcRecord.maxBeats) 条备注；写整章时会参考，不替代本章计划。")
+                Text(IOSAppLocalization.formatted(
+                    "最多 %lld 条备注；写整章时会参考，不替代本章计划。",
+                    defaultValue: "最多 %lld 条备注；写整章时会参考，不替代本章计划。",
+                    arguments: [NovelUpcomingArcRecord.maxBeats]
+                ))
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             Section("写作偏好") {
@@ -1744,19 +1872,37 @@ struct NovelWritingContextSheet: View {
     }
 
     private var modeSectionFooter: String {
-        var parts = [collaborationMode.shortSummary]
+        var parts = [IOSAppLocalization.string(
+            collaborationMode.shortSummary,
+            defaultValue: collaborationMode.shortSummary
+        )]
         if collaborationMode == .ghostwrite {
             if session.ghostwriteProgress?.pauseReason == .planProposedForNewBatch {
-                parts.append("已自动拟定下一章计划。确认后开始写，批内后续章节全自动连写。")
+                parts.append(IOSAppLocalization.string(
+                    "已自动拟定下一章计划。确认后开始写，批内后续章节全自动连写。",
+                    defaultValue: "已自动拟定下一章计划。确认后开始写，批内后续章节全自动连写。"
+                ))
             } else if shouldShowContinueGhostwrite {
-                parts.append("本批未完成：可继续；质量问题会自动改写几次，仍不过再停住。")
+                parts.append(IOSAppLocalization.string(
+                    "本批未完成：可继续；质量问题会自动改写几次，仍不过再停住。",
+                    defaultValue: "本批未完成：可继续；质量问题会自动改写几次，仍不过再停住。"
+                ))
             } else if session.isGhostwriting {
-                parts.append("代笔进行中，可在下方暂停。")
+                parts.append(IOSAppLocalization.string(
+                    "代笔进行中，可在下方暂停。",
+                    defaultValue: "代笔进行中，可在下方暂停。"
+                ))
             } else if session.ghostwriteProgress?.pauseReason == .batchCompleted
                         || session.ghostwriteProgress?.pauseReason == .chapterCompleted {
-                parts.append("上一批已完成。在下方「代笔」区点按钮开始下一批。")
+                parts.append(IOSAppLocalization.string(
+                    "上一批已完成。在下方「代笔」区点按钮开始下一批。",
+                    defaultValue: "上一批已完成。在下方「代笔」区点按钮开始下一批。"
+                ))
             } else {
-                parts.append("可用「开始代笔」按批自动写整章并审核收录；也可以继续自己点。")
+                parts.append(IOSAppLocalization.string(
+                    "可用「开始代笔」按批自动写整章并审核收录；也可以继续自己点。",
+                    defaultValue: "可用「开始代笔」按批自动写整章并审核收录；也可以继续自己点。"
+                ))
             }
         }
         return parts.joined(separator: " ")
@@ -1769,58 +1915,91 @@ struct NovelWritingContextSheet: View {
     }
 
     private var ghostwriteAdvanceSectionTitle: String {
-        if session.isGhostwriting { return "代笔进行中" }
+        if session.isGhostwriting {
+            return IOSAppLocalization.string("代笔进行中", defaultValue: "代笔进行中")
+        }
         // planProposedForNewBatch 优先级在 shouldShowContinueGhostwrite 之前，
         // 与 toolbar 按钮分支顺序一致，避免文案矛盾。
         if session.ghostwriteProgress?.pauseReason == .planProposedForNewBatch {
-            return "确认计划后开始写"
+            return IOSAppLocalization.string("确认计划后开始写", defaultValue: "确认计划后开始写")
         }
-        if shouldShowContinueGhostwrite { return "继续本批代笔" }
+        if shouldShowContinueGhostwrite {
+            return IOSAppLocalization.string("继续本批代笔", defaultValue: "继续本批代笔")
+        }
         // 完批/完章后：用户看到的应是「下一批」而非看起来像初始的「开始代笔」。
         if session.ghostwriteProgress?.pauseReason == .batchCompleted {
-            return "开启下一批代笔"
+            return IOSAppLocalization.string("开启下一批代笔", defaultValue: "开启下一批代笔")
         }
         if session.ghostwriteProgress?.pauseReason == .chapterCompleted {
-            return "代笔下一章"
+            return IOSAppLocalization.string("代笔下一章", defaultValue: "代笔下一章")
         }
-        return "开始代笔"
+        return IOSAppLocalization.string("开始代笔", defaultValue: "开始代笔")
     }
 
     private var ghostwriteAdvanceSectionFooter: String {
         if session.ghostwriteProgress?.pauseReason == .planProposedForNewBatch {
-            return "已自动拟定下一章计划。确认后开始写本章，批内后续章节全自动连写。"
+            return IOSAppLocalization.string(
+                "已自动拟定下一章计划。确认后开始写本章，批内后续章节全自动连写。",
+                defaultValue: "已自动拟定下一章计划。确认后开始写本章，批内后续章节全自动连写。"
+            )
         }
         if shouldShowContinueGhostwrite {
             if session.ghostwriteProgress?.pauseReason == .backgroundInterrupted {
-                return "系统暂停了后台代笔，回到前台会自动继续；若仍停在这里，可手动继续本批。"
+                return IOSAppLocalization.string(
+                    "系统暂停了后台代笔，回到前台会自动继续；若仍停在这里，可手动继续本批。",
+                    defaultValue: "系统暂停了后台代笔，回到前台会自动继续；若仍停在这里，可手动继续本批。"
+                )
             }
             if session.ghostwriteProgress?.shouldOfferRevisionSheet == true {
-                return "建议先「按审稿意见润修」（可改要求）；也可整章重写或先改本章计划。不会用旧稿再验。"
+                return IOSAppLocalization.string(
+                    "建议先「按审稿意见润修」（可改要求）；也可整章重写或先改本章计划。不会用旧稿再验。",
+                    defaultValue: "建议先「按审稿意见润修」（可改要求）；也可整章重写或先改本章计划。不会用旧稿再验。"
+                )
             }
             if session.ghostwriteProgress?.pauseReason == .continuityAuditIncomplete {
-                return "检查链路未扫稳（不是剧情硬伤）。继续会对同一篇候选稿再检，不会重写。"
+                return IOSAppLocalization.string(
+                    "检查链路未扫稳（不是剧情硬伤）。继续会对同一篇候选稿再检，不会重写。",
+                    defaultValue: "检查链路未扫稳（不是剧情硬伤）。继续会对同一篇候选稿再检，不会重写。"
+                )
             }
             if session.ghostwriteProgress?.mustRewriteCandidateOnResume == true {
-                return "继续将重写本章，不会用同一篇旧稿再审核。"
+                return IOSAppLocalization.string(
+                    "继续将重写本章，不会用同一篇旧稿再审核。",
+                    defaultValue: "继续将重写本章，不会用同一篇旧稿再审核。"
+                )
             }
-            return "继续本批：先处理同步或拟定计划，再往下写。"
+            return IOSAppLocalization.string(
+                "继续本批：先处理同步或拟定计划，再往下写。",
+                defaultValue: "继续本批：先处理同步或拟定计划，再往下写。"
+            )
         }
         // 完批后明确告诉用户：上一批已完成，点按钮开始下一批。
         if session.ghostwriteProgress?.pauseReason == .batchCompleted {
-            return "上一批已全部完成并收录。点「代笔下一批」继续连写，或修改章数后再开始。"
+            return IOSAppLocalization.string(
+                "上一批已全部完成并收录。点「代笔下一批」继续连写，或修改章数后再开始。",
+                defaultValue: "上一批已全部完成并收录。点「代笔下一批」继续连写，或修改章数后再开始。"
+            )
         }
         if session.ghostwriteProgress?.pauseReason == .chapterCompleted {
-            return "本章已完成。点「代笔下一章」继续，或修改章数后再开始。"
+            return IOSAppLocalization.string(
+                "本章已完成。点「代笔下一章」继续，或修改章数后再开始。",
+                defaultValue: "本章已完成。点「代笔下一章」继续，或修改章数后再开始。"
+            )
         }
-        return "最多连续 \(NovelGhostwriteBatch.maxChapterCount) 章。首章可用「根据前文生成草稿」再确认；之后自动拟计划并连写。写不过会自动改写几次，仍不过会停，不会假装写完。"
+        return IOSAppLocalization.formatted(
+            "最多连续 %lld 章。首章可用「根据前文生成草稿」再确认；之后自动拟计划并连写。写不过会自动改写几次，仍不过会停，不会假装写完。",
+            defaultValue: "最多连续 %lld 章。首章可用「根据前文生成草稿」再确认；之后自动拟计划并连写。写不过会自动改写几次，仍不过会停，不会假装写完。",
+            arguments: [NovelGhostwriteBatch.maxChapterCount]
+        )
     }
 
     private var toolbarGhostwriteActionTitle: String {
-        NovelGhostwriteSheetChrome.trailingActionTitle(
+        let title = NovelGhostwriteSheetChrome.trailingActionTitle(
             isGhostwriting: session.isGhostwriting,
             pauseReason: session.ghostwriteProgress?.pauseReason,
             shouldContinueSameBatch: shouldShowContinueGhostwrite
         )
+        return IOSAppLocalization.string(title, defaultValue: title)
     }
 
     private var toolbarGhostwriteActionDisabled: Bool {
@@ -1848,20 +2027,22 @@ struct NovelWritingContextSheet: View {
 
     /// 质量失败时标明「将重写」，避免用户以为再点继续是复验旧稿。
     private var continueGhostwriteButtonTitle: String {
-        guard let progress = session.ghostwriteProgress else { return "继续代笔" }
+        guard let progress = session.ghostwriteProgress else {
+            return IOSAppLocalization.string("继续代笔", defaultValue: "继续代笔")
+        }
         if progress.pauseReason == .continuityAuditIncomplete {
-            return "再检查同一篇"
+            return IOSAppLocalization.string("再检查同一篇", defaultValue: "再检查同一篇")
         }
         if progress.pauseReason == .syncFailed {
-            return "继续同步"
+            return IOSAppLocalization.string("继续同步", defaultValue: "继续同步")
         }
         if progress.pauseReason == .healBudgetExhausted {
-            return "继续重写本章"
+            return IOSAppLocalization.string("继续重写本章", defaultValue: "继续重写本章")
         }
         if progress.mustRewriteCandidateOnResume {
-            return "继续代笔 · 将重写"
+            return IOSAppLocalization.string("继续代笔 · 将重写", defaultValue: "继续代笔 · 将重写")
         }
-        return "继续代笔"
+        return IOSAppLocalization.string("继续代笔", defaultValue: "继续代笔")
     }
 
     private var ghostwriteDisplayedTargetCount: Int {
@@ -1881,16 +2062,24 @@ struct NovelWritingContextSheet: View {
     }
 
     private var planStatusLabel: String {
-        guard let plan = currentChapterPlan else { return "未创建" }
+        guard let plan = currentChapterPlan else {
+            return IOSAppLocalization.string("未创建", defaultValue: "未创建")
+        }
         switch plan.status {
-        case .draft: return "草稿"
-        case .confirmed: return "已确认"
+        case .draft: return IOSAppLocalization.string("草稿", defaultValue: "草稿")
+        case .confirmed: return IOSAppLocalization.string("已确认", defaultValue: "已确认")
         }
     }
 
     private var upcomingArcStatusLabel: String {
-        guard let arc = currentUpcomingArc, !arc.beats.isEmpty else { return "未设置" }
-        return "\(arc.beats.count) 条"
+        guard let arc = currentUpcomingArc, !arc.beats.isEmpty else {
+            return IOSAppLocalization.string("未设置", defaultValue: "未设置")
+        }
+        return IOSAppLocalization.formatted(
+            "%lld 条",
+            defaultValue: "%lld 条",
+            arguments: [arc.beats.count]
+        )
     }
 
     private var reviewModelLabel: String {
@@ -1908,7 +2097,11 @@ struct NovelWritingContextSheet: View {
             sharedSettings: sharedSettings
         )
         if case .global = configured {
-            return "小说默认 · \(name)"
+            return IOSAppLocalization.formatted(
+                "小说默认 · %@",
+                defaultValue: "小说默认 · %@",
+                arguments: [name]
+            )
         }
         return name
     }
@@ -1940,22 +2133,38 @@ struct NovelWritingContextSheet: View {
     }
 
     private var proposePlanDraftButtonTitle: String {
-        if isProposingPlanDraft { return "正在根据前文生成…" }
-        if currentChapterPlan?.status == .draft { return "重新根据前文生成" }
-        return "根据前文生成草稿"
+        if isProposingPlanDraft {
+            return IOSAppLocalization.string("正在根据前文生成…", defaultValue: "正在根据前文生成…")
+        }
+        if currentChapterPlan?.status == .draft {
+            return IOSAppLocalization.string("重新根据前文生成", defaultValue: "重新根据前文生成")
+        }
+        return IOSAppLocalization.string("根据前文生成草稿", defaultValue: "根据前文生成草稿")
     }
 
     private var chapterPlanSectionFooter: String {
         if collaborationMode == .ghostwrite {
             if canShowProposePlanDraft {
-                return "可先「根据前文生成草稿」，核对后点确认计划，再开始代笔。代笔进行中不能改。"
+                return IOSAppLocalization.string(
+                    "可先「根据前文生成草稿」，核对后点确认计划，再开始代笔。代笔进行中不能改。",
+                    defaultValue: "可先「根据前文生成草稿」，核对后点确认计划，再开始代笔。代笔进行中不能改。"
+                )
             }
-            return "代笔写整章前要先确认计划；代笔进行中不能改。"
+            return IOSAppLocalization.string(
+                "代笔写整章前要先确认计划；代笔进行中不能改。",
+                defaultValue: "代笔写整章前要先确认计划；代笔进行中不能改。"
+            )
         }
         if canShowProposePlanDraft {
-            return "可先「根据前文生成草稿」，也可手写；确认后写整章时会带上。"
+            return IOSAppLocalization.string(
+                "可先「根据前文生成草稿」，也可手写；确认后写整章时会带上。",
+                defaultValue: "可先「根据前文生成草稿」，也可手写；确认后写整章时会带上。"
+            )
         }
-        return "可以先写好本章计划；确认后写整章时会带上。"
+        return IOSAppLocalization.string(
+            "可以先写好本章计划；确认后写整章时会带上。",
+            defaultValue: "可以先写好本章计划；确认后写整章时会带上。"
+        )
     }
 
     private func reloadPlanFieldsFromWorkspace() {
@@ -2151,11 +2360,20 @@ struct NovelWritingContextSheet: View {
     private var contextList: some View {
         List {
             Section("本次生成") {
-                LabeledContent("模式", value: mode == .writeProse ? "写正文" : "讨论规划")
+                LabeledContent(
+                    "模式",
+                    value: IOSAppLocalization.string(
+                        mode == .writeProse ? "写正文" : "讨论规划",
+                        defaultValue: mode == .writeProse ? "写正文" : "讨论规划"
+                    )
+                )
                 if mode == .writeProse {
                     LabeledContent(
                         "粒度",
-                        value: granularity == .wholeChapter ? "生成整章" : "续写片段"
+                        value: IOSAppLocalization.string(
+                            granularity == .wholeChapter ? "生成整章" : "续写片段",
+                            defaultValue: granularity == .wholeChapter ? "生成整章" : "续写片段"
+                        )
                     )
                 }
             }
@@ -2211,7 +2429,11 @@ struct NovelWritingContextSheet: View {
             Section {
                 if materials(in: category).isEmpty {
                     ContentUnavailableView(
-                        "没有\(category.title)资料",
+                        IOSAppLocalization.formatted(
+                            "没有%@资料",
+                            defaultValue: "没有%@资料",
+                            arguments: [category.title]
+                        ),
                         systemImage: category.systemImage
                     )
                 } else {
@@ -2335,8 +2557,18 @@ struct NovelWritingContextSheet: View {
         let adjusted = categoryMaterials.filter {
             (materialChoices[$0.id] ?? .automatic) != .automatic
         }.count
-        guard adjusted > 0 else { return "\(categoryMaterials.count) 条" }
-        return "\(categoryMaterials.count) 条 · 已调整 \(adjusted)"
+        guard adjusted > 0 else {
+            return IOSAppLocalization.formatted(
+                "%lld 条",
+                defaultValue: "%lld 条",
+                arguments: [categoryMaterials.count]
+            )
+        }
+        return IOSAppLocalization.formatted(
+            "%lld 条 · 已调整 %lld",
+            defaultValue: "%lld 条 · 已调整 %lld",
+            arguments: [categoryMaterials.count, adjusted]
+        )
     }
 
     private func choiceBinding(_ materialID: NovelMaterialID) -> Binding<MaterialChoice> {
@@ -2417,9 +2649,12 @@ struct NovelWritingContextSheet: View {
 
         var title: String {
             switch self {
-            case .automatic: "按默认"
-            case .include: "本次加入"
-            case .exclude: "本次排除"
+            case .automatic:
+                IOSAppLocalization.string("按默认", defaultValue: "按默认")
+            case .include:
+                IOSAppLocalization.string("本次加入", defaultValue: "本次加入")
+            case .exclude:
+                IOSAppLocalization.string("本次排除", defaultValue: "本次排除")
             }
         }
     }
@@ -2432,8 +2667,10 @@ struct NovelWritingContextSheet: View {
 
         var title: String {
             switch self {
-            case .preferences: "模式与偏好"
-            case .context: "上下文注入"
+            case .preferences:
+                IOSAppLocalization.string("模式与偏好", defaultValue: "模式与偏好")
+            case .context:
+                IOSAppLocalization.string("上下文注入", defaultValue: "上下文注入")
             }
         }
     }
@@ -2453,10 +2690,14 @@ struct NovelWritingContextSheet: View {
 
         var title: String {
             switch self {
-            case .characters: "人物角色"
-            case .world: "世界观"
-            case .story: "剧情大纲"
-            case .other: "其他资料"
+            case .characters:
+                IOSAppLocalization.string("人物角色", defaultValue: "人物角色")
+            case .world:
+                IOSAppLocalization.string("世界观", defaultValue: "世界观")
+            case .story:
+                IOSAppLocalization.string("剧情大纲", defaultValue: "剧情大纲")
+            case .other:
+                IOSAppLocalization.string("其他资料", defaultValue: "其他资料")
             }
         }
 
@@ -2601,7 +2842,10 @@ struct NovelGhostwriteRevisionSheet: View {
                                         .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 3) {
                                         HStack(spacing: 6) {
-                                            Text(strategy.title)
+                                            Text(IOSAppLocalization.string(
+                                                strategy.title,
+                                                defaultValue: strategy.title
+                                            ))
                                                 .font(.subheadline.weight(.semibold))
                                                 .foregroundStyle(AmberTheme.foreground)
                                             if strategy.isDefault {
@@ -2610,7 +2854,10 @@ struct NovelGhostwriteRevisionSheet: View {
                                                     .foregroundStyle(AmberTheme.accent)
                                             }
                                         }
-                                        Text(strategy.detail)
+                                        Text(IOSAppLocalization.string(
+                                            strategy.detail,
+                                            defaultValue: strategy.detail
+                                        ))
                                             .font(.caption)
                                             .foregroundStyle(AmberTheme.muted)
                                             .multilineTextAlignment(.leading)
@@ -2622,10 +2869,35 @@ struct NovelGhostwriteRevisionSheet: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel(
-                                strategy.isDefault ? "\(strategy.title)，默认方案" : strategy.title
+                                strategy.isDefault
+                                    ? IOSAppLocalization.formatted(
+                                        "%@，默认方案",
+                                        defaultValue: "%@，默认方案",
+                                        arguments: [IOSAppLocalization.string(
+                                            strategy.title,
+                                            defaultValue: strategy.title
+                                        )]
+                                    )
+                                    : IOSAppLocalization.string(
+                                        strategy.title,
+                                        defaultValue: strategy.title
+                                    )
                             )
                             .accessibilityValue(
-                                "\(selectedStrategyID == strategy.id ? "已选择" : "未选择")，\(strategy.detail)"
+                                IOSAppLocalization.formatted(
+                                    "%@，%@",
+                                    defaultValue: "%@，%@",
+                                    arguments: [
+                                        IOSAppLocalization.string(
+                                            selectedStrategyID == strategy.id ? "已选择" : "未选择",
+                                            defaultValue: selectedStrategyID == strategy.id ? "已选择" : "未选择"
+                                        ),
+                                        IOSAppLocalization.string(
+                                            strategy.detail,
+                                            defaultValue: strategy.detail
+                                        )
+                                    ]
+                                )
                             )
                             .accessibilityAddTraits(
                                 selectedStrategyID == strategy.id ? .isSelected : []
@@ -2634,14 +2906,21 @@ struct NovelGhostwriteRevisionSheet: View {
                     } header: {
                         Text("选择处理方向")
                     } footer: {
-                        Text("以下为通用处理方向，可按本次审稿意见选择并继续编辑；确认开始前不会改动候选稿或正文。")
+                        Text(IOSAppLocalization.string(
+                            "以下为通用处理方向，可按本次审稿意见选择并继续编辑；确认开始前不会改动候选稿或正文。",
+                            defaultValue: "以下为通用处理方向，可按本次审稿意见选择并继续编辑；确认开始前不会改动候选稿或正文。"
+                        ))
+                        .fixedSize(horizontal: false, vertical: true)
                     }
                 }
 
                 Section {
                     NovelIMETextEditor(
                         text: $brief,
-                        placeholder: "润修要求",
+                        placeholder: IOSAppLocalization.string(
+                            "润修要求",
+                            defaultValue: "润修要求"
+                        ),
                         isEnabled: true,
                         minHeight: 160,
                         bank: revisionFieldBank
@@ -2668,7 +2947,11 @@ struct NovelGhostwriteRevisionSheet: View {
                 } header: {
                     Text("润修要求")
                 } footer: {
-                    Text("会保留上一稿可用部分，按审稿意见修改并重新审核收录。")
+                    Text(IOSAppLocalization.string(
+                        "会保留上一稿可用部分，按审稿意见修改并重新审核收录。",
+                        defaultValue: "会保留上一稿可用部分，按审稿意见修改并重新审核收录。"
+                    ))
+                    .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .scrollContentBackground(.hidden)
@@ -2691,7 +2974,10 @@ struct NovelGhostwriteRevisionSheet: View {
                             if started {
                                 dismiss()
                             } else {
-                                startError = "代笔暂时不能开始，请检查本章计划后重试。"
+                                startError = IOSAppLocalization.string(
+                                    "代笔暂时不能开始，请检查本章计划后重试。",
+                                    defaultValue: "代笔暂时不能开始，请检查本章计划后重试。"
+                                )
                             }
                         }
                     }

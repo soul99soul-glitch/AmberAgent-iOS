@@ -12,10 +12,14 @@ enum IOSWebMountBackendKind: String, Codable, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .local: "本地 WKWebView"
-        case .moli: "Moli"
-        case .playwright_mcp: "Playwright MCP"
-        case .steel: "Steel"
+        case .local:
+            IOSAppLocalization.string("本地 WKWebView", defaultValue: "本地 WKWebView")
+        case .moli:
+            IOSAppLocalization.string("Moli", defaultValue: "Moli")
+        case .playwright_mcp:
+            IOSAppLocalization.string("Playwright MCP", defaultValue: "Playwright MCP")
+        case .steel:
+            IOSAppLocalization.string("Steel", defaultValue: "Steel")
         }
     }
 }
@@ -106,12 +110,18 @@ enum IOSWebMountDesktopBackendStatus: Equatable {
 
     var title: String {
         switch self {
-        case .idle: "未连接"
-        case .connecting: "连接中"
-        case .connected: "已连接"
-        case .needsReopen: "需要重新连接"
-        case .failed: "连接失败"
-        case .closed: "已关闭"
+        case .idle:
+            IOSAppLocalization.string("未连接", defaultValue: "未连接")
+        case .connecting:
+            IOSAppLocalization.string("连接中", defaultValue: "连接中")
+        case .connected:
+            IOSAppLocalization.string("已连接", defaultValue: "已连接")
+        case .needsReopen:
+            IOSAppLocalization.string("需要重新连接", defaultValue: "需要重新连接")
+        case .failed:
+            IOSAppLocalization.string("连接失败", defaultValue: "连接失败")
+        case .closed:
+            IOSAppLocalization.string("已关闭", defaultValue: "已关闭")
         }
     }
 }

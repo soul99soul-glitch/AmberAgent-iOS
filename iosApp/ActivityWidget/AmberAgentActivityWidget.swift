@@ -40,7 +40,8 @@ struct AmberAgentActivityWidget: Widget {
                             presentation: context.state.presentation,
                             startedAt: context.attributes.startedAt,
                             updatedAt: context.state.updatedAt,
-                            isStale: context.isStale
+                            isStale: context.isStale,
+                            languageCode: context.state.languageCode
                         )
                         .offset(y: 1)
                     }
@@ -57,14 +58,16 @@ struct AmberAgentActivityWidget: Widget {
             } compactTrailing: {
                 AgentActivityCompactStatus(
                     presentation: context.state.presentation,
-                    isStale: context.isStale
+                    isStale: context.isStale,
+                    languageCode: context.state.languageCode
                 )
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(
                     agentActivityIslandAccessibilityLabel(
                         conversationTitle: context.attributes.conversationTitle,
                         presentation: context.state.presentation,
-                        isStale: context.isStale
+                        isStale: context.isStale,
+                        languageCode: context.state.languageCode
                     )
                 )
             } minimal: {
@@ -79,7 +82,8 @@ struct AmberAgentActivityWidget: Widget {
                     agentActivityIslandAccessibilityLabel(
                         conversationTitle: context.attributes.conversationTitle,
                         presentation: context.state.presentation,
-                        isStale: context.isStale
+                        isStale: context.isStale,
+                        languageCode: context.state.languageCode
                     )
                 )
             }
@@ -96,30 +100,36 @@ struct AmberAgentActivityWidget: Widget {
 private func agentActivityHeadlineText(
     conversationTitle: String?,
     presentation: AgentActivityPresentation,
-    isStale: Bool
+    isStale: Bool,
+    languageCode: String?
 ) -> (title: String, subtitle: String?) {
-    let stageTitle = presentation.displayStage(isStale: isStale).title
+    let stageTitle = presentation.displayStage(isStale: isStale)
+        .localizedTitle(languageCode: languageCode)
     if let conversationTitle, !conversationTitle.isEmpty {
         return (conversationTitle, stageTitle)
     }
     return (
         stageTitle,
-        presentation.kind == .response ? nil : presentation.kind.title
+        presentation.kind == .response
+            ? nil
+            : presentation.kind.localizedTitle(languageCode: languageCode)
     )
 }
 
 private func agentActivityIslandAccessibilityLabel(
     conversationTitle: String?,
     presentation: AgentActivityPresentation,
-    isStale: Bool
+    isStale: Bool,
+    languageCode: String?
 ) -> String {
     let headline = agentActivityHeadlineText(
         conversationTitle: conversationTitle,
         presentation: presentation,
-        isStale: isStale
+        isStale: isStale,
+        languageCode: languageCode
     )
     if let subtitle = headline.subtitle {
-        return "\(headline.title)，\(subtitle)"
+        return "\(headline.title), \(subtitle)"
     }
     return headline.title
 }
@@ -127,13 +137,14 @@ private func agentActivityIslandAccessibilityLabel(
 private struct AgentActivityCompactStatus: View {
     let presentation: AgentActivityPresentation
     let isStale: Bool
+    let languageCode: String?
 
     private var stage: AgentActivityStage {
         presentation.displayStage(isStale: isStale)
     }
 
     var body: some View {
-        Text(stage.compactTitle)
+        Text(stage.localizedCompactTitle(languageCode: languageCode))
             .font(.system(size: 11, weight: .semibold))
             .tracking(0.22)
             .lineLimit(1)
@@ -156,12 +167,14 @@ private struct AgentActivityIslandHeadline: View {
     let startedAt: Date
     let updatedAt: Date
     let isStale: Bool
+    let languageCode: String?
 
     private var headline: (title: String, subtitle: String?) {
         agentActivityHeadlineText(
             conversationTitle: conversationTitle,
             presentation: presentation,
-            isStale: isStale
+            isStale: isStale,
+            languageCode: languageCode
         )
     }
 
@@ -207,7 +220,8 @@ private struct AgentActivityIslandHeadline: View {
         .accessibilityLabel(agentActivityIslandAccessibilityLabel(
             conversationTitle: conversationTitle,
             presentation: presentation,
-            isStale: isStale
+            isStale: isStale,
+            languageCode: languageCode
         ))
     }
 }
@@ -315,12 +329,14 @@ private struct AgentActivityHeadline: View {
     let startedAt: Date
     let updatedAt: Date
     let isStale: Bool
+    let languageCode: String?
 
     private var headline: (title: String, subtitle: String?) {
         agentActivityHeadlineText(
             conversationTitle: conversationTitle,
             presentation: presentation,
-            isStale: isStale
+            isStale: isStale,
+            languageCode: languageCode
         )
     }
 
@@ -360,13 +376,20 @@ private struct AgentActivityExpandedFooter: View {
     let state: AgentActivityAttributes.ContentState
     let isStale: Bool
 
+    private var languageCode: String? {
+        state.languageCode
+    }
+
     private var displayPhase: AgentActivityPhase {
         state.presentation.displayPhase(isStale: isStale)
     }
 
     private var hasContent: Bool {
         (displayPhase == .running && state.presentation.progressFraction != nil)
-            || (displayPhase == .running && state.presentation.metric.detailText != nil)
+            || (displayPhase == .running
+                && state.presentation.metric.localizedDetailText(
+                    languageCode: languageCode
+                ) != nil)
             || (state.presentation.action?.showsLockScreenLabel == true
                 && attributes.destinationURL(for: state.presentation.action) != nil)
     }
@@ -383,7 +406,9 @@ private struct AgentActivityExpandedFooter: View {
 
                 HStack(spacing: 10) {
                     if displayPhase == .running,
-                       let detail = state.presentation.metric.detailText {
+                       let detail = state.presentation.metric.localizedDetailText(
+                           languageCode: languageCode
+                       ) {
                         Text(detail)
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.58))
@@ -395,7 +420,10 @@ private struct AgentActivityExpandedFooter: View {
                     if let action = state.presentation.action,
                        action.showsLockScreenLabel,
                        attributes.destinationURL(for: action) != nil {
-                        Label(action.title, systemImage: "arrow.up.right")
+                        Label(
+                            action.localizedTitle(languageCode: languageCode),
+                            systemImage: "arrow.up.right"
+                        )
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Color.amberAccent)
                     }
@@ -426,7 +454,8 @@ private struct LockScreenAgentActivityView: View {
                     presentation: state.presentation,
                     startedAt: attributes.startedAt,
                     updatedAt: state.updatedAt,
-                    isStale: isStale
+                    isStale: isStale,
+                    languageCode: state.languageCode
                 )
 
                 AgentActivityExpandedFooter(

@@ -470,7 +470,15 @@ struct ProviderDetailView: View {
         }
         connectionStatus = .idle
         loadDraft()
-        notice = mode == GoogleAuthMode.antigravityOauth ? "已切换到 Antigravity 登录模式。" : "已切回 API Key 模式。"
+        notice = mode == GoogleAuthMode.antigravityOauth
+            ? IOSAppLocalization.string(
+                "已切换到 Antigravity 登录模式。",
+                defaultValue: "已切换到 Antigravity 登录模式。"
+            )
+            : IOSAppLocalization.string(
+                "已切回 API Key 模式。",
+                defaultValue: "已切回 API Key 模式。"
+            )
     }
 
     /// Antigravity (Google account) sign-in entry for the Gemini provider in
@@ -696,7 +704,10 @@ struct ProviderDetailView: View {
             Button {
                 draftApiKey = oldKey
                 saveConfig(showSuccess: false)
-                notice = "旧 API Key 已写入当前服务商。"
+                notice = IOSAppLocalization.string(
+                    "旧 API Key 已写入当前服务商。",
+                    defaultValue: "旧 API Key 已写入当前服务商。"
+                )
             } label: {
                 ProviderRowContent(
                     title: "导入旧 API Key",
@@ -950,7 +961,10 @@ struct ProviderDetailView: View {
             sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
         }
         if showSuccess {
-            notice = "服务商配置已保存。"
+            notice = IOSAppLocalization.string(
+                "服务商配置已保存。",
+                defaultValue: "服务商配置已保存。"
+            )
         }
         return true
     }
@@ -1000,7 +1014,9 @@ struct ProviderDetailView: View {
         }
         connectionStatus = .idle
         loadDraft()
-        notice = isCodingPlan(mode) ? "已切换到 Token Plan。" : "已切回 API Key 模式。"
+        notice = isCodingPlan(mode)
+            ? IOSAppLocalization.string("已切换到 Token Plan。", defaultValue: "已切换到 Token Plan。")
+            : IOSAppLocalization.string("已切回 API Key 模式。", defaultValue: "已切回 API Key 模式。")
     }
 
     private func isCodingPlan(_ mode: OpenAIAuthMode) -> Bool {
@@ -1054,7 +1070,10 @@ struct ProviderDetailView: View {
             selectedTab = .models
         }
         guard ChatProviderConfiguration.supportsChatStreaming(provider) else {
-            let message = "这个 Provider 类型的 iOS 模型获取尚未移植。"
+            let message = IOSAppLocalization.string(
+                "这个 Provider 类型的 iOS 模型获取尚未移植。",
+                defaultValue: "这个 Provider 类型的 iOS 模型获取尚未移植。"
+            )
             fetchState = .failure(message)
             if reportsConnectionStatus { connectionStatus = .failure(message) }
             return
@@ -1117,11 +1136,17 @@ struct ProviderDetailView: View {
                     successMessage = nil
                 } else if IOSGrokWebProviderResolver.isGrokWebProvider(provider) {
                     models = provider.models.filter { $0.type == ModelType.chat }
-                    successMessage = "Grok 登录凭据已就绪；服务器可用性会在发送消息时验证。"
+                    successMessage = IOSAppLocalization.string(
+                        "Grok 登录凭据已就绪；服务器可用性会在发送消息时验证。",
+                        defaultValue: "Grok 登录凭据已就绪；服务器可用性会在发送消息时验证。"
+                    )
                 } else if let google = provider as? ProviderSetting.Google {
                     if IOSGeminiProviderResolver.isAntigravityOAuth(google) {
                         models = try await IOSGeminiClient(provider: google).listModelsOrThrow()
-                        successMessage = "已载入官方常用模型。"
+                        successMessage = IOSAppLocalization.string(
+                            "已载入官方常用模型。",
+                            defaultValue: "已载入官方常用模型。"
+                        )
                     } else {
                         models = try await IOSGeminiClient(provider: google).listModelsOrThrow()
                         successMessage = nil
@@ -1141,8 +1166,15 @@ struct ProviderDetailView: View {
                 }
                 availableModels = models
                 let message = successMessage ?? (models.isEmpty
-                    ? "连接成功，但服务商没有返回可列出的模型。可手动添加 Model ID。"
-                    : "连接成功，服务商返回 \(models.count) 个模型。")
+                    ? IOSAppLocalization.string(
+                        "连接成功，但服务商没有返回可列出的模型。可手动添加 Model ID。",
+                        defaultValue: "连接成功，但服务商没有返回可列出的模型。可手动添加 Model ID。"
+                    )
+                    : IOSAppLocalization.formatted(
+                        "连接成功，服务商返回 %lld 个模型。",
+                        defaultValue: "连接成功，服务商返回 %lld 个模型。",
+                        arguments: [Int64(models.count)]
+                    ))
                 fetchState = .success(message)
                 if reportsConnectionStatus { connectionStatus = .success(message) }
             } catch {
@@ -1206,7 +1238,11 @@ struct ProviderDetailView: View {
         sharedSettings.setCurrentChatModelId(model.id.description())
         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
         if showAlert {
-            notice = "新的聊天会默认使用 \(model.modelId)。"
+            notice = IOSAppLocalization.formatted(
+                "新的聊天会默认使用 %@。",
+                defaultValue: "新的聊天会默认使用 %@。",
+                arguments: [model.modelId]
+            )
         }
     }
 
@@ -1388,41 +1424,83 @@ private enum ProviderDetailAlert: Identifiable {
 
     var title: String {
         switch self {
-        case .saved: "已保存"
-        case .invalidBaseURL: "API 地址无效"
-        case .protocolSwitchFailed: "协议切换失败"
-        case .unsupportedProtocol: "暂不支持"
-        case .modelRequired: "需要 Model ID"
-        case .currentModelSet: "已设为当前"
-        case .currentModelDeleted: "当前模型已删除"
-        case .legacyKeyImported: "已导入"
-        case .deleteProvider: "删除服务商？"
-        case .providerDeleteFailed: "无法删除服务商"
+        case .saved:
+            IOSAppLocalization.string("已保存", defaultValue: "已保存")
+        case .invalidBaseURL:
+            IOSAppLocalization.string("API 地址无效", defaultValue: "API 地址无效")
+        case .protocolSwitchFailed:
+            IOSAppLocalization.string("协议切换失败", defaultValue: "协议切换失败")
+        case .unsupportedProtocol:
+            IOSAppLocalization.string("暂不支持", defaultValue: "暂不支持")
+        case .modelRequired:
+            IOSAppLocalization.string("需要 Model ID", defaultValue: "需要 Model ID")
+        case .currentModelSet:
+            IOSAppLocalization.string("已设为当前", defaultValue: "已设为当前")
+        case .currentModelDeleted:
+            IOSAppLocalization.string("当前模型已删除", defaultValue: "当前模型已删除")
+        case .legacyKeyImported:
+            IOSAppLocalization.string("已导入", defaultValue: "已导入")
+        case .deleteProvider:
+            IOSAppLocalization.string("删除服务商？", defaultValue: "删除服务商？")
+        case .providerDeleteFailed:
+            IOSAppLocalization.string("无法删除服务商", defaultValue: "无法删除服务商")
         }
     }
 
     var message: String {
         switch self {
         case .saved:
-            "服务商配置已写入当前设置。"
+            IOSAppLocalization.string(
+                "服务商配置已写入当前设置。",
+                defaultValue: "服务商配置已写入当前设置。"
+            )
         case .invalidBaseURL:
-            "请输入 HTTPS 地址，或使用 http://IP:端口形式的 API 地址。"
+            IOSAppLocalization.string(
+                "请输入 HTTPS 地址，或使用 http://IP:端口形式的 API 地址。",
+                defaultValue: "请输入 HTTPS 地址，或使用 http://IP:端口形式的 API 地址。"
+            )
         case .protocolSwitchFailed:
-            "没有找到可切换的服务商配置。"
+            IOSAppLocalization.string(
+                "没有找到可切换的服务商配置。",
+                defaultValue: "没有找到可切换的服务商配置。"
+            )
         case .unsupportedProtocol:
-            "这个 Provider 类型的 iOS 聊天执行器尚未移植。"
+            IOSAppLocalization.string(
+                "这个 Provider 类型的 iOS 聊天执行器尚未移植。",
+                defaultValue: "这个 Provider 类型的 iOS 聊天执行器尚未移植。"
+            )
         case .modelRequired:
-            "请填写服务商文档中的 Model ID。"
+            IOSAppLocalization.string(
+                "请填写服务商文档中的 Model ID。",
+                defaultValue: "请填写服务商文档中的 Model ID。"
+            )
         case .currentModelSet(let model):
-            "新的聊天会默认使用 \(model)。"
+            IOSAppLocalization.formatted(
+                "新的聊天会默认使用 %@。",
+                defaultValue: "新的聊天会默认使用 %@。",
+                arguments: [model]
+            )
         case .currentModelDeleted:
-            "你删除的是当前聊天模型，请在模型页重新选择一个当前模型。"
+            IOSAppLocalization.string(
+                "你删除的是当前聊天模型，请在模型页重新选择一个当前模型。",
+                defaultValue: "你删除的是当前聊天模型，请在模型页重新选择一个当前模型。"
+            )
         case .legacyKeyImported:
-            "旧 API Key 已写入当前服务商。"
+            IOSAppLocalization.string(
+                "旧 API Key 已写入当前服务商。",
+                defaultValue: "旧 API Key 已写入当前服务商。"
+            )
         case .deleteProvider(let name):
-            "\(name) 的配置、模型和 API Key 将被删除，此操作无法撤销。"
+            IOSAppLocalization.formatted(
+                "%@ 的配置、模型和 API Key 将被删除，此操作无法撤销。",
+                defaultValue: "%@ 的配置、模型和 API Key 将被删除，此操作无法撤销。",
+                arguments: [name]
+            )
         case .providerDeleteFailed:
-            "内置服务商不能删除；当前服务商没有可切换的备用聊天模型时也不能删除。"
+            IOSAppLocalization.string(
+                "内置服务商不能删除；当前服务商没有可切换的备用聊天模型时也不能删除。",
+                defaultValue: "内置服务商不能删除；当前服务商没有可切换的备用聊天模型时也不能删除。"
+            )
         }
     }
 }

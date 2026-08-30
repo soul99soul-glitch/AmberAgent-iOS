@@ -511,7 +511,10 @@ struct NovelProjectWorkspaceView: View {
                 sharedSettings: sharedSettings,
                 currentModel: selectedModelID(for: purpose),
                 title: purpose.pickerTitle,
-                fallbackTitle: "跟随小说默认",
+                fallbackTitle: IOSAppLocalization.string(
+                    "跟随小说默认",
+                    defaultValue: "跟随小说默认"
+                ),
                 onFallback: {
                     selectModelPolicy(.global, for: purpose)
                 },
@@ -530,7 +533,10 @@ struct NovelProjectWorkspaceView: View {
             ) {
                 Button("知道了", role: .cancel) { modelPolicyFailure = nil }
             } message: {
-                Text(modelPolicyFailure ?? "模型设置未能保存，请重试。")
+                Text(verbatim: modelPolicyFailure ?? IOSAppLocalization.string(
+                    "模型设置未能保存，请重试。",
+                    defaultValue: "模型设置未能保存，请重试。"
+                ))
             }
 
         case .materialEditor(let material, let suggestedKind):
@@ -871,7 +877,14 @@ struct NovelProjectWorkspaceView: View {
         let configured = project.configuredModelPolicy(for: purpose)
         let effective = effectivePolicy(configured, purpose: purpose)
         let name = NovelPresentation.modelDisplayName(for: effective, sharedSettings: sharedSettings)
-        return configured == .global ? "默认 · \(name)" : name
+        if configured == .global {
+            return IOSAppLocalization.formatted(
+                "小说默认 · %@",
+                defaultValue: "小说默认 · %@",
+                arguments: [name]
+            )
+        }
+        return name
     }
 
     private func effectivePolicy(
@@ -899,7 +912,10 @@ struct NovelProjectWorkspaceView: View {
             if await viewModel.setModelPolicy(policy, for: purpose) {
                 activeSheet = nil
             } else {
-                modelPolicyFailure = viewModel.errorMessage ?? "模型设置未能保存，请重试。"
+                modelPolicyFailure = viewModel.errorMessage ?? IOSAppLocalization.string(
+                    "模型设置未能保存，请重试。",
+                    defaultValue: "模型设置未能保存，请重试。"
+                )
             }
         }
     }

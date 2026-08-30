@@ -97,7 +97,10 @@ struct IOSChatBackgroundProvider: IOSAgentTextProvider, IOSAgentStreamingProvide
         throw NSError(
             domain: "AmberAgent.ChatBackgroundGeneration",
             code: 1,
-            userInfo: [NSLocalizedDescriptionKey: "当前服务商类型暂不支持后台生成"]
+            userInfo: [NSLocalizedDescriptionKey: IOSAppLocalization.string(
+                "当前服务商类型暂不支持后台生成",
+                defaultValue: "当前服务商类型暂不支持后台生成"
+            )]
         )
     }
 
@@ -129,7 +132,10 @@ struct IOSChatBackgroundProvider: IOSAgentTextProvider, IOSAgentStreamingProvide
                 onError: onError
             )
         }
-        onError(KotlinThrowable(message: "当前服务商类型暂不支持后台生成"))
+        onError(KotlinThrowable(message: IOSAppLocalization.string(
+            "当前服务商类型暂不支持后台生成",
+            defaultValue: "当前服务商类型暂不支持后台生成"
+        )))
         return nil
     }
 }
@@ -602,7 +608,10 @@ final class IOSChatBackgroundGenerationCoordinator {
 
         let request = BGContinuedProcessingTaskRequest(
             identifier: requestId,
-            title: "Amber 后台生成",
+            title: IOSAppLocalization.string(
+                "Amber 后台生成",
+                defaultValue: "Amber 后台生成"
+            ),
             subtitle: handoff.params.model.displayName
         )
         // Match KeepAlive: queue when the system is busy instead of failing the
@@ -820,7 +829,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             if job.toolRuntime.hasUnresolvedToolCall(in: latestMessages) {
                 cancelledMessages = job.toolRuntime.messagesByFailingPendingToolCalls(
                     in: latestMessages,
-                    failureReason: "User cancelled.",
+                    failureReason: IOSAppLocalization.string(
+                        "User cancelled.",
+                        defaultValue: "User cancelled."
+                    ),
                     denied: true
                 )
             } else {
@@ -872,7 +884,12 @@ final class IOSChatBackgroundGenerationCoordinator {
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
                 presentation: didPersistTerminal ? .cancelled() : .failed(),
-                summary: didPersistTerminal ? nil : "已停止生成，但工具取消状态保存失败。"
+                summary: didPersistTerminal
+                    ? nil
+                    : IOSAppLocalization.string(
+                        "已停止生成，但工具取消状态保存失败。",
+                        defaultValue: "已停止生成，但工具取消状态保存失败。"
+                    )
             )
             await job.liveActivityController.end(
                 runId: job.runId,
@@ -1149,7 +1166,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                     let didSave = await persistExpirationFailure(
                         job: job,
                         requestId: requestId,
-                        rawMessage: "回复已恢复，但工具阶段未能继续，请重试。",
+                        rawMessage: IOSAppLocalization.string(
+                            "回复已恢复，但工具阶段未能继续，请重试。",
+                            defaultValue: "回复已恢复，但工具阶段未能继续，请重试。"
+                        ),
                         partialAssistantText: nil
                     )
                     guard runState.finalizeTerminal() else { return }
@@ -1193,7 +1213,12 @@ final class IOSChatBackgroundGenerationCoordinator {
             let didSave = await persistExpirationFailure(
                 job: job,
                 requestId: requestId,
-                rawMessage: message.isEmpty ? "后台回复连接中断，请重试。" : message,
+                rawMessage: message.isEmpty
+                    ? IOSAppLocalization.string(
+                        "后台回复连接中断，请重试。",
+                        defaultValue: "后台回复连接中断，请重试。"
+                    )
+                    : message,
                 partialAssistantText: nil
             )
             guard runState.finalizeTerminal() else { return }
@@ -1253,7 +1278,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                     runId: job.runId,
                     conversationId: job.conversationId.toHexDashString(),
                     presentation: .failed(),
-                    summary: "网页操作结果待确认。"
+                    summary: IOSAppLocalization.string(
+                        "网页操作结果待确认。",
+                        defaultValue: "网页操作结果待确认。"
+                    )
                 )
                 await job.liveActivityController.end(
                     runId: job.runId,
@@ -1299,7 +1327,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
             presentation: .failed(),
-            summary: "网页操作结果待确认。"
+            summary: IOSAppLocalization.string(
+                "网页操作结果待确认。",
+                defaultValue: "网页操作结果待确认。"
+            )
         )
         await job.liveActivityController.end(
             runId: job.runId,
@@ -1399,7 +1430,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
                 presentation: .failed(),
-                summary: "回复已完成，但保存失败。"
+                summary: IOSAppLocalization.string(
+                    "回复已完成，但保存失败。",
+                    defaultValue: "回复已完成，但保存失败。"
+                )
             )
             await job.liveActivityController.end(runId: job.runId, presentation: .failed())
             activeRunStates[requestId] = IOSChatBackgroundRunState()
@@ -1414,7 +1448,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         // 成 App Switcher 强杀留下的 stale request。
         activeBackgroundTasks[backgroundTask.identifier] = backgroundTask
         guard let job = job(for: backgroundTask.identifier) else {
-            backgroundTask.updateTitle("Amber 后台生成", subtitle: "无法恢复任务")
+            backgroundTask.updateTitle(
+                IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+                subtitle: IOSAppLocalization.string("无法恢复任务", defaultValue: "无法恢复任务")
+            )
             if let mappedRunId {
                 let controller = dependencies?.liveActivityController ?? .shared
                 _ = controller.adoptExistingActivity(runId: mappedRunId)
@@ -1446,7 +1483,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         let progress = backgroundTask.progress
         progress.totalUnitCount = 4
         progress.completedUnitCount = 0
-        backgroundTask.updateTitle("Amber 后台生成", subtitle: "准备上下文")
+        backgroundTask.updateTitle(
+            IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+            subtitle: IOSAppLocalization.string("准备上下文", defaultValue: "准备上下文")
+        )
         _ = job.liveActivityController.adoptExistingActivity(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString()
@@ -1510,7 +1550,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                         _ = await self.persistExpirationFailure(
                             job: job,
                             requestId: backgroundTask.identifier,
-                            rawMessage: "后台执行再次被系统暂停，请回到会话重试。",
+                            rawMessage: IOSAppLocalization.string(
+                                "后台执行再次被系统暂停，请回到会话重试。",
+                                defaultValue: "后台执行再次被系统暂停，请回到会话重试。"
+                            ),
                             partialAssistantText: assistantTextSnapshot.text
                         )
                     } else {
@@ -1560,8 +1603,11 @@ final class IOSChatBackgroundGenerationCoordinator {
 
         progress.completedUnitCount = 1
         backgroundTask.updateTitle(
-            "Amber 后台生成",
-            subtitle: job.mode == .singleToolOnly ? "正在执行工具" : "正在生成回复"
+            IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+            subtitle: IOSAppLocalization.string(
+                job.mode == .singleToolOnly ? "正在执行工具" : "正在生成回复",
+                defaultValue: job.mode == .singleToolOnly ? "正在执行工具" : "正在生成回复"
+            )
         )
 
         let engine = IOSAgentToolEngine(
@@ -1720,7 +1766,10 @@ final class IOSChatBackgroundGenerationCoordinator {
                         stepsExecuted: initialResult.stepsExecuted,
                         pendingApproval: initialResult.pendingApproval,
                         hitStepLimit: initialResult.hitStepLimit,
-                        providerFailureMessage: "Unable to persist the required visual retry checkpoint.",
+                        providerFailureMessage: IOSAppLocalization.string(
+                            "Unable to persist the required visual retry checkpoint.",
+                            defaultValue: "Unable to persist the required visual retry checkpoint."
+                        ),
                         durabilityFailureMessage: initialResult.durabilityFailureMessage,
                         toolOutcomeUnknown: initialResult.toolOutcomeUnknown,
                         hitOutputLimit: initialResult.hitOutputLimit,
@@ -1798,7 +1847,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard runState.reserveTerminal() else { return }
 
         progress.completedUnitCount = 3
-        backgroundTask.updateTitle("Amber 后台生成", subtitle: "正在保存结果")
+        backgroundTask.updateTitle(
+            IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+            subtitle: IOSAppLocalization.string("正在保存结果", defaultValue: "正在保存结果")
+        )
 
         var reconciledMessages = job.mode == .continueModel
             ? Self.reconciledMessages(
@@ -1878,11 +1930,17 @@ final class IOSChatBackgroundGenerationCoordinator {
            job.toolRuntime.hasUnresolvedToolCall(in: finalMessages) {
             finalMessages = job.toolRuntime.messagesByFailingPendingToolCalls(
                 in: finalMessages,
-                failureReason: "The tool was unavailable during background continuation."
+                failureReason: IOSAppLocalization.string(
+                    "The tool was unavailable during background continuation.",
+                    defaultValue: "The tool was unavailable during background continuation."
+                )
             )
         }
         if job.mode == .continueModel, result.hitStepLimit {
-            finalMessages.append(Self.assistantMessage("后台生成已达到工具循环上限，已保存当前结果。"))
+            finalMessages.append(Self.assistantMessage(IOSAppLocalization.string(
+                "后台生成已达到工具循环上限，已保存当前结果。",
+                defaultValue: "后台生成已达到工具循环上限，已保存当前结果。"
+            )))
         }
         // I-5: same visibility contract as the hitStepLimit notice above — the
         // engine already wrote a per-tool stop explanation into that tool's
@@ -1899,7 +1957,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         // terminal-status block below can align background with foreground.
         var guardStoppedNotice: String?
         if job.mode == .continueModel, result.guardStopped {
-            let notice = "模型连续以相同参数重复调用工具，已停止本轮以避免空耗，已保存当前结果。"
+            let notice = IOSAppLocalization.string(
+                "模型连续以相同参数重复调用工具，已停止本轮以避免空耗，已保存当前结果。",
+                defaultValue: "模型连续以相同参数重复调用工具，已停止本轮以避免空耗，已保存当前结果。"
+            )
             finalMessages.append(Self.assistantMessage(notice))
             guardStoppedNotice = notice
         }
@@ -1991,7 +2052,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
         guard didSave else {
-            backgroundTask.updateTitle("Amber 后台生成", subtitle: "保存结果失败")
+            backgroundTask.updateTitle(
+                IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+                subtitle: IOSAppLocalization.string("保存结果失败", defaultValue: "保存结果失败")
+            )
             await completeAsFailureAfterSaveFailure(
                 job: job,
                 backgroundTask: backgroundTask
@@ -2049,7 +2113,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         if job.toolRuntime.hasUnresolvedToolCall(in: finalMessages) {
             finalMessages = job.toolRuntime.messagesByFailingPendingToolCalls(
                 in: finalMessages,
-                failureReason: "The model output ended before the tool call completed."
+                failureReason: IOSAppLocalization.string(
+                    "The model output ended before the tool call completed.",
+                    defaultValue: "The model output ended before the tool call completed."
+                )
             )
         }
         finalMessages.append(ChatGenerationSupport.outputLimitNotice())
@@ -2082,7 +2149,13 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
         guard didSave else {
-            backgroundTask.updateTitle("Amber 后台生成", subtitle: "保存截断回复失败")
+            backgroundTask.updateTitle(
+                IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+                subtitle: IOSAppLocalization.string(
+                    "保存截断回复失败",
+                    defaultValue: "保存截断回复失败"
+                )
+            )
             await completeAsFailureAfterSaveFailure(
                 job: job,
                 backgroundTask: backgroundTask
@@ -2097,7 +2170,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             summary: Self.backgroundSummary(from: finalMessages)
         ) else { return }
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
-        backgroundTask.updateTitle("Amber 后台生成", subtitle: "回复达到输出上限")
+        backgroundTask.updateTitle(
+            IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+            subtitle: IOSAppLocalization.string("回复达到输出上限", defaultValue: "回复达到输出上限")
+        )
         backgroundTask.progress.completedUnitCount = backgroundTask.progress.totalUnitCount
         if runState.claimSystemTaskCompletion() {
             backgroundTask.setTaskCompleted(success: true)
@@ -2170,7 +2246,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         if job.toolRuntime.hasUnresolvedToolCall(in: finalMessages) {
             finalMessages = job.toolRuntime.messagesByFailingPendingToolCalls(
                 in: finalMessages,
-                failureReason: "Generation failed before the tool call completed."
+                failureReason: IOSAppLocalization.string(
+                    "Generation failed before the tool call completed.",
+                    defaultValue: "Generation failed before the tool call completed."
+                )
             )
         }
         let didSave: Bool
@@ -2222,7 +2301,13 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
         guard didSave else {
-            backgroundTask.updateTitle("Amber 后台生成", subtitle: "无法保存失败状态")
+            backgroundTask.updateTitle(
+                IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
+                subtitle: IOSAppLocalization.string(
+                    "无法保存失败状态",
+                    defaultValue: "无法保存失败状态"
+                )
+            )
             await completeAsFailureAfterSaveFailure(
                 job: job,
                 backgroundTask: backgroundTask
@@ -2371,7 +2456,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         _ = await persistExpirationFailure(
             job: job,
             requestId: requestId,
-            rawMessage: "后台生成已停止，可以重试。",
+            rawMessage: IOSAppLocalization.string(
+                "后台生成已停止，可以重试。",
+                defaultValue: "后台生成已停止，可以重试。"
+            ),
             partialAssistantText: nil
         )
     }
@@ -2441,7 +2529,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         if job.toolRuntime.hasUnresolvedToolCall(in: finalMessages) {
             finalMessages = job.toolRuntime.messagesByFailingPendingToolCalls(
                 in: finalMessages,
-                failureReason: "Generation failed before the tool call completed."
+                failureReason: IOSAppLocalization.string(
+                    "Generation failed before the tool call completed.",
+                    defaultValue: "Generation failed before the tool call completed."
+                )
             )
         }
         let didSave = await job.conversationStore.saveBackgroundCompletion(
@@ -2499,7 +2590,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
             presentation: presentation,
-            summary: "后台执行已暂停，回到 Amber 后自动继续。"
+            summary: IOSAppLocalization.string(
+                "后台执行已暂停，回到 Amber 后自动继续。",
+                defaultValue: "后台执行已暂停，回到 Amber 后自动继续。"
+            )
         )
         await job.liveActivityController.update(
             runId: job.runId,
@@ -2548,7 +2642,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             _ = await persistExpirationFailure(
                 job: job,
                 requestId: requestId,
-                rawMessage: "后台任务包含不能安全自动重放的操作，请回到会话重试。",
+                rawMessage: IOSAppLocalization.string(
+                    "后台任务包含不能安全自动重放的操作，请回到会话重试。",
+                    defaultValue: "后台任务包含不能安全自动重放的操作，请回到会话重试。"
+                ),
                 partialAssistantText: nil
             )
             return
@@ -2594,7 +2691,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
         let request = BGContinuedProcessingTaskRequest(
             identifier: requestId,
-            title: "Amber 后台生成",
+            title: IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
             subtitle: job.params.model.displayName
         )
         request.strategy = .queue
@@ -2611,7 +2708,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             _ = await persistExpirationFailure(
                 job: job,
                 requestId: requestId,
-                rawMessage: "后台回复自动恢复未能启动，请回到会话重试。",
+                rawMessage: IOSAppLocalization.string(
+                    "后台回复自动恢复未能启动，请回到会话重试。",
+                    defaultValue: "后台回复自动恢复未能启动，请回到会话重试。"
+                ),
                 partialAssistantText: nil
             )
         }
@@ -2738,7 +2838,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
             presentation: .failed(),
-            summary: "网页操作结果待确认。"
+            summary: IOSAppLocalization.string(
+                "网页操作结果待确认。",
+                defaultValue: "网页操作结果待确认。"
+            )
         )
         await job.liveActivityController.end(runId: job.runId, presentation: .failed())
         if didSave {
@@ -2775,7 +2878,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
             presentation: .failed(),
-            summary: "网页操作结果待确认。"
+            summary: IOSAppLocalization.string(
+                "网页操作结果待确认。",
+                defaultValue: "网页操作结果待确认。"
+            )
         )
         await job.liveActivityController.end(runId: job.runId, presentation: .failed())
         if didSave {
@@ -3014,10 +3120,20 @@ final class IOSChatBackgroundGenerationCoordinator {
                 detail: resolvedInterruptedReason
             )
             if !didRecord {
-                let detail = "运行终态发生冲突，后台任务已保留等待恢复。"
+                let detail = IOSAppLocalization.string(
+                    "运行终态发生冲突，后台任务已保留等待恢复。",
+                    defaultValue: "运行终态发生冲突，后台任务已保留等待恢复。"
+                )
                 if let store = dependencies?.conversationStore {
                     store.publishUserVisibleError(
-                        IOSUserVisibleError(title: "运行状态记录失败", message: detail, severity: .error)
+                        IOSUserVisibleError(
+                            title: IOSAppLocalization.string(
+                                "运行状态记录失败",
+                                defaultValue: "运行状态记录失败"
+                            ),
+                            message: detail,
+                            severity: .error
+                        )
                     )
                 } else {
                     backgroundRunLedgerLogger.error("\(detail)")
@@ -3027,10 +3143,21 @@ final class IOSChatBackgroundGenerationCoordinator {
         } catch {
             // agent_run 是强杀恢复（applyToolCallLedgerRecovery）依赖的账本，
             // 写失败必须走用户可见错误通道，不能只 print 静默吞掉。
-            let detail = "未能写入运行账本：\(error)"
+            let detail = IOSAppLocalization.formatted(
+                "未能写入运行账本：%@",
+                defaultValue: "未能写入运行账本：%@",
+                arguments: [String(describing: error)]
+            )
             if let store = dependencies?.conversationStore {
                 store.publishUserVisibleError(
-                    IOSUserVisibleError(title: "运行状态记录失败", message: detail, severity: .error)
+                    IOSUserVisibleError(
+                        title: IOSAppLocalization.string(
+                            "运行状态记录失败",
+                            defaultValue: "运行状态记录失败"
+                        ),
+                        message: detail,
+                        severity: .error
+                    )
                 )
             } else {
                 backgroundRunLedgerLogger.error("\(detail)")
@@ -3529,7 +3656,10 @@ final class IOSChatBackgroundGenerationCoordinator {
     private func beginChatBackgroundAudioKeepAlive(requestId: String, subtitle: String) {
         BackgroundGenerationKeepAlive.shared.begin(
             chatBackgroundAudioLeaseId(for: requestId),
-            title: "Amber 后台生成",
+            title: IOSAppLocalization.string(
+                "Amber 后台生成",
+                defaultValue: "Amber 后台生成"
+            ),
             subtitle: subtitle,
             submitSystemTask: false
         )

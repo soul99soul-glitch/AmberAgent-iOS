@@ -279,7 +279,9 @@ struct WebMountDesktopBackendsView: View {
                             ProgressView()
                                 .tint(.white)
                         }
-                        Text(isCreating ? "创建中…" : createButtonTitle)
+                        Text(isCreating
+                             ? IOSAppLocalization.string("创建中…", defaultValue: "创建中…")
+                             : createButtonTitle)
                             .font(.body.weight(.semibold))
                             .lineLimit(2)
                             .multilineTextAlignment(.center)
@@ -319,8 +321,11 @@ struct WebMountDesktopBackendsView: View {
                 WebMountDesktopCapabilityRow(
                     systemImage: "lock.shield",
                     tint: AmberTheme.accent,
-                    title: "本地 WKWebView",
-                    subtitle: "App 内登录、隐私 Cookie、页面截图"
+                    title: webMountDesktopBackendTitle(.local),
+                    subtitle: IOSAppLocalization.string(
+                        "App 内登录、隐私 Cookie、页面截图",
+                        defaultValue: "App 内登录、隐私 Cookie、页面截图"
+                    )
                 )
 
                 if selectedBackend != .local {
@@ -330,7 +335,7 @@ struct WebMountDesktopBackendsView: View {
                     WebMountDesktopCapabilityRow(
                         systemImage: webMountDesktopBackendIcon(selectedBackend),
                         tint: AmberTheme.accent,
-                        title: "\(webMountDesktopBackendTitle(selectedBackend)) · \(selectedServer?.name ?? "未选择服务器")",
+                        title: "\(webMountDesktopBackendTitle(selectedBackend)) · \(selectedServer?.name ?? IOSAppLocalization.string("未选择服务器", defaultValue: "未选择服务器"))",
                         subtitle: selectedBackendCapabilitySubtitle
                     )
                 }
@@ -346,8 +351,11 @@ struct WebMountDesktopBackendsView: View {
                     WebMountDesktopInfoRow(
                         systemImage: "rectangle.on.rectangle.slash",
                         tint: AmberTheme.muted2,
-                        title: "暂无桌面 session",
-                        subtitle: "创建远程后端 session 后，这里显示状态、重新连接与关闭操作，不会打开本地 WKWebView。"
+                        title: IOSAppLocalization.string("暂无桌面 session", defaultValue: "暂无桌面 session"),
+                        subtitle: IOSAppLocalization.string(
+                            "创建远程后端 session 后，这里显示状态、重新连接与关闭操作，不会打开本地 WKWebView。",
+                            defaultValue: "创建远程后端 session 后，这里显示状态、重新连接与关闭操作，不会打开本地 WKWebView。"
+                        )
                     )
                 } else {
                     ForEach(Array(remoteSessions.enumerated()), id: \.element.id) { index, session in
@@ -425,23 +433,42 @@ struct WebMountDesktopBackendsView: View {
     }
 
     private var createButtonTitle: String {
-        selectedBackend == .local
-            ? "创建本地 WKWebView 会话"
-            : "创建 \(webMountDesktopBackendTitle(selectedBackend)) 会话"
+        if selectedBackend == .local {
+            return IOSAppLocalization.string(
+                "创建本地 WKWebView 会话",
+                defaultValue: "创建本地 WKWebView 会话"
+            )
+        }
+        return IOSAppLocalization.formatted(
+            "创建 %@ 会话",
+            defaultValue: "创建 %@ 会话",
+            arguments: [webMountDesktopBackendTitle(selectedBackend)]
+        )
     }
 
     private var selectedBackendCapabilitySubtitle: String {
         guard let selectedServer else {
-            return "未选择符合安全策略的 MCP 服务器；远程能力不可用。"
+            return IOSAppLocalization.string(
+                "未选择符合安全策略的 MCP 服务器；远程能力不可用。",
+                defaultValue: "未选择符合安全策略的 MCP 服务器；远程能力不可用。"
+            )
         }
         let status = mcpManager.statusByServer[selectedServer.name] ?? .idle
         let configuredToolCount = selectedServer.tools.filter {
             $0.enabled && IOSWebMountDesktopBackendAdapter.safeBrowserToolNames.contains($0.name)
         }.count
         let capabilities = configuredToolCount == 0
-            ? "未配置已启用的后端工具"
-            : "已配置 \(configuredToolCount) 个后端工具"
-        return "MCP \(status.title) · \(capabilities)；创建 session 后验证实际能力"
+            ? IOSAppLocalization.string("未配置已启用的后端工具", defaultValue: "未配置已启用的后端工具")
+            : IOSAppLocalization.formatted(
+                "已配置 %lld 个后端工具",
+                defaultValue: "已配置 %lld 个后端工具",
+                arguments: [Int64(configuredToolCount)]
+            )
+        return IOSAppLocalization.formatted(
+            "MCP %@ · %@；创建 session 后验证实际能力",
+            defaultValue: "MCP %@ · %@；创建 session 后验证实际能力",
+            arguments: [status.title, capabilities]
+        )
     }
 
     private func ensureServerSelection() {
@@ -633,7 +660,9 @@ private struct WebMountDesktopServerRow: View {
                 .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(server.name.isEmpty ? "未命名服务器" : server.name)
+                Text(server.name.isEmpty
+                     ? IOSAppLocalization.string("未命名服务器", defaultValue: "未命名服务器")
+                     : server.name)
                     .font(.body)
                     .foregroundStyle(AmberTheme.foreground)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -644,7 +673,11 @@ private struct WebMountDesktopServerRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
 
-                Text("MCP \(status.title) · 已配置 \(configuredBackendToolCount) 个后端工具")
+                Text(IOSAppLocalization.formatted(
+                    "MCP %@ · 已配置 %lld 个后端工具",
+                    defaultValue: "MCP %@ · 已配置 %lld 个后端工具",
+                    arguments: [status.title, Int64(configuredBackendToolCount)]
+                ))
                     .font(.caption2)
                     .foregroundStyle(status == .connected ? AmberTheme.accent : AmberTheme.muted2)
                     .lineLimit(2)
@@ -763,7 +796,9 @@ private struct WebMountFocusedRemoteTaskView: View {
     }
 
     private var title: String {
-        session.siteName?.nilIfBlank ?? session.title.nilIfBlank ?? "浏览器任务"
+        session.siteName?.nilIfBlank
+            ?? session.title.nilIfBlank
+            ?? IOSAppLocalization.string("浏览器任务", defaultValue: "浏览器任务")
     }
 
     private var pageSummary: String? {
@@ -925,9 +960,18 @@ private struct WebMountDesktopSessionRow: View {
     }
 
     private var capabilitySummary: String {
-        guard configurationMatches else { return "未确认" }
+        guard configurationMatches else {
+            return IOSAppLocalization.string("未确认", defaultValue: "未确认")
+        }
         let names = capabilities.filter(\.available).map(\.amberToolName)
-        return names.isEmpty ? "未确认" : "已确认 \(names.count) 项"
+        guard !names.isEmpty else {
+            return IOSAppLocalization.string("未确认", defaultValue: "未确认")
+        }
+        return IOSAppLocalization.formatted(
+            "已确认 %lld 项",
+            defaultValue: "已确认 %lld 项",
+            arguments: [Int64(names.count)]
+        )
     }
 
     var body: some View {
@@ -939,7 +983,7 @@ private struct WebMountDesktopSessionRow: View {
                     .frame(width: 28, height: 28)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("\(webMountDesktopBackendTitle(session.backend)) · \(session.mcpServerName ?? "未绑定服务器")")
+                    Text("\(webMountDesktopBackendTitle(session.backend)) · \(session.mcpServerName ?? IOSAppLocalization.string("未绑定服务器", defaultValue: "未绑定服务器"))")
                         .font(.body.weight(.medium))
                         .foregroundStyle(AmberTheme.foreground)
                         .fixedSize(horizontal: false, vertical: true)
@@ -963,7 +1007,9 @@ private struct WebMountDesktopSessionRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Text(session.siteName?.nilIfBlank ?? session.title.nilIfBlank ?? "未命名页面")
+            Text(session.siteName?.nilIfBlank
+                 ?? session.title.nilIfBlank
+                 ?? IOSAppLocalization.string("未命名页面", defaultValue: "未命名页面"))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground2)
                 .lineLimit(1)
@@ -1048,18 +1094,21 @@ private struct WebMountDesktopSessionRow: View {
 }
 
 private func webMountDesktopBackendTitle(_ backend: IOSWebMountBackendKind) -> String {
-    switch backend {
-    case .local: "本地 WKWebView"
-    case .moli: "Moli"
-    case .playwright_mcp: "Playwright MCP"
-    case .steel: "Steel"
-    }
+    backend.title
 }
 
 private func webMountDesktopBackendSubtitle(_ backend: IOSWebMountBackendKind) -> String {
     switch backend {
-    case .local: "App 内页面、隐私登录与本地 Cookie"
-    case .moli, .playwright_mcp, .steel: "需要符合策略的 MCP 服务器；能力以实际发现工具为准"
+    case .local:
+        IOSAppLocalization.string(
+            "App 内页面、隐私登录与本地 Cookie",
+            defaultValue: "App 内页面、隐私登录与本地 Cookie"
+        )
+    case .moli, .playwright_mcp, .steel:
+        IOSAppLocalization.string(
+            "需要符合策略的 MCP 服务器；能力以实际发现工具为准",
+            defaultValue: "需要符合策略的 MCP 服务器；能力以实际发现工具为准"
+        )
     }
 }
 
@@ -1074,7 +1123,7 @@ private func webMountDesktopEndpointSummary(_ rawURL: String) -> String {
     guard let components = URLComponents(string: rawURL),
           let scheme = components.scheme?.nilIfBlank,
           let host = components.host?.nilIfBlank else {
-        return "地址无效"
+        return IOSAppLocalization.string("地址无效", defaultValue: "地址无效")
     }
     var result = "\(scheme.lowercased())://\(host)"
     if let port = components.port {
@@ -1085,8 +1134,10 @@ private func webMountDesktopEndpointSummary(_ rawURL: String) -> String {
 
 private func webMountDesktopControlTitle(_ owner: IOSWebMountControlOwner) -> String {
     switch owner {
-    case .none: "空闲"
+    case .none:
+        IOSAppLocalization.string("空闲", defaultValue: "空闲")
     case .agent: "Agent"
-    case .user: "用户"
+    case .user:
+        IOSAppLocalization.string("用户", defaultValue: "用户")
     }
 }

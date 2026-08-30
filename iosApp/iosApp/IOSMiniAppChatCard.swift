@@ -17,10 +17,13 @@ struct ChatMiniAppStreamingCard: View {
     }
 
     private var title: String {
+        let key: String
         if isGenerating {
-            return showCode ? "正在生成前端代码" : "正在生成小应用"
+            key = showCode ? "正在生成前端代码" : "正在生成小应用"
+        } else {
+            key = showCode ? "小应用代码" : "小应用"
         }
-        return showCode ? "小应用代码" : "小应用"
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private var displayCode: String {
@@ -43,10 +46,19 @@ struct ChatMiniAppStreamingCard: View {
         .modifier(ChatGeneratedImageAppearModifier())
         .accessibilityElement(children: showCode ? .contain : .combine)
         .accessibilityLabel(title)
-        .accessibilityValue(showCode ? "代码模式" : "预览模式")
-        .accessibilityHint("点按切换预览与代码")
+        .accessibilityValue(IOSAppLocalization.string(
+            showCode ? "代码模式" : "预览模式",
+            defaultValue: showCode ? "代码模式" : "预览模式"
+        ))
+        .accessibilityHint(IOSAppLocalization.string(
+            "点按切换预览与代码",
+            defaultValue: "点按切换预览与代码"
+        ))
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction(named: Text(showCode ? "显示预览" : "显示代码"), toggleMode)
+        .accessibilityAction(named: Text(IOSAppLocalization.string(
+            showCode ? "显示预览" : "显示代码",
+            defaultValue: showCode ? "显示预览" : "显示代码"
+        )), toggleMode)
     }
 
     private func cardShell<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -150,7 +162,7 @@ struct ChatMiniAppStreamingCard: View {
             }
         }
         .mask(codeFadeMask)
-        .accessibilityLabel("小应用代码")
+        .accessibilityLabel(IOSAppLocalization.string("小应用代码", defaultValue: "小应用代码"))
     }
 
     private var codeFadeMask: some View {
@@ -263,7 +275,14 @@ struct IOSMiniAppChatCard: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(2)
-                    Text("v\(displayVersion) · \(categoryLabel(part.category?.nilIfBlank ?? "tool"))")
+                    Text(verbatim: IOSAppLocalization.formatted(
+                        "v%lld · %@",
+                        defaultValue: "v%lld · %@",
+                        arguments: [
+                            Int64(displayVersion),
+                            categoryLabel(part.category?.nilIfBlank ?? "tool"),
+                        ]
+                    ))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                 }
@@ -271,7 +290,7 @@ struct IOSMiniAppChatCard: View {
 
                 // Top-align with title line; 44pt hit box without centering on the icon.
                 Button(action: onOpenList) {
-                    Text("全部")
+                    Text(IOSAppLocalization.string("全部", defaultValue: "全部"))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.accent)
                         .padding(.horizontal, 4)
@@ -281,7 +300,7 @@ struct IOSMiniAppChatCard: View {
                 .frame(minWidth: 44, minHeight: 44, alignment: .topTrailing)
                 .contentShape(Rectangle())
                 .padding(.top, 1)
-                .accessibilityLabel("全部小应用")
+                .accessibilityLabel(IOSAppLocalization.string("全部小应用", defaultValue: "全部小应用"))
             }
 
             if !part.description_.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -311,7 +330,7 @@ struct IOSMiniAppChatCard: View {
         .sheet(isPresented: $showModifySheet) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("描述你想改的地方")
+                    Text(IOSAppLocalization.string("描述你想改的地方", defaultValue: "描述你想改的地方"))
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
                     TextEditor(text: $modifyPrompt)
@@ -319,24 +338,35 @@ struct IOSMiniAppChatCard: View {
                         .padding(10)
                         .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .scrollContentBackground(.hidden)
-                        .accessibilityLabel("小应用修改说明")
-                        .accessibilityHint("描述希望修改的内容")
+                        .accessibilityLabel(IOSAppLocalization.string(
+                            "小应用修改说明",
+                            defaultValue: "小应用修改说明"
+                        ))
+                        .accessibilityHint(IOSAppLocalization.string(
+                            "描述希望修改的内容",
+                            defaultValue: "描述希望修改的内容"
+                        ))
                     if modifyBusyRejected {
-                        Text("当前正在生成回复，请稍后再修改。")
+                        Text(IOSAppLocalization.string(
+                            "当前正在生成回复，请稍后再修改。",
+                            defaultValue: "当前正在生成回复，请稍后再修改。"
+                        ))
                             .font(.caption)
                             .foregroundStyle(AmberTheme.accentAmber)
                     }
                     Spacer(minLength: 0)
                 }
                 .padding(16)
-                .navigationTitle("修改小应用")
+                .navigationTitle(IOSAppLocalization.string("修改小应用", defaultValue: "修改小应用"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showModifySheet = false }
+                        Button(IOSAppLocalization.string("取消", defaultValue: "取消")) {
+                            showModifySheet = false
+                        }
                     }
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("发送") {
+                        Button(IOSAppLocalization.string("发送", defaultValue: "发送")) {
                             let prompt = modifyPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !prompt.isEmpty else { return }
                             let accepted = onModify(
@@ -365,9 +395,12 @@ struct IOSMiniAppChatCard: View {
                 Group {
                     if versions.isEmpty {
                         ContentUnavailableView(
-                            "暂无历史版本",
+                            IOSAppLocalization.string("暂无历史版本", defaultValue: "暂无历史版本"),
                             systemImage: "clock",
-                            description: Text("保存或修改小应用后会出现版本记录")
+                            description: Text(IOSAppLocalization.string(
+                                "保存或修改小应用后会出现版本记录",
+                                defaultValue: "保存或修改小应用后会出现版本记录"
+                            ))
                         )
                     } else {
                         List {
@@ -377,7 +410,7 @@ struct IOSMiniAppChatCard: View {
                                         Text("v\(version.versionNumber)")
                                             .font(.subheadline.weight(.semibold))
                                         if version.versionNumber == displayVersion {
-                                            Text("当前")
+                                            Text(IOSAppLocalization.string("当前", defaultValue: "当前"))
                                                 .font(.caption2.weight(.semibold))
                                                 .foregroundStyle(AmberTheme.accent)
                                                 .padding(.horizontal, 6)
@@ -389,7 +422,10 @@ struct IOSMiniAppChatCard: View {
                                             .font(.caption)
                                             .foregroundStyle(AmberTheme.muted)
                                     }
-                                    Text(version.changeNote ?? "小应用版本")
+                                    Text(version.changeNote ?? IOSAppLocalization.string(
+                                        "小应用版本",
+                                        defaultValue: "小应用版本"
+                                    ))
                                         .font(.caption)
                                         .foregroundStyle(AmberTheme.muted)
                                         .lineLimit(3)
@@ -402,11 +438,13 @@ struct IOSMiniAppChatCard: View {
                         .listStyle(.insetGrouped)
                     }
                 }
-                .navigationTitle("版本历史")
+                .navigationTitle(IOSAppLocalization.string("版本历史", defaultValue: "版本历史"))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
-                        Button("完成") { showVersionHistory = false }
+                        Button(IOSAppLocalization.string("完成", defaultValue: "完成")) {
+                            showVersionHistory = false
+                        }
                     }
                 }
             }
@@ -418,9 +456,9 @@ struct IOSMiniAppChatCard: View {
         }
         .alert(item: $exportError) { error in
             Alert(
-                title: Text("无法导出小应用"),
+                title: Text(IOSAppLocalization.string("无法导出小应用", defaultValue: "无法导出小应用")),
                 message: Text(error.message),
-                dismissButton: .default(Text("知道了"))
+                dismissButton: .default(Text(IOSAppLocalization.string("知道了", defaultValue: "知道了")))
             )
         }
     }
@@ -435,13 +473,20 @@ struct IOSMiniAppChatCard: View {
     }
 
     private func categoryLabel(_ raw: String) -> String {
+        let key: String?
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "tool": return "工具"
-        case "game": return "游戏"
-        case "info": return "信息"
-        case "custom": return "自定义"
-        default: return raw.isEmpty ? "小应用" : raw
+        case "tool": key = "工具"
+        case "game": key = "游戏"
+        case "info": key = "信息"
+        case "custom": key = "自定义"
+        default: key = nil
         }
+        guard let key else {
+            return raw.isEmpty
+                ? IOSAppLocalization.string("小应用", defaultValue: "小应用")
+                : raw
+        }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     /// Visual capsule height matches chat image actions (~28–30), not chunky
@@ -478,9 +523,10 @@ struct IOSMiniAppChatCard: View {
         emphasized: Bool,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        let localizedTitle = IOSAppLocalization.string(title, defaultValue: title)
+        return Button(action: action) {
             Label {
-                Text(title)
+                Text(localizedTitle)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             } icon: {
@@ -501,7 +547,7 @@ struct IOSMiniAppChatCard: View {
         // Visual capsule stays ~30; expand hit area without restyling.
         .frame(maxWidth: .infinity, minHeight: 44)
         .contentShape(Rectangle())
-        .accessibilityLabel(title)
+        .accessibilityLabel(localizedTitle)
     }
 
     private func refreshHeaderFromRepository() {
@@ -516,7 +562,10 @@ struct IOSMiniAppChatCard: View {
 
     private func exportHTML() {
         guard let record = repository.get(part.appId) else {
-            exportError = MiniAppExportError(message: "找不到这个小应用的已保存内容。")
+            exportError = MiniAppExportError(message: IOSAppLocalization.string(
+                "找不到这个小应用的已保存内容。",
+                defaultValue: "找不到这个小应用的已保存内容。"
+            ))
             return
         }
         let safeName = record.title
@@ -528,13 +577,20 @@ struct IOSMiniAppChatCard: View {
             try record.htmlContent.write(to: url, atomically: true, encoding: .utf8)
             exportShare = MiniAppExportShare(url: url)
         } catch {
-            exportError = MiniAppExportError(message: "无法写入导出文件：\(error.localizedDescription)")
+            exportError = MiniAppExportError(message: IOSAppLocalization.formatted(
+                "无法写入导出文件：%@",
+                defaultValue: "无法写入导出文件：%@",
+                arguments: [error.localizedDescription]
+            ))
         }
     }
 
     private static func formatDate(_ ms: Int64) -> String {
         Date(timeIntervalSince1970: TimeInterval(ms) / 1000)
-            .formatted(date: .abbreviated, time: .shortened)
+            .formatted(
+                Date.FormatStyle(date: .abbreviated, time: .shortened)
+                    .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+            )
     }
 }
 

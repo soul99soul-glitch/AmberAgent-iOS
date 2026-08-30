@@ -36,8 +36,11 @@ final class NovelWorkspaceLifecycleCoordinator {
         beginKeepAlive: @escaping BeginKeepAlive = { leaseId, onExpire in
             BackgroundGenerationKeepAlive.shared.begin(
                 leaseId,
-                title: "Amber 小说创作中",
-                subtitle: "后台生成",
+                title: IOSAppLocalization.string(
+                    "Amber 小说创作中",
+                    defaultValue: "Amber 小说创作中"
+                ),
+                subtitle: IOSAppLocalization.string("后台生成", defaultValue: "后台生成"),
                 onExpire: onExpire,
                 submitSystemTask: false
             )

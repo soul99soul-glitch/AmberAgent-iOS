@@ -22,8 +22,13 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private var currentConversationId: String?
     private var currentPresentation: AgentActivityPresentation?
     private var currentDecision: WatchDecision?
+    private var currentApprovalPrompt: ChatToolApprovalPrompt?
     private var currentSummary: String?
     private var pendingAskUser: WatchAskUserRequest?
+
+    private var resolvedLanguageCode: String {
+        IOSAppLanguagePreference.selected().resolvedLanguage().rawValue
+    }
 
     init(bridge: WatchConnectivityBridge = .shared) {
         self.bridge = bridge
@@ -44,7 +49,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                     presentation: .reconnecting(kind: .response)
                 )
             } else {
-                bridge.clear()
+                bridge.clear(languageCode: resolvedLanguageCode)
             }
         } else {
             republish()
@@ -61,6 +66,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         if currentRunId != runId {
             currentSummary = nil
             currentDecision = nil
+            currentApprovalPrompt = nil
             pendingAskUser = nil
         }
         currentRunId = runId
@@ -73,12 +79,14 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             || presentation.phase == .failed
             || presentation.phase == .cancelled {
             currentDecision = nil
+            currentApprovalPrompt = nil
             pendingAskUser = nil
         } else if let decision {
             currentDecision = decision
         } else if presentation.phase != .waitingForUser {
             // Running/tool stages replace a previous decision node.
             currentDecision = nil
+            currentApprovalPrompt = nil
             pendingAskUser = nil
         }
         republish()
@@ -94,8 +102,12 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             runId: runId,
             conversationId: conversationId,
             presentation: .waitingForUser(kind: prompt.activityKind),
-            decision: WatchTaskSnapshotBuilder.decision(from: prompt)
+            decision: WatchTaskSnapshotBuilder.decision(
+                from: prompt,
+                languageCode: resolvedLanguageCode
+            )
         )
+        currentApprovalPrompt = prompt
     }
 
     func publishAskUser(
@@ -103,11 +115,15 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         conversationId: String?,
         request: WatchAskUserRequest
     ) {
+        currentApprovalPrompt = nil
         publish(
             runId: runId,
             conversationId: conversationId,
             presentation: .waitingForUser(kind: .workflow),
-            decision: WatchTaskSnapshotBuilder.askUserDecision(from: request)
+            decision: WatchTaskSnapshotBuilder.askUserDecision(
+                from: request,
+                languageCode: resolvedLanguageCode
+            )
         )
         pendingAskUser = request
     }
@@ -140,13 +156,29 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         currentConversationId = nil
         currentPresentation = nil
         currentDecision = nil
+        currentApprovalPrompt = nil
         currentSummary = nil
         pendingAskUser = nil
-        bridge.clear()
+        bridge.clear(languageCode: resolvedLanguageCode)
     }
 
     func currentSnapshot() -> WatchTaskSnapshot {
         bridge.latestSnapshot
+    }
+
+    func refreshLanguage() {
+        if let currentApprovalPrompt {
+            currentDecision = WatchTaskSnapshotBuilder.decision(
+                from: currentApprovalPrompt,
+                languageCode: resolvedLanguageCode
+            )
+        } else if let pendingAskUser {
+            currentDecision = WatchTaskSnapshotBuilder.askUserDecision(
+                from: pendingAskUser,
+                languageCode: resolvedLanguageCode
+            )
+        }
+        republish()
     }
 
     func handleWatchAction(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult {
@@ -286,7 +318,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private func republish() {
         guard let runId = currentRunId,
               let presentation = currentPresentation else {
-            bridge.clear()
+            bridge.clear(languageCode: resolvedLanguageCode)
             return
         }
         let snapshot = WatchTaskSnapshotBuilder.make(
@@ -294,7 +326,8 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             conversationId: currentConversationId,
             presentation: presentation,
             summary: currentSummary,
-            decision: currentDecision
+            decision: currentDecision,
+            languageCode: resolvedLanguageCode
         )
         bridge.publish(snapshot)
     }
@@ -307,7 +340,13 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             requestId: request.requestId,
             runId: request.runId,
             accepted: true,
-            message: message,
+            message: message.map {
+                WatchTaskLocalization.string(
+                    $0,
+                    defaultValue: $0,
+                    languageCode: resolvedLanguageCode
+                )
+            },
             snapshot: bridge.latestSnapshot
         )
     }
@@ -320,7 +359,11 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             requestId: request.requestId,
             runId: request.runId,
             accepted: false,
-            message: message,
+            message: WatchTaskLocalization.string(
+                message,
+                defaultValue: message,
+                languageCode: resolvedLanguageCode
+            ),
             snapshot: bridge.latestSnapshot
         )
     }

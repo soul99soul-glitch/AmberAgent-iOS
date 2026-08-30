@@ -55,8 +55,9 @@ struct SelectedDocumentReadResult: Hashable {
     let note: String?
 
     var byteSummary: String {
-        guard totalBytes > 0 else { return "\(bytesRead) bytes" }
-        return "\(bytesRead)/\(totalBytes) bytes"
+        let read = DocumentAccessStore.formatBytes(Int64(bytesRead))
+        guard totalBytes > 0 else { return read }
+        return "\(read)/\(DocumentAccessStore.formatBytes(totalBytes))"
     }
 
     var statusSummary: String {
@@ -74,14 +75,16 @@ enum IOSWorkspaceFileStatus: String, Codable, Hashable {
     case needsReauthorization
 
     var title: String {
+        let key: String
         switch self {
-        case .ready: "Ready"
-        case .missing: "Missing"
-        case .parseFailed: "Parse failed"
-        case .unsupported: "Unsupported"
-        case .tooLarge: "Too large"
-        case .needsReauthorization: "Needs reauthorization"
+        case .ready: key = "Ready"
+        case .missing: key = "Missing"
+        case .parseFailed: key = "Parse failed"
+        case .unsupported: key = "Unsupported"
+        case .tooLarge: key = "Too large"
+        case .needsReauthorization: key = "Needs reauthorization"
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 }
 
@@ -97,15 +100,17 @@ enum IOSWorkspaceArtifactType: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var title: String {
+        let key: String
         switch self {
-        case .chat: "Chat"
-        case .deepRead: "Deep Read"
-        case .webMount: "WebMount"
-        case .miniApp: "Mini App"
-        case .image: "Image"
-        case .note: "Note"
-        case .file: "File"
+        case .chat: key = "Chat"
+        case .deepRead: key = "Deep Read"
+        case .webMount: key = "WebMount"
+        case .miniApp: key = "Mini App"
+        case .image: key = "Image"
+        case .note: key = "Note"
+        case .file: key = "File"
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 }
 
@@ -1413,10 +1418,11 @@ final class DocumentAccessStore {
     }
 
     nonisolated static func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        formatter.allowedUnits = bytes >= 1024 * 1024 ? [.useMB] : [.useKB, .useBytes]
-        return formatter.string(fromByteCount: bytes)
+        let units: ByteCountFormatStyle.Units = bytes >= 1024 * 1024 ? [.mb] : [.kb, .bytes]
+        return bytes.formatted(
+            .byteCount(style: .file, allowedUnits: units)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
     }
 
     static func scopeDigest(for url: URL) -> String {

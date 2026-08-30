@@ -167,7 +167,7 @@ struct NovelIMETextField: UIViewRepresentable {
     func makeUIView(context: Context) -> UITextField {
         let textField = UITextField()
         textField.delegate = context.coordinator
-        textField.placeholder = placeholder
+        textField.placeholder = IOSAppLocalization.string(placeholder, defaultValue: placeholder)
         textField.text = text
         textField.font = .preferredFont(forTextStyle: .body)
         textField.adjustsFontForContentSizeCategory = true
@@ -192,7 +192,7 @@ struct NovelIMETextField: UIViewRepresentable {
         context.coordinator.text = $text
         context.coordinator.bank = bank
         bank?.register(context.coordinator)
-        textField.placeholder = placeholder
+        textField.placeholder = IOSAppLocalization.string(placeholder, defaultValue: placeholder)
         textField.isEnabled = isEnabled
         // Never clobber an in-progress composition, and never replace equal text
         // (avoids caret jumps that also break IME).
@@ -382,7 +382,7 @@ struct NovelIMETextEditor: UIViewRepresentable {
         }
 
         func refreshPlaceholder() {
-            placeholderLabel.text = placeholder
+            placeholderLabel.text = IOSAppLocalization.string(placeholder, defaultValue: placeholder)
             let isEmpty = (textView?.text ?? "").isEmpty
             placeholderLabel.isHidden = !isEmpty || placeholder.isEmpty
         }
@@ -410,9 +410,9 @@ enum NovelWorkspaceSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .creation: "创作"
-        case .manuscript: "正文"
-        case .compendium: "设定"
+        case .creation: IOSAppLocalization.string("创作", defaultValue: "创作")
+        case .manuscript: IOSAppLocalization.string("正文", defaultValue: "正文")
+        case .compendium: IOSAppLocalization.string("设定", defaultValue: "设定")
         }
     }
 }
@@ -427,10 +427,10 @@ enum NovelCompendiumSection: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .characters: "角色"
-        case .world: "世界观"
-        case .story: "剧情"
-        case .more: "更多"
+        case .characters: IOSAppLocalization.string("角色", defaultValue: "角色")
+        case .world: IOSAppLocalization.string("世界观", defaultValue: "世界观")
+        case .story: IOSAppLocalization.string("剧情", defaultValue: "剧情")
+        case .more: IOSAppLocalization.string("更多", defaultValue: "更多")
         }
     }
 }
@@ -438,8 +438,8 @@ enum NovelCompendiumSection: String, CaseIterable, Identifiable {
 extension NovelProjectCreationMode {
     var displayName: String {
         switch self {
-        case .blank: "空白项目"
-        case .quickStart: "快速开始"
+        case .blank: IOSAppLocalization.string("空白项目", defaultValue: "空白项目")
+        case .quickStart: IOSAppLocalization.string("快速开始", defaultValue: "快速开始")
         }
     }
 }
@@ -447,13 +447,15 @@ extension NovelProjectCreationMode {
 extension NovelMaterialKind {
     var displayName: String {
         switch self {
-        case .world: "世界观"
-        case .character: "人物档案"
-        case .relationship: "人物关系"
-        case .masterOutline: "总剧情大纲"
-        case .writingRequirements: "写作要求"
-        case .decisionLog: "讨论决定"
-        case .custom(let name): name.isEmpty ? "自定义" : name
+        case .world: IOSAppLocalization.string("世界观", defaultValue: "世界观")
+        case .character: IOSAppLocalization.string("人物档案", defaultValue: "人物档案")
+        case .relationship: IOSAppLocalization.string("人物关系", defaultValue: "人物关系")
+        case .masterOutline: IOSAppLocalization.string("总剧情大纲", defaultValue: "总剧情大纲")
+        case .writingRequirements: IOSAppLocalization.string("写作要求", defaultValue: "写作要求")
+        case .decisionLog: IOSAppLocalization.string("讨论决定", defaultValue: "讨论决定")
+        case .custom(let name): name.isEmpty
+                ? IOSAppLocalization.string("自定义", defaultValue: "自定义")
+                : name
         }
     }
 
@@ -473,9 +475,9 @@ extension NovelMaterialKind {
 extension NovelInjectionMode {
     var displayName: String {
         switch self {
-        case .always: "常驻"
-        case .smart: "智能"
-        case .off: "关闭"
+        case .always: IOSAppLocalization.string("常驻", defaultValue: "常驻")
+        case .smart: IOSAppLocalization.string("智能", defaultValue: "智能")
+        case .off: IOSAppLocalization.string("关闭", defaultValue: "关闭")
         }
     }
 
@@ -491,8 +493,8 @@ extension NovelInjectionMode {
 extension NovelGenerationGranularity {
     var displayName: String {
         switch self {
-        case .continuation: "续写片段"
-        case .wholeChapter: "生成整章"
+        case .continuation: IOSAppLocalization.string("续写片段", defaultValue: "续写片段")
+        case .wholeChapter: IOSAppLocalization.string("生成整章", defaultValue: "生成整章")
         }
     }
 }
@@ -500,8 +502,8 @@ extension NovelGenerationGranularity {
 extension NovelBranchSyncStatus {
     var displayName: String {
         switch self {
-        case .synchronized: "已同步"
-        case .needsSync: "资料待整理"
+        case .synchronized: IOSAppLocalization.string("已同步", defaultValue: "已同步")
+        case .needsSync: IOSAppLocalization.string("资料待整理", defaultValue: "资料待整理")
         }
     }
 }
@@ -509,13 +511,13 @@ extension NovelBranchSyncStatus {
 extension NovelCheckpointKind {
     var displayName: String {
         switch self {
-        case .initial: "初始"
-        case .collection: "正文收录"
-        case .manualSync: "手动同步"
-        case .discussionArchive: "讨论归档"
-        case .identityClarification: "人物说明"
-        case .polish: "整章润色"
-        case .restore: "版本恢复"
+        case .initial: IOSAppLocalization.string("初始", defaultValue: "初始")
+        case .collection: IOSAppLocalization.string("正文收录", defaultValue: "正文收录")
+        case .manualSync: IOSAppLocalization.string("手动同步", defaultValue: "手动同步")
+        case .discussionArchive: IOSAppLocalization.string("讨论归档", defaultValue: "讨论归档")
+        case .identityClarification: IOSAppLocalization.string("人物说明", defaultValue: "人物说明")
+        case .polish: IOSAppLocalization.string("整章润色", defaultValue: "整章润色")
+        case .restore: IOSAppLocalization.string("版本恢复", defaultValue: "版本恢复")
         }
     }
 }
@@ -523,10 +525,10 @@ extension NovelCheckpointKind {
 extension NovelChapterVersionKind {
     var displayName: String {
         switch self {
-        case .collected: "正文收录"
-        case .manualEdit: "手动编辑"
-        case .polish: "整章润色"
-        case .restore: "版本恢复"
+        case .collected: IOSAppLocalization.string("正文收录", defaultValue: "正文收录")
+        case .manualEdit: IOSAppLocalization.string("手动编辑", defaultValue: "手动编辑")
+        case .polish: IOSAppLocalization.string("整章润色", defaultValue: "整章润色")
+        case .restore: IOSAppLocalization.string("版本恢复", defaultValue: "版本恢复")
         }
     }
 }
@@ -534,33 +536,235 @@ extension NovelChapterVersionKind {
 extension NovelInjectionSelectionReason {
     var displayName: String {
         switch self {
-        case .requiredPrompt: "系统指令"
-        case .requiredPolishPreference: "润色偏好"
-        case .confirmedChapterPlan: "本章计划"
-        case .recentWrittenHighlights: "近期已写要点"
-        case .upcomingArc: "往后几章"
-        case .requiredUserInput: "本次输入"
-        case .requiredCurrentState: "当前分支状态"
-        case .requiredQuickStartSeed: "快速开始信息"
-        case .currentChapterTail: "当前章尾"
-        case .previousChapterTail: "上一章尾"
-        case .fullSourceChapter: "完整来源章节"
-        case .archivedDiscussion: "归档讨论摘要"
-        case .recentSession: "近期对话"
-        case .branchEventHistory: "分支事件"
-        case .branchOverride: "分支覆盖"
-        case .always: "常驻资料"
-        case .forceIncluded: "本次加入"
-        case .smartMatch: "智能匹配"
-        case .forceExcluded: "本次排除"
-        case .disabled: "默认关闭"
-        case .noSmartMatch: "未匹配"
-        case .budgetTrimmed: "预算裁剪"
+        case .requiredPrompt: IOSAppLocalization.string("系统指令", defaultValue: "系统指令")
+        case .requiredPolishPreference: IOSAppLocalization.string("润色偏好", defaultValue: "润色偏好")
+        case .confirmedChapterPlan: IOSAppLocalization.string("本章计划", defaultValue: "本章计划")
+        case .recentWrittenHighlights: IOSAppLocalization.string("近期已写要点", defaultValue: "近期已写要点")
+        case .upcomingArc: IOSAppLocalization.string("往后几章", defaultValue: "往后几章")
+        case .requiredUserInput: IOSAppLocalization.string("本次输入", defaultValue: "本次输入")
+        case .requiredCurrentState: IOSAppLocalization.string("当前分支状态", defaultValue: "当前分支状态")
+        case .requiredQuickStartSeed: IOSAppLocalization.string("快速开始信息", defaultValue: "快速开始信息")
+        case .currentChapterTail: IOSAppLocalization.string("当前章尾", defaultValue: "当前章尾")
+        case .previousChapterTail: IOSAppLocalization.string("上一章尾", defaultValue: "上一章尾")
+        case .fullSourceChapter: IOSAppLocalization.string("完整来源章节", defaultValue: "完整来源章节")
+        case .archivedDiscussion: IOSAppLocalization.string("归档讨论摘要", defaultValue: "归档讨论摘要")
+        case .recentSession: IOSAppLocalization.string("近期对话", defaultValue: "近期对话")
+        case .branchEventHistory: IOSAppLocalization.string("分支事件", defaultValue: "分支事件")
+        case .branchOverride: IOSAppLocalization.string("分支覆盖", defaultValue: "分支覆盖")
+        case .always: IOSAppLocalization.string("常驻资料", defaultValue: "常驻资料")
+        case .forceIncluded: IOSAppLocalization.string("本次加入", defaultValue: "本次加入")
+        case .smartMatch: IOSAppLocalization.string("智能匹配", defaultValue: "智能匹配")
+        case .forceExcluded: IOSAppLocalization.string("本次排除", defaultValue: "本次排除")
+        case .disabled: IOSAppLocalization.string("默认关闭", defaultValue: "默认关闭")
+        case .noSmartMatch: IOSAppLocalization.string("未匹配", defaultValue: "未匹配")
+        case .budgetTrimmed: IOSAppLocalization.string("预算裁剪", defaultValue: "预算裁剪")
         }
     }
 }
 
 enum NovelPresentation {
+    private static let localizedErrorMessageKeys: [String] = [
+        "网络或模型连接中断，请重试。",
+        "模型提取的事实依据与正文不一致，候选正文仍然保留，可以重新同步。",
+        "模型提取的人物称谓没有和资料对齐，候选正文仍然保留，可以重新同步。",
+        "模型更新了剧情摘要，但没有给出对应正文依据，候选正文仍然保留，可以重新同步。",
+        "同步期间项目内容发生了变化，请重新载入后再试。",
+        "这次生成的重试状态已失效，请重新发送请求。",
+        "请求内容为空，请重新输入后再试。",
+        "模型输入预算无效，请检查项目模型设置后重试。",
+        "这个问题已经回答过了。请直接发送新消息继续，或换个问法。",
+        "原来的追问已失效，请直接发送新消息继续。",
+        "这次讨论请求格式无效，请直接重新发送。",
+        "删除章节时正文已变化，请重新载入后再试。",
+        "这一章已经不在当前正文目录里。",
+        "请先完成当前分支未完成的正文操作，再删除章节。",
+        "当前操作的内容或项目状态不匹配，请重新载入后再试。",
+        "生成已取消。",
+        "还没有可用的全局聊天模型，请先在设置里配好服务商和默认模型。",
+        "项目绑定的模型已失效（服务商或模型 ID 已变）。请在右上角「项目模型覆盖」重新选择，或改回跟随全局。",
+        "项目模型当前不可用，请在右上角“设置”的“项目模型覆盖”中重新选择。",
+        "模型返回的创作建议格式不完整，请重新生成。",
+        "模型返回的结果格式不完整，请重新生成。",
+        "模型没有返回内容，请重新生成。",
+        "内容已经生成，但保存失败，请重试保存。",
+        "生成暂时失败，请稍后重试。",
+        "生成没有完成，请检查项目模型或输入后重试。",
+        "设备当前无网络，请恢复网络后重试。",
+        "模型请求超时，已保留当前回复，可以重试。",
+        "模型请求超时，请检查网络后重试。",
+        "安全连接失败，请检查网络或代理后重试。",
+        "网络连接中断，已保留当前回复，可以重试。若反复出现，请换一个创作模型。",
+        "网络连接中断，请重试。若反复出现，请到小说设置换一个创作模型。",
+        "网络或模型连接中断，请重试。若反复出现，请到小说设置换一个创作模型。",
+        "模型上游服务在生成过程中中断，已保留当前回复，可以重试。",
+        "剧情状态同步失败，请重试。",
+        "剧情同步失败：正文与检查点不一致（常见于删章后）。请点重试；仍失败再点「重新载入」。",
+        "剧情同步模型返回的格式无法读取，请重试；若反复出现，请更换剧情同步模型。",
+        "剧情状态同步已取消，可以重试。",
+        "剧情同步失败：目录结构已变（如删过章节），正在按新规则处理。请再点重试。",
+        "没有待同步的改写。",
+        "同步前正文又变了，请点「重新载入」后再同步。",
+        "项目版本已更新，请点「重新载入」后再同步。",
+        "找不到可用的剧情基线，请点「重新载入」后再同步。",
+        "剧情同步超时，请重试；大项目可换更快的同步模型。",
+        "剧情同步模型返回的 JSON 无法解析，输出可能被截断；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回的不是 JSON 对象；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回的 JSON 缺少必需字段；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回了契约之外的字段；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回的 JSON 存在重复字段；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回的字段类型不符合契约；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回了不支持的数据版本；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回了不符合契约的取值；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型返回了重复的标识符；若反复出现，请更换剧情同步模型。",
+        "剧情同步模型引用了不存在的条目；若反复出现，请更换剧情同步模型。",
+        "建议生成已中断，可以重新生成。",
+        "尚未生成创作建议，可以重新生成。",
+        "建议生成失败，可以重新生成。",
+        "生成状态尚未收口，请重新载入后再继续。",
+    ]
+
+    private static func localized(_ key: String) -> String {
+        IOSAppLocalization.string(key, defaultValue: key)
+    }
+
+    private static func localizedFormat(_ key: String, arguments: [CVarArg]) -> String {
+        IOSAppLocalization.formatted(key, defaultValue: key, arguments: arguments)
+    }
+
+    private static func matchesLocalizedCopy(_ message: String, key: String) -> Bool {
+        IOSAppLanguage.explicitLanguages.contains { language in
+            IOSAppLocalization.string(
+                key,
+                defaultValue: key,
+                language: language
+            ) == message
+        }
+    }
+
+    /// Re-localizes fixed error copy held by an in-memory status/banner.
+    /// Unknown text is returned byte-for-byte so model, user, and external
+    /// diagnostics do not get translated or rewritten at this boundary.
+    static func localizedCachedErrorMessage(_ message: String) -> String {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return message }
+
+        for key in localizedErrorMessageKeys {
+            if matchesLocalizedCopy(trimmed, key: key) {
+                return localized(key)
+            }
+        }
+
+        // The state-sync count suffix contains durable progress, so only the
+        // fixed format is localized and the two numbers are carried through.
+        for language in IOSAppLanguage.explicitLanguages {
+            if let match = completedChunkMessageMatch(trimmed, language: language) {
+                return localizedFormat(
+                    "%@ 已保存 %lld 段进度，重试从第 %lld 段继续。",
+                    arguments: [
+                        localizedCachedErrorMessage(match.base),
+                        match.completed,
+                        match.next,
+                    ]
+                )
+            }
+        }
+
+        // Keep a state-sync prefix in the current language while preserving the
+        // raw diagnostic that follows it.
+        let prefixKey = "剧情同步失败：%@"
+        let marker = "__amber_error_detail__"
+        for language in IOSAppLanguage.explicitLanguages {
+            let sample = IOSAppLocalization.formatted(
+                prefixKey,
+                defaultValue: prefixKey,
+                arguments: [marker],
+                language: language
+            )
+            guard let markerRange = sample.range(of: marker) else { continue }
+            let prefix = String(sample[..<markerRange.lowerBound])
+            let suffix = String(sample[markerRange.upperBound...])
+            guard trimmed.hasPrefix(prefix),
+                  trimmed.hasSuffix(suffix),
+                  trimmed.count >= prefix.count + suffix.count else { continue }
+            let start = trimmed.index(trimmed.startIndex, offsetBy: prefix.count)
+            let end = trimmed.index(trimmed.endIndex, offsetBy: -suffix.count)
+            let detail = String(trimmed[start..<end])
+            return localizedFormat(prefixKey, arguments: [detail])
+        }
+
+        return message
+    }
+
+    static func shouldOfferReload(for message: String) -> Bool {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        if localizedErrorMessageKeys.contains(where: { key in
+            guard key.contains("重新载入") || key.contains("刷新后") else { return false }
+            return matchesLocalizedCopy(trimmed, key: key)
+        }) {
+            return true
+        }
+
+        // Preserve the reload affordance when a cached sync error includes
+        // completed-chunk progress around a fixed reload message.
+        for language in IOSAppLanguage.explicitLanguages {
+            if let match = completedChunkMessageMatch(trimmed, language: language) {
+                return shouldOfferReload(for: match.base)
+            }
+        }
+        return false
+    }
+
+    private static func completedChunkMessageMatch(
+        _ message: String,
+        language: IOSAppLanguage
+    ) -> (base: String, completed: Int64, next: Int64)? {
+        let key = "%@ 已保存 %lld 段进度，重试从第 %lld 段继续。"
+        let marker = "__amber_error_base__"
+        let sample = IOSAppLocalization.formatted(
+            key,
+            defaultValue: key,
+            arguments: [marker, Int64(9137), Int64(4821)],
+            language: language
+        )
+        guard let markerRange = sample.range(of: marker),
+              let firstRange = sample.range(of: "9137", range: markerRange.upperBound..<sample.endIndex),
+              let secondRange = sample.range(of: "4821", range: firstRange.upperBound..<sample.endIndex),
+              message.hasPrefix(String(sample[..<markerRange.lowerBound])) else {
+            return nil
+        }
+
+        let prefix = String(sample[..<markerRange.lowerBound])
+        let middle = String(sample[markerRange.upperBound..<firstRange.lowerBound])
+        let betweenNumbers = String(sample[firstRange.upperBound..<secondRange.lowerBound])
+        let suffix = String(sample[secondRange.upperBound...])
+        var remainder = message.dropFirst(prefix.count)
+        guard let middleRange = remainder.range(of: middle) else { return nil }
+        let base = String(remainder[..<middleRange.lowerBound])
+        remainder = remainder[middleRange.upperBound...]
+        guard let first = consumeASCIIInteger(from: remainder) else { return nil }
+        remainder = first.remainder
+        guard remainder.hasPrefix(betweenNumbers) else { return nil }
+        remainder = remainder.dropFirst(betweenNumbers.count)
+        guard let second = consumeASCIIInteger(from: remainder),
+              second.remainder == suffix else { return nil }
+        return (base, first.value, second.value)
+    }
+
+    private static func consumeASCIIInteger(
+        from text: Substring
+    ) -> (value: Int64, remainder: Substring)? {
+        var end = text.startIndex
+        while end < text.endIndex {
+            let scalar = text[end].unicodeScalars.first?.value ?? 0
+            guard scalar >= 48, scalar <= 57 else { break }
+            end = text.index(after: end)
+        }
+        guard end > text.startIndex,
+              let value = Int64(text[..<end]) else { return nil }
+        return (value, text[end...])
+    }
+
     static func chapterDisplayTitle(
         storedTitle: String,
         content: String,
@@ -588,79 +792,79 @@ enum NovelPresentation {
             let text = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
             if looksLikeTechnicalFailureDump(text) {
-                return "网络或模型连接中断，请重试。"
+                return localized("网络或模型连接中断，请重试。")
             }
-            return text
+            return localizedCachedErrorMessage(text)
         }
         if detail.contains("evidence outside the authoritative manuscript") {
-            return "模型提取的事实依据与正文不一致，候选正文仍然保留，可以重新同步。"
+            return localized("模型提取的事实依据与正文不一致，候选正文仍然保留，可以重新同步。")
         }
         if detail.contains("Unknown entity") ||
             detail.contains("newly unresolved entity") ||
             detail.contains("known project material") {
-            return "模型提取的人物称谓没有和资料对齐，候选正文仍然保留，可以重新同步。"
+            return localized("模型提取的人物称谓没有和资料对齐，候选正文仍然保留，可以重新同步。")
         }
         if detail.contains("without evidence-backed facts") {
-            return "模型更新了剧情摘要，但没有给出对应正文依据，候选正文仍然保留，可以重新同步。"
+            return localized("模型更新了剧情摘要，但没有给出对应正文依据，候选正文仍然保留，可以重新同步。")
         }
         if detail.contains("pending novel operation changed") {
-            return "同步期间项目内容发生了变化，请重新载入后再试。"
+            return localized("同步期间项目内容发生了变化，请重新载入后再试。")
         }
         if detail.contains("no pending terminal state") {
-            return "这次生成的重试状态已失效，请重新发送请求。"
+            return localized("这次生成的重试状态已失效，请重新发送请求。")
         }
         if detail.contains("cannot be empty") {
-            return "请求内容为空，请重新输入后再试。"
+            return localized("请求内容为空，请重新输入后再试。")
         }
         if detail.contains("input budget must be positive") {
-            return "模型输入预算无效，请检查项目模型设置后重试。"
+            return localized("模型输入预算无效，请检查项目模型设置后重试。")
         }
         if detail.contains("already been answered") {
-            return "这个问题已经回答过了。请直接发送新消息继续，或换个问法。"
+            return localized("这个问题已经回答过了。请直接发送新消息继续，或换个问法。")
         }
         if detail.contains("Ask User prompt no longer belongs") {
-            return "原来的追问已失效，请直接发送新消息继续。"
+            return localized("原来的追问已失效，请直接发送新消息继续。")
         }
         if detail.contains("discussion run shape is invalid") {
-            return "这次讨论请求格式无效，请直接重新发送。"
+            return localized("这次讨论请求格式无效，请直接重新发送。")
         }
         if detail.contains("while deleting the chapter") {
-            return "删除章节时正文已变化，请重新载入后再试。"
+            return localized("删除章节时正文已变化，请重新载入后再试。")
         }
         if detail.contains("not in the working manuscript") {
-            return "这一章已经不在当前正文目录里。"
+            return localized("这一章已经不在当前正文目录里。")
         }
         if detail.contains("before deleting a chapter") {
-            return "请先完成当前分支未完成的正文操作，再删除章节。"
+            return localized("请先完成当前分支未完成的正文操作，再删除章节。")
         }
         // 代笔等链路直接抛中文 invalidInput：原样透传，不抹成「重新载入」。
         if detail.unicodeScalars.contains(where: { (0x4E00...0x9FFF).contains($0.value) }),
            !looksLikeTechnicalFailureDump(detail) {
             return detail
         }
-        return "当前操作的内容或项目状态不匹配，请重新载入后再试。"
+        return localized("当前操作的内容或项目状态不匹配，请重新载入后再试。")
     }
 
     static func failureMessage(_ failure: NovelFailure) -> String {
         switch failure.code {
         case "cancelled", "polish_abandoned":
-            return "生成已取消。"
+            return localized("生成已取消。")
         case "global_model_missing", "global_provider_missing":
-            return "还没有可用的全局聊天模型，请先在设置里配好服务商和默认模型。"
+            return localized("还没有可用的全局聊天模型，请先在设置里配好服务商和默认模型。")
         case "fixed_provider_missing", "fixed_model_missing":
-            return "项目绑定的模型已失效（服务商或模型 ID 已变）。请在右上角「项目模型覆盖」重新选择，或改回跟随全局。"
+            return localized("项目绑定的模型已失效（服务商或模型 ID 已变）。请在右上角「项目模型覆盖」重新选择，或改回跟随全局。")
         case "effective_provider_missing", "provider_disabled",
              "model_not_chat", "model_unavailable", "grok_isolation_missing",
              "grok_isolation_unavailable", "grok_provider_invalid":
-            return "项目模型当前不可用，请在右上角“设置”的“项目模型覆盖”中重新选择。"
+            return localized("项目模型当前不可用，请在右上角“设置”的“项目模型覆盖”中重新选择。")
         case "invalid_quick_start_output":
-            return "模型返回的创作建议格式不完整，请重新生成。"
+            return localized("模型返回的创作建议格式不完整，请重新生成。")
         case "invalid_structured_output", "incomplete_polish_output", "invalid_polish_assessment":
-            return "模型返回的结果格式不完整，请重新生成。"
+            return localized("模型返回的结果格式不完整，请重新生成。")
         case "empty_completion":
-            return "模型没有返回内容，请重新生成。"
+            return localized("模型没有返回内容，请重新生成。")
         case "terminal_persist_failed":
-            return "内容已经生成，但保存失败，请重试保存。"
+            return localized("内容已经生成，但保存失败，请重试保存。")
         case "provider_stream_failed", "grok_web_stream_failed",
              "provider_background_disconnected", "provider_background_failed",
              "discussion_provider_failed":
@@ -680,8 +884,8 @@ enum NovelPresentation {
                 return message
             }
             return failure.isRetryable
-                ? "生成暂时失败，请稍后重试。"
-                : "生成没有完成，请检查项目模型或输入后重试。"
+                ? localized("生成暂时失败，请稍后重试。")
+                : localized("生成没有完成，请检查项目模型或输入后重试。")
         }
     }
 
@@ -723,46 +927,58 @@ enum NovelPresentation {
     ) -> String {
         let text = raw
         if text.contains("Code=-1009") || text.contains("似乎已断开与互联网") {
-            return "设备当前无网络，请恢复网络后重试。"
+            return localized("设备当前无网络，请恢复网络后重试。")
         }
         if text.contains("Code=-1001") || text.contains("请求超时") {
             return retainedPartial
-                ? "模型请求超时，已保留当前回复，可以重试。"
-                : "模型请求超时，请检查网络后重试。"
+                ? localized("模型请求超时，已保留当前回复，可以重试。")
+                : localized("模型请求超时，请检查网络后重试。")
         }
         if text.contains("Code=-1200") || text.contains("SSL") {
-            return "安全连接失败，请检查网络或代理后重试。"
+            return localized("安全连接失败，请检查网络或代理后重试。")
         }
         if text.contains("Code=-1005") || text.contains("网络连接已中断") {
             return retainedPartial
-                ? "网络连接中断，已保留当前回复，可以重试。若反复出现，请换一个创作模型。"
-                : "网络连接中断，请重试。若反复出现，请到小说设置换一个创作模型。"
+                ? localized("网络连接中断，已保留当前回复，可以重试。若反复出现，请换一个创作模型。")
+                : localized("网络连接中断，请重试。若反复出现，请到小说设置换一个创作模型。")
         }
         if retainedPartial {
-            return "模型上游服务在生成过程中中断，已保留当前回复，可以重试。"
+            return localized("模型上游服务在生成过程中中断，已保留当前回复，可以重试。")
         }
-        return "网络或模型连接中断，请重试。若反复出现，请到小说设置换一个创作模型。"
+        return localized("网络或模型连接中断，请重试。若反复出现，请到小说设置换一个创作模型。")
     }
 
     static func stateSyncFailureMessage(_ message: String) -> String {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            return "剧情状态同步失败，请重试。"
+            return localized("剧情状态同步失败，请重试。")
         }
-        // Already humanized short/medium copy from operationErrorMessage.
+
+        // A pending operation may hold an operation-level fixed message from a
+        // previous language. Keep the sync-specific presentation while mapping
+        // that cached copy to the current language.
         if trimmed == "状态不符，请重试。" ||
-            trimmed == "当前操作的内容或项目状态不匹配，请重新载入后再试。" {
-            return "剧情同步失败：正文与检查点不一致（常见于删章后）。请点重试；仍失败再点「重新载入」。"
+            matchesLocalizedCopy(
+                trimmed,
+                key: "当前操作的内容或项目状态不匹配，请重新载入后再试。"
+            ) {
+            return localized("剧情同步失败：正文与检查点不一致（常见于删章后）。请点重试；仍失败再点「重新载入」。")
         }
+        let cached = localizedCachedErrorMessage(trimmed)
+        if cached != trimmed {
+            return cached
+        }
+
+        // Already humanized short/medium copy from operationErrorMessage.
         if trimmed == "The model returned malformed JSON." ||
             trimmed == "The model returned more than one JSON object." ||
             trimmed == "The model output must be one JSON object." ||
             trimmed.localizedCaseInsensitiveContains("missing required fields") {
-            return "剧情同步模型返回的格式无法读取，请重试；若反复出现，请更换剧情同步模型。"
+            return localized("剧情同步模型返回的格式无法读取，请重试；若反复出现，请更换剧情同步模型。")
         }
         if trimmed == "The fact synchronization was cancelled and can be retried." ||
             trimmed == "剧情状态同步已取消，可以重试。" {
-            return "剧情状态同步已取消，可以重试。"
+            return localized("剧情状态同步已取消，可以重试。")
         }
         // 结构化分类文案（stateSyncStructuredFailureMessage）原样透出：其中 4 条含
         // "JSON" 等 ASCII 术语，若落到下方的纯中文判定会被折叠回通用文案。
@@ -771,20 +987,20 @@ enum NovelPresentation {
         }
         if trimmed.localizedCaseInsensitiveContains("manual-edit suffix") ||
             trimmed.localizedCaseInsensitiveContains("manual synchronization suffix") {
-            return "剧情同步失败：目录结构已变（如删过章节），正在按新规则处理。请再点重试。"
+            return localized("剧情同步失败：目录结构已变（如删过章节），正在按新规则处理。请再点重试。")
         }
         if trimmed.localizedCaseInsensitiveContains("no manual edits") {
-            return "没有待同步的改写。"
+            return localized("没有待同步的改写。")
         }
         if trimmed.localizedCaseInsensitiveContains("working manuscript changed") {
-            return "同步前正文又变了，请点「重新载入」后再同步。"
+            return localized("同步前正文又变了，请点「重新载入」后再同步。")
         }
         // Only real stale-guard phrases — not every string containing "revision".
         if trimmed.localizedCaseInsensitiveContains("is stale") {
-            return "项目版本已更新，请点「重新载入」后再同步。"
+            return localized("项目版本已更新，请点「重新载入」后再同步。")
         }
         if trimmed.localizedCaseInsensitiveContains("No valid rebuild base") {
-            return "找不到可用的剧情基线，请点「重新载入」后再同步。"
+            return localized("找不到可用的剧情基线，请点「重新载入」后再同步。")
         }
         let containsChinese = trimmed.unicodeScalars.contains {
             (0x4E00...0x9FFF).contains($0.value)
@@ -795,16 +1011,16 @@ enum NovelPresentation {
         // Pure Chinese timeout copy (not mixed dumps like "请求失败：upstream timeout").
         if containsChinese, !containsASCIILetter,
            trimmed.contains("超时") || trimmed.localizedCaseInsensitiveContains("timeout") {
-            return "剧情同步超时，请重试；大项目可换更快的同步模型。"
+            return localized("剧情同步超时，请重试；大项目可换更快的同步模型。")
         }
         if containsChinese, !containsASCIILetter {
             // Keep banner-friendly: one short sentence if possible.
             if trimmed.count <= 28 { return trimmed }
             if trimmed.hasPrefix("剧情") { return trimmed }
-            return "剧情同步失败：\(trimmed)"
+            return localizedFormat("剧情同步失败：%@", arguments: [trimmed])
         }
         // English / mixed technical detail — short, no false "reopen project".
-        return "剧情状态同步失败，请重试。"
+        return localized("剧情状态同步失败，请重试。")
     }
 
     /// When some durable chunks already landed, tell the user retry won't reburn them.
@@ -814,7 +1030,14 @@ enum NovelPresentation {
     ) -> String {
         let base = stateSyncFailureMessage(message)
         guard completedChunkCount > 0 else { return base }
-        return "\(base) 已保存 \(completedChunkCount) 段进度，重试从第 \(completedChunkCount + 1) 段继续。"
+        return localizedFormat(
+            "%@ 已保存 %lld 段进度，重试从第 %lld 段继续。",
+            arguments: [
+                base,
+                Int64(completedChunkCount),
+                Int64(completedChunkCount + 1),
+            ]
+        )
     }
 
     /// 结构化输出失败分类 → banner 可直接展示的中文原因。
@@ -824,28 +1047,27 @@ enum NovelPresentation {
     static func stateSyncStructuredFailureMessage(
         _ failure: NovelStructuredOutputFailure
     ) -> String {
-        let retryHint = "若反复出现，请更换剧情同步模型。"
         switch failure.category {
         case .malformedJSON:
-            return "剧情同步模型返回的 JSON 无法解析，输出可能被截断；\(retryHint)"
+            return localized("剧情同步模型返回的 JSON 无法解析，输出可能被截断；若反复出现，请更换剧情同步模型。")
         case .expectedObject:
-            return "剧情同步模型返回的不是 JSON 对象；\(retryHint)"
+            return localized("剧情同步模型返回的不是 JSON 对象；若反复出现，请更换剧情同步模型。")
         case .missingField:
-            return "剧情同步模型返回的 JSON 缺少必需字段；\(retryHint)"
+            return localized("剧情同步模型返回的 JSON 缺少必需字段；若反复出现，请更换剧情同步模型。")
         case .unknownField:
-            return "剧情同步模型返回了契约之外的字段；\(retryHint)"
+            return localized("剧情同步模型返回了契约之外的字段；若反复出现，请更换剧情同步模型。")
         case .duplicateKey:
-            return "剧情同步模型返回的 JSON 存在重复字段；\(retryHint)"
+            return localized("剧情同步模型返回的 JSON 存在重复字段；若反复出现，请更换剧情同步模型。")
         case .typeMismatch:
-            return "剧情同步模型返回的字段类型不符合契约；\(retryHint)"
+            return localized("剧情同步模型返回的字段类型不符合契约；若反复出现，请更换剧情同步模型。")
         case .unsupportedVersion:
-            return "剧情同步模型返回了不支持的数据版本；\(retryHint)"
+            return localized("剧情同步模型返回了不支持的数据版本；若反复出现，请更换剧情同步模型。")
         case .invalidValue:
-            return "剧情同步模型返回了不符合契约的取值；\(retryHint)"
+            return localized("剧情同步模型返回了不符合契约的取值；若反复出现，请更换剧情同步模型。")
         case .duplicateIdentifier:
-            return "剧情同步模型返回了重复的标识符；\(retryHint)"
+            return localized("剧情同步模型返回了重复的标识符；若反复出现，请更换剧情同步模型。")
         case .invalidReference:
-            return "剧情同步模型引用了不存在的条目；\(retryHint)"
+            return localized("剧情同步模型引用了不存在的条目；若反复出现，请更换剧情同步模型。")
         }
     }
 
@@ -1197,7 +1419,7 @@ extension NovelPresentation {
                     checkOverwrite: true
                   ),
                   provider.enabled else {
-                return "全局模型不可用"
+                return IOSAppLocalization.string("全局模型不可用", defaultValue: "全局模型不可用")
             }
             let name = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             return name.isEmpty ? model.modelId : name
@@ -1209,7 +1431,7 @@ extension NovelPresentation {
             let model = provider.models.first(where: {
                 $0.id.description() == modelID
             }) else {
-                return "固定模型不可用"
+                return IOSAppLocalization.string("固定模型不可用", defaultValue: "固定模型不可用")
             }
             let name = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
             return name.isEmpty ? model.modelId : name

@@ -125,9 +125,15 @@ enum IOSDeepReadLauncher {
         }
 
         store.markRunning(id: taskId)
-        updateProgress(0, "准备生成")
+        updateProgress(
+            0,
+            IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
+        )
 
-        updateProgress(1, "正在搜索补充来源")
+        updateProgress(
+            1,
+            IOSAppLocalization.string("正在搜索补充来源", defaultValue: "正在搜索补充来源")
+        )
         let searched = await searchSourcesForDeepRead(title: running.title, settings: sharedSettings.snapshot)
         guard isCurrentRun() else { return false }
 
@@ -135,12 +141,19 @@ enum IOSDeepReadLauncher {
         let scrapeBase: Int64 = 2
         let generationBase = scrapeBase + Int64(max(mergedSources.count, 1))
         progressTotal = generationBase + 5
-        updateProgress(2, "正在抓取网页正文", total: progressTotal)
+        updateProgress(
+            2,
+            IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文"),
+            total: progressTotal
+        )
         let enriched = await enrichSourcesWithScrape(
             mergedSources,
             settings: sharedSettings.snapshot,
             onSourceProgress: { index, total in
-                updateProgress(scrapeBase + Int64(index), "正在抓取网页正文 \(index)/\(total)")
+                updateProgress(
+                    scrapeBase + Int64(index),
+                    "\(IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文")) \(index)/\(total)"
+                )
             }
         )
         guard isCurrentRun() else { return false }
@@ -150,7 +163,10 @@ enum IOSDeepReadLauncher {
         guard enriched.contains(where: isUsableSourceForGeneration) else {
             return failRun(
                 taskId: taskId,
-                message: "深度阅读生成失败：没有可用来源，请检查搜索/网页抓取配置后重试。",
+                message: IOSAppLocalization.string(
+                    "深度阅读生成失败：没有可用来源，请检查搜索/网页抓取配置后重试。",
+                    defaultValue: "深度阅读生成失败：没有可用来源，请检查搜索/网页抓取配置后重试。"
+                ),
                 store: store,
                 onStatus: onStatus,
                 priorCompletion: priorCompletion
@@ -163,13 +179,19 @@ enum IOSDeepReadLauncher {
         if let (modelId, providerSetting) = sharedSettings.resolveBoardDeepReadModel(
             boardModelId: sharedSettings.todayBoard.boardModelId
         ) {
-            updateProgress(generationBase, "正在生成深度阅读")
+            updateProgress(
+                generationBase,
+                IOSAppLocalization.string("正在生成深度阅读", defaultValue: "正在生成深度阅读")
+            )
             let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
                 task: running,
                 providerSetting: providerSetting,
                 modelId: modelId,
                 onStageProgress: { label, index, _ in
-                    updateProgress(generationBase + Int64(index), "正在生成\(label)")
+                    updateProgress(
+                        generationBase + Int64(index),
+                        "\(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))\(label)"
+                    )
                 },
                 initialOutput: initialOutput,
                 targetStages: targetStages
@@ -183,7 +205,11 @@ enum IOSDeepReadLauncher {
             case .failed(let reason):
                 return failRun(
                     taskId: taskId,
-                    message: "深度阅读生成失败：\(IOSDeepReadUserFacingText.sanitize(reason))",
+                    message: IOSAppLocalization.formatted(
+                        "深度阅读生成失败：%@",
+                        defaultValue: "深度阅读生成失败：%@",
+                        arguments: [IOSDeepReadUserFacingText.sanitize(reason)]
+                    ),
                     store: store,
                     onStatus: onStatus,
                     priorCompletion: priorCompletion
@@ -197,20 +223,29 @@ enum IOSDeepReadLauncher {
             // replace the last good draft with a local offline draft.
             return failRun(
                 taskId: taskId,
-                message: "深度阅读生成失败：当前未配置可用模型，无法重新生成。",
+                message: IOSAppLocalization.string(
+                    "深度阅读生成失败：当前未配置可用模型，无法重新生成。",
+                    defaultValue: "深度阅读生成失败：当前未配置可用模型，无法重新生成。"
+                ),
                 store: store,
                 onStatus: onStatus,
                 priorCompletion: priorCompletion
             )
         } else {
-            updateProgress(generationBase + 4, "正在生成离线草稿")
+            updateProgress(
+                generationBase + 4,
+                IOSAppLocalization.string("正在生成离线草稿", defaultValue: "正在生成离线草稿")
+            )
             output = IOSDeepReadDraftGenerator.generate(task: running)
         }
 
         // KeepAlive expire/system-cancel may have already marked failed; don't resurrect.
         guard isCurrentRun(), store.task(id: taskId)?.status == .running else { return false }
 
-        updateProgress(progressTotal, "正在保存结果")
+        updateProgress(
+            progressTotal,
+            IOSAppLocalization.string("正在保存结果", defaultValue: "正在保存结果")
+        )
         store.complete(
             id: taskId,
             markdown: output,
@@ -221,14 +256,34 @@ enum IOSDeepReadLauncher {
             try workspaceArtifactSaver(running.title, output, .deepRead, "deep_read", running.id)
             store.clearWorkspaceSyncFailure(id: taskId)
             if missingSections.isEmpty {
-                onStatus?("已生成并保存深度阅读。", false)
+                onStatus?(
+                    IOSAppLocalization.string(
+                        "已生成并保存深度阅读。",
+                        defaultValue: "已生成并保存深度阅读。"
+                    ),
+                    false
+                )
             } else {
-                onStatus?("深度阅读已生成，但部分段落未完成（\(missingSections.joined(separator: "、"))），可重新生成。", true)
+                onStatus?(
+                    IOSAppLocalization.formatted(
+                        "深度阅读已生成，但部分段落未完成（%@），可重新生成。",
+                        defaultValue: "深度阅读已生成，但部分段落未完成（%@），可重新生成。",
+                        arguments: [missingSections.joined(separator: "、")]
+                    ),
+                    true
+                )
             }
         } catch {
             let message = IOSDeepReadUserFacingText.fromError(error)
             store.markWorkspaceSyncFailed(id: taskId, message: message)
-            onStatus?("深度阅读已生成，但保存到 Workspace 失败：\(message)", true)
+            onStatus?(
+                IOSAppLocalization.formatted(
+                    "深度阅读已生成，但保存到 Workspace 失败：%@",
+                    defaultValue: "深度阅读已生成，但保存到 Workspace 失败：%@",
+                    arguments: [message]
+                ),
+                true
+            )
         }
         return true
     }
@@ -529,7 +584,10 @@ final class IOSDeepReadBackgroundCoordinator {
         // The UIKit short window is not an authoritative run-owner signal; its
         // deadline may lapse while the in-process run remains valid. It therefore
         // intentionally has no cancellation callback.
-        let interruptMessage = "后台生成被系统中断，可稍后重试。"
+        let interruptMessage = IOSAppLocalization.string(
+            "后台生成被系统中断，可稍后重试。",
+            defaultValue: "后台生成被系统中断，可稍后重试。"
+        )
         let failIfInterrupted: () -> Void = { [weak self] in
             Task { @MainActor in
                 guard let self, self.runRegistry.cancel(taskId: taskId, generationID: generationID) else { return }
@@ -557,7 +615,7 @@ final class IOSDeepReadBackgroundCoordinator {
 
         BackgroundGenerationKeepAlive.shared.begin(
             taskId,
-            title: "深度阅读",
+            title: IOSAppLocalization.string("深度阅读", defaultValue: "深度阅读"),
             subtitle: title,
             onExpire: expirationHandlers.onShortWindowExpiration,
             onSystemTaskExpiration: expirationHandlers.onSystemTaskExpiration
@@ -566,7 +624,7 @@ final class IOSDeepReadBackgroundCoordinator {
             taskId,
             completed: 0,
             total: 7,
-            subtitle: "准备生成"
+            subtitle: IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
         )
 
         let operationTask = Task { @MainActor [weak self] in
@@ -584,7 +642,10 @@ final class IOSDeepReadBackgroundCoordinator {
                 inputSnapshotRef: "deep_read:\(taskId)"
             )) == true
             guard didStartDurably else {
-                let message = "无法保存运行状态，深度阅读未启动。"
+                let message = IOSAppLocalization.string(
+                    "无法保存运行状态，深度阅读未启动。",
+                    defaultValue: "无法保存运行状态，深度阅读未启动。"
+                )
                 if let priorCompletion {
                     IOSDeepReadLauncher.restorePriorCompletion(
                         priorCompletion, taskId: taskId, store: .shared
@@ -746,7 +807,8 @@ struct DeepReadCreateView: View {
 
                     Picker("版式", selection: $selectedTemplateId) {
                         ForEach(IOSDeepReadTemplate.builtIns) { template in
-                            Text(template.name).tag(template.id)
+                            Text(verbatim: IOSAppLocalization.string(template.name, defaultValue: template.name))
+                                .tag(template.id)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -807,7 +869,11 @@ struct DeepReadCreateView: View {
         }
     }
 
-    private func deepReadTextField(title: String, text: Binding<String>, placeholder: String) -> some View {
+    private func deepReadTextField(
+        title: LocalizedStringKey,
+        text: Binding<String>,
+        placeholder: LocalizedStringKey
+    ) -> some View {
         HStack(spacing: 12) {
             Text(title)
                 .font(.caption.weight(.semibold))
@@ -899,7 +965,7 @@ struct DeepReadCreateView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else {
-                deepReadMessage = "没有选择文件。"
+                deepReadMessage = IOSAppLocalization.string("没有选择文件。", defaultValue: "没有选择文件。")
                 deepReadMessageIsError = true
                 return
             }
@@ -922,7 +988,11 @@ struct DeepReadCreateView: View {
                 }
             }
         case .failure(let error):
-            deepReadMessage = "文件选择失败：\(IOSDeepReadUserFacingText.fromError(error))"
+            deepReadMessage = IOSAppLocalization.formatted(
+                "文件选择失败：%@",
+                defaultValue: "文件选择失败：%@",
+                arguments: [IOSDeepReadUserFacingText.fromError(error)]
+            )
             deepReadMessageIsError = true
         }
     }

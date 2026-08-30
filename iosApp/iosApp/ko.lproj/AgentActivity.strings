@@ -1,0 +1,58 @@
+"agent.activity.kind.research" = "심층 조사";
+"agent.activity.kind.response" = "응답";
+"agent.activity.kind.imageGeneration" = "이미지 생성";
+"agent.activity.kind.document" = "문서 작업";
+"agent.activity.kind.web" = "웹 작업";
+"agent.activity.kind.memory" = "메모리 업데이트";
+"agent.activity.kind.command" = "명령 작업";
+"agent.activity.kind.workflow" = "에이전트 작업";
+
+"agent.activity.stage.preparing" = "준비 중";
+"agent.activity.stage.thinking" = "생각 중";
+"agent.activity.stage.searching" = "검색 중";
+"agent.activity.stage.readingSources" = "출처 읽는 중";
+"agent.activity.stage.readingWeb" = "웹 읽는 중";
+"agent.activity.stage.generating" = "생성 중";
+"agent.activity.stage.generatingImage" = "이미지 생성 중";
+"agent.activity.stage.organizing" = "결과 정리 중";
+"agent.activity.stage.readingDocument" = "문서 읽는 중";
+"agent.activity.stage.updatingMemory" = "메모리 업데이트 중";
+"agent.activity.stage.runningTool" = "작업 중";
+"agent.activity.stage.waitingForConfirmation" = "확인 대기 중";
+"agent.activity.stage.reconnecting" = "재연결 중";
+"agent.activity.stage.stale" = "상태 만료";
+"agent.activity.stage.completed" = "완료됨";
+"agent.activity.stage.failed" = "완료되지 않음";
+"agent.activity.stage.cancelled" = "중지됨";
+
+"agent.activity.action.openTask" = "채팅 열기";
+"agent.activity.action.openConfirmation" = "확인 열기";
+"agent.activity.action.viewResult" = "결과 보기";
+
+"agent.activity.fact.waiting" = "확인 필요";
+"agent.activity.fact.stale" = "만료됨";
+"agent.activity.fact.reconnecting" = "재연결 중";
+"agent.activity.fact.completed" = "완료됨";
+"agent.activity.fact.failed" = "완료되지 않음";
+"agent.activity.fact.cancelled" = "중지됨";
+
+"agent.activity.compact.preparing" = "준비 중";
+"agent.activity.compact.thinking" = "생각 중";
+"agent.activity.compact.searching" = "검색 중";
+"agent.activity.compact.readingSources" = "읽는 중";
+"agent.activity.compact.readingWeb" = "웹 읽는 중";
+"agent.activity.compact.generating" = "생성 중";
+"agent.activity.compact.generatingImage" = "그리는 중";
+"agent.activity.compact.organizing" = "정리 중";
+"agent.activity.compact.readingDocument" = "파일 읽는 중";
+"agent.activity.compact.updatingMemory" = "업데이트 중";
+"agent.activity.compact.runningTool" = "작업 중";
+
+"agent.activity.metric.source.count" = "%ld개 출처 조회됨";
+"agent.activity.metric.source.progress" = "%ld / %ld개 출처";
+"agent.activity.metric.file.count" = "%ld개 파일 처리됨";
+"agent.activity.metric.file.progress" = "%ld / %ld개 파일";
+"agent.activity.metric.image.count" = "%ld개 이미지 생성됨";
+"agent.activity.metric.image.progress" = "%ld / %ld개 이미지";
+"agent.activity.metric.item.count" = "%ld개 항목 처리됨";
+"agent.activity.metric.item.progress" = "%ld / %ld개 항목";

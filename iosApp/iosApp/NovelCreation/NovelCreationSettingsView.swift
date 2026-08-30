@@ -74,7 +74,10 @@ struct NovelCreationSettingsView: View {
                 sharedSettings: sharedSettings,
                 currentModel: selectedModelID(for: purpose),
                 title: purpose.pickerTitle,
-                fallbackTitle: "跟随当前聊天模型",
+                fallbackTitle: IOSAppLocalization.string(
+                    "跟随当前聊天模型",
+                    defaultValue: "跟随当前聊天模型"
+                ),
                 onFallback: { setModelPolicy(.global, for: purpose) }
             ) { option in
                 setFixedModel(option, for: purpose)
@@ -101,7 +104,13 @@ struct NovelCreationSettingsView: View {
         _ = sharedSettings.revision
         let policy = preferences.policy(for: purpose)
         let name = NovelPresentation.modelDisplayName(for: policy, sharedSettings: sharedSettings)
-        if case .global = policy { return "跟随聊天 · \(name)" }
+        if case .global = policy {
+            return IOSAppLocalization.formatted(
+                "跟随聊天 · %@",
+                defaultValue: "跟随聊天 · %@",
+                arguments: [name]
+            )
+        }
         return name
     }
 
@@ -179,19 +188,34 @@ extension NovelModelRole: Identifiable {
 
     var title: String {
         switch self {
-        case .creation: "创作模型"
-        case .stateSync: "剧情同步模型"
-        case .review: "审稿模型"
+        case .creation: IOSAppLocalization.string("创作模型", defaultValue: "创作模型")
+        case .stateSync: IOSAppLocalization.string("剧情同步模型", defaultValue: "剧情同步模型")
+        case .review: IOSAppLocalization.string("审稿模型", defaultValue: "审稿模型")
         }
     }
 
     var guidance: String {
         switch self {
-        case .creation: "优先选择擅长长文与创意写作的模型"
-        case .stateSync: "优先选择稳定、便宜、结构化输出可靠的模型"
-        case .review: "核对是否按计划写、查前后是否打架"
+        case .creation: IOSAppLocalization.string(
+            "优先选择擅长长文与创意写作的模型",
+            defaultValue: "优先选择擅长长文与创意写作的模型"
+        )
+        case .stateSync: IOSAppLocalization.string(
+            "优先选择稳定、便宜、结构化输出可靠的模型",
+            defaultValue: "优先选择稳定、便宜、结构化输出可靠的模型"
+        )
+        case .review: IOSAppLocalization.string(
+            "核对是否按计划写、查前后是否打架",
+            defaultValue: "核对是否按计划写、查前后是否打架"
+        )
         }
     }
 
-    var pickerTitle: String { "选择\(title)" }
+    var pickerTitle: String {
+        IOSAppLocalization.formatted(
+            "选择%@",
+            defaultValue: "选择%@",
+            arguments: [title]
+        )
+    }
 }

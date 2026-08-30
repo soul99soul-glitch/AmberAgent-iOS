@@ -243,10 +243,7 @@ struct MiniAppRunnerView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Text(
-                "更新于 \(dateText(app.updatedAt))"
-                    + (app.lastRunAt.map { " · 上次打开 \(dateText($0))" } ?? " · 尚未打开")
-            )
+            Text(verbatim: metadataDateText(for: app))
                 .font(.caption2)
                 .foregroundStyle(AmberTheme.muted2)
         }
@@ -263,13 +260,20 @@ struct MiniAppRunnerView: View {
     }
 
     private func categoryLabel(_ raw: String) -> String {
+        let key: String?
         switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "tool": return "工具"
-        case "game": return "游戏"
-        case "info": return "信息"
-        case "custom": return "自定义"
-        default: return raw.isEmpty ? "小应用" : raw
+        case "tool": key = "工具"
+        case "game": key = "游戏"
+        case "info": key = "信息"
+        case "custom": key = "自定义"
+        default: key = nil
         }
+        guard let key else {
+            return raw.isEmpty
+                ? IOSAppLocalization.string("小应用", defaultValue: "小应用")
+                : raw
+        }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private func runnerSurface(_ app: IOSMiniAppRecord) -> some View {
@@ -347,9 +351,12 @@ struct MiniAppRunnerView: View {
             AmberFormGroup {
                 if app.permissions.isEmpty {
                     MiniAppCapabilityStatusRow(row: .init(
-                        title: "无需额外权限",
-                        subtitle: "这个小应用只用基础能力。",
-                        status: "就绪",
+                        title: IOSAppLocalization.string("无需额外权限", defaultValue: "无需额外权限"),
+                        subtitle: IOSAppLocalization.string(
+                            "这个小应用只用基础能力。",
+                            defaultValue: "这个小应用只用基础能力。"
+                        ),
+                        status: IOSAppLocalization.string("就绪", defaultValue: "就绪"),
                         tint: AmberTheme.accentGreen
                     ))
                 } else {
@@ -434,11 +441,14 @@ struct MiniAppRunnerView: View {
                                             .background(AmberTheme.accentTint, in: Capsule())
                                     }
                                 }
-                                Text(version.changeNote ?? "小应用版本")
+                                Text(version.changeNote ?? IOSAppLocalization.string(
+                                    "小应用版本",
+                                    defaultValue: "小应用版本"
+                                ))
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)
                                     .lineLimit(2)
-                                Text(dateText(version.createdAt))
+                                Text(verbatim: dateText(version.createdAt))
                                     .font(.caption2)
                                     .foregroundStyle(AmberTheme.muted2)
                             }
@@ -474,8 +484,11 @@ struct MiniAppRunnerView: View {
             AmberFormGroup {
                 if logs.isEmpty {
                     MiniAppCapabilityStatusRow(row: .init(
-                        title: "还没有活动",
-                        subtitle: "打开小应用或使用权限后会出现记录。",
+                        title: IOSAppLocalization.string("还没有活动", defaultValue: "还没有活动"),
+                        subtitle: IOSAppLocalization.string(
+                            "打开小应用或使用权限后会出现记录。",
+                            defaultValue: "打开小应用或使用权限后会出现记录。"
+                        ),
                         status: "—",
                         tint: AmberTheme.muted
                     ))
@@ -483,7 +496,11 @@ struct MiniAppRunnerView: View {
                     ForEach(Array(logs.enumerated()), id: \.element.id) { index, log in
                         MiniAppCapabilityStatusRow(row: .init(
                             title: humanizeAuditMethod(log.method),
-                            subtitle: "\(log.summary) · \(dateText(log.createdAt))",
+                            subtitle: IOSAppLocalization.formatted(
+                                "%@ · %@",
+                                defaultValue: "%@ · %@",
+                                arguments: [log.summary, dateText(log.createdAt)]
+                            ),
                             status: permissionDisplayName(log.permission),
                             tint: AmberTheme.accent
                         ))
@@ -607,43 +624,61 @@ struct MiniAppRunnerView: View {
     }
 
     private func permissionDisplayName(_ permission: String) -> String {
+        let key: String?
         switch IOSMiniAppPermission(rawValue: permission) {
-        case .storage: "本地存储"
-        case .toast: "提示"
-        case .theme: "主题"
-        case .network: "网络"
-        case .search: "搜索"
-        case .clipboardCopy: "写入剪贴板"
-        case .aiGenerate: "调用 AI"
-        case .sharedStore: "共享存储"
-        case .eventBus: "事件"
-        case .hostUpdateBoardSummary: "更新摘要"
-        case .hostContext: "读取上下文"
-        case .hostSendToConversation: "写回聊天"
-        case .hostCreateArtifact: "创建内容卡片"
-        case .externalImages: "外链图片"
-        case .launch: "打开其他小应用"
-        case .sensor: "传感器"
-        case .location: "定位"
-        case .clipboardRead: "读取剪贴板"
-        case nil: permission.isEmpty ? "权限" : permission
+        case .storage: key = "本地存储"
+        case .toast: key = "提示"
+        case .theme: key = "主题"
+        case .network: key = "网络"
+        case .search: key = "搜索"
+        case .clipboardCopy: key = "写入剪贴板"
+        case .aiGenerate: key = "调用 AI"
+        case .sharedStore: key = "共享存储"
+        case .eventBus: key = "事件"
+        case .hostUpdateBoardSummary: key = "更新摘要"
+        case .hostContext: key = "读取上下文"
+        case .hostSendToConversation: key = "写回聊天"
+        case .hostCreateArtifact: key = "创建内容卡片"
+        case .externalImages: key = "外链图片"
+        case .launch: key = "打开其他小应用"
+        case .sensor: key = "传感器"
+        case .location: key = "定位"
+        case .clipboardRead: key = "读取剪贴板"
+        case nil: key = nil
         }
+        guard let key else {
+            guard !permission.isEmpty else {
+                return IOSAppLocalization.string("权限", defaultValue: "权限")
+            }
+            return IOSAppLocalization.formatted(
+                "未知权限：%@",
+                defaultValue: "未知权限：%@",
+                arguments: [permission]
+            )
+        }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private func humanizeAuditMethod(_ method: String) -> String {
+        let key: String?
         switch method {
-        case "network.fetch", "fetch": return "网络请求"
-        case "search", "search.query": return "搜索"
-        case "ai.generate": return "AI 生成"
-        case "storage.get", "storage.set": return "本地存储"
-        case "toast": return "提示"
-        case "clipboard.copy": return "写入剪贴板"
-        case "clipboard.read": return "读取剪贴板"
-        case "location.get", "location.getCurrent": return "定位"
+        case "network.fetch", "fetch": key = "网络请求"
+        case "search", "search.query": key = "搜索"
+        case "ai.generate": key = "AI 生成"
+        case "storage.get", "storage.set": key = "本地存储"
+        case "toast": key = "提示"
+        case "clipboard.copy": key = "写入剪贴板"
+        case "clipboard.read": key = "读取剪贴板"
+        case "location.get", "location.getCurrent": key = "定位"
         default:
-            if method.hasPrefix("host.") { return "宿主能力" }
-            return method
+            if method.hasPrefix("host.") {
+                key = "宿主能力"
+            } else {
+                key = nil
+            }
         }
+        guard let key else { return method }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private var loadingSection: some View {
@@ -752,8 +787,8 @@ struct MiniAppRunnerView: View {
             var operation: Task<IOSMiniAppJSONValue, Error>?
             BackgroundGenerationKeepAlive.shared.begin(
                 leaseId,
-                title: "\(appTitle) 正在生成",
-                subtitle: "MiniApp AI",
+                title: "\(appTitle) \(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))",
+                subtitle: IOSAppLocalization.string("MiniApp AI", defaultValue: "MiniApp AI"),
                 onExpire: {
                     didExpire = true
                     operation?.cancel()
@@ -888,7 +923,10 @@ struct MiniAppRunnerView: View {
         switch request {
         case .getConversationContext(let request):
             let value = try miniAppHostContext(maxChars: request.maxChars)
-            actionMessage = "已向 MiniApp 提供最小化上下文。"
+            actionMessage = IOSAppLocalization.string(
+                "已向 MiniApp 提供最小化上下文。",
+                defaultValue: "已向 MiniApp 提供最小化上下文。"
+            )
             return value
         case .sendToConversation(let request):
             guard let chatViewModel else {
@@ -902,7 +940,11 @@ struct MiniAppRunnerView: View {
             } else {
                 chatViewModel.inputText = request.text
             }
-            actionMessage = "已写入聊天输入框：\(request.text.truncated(to: 180))"
+            actionMessage = IOSAppLocalization.formatted(
+                "已写入聊天输入框：%@",
+                defaultValue: "已写入聊天输入框：%@",
+                arguments: [request.text.truncated(to: 180)]
+            )
             return .object([
                 "accepted": .bool(true),
                 "mode": .string(request.mode),
@@ -921,10 +963,18 @@ struct MiniAppRunnerView: View {
                 try repository.updateBoardSummary(id: appId, summary: summary)
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-                actionMessage = "MiniApp 创建内容卡片失败：\(message)"
+                actionMessage = IOSAppLocalization.formatted(
+                    "MiniApp 创建内容卡片失败：%@",
+                    defaultValue: "MiniApp 创建内容卡片失败：%@",
+                    arguments: [message]
+                )
                 throw MiniAppRunnerHostError.denied("Workspace artifact save failed: \(message)")
             }
-            actionMessage = "MiniApp 已创建内容卡片：\(request.title)"
+            actionMessage = IOSAppLocalization.formatted(
+                "MiniApp 已创建内容卡片：%@",
+                defaultValue: "MiniApp 已创建内容卡片：%@",
+                arguments: [request.title]
+            )
             return .object([
                 "accepted": .bool(true),
                 "title": .string(request.title),
@@ -994,7 +1044,10 @@ struct MiniAppRunnerView: View {
             try MiniAppHtmlValidator.validate(generatedHtml)
             loadedHtml = generatedHtml
             runnerError = nil
-            actionMessage = "HTML 校验通过，已加载到 WKWebView。"
+            actionMessage = IOSAppLocalization.string(
+                "HTML 校验通过，已加载到 WKWebView。",
+                defaultValue: "HTML 校验通过，已加载到 WKWebView。"
+            )
         } catch {
             runnerError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -1011,7 +1064,11 @@ struct MiniAppRunnerView: View {
             loadedHtml = updated.htmlContent
             observedAppHTMLHash = updated.htmlHash
             runnerError = nil
-            actionMessage = "已保存 v\(updated.version)。"
+            actionMessage = IOSAppLocalization.formatted(
+                "已保存 v%lld。",
+                defaultValue: "已保存 v%lld。",
+                arguments: [Int64(updated.version)]
+            )
         } catch {
             runnerError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -1024,7 +1081,11 @@ struct MiniAppRunnerView: View {
             loadedHtml = updated.htmlContent
             observedAppHTMLHash = updated.htmlHash
             runnerError = nil
-            actionMessage = "已从 v\(version.versionNumber) 恢复为 v\(updated.version)。"
+            actionMessage = IOSAppLocalization.formatted(
+                "已从 v%lld 恢复为 v%lld。",
+                defaultValue: "已从 v%lld 恢复为 v%lld。",
+                arguments: [Int64(version.versionNumber), Int64(updated.version)]
+            )
         } catch {
             actionMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -1033,14 +1094,28 @@ struct MiniAppRunnerView: View {
     private func setGrant(appId: String, permission: String, decision: IOSMiniAppGrantDecision) {
         do {
             try repository.setGrant(appId: appId, permission: permission, decision: decision)
-            actionMessage = "「\(permissionDisplayName(permission))」已\(decision.title)"
+            let permissionTitle = permissionDisplayName(permission)
+            let localizedPermissionTitle = IOSAppLocalization.string(
+                permissionTitle,
+                defaultValue: permissionTitle
+            )
+            let localizedDecisionTitle = IOSAppLocalization.string(
+                decision.title,
+                defaultValue: decision.title
+            )
+            actionMessage = IOSAppLocalization.formatted(
+                "「%@」已%@",
+                defaultValue: "「%@」已%@",
+                arguments: [localizedPermissionTitle, localizedDecisionTitle]
+            )
         } catch {
             actionMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
     private func grantTitle(appId: String, permission: String) -> String {
-        repository.grantDecision(appId: appId, permission: permission)?.title ?? "未设置"
+        let key = repository.grantDecision(appId: appId, permission: permission)?.title ?? "未设置"
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private func grantTint(appId: String, permission: String) -> Color {
@@ -1055,53 +1130,66 @@ struct MiniAppRunnerView: View {
     }
 
     private func grantDescription(_ permission: String) -> String {
+        let key: String?
         switch IOSMiniAppPermission(rawValue: permission) {
-        case .storage:
-            return "允许读写这个小应用自己的本地数据。"
-        case .toast:
-            return "允许显示提示信息。"
-        case .theme:
-            return "允许读取当前主题色。"
-        case .network:
-            return "允许访问 HTTPS 网络。"
-        case .externalImages:
-            return "允许加载外链图片。"
-        case .search:
-            return "允许使用网页搜索。"
-        case .aiGenerate:
-            return "允许调用当前聊天模型。"
-        case .clipboardCopy:
-            return "只写剪贴板，不读取。"
-        case .hostUpdateBoardSummary:
-            return "允许更新这个小应用的深度阅读摘要。"
-        case .hostContext:
-            return "允许读取必要的宿主上下文。"
-        case .hostSendToConversation:
-            return "允许生成聊天草稿，不会自动发送。"
-        case .hostCreateArtifact:
-            return "允许创建内容卡片。"
-        case .sharedStore:
-            return "允许使用这个小应用自己的本地存储。"
-        case .eventBus:
-            return "允许在运行期间发送本地事件。"
-        case .launch:
-            return "允许打开其他小应用。"
-        case .sensor:
-            return "允许订阅设备传感器。"
-        case .location:
-            return "允许读取当前位置。"
-        case .clipboardRead:
-            return "允许读取剪贴板文本。"
-        case nil:
-            return "未知权限会被拒绝。"
-        default:
-            return "使用前需要你明确允许。"
+        case .storage: key = "允许读写这个小应用自己的本地数据。"
+        case .toast: key = "允许显示提示信息。"
+        case .theme: key = "允许读取当前主题色。"
+        case .network: key = "允许访问 HTTPS 网络。"
+        case .externalImages: key = "允许加载外链图片。"
+        case .search: key = "允许使用网页搜索。"
+        case .clipboardCopy: key = "只写剪贴板，不读取。"
+        case .hostUpdateBoardSummary: key = "允许更新这个小应用的深度阅读摘要。"
+        case .hostContext: key = "允许读取必要的宿主上下文。"
+        case .hostSendToConversation: key = "允许生成聊天草稿，不会自动发送。"
+        case .hostCreateArtifact: key = "允许创建内容卡片。"
+        case .aiGenerate: key = "允许调用当前聊天模型。"
+        case .sharedStore: key = "允许使用这个小应用自己的本地存储。"
+        case .eventBus: key = "允许在运行期间发送本地事件。"
+        case .launch: key = "允许打开其他小应用。"
+        case .sensor: key = "允许订阅设备传感器。"
+        case .location: key = "允许读取当前位置。"
+        case .clipboardRead: key = "允许读取剪贴板文本。"
+        case nil: key = nil
         }
+        guard let key else {
+            guard !permission.isEmpty else {
+                return IOSAppLocalization.string("权限", defaultValue: "权限")
+            }
+            return IOSAppLocalization.formatted(
+                "未识别的权限标识：%@",
+                defaultValue: "未识别的权限标识：%@",
+                arguments: [permission]
+            )
+        }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     private func dateText(_ millis: Int64) -> String {
         Date(timeIntervalSince1970: Double(millis) / 1_000)
-            .formatted(date: .abbreviated, time: .shortened)
+            .formatted(
+                Date.FormatStyle(date: .abbreviated, time: .shortened)
+                    .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+            )
+    }
+
+    private func metadataDateText(for app: IOSMiniAppRecord) -> String {
+        let updated = IOSAppLocalization.formatted(
+            "更新于 %@",
+            defaultValue: "更新于 %@",
+            arguments: [dateText(app.updatedAt)]
+        )
+        guard let lastRunAt = app.lastRunAt else {
+            return updated + IOSAppLocalization.string(
+                " · 尚未打开",
+                defaultValue: " · 尚未打开"
+            )
+        }
+        return updated + IOSAppLocalization.formatted(
+            " · 上次打开 %@",
+            defaultValue: " · 上次打开 %@",
+            arguments: [dateText(lastRunAt)]
+        )
     }
 }
 
@@ -1408,27 +1496,42 @@ struct MiniAppHostConfirmation: Equatable {
     let request: IOSMiniAppHostRequest
 
     var title: String {
+        let key: String
         switch request {
         case .getConversationContext:
-            return "允许读取上下文？"
+            key = "允许读取上下文？"
         case .sendToConversation:
-            return "允许写回聊天草稿？"
+            key = "允许写回聊天草稿？"
         case .createArtifact:
-            return "允许创建内容卡片？"
+            key = "允许创建内容卡片？"
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 
     var message: String {
         switch request {
         case .getConversationContext(let request):
-            return "「\(appTitle)」想读取最小化会话上下文，最多 \(request.maxChars) 字。完整聊天记录、系统提示词、provider 设置、凭证和隐藏工具输出不会暴露。"
+            return IOSAppLocalization.formatted(
+                "「%@」想读取最小化会话上下文，最多 %lld 字。完整聊天记录、系统提示词、provider 设置、凭证和隐藏工具输出不会暴露。",
+                defaultValue: "「%@」想读取最小化会话上下文，最多 %lld 字。完整聊天记录、系统提示词、provider 设置、凭证和隐藏工具输出不会暴露。",
+                arguments: [appTitle, Int64(request.maxChars)]
+            )
         case .sendToConversation(let request):
-            let action = request.mode == "insert"
+            let actionKey = request.mode == "insert"
                 ? "追加到当前聊天输入框"
                 : "替换当前聊天输入框草稿"
-            return "「\(appTitle)」想\(action)：\n\n\(request.text.truncated(to: 300))"
+            let action = IOSAppLocalization.string(actionKey, defaultValue: actionKey)
+            return IOSAppLocalization.formatted(
+                "「%@」想%@：\n\n%@",
+                defaultValue: "「%@」想%@：\n\n%@",
+                arguments: [appTitle, action, request.text.truncated(to: 300)]
+            )
         case .createArtifact(let request):
-            return "\(request.title)\n\n\(request.content.truncated(to: 260))"
+            return IOSAppLocalization.formatted(
+                "%@\n\n%@",
+                defaultValue: "%@\n\n%@",
+                arguments: [request.title, request.content.truncated(to: 260)]
+            )
         }
     }
 }
@@ -1438,23 +1541,37 @@ struct MiniAppPermissionGrantPrompt: Equatable {
     let appTitle: String
     let permission: IOSMiniAppPermission
 
-    var title: String { "允许\(Self.displayName(permission))？" }
+    var title: String {
+        let nameKey = Self.displayName(permission)
+        let name = IOSAppLocalization.string(nameKey, defaultValue: nameKey)
+        return IOSAppLocalization.formatted(
+            "允许%@？",
+            defaultValue: "允许%@？",
+            arguments: [name]
+        )
+    }
 
     var message: String {
-        "「\(appTitle)」首次请求：\(Self.displayDescription(permission))\n允许后可继续使用，拒绝后会记住本次选择。"
+        let descriptionKey = Self.displayDescription(permission)
+        let description = IOSAppLocalization.string(descriptionKey, defaultValue: descriptionKey)
+        return IOSAppLocalization.formatted(
+            "「%@」首次请求：%@\n允许后可继续使用，拒绝后会记住本次选择。",
+            defaultValue: "「%@」首次请求：%@\n允许后可继续使用，拒绝后会记住本次选择。",
+            arguments: [appTitle, description]
+        )
     }
 
     private static func displayName(_ permission: IOSMiniAppPermission) -> String {
         switch permission {
         case .storage: "本地存储"
         case .toast: "提示"
-        case .theme: "读取主题"
+        case .theme: "主题"
         case .network: "网络请求"
         case .search: "搜索"
         case .clipboardCopy: "写入剪贴板"
         case .aiGenerate: "调用 AI"
         case .sharedStore: "共享存储"
-        case .eventBus: "事件总线"
+        case .eventBus: "事件"
         case .hostUpdateBoardSummary: "更新摘要"
         case .hostContext: "读取上下文"
         case .hostSendToConversation: "写回聊天"

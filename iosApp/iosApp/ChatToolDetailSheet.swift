@@ -64,7 +64,7 @@ struct ChatToolDetailSheet: View {
                 .padding(16)
             }
             .background(AmberTheme.background)
-            .navigationTitle(isSubAgent ? "子智能体" : friendlyName)
+            .navigationTitle(localizedFriendlyName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -155,6 +155,10 @@ struct ChatToolDetailSheet: View {
 
     // MARK: - Building blocks
 
+    private var localizedFriendlyName: String {
+        IOSAppLocalization.string(friendlyName, defaultValue: friendlyName)
+    }
+
     private var friendlyName: String {
         if isSubAgent { return "子智能体" }
         if tool.toolName == "terminal_execute" { return "Remote SSH 执行" }
@@ -174,7 +178,7 @@ struct ChatToolDetailSheet: View {
 
     @ViewBuilder private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
+            Text(IOSAppLocalization.string(title, defaultValue: title))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.muted2)
                 .textCase(.uppercase)
@@ -188,7 +192,9 @@ struct ChatToolDetailSheet: View {
     }
 
     private func statusLine(_ text: String) -> some View {
-        Text(text).font(.footnote).foregroundStyle(AmberTheme.muted)
+        Text(IOSAppLocalization.string(text, defaultValue: text))
+            .font(.footnote)
+            .foregroundStyle(AmberTheme.muted)
     }
 
     // MARK: - Parsing helpers
@@ -282,13 +288,9 @@ private struct LazyToolTextBlock: View {
     }
 
     private var byteCountText: String {
-        let bytes = text.utf8.count
-        if bytes >= 1_048_576 {
-            return String(format: "%.1f MB", Double(bytes) / 1_048_576)
-        }
-        if bytes >= 1_024 {
-            return String(format: "%.1f KB", Double(bytes) / 1_024)
-        }
-        return "\(bytes) B"
+        Int64(text.utf8.count).formatted(
+            .byteCount(style: .file)
+                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+        )
     }
 }

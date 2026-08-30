@@ -57,7 +57,11 @@ struct BoardSettingsView: View {
                 sharedSettings.updateTodayBoard { _ in
                     TodayBoardSettingPatch(deepReadTemplateId: template.id)
                 }
-                banner = "已保存并选择模板：\(template.name)"
+                banner = IOSAppLocalization.formatted(
+                    "已保存并选择模板：%@",
+                    defaultValue: "已保存并选择模板：%@",
+                    arguments: [template.name]
+                )
             }
         }
         .sheet(isPresented: $showCreateSheet) {
@@ -71,7 +75,12 @@ struct BoardSettingsView: View {
 
     private var header: some View {
         HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回深度阅读", size: 44, symbolSize: 20) {
+            AmberGlassCircleButton(
+                systemImage: "chevron.left",
+                accessibilityLabel: IOSAppLocalization.string("返回深度阅读", defaultValue: "返回深度阅读"),
+                size: 44,
+                symbolSize: 20
+            ) {
                 dismiss()
             }
 
@@ -115,7 +124,7 @@ struct BoardSettingsView: View {
             BoardSettingsActionRow(
                 systemImage: "cpu",
                 iconColor: AmberTheme.accent,
-                title: "深度阅读模型",
+                title: IOSAppLocalization.string("深度阅读模型", defaultValue: "深度阅读模型"),
                 subtitle: modelSubtitle,
                 value: currentModelLabel
             ) {
@@ -177,8 +186,11 @@ struct BoardSettingsView: View {
             BoardCapabilityDivider()
 
             BoardSettingsToggleRow(
-                title: "仅 Wi‑Fi 刷新",
-                subtitle: "前台热榜刷新会遵守这个偏好；不会伪装完整后台调度。",
+                title: IOSAppLocalization.string("仅 Wi‑Fi 刷新", defaultValue: "仅 Wi‑Fi 刷新"),
+                subtitle: IOSAppLocalization.string(
+                    "前台热榜刷新会遵守这个偏好；不会伪装完整后台调度。",
+                    defaultValue: "前台热榜刷新会遵守这个偏好；不会伪装完整后台调度。"
+                ),
                 isOn: board.hotListWifiOnly
             ) { enabled in
                 sharedSettings.updateTodayBoard { _ in
@@ -189,8 +201,11 @@ struct BoardSettingsView: View {
             BoardCapabilityDivider()
 
             BoardSettingsToggleRow(
-                title: "标题翻译为中文",
-                subtitle: "热榜及各类榜单中的非中文标题，抓取时即时翻译成通顺中文（专业术语保留原文）。",
+                title: IOSAppLocalization.string("标题翻译为中文", defaultValue: "标题翻译为中文"),
+                subtitle: IOSAppLocalization.string(
+                    "热榜及各类榜单中的非中文标题，抓取时即时翻译成通顺中文（专业术语保留原文）。",
+                    defaultValue: "热榜及各类榜单中的非中文标题，抓取时即时翻译成通顺中文（专业术语保留原文）。"
+                ),
                 isOn: board.hotListTranslateToChinese
             ) { enabled in
                 sharedSettings.updateTodayBoard { _ in
@@ -205,7 +220,8 @@ struct BoardSettingsView: View {
     @ViewBuilder
     private var hotListSourceSection: some View {
         ForEach(IOSHotlistProviders.descriptorsByCategory(), id: \.category) { group in
-            BoardSettingsSection(title: "热榜来源 · \(group.category)") {
+            let localizedCategory = IOSAppLocalization.string(group.category, defaultValue: group.category)
+            BoardSettingsSection(title: "热榜来源 · \(localizedCategory)") {
                 ForEach(Array(group.items.enumerated()), id: \.element.id) { index, descriptor in
                     BoardSettingsToggleRow(
                         title: descriptor.displayName,
@@ -315,9 +331,11 @@ struct BoardSettingsView: View {
                 BoardSettingsActionRow(
                     systemImage: iconName(for: template.id),
                     iconColor: AmberTheme.accent,
-                    title: template.name,
-                    subtitle: template.description,
-                    value: IOSDeepReadTemplate.normalizedTemplateId(board.deepReadTemplateId) == template.id ? "已选择" : nil
+                    title: IOSAppLocalization.string(template.name, defaultValue: template.name),
+                    subtitle: IOSAppLocalization.string(template.description, defaultValue: template.description),
+                    value: IOSDeepReadTemplate.normalizedTemplateId(board.deepReadTemplateId) == template.id
+                        ? IOSAppLocalization.string("已选择", defaultValue: "已选择")
+                        : nil
                 ) {
                     Button {
                         sharedSettings.updateTodayBoard { _ in
@@ -343,8 +361,14 @@ struct BoardSettingsView: View {
                     systemImage: "doc.richtext",
                     iconColor: AmberTheme.accentGreen,
                     title: template.name,
-                    subtitle: template.description.isEmpty ? (template.createdByAI ? "AI 生成草稿" : "自定义 HTML") : template.description,
-                    value: board.deepReadTemplateId == template.id ? "已选择" : nil
+                    subtitle: template.description.isEmpty
+                        ? (template.createdByAI
+                            ? IOSAppLocalization.string("AI 生成草稿", defaultValue: "AI 生成草稿")
+                            : IOSAppLocalization.string("自定义 HTML", defaultValue: "自定义 HTML"))
+                        : template.description,
+                    value: board.deepReadTemplateId == template.id
+                        ? IOSAppLocalization.string("已选择", defaultValue: "已选择")
+                        : nil
                 ) {
                     HStack(spacing: 6) {
                         Button {
@@ -431,16 +455,29 @@ struct BoardSettingsView: View {
         guard let boardModelId = board.boardModelId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !boardModelId.isEmpty else {
             let current = settingsStore.modelId.trimmingCharacters(in: .whitespacesAndNewlines)
-            return current.isEmpty ? "跟随聊天模型" : "跟随：\(current)"
+            return current.isEmpty
+                ? IOSAppLocalization.string("跟随聊天模型", defaultValue: "跟随聊天模型")
+                : IOSAppLocalization.formatted(
+                    "跟随：%@",
+                    defaultValue: "跟随：%@",
+                    arguments: [current]
+                )
         }
-        return modelOptions.first { $0.id.caseInsensitiveCompare(boardModelId) == .orderedSame }?.displayName ?? "已失效，回退聊天模型"
+        return modelOptions.first { $0.id.caseInsensitiveCompare(boardModelId) == .orderedSame }?.displayName
+            ?? IOSAppLocalization.string("已失效，回退聊天模型", defaultValue: "已失效，回退聊天模型")
     }
 
     private var modelSubtitle: String {
         if modelOptions.isEmpty {
-            return "没有可读取的聊天模型，生成时会回退当前聊天模型或本地草稿。"
+            return IOSAppLocalization.string(
+                "没有可读取的聊天模型，生成时会回退当前聊天模型或本地草稿。",
+                defaultValue: "没有可读取的聊天模型，生成时会回退当前聊天模型或本地草稿。"
+            )
         }
-        return "显示所有已配置服务商的聊天模型。"
+        return IOSAppLocalization.string(
+            "显示所有已配置服务商的聊天模型。",
+            defaultValue: "显示所有已配置服务商的聊天模型。"
+        )
     }
 
     private var effectiveEnabledSources: Set<String> {
@@ -495,7 +532,7 @@ private struct BoardModelOption: Identifiable, Equatable {
 }
 
 private struct BoardSettingsSection<Content: View>: View {
-    let title: String
+    let title: LocalizedStringKey
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -577,7 +614,7 @@ private struct BoardSettingsToggleRow: View {
 }
 
 private struct BoardSettingsChip: View {
-    let title: String
+    let title: LocalizedStringKey
     let selected: Bool
     let action: () -> Void
 
@@ -675,7 +712,9 @@ private struct BoardTemplateWorkbenchSheet: View {
                 .padding(16)
             }
             .background(AmberTheme.background.ignoresSafeArea())
-            .navigationTitle(seed.template == nil ? "模板工坊" : "编辑模板")
+            .navigationTitle(
+                seed.template == nil ? LocalizedStringKey("模板工坊") : LocalizedStringKey("编辑模板")
+            )
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") { dismiss() }
@@ -710,7 +749,10 @@ private struct BoardTemplateWorkbenchSheet: View {
             Button {
                 Task { await generateDraft() }
             } label: {
-                Label(isGenerating ? "生成中" : "AI 生成", systemImage: "sparkles")
+                Label(
+                    isGenerating ? LocalizedStringKey("生成中") : LocalizedStringKey("AI 生成"),
+                    systemImage: "sparkles"
+                )
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -747,7 +789,12 @@ private struct BoardTemplateWorkbenchSheet: View {
         guard let resolved = sharedSettings.resolveBoardDeepReadModel(
             boardModelId: sharedSettings.todayBoard.boardModelId
         ) else {
-            setError("没有可用的聊天服务商和模型，无法生成模板草稿。")
+            setError(
+                IOSAppLocalization.string(
+                    "没有可用的聊天服务商和模型，无法生成模板草稿。",
+                    defaultValue: "没有可用的聊天服务商和模型，无法生成模板草稿。"
+                )
+            )
             return
         }
         isGenerating = true
@@ -762,7 +809,12 @@ private struct BoardTemplateWorkbenchSheet: View {
             name = draft.name
             description = draft.description
             html = draft.html
-            setMessage("已生成草稿，请校验或预览后保存。")
+            setMessage(
+                IOSAppLocalization.string(
+                    "已生成草稿，请校验或预览后保存。",
+                    defaultValue: "已生成草稿，请校验或预览后保存。"
+                )
+            )
         } catch {
             setError(error.localizedDescription)
         }
@@ -771,9 +823,12 @@ private struct BoardTemplateWorkbenchSheet: View {
     private func validate() {
         let result = IOSDeepReadTemplateValidator.validateHTML(html)
         if result.ok {
-            setMessage("模板校验通过。")
+            setMessage(IOSAppLocalization.string("模板校验通过。", defaultValue: "模板校验通过。"))
         } else {
-            setError(result.error ?? "模板校验失败。")
+            setError(
+                result.error
+                    ?? IOSAppLocalization.string("模板校验失败。", defaultValue: "模板校验失败。")
+            )
         }
     }
 
@@ -792,7 +847,7 @@ private struct BoardTemplateWorkbenchSheet: View {
                 fontScale: sharedSettings.todayBoard.deepReadFontScale,
                 fontModeWireName: sharedSettings.todayBoard.boardReadingFontMode.wireName
             )
-            setMessage("预览已更新。")
+            setMessage(IOSAppLocalization.string("预览已更新。", defaultValue: "预览已更新。"))
         } catch {
             previewHTML = nil
             setError(error.localizedDescription)
@@ -819,17 +874,23 @@ private struct BoardTemplateWorkbenchSheet: View {
     private func previewTask(templateId: String) -> IOSDeepReadTask {
         IOSDeepReadTask(
             id: "preview",
-            title: "模板预览",
+            title: IOSAppLocalization.string("模板预览", defaultValue: "模板预览"),
             status: .succeeded,
             templateId: templateId,
             sources: [
                 IOSDeepReadSource(
                     kind: .manualText,
-                    title: "预览来源",
-                    content: "这是模板预览用的本地示例来源，只用于检查版式。"
+                    title: IOSAppLocalization.string("预览来源", defaultValue: "预览来源"),
+                    content: IOSAppLocalization.string(
+                        "这是模板预览用的本地示例来源，只用于检查版式。",
+                        defaultValue: "这是模板预览用的本地示例来源，只用于检查版式。"
+                    )
                 )
             ],
-            resultMarkdown: "# 模板预览\n\n## 摘要\n这是一段预览文本，用来检查标题、摘要、分析和来源区块是否正常显示。\n\n## 分析\n- 保持正文可读。\n- 来源列表应清晰可见。",
+            resultMarkdown: IOSAppLocalization.string(
+                "# 模板预览\n\n## 摘要\n这是一段预览文本，用来检查标题、摘要、分析和来源区块是否正常显示。\n\n## 分析\n- 保持正文可读。\n- 来源列表应清晰可见。",
+                defaultValue: "# 模板预览\n\n## 摘要\n这是一段预览文本，用来检查标题、摘要、分析和来源区块是否正常显示。\n\n## 分析\n- 保持正文可读。\n- 来源列表应清晰可见。"
+            ),
             failureMessage: nil,
             createdAt: IOSBoardSignalRepository.currentEpochMs(),
             updatedAt: IOSBoardSignalRepository.currentEpochMs(),

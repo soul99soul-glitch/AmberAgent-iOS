@@ -1,5 +1,31 @@
 import SwiftUI
 
+private func localized(_ key: String) -> String {
+    IOSAppLocalization.string(key, defaultValue: key)
+}
+
+private func localizedNumber(_ value: Int) -> String {
+    value.formatted(.number.locale(IOSAppLanguagePreference.selected().resolvedLocale()))
+}
+
+private func localizedChapterTitle(
+    storedTitle: String,
+    content: String,
+    ordinal: Int
+) -> String {
+    let displayTitle = NovelPresentation.chapterDisplayTitle(
+        storedTitle: storedTitle,
+        content: content,
+        ordinal: ordinal
+    )
+    guard displayTitle == "第 \(ordinal) 章" else { return displayTitle }
+    return IOSAppLocalization.formatted(
+        "第 %@ 章",
+        defaultValue: "第 %@ 章",
+        arguments: [localizedNumber(ordinal)]
+    )
+}
+
 struct NovelChapterManagementView: View {
     let viewModel: NovelCreationViewModel
     let sessionViewModel: NovelSessionViewModel
@@ -42,14 +68,18 @@ struct NovelChapterManagementView: View {
                     .accessibilityLabel(batchPolishAccessibilityLabel)
                 }
                 if let count = viewModel.branchSnapshot?.chapterSelections.count, count > 0 {
-                    Text("共 \(count) 章")
+                    Text(verbatim: IOSAppLocalization.formatted(
+                        "共 %@ 章",
+                        defaultValue: "共 %@ 章",
+                        arguments: [localizedNumber(count)]
+                    ))
                         .font(.subheadline)
                         .foregroundStyle(AmberTheme.muted)
                 }
             }
 
             if hasPolishableChapters, let batchPolishBlocker {
-                Label(batchPolishBlocker.displayName, systemImage: "info.circle")
+                Label(localized(batchPolishBlocker.displayName), systemImage: "info.circle")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -72,8 +102,13 @@ struct NovelChapterManagementView: View {
     }
 
     private var batchPolishAccessibilityLabel: String {
-        guard let batchPolishBlocker else { return "批量整章润色" }
-        return "批量整章润色（\(batchPolishBlocker.displayName)）"
+        let title = localized("批量整章润色")
+        guard let batchPolishBlocker else { return title }
+        return IOSAppLocalization.formatted(
+            "%@（%@）",
+            defaultValue: "%@（%@）",
+            arguments: [title, localized(batchPolishBlocker.displayName)]
+        )
     }
 
     @ViewBuilder
@@ -152,7 +187,7 @@ private struct NovelChapterRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("\(index)")
+            Text(verbatim: localizedNumber(index))
                 .font(.subheadline.weight(.semibold).monospacedDigit())
                 .foregroundStyle(AmberTheme.accent)
                 .frame(width: 32, height: 32)
@@ -160,7 +195,7 @@ private struct NovelChapterRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 7) {
-                    Text(NovelPresentation.chapterDisplayTitle(
+                    Text(localizedChapterTitle(
                         storedTitle: version.title,
                         content: version.content,
                         ordinal: index
@@ -177,7 +212,11 @@ private struct NovelChapterRow: View {
                             .background(AmberTheme.accentAmber.opacity(0.12), in: Capsule())
                     }
                 }
-                Text("\(version.content.count.formatted()) 字")
+                Text(verbatim: IOSAppLocalization.formatted(
+                    "%@ 字",
+                    defaultValue: "%@ 字",
+                    arguments: [localizedNumber(version.content.count)]
+                ))
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
             }
@@ -186,7 +225,7 @@ private struct NovelChapterRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .contentShape(Rectangle())
-        .accessibilityValue(isDiscarded ? "已废弃，不进入生成上下文" : "")
+        .accessibilityValue(isDiscarded ? localized("已废弃，不进入生成上下文") : "")
     }
 }
 
@@ -246,7 +285,17 @@ struct NovelChapterVersionsSheet: View {
                                 Text(version.title)
                                     .font(.title3.weight(.semibold))
                                     .foregroundStyle(AmberTheme.foreground)
-                                Text("\(version.kind.displayName) · \(version.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text(verbatim: IOSAppLocalization.formatted(
+                                    "%@ · %@",
+                                    defaultValue: "%@ · %@",
+                                    arguments: [
+                                        localized(version.kind.displayName),
+                                        version.createdAt.formatted(
+                                            Date.FormatStyle(date: .abbreviated, time: .shortened)
+                                                .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+                                        )
+                                    ]
+                                ))
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)
                             }
@@ -269,7 +318,7 @@ struct NovelChapterVersionsSheet: View {
                                     .disabled(!canRestore)
 
                                     if !isSubmitting, let restoreBlockReason {
-                                        Label(restoreBlockReason, systemImage: "info.circle")
+                                        Label(localized(restoreBlockReason), systemImage: "info.circle")
                                             .font(.footnote)
                                             .foregroundStyle(AmberTheme.muted)
                                     }
@@ -292,7 +341,7 @@ struct NovelChapterVersionsSheet: View {
                                         .disabled(!canUseAsManualRewrite)
 
                                         if !isSubmitting, let manualRewriteBlockReason {
-                                            Label(manualRewriteBlockReason, systemImage: "info.circle")
+                                            Label(localized(manualRewriteBlockReason), systemImage: "info.circle")
                                                 .font(.footnote)
                                                 .foregroundStyle(AmberTheme.muted)
                                         }
@@ -389,20 +438,30 @@ struct NovelChapterVersionsSheet: View {
     }
 
     private func versionLabel(_ version: NovelChapterVersionRecord) -> String {
-        "\(version.kind.displayName) · \(version.createdAt.formatted(date: .numeric, time: .shortened))"
+        IOSAppLocalization.formatted(
+            "%@ · %@",
+            defaultValue: "%@ · %@",
+            arguments: [
+                localized(version.kind.displayName),
+                version.createdAt.formatted(
+                    Date.FormatStyle(date: .numeric, time: .shortened)
+                        .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+                )
+            ]
+        )
     }
 
     private func restore(_ versionID: NovelChapterVersionID) {
         guard canRestore else { return }
         isSubmitting = true
-        operationProgressTitle = "正在恢复章节版本"
+        operationProgressTitle = localized("正在恢复章节版本")
         failureMessage = nil
         Task { @MainActor in
             viewModel.clearError()
             await viewModel.restoreChapterVersion(versionID)
             isSubmitting = false
             guard viewModel.errorMessage == nil else {
-                failureMessage = viewModel.errorMessage ?? "章节版本没有恢复，请稍后重试。"
+                failureMessage = viewModel.errorMessage ?? localized("章节版本没有恢复，请稍后重试。")
                 return
             }
             dismiss()
@@ -412,14 +471,14 @@ struct NovelChapterVersionsSheet: View {
     private func useAsManualRewrite(_ version: NovelChapterVersionRecord) {
         guard canUseAsManualRewrite else { return }
         isSubmitting = true
-        operationProgressTitle = "正在保存手动改写"
+        operationProgressTitle = localized("正在保存手动改写")
         failureMessage = nil
         Task { @MainActor in
             viewModel.clearError()
             let saved = await viewModel.saveManualRewrite(from: version)
             isSubmitting = false
             guard saved else {
-                failureMessage = viewModel.errorMessage ?? "手动改写没有保存，请稍后重试。"
+                failureMessage = viewModel.errorMessage ?? localized("手动改写没有保存，请稍后重试。")
                 return
             }
             dismiss()

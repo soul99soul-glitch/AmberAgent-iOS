@@ -452,18 +452,20 @@ final class AmberThemeRuntime {
         }
 
         var displayName: String {
+            let key: String
             switch self {
-            case .paper: "暖纸"
-            case .neutral: "暖灰"
-            case .white: "中性白"
-            case .pi: "奶油稿纸"
-            case .notion: "暖白"
-            case .garnet: "绛红"
-            case .ochre: "赭橙"
-            case .turmeric: "姜黄"
-            case .magenta: "品红"
-            case .lotus: "藕荷"
+            case .paper: key = "暖纸"
+            case .neutral: key = "暖灰"
+            case .white: key = "中性白"
+            case .pi: key = "奶油稿纸"
+            case .notion: key = "暖白"
+            case .garnet: key = "绛红"
+            case .ochre: key = "赭橙"
+            case .turmeric: key = "姜黄"
+            case .magenta: key = "品红"
+            case .lotus: key = "藕荷"
             }
+            return IOSAppLocalization.string(key, defaultValue: key)
         }
 
         var isImmersive: Bool {
@@ -696,17 +698,19 @@ enum AmberAccentOption: String, CaseIterable, Identifiable {
     }
 
     var displayName: String {
+        let key: String
         switch self {
-        case .terracotta: "陶土"
-        case .sage:       "鼠尾草绿"
-        case .mistBlue:   "雾蓝"
-        case .steelBlue:  "钢蓝"
-        case .notionBlue: "Notion 蓝"
-        case .wisteria:   "紫藤"
-        case .rose:       "玫红"
-        case .amberGold:  "琥珀金"
-        case .ink:        "墨黑"
+        case .terracotta: key = "陶土"
+        case .sage:       key = "鼠尾草绿"
+        case .mistBlue:   key = "雾蓝"
+        case .steelBlue:  key = "钢蓝"
+        case .notionBlue: key = "Notion 蓝"
+        case .wisteria:   key = "紫藤"
+        case .rose:       key = "玫红"
+        case .amberGold:  key = "琥珀金"
+        case .ink:        key = "墨黑"
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 }
 
@@ -1075,10 +1079,18 @@ struct AmberGlassCircleButton: View {
 }
 
 struct AmberSectionLabel: View {
-    let text: String
+    private let label: Text
+
+    init(text: LocalizedStringKey) {
+        label = Text(text)
+    }
+
+    init(verbatim text: String) {
+        label = Text(verbatim: text)
+    }
 
     var body: some View {
-        Text(text)
+        label
             .font(.caption.weight(.semibold))
             .foregroundStyle(AmberTheme.muted)
             .textCase(.uppercase)
@@ -1685,12 +1697,14 @@ struct HomeContinueCardModel: Equatable {
         imageGeneration: HomeImageGenerationRef? = nil,
         now: Date = Date()
     ) -> HomeContinueCardModel? {
+        let locale = IOSAppLanguagePreference.selected().resolvedLocale()
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = locale
         formatter.unitsStyle = .abbreviated
 
         var candidates = novelProjects.compactMap { project -> Candidate? in
             guard !project.isDegraded else { return nil }
-            let state = project.isRunning ? "生成中" : formatter.localizedString(
+            let state = project.isRunning ? localized("生成中") : formatter.localizedString(
                 for: project.updatedAt,
                 relativeTo: now
             )
@@ -1700,9 +1714,9 @@ struct HomeContinueCardModel: Equatable {
                 updatedAt: project.updatedAt,
                 model: .init(
                     feature: .novel,
-                    title: "小说创作",
-                    meta: "《\(project.name)》· \(state)",
-                    ctaTitle: project.isRunning ? "查看" : "继续",
+                    title: localized("小说创作"),
+                    meta: formatted("%@ · %@", arguments: ["《\(project.name)》", state]),
+                    ctaTitle: localized(project.isRunning ? "查看" : "继续"),
                     destination: .resumeProject(project.id)
                 )
             )
@@ -1717,9 +1731,11 @@ struct HomeContinueCardModel: Equatable {
                 updatedAt: councilTask.updatedAt,
                 model: .init(
                     feature: .council,
-                    title: "模型议会",
-                    meta: "\(councilTask.title) · \(state)",
-                    ctaTitle: priority == .actionRequired ? "处理" : (priority == .active ? "查看" : "继续"),
+                    title: localized("模型议会"),
+                    meta: formatted("%@ · %@", arguments: [councilTask.title, state]),
+                    ctaTitle: localized(
+                        priority == .actionRequired ? "处理" : (priority == .active ? "查看" : "继续")
+                    ),
                     destination: .openCouncil
                 )
             ))
@@ -1731,18 +1747,21 @@ struct HomeContinueCardModel: Equatable {
             let ctaTitle: String
             if task.status == .succeeded, task.workspaceSyncFailed != nil {
                 priority = .actionRequired
-                state = "Workspace 同步失败"
-                ctaTitle = "处理"
+                state = localized("Workspace 同步失败")
+                ctaTitle = localized("处理")
             } else {
                 switch task.status {
                 case .queued, .running:
                     priority = .active
-                    state = task.status.title
-                    ctaTitle = "查看"
+                    state = localized(task.status.title)
+                    ctaTitle = localized("查看")
                 case .failed, .unsupported:
                     priority = .recoverable
-                    state = "\(task.status.title) · 可重试"
-                    ctaTitle = "查看"
+                    state = formatted(
+                        "%@ · %@",
+                        arguments: [localized(task.status.title), localized("可重试")]
+                    )
+                    ctaTitle = localized("查看")
                 case .succeeded:
                     return nil
                 }
@@ -1757,8 +1776,8 @@ struct HomeContinueCardModel: Equatable {
                 updatedAt: task.updatedAt,
                 model: .init(
                     feature: .deepRead,
-                    title: topic.isEmpty ? "深度阅读" : topic,
-                    meta: "深度阅读 · \(state)",
+                    title: topic.isEmpty ? localized("深度阅读") : topic,
+                    meta: formatted("%@ · %@", arguments: [localized("深度阅读"), state]),
                     ctaTitle: ctaTitle,
                     destination: .deepReadTask(task.id)
                 )
@@ -1770,16 +1789,18 @@ struct HomeContinueCardModel: Equatable {
                app.latestVersionCreatedAt <= lastRunAt {
                 return nil
             }
-            let state = app.lastRunAt == nil ? "已生成，尚未打开" : "新版本尚未打开"
+            let state = app.lastRunAt == nil
+                ? localized("已生成，尚未打开")
+                : localized("新版本尚未打开")
             return Candidate(
                 stableID: "mini-app:\(app.id)",
                 priority: .draft,
                 updatedAt: app.latestVersionCreatedAt,
                 model: .init(
                     feature: .miniApp,
-                    title: "小应用",
-                    meta: "「\(app.title)」· \(state)",
-                    ctaTitle: "打开",
+                    title: localized("小应用"),
+                    meta: formatted("%@ · %@", arguments: ["「\(app.title)」", state]),
+                    ctaTitle: localized("打开"),
                     destination: .miniAppRunner(app.id)
                 )
             )
@@ -1788,15 +1809,16 @@ struct HomeContinueCardModel: Equatable {
         if let imageGeneration {
             let isCompleted = imageGeneration.state == .completed
             let prompt = imageGeneration.prompt.isEmpty ? "未命名图片" : imageGeneration.prompt
+            let state = localized(isCompleted ? "图片已生成" : "正在生成图片")
             candidates.append(Candidate(
                 stableID: "image:\(imageGeneration.id)",
                 priority: isCompleted ? .readyResult : .active,
                 updatedAt: imageGeneration.updatedAt,
                 model: .init(
                     feature: .imageGeneration,
-                    title: "AI 生图",
-                    meta: "\(isCompleted ? "图片已生成" : "正在生成") · \(prompt)",
-                    ctaTitle: isCompleted ? "查看图片" : "查看",
+                    title: localized("AI 生图"),
+                    meta: formatted("%@ · %@", arguments: [state, prompt]),
+                    ctaTitle: localized(isCompleted ? "查看图片" : "查看"),
                     destination: .generatedImage(
                         ChatMessageAnchor(
                             conversationID: imageGeneration.conversationID,
@@ -1815,6 +1837,14 @@ struct HomeContinueCardModel: Equatable {
         }.first?.model
     }
 
+    private static func localized(_ key: String) -> String {
+        IOSAppLocalization.string(key, defaultValue: key)
+    }
+
+    private static func formatted(_ key: String, arguments: [CVarArg]) -> String {
+        IOSAppLocalization.formatted(key, defaultValue: key, arguments: arguments)
+    }
+
     private static func councilPriority(for task: HomeCouncilTaskRef) -> Priority? {
         switch task.status {
         case .approvalRequired:
@@ -1831,9 +1861,12 @@ struct HomeContinueCardModel: Equatable {
     private static func councilStateTitle(for task: HomeCouncilTaskRef) -> String {
         switch task.status {
         case .failed, .cancelled, .timedOut, .interrupted:
-            "\(task.status.title) · 可继续"
+            formatted(
+                "%@ · %@",
+                arguments: [localized(task.status.title), localized("可继续")]
+            )
         default:
-            task.status.title
+            localized(task.status.title)
         }
     }
 }
@@ -1855,7 +1888,7 @@ private struct HomeSliceShape: Shape {
 
 /// 会话空态：与列表一体卡同圆角/投影。
 private struct HomeEmptyCard: View {
-    let title: String
+    let title: LocalizedStringKey
     @Environment(\.colorScheme) private var colorScheme
     var body: some View {
         let ambient = AmberTheme.cardShadowAmbientGeometry(for: colorScheme)
@@ -1903,7 +1936,12 @@ private struct HomeShortcut: View {
             VStack(spacing: 6) {
                 // Icon skin from theme pack; VStack layout frozen.
                 HomeShortcutIconView(entry: entry, size: 20)
-                Text(entry.title)
+                Text(
+                    verbatim: IOSAppLocalization.string(
+                        entry.title,
+                        defaultValue: entry.title
+                    )
+                )
                     // Chrome typeface from theme pack; not chat body IOSChatFont.
                     .font(AmberChromeFont.system(size: shortcutLabelSize, weight: .semibold))
                     .tracking(0.11)
@@ -2761,8 +2799,12 @@ struct ConversationsView: View {
             deepReadShortcutFocused = true
         }
         let announcement = newValue.map {
-            "待继续任务更新：\($0.title)，\($0.meta)，\($0.ctaTitle)"
-        } ?? "没有待继续任务"
+            IOSAppLocalization.formatted(
+                "待继续任务更新：%@，%@，%@",
+                defaultValue: "待继续任务更新：%@，%@，%@",
+                arguments: [$0.title, $0.meta, $0.ctaTitle]
+            )
+        } ?? IOSAppLocalization.string("没有待继续任务", defaultValue: "没有待继续任务")
         UIAccessibility.post(notification: .announcement, argument: announcement)
     }
 
@@ -3015,9 +3057,17 @@ private struct ConversationSummaryRow: View {
     }
 
     private var accessibilityRowLabel: String {
-        var label = "会话 \(displayTitle)，\(summary.messageCount) 条消息"
-        if summary.isPinned { label += "，已置顶" }
-        if isGenerating { label += "，正在生成" }
+        var label = IOSAppLocalization.formatted(
+            "会话 %@，%@ 条消息",
+            defaultValue: "会话 %@，%@ 条消息",
+            arguments: [displayTitle, String(summary.messageCount)]
+        )
+        if summary.isPinned {
+            label += "，" + IOSAppLocalization.string("已置顶", defaultValue: "已置顶")
+        }
+        if isGenerating {
+            label += "，" + IOSAppLocalization.string("正在生成", defaultValue: "正在生成")
+        }
         // 不跟 4.2s 轮播抢读：有浓缩预览时固定附带一句，避免动态切换。
         if isCurrent, !listPreview.isEmpty { label += "，\(listPreview)" }
         return label
@@ -3039,7 +3089,13 @@ private struct ConversationSummaryRow: View {
                 Text("·")
                     .font(.system(size: conversationMetadataSize, weight: .regular))
                     .foregroundStyle(AmberTheme.muted2)
-                Text("\(summary.messageCount) 条")
+                Text(
+                    IOSAppLocalization.formatted(
+                        "%d 条",
+                        defaultValue: "%d 条",
+                        arguments: [Int32(summary.messageCount)]
+                    )
+                )
                     .font(.system(size: conversationMetadataSize, weight: .regular)).tracking(0.11)
                     .foregroundStyle(AmberTheme.muted)
             }
@@ -3094,7 +3150,9 @@ private struct ConversationSummaryRow: View {
 
     /// 空标题统一走「新对话」占位语义：行文本、搜索匹配与图标映射同一输入。
     private var displayTitle: String {
-        summary.title.isEmpty ? "新对话" : summary.title
+        summary.title.isEmpty
+            ? IOSAppLocalization.string("新对话", defaultValue: "新对话")
+            : summary.title
     }
 
     /// 相对时间：updateAt -> "刚刚 / N分钟前 / N小时前 / 昨天 / M月D日"。
@@ -3102,6 +3160,7 @@ private struct ConversationSummaryRow: View {
         let ms = summary.updateAt.toEpochMilliseconds()
         let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
     }
@@ -3328,7 +3387,10 @@ struct SearchView: View {
                             selectedFilter = filter
                         } label: {
                             AmberGlassTextChip(
-                                title: filter.title,
+                                title: IOSAppLocalization.string(
+                                    filter.title,
+                                    defaultValue: filter.title
+                                ),
                                 isSelected: selectedFilter == filter,
                                 height: 30,
                                 horizontalPadding: 13,
@@ -3473,8 +3535,14 @@ private struct RecentConversationSearchRow: View {
             SearchRowChrome(
                 systemImage: summary.isPinned ? "pin.fill" : "bubble.left.fill",
                 color: AmberTheme.accent,
-                title: summary.title.isEmpty ? "新对话" : summary.title,
-                preview: "\(summary.messageCount) 条消息",
+                title: summary.title.isEmpty
+                    ? IOSAppLocalization.string("新对话", defaultValue: "新对话")
+                    : summary.title,
+                preview: IOSAppLocalization.formatted(
+                    "%@ 条消息",
+                    defaultValue: "%@ 条消息",
+                    arguments: [String(summary.messageCount)]
+                ),
                 highlight: "",
                 time: relativeTime(ms: summary.updateAt.toEpochMilliseconds())
             )
@@ -3490,7 +3558,9 @@ private struct SearchResultGroup: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: title)
+            AmberSectionLabel(
+                verbatim: IOSAppLocalization.string(title, defaultValue: title)
+            )
                 .padding(.top, -8)
 
             AmberFormGroup {
@@ -3605,6 +3675,7 @@ private struct HighlightedPreview: View {
 private func relativeTime(ms: Int64) -> String {
     let date = Date(timeIntervalSince1970: TimeInterval(ms) / 1000.0)
     let formatter = RelativeDateTimeFormatter()
+    formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
     formatter.unitsStyle = .abbreviated
     return formatter.localizedString(for: date, relativeTo: Date())
 }
@@ -3616,11 +3687,18 @@ struct SettingsHomeView: View {
     @Environment(RouterPath.self) private var router
     @Environment(\.dismiss) private var dismiss
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
+    @AppStorage(IOSAppLanguagePreference.defaultsKey) private var appLanguage = IOSAppLanguage.system.rawValue
 
     // 方案 B：全表统一 accent 图标 + accentTint 浅底，取消彩虹 per-row 色。
     private var generalEntries: [SettingsHomeEntry] {
         [
             .init(title: "外观", value: appearanceModeTitle, systemImage: "circle.lefthalf.filled", route: .appearance),
+            .init(
+                title: IOSAppLocalization.string("language.title", language: selectedLanguage),
+                value: languageTitle,
+                systemImage: "globe",
+                route: .language
+            ),
             .init(title: "显示与字体", systemImage: "slider.horizontal.3", route: .displayFont)
         ]
     }
@@ -3663,7 +3741,19 @@ struct SettingsHomeView: View {
     }
 
     private var appearanceModeTitle: String {
-        (IOSAppearanceMode(rawValue: appearanceMode) ?? .light).title
+        let title = (IOSAppearanceMode(rawValue: appearanceMode) ?? .light).title
+        return IOSAppLocalization.string(title, defaultValue: title)
+    }
+
+    private var selectedLanguage: IOSAppLanguage {
+        IOSAppLanguage(storedValue: appLanguage)
+    }
+
+    private var languageTitle: String {
+        if selectedLanguage == .system {
+            return IOSAppLocalization.string("language.follow_system", language: .system)
+        }
+        return selectedLanguage.nativeDisplayName
     }
 
     /// 与首页顶栏账户入口同源：昵称首字，空昵称回落 "A"。
@@ -3725,7 +3815,7 @@ struct SettingsHomeView: View {
         .padding(.bottom, 22)
     }
 
-    private func settingsSection(_ title: String, entries: [SettingsHomeEntry]) -> some View {
+    private func settingsSection(_ title: LocalizedStringKey, entries: [SettingsHomeEntry]) -> some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: title)
             AmberFormGroup {
@@ -3759,8 +3849,7 @@ struct SettingsHomeView: View {
 }
 
 private struct SettingsHomeEntry: Identifiable {
-    /// 标题在本页唯一，作稳定 id（避免每次 entries 重算换 UUID）。
-    var id: String { title }
+    var id: Route { route }
     let title: String
     let subtitle: String?
     let value: String?
@@ -3774,8 +3863,10 @@ private struct SettingsHomeEntry: Identifiable {
         systemImage: String,
         route: Route
     ) {
-        self.title = title
-        self.subtitle = subtitle
+        self.title = IOSAppLocalization.string(title, defaultValue: title)
+        self.subtitle = subtitle.map {
+            IOSAppLocalization.string($0, defaultValue: $0)
+        }
         self.value = value
         self.systemImage = systemImage
         self.route = route
@@ -4201,20 +4292,22 @@ private struct WorkspaceFileDetailSheet: View {
     }
 
     private var previewEmptyText: String {
+        let key: String
         switch record.status {
         case .ready:
-            "没有可预览文本。"
+            key = "没有可预览文本。"
         case .missing:
-            "文件副本丢失，请重新导入。"
+            key = "文件副本丢失，请重新导入。"
         case .unsupported:
-            "此格式暂不支持文本预览。"
+            key = "此格式暂不支持文本预览。"
         case .tooLarge:
-            "文件超过本地解析上限。"
+            key = "文件超过本地解析上限。"
         case .needsReauthorization:
-            "需要从 Files 重新选择文件。"
+            key = "需要从 Files 重新选择文件。"
         case .parseFailed:
-            "解析失败，可尝试重新解析。"
+            key = "解析失败，可尝试重新解析。"
         }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 }
 
@@ -4226,7 +4319,10 @@ private struct WorkspaceArtifactDetailSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     private var content: String {
-        (try? store.artifactContent(id: record.id)) ?? "Artifact 内容丢失或读取失败。"
+        (try? store.artifactContent(id: record.id)) ?? IOSAppLocalization.string(
+            "Artifact 内容丢失或读取失败。",
+            defaultValue: "Artifact 内容丢失或读取失败。"
+        )
     }
 
     var body: some View {
@@ -4244,7 +4340,13 @@ private struct WorkspaceArtifactDetailSheet: View {
                         ("创建", WorkspaceDateFormat.long(record.createdAtMillis)),
                         ("更新", WorkspaceDateFormat.long(record.updatedAtMillis))
                     ])
-                    WorkspacePreviewBlock(text: content, emptyText: "Artifact 内容为空。")
+                    WorkspacePreviewBlock(
+                        text: content,
+                        emptyText: IOSAppLocalization.string(
+                            "Artifact 内容为空。",
+                            defaultValue: "Artifact 内容为空。"
+                        )
+                    )
                 }
                 .padding(16)
             }
@@ -4300,7 +4402,7 @@ private struct WorkspaceInfoGrid: View {
         VStack(spacing: 0) {
             ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
                 HStack(alignment: .top) {
-                    Text(row.0)
+                    Text(verbatim: IOSAppLocalization.string(row.0, defaultValue: row.0))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.muted)
                         .frame(width: 56, alignment: .leading)
@@ -4341,7 +4443,7 @@ private struct WorkspacePreviewBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("预览")
+            Text(verbatim: IOSAppLocalization.string("预览", defaultValue: "预览"))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.muted)
                 .textCase(.uppercase)
@@ -4361,13 +4463,18 @@ private enum WorkspaceDateFormat {
     static func short(_ millis: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
     static func long(_ millis: Int64) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(millis) / 1000)
-        return date.formatted(date: .abbreviated, time: .shortened)
+        let formatter = DateFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 }
 

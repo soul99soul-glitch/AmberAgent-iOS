@@ -204,7 +204,11 @@ struct BoardView: View {
                 if !hotListStore.dashboard.hasEnabledSources {
                     hotListEmptyText("没有启用任何 iOS 支持的热榜来源。请到设置里选择 Hacker News、arXiv AI、InfoQ AI、36Kr、HF Papers 或 GitHub AI。")
                 } else if hotListStore.dashboard.topics.isEmpty {
-                    hotListEmptyText(hotListStore.isRefreshing ? "正在刷新综合热榜…" : "暂无可显示的综合热点。下拉或点标题旁刷新图标。")
+                    if hotListStore.isRefreshing {
+                        hotListEmptyText("正在刷新综合热榜…")
+                    } else {
+                        hotListEmptyText("暂无可显示的综合热点。下拉或点标题旁刷新图标。")
+                    }
                 } else {
                     ForEach(Array(hotListStore.dashboard.topics.prefix(20).enumerated()), id: \.element.id) { index, topic in
                         Button {
@@ -235,11 +239,15 @@ struct BoardView: View {
     private var hotListProviderSection: some View {
         VStack(spacing: 0) {
             ForEach(hotListStore.dashboard.providers) { provider in
-                AmberSectionLabel(text: provider.providerName)
+                AmberSectionLabel(verbatim: provider.providerName)
                     .padding(.top, 10)
                 AmberFormGroup {
                     if provider.items.isEmpty {
-                        hotListEmptyText(provider.error ?? "这个来源暂时没有可显示内容。")
+                        if let error = provider.error {
+                            hotListEmptyText(verbatim: error)
+                        } else {
+                            hotListEmptyText("这个来源暂时没有可显示内容。")
+                        }
                     } else {
                         ForEach(Array(provider.items.prefix(8).enumerated()), id: \.offset) { index, item in
                             Button {
@@ -255,14 +263,32 @@ struct BoardView: View {
                     }
                 }
                 if provider.stale || (provider.error ?? "").isEmpty == false {
-                    BoardCapabilityNote(provider.stale ? "这个来源刷新失败，当前显示的是上次缓存。" : "刷新失败：\(provider.error ?? "未知错误")")
+                    if provider.stale {
+                        BoardCapabilityNote("这个来源刷新失败，当前显示的是上次缓存。")
+                    } else {
+                        BoardCapabilityNote(verbatim: IOSAppLocalization.formatted(
+                            "刷新失败：%@",
+                            defaultValue: "刷新失败：%@",
+                            arguments: [provider.error ?? IOSAppLocalization.string("未知错误", defaultValue: "未知错误")]
+                        ))
+                    }
                 }
             }
         }
     }
 
-    private func hotListEmptyText(_ text: String) -> some View {
+    private func hotListEmptyText(_ text: LocalizedStringKey) -> some View {
         Text(text)
+            .font(.caption)
+            .foregroundStyle(AmberTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+    }
+
+    private func hotListEmptyText(verbatim text: String) -> some View {
+        Text(verbatim: text)
             .font(.caption)
             .foregroundStyle(AmberTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
@@ -295,7 +321,8 @@ struct BoardView: View {
 
                     Picker("版式", selection: $selectedTemplateId) {
                         ForEach(IOSDeepReadTemplate.builtIns) { template in
-                            Text(template.name).tag(template.id)
+                            Text(verbatim: IOSAppLocalization.string(template.name, defaultValue: template.name))
+                                .tag(template.id)
                         }
                     }
                     .pickerStyle(.segmented)
@@ -360,7 +387,7 @@ struct BoardView: View {
         }
     }
 
-    private func deepReadTextField(title: String, text: Binding<String>, placeholder: String) -> some View {
+    private func deepReadTextField(title: LocalizedStringKey, text: Binding<String>, placeholder: LocalizedStringKey) -> some View {
         HStack(spacing: 12) {
             Text(title)
                 .font(.caption.weight(.semibold))
@@ -544,7 +571,7 @@ struct BoardView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else {
-                deepReadMessage = "没有选择文件。"
+                deepReadMessage = IOSAppLocalization.string("没有选择文件。", defaultValue: "没有选择文件。")
                 deepReadMessageIsError = true
                 return
             }
@@ -566,12 +593,16 @@ struct BoardView: View {
                         deepReadMessageIsError = true
                     }
                 case .failure(let error):
-                    deepReadMessage = error.userMessageForDeepRead
+                    deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
                     deepReadMessageIsError = true
                 }
             }
         case .failure(let error):
-            deepReadMessage = "文件选择失败：\(IOSDeepReadUserFacingText.fromError(error))"
+            deepReadMessage = IOSAppLocalization.formatted(
+                "文件选择失败：%@",
+                defaultValue: "文件选择失败：%@",
+                arguments: [IOSDeepReadUserFacingText.fromError(error)]
+            )
             deepReadMessageIsError = true
         }
     }
@@ -677,7 +708,7 @@ private struct IOSDeepReadHistoryRow: View {
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(2)
 
-                Text(task.sourceSummary.isEmpty ? task.template.name : "\(task.template.name) · \(task.sourceSummary)")
+                Text(verbatim: historySummary)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(2)
@@ -685,16 +716,30 @@ private struct IOSDeepReadHistoryRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text(task.status.title)
+                Text(verbatim: task.status.localizedTitle)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(tint)
-                Text(IOSBoardDateFormatters.monthDayTime.string(from: Date(timeIntervalSince1970: TimeInterval(task.updatedAt) / 1_000)))
+                Text(verbatim: IOSBoardDateFormatters.localizedMonthDayTime(
+                    Date(timeIntervalSince1970: TimeInterval(task.updatedAt) / 1_000)
+                ))
                     .font(.system(size: 10))
                     .foregroundStyle(AmberTheme.muted2)
             }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
+    }
+
+    private var historySummary: String {
+        let template = task.template
+        let isBuiltIn = template.id == IOSDeepReadTemplate.magazine.id
+            || template.id == IOSDeepReadTemplate.editorial.id
+            || template.id == IOSDeepReadTemplate.analysis.id
+        let templateName = isBuiltIn
+            ? IOSAppLocalization.string(template.name, defaultValue: template.name)
+            : template.name
+        let sourceSummary = task.localizedSourceSummary
+        return sourceSummary.isEmpty ? templateName : "\(templateName) · \(sourceSummary)"
     }
 
     private var iconName: String {
@@ -1085,7 +1130,13 @@ struct IOSDeepReadTaskDetailView: View {
                         Text("部分段落未完成")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(AmberTheme.foreground)
-                        Text("以下模块未能生成：\(missing.joined(separator: "、"))。重新生成只重跑这些缺失段落。")
+                        Text(verbatim: IOSAppLocalization.formatted(
+                            "以下模块未能生成：%@。重新生成只重跑这些缺失段落。",
+                            defaultValue: "以下模块未能生成：%@。重新生成只重跑这些缺失段落。",
+                            arguments: [missing.map {
+                                IOSAppLocalization.string($0, defaultValue: $0)
+                            }.joined(separator: "、")]
+                        ))
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                     }
@@ -1119,7 +1170,10 @@ struct IOSDeepReadTaskDetailView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let text = (detail?.isEmpty == false)
             ? IOSDeepReadUserFacingText.sanitize(detail ?? "")
-            : "生成未完成，部分内容可能不完整。点右上角重试。"
+            : IOSAppLocalization.string(
+                "生成未完成，部分内容可能不完整。点右上角重试。",
+                defaultValue: "生成未完成，部分内容可能不完整。点右上角重试。"
+            )
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 15))
@@ -1174,16 +1228,28 @@ struct IOSDeepReadTaskDetailView: View {
 
     private func kicker(_ task: IOSDeepReadTask) -> String {
         let topicType = decodeStructured(task)?.topicType.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return topicType.isEmpty ? "DEEP READ" : topicType.uppercased()
+        return topicType.isEmpty
+            ? IOSAppLocalization.string("深度阅读", defaultValue: "深度阅读").uppercased()
+            : topicType.uppercased()
     }
 
     private func statusText(_ task: IOSDeepReadTask) -> String {
         switch state(for: task) {
-        case .generating: return "正在生成阅读稿…"
+        case .generating:
+            return IOSAppLocalization.string("正在生成阅读稿…", defaultValue: "正在生成阅读稿…")
         case .done:
             let date = Date(timeIntervalSince1970: Double(task.updatedAt) / 1000)
-            return "已完成 · " + date.formatted(date: .omitted, time: .shortened)
-        case .failed: return "生成未完成 · 可重试"
+            let dateText = date.formatted(
+                Date.FormatStyle(date: .omitted, time: .shortened)
+                    .locale(IOSAppLanguagePreference.selected().resolvedLocale())
+            )
+            return IOSAppLocalization.formatted(
+                "已完成 · %@",
+                defaultValue: "已完成 · %@",
+                arguments: [dateText]
+            )
+        case .failed:
+            return IOSAppLocalization.string("生成未完成 · 可重试", defaultValue: "生成未完成 · 可重试")
         }
     }
 
@@ -1197,7 +1263,7 @@ struct IOSDeepReadTaskDetailView: View {
         let partialCompletion = task?.status == .succeeded && !(task?.missingSections ?? []).isEmpty
         guard let task, task.status == .failed || task.status == .unsupported || partialCompletion else { return }
         guard let sharedSettings else {
-            showToast("当前设置不可用，无法重试")
+            showToast(IOSAppLocalization.string("当前设置不可用，无法重试", defaultValue: "当前设置不可用，无法重试"))
             return
         }
         IOSDeepReadLauncher.retry(taskId: task.id, sharedSettings: sharedSettings) { message, isError in
@@ -1217,11 +1283,15 @@ struct IOSDeepReadTaskDetailView: View {
                 sourceId: task.id
             )
             store.clearWorkspaceSyncFailure(id: task.id)
-            showToast("已保存到 Workspace")
+            showToast(IOSAppLocalization.string("已保存到 Workspace", defaultValue: "已保存到 Workspace"))
         } catch {
             let message = IOSDeepReadUserFacingText.fromError(error)
             store.markWorkspaceSyncFailed(id: task.id, message: message)
-            showToast("保存到 Workspace 失败：\(message)")
+            showToast(IOSAppLocalization.formatted(
+                "保存到 Workspace 失败：%@",
+                defaultValue: "保存到 Workspace 失败：%@",
+                arguments: [message]
+            ))
         }
         isRetryingWorkspaceSync = false
     }
@@ -1285,7 +1355,9 @@ struct IOSDeepReadTaskDetailView: View {
         let structured: IOSDeepReadOutput? = task.structuredJSON
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode(IOSDeepReadOutput.self, from: $0) }
-        let kicker = (structured?.topicType.isEmpty == false) ? structured!.topicType.uppercased() : "DEEP READ"
+        let kicker = (structured?.topicType.isEmpty == false)
+            ? structured!.topicType.uppercased()
+            : IOSAppLocalization.string("深度阅读", defaultValue: "深度阅读").uppercased()
         // Resolve the app theme's canvas palette for the current appearance, so the reader
         // follows the chosen background (paper or immersive) — same colors as the native
         // masthead/sources around it. Immersive canvases share one palette across light/dark.
@@ -1604,14 +1676,18 @@ struct BoardCapabilityDivider: View {
 }
 
 struct BoardCapabilityNote: View {
-    let text: String
+    private let label: Text
 
-    init(_ text: String) {
-        self.text = text
+    init(_ text: LocalizedStringKey) {
+        label = Text(text)
+    }
+
+    init(verbatim text: String) {
+        label = Text(verbatim: text)
     }
 
     var body: some View {
-        Text(text)
+        label
             .font(.caption)
             .foregroundStyle(AmberTheme.muted2)
             .lineSpacing(2)
@@ -1658,7 +1734,7 @@ private struct TopicActionSheet: View {
 
 private struct TopicActionRow: View {
     let icon: String
-    let title: String
+    let title: LocalizedStringKey
     var prominent: Bool = false
     let action: () -> Void
 
@@ -1707,7 +1783,7 @@ private struct DeepReadMagazineSkeleton: View {
 
     private var stageText: String {
         let label = progressLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return label.isEmpty ? "正在生成阅读稿…" : label
+        return Self.localizedProgressLabel(label)
     }
 
     var body: some View {
@@ -1773,7 +1849,9 @@ private struct DeepReadMagazineSkeleton: View {
         .opacity(dimmed ? 0.38 : 1)
         .allowsHitTesting(!dimmed)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(dimmed ? "生成未完成" : stageText)
+        .accessibilityLabel(dimmed
+            ? IOSAppLocalization.string("生成未完成", defaultValue: "生成未完成")
+            : stageText)
         .onAppear {
             guard !dimmed else { return }
             withAnimation(.easeInOut(duration: 1.15).repeatForever(autoreverses: true)) { pulse = true }
@@ -1796,6 +1874,51 @@ private struct DeepReadMagazineSkeleton: View {
                 .opacity(dimmed ? 0.85 : (pulse ? 0.38 : 0.85))
         }
         .frame(height: height)
+    }
+
+    private static let fixedProgressKeys = [
+        "准备生成",
+        "正在搜索补充来源",
+        "正在抓取网页正文",
+        "正在生成深度阅读",
+    ]
+
+    private static let generationStageKeys = [
+        "结构规划",
+        "概览",
+        "时间轴叙事",
+        "深度分析",
+        "扩展阅读",
+    ]
+
+    private static func localizedProgressLabel(_ raw: String) -> String {
+        guard !raw.isEmpty else {
+            return IOSAppLocalization.string("正在生成阅读稿…", defaultValue: "正在生成阅读稿…")
+        }
+
+        if let fixedKey = fixedProgressKeys.first(where: { matchesLocalizedValue(raw, canonicalKey: $0) }) {
+            return IOSAppLocalization.string(fixedKey, defaultValue: fixedKey)
+        }
+
+        if let stageKey = generationStageKeys.first(where: { raw == $0 || raw.hasSuffix($0) }) {
+            let localizedStage = IOSAppLocalization.string(stageKey, defaultValue: stageKey)
+            if raw == stageKey {
+                return localizedStage
+            }
+            return IOSAppLocalization.formatted(
+                "正在生成%@",
+                defaultValue: "正在生成%@",
+                arguments: [localizedStage]
+            )
+        }
+
+        return raw
+    }
+
+    private static func matchesLocalizedValue(_ raw: String, canonicalKey: String) -> Bool {
+        raw == canonicalKey || IOSAppLanguage.explicitLanguages.contains {
+            IOSAppLocalization.string(canonicalKey, language: $0) == raw
+        }
     }
 }
 
@@ -1848,7 +1971,7 @@ private struct DeepReadRelatedRow: View {
            let host = URL(string: raw)?.host {
             return Self.brandLabel(fromHost: host)
         }
-        return source.kind.title
+        return source.kind.localizedTitle
     }
 
     static func brandLabel(fromHost host: String) -> String {

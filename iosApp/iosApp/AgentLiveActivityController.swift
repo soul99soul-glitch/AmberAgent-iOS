@@ -105,6 +105,18 @@ final class AgentLiveActivityController {
         await owned.activity.update(Self.content(presentation: presentation, now: now))
     }
 
+    func refreshLanguage() async {
+        let activePresentations = activitiesByRunId.map { ($0.key, $0.value.lastPresentation) }
+        for (runId, presentation) in activePresentations {
+            await update(
+                runId: runId,
+                presentation: presentation,
+                force: true,
+                minimumInterval: 0
+            )
+        }
+    }
+
     func end(
         runId: String,
         presentation: AgentActivityPresentation,
@@ -348,7 +360,13 @@ final class AgentLiveActivityController {
         now: Date
     ) -> ActivityContent<AgentActivityAttributes.ContentState> {
         ActivityContent(
-            state: .init(presentation: presentation, updatedAt: now),
+            state: .init(
+                presentation: presentation,
+                updatedAt: now,
+                languageCode: IOSAppLanguagePreference.selected()
+                    .resolvedLanguage()
+                    .rawValue
+            ),
             staleDate: AgentActivityLifecyclePolicy.staleDate(
                 for: presentation.phase,
                 now: now

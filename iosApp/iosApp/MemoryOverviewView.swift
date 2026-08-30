@@ -360,6 +360,9 @@ struct MemoryOverviewView: View {
                 AmberSectionLabel(text: "受外部内容影响的会话")
                 AmberFormGroup {
                     ForEach(Array(pollutedConversations.enumerated()), id: \.element.id) { index, summary in
+                        let title = summary.title.isEmpty
+                            ? IOSAppLocalization.string("未命名会话", defaultValue: "未命名会话")
+                            : summary.title
                         HStack(spacing: 10) {
                             Image(systemName: "globe")
                                 .accessibilityHidden(true)
@@ -368,11 +371,15 @@ struct MemoryOverviewView: View {
                                 .frame(width: 28, height: 28)
 
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(summary.title.isEmpty ? "未命名会话" : summary.title)
+                                Text(title)
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(AmberTheme.foreground)
                                     .lineLimit(1)
-                                Text("\(pollutedTime(summary.updateAt)) 曾接触外部内容，已暂停记忆抽取")
+                                Text(IOSAppLocalization.formatted(
+                                    "%@ 曾接触外部内容，已暂停记忆抽取",
+                                    defaultValue: "%@ 曾接触外部内容，已暂停记忆抽取",
+                                    arguments: [pollutedTime(summary.updateAt)]
+                                ))
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -386,7 +393,11 @@ struct MemoryOverviewView: View {
                             .foregroundStyle(AmberTheme.accent)
                             .frame(minWidth: 44, minHeight: 44)
                             .contentShape(Rectangle())
-                            .accessibilityLabel("恢复「\(summary.title.isEmpty ? "未命名会话" : summary.title)」的记忆抽取")
+                            .accessibilityLabel(IOSAppLocalization.formatted(
+                                "恢复「%@」的记忆抽取",
+                                defaultValue: "恢复「%@」的记忆抽取",
+                                arguments: [title]
+                            ))
                         }
                         .padding(.horizontal, 14)
                         .padding(.vertical, 6)
@@ -403,6 +414,7 @@ struct MemoryOverviewView: View {
     private func pollutedTime(_ updateAt: KotlinInstant) -> String {
         let seconds = TimeInterval(updateAt.toEpochMilliseconds()) / 1000.0
         let formatter = RelativeDateTimeFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: Date(timeIntervalSince1970: seconds), relativeTo: Date())
     }

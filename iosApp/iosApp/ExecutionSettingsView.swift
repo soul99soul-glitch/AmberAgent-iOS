@@ -143,7 +143,7 @@ struct ExecutionSettingsView: View {
             AmberFormGroup {
                 ExecutionToggleRow(
                     systemImage: "capsule",
-                    title: "灵动岛实时活动",
+                    title: "聊天灵动岛实时活动",
                     isOn: liveActivity
                 ) {
                     liveActivity.toggle()
