@@ -447,7 +447,6 @@ private struct PermissionRequestRow: View {
                     Text(item.subtitle)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 

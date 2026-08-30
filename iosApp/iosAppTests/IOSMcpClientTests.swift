@@ -282,6 +282,12 @@ final class IOSMcpClientTests: XCTestCase {
             ],
             hangingMethods: ["tools/call"]
         )
+        let cancellationObserved = expectation(description: "transport observes cancellation")
+        transport.onCancellation = { method in
+            if method == "tools/call" {
+                cancellationObserved.fulfill()
+            }
+        }
         let client = IOSMcpClient(transport: transport, requestTimeoutSeconds: 5)
         _ = try await client.connect(config: .streamableHTTP(name: "docs", url: "https://example.com/mcp"))
 
@@ -297,6 +303,7 @@ final class IOSMcpClientTests: XCTestCase {
         } catch is CancellationError {
             // Expected.
         }
+        await fulfillment(of: [cancellationObserved], timeout: 1)
         XCTAssertTrue(transport.cancelledMethods.contains("tools/call"))
     }
 
@@ -388,6 +395,7 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
     private(set) var sentRequestHeaders: [[String: String]] = []
     private(set) var disconnectedServers: [String] = []
     private(set) var cancelledMethods: Set<String> = []
+    var onCancellation: ((String) -> Void)?
     private(set) var maximumConcurrentRequests = 0
     private var activeRequests = 0
 
@@ -428,6 +436,7 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
                 }
             } catch is CancellationError {
                 cancelledMethods.insert(method)
+                onCancellation?(method)
                 throw CancellationError()
             }
         }

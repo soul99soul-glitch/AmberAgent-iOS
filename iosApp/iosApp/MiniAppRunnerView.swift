@@ -263,11 +263,11 @@ struct MiniAppRunnerView: View {
     }
 
     private func categoryLabel(_ raw: String) -> String {
-        switch raw.lowercased() {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
         case "tool": return "工具"
         case "game": return "游戏"
-        case "utility": return "实用"
-        case "entertainment": return "娱乐"
+        case "info": return "信息"
+        case "custom": return "自定义"
         default: return raw.isEmpty ? "小应用" : raw
         }
     }
@@ -527,6 +527,8 @@ struct MiniAppRunnerView: View {
                                     }
                                     .buttonStyle(.borderedProminent)
                                     .tint(AmberTheme.accent)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
 
                                     Button {
                                         saveEditedHtml(app)
@@ -537,6 +539,8 @@ struct MiniAppRunnerView: View {
                                             .frame(minHeight: 36)
                                     }
                                     .buttonStyle(.bordered)
+                                    .frame(minHeight: 44)
+                                    .contentShape(Rectangle())
                                 }
                             }
                         }
@@ -635,7 +639,7 @@ struct MiniAppRunnerView: View {
         case "toast": return "提示"
         case "clipboard.copy": return "写入剪贴板"
         case "clipboard.read": return "读取剪贴板"
-        case "location.get": return "定位"
+        case "location.get", "location.getCurrent": return "定位"
         default:
             if method.hasPrefix("host.") { return "宿主能力" }
             return method
@@ -659,7 +663,6 @@ struct MiniAppRunnerView: View {
             Text(actionMessage)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground)
-                .lineLimit(3)
                 .multilineTextAlignment(.leading)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
@@ -1053,8 +1056,16 @@ struct MiniAppRunnerView: View {
 
     private func grantDescription(_ permission: String) -> String {
         switch IOSMiniAppPermission(rawValue: permission) {
+        case .storage:
+            return "允许读写这个小应用自己的本地数据。"
+        case .toast:
+            return "允许显示提示信息。"
+        case .theme:
+            return "允许读取当前主题色。"
         case .network:
             return "允许访问 HTTPS 网络。"
+        case .externalImages:
+            return "允许加载外链图片。"
         case .search:
             return "允许使用网页搜索。"
         case .aiGenerate:
@@ -1073,6 +1084,14 @@ struct MiniAppRunnerView: View {
             return "允许使用这个小应用自己的本地存储。"
         case .eventBus:
             return "允许在运行期间发送本地事件。"
+        case .launch:
+            return "允许打开其他小应用。"
+        case .sensor:
+            return "允许订阅设备传感器。"
+        case .location:
+            return "允许读取当前位置。"
+        case .clipboardRead:
+            return "允许读取剪贴板文本。"
         case nil:
             return "未知权限会被拒绝。"
         default:

@@ -56,7 +56,7 @@ struct WatchTaskRootView: View {
             Label(phaseTitle, systemImage: phaseSymbol)
                 .font(.subheadline.weight(.semibold))
             if model.snapshot.isActive {
-                Text(model.snapshot.stage.replacingOccurrences(of: "_", with: " "))
+                Text(model.snapshot.detail ?? model.snapshot.stage.replacingOccurrences(of: "_", with: " "))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {

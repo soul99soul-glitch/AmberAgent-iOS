@@ -271,6 +271,7 @@ private struct LazyToolTextBlock: View {
                     }
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(AmberTheme.accent)
+                    .frame(minHeight: 44)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

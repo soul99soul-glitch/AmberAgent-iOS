@@ -1908,6 +1908,8 @@ private struct HomeShortcut: View {
                     .font(AmberChromeFont.system(size: shortcutLabelSize, weight: .semibold))
                     .tracking(0.11)
                     .lineLimit(2)
+                    .allowsTightening(true)
+                    .minimumScaleFactor(0.8)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -2440,6 +2442,7 @@ struct ConversationsView: View {
             HStack(spacing: 10) {
                 // Brand mark layer — HStack chrome layout frozen.
                 AmberBrandMarkView()
+                    .layoutPriority(1)
 
                 Spacer(minLength: 8)
 

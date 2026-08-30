@@ -821,8 +821,8 @@ private extension NovelPromptKind {
         // 讨论规划不推进正史,needsSync 时仍可聊,但注入会带 stale 警告。
         case .quickStart, .characterProposal, .discussion,
              .stateDeltaV1, .manualSyncV1, .discussionArchiveV1, .polishDriftV1,
-             .continuityAuditV1, .chapterPlanAcceptanceV1, .chapterPlanProposalV1,
-             .workspacePlotV1:
+             .continuityAuditV1, .continuityRepairV1, .chapterPlanAcceptanceV1,
+             .chapterPlanProposalV1, .workspacePlotV1:
             false
         }
     }
@@ -831,7 +831,7 @@ private extension NovelPromptKind {
         switch self {
         // 矛盾检查要求分支空闲:边生成边扫,正文会在扫描途中变化,报出来的位置对不上。
         case .proseContinuation, .proseWholeChapter, .wholeChapterPolish, .wholeChapterRegeneration,
-             .continuityAuditV1, .chapterAdjudicationV1:
+             .continuityAuditV1, .continuityRepairV1, .chapterAdjudicationV1:
             true
         case .quickStart, .characterProposal, .discussion, .stateDeltaV1, .manualSyncV1,
              .discussionArchiveV1, .polishDriftV1, .chapterPlanAcceptanceV1, .chapterPlanProposalV1,

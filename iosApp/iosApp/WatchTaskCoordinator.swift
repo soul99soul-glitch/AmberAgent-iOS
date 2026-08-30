@@ -103,13 +103,13 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         conversationId: String?,
         request: WatchAskUserRequest
     ) {
-        pendingAskUser = request
         publish(
             runId: runId,
             conversationId: conversationId,
             presentation: .waitingForUser(kind: .workflow),
             decision: WatchTaskSnapshotBuilder.askUserDecision(from: request)
         )
+        pendingAskUser = request
     }
 
     func publishCompleted(

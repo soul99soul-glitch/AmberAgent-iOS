@@ -5,6 +5,7 @@ import SwiftUI
 struct NovelContinuityAuditSection: View {
     let viewModel: NovelCreationViewModel
     let onOpenChapter: (NovelChapterSelection) -> Void
+    @State private var pendingRepair: RepairTarget?
 
     var body: some View {
         Section("剧情矛盾检查") {
@@ -23,20 +24,32 @@ struct NovelContinuityAuditSection: View {
                         .foregroundStyle(AmberTheme.muted)
                 }
                 .padding(.vertical, 3)
-                Button("停止扫描", role: .destructive) {
+                Button("停止", role: .destructive) {
                     viewModel.cancelContinuityAudit()
                 }
             } else if let report = viewModel.continuityAudit {
                 reportHeader(report)
-                if report.issues.isEmpty {
-                    Text("没有发现前后打架的地方。")
+                if let repair = viewModel.continuityRepair {
+                    repairSummary(repair)
+                }
+                if viewModel.visibleContinuityIssues.isEmpty {
+                    Text(
+                        viewModel.continuityRepair?.repairedIssueIDs.isEmpty == false
+                            ? "已按检查结果改写冲突段落。建议再检查一次确认。"
+                            : "没有发现前后打架的地方。"
+                    )
                         .foregroundStyle(AmberTheme.muted)
                 } else {
-                    ForEach(report.issues) { issue in
+                    ForEach(viewModel.visibleContinuityIssues) { issue in
                         NovelContinuityIssueRow(
                             issue: issue,
+                            canRepair: canRepair(report) && canRepairIssue(issue),
+                            showsRepair: canRepairIssue(issue),
                             selection: selection(for:),
-                            onOpenChapter: onOpenChapter
+                            onOpenChapter: onOpenChapter,
+                            onRepair: {
+                                pendingRepair = .issue(issue.id)
+                            }
                         )
                     }
                 }
@@ -49,6 +62,15 @@ struct NovelContinuityAuditSection: View {
                     Text("有 \(report.failedChunkCount) 段正文没扫成功，这份结果不完整，可以重新检查。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
+                }
+                if viewModel.visibleContinuityIssues.contains(where: canRepairIssue) {
+                    Button {
+                        pendingRepair = .all
+                    } label: {
+                        Label("一键修复", systemImage: "wrench.and.screwdriver")
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .disabled(!canRepair(report))
                 }
                 Button("重新检查") {
                     viewModel.clearContinuityAudit()
@@ -82,6 +104,57 @@ struct NovelContinuityAuditSection: View {
                 .disabled(!viewModel.canMutate)
             }
         }
+        .confirmationDialog(
+            pendingRepair == .all ? "按检查结果改写冲突？" : "修复这一处冲突？",
+            isPresented: Binding(
+                get: { pendingRepair != nil },
+                set: { if !$0 { pendingRepair = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingRepair
+        ) { target in
+            Button("开始修复") {
+                switch target {
+                case .all:
+                    viewModel.startContinuityRepair()
+                case .issue(let issueID):
+                    viewModel.startContinuityRepair(issueIDs: [issueID])
+                }
+                pendingRepair = nil
+            }
+            Button("取消", role: .cancel) {
+                pendingRepair = nil
+            }
+        } message: { _ in
+            Text("后文向先文对齐，只改冲突段落。写入的版本可在章节版本历史撤销。")
+        }
+    }
+
+    private enum RepairTarget: Equatable, Hashable {
+        case all
+        case issue(String)
+    }
+
+    @ViewBuilder
+    private func repairSummary(_ repair: NovelContinuityRepairReport) -> some View {
+        let repaired = repair.repairedIssueIDs.count
+        let skipped = repair.skippedIssueIDs.count
+        if repaired > 0 {
+            Text("已改写 \(repair.repairedChapterCount) 章、\(repaired) 处冲突。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.foreground2)
+        }
+        if skipped > 0 || repair.failedChapterCount > 0 {
+            if let audit = viewModel.continuityAudit, isStale(audit) {
+                Text("另有 \(skipped) 处未能自动改写。正文已改过，请重新检查后再试。")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.foreground2)
+            } else {
+                Text("另有 \(skipped) 处未能自动改写，可点单条「修复」或重新检查。")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.foreground2)
+            }
+        }
     }
 
     @ViewBuilder
@@ -108,6 +181,16 @@ struct NovelContinuityAuditSection: View {
         return report.isStale(against: branch, discardedChapterIDs: discarded)
     }
 
+    private func canRepair(_ report: NovelContinuityAuditReport) -> Bool {
+        viewModel.canMutate &&
+            viewModel.visibleContinuityIssues.contains(where: canRepairIssue) &&
+            !isStale(report)
+    }
+
+    private func canRepairIssue(_ issue: NovelContinuityIssue) -> Bool {
+        NovelContinuityRepairPlanner.targetReference(in: issue) != nil
+    }
+
     /// 报告里只有 chapterID —— 阅读器要的是「章 + 版本」这一对，版本以当前分支
     /// 工作区选中的那一版为准。查不到就说明这一章已经不在分支上了。
     private func selection(for chapterID: NovelChapterID) -> NovelChapterSelection? {
@@ -118,8 +201,11 @@ struct NovelContinuityAuditSection: View {
 
 private struct NovelContinuityIssueRow: View {
     let issue: NovelContinuityIssue
+    let canRepair: Bool
+    let showsRepair: Bool
     let selection: (NovelChapterID) -> NovelChapterSelection?
     let onOpenChapter: (NovelChapterSelection) -> Void
+    let onRepair: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -130,6 +216,7 @@ private struct NovelContinuityIssueRow: View {
                 Text(issue.severity.displayName)
                     .font(.caption)
                     .foregroundStyle(issue.severity.tint)
+                Spacer(minLength: 8)
             }
             Text(issue.summary)
                 .foregroundStyle(AmberTheme.foreground)
@@ -149,6 +236,17 @@ private struct NovelContinuityIssueRow: View {
                             .font(.caption2)
                             .foregroundStyle(AmberTheme.muted)
                     }
+                }
+            }
+            if showsRepair {
+                HStack {
+                    Spacer()
+                    Button("修复", action: onRepair)
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .disabled(!canRepair)
                 }
             }
         }

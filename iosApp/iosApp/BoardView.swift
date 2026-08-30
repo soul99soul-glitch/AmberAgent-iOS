@@ -109,7 +109,6 @@ struct BoardView: View {
                     .compactMap(\.url)
                     .first(where: { !$0.isEmpty })
                     .flatMap { URL(string: $0) }
-                let rowCount = 2 + (sourceURL != nil ? 1 : 0)
                 TopicActionSheet(
                     title: topic.title,
                     sourceURL: sourceURL,
@@ -128,7 +127,7 @@ struct BoardView: View {
                         Task { await createDeepReadTask(topic: topic) }
                     }
                 )
-                .presentationDetents([.height(CGFloat(96 + rowCount * 64))])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(.regularMaterial)
                 .presentationCornerRadius(30)
@@ -193,6 +192,8 @@ struct BoardView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .frame(minWidth: 44, minHeight: 44, alignment: .trailing)
+                .contentShape(Rectangle())
                 .disabled(hotListStore.isRefreshing)
                 .opacity(hotListStore.isRefreshing ? 0.45 : 1)
                 .accessibilityLabel(hotListStore.isRefreshing ? "刷新中" : "刷新热榜")
@@ -317,6 +318,8 @@ struct BoardView: View {
                                     .frame(width: 42)
                             }
                             .buttonStyle(.glass)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                             .accessibilityLabel("从文件创建深度阅读")
 
                             Button {
@@ -326,6 +329,8 @@ struct BoardView: View {
                                     .frame(width: 42)
                             }
                             .buttonStyle(.glass)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                             .accessibilityLabel("从当前 WebMount 页面创建深度阅读")
                         }
                     }
@@ -360,7 +365,7 @@ struct BoardView: View {
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground)
-                .frame(width: 48, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
             TextField(placeholder, text: text)
                 .font(.footnote)
                 .textFieldStyle(.plain)
@@ -368,6 +373,7 @@ struct BoardView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .background(AmberTheme.surface2.opacity(0.65), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -1033,7 +1039,6 @@ struct IOSDeepReadTaskDetailView: View {
                         Text(message)
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
-                            .lineLimit(3)
                     }
                 }
                 Button {
@@ -1083,7 +1088,6 @@ struct IOSDeepReadTaskDetailView: View {
                         Text("以下模块未能生成：\(missing.joined(separator: "、"))。重新生成只重跑这些缺失段落。")
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
-                            .lineLimit(3)
                     }
                 }
                 Button {
@@ -1677,7 +1681,7 @@ private struct TopicActionRow: View {
         }
         .foregroundStyle(prominent ? Color.white : AmberTheme.foreground)
         .padding(.horizontal, 18)
-        .frame(height: 54)
+        .frame(minHeight: 54)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
 

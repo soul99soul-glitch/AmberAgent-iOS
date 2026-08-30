@@ -1782,6 +1782,13 @@ protocol NovelCreation: Sendable {
         candidateID: NovelCandidateID,
         maxPriorManuscriptChapters: Int?
     ) async throws -> NovelContinuityAuditReport
+    /// 按检查结果改写冲突段落：先文不动，只改较后的一章。走既有 `saveManualEdit`。
+    func repairContinuity(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        report: NovelContinuityAuditReport,
+        issueIDs: Set<String>?
+    ) async throws -> NovelContinuityRepairReport
     /// 代笔验收：用审稿模型核对候选是否满足已确认本章计划。结果不写进项目文档。
     func acceptChapterPlan(
         projectID: NovelProjectID,
@@ -1949,6 +1956,15 @@ extension NovelCreation {
         maxPriorManuscriptChapters: Int?
     ) async throws -> NovelContinuityAuditReport {
         throw NovelError.invalidInput("This novel runtime cannot audit story continuity.")
+    }
+
+    func repairContinuity(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        report: NovelContinuityAuditReport,
+        issueIDs: Set<String>?
+    ) async throws -> NovelContinuityRepairReport {
+        throw NovelError.invalidInput("This novel runtime cannot repair story continuity.")
     }
 
     func acceptChapterPlan(

@@ -269,9 +269,11 @@ final class NovelCreationViewModel {
     private(set) var continuityAuditReport: NovelContinuityAuditReport?
     private var continuityAuditPlanStorage: NovelContinuityAuditPlan?
     private var continuityAuditFailureStorage: NovelContinuityAuditFailure?
+    private(set) var continuityRepairReport: NovelContinuityRepairReport?
     @ObservationIgnored private var continuityAuditExpirationOwnerID: UUID?
     private(set) var isPlanningContinuity = false
     private(set) var isAuditingContinuity = false
+    private(set) var isRepairingContinuity = false
     @ObservationIgnored private var continuityAuditTask: Task<Void, Never>?
     var isLoading = false
     /// loadProjects 并发防护：首页 onAppear 与项目列表 .task 可并发触发同一加载，
@@ -623,12 +625,31 @@ final class NovelCreationViewModel {
         return failure.message
     }
 
+    var continuityRepair: NovelContinuityRepairReport? {
+        guard let report = continuityRepairReport,
+              report.projectID == selectedProjectID,
+              report.branchID == selectedBranchID else { return nil }
+        return report
+    }
+
+    var visibleContinuityIssues: [NovelContinuityIssue] {
+        guard let report = continuityAudit else { return [] }
+        let repaired = Set(continuityRepair?.repairedIssueIDs ?? [])
+        return report.issues.filter { !repaired.contains($0.id) }
+    }
+
     var isContinuityOperationRunning: Bool {
-        isPlanningContinuity || isAuditingContinuity
+        isPlanningContinuity || isAuditingContinuity || isRepairingContinuity
     }
 
     var continuityOperationTitle: String {
-        isPlanningContinuity ? "正在准备剧情矛盾检查" : "正在通读全书正文"
+        if isPlanningContinuity {
+            return "正在准备剧情矛盾检查"
+        }
+        if isRepairingContinuity {
+            return "正在修复剧情矛盾"
+        }
+        return "正在通读全书正文"
     }
 
     var presentedMessage: String? {
@@ -2811,6 +2832,14 @@ final class NovelCreationViewModel {
         }
     }
 
+    func startContinuityRepair(issueIDs: Set<String>? = nil) {
+        guard continuityAuditTask == nil else { return }
+        continuityAuditTask = Task { @MainActor [weak self] in
+            await self?.repairContinuity(issueIDs: issueIDs)
+            self?.continuityAuditTask = nil
+        }
+    }
+
     func cancelContinuityAudit() {
         continuityAuditTask?.cancel()
     }
@@ -2848,6 +2877,7 @@ final class NovelCreationViewModel {
             )
             try Task.checkCancellation()
             continuityAuditReport = audit
+            continuityRepairReport = nil
             if continuityAuditFailureStorage?.target == target {
                 continuityAuditFailureStorage = nil
             }
@@ -2881,10 +2911,84 @@ final class NovelCreationViewModel {
         }
     }
 
+    func repairContinuity(issueIDs: Set<String>? = nil) async {
+        guard let projectID = selectedProjectID,
+              let branchID = selectedBranchID,
+              let report = continuityAudit else { return }
+        let target = NovelAutomaticStateSyncTarget(projectID: projectID, branchID: branchID)
+        let ownerID = UUID()
+        guard acquireOperation(ownerID: ownerID) else {
+            continuityAuditFailureStorage = NovelContinuityAuditFailure(
+                target: target,
+                message: "有别的操作正在进行，请稍后再试。"
+            )
+            return
+        }
+        isRepairingContinuity = true
+        beginContinuityBackgroundLease(
+            ownerID: ownerID,
+            target: target,
+            subtitle: "剧情矛盾修复"
+        )
+        defer {
+            isRepairingContinuity = false
+            if continuityAuditExpirationOwnerID == ownerID {
+                continuityAuditExpirationOwnerID = nil
+            }
+            BackgroundGenerationKeepAlive.shared.end(
+                novelContinuityBackgroundLeaseID(for: ownerID)
+            )
+            releaseOperation(ownerID: ownerID)
+        }
+        do {
+            let repair = try await creation.repairContinuity(
+                projectID: projectID,
+                branchID: branchID,
+                report: report,
+                issueIDs: issueIDs
+            )
+            try Task.checkCancellation()
+            continuityRepairReport = repair
+            if continuityAuditFailureStorage?.target == target {
+                continuityAuditFailureStorage = nil
+            }
+            errorMessage = nil
+            try? await reloadSelection(projectID: projectID, branchID: branchID)
+        } catch is CancellationError {
+            try? await reloadSelection(projectID: projectID, branchID: branchID)
+            if continuityAuditExpirationOwnerID == ownerID {
+                continuityAuditFailureStorage = NovelContinuityAuditFailure(
+                    target: target,
+                    message: "后台执行时间已结束，请重新检查。"
+                )
+            } else if continuityAuditFailureStorage?.target == target {
+                continuityAuditFailureStorage = nil
+            }
+        } catch {
+            try? await reloadSelection(projectID: projectID, branchID: branchID)
+            if continuityAuditExpirationOwnerID == ownerID {
+                continuityAuditFailureStorage = NovelContinuityAuditFailure(
+                    target: target,
+                    message: "后台执行时间已结束，请重新检查。"
+                )
+            } else if Task.isCancelled {
+                if continuityAuditFailureStorage?.target == target {
+                    continuityAuditFailureStorage = nil
+                }
+            } else {
+                continuityAuditFailureStorage = NovelContinuityAuditFailure(
+                    target: target,
+                    message: errorDescription(error)
+                )
+            }
+        }
+    }
+
     func clearContinuityAudit() {
         continuityAuditReport = nil
         continuityAuditPlanStorage = nil
         continuityAuditFailureStorage = nil
+        continuityRepairReport = nil
     }
 
     func clearContinuityAuditPlan() {
@@ -3440,14 +3544,15 @@ final class NovelCreationViewModel {
 
     private func beginContinuityBackgroundLease(
         ownerID: UUID,
-        target: NovelAutomaticStateSyncTarget
+        target: NovelAutomaticStateSyncTarget,
+        subtitle: String = "剧情矛盾检查"
     ) {
         let leaseID = novelContinuityBackgroundLeaseID(for: ownerID)
         let expire: () -> Void = { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self,
                       self.operationOwnerID == ownerID,
-                      self.isAuditingContinuity else { return }
+                      self.isAuditingContinuity || self.isRepairingContinuity else { return }
                 self.continuityAuditExpirationOwnerID = ownerID
                 self.continuityAuditFailureStorage = NovelContinuityAuditFailure(
                     target: target,
@@ -3459,7 +3564,7 @@ final class NovelCreationViewModel {
         BackgroundGenerationKeepAlive.shared.begin(
             leaseID,
             title: "Amber 小说创作中",
-            subtitle: "剧情矛盾检查",
+            subtitle: subtitle,
             onExpire: expire,
             onSystemTaskExpiration: expire
         )

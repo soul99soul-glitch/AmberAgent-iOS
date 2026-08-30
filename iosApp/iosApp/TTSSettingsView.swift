@@ -128,7 +128,10 @@ struct TTSSettingsView: View {
                             }.frame(maxWidth: .infinity, alignment: .leading)
                             Button { sharedSettings.removeTtsEngine(at: index) } label: {
                                 Image(systemName: "minus.circle.fill").font(.system(size: 18)).foregroundStyle(AmberTheme.accentRed)
-                            }.buttonStyle(.plain)
+                            }
+                            .buttonStyle(.plain)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                         }.frame(minHeight: 48).padding(.horizontal, 14).padding(.vertical, 4)
                         if index < engines.count - 1 { TTSSettingsDivider() }
                     }
@@ -240,7 +243,7 @@ private struct TTSCurrentEngineRow: View {
                 Text(subtitle)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -301,7 +304,7 @@ private struct TTSUnavailableCloudRow: View {
                 Text("不会参与当前试听或聊天朗读；历史配置仅用于保留记录。")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

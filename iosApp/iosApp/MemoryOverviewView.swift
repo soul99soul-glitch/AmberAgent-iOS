@@ -375,7 +375,7 @@ struct MemoryOverviewView: View {
                                 Text("\(pollutedTime(summary.updateAt)) 曾接触外部内容，已暂停记忆抽取")
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)
-                                    .lineLimit(1)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
 

@@ -263,7 +263,7 @@ struct IOSMiniAppChatCard: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
                         .lineLimit(2)
-                    Text("v\(displayVersion) · \(part.category?.nilIfBlank ?? "tool")")
+                    Text("v\(displayVersion) · \(categoryLabel(part.category?.nilIfBlank ?? "tool"))")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                 }
@@ -432,6 +432,16 @@ struct IOSMiniAppChatCard: View {
 
     private var displayVersion: Int {
         max(cardVersion, Int(part.version))
+    }
+
+    private func categoryLabel(_ raw: String) -> String {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "tool": return "工具"
+        case "game": return "游戏"
+        case "info": return "信息"
+        case "custom": return "自定义"
+        default: return raw.isEmpty ? "小应用" : raw
+        }
     }
 
     /// Visual capsule height matches chat image actions (~28–30), not chunky

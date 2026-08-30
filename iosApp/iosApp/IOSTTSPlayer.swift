@@ -29,7 +29,7 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
         stop()
         let utterance = AVSpeechUtterance(string: text)
         let lang = language ?? Locale.current.identifier
-        if let voice = AVSpeechSynthesisVoice(identifier: lang) {
+        if let voice = AVSpeechSynthesisVoice(language: lang) {
             utterance.voice = voice
         }
         utterance.rate = rate

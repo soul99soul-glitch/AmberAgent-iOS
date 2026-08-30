@@ -13,6 +13,7 @@ enum NovelPromptKind: String, Codable, CaseIterable, Sendable {
     case wholeChapterRegeneration
     case polishDriftV1
     case continuityAuditV1
+    case continuityRepairV1
     case chapterPlanAcceptanceV1
     case chapterAdjudicationV1
     case chapterPlanProposalV1
@@ -105,7 +106,7 @@ enum NovelPromptCatalog {
                 "novel.chapter-plan-proposal.v3",
             ])
         case .characterProposal, .discussionArchiveV1, .polishDriftV1, .continuityAuditV1,
-             .chapterPlanAcceptanceV1, .workspacePlotV1:
+             .continuityRepairV1, .chapterPlanAcceptanceV1, .workspacePlotV1:
             break
         case .chapterAdjudicationV1:
             // v1 is the shipped four-field adjudication contract. Keep it
@@ -500,6 +501,28 @@ enum NovelPromptCatalog {
                 \(evidenceIntegrityConstraint)
 
                 \(continuityAuditJSONContract)
+                """
+            )
+
+        case .continuityRepairV1:
+            NovelPromptTemplate(
+                kind: kind,
+                version: "novel.continuity-repair.v1",
+                systemText: """
+                Repair continuity conflicts in ONE target chapter. Earlier-chapter facts in the user message
+                are canonical: do not change them, do not invent a third version of events, and do not
+                rewrite unrelated passages. Make the smallest prose change that makes this chapter consistent
+                with those earlier facts. Deliberate devices such as a flashback, a dream, a lie, or a
+                rumour later corrected are not defects — leave them alone.
+
+                \(evidenceIntegrityConstraint)
+
+                oldText must be copied verbatim from TARGET CHAPTER, the same way evidence is copied from
+                the manuscript. If you cannot quote an exact unique span, omit that patch.
+                newText replaces that span in the same chapter and must differ from oldText.
+                Return exactly one raw JSON object.
+
+                \(continuityRepairJSONContract)
                 """
             )
 
@@ -1875,6 +1898,22 @@ private extension NovelPromptCatalog {
         Every issue must cite at least two references, because a contradiction always has two sides. Cite the
         earliest passage first. chapterOrdinal is the number N from the "# Chapter N:" heading that precedes the
         cited passage, counting from 1.
+        """
+
+    static let continuityRepairJSONContract = """
+        Output contract: NovelContinuityRepairV1, schemaVersion 1.
+        Return exactly one raw JSON object. Do not use Markdown fences, comments, or trailing prose.
+        Every key shown below is required. Do not add unknown keys at any level.
+        Root shape:
+        {"schemaVersion":1,"patches":[]}
+        patches item shape:
+        {
+          "issueId":"id copied from ISSUES TO REPAIR",
+          "oldText":"exact unique contiguous substring of TARGET CHAPTER",
+          "newText":"non-empty replacement that differs from oldText"
+        }
+        patches may be empty when no safe unique span can be quoted. issueId values are unique.
+        oldText must be copied verbatim from TARGET CHAPTER. newText rewrites only the conflict in this chapter.
         """
 
     static let chapterPlanAcceptanceJSONContract = """

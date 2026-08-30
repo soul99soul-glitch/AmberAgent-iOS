@@ -141,6 +141,8 @@ struct BoardSettingsView: View {
                         .foregroundStyle(AmberTheme.muted)
                         .frame(width: 30, height: 30)
                         .background(AmberTheme.surface2.opacity(0.7), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .frame(minWidth: 44, minHeight: 44)
+                        .contentShape(Rectangle())
                 }
             }
         }
@@ -326,6 +328,8 @@ struct BoardSettingsView: View {
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(IOSDeepReadTemplate.normalizedTemplateId(board.deepReadTemplateId) == template.id ? AmberTheme.accent : AmberTheme.muted2)
                             .frame(width: 30, height: 30)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
@@ -350,6 +354,8 @@ struct BoardSettingsView: View {
                         } label: {
                             Image(systemName: "checkmark")
                                 .frame(width: 30, height: 30)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
@@ -358,6 +364,8 @@ struct BoardSettingsView: View {
                         } label: {
                             Image(systemName: "square.and.pencil")
                                 .frame(width: 30, height: 30)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
@@ -371,6 +379,8 @@ struct BoardSettingsView: View {
                         } label: {
                             Image(systemName: "trash")
                                 .frame(width: 30, height: 30)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
@@ -581,6 +591,8 @@ private struct BoardSettingsChip: View {
                 .background(selected ? AmberTheme.accent : AmberTheme.surface2.opacity(0.75), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
     }
 }
 
