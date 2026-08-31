@@ -426,7 +426,7 @@ internal fun Tool.category(): String = when {
         name in setOf("download_file", "pdf_read", "pdf_render_page", "office_read", "image_info", "image_convert", "ocr_image") -> "workspace"
     name.startsWith("icloud_") -> "cloud"
     name.startsWith("officepro_") -> "office"
-    name.startsWith("terminal_") -> "terminal"
+    name.startsWith("terminal_") || name == "ios_shell_execute" -> "terminal"
     name in setOf("search_web", "scrape_web", "search_sources_status", "search_strategy_explain", "http_request") -> "web"
     name.startsWith("webview_") -> "webview"
     name.startsWith("wm_") -> "webmount"
@@ -461,6 +461,7 @@ private fun Tool.mutatesState(): Boolean {
     if (name == "memory_tool") return true
     if (name == "deep_read_open") return true
     if (name == "run_plan_update") return false
+    if (name == "ios_shell_execute") return true
     return hasMutatingNameHint() ||
         name.contains("_install") ||
         name.contains("_stop") ||
@@ -528,7 +529,7 @@ private fun Tool.riskProfile(): RiskProfile = when {
     name.startsWith("external_file_") && (name.contains("_write") || name.contains("_delete")) -> RiskProfile(ToolRisk.High, explicit = true)
     name.startsWith("sms_") || name.startsWith("call_") || name.startsWith("contacts_write") -> RiskProfile(ToolRisk.High, explicit = true)
     name.startsWith("screen_") || name == "vlm_task" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
-    name.startsWith("terminal_") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
+    name.startsWith("terminal_") || name == "ios_shell_execute" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     else -> RiskProfile(ToolRisk.Normal, explicit = false)
 }
 
@@ -555,7 +556,7 @@ private val FAIL_CLOSED_AUTO_APPROVAL_CATEGORIES = setOf(
 )
 
 private fun Tool.concurrencySafe(): Boolean = when {
-    name in setOf("terminal_install_packages", "terminal_job_stop", "terminal_execute", "terminal_job_start") -> false
+    name in setOf("terminal_install_packages", "terminal_job_stop", "terminal_execute", "terminal_job_start", "ios_shell_execute") -> false
     name.startsWith("cron_task_") && name != "cron_task_list" -> false
     name.startsWith("agent_task_") || name in setOf("agent_runtime_status", "tool_policy_explain", "tool_search", "tools_list") -> true
     name.startsWith("subagent_") || name.startsWith("model_council_") -> false

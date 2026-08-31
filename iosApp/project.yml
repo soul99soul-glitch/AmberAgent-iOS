@@ -55,6 +55,16 @@ targets:
         buildPhase: resources
       - path: Resources/Fonts/jetbrains_mono.ttf
         buildPhase: resources
+      - path: Resources/Licenses/CPython-3.14.7.txt
+        buildPhase: resources
+      - path: AmberShellPythonRuntime
+        excludes:
+          - README.md
+      - path: AmberShellPythonApp
+        optional: true
+        buildPhase: resources
+        type: folder
+    putResourcesBeforeSourcesBuildPhase: true
     preBuildScripts:
       - name: Build Shared KMP Framework
         basedOnDependencyAnalysis: false
@@ -106,6 +116,17 @@ targets:
           if [ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ] && [ "${EXPANDED_CODE_SIGN_IDENTITY:-}" != "-" ]; then
             codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" "${framework_dst}"
           fi
+    postCompileScripts:
+      - name: Process Python libraries
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          if [ -z "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
+            export EXPANDED_CODE_SIGN_IDENTITY="-"
+            export EXPANDED_CODE_SIGN_IDENTITY_NAME="Ad Hoc"
+          fi
+          source "$PROJECT_DIR/Python.xcframework/build/utils.sh"
+          install_python Python.xcframework AmberShellPythonApp
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios
@@ -131,6 +152,19 @@ targets:
           - "$(SRCROOT)/../native/AmberNative.xcframework/ios-arm64"
         OTHER_LDFLAGS:
           - "-lamber_ffi"
+        ENABLE_TESTABILITY: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)"
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "\"$(BUILT_PRODUCTS_DIR)/Python.framework/Headers\""
+        CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER: NO
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS:
+          - "$(inherited)"
+          - "ENABLE_AMBERSHELL_PYTHON"
+        SWIFT_OBJC_BRIDGING_HEADER: AmberShellPythonRuntime/AmberShellPythonBridge.h
         HEADER_SEARCH_PATHS[sdk=iphonesimulator*]:
           - "$(SRCROOT)/../native/AmberNative.xcframework/ios-arm64-sim/Headers"
         HEADER_SEARCH_PATHS[sdk=iphoneos*]:
@@ -138,6 +172,8 @@ targets:
     dependencies:
       - framework: Shared.framework
         embed: false
+      - framework: Python.xcframework
+        embed: true
       - package: swift-nio
         product: NIOCore
       - package: swift-nio
@@ -340,6 +376,7 @@ targets:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS:
           - "$(inherited)"
           - "ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES"
+        SWIFT_OBJC_BRIDGING_HEADER: iosApp/IOSAmberShellExecutionControl.h
         HEADER_SEARCH_PATHS[sdk=iphonesimulator*]:
           - "$(SRCROOT)/../native/AmberNative.xcframework/ios-arm64-sim/Headers"
         HEADER_SEARCH_PATHS[sdk=iphoneos*]:

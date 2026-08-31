@@ -1218,13 +1218,9 @@ struct IshHandoffToolApprovalCard: View {
                 Spacer(minLength: 0)
             }
 
-            Menu {
-                scopeButton(.once)
-                scopeButton(.session)
-                scopeButton(.global)
-            } label: {
+            if request.mode == .amberShell {
                 HStack(spacing: 10) {
-                    Image(systemName: approvalScope.systemImage)
+                    Image(systemName: "hand.raised.fill")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(AmberTheme.accentAmber)
                         .frame(width: 24)
@@ -1233,16 +1229,12 @@ struct IshHandoffToolApprovalCard: View {
                         Text("批准范围")
                             .font(.caption2)
                             .foregroundStyle(AmberTheme.muted)
-                        Text(approvalScope.title)
+                        Text("仅这一次")
                             .font(.footnote.weight(.semibold))
                             .foregroundStyle(AmberTheme.foreground2)
                     }
 
                     Spacer(minLength: 8)
-
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(AmberTheme.muted2)
                 }
                 .padding(.horizontal, 10)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1250,29 +1242,69 @@ struct IshHandoffToolApprovalCard: View {
                     AmberTheme.surface2.opacity(0.72),
                     in: RoundedRectangle(cornerRadius: 10, style: .continuous)
                 )
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("批准范围，\(approvalScope.title)")
-            .accessibilityHint("选择仅这一次、本次会话或全局自动批准")
+                .accessibilityLabel("批准范围，仅这一次")
 
-            Text(approvalScope.detail)
-                .font(.caption2)
-                .foregroundStyle(AmberTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
+                Text("AmberShell 命令始终逐次前台审批。")
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Menu {
+                    scopeButton(.once)
+                    scopeButton(.session)
+                    scopeButton(.global)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: approvalScope.systemImage)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(AmberTheme.accentAmber)
+                            .frame(width: 24)
 
-            if approvalScope == .global {
-                Label(
-                    "此设置会持续生效，直到你在设置中关闭；其他高风险工具也可能跳过逐次确认。",
-                    systemImage: "exclamationmark.shield"
-                )
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(AmberTheme.accentAmber)
-                .fixedSize(horizontal: false, vertical: true)
-                .transition(
-                    reduceMotion
-                        ? .opacity
-                        : .opacity.combined(with: .offset(y: -4))
-                )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("批准范围")
+                                .font(.caption2)
+                                .foregroundStyle(AmberTheme.muted)
+                            Text(approvalScope.title)
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground2)
+                        }
+
+                        Spacer(minLength: 8)
+
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .background(
+                        AmberTheme.surface2.opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("批准范围，\(approvalScope.title)")
+                .accessibilityHint("选择仅这一次、本次会话或全局自动批准")
+
+                Text(approvalScope.detail)
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if approvalScope == .global {
+                    Label(
+                        "此设置会持续生效，直到你在设置中关闭；其他高风险工具也可能跳过逐次确认。",
+                        systemImage: "exclamationmark.shield"
+                    )
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AmberTheme.accentAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .offset(y: -4))
+                    )
+                }
             }
 
             HStack(spacing: 8) {

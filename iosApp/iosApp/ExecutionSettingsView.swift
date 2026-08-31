@@ -19,19 +19,22 @@ struct ExecutionSettingsView: View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                    runSection
-                    toolLoopSection
-                    execJavaScriptSection
-                    recentTasksSection
-                    liveActivitySection
-                    audioKeepAliveSection
+            VStack(spacing: 0) {
+                header
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        runSection
+                        toolLoopSection
+                        execJavaScriptSection
+                        recentTasksSection
+                        liveActivitySection
+                        audioKeepAliveSection
+                    }
+                    .padding(.bottom, 36)
                 }
-                .padding(.bottom, 36)
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -65,8 +68,14 @@ struct ExecutionSettingsView: View {
             AmberFormGroup {
                 ExecutionNavigationRow(
                     systemImage: "terminal",
-                    title: "Runtime 与任务",
-                    subtitle: "默认 Runtime、Remote SSH、iSH 工具与任务记录"
+                    title: IOSAppLocalization.string(
+                        "Runtime 与任务",
+                        defaultValue: "Runtime 与任务"
+                    ),
+                    subtitle: IOSAppLocalization.string(
+                        "默认 Runtime、Remote SSH、iSH 工具与任务记录",
+                        defaultValue: "默认 Runtime、Remote SSH、iSH 工具与任务记录"
+                    )
                 ) {
                     router.navigate(to: .sandbox)
                 }
@@ -127,8 +136,14 @@ struct ExecutionSettingsView: View {
             AmberFormGroup {
                 ExecutionToggleRow(
                     systemImage: "chevron.left.forwardslash.chevron.right",
-                    title: "JavaScript 沙箱执行",
-                    subtitle: "允许模型用 exec 工具运行隔离的 JavaScript（默认关闭；无网络、无文件访问）",
+                    title: IOSAppLocalization.string(
+                        "JavaScript 沙箱执行",
+                        defaultValue: "JavaScript 沙箱执行"
+                    ),
+                    subtitle: IOSAppLocalization.string(
+                        "允许模型用 exec 工具运行隔离的 JavaScript（默认关闭；无网络、无文件访问）",
+                        defaultValue: "允许模型用 exec 工具运行隔离的 JavaScript（默认关闭；无网络、无文件访问）"
+                    ),
                     isOn: execJavaScriptEnabled
                 ) {
                     execJavaScriptEnabled.toggle()
@@ -143,7 +158,10 @@ struct ExecutionSettingsView: View {
             AmberFormGroup {
                 ExecutionToggleRow(
                     systemImage: "capsule",
-                    title: "聊天灵动岛实时活动",
+                    title: IOSAppLocalization.string(
+                        "聊天灵动岛实时活动",
+                        defaultValue: "聊天灵动岛实时活动"
+                    ),
                     isOn: liveActivity
                 ) {
                     liveActivity.toggle()
@@ -164,8 +182,14 @@ struct ExecutionSettingsView: View {
             AmberFormGroup {
                 ExecutionToggleRow(
                     systemImage: "waveform",
-                    title: "音频保活",
-                    subtitle: "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。",
+                    title: IOSAppLocalization.string(
+                        "音频保活",
+                        defaultValue: "音频保活"
+                    ),
+                    subtitle: IOSAppLocalization.string(
+                        "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。",
+                        defaultValue: "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。"
+                    ),
                     isOn: audioKeepAlive
                 ) {
                     audioKeepAlive.toggle()
@@ -334,8 +358,14 @@ private struct ExecutionToggleRow: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(title)
-        .accessibilityValue(isOn ? "已开启" : "已关闭")
-        .accessibilityHint("双击切换")
+        .accessibilityValue(
+            isOn
+                ? IOSAppLocalization.string("已开启", defaultValue: "已开启")
+                : IOSAppLocalization.string("已关闭", defaultValue: "已关闭")
+        )
+        .accessibilityHint(
+            IOSAppLocalization.string("双击切换", defaultValue: "双击切换")
+        )
     }
 }
 

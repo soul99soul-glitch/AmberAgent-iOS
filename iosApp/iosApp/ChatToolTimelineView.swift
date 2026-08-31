@@ -32,7 +32,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
         case "mcp_call": return .mcp
         case "model_council_run": return .council
         case "generate_image": return .image
-        case "terminal_execute", "ish_handoff", "ios_ish_execute": return .terminal
+        case "terminal_execute", "ios_shell_execute", "ish_handoff", "ios_ish_execute": return .terminal
         case "workspace_file_write": return .workspaceWrite
         case "workspace_artifact_delete": return .workspaceDelete
         case "workspace_file_read", "workspace_artifact_read": return .workspaceRead
@@ -457,6 +457,31 @@ struct ChatToolStepModel: Identifiable {
             return
         }
 
+        if tool.toolName == IOSAmberShellToolCatalog.executeToolName {
+            let executed = !tool.output.isEmpty
+            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let status = Self.firstJSONObject(in: tool.output)?["status"] as? String
+            let title: String
+            switch status?.lowercased() {
+            case IOSTerminalJobStatus.timedOut.rawValue:
+                title = Self.localized("AmberShell 已超时")
+            case IOSTerminalJobStatus.cancelled.rawValue:
+                title = Self.localized("AmberShell 已取消")
+            default:
+                title = failed
+                    ? Self.localized("AmberShell 执行失败")
+                    : (executed ? Self.localized("AmberShell 已执行") : Self.localized("准备执行 AmberShell"))
+            }
+            self.init(
+                id: stableID,
+                visualKind: .terminal,
+                title: title,
+                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                state: Self.terminalState(status: status, executed: executed, failed: failed)
+            )
+            return
+        }
+
         if IOSRemoteTerminalToolCatalog.jobToolNames.contains(tool.toolName) {
             let executed = !tool.output.isEmpty
             let object = Self.firstJSONObject(in: tool.output)
@@ -611,6 +636,7 @@ struct ChatToolStepModel: Identifiable {
             "tools_list": Self.localized("列出可用工具"),
             "subagent_report": Self.localized("子智能体汇报"),
             "terminal_execute": Self.localized("Remote SSH 执行"),
+            "ios_shell_execute": Self.localized("AmberShell 执行"),
             "ish_handoff": Self.localized("iSH 交接"),
             "read_health": Self.localized("读取健康数据"),
             "provider_config_status": Self.localized("查看模型配置"),

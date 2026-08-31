@@ -13,7 +13,7 @@ enum IOSTerminalRuntimeKind: String, CaseIterable, Codable, Identifiable {
     var displayName: String {
         switch self {
         case .remoteSSH: "Remote SSH"
-        case .localIOSTools: "Local iOS Tools"
+        case .localIOSTools: "AmberShell"
         case .remoteMosh: "Remote Mosh"
         case .ishExperimental: "iSH Experimental"
         }
@@ -133,9 +133,16 @@ enum IOSRemoteTerminalToolCatalog {
     static let supportedToolNames = Set(["terminal_execute"]).union(jobToolNames)
 }
 
+enum IOSAmberShellToolCatalog {
+    static let executeToolName = "ios_shell_execute"
+    static let supportedToolNames: Set<String> = [executeToolName]
+    static let approvalToolNames = supportedToolNames
+}
+
 enum IOSAgentTerminalToolCatalog {
     static var supportedToolNames: Set<String> {
         IOSRemoteTerminalToolCatalog.supportedToolNames
+            .union(IOSAmberShellToolCatalog.supportedToolNames)
             .union(IOSIshToolCatalog.supportedToolNames)
             .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
     }
@@ -785,7 +792,8 @@ final class IOSTerminalRuntime {
         command: String,
         runtime: IOSTerminalRuntimeKind,
         experimentalEnabled: Bool,
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        amberShellStdin: String? = nil
     ) async -> IOSTerminalJobSnapshot {
         await startJob(
             command: command,
@@ -793,7 +801,8 @@ final class IOSTerminalRuntime {
             experimentalEnabled: experimentalEnabled,
             workingDirectory: workingDirectory,
             sshProfile: nil,
-            sshPassword: nil
+            sshPassword: nil,
+            amberShellStdin: amberShellStdin
         )
     }
 
@@ -805,7 +814,9 @@ final class IOSTerminalRuntime {
         sshProfile: IOSSSHProfile?,
         sshPassword: String?,
         timeoutSeconds: TimeInterval = 60,
-        jobId: String? = nil
+        jobId: String? = nil,
+        workspaceStore: IOSWorkspaceStore = .shared,
+        amberShellStdin: String? = nil
     ) async -> IOSTerminalJobSnapshot {
         let now = Date()
         let capability = IOSTerminalRuntimeCapabilities.capability(for: runtime)
@@ -840,7 +851,38 @@ final class IOSTerminalRuntime {
                 jobId: jobId
             )
         case .localIOSTools:
-            return runLocalTool(command: command, now: now)
+            do {
+                let cwd = try IOSPOSIXWorkingDirectory.normalized(
+                    workingDirectory,
+                    default: IOSPOSIXWorkingDirectory.embeddedDefault
+                ) ?? IOSPOSIXWorkingDirectory.embeddedDefault
+                guard cwd == IOSPOSIXWorkingDirectory.embeddedDefault else {
+                    return failedSnapshot(
+                        runtime: runtime,
+                        command: command,
+                        now: now,
+                        message: "AmberShell currently exposes only /workspace.",
+                        id: jobId
+                    )
+                }
+                return try await runLocalTool(
+                    command: command,
+                    workingDirectory: cwd,
+                    workspaceStore: workspaceStore,
+                    amberShellStdin: amberShellStdin,
+                    timeoutSeconds: timeoutSeconds,
+                    now: now,
+                    jobId: jobId
+                )
+            } catch {
+                return failedSnapshot(
+                    runtime: runtime,
+                    command: command,
+                    now: now,
+                    message: error.localizedDescription,
+                    id: jobId
+                )
+            }
         case .remoteMosh:
             return failedSnapshot(
                 runtime: runtime,
@@ -1121,47 +1163,64 @@ final class IOSTerminalRuntime {
         }
     }
 
-    private func runLocalTool(command: String, now: Date) -> IOSTerminalJobSnapshot {
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
-        let output: String
-        let exitCode: Int
-        let error: String?
-
-        switch trimmed {
-        case "pwd":
-            output = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path ?? NSHomeDirectory()
-            exitCode = 0
-            error = nil
-        case "ls":
-            let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            let names = directory.flatMap { try? FileManager.default.contentsOfDirectory(atPath: $0.path) } ?? []
-            output = names.sorted().joined(separator: "\n")
-            exitCode = 0
-            error = nil
-        case "curl --version":
-            output = "curl is planned through ios_system; native dependency is not linked in this stable skeleton."
-            exitCode = 64
-            error = "ios_system is not linked"
-        case "python hello-world", "python3 hello-world":
-            output = "Python is planned through ios_system/a-Shell-compatible tooling; native dependency is not linked yet."
-            exitCode = 64
-            error = "python runtime is not linked"
-        default:
-            output = "Unsupported local iOS tools command: \(trimmed)"
-            exitCode = 64
-            error = "unsupported local command"
+    private func runLocalTool(
+        command: String,
+        workingDirectory: String,
+        workspaceStore: IOSWorkspaceStore,
+        amberShellStdin: String?,
+        timeoutSeconds: TimeInterval,
+        now: Date,
+        jobId: String?
+    ) async throws -> IOSTerminalJobSnapshot {
+        let control = try IOSAmberShellExecutionControl(timeoutSeconds: timeoutSeconds)
+        let result = await withTaskCancellationHandler {
+            await IOSAmberShellEngine.execute(
+                command: command,
+                stdin: amberShellStdin,
+                workspaceStore: workspaceStore,
+                control: control
+            )
+        } onCancel: {
+            control.cancel()
         }
 
+        var finalTermination = result.termination
+        do {
+            try control.checkpoint()
+        } catch let termination as IOSAmberShellTermination {
+            finalTermination = termination
+        }
+
+        let status: IOSTerminalJobStatus
+        let terminationError: String?
+        switch finalTermination {
+        case .cancelled:
+            status = .cancelled
+            terminationError = "AmberShell command was cancelled."
+        case .timedOut:
+            status = .timedOut
+            terminationError = "AmberShell command timed out after \(Int(timeoutSeconds)) seconds."
+        case nil:
+            status = result.exitCode == 0 ? .completed : .failed
+            terminationError = nil
+        }
+        let stderr = terminationError.map { $0 + "\n" } ?? result.stderr
+        let outputTail = result.stdout + stderr
+        let completed = status == .completed
+
         return IOSTerminalJobSnapshot(
-            id: UUID().uuidString,
+            id: jobId ?? UUID().uuidString,
             runtime: .localIOSTools,
-            status: exitCode == 0 ? IOSTerminalJobStatus.completed.rawValue : IOSTerminalJobStatus.failed.rawValue,
-            exitCode: exitCode,
-            outputTail: output,
-            stdoutTail: output,
+            status: status.rawValue,
+            exitCode: finalTermination == nil ? result.exitCode : nil,
+            outputTail: outputTail,
+            stdoutTail: result.stdout,
+            stderrTail: stderr,
+            stdoutTruncated: result.stdoutTruncated,
+            stderrTruncated: result.stderrTruncated,
             startedAt: now,
             updatedAt: Date(),
-            error: error
+            error: completed ? nil : (terminationError ?? result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
         )
     }
 
@@ -1505,6 +1564,186 @@ enum IOSRemoteTerminalExecuteExecutor {
         if let number = value as? NSNumber { return number.doubleValue }
         if let string = value as? String { return Double(string) }
         return nil
+    }
+
+}
+
+// MARK: - Agent AmberShell execution
+
+private struct IOSAmberShellExecuteRequest {
+    let command: String
+    let stdin: String?
+    let purpose: String?
+    let workingDirectory: String
+    let timeoutSeconds: TimeInterval
+}
+
+@MainActor
+enum IOSAmberShellExecuteExecutor {
+    static func execute(
+        input: String,
+        runtime: IOSTerminalRuntime = .shared,
+        workspaceStore: IOSWorkspaceStore = .shared
+    ) async -> String {
+        do {
+            let request = try parseRequest(input)
+            let snapshot = await runtime.startJob(
+                command: request.command,
+                runtime: .localIOSTools,
+                experimentalEnabled: false,
+                workingDirectory: request.workingDirectory,
+                sshProfile: nil,
+                sshPassword: nil,
+                timeoutSeconds: request.timeoutSeconds,
+                workspaceStore: workspaceStore,
+                amberShellStdin: request.stdin
+            )
+            let completed = snapshot.status == IOSTerminalJobStatus.completed.rawValue
+                && snapshot.exitCode == 0
+            return IOSWorkspaceStore.json([
+                "ok": completed,
+                "tool": IOSAmberShellToolCatalog.executeToolName,
+                "runtime": IOSTerminalRuntimeKind.localIOSTools.rawValue,
+                "cwd": request.workingDirectory,
+                "status": snapshot.status,
+                "purpose": request.purpose ?? "",
+                "exit_code": snapshot.exitCode.map { $0 as Any } ?? NSNull(),
+                "stdout": snapshot.stdoutTail,
+                "stderr": snapshot.stderrTail,
+                "stdout_available": true,
+                "stderr_available": true,
+                "exit_code_available": snapshot.exitCode != nil,
+                "stdout_truncated": snapshot.stdoutTruncated,
+                "stderr_truncated": snapshot.stderrTruncated,
+                "timed_out": snapshot.status == IOSTerminalJobStatus.timedOut.rawValue,
+                "error": snapshot.error ?? "",
+            ])
+        } catch {
+            return failureJSON(error)
+        }
+    }
+
+    static func approvalPreview(input: String) -> IshHandoffToolApprovalRequest? {
+        guard let request = try? parseRequest(input) else { return nil }
+        return IshHandoffToolApprovalRequest(
+            id: chatInputDigest(for: input),
+            mode: .amberShell,
+            commandPreview: request.command,
+            filename: "AmberShell · \(request.workingDirectory)",
+            reason: IOSAppLocalization.string(
+                "Amber 将在 App 自有 /workspace 中执行一次非交互 AmberShell 命令，并回传 stdout/stderr/exit code。",
+                defaultValue: "Amber 将在 App 自有 /workspace 中执行一次非交互 AmberShell 命令，并回传 stdout/stderr/exit code。"
+            ),
+            contextLines: [
+                IOSAppLocalization.string(
+                    "模式：稳定版本地执行（无 PTY）",
+                    defaultValue: "模式：稳定版本地执行（无 PTY）"
+                ),
+                IOSAppLocalization.formatted(
+                    "工作目录：%@",
+                    defaultValue: "工作目录：%@",
+                    arguments: [request.workingDirectory]
+                ),
+                IOSAppLocalization.formatted(
+                    "超时：%lld 秒（协作式）",
+                    defaultValue: "超时：%lld 秒（协作式）",
+                    arguments: [Int64(request.timeoutSeconds)]
+                ),
+            ] + (request.stdin.map {
+                $0.isEmpty ? [] : [IOSAppLocalization.formatted(
+                    "stdin：%lld bytes",
+                    defaultValue: "stdin：%lld bytes",
+                    arguments: [Int64($0.utf8.count)]
+                )]
+            } ?? [])
+        )
+    }
+
+    private static func parseRequest(_ input: String) throws -> IOSAmberShellExecuteRequest {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw IOSAmberShellExecuteError.emptyInput }
+
+        let object: [String: Any]
+        if let data = trimmed.data(using: .utf8),
+           let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            object = decoded
+        } else {
+            object = ["command": trimmed]
+        }
+        guard let command = nonEmptyString(object["command"]) else {
+            throw IOSAmberShellExecuteError.emptyInput
+        }
+        let cwd = try IOSPOSIXWorkingDirectory.normalized(
+            object["cwd"] as? String,
+            default: IOSPOSIXWorkingDirectory.embeddedDefault
+        ) ?? IOSPOSIXWorkingDirectory.embeddedDefault
+        guard cwd == IOSPOSIXWorkingDirectory.embeddedDefault else {
+            throw IOSAmberShellExecuteError.unsupportedWorkingDirectory(cwd)
+        }
+        let stdin: String?
+        if let rawStdin = object["stdin"] {
+            guard let value = rawStdin as? String else {
+                throw IOSAmberShellExecuteError.invalidArguments("stdin must be a string.")
+            }
+            guard value.utf8.count <= 64 * 1024 else {
+                throw IOSAmberShellExecuteError.invalidArguments(
+                    "stdin cannot exceed 65536 UTF-8 bytes."
+                )
+            }
+            stdin = value
+        } else {
+            stdin = nil
+        }
+        let timeoutSeconds: TimeInterval
+        if let rawTimeout = object["timeout_seconds"] {
+            guard let number = rawTimeout as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                throw IOSAmberShellExecuteError.invalidArguments(
+                    "timeout_seconds must be an integer from 1 through 180."
+                )
+            }
+            let value = number.doubleValue
+            guard value.isFinite,
+                  value.rounded(.towardZero) == value,
+                  (1...180).contains(value) else {
+                throw IOSAmberShellExecuteError.invalidArguments(
+                    "timeout_seconds must be an integer from 1 through 180."
+                )
+            }
+            timeoutSeconds = value
+        } else {
+            timeoutSeconds = 60
+        }
+        return IOSAmberShellExecuteRequest(
+            command: command,
+            stdin: stdin,
+            purpose: nonEmptyString(object["purpose"]),
+            workingDirectory: cwd,
+            timeoutSeconds: timeoutSeconds
+        )
+    }
+
+    private static func failureJSON(_ error: Error) -> String {
+        IOSWorkspaceStore.json([
+            "ok": false,
+            "tool": IOSAmberShellToolCatalog.executeToolName,
+            "runtime": IOSTerminalRuntimeKind.localIOSTools.rawValue,
+            "status": IOSTerminalJobStatus.failed.rawValue,
+            "exit_code": NSNull(),
+            "stdout": "",
+            "stderr": "",
+            "stdout_available": false,
+            "stderr_available": false,
+            "exit_code_available": false,
+            "timed_out": false,
+            "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+        ])
+    }
+
+    private static func nonEmptyString(_ value: Any?) -> String? {
+        guard let string = value as? String else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
 }
@@ -2233,6 +2472,23 @@ enum IOSAgentTerminalJobExecutor {
     private static func timestampValue(_ date: Date?, fallback: Date?) -> Any {
         guard let date = date ?? fallback else { return NSNull() }
         return Int64(date.timeIntervalSince1970 * 1_000)
+    }
+}
+
+private enum IOSAmberShellExecuteError: LocalizedError {
+    case emptyInput
+    case invalidArguments(String)
+    case unsupportedWorkingDirectory(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyInput:
+            "需要提供 AmberShell 命令。"
+        case .invalidArguments(let message):
+            message
+        case .unsupportedWorkingDirectory(let path):
+            "AmberShell 当前只开放 /workspace，不支持 \(path)。"
+        }
     }
 }
 

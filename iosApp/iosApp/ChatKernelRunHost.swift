@@ -1337,7 +1337,8 @@ final class ChatKernelRunHost {
             requestId: requestId
         ) else { return }
 
-        switch scope {
+        let effectiveScope: IshToolApprovalScope = approvalRequest.mode == .amberShell ? .once : scope
+        switch effectiveScope {
         case .once:
             break
         case .session:

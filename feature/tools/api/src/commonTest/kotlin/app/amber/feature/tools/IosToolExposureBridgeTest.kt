@@ -44,7 +44,7 @@ class IosToolExposureBridgeTest {
         "mcp_call", "mcp_list", "mcp_test", "mcp_describe_tool", "mcp_import_from_skill",
         "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
         "subagent_dispatch", "model_council_run", "file_read_selected",
-        "ish_handoff", "ios_ish_execute", "terminal_execute",
+        "ish_handoff", "ios_ish_execute", "terminal_execute", "ios_shell_execute",
         "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "permissions_status", "tools_list", "subagent_report",
     )
@@ -64,7 +64,7 @@ class IosToolExposureBridgeTest {
 
     private val deferredNames = setOf(
         "wm_stations", "wm_click", "wm_type", "wm_screenshot",
-        "ish_handoff", "ios_ish_execute", "terminal_execute",
+        "ish_handoff", "ios_ish_execute", "terminal_execute", "ios_shell_execute",
         "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "mcp_test", "mcp_import_from_skill",
         "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
@@ -121,6 +121,30 @@ class IosToolExposureBridgeTest {
         val expanded = payload["expanded_tools"]!!.jsonArray.map { it.jsonPrimitive.contentOrNull }
         assertTrue("wm_type" in expanded, "search must return the deferred wm_type tool")
         assertTrue("wm_type" in bridge.visibleTools().map { it.name }, "hit must be exposed for the next model step")
+    }
+
+    @Test
+    fun amberShellSearchMetadataIsTerminalAndMutating() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+        val payload = parseObject(
+            bridge.executeToolSearch("""{"query":"ios_shell_execute","category":"terminal","limit":1}""")
+        )
+        val match = payload["tools"]!!.jsonArray.single().jsonObject
+
+        assertEquals("ios_shell_execute", match["name"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("terminal", match["category"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("true", match["mutates"]?.jsonPrimitive?.contentOrNull)
+    }
+
+    @Test
+    fun amberShellIsDiscoverableFromGenericLocalCommandIntent() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+        val payload = parseObject(
+            bridge.executeToolSearch("""{"query":"本地命令","category":"terminal","limit":3}""")
+        )
+
+        val matches = payload["tools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content }
+        assertTrue("ios_shell_execute" in matches)
     }
 
     @Test

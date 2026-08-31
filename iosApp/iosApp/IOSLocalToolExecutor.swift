@@ -264,6 +264,23 @@ final class IOSLocalToolExecutor {
         if request.toolName == "permissions_status" {
             return .permissionsStatus(permissionsStatus(now: now))
         }
+        if IOSAmberShellToolCatalog.supportedToolNames.contains(request.toolName) {
+            guard let capability = IOSCapabilityRegistry.capability(forToolName: request.toolName) else {
+                return .denied("Unknown AmberShell tool: \(request.toolName)")
+            }
+            switch resolveAmberShellExecution(request: request, capability: capability) {
+            case .allow:
+                return .terminalResult(await IOSAmberShellExecuteExecutor.execute(
+                    input: request.operation,
+                    runtime: terminalRuntime,
+                    workspaceStore: workspaceStore
+                ))
+            case .needsUserAction(let reason):
+                return .needsUserAction(reason)
+            case .deny(let reason):
+                return .denied(reason)
+            }
+        }
         if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(request.toolName) {
             guard let capability = terminalCapability(
                 toolName: request.toolName,
@@ -544,6 +561,21 @@ final class IOSLocalToolExecutor {
                 return .needsUserAction(reason: "Starting a Remote SSH job on the selected trusted host requires explicit foreground approval.")
             }
             return .needsUserAction(reason: "Remote SSH executes a command on the selected trusted host and returns stdout/stderr/exit code. It requires explicit foreground approval.")
+        }
+        return .allow(capabilityId: capability.id)
+    }
+
+    private func resolveAmberShellExecution(
+        request: IOSLocalToolExecutionRequest,
+        capability: IOSPlatformCapability
+    ) -> IOSPlatformGateDecision {
+        let policy = request.executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
+        if policy == .disabled {
+            return .deny(reason: "Disabled by AmberAgent AmberShell policy")
+        }
+        guard request.isUserInitiated else {
+            let reason = "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；每次执行都需要前台批准。"
+            return .needsUserAction(reason: IOSAppLocalization.string(reason, defaultValue: reason))
         }
         return .allow(capabilityId: capability.id)
     }
@@ -904,10 +936,13 @@ final class IOSLocalToolExecutor {
         return reason
     }
 
-    func remoteTerminalApprovalPreview(
+    func terminalApprovalPreview(
         toolName: String,
         input: String
     ) -> IshHandoffToolApprovalRequest? {
+        if IOSAmberShellToolCatalog.supportedToolNames.contains(toolName) {
+            return IOSAmberShellExecuteExecutor.approvalPreview(input: input)
+        }
         guard IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolName) else {
             return nil
         }

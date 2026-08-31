@@ -18,6 +18,7 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             "ios.mcp.tool_call",
             "ios.workspace.file_read",
             "ios.workspace.file_write",
+            "ios.local.ambershell",
             "ios.embedded.ish_runtime",
             "ios.external.ish_handoff",
             "ios.remote.command",
@@ -98,6 +99,7 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             "ish_handoff"
         ]).union(IOSWebMountToolCatalog.supportedToolNames)
             .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            .union(IOSAmberShellToolCatalog.supportedToolNames)
             .union(IOSRemoteTerminalToolCatalog.supportedToolNames)
         XCTAssertEqual(IOSCapabilityRegistry.executableToolNames, expected)
     }
@@ -111,6 +113,9 @@ final class IOSCapabilityRegistryTests: XCTestCase {
         )
         let remote = try XCTUnwrap(
             IOSCapabilityRegistry.capabilities.first { $0.id == "ios.remote.command" }
+        )
+        let amberShell = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.local.ambershell" }
         )
         let ish = try XCTUnwrap(
             IOSCapabilityRegistry.capabilities.first { $0.id == "ios.external.ish_handoff" }
@@ -137,6 +142,14 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             XCTAssertTrue(embeddedIsh.unavailableReason?.contains("ExperimentalGPL") == true)
         }
         XCTAssertTrue(remote.uiActionNames.contains("remote_command_run"))
+        XCTAssertEqual(amberShell.modelToolNames, [IOSAmberShellToolCatalog.executeToolName])
+        XCTAssertEqual(amberShell.requestKind, .foregroundSession)
+        XCTAssertTrue(amberShell.gate.requiresFreshUserPresence)
+        XCTAssertTrue(IOSCapabilityRegistry.executableToolNames.contains(IOSAmberShellToolCatalog.executeToolName))
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAmberShellToolCatalog.executeToolName)?.id,
+            "ios.local.ambershell"
+        )
         XCTAssertEqual(remote.modelToolNames, Array(IOSRemoteTerminalToolCatalog.supportedToolNames).sorted())
         XCTAssertEqual(remote.requestKind, .foregroundSession)
         XCTAssertTrue(remote.gate.requiresFreshUserPresence)

@@ -32,7 +32,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
         "wm_screenshot", "wm_back", "wm_forward", "wm_clear_session", "wm_site_add",
         "wm_site_remove", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
         "wm_select", "wm_find", "wm_wait",
-        "terminal_execute", "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
+        "terminal_execute", "ios_shell_execute", "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "ish_handoff", "ios_ish_execute",
         "mcp_test", "mcp_import_from_skill",
         "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
@@ -117,7 +117,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
         )
         let terminalNames: Set<String> = [
             "terminal_execute", "terminal_job_start", "terminal_job_read",
-            "terminal_job_wait", "terminal_job_stop",
+            "terminal_job_wait", "terminal_job_stop", "ios_shell_execute",
         ]
         XCTAssertTrue(terminalNames.isDisjoint(with: Set(viewModel.currentToolDeclarationNames())))
         let bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
@@ -127,9 +127,13 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertTrue(executePayload.contains("terminal_execute"))
         XCTAssertTrue(Set(bridge.visibleTools().map(\.name)).contains("terminal_execute"))
 
+        let amberShellPayload = bridge.executeToolSearch(argumentsJson: #"{"query":"AmberShell local command","limit":3}"#)
+        XCTAssertTrue(amberShellPayload.contains("ios_shell_execute"))
+        XCTAssertTrue(Set(bridge.visibleTools().map(\.name)).contains("ios_shell_execute"))
+
         let payload = bridge.executeToolSearch(argumentsJson: #"{"query":"terminal_job","limit":10}"#)
 
-        for name in terminalNames where name != "terminal_execute" {
+        for name in terminalNames where name != "terminal_execute" && name != "ios_shell_execute" {
             XCTAssertTrue(payload.contains(name), "tool_search 必须命中 \(name)")
             XCTAssertTrue(Set(bridge.visibleTools().map(\.name)).contains(name))
         }

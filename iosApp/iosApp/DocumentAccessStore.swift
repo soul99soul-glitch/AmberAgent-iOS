@@ -437,6 +437,390 @@ final class IOSWorkspaceStore {
         fileURL(forWorkspacePath: record.workspacePath)
     }
 
+    func amberShellRootEntries() throws -> [String] {
+        try amberShellList(path: "/workspace")
+    }
+
+    func amberShellList(path: String) throws -> [String] {
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: true)
+        let directory = try amberShellURL(for: relativePath, finalMayBeMissing: false)
+        let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isSymbolicLink != true else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot traverse symbolic links.")
+        }
+        guard values.isDirectory == true else {
+            throw IOSWorkspaceStoreError.directorySelected
+        }
+        return try fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+        .map(\.lastPathComponent)
+        .sorted()
+    }
+
+    func amberShellReadText(path: String, maxBytes: Int) throws -> String {
+        guard maxBytes >= 0 else {
+            throw IOSWorkspaceStoreError.invalidPath("maxBytes must be non-negative.")
+        }
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: false)
+        let file = try amberShellURL(for: relativePath, finalMayBeMissing: false)
+        try amberShellRequireRegularFile(at: file)
+        let data = try Data(contentsOf: file)
+        guard String(data: data, encoding: .utf8) != nil else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace file is not valid UTF-8 text.")
+        }
+        guard data.count <= maxBytes else {
+            throw IOSWorkspaceStoreError.fileTooLarge("File exceeds the AmberShell output limit of \(DocumentAccessStore.formatBytes(Int64(maxBytes))).")
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    func amberShellWriteText(path: String, text: String) async throws {
+        let data = Data(text.utf8)
+        let maxBytes = 128 * 1024
+        guard data.count <= maxBytes else {
+            throw IOSWorkspaceStoreError.fileTooLarge(
+                "File exceeds the AmberShell write limit of \(DocumentAccessStore.formatBytes(Int64(maxBytes)))."
+            )
+        }
+
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: false)
+        let file = try amberShellURL(for: relativePath, finalMayBeMissing: true)
+        let existed = fileManager.fileExists(atPath: file.path)
+        let previousData: Data?
+        let previousModificationDate: Date?
+        if existed {
+            try amberShellRequireRegularFile(at: file)
+            previousData = try Data(contentsOf: file)
+            previousModificationDate = try file.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate
+        } else {
+            previousData = nil
+            previousModificationDate = nil
+        }
+        let previousFiles = files
+
+        try data.write(to: file, options: [.atomic])
+        do {
+            try await amberShellSyncFileRecord(
+                path: relativePath,
+                file: file,
+                source: "amber_shell_write"
+            )
+        } catch {
+            try amberShellRollback(after: error, restoring: previousFiles) {
+                if let previousData {
+                    try previousData.write(to: file, options: [.atomic])
+                    if let previousModificationDate {
+                        try fileManager.setAttributes(
+                            [.modificationDate: previousModificationDate],
+                            ofItemAtPath: file.path
+                        )
+                    }
+                } else if fileManager.fileExists(atPath: file.path) {
+                    try fileManager.removeItem(at: file)
+                }
+            }
+        }
+    }
+
+    func amberShellValidateWriteTarget(path: String) throws {
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: false)
+        let file = try amberShellURL(for: relativePath, finalMayBeMissing: true)
+        if fileManager.fileExists(atPath: file.path) {
+            try amberShellRequireRegularFile(at: file)
+        }
+    }
+
+    func amberShellPathIdentity(_ path: String) throws -> String {
+        try amberShellRelativePath(path, allowingRoot: false)
+            .precomposedStringWithCanonicalMapping
+            .lowercased()
+    }
+
+    func amberShellCreateDirectory(path: String) throws {
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: false)
+        let directory = try amberShellURL(for: relativePath, finalMayBeMissing: true)
+        if fileManager.fileExists(atPath: directory.path) {
+            throw IOSWorkspaceStoreError.writeWouldOverwrite("/workspace/\(relativePath)")
+        }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: false)
+    }
+
+    func amberShellTouch(path: String) async throws {
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: false)
+        let file = try amberShellURL(for: relativePath, finalMayBeMissing: true)
+        let existed = fileManager.fileExists(atPath: file.path)
+        let previousModificationDate = existed
+            ? try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            : nil
+        let previousFiles = files
+        if existed {
+            try amberShellRequireRegularFile(at: file)
+            try fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
+        } else {
+            guard fileManager.createFile(atPath: file.path, contents: Data()) else {
+                throw IOSWorkspaceStoreError.storage("Unable to create Workspace file.")
+            }
+        }
+        do {
+            try await amberShellSyncFileRecord(path: relativePath, file: file, source: "amber_shell_touch")
+        } catch {
+            try amberShellRollback(after: error, restoring: previousFiles) {
+                if existed, let previousModificationDate {
+                    try fileManager.setAttributes([.modificationDate: previousModificationDate], ofItemAtPath: file.path)
+                } else if !existed, fileManager.fileExists(atPath: file.path) {
+                    try fileManager.removeItem(at: file)
+                }
+            }
+        }
+    }
+
+    func amberShellCopy(from source: String, to destination: String) async throws {
+        try ensureDirectories()
+        let sourcePath = try amberShellRelativePath(source, allowingRoot: false)
+        let destinationPath = try amberShellRelativePath(destination, allowingRoot: false)
+        let sourceURL = try amberShellURL(for: sourcePath, finalMayBeMissing: false)
+        let destinationURL = try amberShellURL(for: destinationPath, finalMayBeMissing: true)
+        try amberShellRequireRegularFile(at: sourceURL)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            throw IOSWorkspaceStoreError.writeWouldOverwrite("/workspace/\(destinationPath)")
+        }
+        let data = try Data(contentsOf: sourceURL)
+        guard String(data: data, encoding: .utf8) != nil else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace file is not valid UTF-8 text.")
+        }
+        let previousFiles = files
+        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+        do {
+            try await amberShellSyncFileRecord(
+                path: destinationPath,
+                file: destinationURL,
+                source: "amber_shell_copy"
+            )
+        } catch {
+            try amberShellRollback(after: error, restoring: previousFiles) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+        }
+    }
+
+    func amberShellMove(from source: String, to destination: String) async throws {
+        try ensureDirectories()
+        let sourcePath = try amberShellRelativePath(source, allowingRoot: false)
+        let destinationPath = try amberShellRelativePath(destination, allowingRoot: false)
+        let sourceURL = try amberShellURL(for: sourcePath, finalMayBeMissing: false)
+        let destinationURL = try amberShellURL(for: destinationPath, finalMayBeMissing: true)
+        try amberShellRequireRegularFile(at: sourceURL)
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            throw IOSWorkspaceStoreError.writeWouldOverwrite("/workspace/\(destinationPath)")
+        }
+        let previousFiles = files
+        try fileManager.moveItem(at: sourceURL, to: destinationURL)
+        do {
+            if let index = files.firstIndex(where: { $0.workspacePath == sourcePath }) {
+                var record = files[index]
+                record.workspacePath = destinationPath
+                record.displayName = destinationURL.lastPathComponent
+                files.remove(at: index)
+                files.removeAll { $0.workspacePath == destinationPath }
+                files.insert(record, at: 0)
+            }
+            try await amberShellSyncFileRecord(
+                path: destinationPath,
+                file: destinationURL,
+                source: "amber_shell_move"
+            )
+        } catch {
+            try amberShellRollback(after: error, restoring: previousFiles) {
+                try fileManager.moveItem(at: destinationURL, to: sourceURL)
+            }
+        }
+    }
+
+    func amberShellRemove(path: String) throws {
+        try ensureDirectories()
+        let relativePath = try amberShellRelativePath(path, allowingRoot: false)
+        let file = try amberShellURL(for: relativePath, finalMayBeMissing: false)
+        try amberShellRequireRegularFile(at: file)
+        let data = try Data(contentsOf: file)
+        let previousModificationDate = try file.resourceValues(
+            forKeys: [.contentModificationDateKey]
+        ).contentModificationDate
+        let previousFiles = files
+        try fileManager.removeItem(at: file)
+        files.removeAll { $0.workspacePath == relativePath }
+        do {
+            try persist()
+            publish()
+        } catch {
+            try amberShellRollback(after: error, restoring: previousFiles) {
+                try data.write(to: file, options: [.atomic])
+                if let previousModificationDate {
+                    try fileManager.setAttributes([.modificationDate: previousModificationDate], ofItemAtPath: file.path)
+                }
+            }
+        }
+    }
+
+    private func amberShellRelativePath(_ raw: String, allowingRoot: Bool) throws -> String {
+        guard !raw.isEmpty,
+              !raw.contains("\\"),
+              !raw.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace paths must be canonical UTF-8 POSIX paths.")
+        }
+
+        let relative: String
+        if raw == "/workspace" || raw == "/workspace/" {
+            relative = ""
+        } else if raw.hasPrefix("/workspace/") {
+            relative = String(raw.dropFirst("/workspace/".count))
+        } else if raw.hasPrefix("/") {
+            throw IOSWorkspaceStoreError.invalidPath("Use a path under /workspace, not a host absolute path.")
+        } else {
+            relative = raw
+        }
+
+        var value = relative
+        let hadPathComponent = !value.isEmpty
+        if value.hasSuffix("/") {
+            value.removeLast()
+        }
+        guard !hadPathComponent || !value.isEmpty else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot contain empty components.")
+        }
+        guard allowingRoot || !value.isEmpty else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace path is required.")
+        }
+        guard !value.hasSuffix("/") else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot contain empty components.")
+        }
+        if !value.isEmpty {
+            let components = value.split(separator: "/", omittingEmptySubsequences: false)
+            guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+                throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot contain empty, . or .. components.")
+            }
+        }
+        return value
+    }
+
+    private func amberShellURL(for relativePath: String, finalMayBeMissing: Bool) throws -> URL {
+        let root = filesDirectory.standardizedFileURL
+        let candidate = relativePath.isEmpty
+            ? root
+            : root.appendingPathComponent(relativePath, isDirectory: false).standardizedFileURL
+        guard candidate.path == root.path || candidate.path.hasPrefix(root.path + "/") else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace path escapes /workspace.")
+        }
+
+        guard !amberShellIsSymbolicLink(root) else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot traverse symbolic links.")
+        }
+        let components = relativePath.split(separator: "/").map(String.init)
+        var current = root
+        for (index, component) in components.enumerated() {
+            let next = current.appendingPathComponent(component, isDirectory: index < components.count - 1)
+            guard next.standardizedFileURL.path == root.path || next.standardizedFileURL.path.hasPrefix(root.path + "/") else {
+                throw IOSWorkspaceStoreError.invalidPath("Workspace path escapes /workspace.")
+            }
+            if amberShellIsSymbolicLink(next) {
+                throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot traverse symbolic links.")
+            }
+            let exists = fileManager.fileExists(atPath: next.path)
+            if !exists {
+                guard finalMayBeMissing && index == components.count - 1 else {
+                    throw IOSWorkspaceStoreError.missingFile
+                }
+                return candidate
+            }
+            if index < components.count - 1 {
+                let values = try next.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                guard values.isSymbolicLink != true, values.isDirectory == true else {
+                    throw IOSWorkspaceStoreError.directorySelected
+                }
+            }
+            current = next
+        }
+        return candidate
+    }
+
+    private func amberShellRequireRegularFile(at file: URL) throws {
+        let values = try file.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isSymbolicLink != true else {
+            throw IOSWorkspaceStoreError.invalidPath("Workspace paths cannot traverse symbolic links.")
+        }
+        guard values.isRegularFile == true else {
+            if values.isDirectory == true {
+                throw IOSWorkspaceStoreError.directorySelected
+            }
+            throw IOSWorkspaceStoreError.missingFile
+        }
+    }
+
+    private func amberShellIsSymbolicLink(_ url: URL) -> Bool {
+        if (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) != nil {
+            return true
+        }
+        guard let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]) else {
+            return false
+        }
+        return values.isSymbolicLink == true
+    }
+
+    private func amberShellSyncFileRecord(path: String, file: URL, source: String) async throws {
+        let now = Date()
+        var record = files.first(where: { $0.workspacePath == path }) ?? IOSWorkspaceFileRecord(
+            id: UUID().uuidString,
+            displayName: file.lastPathComponent,
+            originalFileName: file.lastPathComponent,
+            workspacePath: path,
+            mimeType: path.hasSuffix(".md") ? "text/markdown" : "text/plain",
+            sizeBytes: Int64(Self.fileSize(for: file) ?? 0),
+            importedAtMillis: Self.millis(now),
+            updatedAtMillis: Self.millis(now),
+            status: .ready,
+            statusMessage: "",
+            preview: "",
+            isTruncated: false,
+            characterCount: 0,
+            source: source
+        )
+        record.displayName = file.lastPathComponent
+        record.sizeBytes = Int64(Self.fileSize(for: file) ?? 0)
+        record.updatedAtMillis = Self.millis(now)
+        record.source = source
+        record = await parsedRecord(record, now: now)
+        files.removeAll { $0.id == record.id || $0.workspacePath == path }
+        files.insert(record, at: 0)
+        try persist()
+        publish()
+    }
+
+    private func amberShellRollback(
+        after originalError: Error,
+        restoring previousFiles: [IOSWorkspaceFileRecord],
+        _ rollback: () throws -> Void
+    ) throws -> Never {
+        files = previousFiles
+        do {
+            try rollback()
+        } catch {
+            throw IOSWorkspaceStoreError.storage(
+                "Workspace update failed and its file rollback also failed: \(error.localizedDescription)"
+            )
+        }
+        throw originalError
+    }
+
     private func workspaceFileReadJSON(_ args: [String: Any]) async throws -> String {
         let raw = (args["file_id"] as? String)?.workspaceNilIfBlank
             ?? (args["path"] as? String)?.workspaceNilIfBlank

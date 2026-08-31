@@ -149,11 +149,11 @@ object TerminalRuntimeCapabilities {
             supportsPackageInstall = false,
             supportsLongRunningJobs = false,
             supportsInteractiveLogin = false,
-            supportsFileSync = false,
+            supportsFileSync = true,
             appStoreSafeByDefault = true,
             supportsExternalCliByDefault = false,
             licenseClass = TerminalRuntimeLicenseClass.PERMISSIVE,
-            summary = "iOS bounded local utilities; currently pwd and ls, not a shell.",
+            summary = "AmberShell stable local executor for app-owned /workspace file and text commands without PTY or a system shell. The stable app target embeds CPython 3.14 for restricted python -c snippets; ExperimentalGPL deliberately excludes CPython. Supports pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date, and uname; at most three pipeline stages with only <, >, and 2> redirection; no pip, network, host file access, control flow, globbing, command substitution, or package installation. Foreground timeout and cancellation are cooperative; blocking native extensions cannot be force-terminated.",
         ),
         TerminalRuntimeCapability(
             runtime = TerminalRuntimeKind.REMOTE_MOSH,

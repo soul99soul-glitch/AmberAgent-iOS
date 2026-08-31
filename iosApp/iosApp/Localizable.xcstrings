@@ -1,6 +1,1974 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "推荐": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recommended"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "おすすめ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "권장"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рекомендуется"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推荐"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推薦"
+          }
+        }
+      }
+    },
+    "稳定": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stable"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "安定版"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "안정"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Стабильный"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "稳定"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "穩定"
+          }
+        }
+      }
+    },
+    "实验": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実験的"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실험"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспериментальный"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗"
+          }
+        }
+      }
+    },
+    "Runtime 与任务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime & Tasks"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime とタスク"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 및 작업"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime и задания"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 与任务"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime 與工作"
+          }
+        }
+      }
+    },
+    "默认 Runtime、Remote SSH、iSH 工具与任务记录": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Default Runtime, Remote SSH, iSH tools, and task history"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デフォルト Runtime、Remote SSH、iSH ツール、タスク履歴"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기본 Runtime, Remote SSH, iSH 도구 및 작업 기록"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runtime по умолчанию, инструменты Remote SSH и iSH, а также история заданий"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "默认 Runtime、Remote SSH、iSH 工具与任务记录"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預設 Runtime、Remote SSH、iSH 工具與工作記錄"
+          }
+        }
+      }
+    },
+    "JavaScript 沙箱执行": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JavaScript sandbox execution"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JavaScript サンドボックス実行"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JavaScript 샌드박스 실행"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выполнение JavaScript в песочнице"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JavaScript 沙箱执行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "JavaScript 沙盒執行"
+          }
+        }
+      }
+    },
+    "允许模型用 exec 工具运行隔离的 JavaScript（默认关闭；无网络、无文件访问）": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow the model to run isolated JavaScript through the exec tool (off by default; no network or file access)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "exec ツールで分離された JavaScript をモデルに実行させる（デフォルトではオフ。ネットワークとファイルへのアクセスなし）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "exec 도구를 통해 격리된 JavaScript를 모델이 실행하도록 허용(기본적으로 꺼짐; 네트워크 및 파일 접근 없음)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить модели запускать изолированный JavaScript через инструмент exec (выключено по умолчанию; без доступа к сети и файлам)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许模型用 exec 工具运行隔离的 JavaScript（默认关闭；无网络、无文件访问）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許模型透過 exec 工具執行隔離的 JavaScript（預設關閉；無網路、無檔案存取）"
+          }
+        }
+      }
+    },
+    "聊天灵动岛实时活动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat Dynamic Island Live Activity"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットの Dynamic Island ライブアクティビティ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅 Dynamic Island 실시간 활동"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Activity чата в Dynamic Island"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天灵动岛实时活动"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "聊天靈動島即時活動"
+          }
+        }
+      }
+    },
+    "音频保活": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio keep-alive"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オーディオの維持"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오디오 유지"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поддержание аудио"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音频保活"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音訊保活"
+          }
+        }
+      }
+    },
+    "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use near-silent audio during supported task runtimes to seek longer background time. iOS may still suspend tasks; other music may pause when the screen is locked, and playback may also appear in Control Center."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "対応するタスクの実行中にほぼ無音のオーディオを使い、バックグラウンド時間の延長を試みます。iOS がタスクを一時停止する場合があります。画面ロック中は他の音楽が一時停止される場合があり、コントロールセンターに再生中と表示されることもあります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지원되는 작업 런타임에서 거의 무음인 오디오를 사용해 백그라운드 시간을 더 확보합니다. iOS는 여전히 작업을 일시 중지할 수 있으며, 화면이 잠기면 다른 음악이 일시 중지될 수 있고 제어 센터에 재생 중으로 표시될 수도 있습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать почти бесшумный звук во время поддерживаемых запусков заданий, чтобы попытаться продлить работу в фоне. iOS всё равно может приостановить задания; при блокировке экрана другая музыка может быть приостановлена, а в Пункте управления может отображаться воспроизведение."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在支援的工作執行環境中使用近乎靜音的音訊，爭取更長的背景執行時間。iOS 仍可能暫停工作；鎖定螢幕時其他音樂可能暫停，控制中心也可能顯示播放中。"
+          }
+        }
+      }
+    },
+    "实验 Runtime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental Runtime"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実験 Runtime"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실험 Runtime"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспериментальный Runtime"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验 Runtime"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗 Runtime"
+          }
+        }
+      }
+    },
+    "当前构建没有链接实验 Runtime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current build does not link the experimental Runtime"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在のビルドには実験 Runtime がリンクされていません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 빌드에는 실험 Runtime이 연결되어 있지 않습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущая сборка не содержит ссылки на экспериментальный Runtime"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前构建没有链接实验 Runtime"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前建置未連結實驗 Runtime"
+          }
+        }
+      }
+    },
+    "iSH Experimental 已显示；仅 ExperimentalGPL target，需 GPL 审核": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental is shown; ExperimentalGPL target only; GPL review required"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental を表示；ExperimentalGPL target のみ。GPL の確認が必要"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental 표시됨; ExperimentalGPL target만 해당; GPL 검토 필요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental отображается; только target ExperimentalGPL; требуется проверка GPL"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental 已显示；仅 ExperimentalGPL target，需 GPL 审核"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental 已顯示；僅 ExperimentalGPL target，需 GPL 審核"
+          }
+        }
+      }
+    },
+    "iSH Experimental 默认隐藏；仅 ExperimentalGPL target，需 GPL 审核": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental is hidden by default; ExperimentalGPL target only; GPL review required"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental はデフォルトで非表示；ExperimentalGPL target のみ。GPL の確認が必要"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental 기본 숨김; ExperimentalGPL target만 해당; GPL 검토 필요"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental скрыт по умолчанию; только target ExperimentalGPL; требуется проверка GPL"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental 默认隐藏；仅 ExperimentalGPL target，需 GPL 审核"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH Experimental 預設隱藏；僅 ExperimentalGPL target，需 GPL 審核"
+          }
+        }
+      }
+    },
+    "已显示": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shown"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "表示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "표시됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показано"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已显示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已顯示"
+          }
+        }
+      }
+    },
+    "已隐藏": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hidden"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "非表示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "숨김"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скрыто"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已隐藏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已隱藏"
+          }
+        }
+      }
+    },
+    "SSH Profile": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH Profile"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH プロファイル"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH 프로필"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Профиль SSH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH Profile"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH Profile"
+          }
+        }
+      }
+    },
+    "为 Remote SSH 添加 host、端口、用户名和密码": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a host, port, username, and password for Remote SSH"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote SSH に host、ポート、ユーザー名、パスワードを追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote SSH에 host, 포트, 사용자 이름 및 비밀번호 추가"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавьте хост, порт, имя пользователя и пароль для Remote SSH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "为 Remote SSH 添加 host、端口、用户名和密码"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "為 Remote SSH 新增 host、連接埠、使用者名稱與密碼"
+          }
+        }
+      }
+    },
+    "未配置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not configured"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未設定"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "구성되지 않음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не настроено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未配置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未設定"
+          }
+        }
+      }
+    },
+    "Host 信任": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host trust"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host の信頼"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host 신뢰"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доверие к хосту"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host 信任"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host 信任"
+          }
+        }
+      }
+    },
+    "连接前校验 host key；未信任时不会发送密码": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verify the host key before connecting; a password is not sent until the host is trusted"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続前に host key を検証し、信頼されるまでパスワードは送信しません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결 전에 host key를 확인하며, Host를 신뢰하기 전에는 비밀번호를 전송하지 않습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверяйте ключ хоста перед подключением; пароль не отправляется, пока хост не станет доверенным"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接前校验 host key；未信任时不会发送密码"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線前驗證 host key；未信任時不會傳送密碼"
+          }
+        }
+      }
+    },
+    "待检查": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pending check"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認待ち"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인 대기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ожидает проверки"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待检查"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待檢查"
+          }
+        }
+      }
+    },
+    "检查中": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Checking"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認中"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "확인 중"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "检查中"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢查中"
+          }
+        }
+      }
+    },
+    "已信任": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trusted"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "信頼済み"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "신뢰됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Доверенный"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已信任"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已信任"
+          }
+        }
+      }
+    },
+    "异常": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Error"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エラー"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오류"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ошибка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "异常"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "異常"
+          }
+        }
+      }
+    },
+    "Host 未填写": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host is required"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host は必須です"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host를 입력해야 합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Укажите хост"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host 未填写"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Host 未填寫"
+          }
+        }
+      }
+    },
+    "iSH 工具能力": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH tool capabilities"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH ツールの機能"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH 도구 기능"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Возможности инструментов iSH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH 工具能力"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "iSH 工具能力"
+          }
+        }
+      }
+    },
+    "审批后可运行复杂非 PTY 脚本或异步 Job；外部 iSH 为手动交接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After approval, complex non-PTY scripts or asynchronous Jobs can run; external iSH requires a manual handoff"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "承認後、複雑な非 PTY スクリプトや非同期 Job を実行できます。外部 iSH には手動の引き継ぎが必要です"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인 후 복잡한 비-PTY 스크립트 또는 비동기 Job을 실행할 수 있으며, 외부 iSH는 수동 인계가 필요합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "После одобрения можно запускать сложные скрипты без PTY или асинхронные Job; для внешнего iSH требуется ручная передача"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "审批后可运行复杂非 PTY 脚本或异步 Job；外部 iSH 为手动交接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "核准後可執行複雜的非 PTY 指令碼或非同步 Job；外部 iSH 需手動交接"
+          }
+        }
+      }
+    },
+    "当前 target 未链接内置 iSH；外部 iSH 仅支持手动交接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current target does not link built-in iSH; external iSH supports manual handoff only"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の target には内蔵 iSH がリンクされていません。外部 iSH は手動の引き継ぎのみ対応します"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 target에는 내장 iSH가 연결되어 있지 않으며, 외부 iSH는 수동 인계만 지원합니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущий target не содержит встроенного iSH; внешний iSH поддерживает только ручную передачу"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前 target 未链接内置 iSH；外部 iSH 仅支持手动交接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前 target 未連結內建 iSH；外部 iSH 僅支援手動交接"
+          }
+        }
+      }
+    },
+    "内置 + 交接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in + handoff"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内蔵 + 引き継ぎ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내장 + 인계"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Встроенный + передача"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置 + 交接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內建 + 交接"
+          }
+        }
+      }
+    },
+    "内置可用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in available"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内蔵を利用可能"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내장 사용 가능"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Встроенный доступен"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置可用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內建可用"
+          }
+        }
+      }
+    },
+    "外部交接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External handoff"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部の引き継ぎ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "외부 인계"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Передача внешнему"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部交接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部交接"
+          }
+        }
+      }
+    },
+    "未启用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not enabled"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無効"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "사용 안 함"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не включено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未启用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未啟用"
+          }
+        }
+      }
+    },
+    "Smoke Test 与远程命令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoke Test & Remote Commands"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoke Test とリモートコマンド"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoke Test 및 원격 명령"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoke Test и удалённые команды"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoke Test 与远程命令"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Smoke Test 與遠端命令"
+          }
+        }
+      }
+    },
+    "验证当前 Runtime，或手动运行一次 Remote SSH 命令": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verify the current Runtime, or manually run one Remote SSH command"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在の Runtime を確認するか、Remote SSH コマンドを 1 回手動で実行"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 Runtime을 확인하거나 Remote SSH 명령을 한 번 수동 실행"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверьте текущий Runtime или вручную выполните одну команду Remote SSH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "验证当前 Runtime，或手动运行一次 Remote SSH 命令"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "驗證目前的 Runtime，或手動執行一次 Remote SSH 命令"
+          }
+        }
+      }
+    },
+    "远程命令正在运行，可进入查看输出或取消": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A remote command is running; open it to view output or cancel"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモートコマンドを実行中です。開いて出力を確認するか、キャンセルできます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 명령이 실행 중입니다. 열어 출력을 확인하거나 취소할 수 있습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалённая команда выполняется; откройте её, чтобы просмотреть вывод или отменить"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "远程命令正在运行，可进入查看输出或取消"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遠端命令正在執行，可進入查看輸出或取消"
+          }
+        }
+      }
+    },
+    "最近远程命令：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recent remote command: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近のリモートコマンド：%@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 원격 명령: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последняя удалённая команда: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近远程命令：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近遠端命令：%@"
+          }
+        }
+      }
+    },
+    "最近 Smoke Test：%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recent Smoke Test: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近の Smoke Test：%@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 Smoke Test: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Последний Smoke Test: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近 Smoke Test：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近 Smoke Test：%@"
+          }
+        }
+      }
+    },
+    "内置 iSH": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in iSH"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内蔵 iSH"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "내장 iSH"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Встроенный iSH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置 iSH"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內建 iSH"
+          }
+        }
+      }
+    },
+    "可回传": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can return output"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "出力を返せます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "출력 반환 가능"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Может вернуть вывод"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可回传"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可回傳"
+          }
+        }
+      }
+    },
+    "未链接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not linked"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未リンク"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결되지 않음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не подключено"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未链接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未連結"
+          }
+        }
+      }
+    },
+    "外部 iSH": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "External iSH"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部 iSH"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "외부 iSH"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Внешний iSH"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部 iSH"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部 iSH"
+          }
+        }
+      }
+    },
+    "交接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Handoff"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引き継ぎ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인계"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Передача"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "交接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "交接"
+          }
+        }
+      }
+    },
+    "未选择 SSH Profile": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No SSH Profile selected"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH プロファイルが選択されていません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SSH 프로필이 선택되지 않음"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Профиль SSH не выбран"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未选择 SSH Profile"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未選擇 SSH Profile"
+          }
+        }
+      }
+    },
+    "当前构建未链接实验 Runtime": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The current build does not link the experimental Runtime"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在のビルドには実験 Runtime がリンクされていません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 빌드에는 실험 Runtime이 연결되어 있지 않습니다"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущая сборка не содержит ссылки на экспериментальный Runtime"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前构建未链接实验 Runtime"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前建置未連結實驗 Runtime"
+          }
+        }
+      }
+    },
+    "实验 Runtime 已显示": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental Runtime shown"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実験 Runtime を表示中"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실험 Runtime 표시됨"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспериментальный Runtime отображается"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验 Runtime 已显示"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗 Runtime 已顯示"
+          }
+        }
+      }
+    },
+    "实验 Runtime 已隐藏": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental Runtime hidden"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実験 Runtime を非表示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실험 Runtime 숨김"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспериментальный Runtime скрыт"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验 Runtime 已隐藏"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗 Runtime 已隱藏"
+          }
+        }
+      }
+    },
+    "%@ · %@。聊天中的 iSH 工具会单独走前台审批。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@. iSH tools in chat require separate foreground approval."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@。チャットの iSH ツールは個別にフォアグラウンド承認が必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@. 채팅의 iSH 도구는 별도의 포그라운드 승인이 필요합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@. Инструменты iSH в чате требуют отдельного подтверждения на переднем плане."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@。聊天中的 iSH 工具会单独走前台审批。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@。聊天中的 iSH 工具會個別進行前景核准。"
+          }
+        }
+      }
+    },
     "": {
       "extractionState": "manual",
       "localizations": {
@@ -87863,7 +89831,1415 @@
           }
         }
       }
-    }
+    },
+      "AmberShell": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell"
+            }
+          }
+        }
+      },
+      "AmberShell 执行": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Run AmberShell"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell を実行"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 실행"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Выполнить AmberShell"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 执行"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "執行 AmberShell"
+            }
+          }
+        }
+      },
+      "AmberShell 已超时": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell timed out"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell がタイムアウトしました"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 시간 초과"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Время ожидания AmberShell истекло"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 已超时"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 已逾時"
+            }
+          }
+        }
+      },
+      "AmberShell 已取消": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell cancelled"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell をキャンセルしました"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 취소됨"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell отменён"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 已取消"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 已取消"
+            }
+          }
+        }
+      },
+      "AmberShell 执行失败": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell execution failed"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell の実行に失敗しました"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 실행 실패"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Ошибка выполнения AmberShell"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 执行失败"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 執行失敗"
+            }
+          }
+        }
+      },
+      "AmberShell 已执行": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell executed"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell を実行しました"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 실행됨"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell выполнен"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 已执行"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 已執行"
+            }
+          }
+        }
+      },
+      "准备执行 AmberShell": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Preparing to run AmberShell"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell の実行を準備中"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 실행 준비 중"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Подготовка к запуску AmberShell"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "准备执行 AmberShell"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "準備執行 AmberShell"
+            }
+          }
+        }
+      },
+      "AmberShell 本地命令": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell local commands"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell ローカルコマンド"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 로컬 명령"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Локальные команды AmberShell"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 本地命令"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 本機命令"
+            }
+          }
+        }
+      },
+      "Run approved, bounded file and text commands inside AmberAgent's stable app-owned /workspace and return separate stdout, stderr, and exit code. A system shell, package installation, and durable background execution are not available.": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Run approved, bounded file and text commands inside AmberAgent's stable app-owned /workspace and return separate stdout, stderr, and exit code. A system shell, package installation, and durable background execution are not available."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberAgent のアプリ所有の安定版 /workspace 内で、承認済みの制限付きファイル／テキストコマンドを実行し、stdout、stderr、終了コードを個別に返します。システムシェル、パッケージのインストール、永続的なバックグラウンド実行は利用できません。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberAgent가 소유한 안정 버전 /workspace에서 승인된 제한 파일/텍스트 명령을 실행하고 stdout, stderr, 종료 코드를 별도로 반환합니다. 시스템 셸, 패키지 설치 및 지속적인 백그라운드 실행은 사용할 수 없습니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Выполняет одобренные ограниченные файловые и текстовые команды в принадлежащем приложению AmberAgent стабильном /workspace и отдельно возвращает stdout, stderr и код выхода. Системная оболочка, установка пакетов и длительное выполнение в фоне недоступны."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "在 AmberAgent 稳定版 App 自有的 /workspace 中执行经批准的受限文件和文本命令，并分别返回 stdout、stderr 和退出码。不提供 system shell、安装 package 或持久后台执行。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "在 AmberAgent 穩定版 App 自有的 /workspace 中執行經核准的受限檔案與文字命令，並分別回傳 stdout、stderr 與結束碼。不提供 system shell、套件安裝或持續背景執行。"
+            }
+          }
+        }
+      },
+      "在 /workspace 执行受限本地命令": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Run bounded local commands in /workspace"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "/workspace で制限付きローカルコマンドを実行"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "/workspace에서 제한된 로컬 명령 실행"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Выполнять ограниченные локальные команды в /workspace"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "在 /workspace 执行受限本地命令"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "在 /workspace 執行受限本機命令"
+            }
+          }
+        }
+      },
+      "执行 AmberShell": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Run AmberShell"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell を実行"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 실행"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Выполнить AmberShell"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "执行 AmberShell"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "執行 AmberShell"
+            }
+          }
+        }
+      },
+      "稳定版本地执行": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Stable local execution"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "安定版ローカル実行"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "안정 버전 로컬 실행"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Стабильное локальное выполнение"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "稳定版本地执行"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "穩定版本機執行"
+            }
+          }
+        }
+      },
+      "审批前检查 AmberShell 的完整命令": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Review the full AmberShell command before approving"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "承認前に AmberShell の完全なコマンドを確認"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "승인 전에 전체 AmberShell 명령 검토"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Проверить полную команду AmberShell перед подтверждением"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "审批前检查 AmberShell 的完整命令"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "核准前檢查 AmberShell 的完整命令"
+            }
+          }
+        }
+      },
+      "Amber 将在 App 自有 /workspace 中执行一次非交互 AmberShell 命令，并回传 stdout/stderr/exit code。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Amber will run one non-interactive AmberShell command in the app-owned /workspace and return stdout/stderr/exit code."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Amber は App 所有の /workspace で非対話型の AmberShell コマンドを1回実行し、stdout/stderr/exit code を返します。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Amber는 앱 소유 /workspace에서 비대화형 AmberShell 명령을 한 번 실행하고 stdout/stderr/exit code를 반환합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Amber выполнит одну неинтерактивную команду AmberShell в принадлежащем приложению /workspace и вернёт stdout/stderr/exit code."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Amber 将在 App 自有 /workspace 中执行一次非交互 AmberShell 命令，并回传 stdout/stderr/exit code。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Amber 會在 App 自有的 /workspace 中執行一次非互動式 AmberShell 命令，並回傳 stdout/stderr/exit code。"
+            }
+          }
+        }
+      },
+      "模式：稳定版本地执行（无 PTY）": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Mode: stable local execution (no PTY)"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "モード：安定版ローカル実行（PTY なし）"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "모드: 안정 버전 로컬 실행(PTY 없음)"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Режим: стабильное локальное выполнение (без PTY)"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "模式：稳定版本地执行（无 PTY）"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "模式：穩定版本機執行（無 PTY）"
+            }
+          }
+        }
+      },
+      "工作目录：%@": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Working directory: %@"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "作業ディレクトリ：%@"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "작업 디렉터리: %@"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Рабочий каталог: %@"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "工作目录：%@"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "工作目錄：%@"
+            }
+          }
+        }
+      },
+      "超时：%lld 秒（协作式）": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Timeout: %lld seconds (cooperative)"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "タイムアウト：%lld秒（協調的）"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "시간 초과: %lld초(협력 방식)"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Тайм-аут: %lld с (кооперативный)"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "超时：%lld 秒（协作式）"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "逾時：%lld 秒（協作式）"
+            }
+          }
+        }
+      },
+      "stdin：%lld bytes": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "stdin: %lld bytes"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "stdin：%lldバイト"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "stdin: %lld바이트"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "stdin: %lld байт"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "stdin：%lld 字节"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "stdin：%lld 位元組"
+            }
+          }
+        }
+      },
+      "批准范围，仅这一次": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Approval scope, only this time"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "承認範囲、今回のみ"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "승인 범위, 이번 한 번만"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Область подтверждения: только сейчас"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "批准范围，仅这一次"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "核准範圍，僅這一次"
+            }
+          }
+        }
+      },
+      "AmberShell 命令始终逐次前台审批。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell commands always require foreground approval one at a time."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell のコマンドは常に1回ずつフォアグラウンドで承認します。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 명령은 항상 한 번씩 포그라운드에서 승인해야 합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Для команд AmberShell всегда требуется отдельное подтверждение на переднем плане."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 命令始终逐次前台审批。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 命令一律需要逐次前景核准。"
+            }
+          }
+        }
+      },
+      "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限 python -c（CPython 3.14，无 pip、网络或宿主文件访问）；最多三段管道，仅支持 <、>、2> 重定向；不提供 system shell、PTY、控制流、glob、命令替换或 package install。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Configure the execution boundaries for AmberShell, Remote SSH, and iSH. AmberShell runs bounded non-PTY commands in the app-owned /workspace and requires approval for each run. It supports pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date, uname, and restricted python -c (CPython 3.14, with no pip, network, or host-file access). It supports up to three pipeline stages and only <, >, and 2> redirection; system shells, PTY, control flow, globbing, command substitution, and package installation are unavailable."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell、Remote SSH、iSH の実行範囲を設定します。AmberShell は App 所有の /workspace で制限付きの非 PTY コマンドを実行し、毎回承認が必要です。pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname と、制限付きの python -c（CPython 3.14、pip・ネットワーク・ホストファイルへのアクセスなし）に対応します。パイプラインは最大3段で、リダイレクトは <、>、2> のみです。system shell、PTY、制御フロー、glob、コマンド置換、パッケージのインストールは利用できません。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell, Remote SSH 및 iSH의 실행 범위를 설정합니다. AmberShell은 앱이 소유한 /workspace에서 제한된 비대화형(non-PTY) 명령을 실행하며 매번 승인이 필요합니다. pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date, uname 및 제한된 python -c(CPython 3.14, pip·네트워크·호스트 파일 접근 없음)를 지원합니다. 파이프라인은 최대 3단계이며 리디렉션은 <, >, 2>만 지원합니다. system shell, PTY, 제어 흐름, glob, 명령 치환 및 패키지 설치는 제공하지 않습니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Настройте границы выполнения AmberShell, Remote SSH и iSH. AmberShell запускает ограниченные команды без PTY в принадлежащем приложению /workspace; для каждого запуска требуется подтверждение. Поддерживаются pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date, uname и ограниченный python -c (CPython 3.14, без pip, сети и доступа к файлам хоста). Допускается до трёх этапов конвейера и только перенаправления <, > и 2>; системная оболочка, PTY, управление потоком, glob, подстановка команд и установка пакетов недоступны."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限 python -c（CPython 3.14，无 pip、网络或宿主文件访问）；最多三段管道，仅支持 <、>、2> 重定向；不提供 system shell、PTY、控制流、glob、命令替换或 package install。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "設定 AmberShell、Remote SSH 與 iSH 的執行邊界。AmberShell 會在 App 自有的 /workspace 中執行受限的非 PTY 命令，且每次都需要核准；支援 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限的 python -c（CPython 3.14，不提供 pip、網路或主機檔案存取）；最多三段管線，僅支援 <、>、2> 重新導向；不提供 system shell、PTY、控制流程、glob、命令替換或套件安裝。"
+            }
+          }
+        }
+      },
+      "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管道，仅支持 <、>、2> 重定向；当前 ExperimentalGPL target 不链接 CPython；不提供 system shell、PTY、控制流、glob、命令替换或 package install。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Configure the execution boundaries for AmberShell, Remote SSH, and iSH. AmberShell runs bounded non-PTY commands in the app-owned /workspace and requires approval for each run. It supports pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date, and uname. It supports up to three pipeline stages and only <, >, and 2> redirection; the current ExperimentalGPL target does not link CPython. System shells, PTY, control flow, globbing, command substitution, and package installation are unavailable."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell、Remote SSH、iSH の実行範囲を設定します。AmberShell は App 所有の /workspace で制限付きの非 PTY コマンドを実行し、毎回承認が必要です。pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname に対応します。パイプラインは最大3段で、リダイレクトは <、>、2> のみです。現在の ExperimentalGPL target には CPython がリンクされていません。system shell、PTY、制御フロー、glob、コマンド置換、パッケージのインストールは利用できません。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell, Remote SSH 및 iSH의 실행 범위를 설정합니다. AmberShell은 앱이 소유한 /workspace에서 제한된 비대화형(non-PTY) 명령을 실행하며 매번 승인이 필요합니다. pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date, uname을 지원합니다. 파이프라인은 최대 3단계이며 리디렉션은 <, >, 2>만 지원합니다. 현재 ExperimentalGPL target에는 CPython이 링크되지 않습니다. system shell, PTY, 제어 흐름, glob, 명령 치환 및 패키지 설치는 제공하지 않습니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Настройте границы выполнения AmberShell, Remote SSH и iSH. AmberShell запускает ограниченные команды без PTY в принадлежащем приложению /workspace; для каждого запуска требуется подтверждение. Поддерживаются pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf, grep, sort, uniq, cut, tr, basename, dirname, env, date и uname. Допускается до трёх этапов конвейера и только перенаправления <, > и 2>; текущий target ExperimentalGPL не подключает CPython. Системная оболочка, PTY, управление потоком, glob, подстановка команд и установка пакетов недоступны."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管道，仅支持 <、>、2> 重定向；当前 ExperimentalGPL target 不链接 CPython；不提供 system shell、PTY、控制流、glob、命令替换或 package install。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "設定 AmberShell、Remote SSH 與 iSH 的執行邊界。AmberShell 會在 App 自有的 /workspace 中執行受限的非 PTY 命令，且每次都需要核准；支援 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管線，僅支援 <、>、2> 重新導向；目前的 ExperimentalGPL target 不連結 CPython；不提供 system shell、PTY、控制流程、glob、命令替換或套件安裝。"
+            }
+          }
+        }
+      },
+      "默认 Runtime 影响前台测试与聊天命令入口；AmberShell 逐次审批，支持受限文件/文本命令与最多三段管道，默认 60 秒协作式超时；阻塞的原生扩展需返回后才能结束。iSH 工具在下方单独控制。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "The default Runtime affects foreground tests and chat command entry points. AmberShell requires approval for each run, supports bounded file/text commands and up to three pipeline stages, and uses a 60-second cooperative timeout by default; a blocking native extension must return before it can finish. iSH tools are controlled separately below."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "デフォルト Runtime はフォアグラウンドのテストとチャットのコマンド入口に影響します。AmberShell は毎回承認が必要で、制限付きのファイル／テキストコマンドと最大3段のパイプラインに対応し、既定のタイムアウトは60秒（協調的）です。ブロッキングするネイティブ拡張は、終了する前に戻る必要があります。iSH ツールは下で個別に管理します。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "기본 Runtime은 포그라운드 테스트와 채팅 명령 진입점에 영향을 줍니다. AmberShell은 매번 승인이 필요하고 제한된 파일/텍스트 명령과 최대 3단계 파이프라인을 지원하며 기본 협력 방식 시간 초과는 60초입니다. 차단 중인 네이티브 확장은 완료되기 전에 반환되어야 합니다. iSH 도구는 아래에서 별도로 제어합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Runtime по умолчанию влияет на проверки на переднем плане и точки входа команд чата. Для каждого запуска AmberShell требуется подтверждение; поддерживаются ограниченные файловые и текстовые команды и до трёх этапов конвейера, а тайм-аут по умолчанию составляет 60 секунд (кооперативный). Блокирующее нативное расширение должно вернуть управление, прежде чем выполнение завершится. Инструменты iSH настраиваются отдельно ниже."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "默认 Runtime 影响前台测试与聊天命令入口；AmberShell 逐次审批，支持受限文件/文本命令与最多三段管道，默认 60 秒协作式超时；阻塞的原生扩展需返回后才能结束。iSH 工具在下方单独控制。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "預設 Runtime 會影響前景測試與聊天命令入口；AmberShell 一律逐次核准，支援受限檔案／文字命令與最多三段管線，預設採 60 秒協作式逾時；阻塞的原生擴充功能必須先返回，執行才能結束。iSH 工具會在下方個別控制。"
+            }
+          }
+        }
+      },
+      "iSH 工具": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "iSH tools"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "iSH ツール"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "iSH 도구"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Инструменты iSH"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "iSH 工具"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "iSH 工具"
+            }
+          }
+        }
+      },
+      "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 始终逐次前台审批。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell, Remote SSH, and iSH use separate capability gates; AmberShell always requires foreground approval for each run."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell、Remote SSH、iSH はそれぞれ別の機能ゲートを使用し、AmberShell は常に実行ごとにフォアグラウンドでの承認が必要です。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell, Remote SSH 및 iSH는 각각 별도의 기능 게이트를 사용하며 AmberShell은 항상 실행할 때마다 포그라운드 승인이 필요합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell, Remote SSH и iSH используют отдельные шлюзы возможностей; для AmberShell всегда требуется подтверждение на переднем плане каждого запуска."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 始终逐次前台审批。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell、Remote SSH 與 iSH 使用各自能力閘門；AmberShell 一律需要逐次前景核准。"
+            }
+          }
+        }
+      },
+      "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 始终逐次前台审批，iSH 交接能力在下方单独说明。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "The stable target provides Remote SSH and AmberShell; AmberShell always requires foreground approval for each run, and iSH handoff is described separately below."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "安定版 target では Remote SSH と AmberShell を提供します。AmberShell は常に実行ごとにフォアグラウンドでの承認が必要で、iSH の引き継ぎ機能については下で個別に説明します。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "안정 target은 Remote SSH와 AmberShell을 제공합니다. AmberShell은 항상 실행할 때마다 포그라운드 승인이 필요하며 iSH 인계 기능은 아래에서 별도로 설명합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Стабильный target предоставляет Remote SSH и AmberShell; для AmberShell всегда требуется подтверждение на переднем плане каждого запуска, а передача iSH описана отдельно ниже."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 始终逐次前台审批，iSH 交接能力在下方单独说明。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "穩定 target 提供 Remote SSH 與 AmberShell；AmberShell 一律需要逐次前景核准，iSH 交接能力會在下方個別說明。"
+            }
+          }
+        }
+      },
+      "异步只表示 Agent 不必阻塞等待，并非 iOS 后台常驻：App 重启会把未完成作业标记为已中断。AmberShell 与聊天共用 App 自有 /workspace；Remote SSH 的 cwd 与内置 iSH 的 /workspace 与其隔离，不会自动同步。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Asynchronous means only that Agent need not block while waiting; it is not persistent iOS background execution. On app restart, unfinished jobs are marked interrupted. AmberShell and chat share the app-owned /workspace; the Remote SSH cwd and built-in iSH /workspace are isolated from it and are not synced automatically."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "非同期とは Agent が待機中にブロックされないという意味にすぎず、iOS の常駐バックグラウンド実行ではありません。App の再起動時、未完了のジョブは中断済みになります。AmberShell とチャットは App 所有の /workspace を共有しますが、Remote SSH の cwd と内蔵 iSH の /workspace はそこから分離され、自動同期されません。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "비동기는 Agent가 대기 중 차단되지 않는다는 뜻일 뿐 iOS 백그라운드 상주 실행을 의미하지 않습니다. 앱을 다시 시작하면 완료되지 않은 작업은 중단됨으로 표시됩니다. AmberShell과 채팅은 앱 소유 /workspace를 공유하지만 Remote SSH cwd 및 내장 iSH /workspace는 여기서 격리되어 자동으로 동기화되지 않습니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Асинхронность означает лишь, что Agent не обязан блокироваться в ожидании; это не постоянное фоновое выполнение на iOS. После перезапуска приложения незавершённые задания помечаются прерванными. AmberShell и чат используют принадлежащий приложению /workspace; cwd Remote SSH и /workspace встроенного iSH изолированы от него и не синхронизируются автоматически."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "异步只表示 Agent 不必阻塞等待，并非 iOS 后台常驻：App 重启会把未完成作业标记为已中断。AmberShell 与聊天共用 App 自有 /workspace；Remote SSH 的 cwd 与内置 iSH 的 /workspace 与其隔离，不会自动同步。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "非同步只代表 Agent 不必阻塞等待，並非 iOS 背景常駐執行：App 重新啟動後，未完成的工作會標記為已中斷。AmberShell 與聊天共用 App 自有的 /workspace；Remote SSH 的 cwd 與內建 iSH 的 /workspace 與其隔離，不會自動同步。"
+            }
+          }
+        }
+      },
+      "Smoke Test 会验证当前默认 Runtime：Remote SSH 执行 echo amber-terminal-smoke，AmberShell 与 iSH 执行 pwd。AmberShell 与聊天共用 App 自有 /workspace；iSH 的 /workspace 位于内置 rootfs，Remote SSH 使用远端 cwd。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Smoke Test verifies the current default Runtime: Remote SSH runs echo amber-terminal-smoke, while AmberShell and iSH run pwd. AmberShell and chat share the app-owned /workspace; iSH's /workspace is inside the built-in rootfs, while Remote SSH uses its remote cwd."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Smoke Test は現在のデフォルト Runtime を検証します。Remote SSH では echo amber-terminal-smoke、AmberShell と iSH では pwd を実行します。AmberShell とチャットは App 所有の /workspace を共有し、iSH の /workspace は内蔵 rootfs 内にあり、Remote SSH はリモートの cwd を使用します。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Smoke Test는 현재 기본 Runtime을 확인합니다. Remote SSH에서는 echo amber-terminal-smoke를 실행하고 AmberShell과 iSH에서는 pwd를 실행합니다. AmberShell과 채팅은 앱 소유 /workspace를 공유하며 iSH의 /workspace는 내장 rootfs 안에 있고 Remote SSH는 원격 cwd를 사용합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Smoke Test проверяет Runtime по умолчанию: Remote SSH выполняет echo amber-terminal-smoke, а AmberShell и iSH — pwd. AmberShell и чат используют принадлежащий приложению /workspace; /workspace iSH находится во встроенном rootfs, а Remote SSH использует удалённый cwd."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Smoke Test 会验证当前默认 Runtime：Remote SSH 执行 echo amber-terminal-smoke，AmberShell 与 iSH 执行 pwd。AmberShell 与聊天共用 App 自有 /workspace；iSH 的 /workspace 位于内置 rootfs，Remote SSH 使用远端 cwd。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Smoke Test 會驗證目前的預設 Runtime：Remote SSH 執行 echo amber-terminal-smoke，AmberShell 與 iSH 執行 pwd。AmberShell 與聊天共用 App 自有的 /workspace；iSH 的 /workspace 位於內建 rootfs，Remote SSH 使用遠端 cwd。"
+            }
+          }
+        }
+      },
+      "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Stable AmberShell; bounded file/text commands, pipelines, redirection, and CPython 3.14 python -c, without PTY"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "安定版 AmberShell：制限付きのファイル／テキストコマンド、パイプライン、リダイレクト、CPython 3.14 の python -c（PTY なし）"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "안정 버전 AmberShell: 제한된 파일/텍스트 명령, 파이프라인, 리디렉션 및 CPython 3.14 python -c, PTY 없음"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Стабильный AmberShell: ограниченные файловые и текстовые команды, конвейеры, перенаправление и CPython 3.14 python -c, без PTY"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "穩定版 AmberShell；受限檔案／文字命令、管線、重新導向與 CPython 3.14 python -c，無 PTY"
+            }
+          }
+        }
+      },
+      "AmberShell 文件/文本命令、管道与重定向；ExperimentalGPL 不链接 CPython，无 PTY": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell file/text commands, pipelines, and redirection; ExperimentalGPL does not link CPython, without PTY"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell のファイル／テキストコマンド、パイプライン、リダイレクト。ExperimentalGPL は CPython をリンクせず、PTY はありません"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 파일/텍스트 명령, 파이프라인 및 리디렉션; ExperimentalGPL은 CPython을 링크하지 않으며 PTY가 없습니다"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Файловые и текстовые команды AmberShell, конвейеры и перенаправление; ExperimentalGPL не подключает CPython, без PTY"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 文件/文本命令、管道与重定向；ExperimentalGPL 不链接 CPython，无 PTY"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 檔案／文字命令、管線與重新導向；ExperimentalGPL 不連結 CPython，無 PTY"
+            }
+          }
+        }
+      },
+      "回传输出": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Return output"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "出力を返す"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "출력 반환"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Вернуть вывод"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "回传输出"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "回傳輸出"
+            }
+          }
+        }
+      },
+      "仅这一次": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "This time only"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "今回のみ"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "이번만"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Только в этот раз"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "仅这一次"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "僅這一次"
+            }
+          }
+        }
+      },
+      "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；每次执行都需要前台批准。": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell runs local commands in the app-owned /workspace and returns stdout, stderr, and the exit code. Every run requires foreground approval."
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell はアプリ所有の /workspace でローカルコマンドを実行し、stdout、stderr、終了コードを返します。実行ごとにフォアグラウンドでの承認が必要です。"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell은 앱 소유 /workspace에서 로컬 명령을 실행하고 stdout, stderr 및 종료 코드를 반환합니다. 실행할 때마다 포그라운드 승인이 필요합니다."
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell выполняет локальные команды в принадлежащем приложению /workspace и возвращает stdout, stderr и код завершения. Каждый запуск требует подтверждения на переднем плане."
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；每次执行都需要前台批准。"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "AmberShell 會在 App 自有的 /workspace 中執行本機命令並回傳 stdout、stderr 與結束碼；每次執行都需要前景核准。"
+            }
+          }
+        }
+      },
+      "批准范围": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Approval scope" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "承認範囲" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "승인 범위" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Область подтверждения" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "批准范围" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "核准範圍" } }
+        }
+      },
+      "exit %ld · %@": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "exit %ld · %@" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "exit %ld · %@" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "exit %ld · %@" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "exit %ld · %@" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "exit %ld · %@" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "exit %ld · %@" } }
+        }
+      },
+      "exit %ld · stderr: %@": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "exit %ld · stderr: %@" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "exit %ld · stderr: %@" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "exit %ld · stderr: %@" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "exit %ld · stderr: %@" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "exit %ld · stderr: %@" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "exit %ld · stderr: %@" } }
+        }
+      },
+      "stderr: %@": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "stderr: %@" } }
+        }
+      },
+      "exit %ld · 无输出": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "exit %ld · No output" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "exit %ld · 出力なし" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "exit %ld · 출력 없음" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "exit %ld · Нет вывода" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "exit %ld · 无输出" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "exit %ld · 無輸出" } }
+        }
+      }
   },
   "version": "1.0"
 }

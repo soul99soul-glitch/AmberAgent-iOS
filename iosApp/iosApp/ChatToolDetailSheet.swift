@@ -162,6 +162,9 @@ struct ChatToolDetailSheet: View {
     private var friendlyName: String {
         if isSubAgent { return "子智能体" }
         if tool.toolName == "terminal_execute" { return "Remote SSH 执行" }
+        if tool.toolName == IOSAmberShellToolCatalog.executeToolName {
+            return IOSAppLocalization.string("AmberShell 执行", defaultValue: "AmberShell 执行")
+        }
         if tool.toolName == "ish_handoff" { return "iSH 交接" }
         if tool.toolName == "ios_ish_execute" { return "内置 iSH 执行" }
         if IOSRemoteTerminalToolCatalog.jobToolNames.contains(tool.toolName) {
