@@ -260,6 +260,7 @@ struct McpServersView: View {
 struct McpImportView: View {
     let configStore: IOSMcpConfigStore
     @Environment(\.dismiss) private var dismiss
+    @FocusState private var isJSONEditorFocused: Bool
 
     @State private var jsonText = """
     {
@@ -337,12 +338,33 @@ struct McpImportView: View {
                     .font(.system(size: 13, weight: .regular, design: .monospaced))
                     .foregroundStyle(AmberTheme.foreground)
                     .scrollContentBackground(.hidden)
+                    .focused($isJSONEditorFocused)
                     .frame(minHeight: 220)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
                     .background(AmberTheme.surface2.opacity(0.42), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .padding(.horizontal, 12)
                     .padding(.vertical, 12)
+
+                McpDivider()
+
+                Button(action: replaceWithClipboard) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.on.clipboard")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
+
+                        Text("从剪贴板替换")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(AmberTheme.accent)
+
+                        Spacer()
+                    }
+                    .frame(minHeight: 48)
+                    .padding(.horizontal, 14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
 
             McpValidationNote(text: validationText, isWarning: true)
@@ -376,6 +398,15 @@ struct McpImportView: View {
 
     private var parsedServers: [McpServerConfig] {
         McpImportParserKt.parseMcpServersFromJson(json: jsonText)
+    }
+
+    private func replaceWithClipboard() {
+        guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !clipboardText.isEmpty else {
+            return
+        }
+        isJSONEditorFocused = false
+        jsonText = clipboardText
     }
 }
 

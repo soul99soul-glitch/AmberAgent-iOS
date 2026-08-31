@@ -39,7 +39,8 @@ struct RuntimeEnvironmentView: View {
 
         var title: String {
             switch self {
-            case .runtime: "默认 Runtime"
+            case .runtime:
+                IOSAppLocalization.string("选择运行环境", defaultValue: "选择运行环境")
             case .sshProfile: "SSH Profile"
             case .ishTools: "Agent iSH 工具"
             case .diagnostics: "验证与命令"
@@ -48,7 +49,11 @@ struct RuntimeEnvironmentView: View {
 
         var subtitle: String {
             switch self {
-            case .runtime: "选择前台测试和远程命令使用的执行环境。"
+            case .runtime:
+                IOSAppLocalization.string(
+                    "选择 Amber 执行命令的方式。",
+                    defaultValue: "选择 Amber 执行命令的方式。"
+                )
             case .sshProfile: "编辑 Remote SSH 连接信息，并完成 Host 信任检查。"
             case .ishTools: "查看 Agent 的非 PTY iSH 执行、异步作业与人类 PTY 边界。"
             case .diagnostics: "运行 Smoke Test、查看能力矩阵，或手动触发一次远程命令。"
@@ -139,27 +144,18 @@ struct RuntimeEnvironmentView: View {
     }
 
     private var intro: some View {
-        Text(amberShellIntroText)
+        Text(
+            IOSAppLocalization.string(
+                "选择 Amber 执行命令的方式，也可以在这里配置 SSH 和 iSH。",
+                defaultValue: "选择 Amber 执行命令的方式，也可以在这里配置 SSH 和 iSH。"
+            )
+        )
             .font(.footnote)
             .foregroundStyle(AmberTheme.muted)
             .lineSpacing(3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
-    }
-
-    private var amberShellIntroText: String {
-        #if ENABLE_AMBERSHELL_PYTHON
-        IOSAppLocalization.string(
-            "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限 python -c（CPython 3.14，无 pip、网络或宿主文件访问）；最多三段管道，仅支持 <、>、2> 重定向；不提供 system shell、PTY、控制流、glob、命令替换或 package install。",
-            defaultValue: "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限 python -c（CPython 3.14，无 pip、网络或宿主文件访问）；最多三段管道，仅支持 <、>、2> 重定向；不提供 system shell、PTY、控制流、glob、命令替换或 package install。"
-        )
-        #else
-        IOSAppLocalization.string(
-            "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管道，仅支持 <、>、2> 重定向；当前 ExperimentalGPL target 不链接 CPython；不提供 system shell、PTY、控制流、glob、命令替换或 package install。",
-            defaultValue: "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管道，仅支持 <、>、2> 重定向；当前 ExperimentalGPL target 不链接 CPython；不提供 system shell、PTY、控制流、glob、命令替换或 package install。"
-        )
-        #endif
     }
 
     private var runtimeStatusSection: some View {
@@ -177,7 +173,7 @@ struct RuntimeEnvironmentView: View {
 
     private var runtimeOverviewSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "默认 Runtime")
+            AmberSectionLabel(text: "默认运行环境")
             AmberFormGroup {
                 ForEach(Array(primaryRuntimeChoices.enumerated()), id: \.element.id) { index, runtime in
                     RuntimeChoiceRow(
@@ -199,8 +195,8 @@ struct RuntimeEnvironmentView: View {
                     RuntimeDivider()
                     RuntimeNavigationRow(
                         title: IOSAppLocalization.string(
-                            "实验 Runtime",
-                            defaultValue: "实验 Runtime"
+                            "更多运行环境",
+                            defaultValue: "更多运行环境"
                         ),
                         subtitle: experimentalRuntimeSubtitle,
                         value: experimentalRuntimeValue,
@@ -212,7 +208,12 @@ struct RuntimeEnvironmentView: View {
                 }
             }
 
-            Text("默认 Runtime 影响前台测试与聊天命令入口；AmberShell 逐次审批，支持受限文件/文本命令与最多三段管道，默认 60 秒协作式超时；阻塞的原生扩展需返回后才能结束。iSH 工具在下方单独控制。")
+            Text(
+                IOSAppLocalization.string(
+                    "默认环境会用于聊天命令和测试。运行 AmberShell 前会向你确认。",
+                    defaultValue: "默认环境会用于聊天命令和测试。运行 AmberShell 前会向你确认。"
+                )
+            )
                 .runtimeFootnote()
         }
     }
@@ -320,7 +321,7 @@ struct RuntimeEnvironmentView: View {
 
     private var runtimeSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "默认 Runtime")
+            AmberSectionLabel(text: "默认运行环境")
             AmberFormGroup {
                 ForEach(Array(runtimeChoices.enumerated()), id: \.element.id) { index, runtime in
                     RuntimeChoiceRow(

@@ -43,4 +43,38 @@ class McpImportParserTest {
     fun returnsEmptyListWhenMcpServersSectionIsMissing() {
         assertEquals(emptyList(), parseMcpServersFromJson("{}"))
     }
+
+    @Test
+    fun returnsEmptyListForIncompleteEditorText() {
+        listOf(
+            "",
+            "{",
+            "[]",
+            """{"mcpServers":"not-an-object"}""",
+        ).forEach { text ->
+            assertEquals(emptyList(), parseMcpServersFromJson(text), text)
+        }
+    }
+
+    @Test
+    fun skipsMalformedServerAndKeepsValidEntries() {
+        val servers = parseMcpServersFromJson(
+            """
+            {
+              "mcpServers": {
+                "broken": {
+                  "url": "https://broken.example/mcp",
+                  "headers": []
+                },
+                "docs": {
+                  "url": "https://example.com/mcp"
+                }
+              }
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(1, servers.size)
+        assertEquals("docs", servers.single().commonOptions.name)
+    }
 }

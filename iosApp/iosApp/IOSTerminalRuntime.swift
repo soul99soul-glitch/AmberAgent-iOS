@@ -139,6 +139,16 @@ enum IOSAmberShellToolCatalog {
     static let approvalToolNames = supportedToolNames
 }
 
+/// Cross-layer contract for `ios_shell_execute.stdin`.
+///
+/// JSON Schema cannot express a UTF-8 byte limit with its standard
+/// `maxLength` keyword (which counts Unicode characters). The model-facing
+/// schema documents this limit in prose, while the parser and AmberShell
+/// engine enforce this shared byte ceiling.
+enum IOSAmberShellInputContract {
+    static let maxStdinBytes = 64 * 1024
+}
+
 enum IOSAgentTerminalToolCatalog {
     static var supportedToolNames: Set<String> {
         IOSRemoteTerminalToolCatalog.supportedToolNames
@@ -1685,9 +1695,9 @@ enum IOSAmberShellExecuteExecutor {
             guard let value = rawStdin as? String else {
                 throw IOSAmberShellExecuteError.invalidArguments("stdin must be a string.")
             }
-            guard value.utf8.count <= 64 * 1024 else {
+            guard value.utf8.count <= IOSAmberShellInputContract.maxStdinBytes else {
                 throw IOSAmberShellExecuteError.invalidArguments(
-                    "stdin cannot exceed 65536 UTF-8 bytes."
+                    "stdin cannot exceed \(IOSAmberShellInputContract.maxStdinBytes) UTF-8 bytes."
                 )
             }
             stdin = value

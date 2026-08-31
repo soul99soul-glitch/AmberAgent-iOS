@@ -79,9 +79,11 @@ class TerminalToolDeclarationTest {
             "string",
             amberShellParameters.properties["stdin"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull
         )
-        assertEquals(
-            "65536",
-            amberShellParameters.properties["stdin"]!!.jsonObject["maxLength"]?.jsonPrimitive?.contentOrNull
+        val stdinSchema = amberShellParameters.properties["stdin"]!!.jsonObject
+        assertFalse("maxLength" in stdinSchema)
+        assertTrue(
+            "UTF-8 encoded input must not exceed 65536 bytes." in
+                stdinSchema["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
         )
         assertEquals(
             "4096",

@@ -131,7 +131,11 @@ struct WebMountDesktopBackendsView: View {
 
             Spacer()
 
-            Text(focusedSessionId == nil ? "桌面后端" : "浏览任务")
+            Text(
+                focusedSessionId == nil
+                    ? IOSAppLocalization.string("新建浏览任务", defaultValue: "新建浏览任务")
+                    : IOSAppLocalization.string("浏览任务", defaultValue: "浏览任务")
+            )
                 .font(.title2.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
                 .lineLimit(1)
@@ -150,11 +154,11 @@ struct WebMountDesktopBackendsView: View {
 
     private var introSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("为每个 WebMount session 显式选择运行后端。")
+            Text("每个任务单独选择，互不替换")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground)
 
-            Text("本地 WKWebView 是默认的 App 内隐私与登录入口。Moli、Playwright MCP、Steel 只使用已配置的 MCP 服务器，不会在这里复制 endpoint、请求头或 token。")
+            Text("你可以同时保留本地和远程浏览任务。这里的选择只影响接下来创建的任务，不会更改已有任务。")
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
                 .lineSpacing(2)
@@ -167,7 +171,7 @@ struct WebMountDesktopBackendsView: View {
 
     private var backendSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "运行后端")
+            AmberSectionLabel(text: "这个新任务使用")
             AmberFormGroup {
                 ForEach(Array(IOSWebMountBackendKind.allCases.enumerated()), id: \.element.id) { index, backend in
                     Button {
@@ -207,7 +211,7 @@ struct WebMountDesktopBackendsView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
-                    .accessibilityLabel("后端 \(webMountDesktopBackendTitle(backend))")
+                    .accessibilityLabel("浏览方式 \(webMountDesktopBackendTitle(backend))")
                     .accessibilityValue(selectedBackend == backend ? "已选择" : "未选择")
 
                     if index < IOSWebMountBackendKind.allCases.count - 1 {
@@ -221,14 +225,14 @@ struct WebMountDesktopBackendsView: View {
 
     private var serverSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "MCP 服务器")
+            AmberSectionLabel(text: "远程浏览服务")
             AmberFormGroup {
                 if eligibleServers.isEmpty {
                     WebMountDesktopInfoRow(
                         systemImage: "exclamationmark.triangle",
                         tint: AmberTheme.accentAmber,
-                        title: "没有符合条件的服务器",
-                        subtitle: "仅显示已启用、Streamable HTTP 且通过 HTTPS/远端网关策略的 MCP 服务器。请先在 MCP 服务器设置页完成配置。"
+                        title: "还没有可用的远程服务",
+                        subtitle: "请先到「MCP 服务器」添加一个已启用的 HTTPS 服务。这里只显示可用于浏览器自动化的服务。"
                     )
                 } else {
                     ForEach(Array(eligibleServers.enumerated()), id: \.element.id) { index, server in
@@ -246,7 +250,7 @@ struct WebMountDesktopBackendsView: View {
                             )
                         }
                         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
-                        .accessibilityLabel("MCP 服务器 \(server.name)")
+                        .accessibilityLabel("远程浏览服务 \(server.name)")
                         .accessibilityValue(selectedServerName == server.name ? "已选择" : "未选择")
 
                         if index < eligibleServers.count - 1 {
@@ -257,7 +261,7 @@ struct WebMountDesktopBackendsView: View {
                 }
             }
 
-            Text("这里显示 MCP 通用连接状态与当前后端工具配置；创建 session 后，实际能力由 WebMount 独立连接并验证。")
+            Text("当前连接状态仅供参考。创建任务时会再次检查导航、读取页面等必要能力。")
                 .font(.caption2)
                 .foregroundStyle(AmberTheme.muted2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -268,7 +272,7 @@ struct WebMountDesktopBackendsView: View {
 
     private var createSection: some View {
         VStack(spacing: 10) {
-            AmberSectionLabel(text: "创建会话")
+            AmberSectionLabel(text: "创建浏览任务")
 
             VStack(alignment: .leading, spacing: 8) {
                 Button {
@@ -296,7 +300,7 @@ struct WebMountDesktopBackendsView: View {
                 .opacity(canCreate ? 1 : 0.55)
 
                 if selectedBackend != .local, selectedServer == nil {
-                    Text("选择一个通过安全策略的 MCP 服务器后才能创建远程 session。")
+                    Text("选择一个远程浏览服务后才能创建任务。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.accentAmber)
                         .fixedSize(horizontal: false, vertical: true)
@@ -316,7 +320,7 @@ struct WebMountDesktopBackendsView: View {
 
     private var capabilitySection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "能力对比")
+            AmberSectionLabel(text: "当前任务能力")
             AmberFormGroup {
                 WebMountDesktopCapabilityRow(
                     systemImage: "lock.shield",
@@ -345,16 +349,16 @@ struct WebMountDesktopBackendsView: View {
 
     private var remoteSessionSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "远程会话")
+            AmberSectionLabel(text: "已有远程任务")
             AmberFormGroup {
                 if remoteSessions.isEmpty {
                     WebMountDesktopInfoRow(
                         systemImage: "rectangle.on.rectangle.slash",
                         tint: AmberTheme.muted2,
-                        title: IOSAppLocalization.string("暂无桌面 session", defaultValue: "暂无桌面 session"),
+                        title: IOSAppLocalization.string("暂无远程浏览任务", defaultValue: "暂无远程浏览任务"),
                         subtitle: IOSAppLocalization.string(
-                            "创建远程后端 session 后，这里显示状态、重新连接与关闭操作，不会打开本地 WKWebView。",
-                            defaultValue: "创建远程后端 session 后，这里显示状态、重新连接与关闭操作，不会打开本地 WKWebView。"
+                            "创建后，任务会显示在这里。你可以重新连接或关闭它；本地浏览任务不会受影响。",
+                            defaultValue: "创建后，任务会显示在这里。你可以重新连接或关闭它；本地浏览任务不会受影响。"
                         )
                     )
                 } else {
@@ -423,7 +427,7 @@ struct WebMountDesktopBackendsView: View {
     }
 
     private var managementNote: some View {
-        Text("远程网关必须使用 HTTPS；本页只显示 scheme、host 和 port。Token 与请求头继续由 MCP 服务器设置页保管，不在这里重复保存。")
+        Text("远程浏览服务需要 HTTPS。认证信息只保存在「MCP 服务器」设置中，不会在这里重复保存。")
             .font(.caption)
             .foregroundStyle(AmberTheme.muted2)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -435,13 +439,13 @@ struct WebMountDesktopBackendsView: View {
     private var createButtonTitle: String {
         if selectedBackend == .local {
             return IOSAppLocalization.string(
-                "创建本地 WKWebView 会话",
-                defaultValue: "创建本地 WKWebView 会话"
+                "创建本地浏览任务",
+                defaultValue: "创建本地浏览任务"
             )
         }
         return IOSAppLocalization.formatted(
-            "创建 %@ 会话",
-            defaultValue: "创建 %@ 会话",
+            "创建 %@ 浏览任务",
+            defaultValue: "创建 %@ 浏览任务",
             arguments: [webMountDesktopBackendTitle(selectedBackend)]
         )
     }
@@ -449,8 +453,8 @@ struct WebMountDesktopBackendsView: View {
     private var selectedBackendCapabilitySubtitle: String {
         guard let selectedServer else {
             return IOSAppLocalization.string(
-                "未选择符合安全策略的 MCP 服务器；远程能力不可用。",
-                defaultValue: "未选择符合安全策略的 MCP 服务器；远程能力不可用。"
+                "还没有选择远程浏览服务。",
+                defaultValue: "还没有选择远程浏览服务。"
             )
         }
         let status = mcpManager.statusByServer[selectedServer.name] ?? .idle
@@ -458,15 +462,15 @@ struct WebMountDesktopBackendsView: View {
             $0.enabled && IOSWebMountDesktopBackendAdapter.safeBrowserToolNames.contains($0.name)
         }.count
         let capabilities = configuredToolCount == 0
-            ? IOSAppLocalization.string("未配置已启用的后端工具", defaultValue: "未配置已启用的后端工具")
+            ? IOSAppLocalization.string("等待检查可用操作", defaultValue: "等待检查可用操作")
             : IOSAppLocalization.formatted(
-                "已配置 %lld 个后端工具",
-                defaultValue: "已配置 %lld 个后端工具",
+                "可用操作 %lld 项",
+                defaultValue: "可用操作 %lld 项",
                 arguments: [Int64(configuredToolCount)]
             )
         return IOSAppLocalization.formatted(
-            "MCP %@ · %@；创建 session 后验证实际能力",
-            defaultValue: "MCP %@ · %@；创建 session 后验证实际能力",
+            "%@ · %@；创建时会再次检查",
+            defaultValue: "%@ · %@；创建时会再次检查",
             arguments: [status.title, capabilities]
         )
     }
@@ -575,25 +579,29 @@ struct WebMountDesktopBackendsView: View {
             return
         }
         guard object["ok"] as? Bool == true else {
-            errorMessage = structuredError(from: object, action: "创建 session")
+            errorMessage = structuredError(from: object, action: "创建浏览任务")
             refreshSessions()
             return
         }
 
         guard let session = object["session"] as? [String: Any],
               session["backend"] as? String == selectedBackend.rawValue else {
-            errorMessage = "创建未确认：返回结果没有确认所选后端，未打开或回退到本地 WebView。"
+            errorMessage = "创建未确认：服务没有确认所选浏览方式，任务未创建。"
             refreshSessions()
             return
         }
         if selectedBackend != .local,
            session["mcp_server_name"] as? String != selectedServerName {
-            errorMessage = "创建未确认：返回结果没有确认所选 MCP 服务器。"
+            errorMessage = "创建未确认：服务没有确认所选远程浏览服务，任务未创建。"
             refreshSessions()
             return
         }
 
-        successMessage = "已创建 \(webMountDesktopBackendTitle(selectedBackend)) session。"
+        successMessage = IOSAppLocalization.formatted(
+            "已创建 %@ 浏览任务。",
+            defaultValue: "已创建 %@ 浏览任务。",
+            arguments: [webMountDesktopBackendTitle(selectedBackend)]
+        )
         refreshSessions()
     }
 
@@ -603,11 +611,15 @@ struct WebMountDesktopBackendsView: View {
             return
         }
         guard object["ok"] as? Bool == true else {
-            errorMessage = structuredError(from: object, action: "关闭 session")
+            errorMessage = structuredError(from: object, action: "关闭浏览任务")
             refreshSessions()
             return
         }
-        successMessage = "已关闭 \(webMountDesktopBackendTitle(session.backend)) session。"
+        successMessage = IOSAppLocalization.formatted(
+            "已关闭 %@ 浏览任务。",
+            defaultValue: "已关闭 %@ 浏览任务。",
+            arguments: [webMountDesktopBackendTitle(session.backend)]
+        )
         refreshSessions()
     }
 
@@ -617,17 +629,21 @@ struct WebMountDesktopBackendsView: View {
             return
         }
         guard object["ok"] as? Bool == true else {
-            errorMessage = structuredError(from: object, action: "重新连接 session")
+            errorMessage = structuredError(from: object, action: "重新连接浏览任务")
             refreshSessions()
             return
         }
         guard object["session_id"] as? String == session.id,
               object["backend"] as? String == session.backend.rawValue else {
-            errorMessage = "重新连接未确认：返回结果与当前 session 不匹配。"
+            errorMessage = "重新连接未确认：服务返回的任务与当前任务不匹配。"
             refreshSessions()
             return
         }
-        successMessage = "已重新连接 \(webMountDesktopBackendTitle(session.backend)) session。"
+        successMessage = IOSAppLocalization.formatted(
+            "已重新连接 %@ 浏览任务。",
+            defaultValue: "已重新连接 %@ 浏览任务。",
+            arguments: [webMountDesktopBackendTitle(session.backend)]
+        )
         refreshSessions()
     }
 
@@ -674,8 +690,8 @@ private struct WebMountDesktopServerRow: View {
                     .minimumScaleFactor(0.75)
 
                 Text(IOSAppLocalization.formatted(
-                    "MCP %@ · 已配置 %lld 个后端工具",
-                    defaultValue: "MCP %@ · 已配置 %lld 个后端工具",
+                    "%@ · 可用操作 %lld 项",
+                    defaultValue: "%@ · 可用操作 %lld 项",
                     arguments: [status.title, Int64(configuredBackendToolCount)]
                 ))
                     .font(.caption2)
@@ -1022,13 +1038,6 @@ private struct WebMountDesktopSessionRow: View {
                     .truncationMode(.middle)
             }
 
-            Text("session_id：\(session.id)")
-                .font(.caption2.monospaced())
-                .foregroundStyle(AmberTheme.muted2)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
                     reconnectButton
@@ -1074,7 +1083,7 @@ private struct WebMountDesktopSessionRow: View {
             }
             .buttonStyle(.plain)
             .disabled(isReconnecting || isClosing)
-            .accessibilityLabel("重新连接远程 session")
+            .accessibilityLabel("重新连接远程浏览任务")
         }
     }
 
@@ -1087,7 +1096,7 @@ private struct WebMountDesktopSessionRow: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("关闭远程 session")
+        .accessibilityLabel("关闭远程浏览任务")
         .disabled(isClosing || isReconnecting)
         .opacity(isClosing ? 0.5 : 1)
     }
@@ -1106,8 +1115,8 @@ private func webMountDesktopBackendSubtitle(_ backend: IOSWebMountBackendKind) -
         )
     case .moli, .playwright_mcp, .steel:
         IOSAppLocalization.string(
-            "需要符合策略的 MCP 服务器；能力以实际发现工具为准",
-            defaultValue: "需要符合策略的 MCP 服务器；能力以实际发现工具为准"
+            "在已配置的远程浏览服务上运行；创建时会自动检查可用操作",
+            defaultValue: "在已配置的远程浏览服务上运行；创建时会自动检查可用操作"
         )
     }
 }

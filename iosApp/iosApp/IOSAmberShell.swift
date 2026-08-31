@@ -38,7 +38,7 @@ enum IOSAmberShellEngine {
     #endif
 
     private static let maxCommandCharacters = 4_096
-    private static let maxInputBytes = 64 * 1024
+    private static let maxInputBytes = IOSAmberShellInputContract.maxStdinBytes
     private static let maxOutputBytes = 128 * 1024
 
     static func execute(

@@ -9,6 +9,7 @@ import ast as _ast
 import builtins as _builtins
 import sys as _sys
 import traceback as _traceback
+import types as _types
 
 
 _MAX_STDIN_BYTES = 64 * 1024
@@ -148,6 +149,56 @@ class _InputStream:
         return False
 
 
+def _is_allowlisted_module_name(name):
+    """Return whether *name* belongs to one of the modules we expose.
+
+    Importing a module normally puts both the requested module and its
+    implementation submodules in ``sys.modules``.  Treating the whole
+    family as one unit is important here: dropping only ``json`` would leave
+    ``json.encoder`` (and any state it carries) alive for the next job.
+    """
+    return any(
+        name == allowed or name.startswith(allowed + ".")
+        for allowed in _ALLOWED_MODULES
+    )
+
+
+class _ReadOnlyModule:
+    """Expose an allowlisted module without exposing mutation operations."""
+
+    __slots__ = ("_module",)
+
+    def __init__(self, module):
+        object.__setattr__(self, "_module", module)
+
+    def __getattr__(self, name):
+        module = object.__getattribute__(self, "_module")
+        value = getattr(module, name)
+        if isinstance(value, _types.ModuleType) and _is_allowlisted_module_name(
+            value.__name__
+        ):
+            return _ReadOnlyModule(value)
+        return value
+
+    def __setattr__(self, name, value):
+        module = object.__getattribute__(self, "_module")
+        raise AttributeError(
+            "allowlisted module attributes are read-only: "
+            + module.__name__
+            + "."
+            + name
+        )
+
+    def __delattr__(self, name):
+        module = object.__getattribute__(self, "_module")
+        raise AttributeError(
+            "allowlisted module attributes are read-only: "
+            + module.__name__
+            + "."
+            + name
+        )
+
+
 def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
     if level != 0 or name not in _ALLOWED_MODULES:
         raise ImportError("AmberShell Python import is not allowlisted: " + repr(name))
@@ -157,10 +208,48 @@ def _safe_import(name, globals=None, locals=None, fromlist=(), level=0):
         for item in fromlist
     ):
         raise ImportError("AmberShell Python import name cannot be a dunder.")
-    return _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)
+    module = _ORIGINAL_IMPORT(name, globals, locals, fromlist, level)
+    return _ReadOnlyModule(module)
 
 
 _ORIGINAL_IMPORT = _builtins.__import__
+
+
+# ``ast`` imports a few standard-library modules before the first user job.
+# Keep those interpreter-owned modules intact while making every module first
+# imported by a job ephemeral.  This avoids disturbing CPython internals while
+# still preventing a user-imported module (and its submodules) from surviving
+# into the next job.
+_BASELINE_ALLOWED_MODULES = {
+    name: module
+    for name, module in tuple(_sys.modules.items())
+    if module is not None and _is_allowlisted_module_name(name)
+}
+_BASELINE_ALLOWED_MODULE_STATES = {
+    name: dict(module.__dict__)
+    for name, module in _BASELINE_ALLOWED_MODULES.items()
+}
+
+
+def _reset_allowlisted_modules():
+    """Restore interpreter-owned modules and discard job-imported modules."""
+    for name in tuple(_sys.modules):
+        if not _is_allowlisted_module_name(name):
+            continue
+        baseline = _BASELINE_ALLOWED_MODULES.get(name)
+        if baseline is None:
+            _sys.modules.pop(name, None)
+            continue
+        if _sys.modules.get(name) is not baseline:
+            _sys.modules[name] = baseline
+
+    for name, module in _BASELINE_ALLOWED_MODULES.items():
+        state = _BASELINE_ALLOWED_MODULE_STATES[name]
+        module_dict = module.__dict__
+        for key in tuple(module_dict):
+            if key not in state:
+                del module_dict[key]
+        module_dict.update(state)
 
 
 def _safe_input(prompt=""):
@@ -330,13 +419,129 @@ def _is_dunder(name):
     return name.startswith("_")
 
 
+def _attribute_root(node):
+    """Find the name at the root of a dotted/module-derived expression."""
+    while isinstance(node, (_ast.Attribute, _ast.Call, _ast.Subscript)):
+        if isinstance(node, _ast.Attribute):
+            node = node.value
+        elif isinstance(node, _ast.Call):
+            node = node.func
+        else:
+            node = node.value
+    return node.id if isinstance(node, _ast.Name) else None
+
+
+def _attribute_path(node):
+    parts = []
+    while isinstance(node, _ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, _ast.Name):
+        parts.append(node.id)
+    return ".".join(reversed(parts))
+
+
+def _target_names(node):
+    if isinstance(node, _ast.Name):
+        return {node.id}
+    if isinstance(node, (_ast.Tuple, _ast.List)):
+        names = set()
+        for element in node.elts:
+            names.update(_target_names(element))
+        return names
+    return set()
+
+
+def _module_target_bindings(target, value, module_bindings):
+    if isinstance(target, _ast.Name):
+        return {target.id} if _is_module_reference(value, module_bindings) else set()
+    if isinstance(target, (_ast.Tuple, _ast.List)) and isinstance(
+        value, (_ast.Tuple, _ast.List)
+    ):
+        bindings = set()
+        for target_element, value_element in zip(target.elts, value.elts):
+            bindings.update(
+                _module_target_bindings(
+                    target_element, value_element, module_bindings
+                )
+            )
+        return bindings
+    return set()
+
+
+def _is_module_reference(node, module_bindings):
+    root = _attribute_root(node)
+    return root in module_bindings
+
+
+def _module_bindings(tree):
+    """Collect module names and conservative aliases from the source tree."""
+    bindings = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Import):
+            for alias in node.names:
+                bindings.add(alias.asname or alias.name.split(".", 1)[0])
+        elif isinstance(node, _ast.ImportFrom):
+            for alias in node.names:
+                if alias.name != "*":
+                    # A from-import can expose a submodule (for example,
+                    # ``from collections import abc``).  Conservatively mark
+                    # every imported name so aliases cannot become writable
+                    # module handles through a later refactor.
+                    bindings.add(alias.asname or alias.name)
+
+    changed = True
+    while changed:
+        changed = False
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Assign):
+                for target in node.targets:
+                    if _is_module_reference(node.value, bindings):
+                        new_names = _target_names(target)
+                    else:
+                        new_names = _module_target_bindings(
+                            target, node.value, bindings
+                        )
+                    new_names -= bindings
+                    if new_names:
+                        bindings.update(new_names)
+                        changed = True
+            elif isinstance(node, _ast.NamedExpr) and _is_module_reference(
+                node.value, bindings
+            ):
+                new_names = _target_names(node.target) - bindings
+                if new_names:
+                    bindings.update(new_names)
+                    changed = True
+    return bindings
+
+
+def _reject_module_attribute_mutations(tree, module_bindings):
+    for node in _ast.walk(tree):
+        if not isinstance(node, (_ast.Attribute, _ast.Subscript)):
+            continue
+        if not isinstance(node.ctx, (_ast.Store, _ast.Del)):
+            continue
+        if _attribute_root(node) not in module_bindings:
+            continue
+        path = _attribute_path(node) or "module"
+        raise _RejectedSource(
+            "allowlisted module attributes are read-only: " + path
+        )
+
+
 def _validate_node(node):
     node_type = type(node)
     if node_type not in _ALLOWED_AST_NODES:
         raise _RejectedSource("AST node is not allowlisted: " + node_type.__name__)
 
     if isinstance(node, (_ast.Name, _ast.Attribute, _ast.arg)):
-        identifier = node.id if isinstance(node, (_ast.Name, _ast.arg)) else node.attr
+        if isinstance(node, _ast.Name):
+            identifier = node.id
+        elif isinstance(node, _ast.Attribute):
+            identifier = node.attr
+        else:
+            identifier = node.arg
         if _is_dunder(identifier):
             raise _RejectedSource("dunder names and attributes are unavailable")
         if identifier in _FORBIDDEN_NAMES:
@@ -395,6 +600,7 @@ def _validate_source(source):
     except SyntaxError as error:
         raise _RejectedSource("syntax error: " + str(error)) from None
     _validate_node(tree)
+    _reject_module_attribute_mutations(tree, _module_bindings(tree))
     return tree
 
 
@@ -416,6 +622,11 @@ def execute(source, stdin):
         return 2, "", "AmberShell Python source and stdin must be strings.\n"
     if len(stdin.encode("utf-8")) > _MAX_STDIN_BYTES:
         return 2, "", "AmberShell Python stdin cannot exceed 65536 UTF-8 bytes.\n"
+
+    # A previous job may have left imported modules (or their submodules) in
+    # ``sys.modules``.  Clear that state before validation and execution so a
+    # failed cleanup on an earlier path cannot become a later job's input.
+    _reset_allowlisted_modules()
 
     stdout = _LimitedTextStream(_MAX_OUTPUT_BYTES)
     stderr = _LimitedTextStream(_MAX_OUTPUT_BYTES)
@@ -443,3 +654,7 @@ def execute(source, stdin):
         return _result_with_output_limit(0, stdout, stderr)
     finally:
         _sys.stdin, _sys.stdout, _sys.stderr = old_stdin, old_stdout, old_stderr
+        # Do this on every result path, including rejected source and Python
+        # exceptions.  User code never gets to retain an allowlisted module
+        # object after the call returns.
+        _reset_allowlisted_modules()
