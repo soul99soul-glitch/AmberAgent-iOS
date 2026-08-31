@@ -15,8 +15,12 @@ settings:
   configs:
     Debug:
       SHARED_FRAMEWORK_CONFIGURATION: debugFramework
+      APS_ENVIRONMENT: development
+      APP_ATTEST_ENVIRONMENT: development
     Release:
       SHARED_FRAMEWORK_CONFIGURATION: releaseFramework
+      APS_ENVIRONMENT: production
+      APP_ATTEST_ENVIRONMENT: production
       EXCLUDED_SOURCE_FILE_NAMES:
         - chat-perf-growing-table.jsonl
         - chat-perf-long-prose.jsonl
@@ -24,6 +28,9 @@ settings:
 configs:
   Debug: debug
   Release: release
+
+fileGroups:
+  - iosApp/AmberSubscriptions.storekit
 
 packages:
   swift-nio:
@@ -49,6 +56,7 @@ targets:
       - path: iosApp
         excludes:
           - NovelCreation/AGENTS.md
+          - AmberSubscriptions.storekit
       - path: SharedWatch
       # Deep Read editorial reader fonts owned by the iOS app and bundled as resources.
       - path: Resources/Fonts/noto_serif_sc.otf
@@ -93,6 +101,10 @@ targets:
         basedOnDependencyAnalysis: false
         script: |
           /bin/sh "${SRCROOT}/scripts/validate-entitlement-diagnostics.sh" "${SRCROOT}/iosApp/AmberAgent.entitlements" "${SRCROOT}/iosApp/Info.plist"
+      - name: Validate Release Readiness
+        basedOnDependencyAnalysis: false
+        script: |
+          /bin/sh "${SRCROOT}/scripts/validate-release-readiness.sh" "${SRCROOT}/iosApp/Info.plist" "${SRCROOT}/iosApp/PrivacyInfo.xcprivacy" "${SRCROOT}/project.yml"
     postBuildScripts:
       - name: Embed Shared KMP Framework
         basedOnDependencyAnalysis: false
@@ -189,6 +201,7 @@ targets:
         embed: true
     scheme:
       gatherCoverageData: false
+      storeKitConfiguration: iosApp/AmberSubscriptions.storekit
       testTargets:
         - iosAppTests
   iosAppTests:
@@ -290,6 +303,7 @@ targets:
       - path: iosApp
         excludes:
           - NovelCreation/AGENTS.md
+          - AmberSubscriptions.storekit
       - path: SharedWatch
       - path: Resources/Fonts/noto_serif_sc.otf
         buildPhase: resources
@@ -325,7 +339,11 @@ targets:
       - name: Validate Entitlement Diagnostics
         basedOnDependencyAnalysis: false
         script: |
-          /bin/sh "${SRCROOT}/scripts/validate-entitlement-diagnostics.sh" "${SRCROOT}/iosApp/AmberAgent.entitlements" "${SRCROOT}/iosApp/Info.plist"
+          /bin/sh "${SRCROOT}/scripts/validate-entitlement-diagnostics.sh" "${SRCROOT}/iosApp/AmberAgentExperimental.entitlements" "${SRCROOT}/iosApp/Info.plist" "AmberAgentExperimentalConfiguredEntitlements"
+      - name: Validate Release Readiness
+        basedOnDependencyAnalysis: false
+        script: |
+          /bin/sh "${SRCROOT}/scripts/validate-release-readiness.sh" "${SRCROOT}/iosApp/Info.plist" "${SRCROOT}/iosApp/PrivacyInfo.xcprivacy" "${SRCROOT}/project.yml"
     postBuildScripts:
       - name: Embed Shared KMP Framework
         basedOnDependencyAnalysis: false
@@ -354,7 +372,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl
         AGENT_ACTIVITY_URL_SCHEME: amber-experimental
         INFOPLIST_FILE: iosApp/Info.plist
-        CODE_SIGN_ENTITLEMENTS: iosApp/AmberAgent.entitlements
+        CODE_SIGN_ENTITLEMENTS: iosApp/AmberAgentExperimental.entitlements
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1,2"

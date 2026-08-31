@@ -40,6 +40,7 @@ enum IOSRecipePrimitiveCatalog {
             return .advanced
         }
         if tool == "mcp_call"
+            || tool == IOSWeatherToolCatalog.toolName
             || tool == "subagent_dispatch" || tool == "model_council_run"
             || tool == "spawn_agent" || tool == "list_agents" || tool == "interrupt_agent"
             || tool == "send_message" || tool == "followup_task" || tool == "wait_agent"

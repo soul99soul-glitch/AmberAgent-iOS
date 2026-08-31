@@ -3,14 +3,14 @@ import XCTest
 
 @MainActor
 final class IOSSystemPermissionCoordinatorTests: XCTestCase {
-    func testEntitlementCapabilityReportsRequiresEntitlement() async throws {
+    func testStableHealthCapabilityPassesEntitlementPreflight() async throws {
         let coordinator = IOSSystemPermissionCoordinator()
         let health = try capability("ios.health.read")
 
         let result = await coordinator.refreshStatus(for: health)
 
-        XCTAssertEqual(result.status, .requiresEntitlement)
-        XCTAssertTrue(result.message.contains("com.apple.developer.healthkit"))
+        XCTAssertNotEqual(result.status, .requiresEntitlement)
+        XCTAssertFalse(result.message.contains("Requires entitlement"))
     }
 
     func testExtensionOnlyCapabilityReportsRequiresExtensionTarget() async throws {
@@ -46,9 +46,11 @@ final class IOSSystemPermissionCoordinatorTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let entitlementsURL = projectRoot.appendingPathComponent("iosApp/AmberAgent.entitlements")
+        let experimentalEntitlementsURL = projectRoot.appendingPathComponent("iosApp/AmberAgentExperimental.entitlements")
         let infoPlistURL = projectRoot.appendingPathComponent("iosApp/Info.plist")
 
         let entitlements = try plistDictionary(at: entitlementsURL)
+        let experimentalEntitlements = try plistDictionary(at: experimentalEntitlementsURL)
         let infoPlist = try plistDictionary(at: infoPlistURL)
         let configured = try XCTUnwrap(
             infoPlist["AmberAgentConfiguredEntitlements"] as? [String],
@@ -56,6 +58,11 @@ final class IOSSystemPermissionCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(Set(entitlements.keys), Set(configured))
+        let experimentalConfigured = try XCTUnwrap(
+            infoPlist["AmberAgentExperimentalConfiguredEntitlements"] as? [String],
+            "AmberAgentExperimentalConfiguredEntitlements must be an array of strings"
+        )
+        XCTAssertEqual(Set(experimentalEntitlements.keys), Set(experimentalConfigured))
     }
 
     private func capability(_ id: String) throws -> IOSPlatformCapability {

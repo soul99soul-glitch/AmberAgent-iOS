@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>
@@ -103,9 +103,7 @@
     <key>NSGKFriendListUsageDescription</key>
     <string>AmberAgent can request Game Center friend list access when you choose to enable Game Center capabilities.</string>
     <key>NSHealthShareUsageDescription</key>
-    <string>AmberAgent can request HealthKit read access for health data types you choose.</string>
-    <key>NSHealthUpdateUsageDescription</key>
-    <string>AmberAgent can request HealthKit write access for health data types you choose.</string>
+    <string>Amber reads your step count only after you enable Health access, so it can show a private activity summary on this device.</string>
     <key>NSHomeKitUsageDescription</key>
     <string>AmberAgent can request HomeKit access when you choose to enable home capabilities.</string>
     <key>NSIdentityUsageDescription</key>
@@ -114,19 +112,8 @@
     <string>AmberAgent can request local network access when you choose to discover or connect to nearby services.</string>
     <key>NSAppTransportSecurity</key>
     <dict>
-        <key>NSExceptionDomains</key>
-        <dict>
-            <key>0.0.0.0/0</key>
-            <dict>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-            </dict>
-            <key>::/0</key>
-            <dict>
-                <key>NSExceptionAllowsInsecureHTTPLoads</key>
-                <true/>
-            </dict>
-        </dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
     </dict>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>AmberAgent can request always-on location access when you choose to enable background location capabilities.</string>
@@ -164,6 +151,16 @@
     <key>NSVideoSubscriberAccountUsageDescription</key>
     <string>AmberAgent can request TV provider account access when you choose to enable video subscriber capabilities.</string>
     <key>AmberAgentConfiguredEntitlements</key>
+    <array>
+        <string>aps-environment</string>
+        <string>com.apple.developer.applesignin</string>
+        <string>com.apple.developer.devicecheck.appattest-environment</string>
+        <string>com.apple.developer.healthkit</string>
+        <string>com.apple.developer.icloud-container-identifiers</string>
+        <string>com.apple.developer.icloud-services</string>
+        <string>com.apple.developer.weatherkit</string>
+    </array>
+    <key>AmberAgentExperimentalConfiguredEntitlements</key>
     <array/>
     <key>UILaunchScreen</key>
     <dict/>
@@ -171,7 +168,6 @@
     <false/>
     <key>UIBackgroundModes</key>
     <array>
-        <string>audio</string>
         <string>processing</string>
     </array>
     <key>UIRequiredDeviceCapabilities</key>

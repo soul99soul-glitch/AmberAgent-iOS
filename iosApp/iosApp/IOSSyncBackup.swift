@@ -461,6 +461,7 @@ private enum IOSDeviceLabel {
 
 enum IOSRemoteProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case localFolder
+    case cloudKit
     case webDAV
     case googleDrive
     case s3
@@ -471,6 +472,8 @@ enum IOSRemoteProviderKind: String, Codable, CaseIterable, Identifiable, Sendabl
         switch self {
         case .localFolder:
             return "本机文件夹"
+        case .cloudKit:
+            return "iCloud"
         case .webDAV:
             return "WebDAV"
         case .googleDrive:

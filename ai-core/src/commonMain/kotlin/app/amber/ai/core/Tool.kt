@@ -811,6 +811,31 @@ fun createPermissionsStatusToolDeclaration(): Tool = Tool(
     execute = { emptyList() }
 )
 
+fun createWeatherReadToolDeclaration(): Tool = Tool(
+    name = "weather_read",
+    description = """
+        Read current conditions and a bounded five-day forecast through Apple WeatherKit.
+        Provide one named `location`, which does not need device location permission, or set
+        `use_current_location` to true. Never provide both. Results include Apple Weather
+        attribution and are read-only.
+    """.trimIndent(),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("location", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional city or place name, maximum 80 characters.")
+                })
+                put("use_current_location", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Optional. Set true to request the device's current location in the foreground.")
+                })
+            },
+        )
+    },
+    execute = { emptyList() },
+)
+
 fun createToolsListToolDeclaration(): Tool = Tool(
     name = "tools_list",
     description = "List the tools currently exposed to this iOS sub-agent run and their intended use.",
@@ -1160,6 +1185,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "terminal_job_wait" to ::createTerminalJobWaitToolDeclaration,
     "terminal_job_stop" to ::createTerminalJobStopToolDeclaration,
     "permissions_status" to ::createPermissionsStatusToolDeclaration,
+    "weather_read" to ::createWeatherReadToolDeclaration,
     "tools_list" to ::createToolsListToolDeclaration,
     "subagent_report" to ::createSubAgentReportToolDeclaration,
     "spawn_agent" to ::createSpawnAgentToolDeclaration,

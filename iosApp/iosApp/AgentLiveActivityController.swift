@@ -3,8 +3,8 @@ import Foundation
 
 enum IOSExecutionPreferenceKeys {
     static let liveActivity = "app.amber.ios.execution.liveActivity"
-    /// 生成期间用极轻音频占住后台执行权。缺省开；与 ExecutionSettingsView /
-    /// BackgroundGenerationKeepAlive 共用同一 key。
+    /// 历史音频保活偏好 key。稳定版不声明 audio background mode，因此始终关闭；
+    /// 仅保留给明确声明该模式的内部构建读取。
     static let audioKeepAlive = "app.amber.ios.execution.audioKeepAlive"
     /// G7: 前台单轮工具循环上限（默认 12，clamp 4-24）。与
     /// ExecutionSettingsView 的 @AppStorage / SettingsStore 共用同一 key。

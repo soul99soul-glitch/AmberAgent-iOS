@@ -776,6 +776,15 @@ final class ChatToolRuntime {
             }
         }
 
+        if availableToolNames.contains(IOSWeatherToolCatalog.toolName) {
+            executors[IOSWeatherToolCatalog.toolName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, arguments, _ in
+                guard !IOSWeatherToolExecutor.requestsCurrentLocation(input: arguments) else {
+                    return .denied("后台生成期间不能申请当前位置，请回到 App 内使用天气工具。")
+                }
+                return .filled(await IOSWeatherToolExecutor.execute(input: arguments))
+            }
+        }
+
         // ask_user is a foreground HITL node. Background cannot present the card or
         // Watch decision, so deny with an explicit return-to-app reason instead of
         // leaving the tool unregistered (engine would otherwise error-fill and continue).
@@ -1060,6 +1069,7 @@ final class ChatToolRuntime {
         if ["session_search", "session_read"].contains(name) { return .sessionRead }
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
+            IOSWeatherToolCatalog.toolName,
             IOSSoulToolCatalog.toolName,
             "spawn_agent", "list_agents", "interrupt_agent",
             "send_message", "followup_task", "wait_agent",
@@ -2315,6 +2325,7 @@ final class ChatToolRuntime {
     ) -> UIMessagePart.Tool? {
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
+            IOSWeatherToolCatalog.toolName,
             IOSSoulToolCatalog.toolName,
             // P1-c/P1-d: 线程编排工具（非常驻，tool_search 命中后与 mcp__* 同样可执行）。
             "spawn_agent", "list_agents", "interrupt_agent",
@@ -4248,6 +4259,8 @@ final class ChatToolRuntime {
             ])
         }
         switch toolCall.toolName {
+        case IOSWeatherToolCatalog.toolName:
+            return await IOSWeatherToolExecutor.execute(input: toolCall.input)
         case "subagent_dispatch":
             let args = ChatToolCallParsing.jsonObject(toolCall.input)
             let objective = args?["objective"] as? String ?? toolCall.input
@@ -4907,6 +4920,8 @@ final class ChatToolRuntime {
     private func isAdvancedToolEnabled(_ toolName: String) -> Bool {
         switch toolName {
         case "mcp_list", "mcp_describe_tool", "mcp_import_from_skill":
+            true
+        case IOSWeatherToolCatalog.toolName:
             true
         case "mcp_call", "mcp_test":
             isMcpNetworkAllowed()

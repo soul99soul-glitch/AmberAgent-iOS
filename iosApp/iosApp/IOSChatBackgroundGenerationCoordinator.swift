@@ -551,9 +551,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             let alreadyHeldAudio = BackgroundGenerationKeepAlive.shared.holdsLease(
                 chatBackgroundAudioLeaseId(for: requestId)
             )
-            beginChatBackgroundAudioKeepAlive(
+            beginChatBackgroundKeepAlive(
                 requestId: requestId,
-                subtitle: handoff.params.model.displayName
+                subtitle: handoff.params.model.displayName,
+                submitSystemFallback: true
             )
             guard checkpointDurableResponse(handoff) else {
                 if !alreadyHeldAudio {
@@ -576,7 +577,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         let alreadyHeldAudio = BackgroundGenerationKeepAlive.shared.holdsLease(
             chatBackgroundAudioLeaseId(for: requestId)
         )
-        beginChatBackgroundAudioKeepAlive(
+        beginChatBackgroundKeepAlive(
             requestId: requestId,
             subtitle: handoff.params.model.displayName
         )
@@ -690,9 +691,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             }
             // Task { @MainActor } 要等下一拍才跑；退后台时这一拍就会被挂起。
             // 必须在派发前就把音频腿拉起来，不能等 resumeDetachedResponse 的首个 await。
-            beginChatBackgroundAudioKeepAlive(
+            beginChatBackgroundKeepAlive(
                 requestId: requestId,
-                subtitle: job.params.model.displayName
+                subtitle: job.params.model.displayName,
+                submitSystemFallback: true
             )
             activeDetachedResponseTasks[requestId] = Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -1048,9 +1050,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         if Task.isCancelled {
             return
         }
-        beginChatBackgroundAudioKeepAlive(
+        beginChatBackgroundKeepAlive(
             requestId: requestId,
-            subtitle: job.params.model.displayName
+            subtitle: job.params.model.displayName,
+            submitSystemFallback: true
         )
         do {
             guard let snapshot = try await runStore.snapshot(runId: job.runId) else {
@@ -1475,7 +1478,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             "bgTaskStarted(run=\(job.runId.prefix(8)))",
             detail: lifecycleSnapshotDetail
         )
-        beginChatBackgroundAudioKeepAlive(
+        beginChatBackgroundKeepAlive(
             requestId: backgroundTask.identifier,
             subtitle: job.params.model.displayName
         )
@@ -2685,7 +2688,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         backgroundInterruptedRequestIds.remove(requestId)
         activeRunStates.removeValue(forKey: requestId)
 
-        beginChatBackgroundAudioKeepAlive(
+        beginChatBackgroundKeepAlive(
             requestId: requestId,
             subtitle: job.params.model.displayName
         )
@@ -3652,8 +3655,14 @@ final class IOSChatBackgroundGenerationCoordinator {
         "chat-bg-\(requestId)"
     }
 
-    /// 专用后台 job 自己挂系统卡；这里只借 KeepAlive 的音频腿，避免再出第二张进度卡。
-    private func beginChatBackgroundAudioKeepAlive(requestId: String, subtitle: String) {
+    /// 普通后台 job 已经自己提交系统卡，因此默认只借 UIKit 短窗。服务端持有的
+    /// detached response 没有专用系统卡，稳定版又不启用音频后台模式，必须显式
+    /// 打开 system fallback，避免短窗结束后轮询立即被挂起。
+    private func beginChatBackgroundKeepAlive(
+        requestId: String,
+        subtitle: String,
+        submitSystemFallback: Bool = false
+    ) {
         BackgroundGenerationKeepAlive.shared.begin(
             chatBackgroundAudioLeaseId(for: requestId),
             title: IOSAppLocalization.string(
@@ -3661,7 +3670,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 defaultValue: "Amber 后台生成"
             ),
             subtitle: subtitle,
-            submitSystemTask: false
+            submitSystemTask: submitSystemFallback
         )
     }
 
