@@ -189,7 +189,7 @@ struct ChatView: View {
                         runSummary: browserTaskRunSummary,
                         onExpand: { collapsedWebMountSessionId = nil }
                     )
-                    .padding(.horizontal, ChatLayout.contentHorizontalInset + 18)
+                    .padding(.horizontal, ChatLayout.contentHorizontalInset)
                     .padding(.bottom, max(10, composerBarHeight + 8))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

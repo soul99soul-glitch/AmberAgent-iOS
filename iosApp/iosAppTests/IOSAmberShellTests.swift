@@ -167,6 +167,43 @@ final class IOSAmberShellTests: XCTestCase {
         XCTAssertNil(store.fileRecord(idOrPath: "/workspace/created-before-redirect.txt"))
     }
 
+    func testStdinUTF8ByteLimitUsesExactASCIIAndUnicodeBoundaries() async {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSAmberShellUTF8LimitTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
+        let cases: [(label: String, input: String, bytes: Int)] = [
+            ("ASCII-65535", utf8String(using: "x", bytes: 65_535), 65_535),
+            ("ASCII-65536", utf8String(using: "x", bytes: 65_536), 65_536),
+            ("ASCII-65537", utf8String(using: "x", bytes: 65_537), 65_537),
+            ("CJK-65535", utf8String(using: "中", bytes: 65_535), 65_535),
+            ("CJK-65536", utf8String(using: "中", bytes: 65_536), 65_536),
+            ("CJK-65537", utf8String(using: "中", bytes: 65_537), 65_537),
+            ("emoji-65535", utf8String(using: "😀", bytes: 65_535), 65_535),
+            ("emoji-65536", utf8String(using: "😀", bytes: 65_536), 65_536),
+            ("emoji-65537", utf8String(using: "😀", bytes: 65_537), 65_537),
+        ]
+
+        for testCase in cases {
+            XCTAssertEqual(testCase.input.utf8.count, testCase.bytes, testCase.label)
+            let result = await IOSAmberShellEngine.execute(
+                command: "wc -c",
+                stdin: testCase.input,
+                workspaceStore: store
+            )
+            if testCase.bytes <= IOSAmberShellInputContract.maxStdinBytes {
+                XCTAssertEqual(result.exitCode, 0, testCase.label)
+                XCTAssertEqual(result.stdout, "\(testCase.bytes)\n", testCase.label)
+            } else {
+                XCTAssertEqual(result.exitCode, 64, testCase.label)
+                XCTAssertTrue(
+                    result.stderr.contains("\(IOSAmberShellInputContract.maxStdinBytes) UTF-8 bytes"),
+                    testCase.label
+                )
+            }
+        }
+    }
+
     func testEmbeddedPythonExecutesAllowlistedCodeAndRejectsHostModules() async {
         let baseDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("IOSAmberShellPythonTests-\(UUID().uuidString)", isDirectory: true)
@@ -193,6 +230,42 @@ final class IOSAmberShellTests: XCTestCase {
         )
         XCTAssertNotEqual(blocked.exitCode, 0)
         XCTAssertTrue(blocked.stderr.contains("not allowlisted"))
+    }
+
+    func testEmbeddedPythonRejectsModuleMutationAndDoesNotLeakAcrossJobs() async {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSAmberShellPythonIsolationTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
+
+        let jsonMutation = await IOSAmberShellEngine.execute(
+            command: #"python -c "import json; json.amber_state = input()""#,
+            stdin: "bridge-secret\n",
+            workspaceStore: store
+        )
+        XCTAssertNotEqual(jsonMutation.exitCode, 0)
+        XCTAssertTrue(jsonMutation.stderr.contains("module attributes are read-only"))
+
+        let jsonRead = await IOSAmberShellEngine.execute(
+            command: #"python -c "import json; print(json.amber_state)""#,
+            workspaceStore: store
+        )
+        XCTAssertNotEqual(jsonRead.exitCode, 0)
+        XCTAssertTrue(jsonRead.stderr.contains("AttributeError"), jsonRead.stderr)
+
+        let mathMutation = await IOSAmberShellEngine.execute(
+            command: #"python -c "import math; math.pi = 0""#,
+            workspaceStore: store
+        )
+        XCTAssertNotEqual(mathMutation.exitCode, 0)
+        XCTAssertTrue(mathMutation.stderr.contains("module attributes are read-only"))
+
+        let mathRead = await IOSAmberShellEngine.execute(
+            command: #"python -c "import math; print(math.pi > 3)""#,
+            workspaceStore: store
+        )
+        XCTAssertEqual(mathRead.exitCode, 0, mathRead.stderr)
+        XCTAssertEqual(mathRead.stdout, "True\n")
     }
 
     func testEmbeddedPythonTimeoutCancellationAndReuse() async throws {
@@ -256,6 +329,14 @@ final class IOSAmberShellTests: XCTestCase {
         let result = await IOSAmberShellEngine.execute(command: command, stdin: stdin, workspaceStore: store)
         XCTAssertEqual(result.exitCode, 0, result.stderr)
         return result.stdout
+    }
+
+    private func utf8String(using scalar: String, bytes: Int) -> String {
+        let scalarBytes = scalar.utf8.count
+        let repetitions = bytes / scalarBytes
+        let remainder = bytes % scalarBytes
+        return String(repeating: scalar, count: repetitions)
+            + String(repeating: "x", count: remainder)
     }
 
     private func jsonObject(_ text: String) throws -> [String: Any] {

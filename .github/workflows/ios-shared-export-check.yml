@@ -45,6 +45,12 @@ jobs:
       - name: Verify Shared export reachability
         run: python3 scripts/check_shared_export_reachability.py
 
+      - name: Test AmberShell Python helper isolation
+        run: python3 -m unittest discover -s iosApp/AmberShellPythonAppTests -v
+
+      - name: Prepare verified AmberShell CPython runtime
+        run: iosApp/scripts/prepare-ambershell-python.sh
+
       - name: Generate Xcode project
         run: |
           command -v xcodegen >/dev/null || brew install xcodegen

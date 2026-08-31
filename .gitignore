@@ -29,6 +29,7 @@ iosApp/**/DerivedData/
 iosApp/**/build/
 # Regeneratable CPython iOS artifact; build it from the pinned official source.
 /iosApp/Python.xcframework/
+/iosApp/Python.xcframework.receipt
 
 # Design handoff reference (large binaries; keep the .md/.css/.jsx specs tracked)
 /amberagent-handoff.zip

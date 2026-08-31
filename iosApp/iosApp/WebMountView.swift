@@ -421,31 +421,25 @@ struct AgentBrowserTaskCompactBar: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Image(systemName: displayInfo.status.image)
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(displayInfo.status.tint)
-                .frame(width: 26, height: 26)
-                .background(AmberTheme.surface2, in: Circle())
+                .frame(width: 22, height: 22)
+                .background(AmberTheme.accent.opacity(0.14), in: Circle())
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(summary)
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-            }
+            AgentBrowserTaskMarqueeText(text: summary)
 
             Image(systemName: "chevron.up")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(AmberTheme.muted2)
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(AmberTheme.accent)
         }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
+        .frame(height: 36)
+        .agentBrowserSummaryGlass(cornerRadius: 18)
         .frame(minHeight: 44)
-        .composerDockGlass(cornerRadius: 22)
-        .contentShape(Capsule())
+        .contentShape(Rectangle())
         .offset(y: max(-8, dragTranslation * 0.18))
         .onTapGesture(perform: expand)
         .simultaneousGesture(expandGesture)
@@ -485,6 +479,128 @@ struct AgentBrowserTaskCompactBar: View {
 
     private var animation: Animation? {
         reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
+    }
+}
+
+private struct AgentBrowserTaskMarqueeText: View {
+    let text: String
+
+    @State private var textWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var travel: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Text(text)
+            .font(.footnote.weight(.medium))
+            .foregroundStyle(AmberTheme.foreground)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: AgentBrowserTaskTextWidthPreferenceKey.self,
+                        value: proxy.size.width
+                    )
+                }
+            }
+            .offset(x: -min(travel, overflow))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: AgentBrowserTaskContainerWidthPreferenceKey.self,
+                        value: proxy.size.width
+                    )
+                }
+            }
+            .onPreferenceChange(AgentBrowserTaskTextWidthPreferenceKey.self) { textWidth = $0 }
+            .onPreferenceChange(AgentBrowserTaskContainerWidthPreferenceKey.self) { containerWidth = $0 }
+            .task(id: animationKey) {
+                travel = 0
+                guard !reduceMotion, overflow > 8 else { return }
+
+                while !Task.isCancelled {
+                    guard await pause(seconds: 1.4) else { return }
+                    let forwardDuration = marqueeForwardDuration(overflow: overflow)
+                    withAnimation(.linear(duration: forwardDuration)) {
+                        travel = overflow
+                    }
+                    guard await pause(seconds: forwardDuration + 1.2) else { return }
+
+                    let returnDuration = marqueeReturnDuration(overflow: overflow)
+                    withAnimation(.easeInOut(duration: returnDuration)) {
+                        travel = 0
+                    }
+                    guard await pause(seconds: returnDuration + 2.0) else { return }
+                }
+            }
+            .allowsHitTesting(false)
+    }
+
+    private var overflow: CGFloat {
+        max(0, textWidth - containerWidth)
+    }
+
+    private var animationKey: String {
+        "\(text)|\(Int(textWidth.rounded()))|\(Int(containerWidth.rounded()))|\(reduceMotion)"
+    }
+
+    private func marqueeForwardDuration(overflow: CGFloat) -> Double {
+        max(2.5, Double(overflow) / 22)
+    }
+
+    private func marqueeReturnDuration(overflow: CGFloat) -> Double {
+        min(1.6, max(0.7, Double(overflow) / 90))
+    }
+
+    private func pause(seconds: Double) async -> Bool {
+        do {
+            try await Task.sleep(for: .seconds(seconds))
+            return !Task.isCancelled
+        } catch {
+            return false
+        }
+    }
+}
+
+private struct AgentBrowserTaskTextWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private struct AgentBrowserTaskContainerWidthPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func agentBrowserSummaryGlass(cornerRadius: CGFloat) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        if #available(iOS 26.0, *) {
+            background(AmberTheme.accent.opacity(0.08), in: shape)
+                .glassEffect(
+                    .regular.tint(AmberTheme.accent.opacity(0.28)).interactive(),
+                    in: .rect(cornerRadius: cornerRadius)
+                )
+        } else {
+            background(.thinMaterial, in: shape)
+                .overlay {
+                    shape.fill(AmberTheme.accent.opacity(0.10))
+                }
+                .overlay {
+                    shape.stroke(AmberTheme.accent.opacity(0.28), lineWidth: 0.5)
+                }
+                .shadow(color: AmberTheme.accent.opacity(0.12), radius: 10, y: 3)
+        }
     }
 }
 

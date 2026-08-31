@@ -29,7 +29,7 @@ public struct RenderableDocument: Equatable, Sendable {
   /// - Parameters:
   ///   - document: The parsed markdown tree.
   ///   - config: Styling and behavior used during conversion.
-  public init(document: Document, config: MarkdownRenderConfig) async {
+  public init(document: Markdown.Document, config: MarkdownRenderConfig) async {
     let converted = RenderableDocument(renderables: document.convert(with: config))
     self = config.coalescesAdjacentTextBlocks
       ? converted.coalescingAdjacentTextBlocks(config: config)

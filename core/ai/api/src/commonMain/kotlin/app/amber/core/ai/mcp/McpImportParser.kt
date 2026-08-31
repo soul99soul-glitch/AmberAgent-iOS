@@ -6,19 +6,23 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 fun parseMcpServersFromJson(json: String): List<McpServerConfig> {
-    val root = Json.parseToJsonElement(json).jsonObject
-    val mcpServers = root["mcpServers"]?.jsonObject ?: return emptyList()
+    val root = runCatching { Json.parseToJsonElement(json).jsonObject }.getOrNull()
+        ?: return emptyList()
+    val mcpServers = runCatching { root["mcpServers"]?.jsonObject }.getOrNull()
+        ?: return emptyList()
     return mcpServers.entries.mapNotNull { (name, element) ->
-        val obj = element.jsonObject
-        val type = obj["type"]?.jsonPrimitive?.contentOrNull ?: "streamable_http"
-        val url = obj["url"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-        val headers = obj["headers"]?.jsonObject?.entries?.map { (key, value) ->
-            key to (value.jsonPrimitive.contentOrNull ?: "")
-        } ?: emptyList()
-        val commonOptions = McpCommonOptions(name = name, headers = headers)
-        when (type) {
-            "sse" -> McpServerConfig.SseTransportServer(commonOptions = commonOptions, url = url)
-            else -> McpServerConfig.StreamableHTTPServer(commonOptions = commonOptions, url = url)
-        }
+        runCatching {
+            val obj = element.jsonObject
+            val type = obj["type"]?.jsonPrimitive?.contentOrNull ?: "streamable_http"
+            val url = obj["url"]?.jsonPrimitive?.contentOrNull ?: return@runCatching null
+            val headers = obj["headers"]?.jsonObject?.entries?.map { (key, value) ->
+                key to (value.jsonPrimitive.contentOrNull ?: "")
+            } ?: emptyList()
+            val commonOptions = McpCommonOptions(name = name, headers = headers)
+            when (type) {
+                "sse" -> McpServerConfig.SseTransportServer(commonOptions = commonOptions, url = url)
+                else -> McpServerConfig.StreamableHTTPServer(commonOptions = commonOptions, url = url)
+            }
+        }.getOrNull()
     }
 }

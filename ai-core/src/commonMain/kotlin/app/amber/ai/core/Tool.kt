@@ -2376,8 +2376,10 @@ private fun iosShellExecuteParameters(): InputSchema = InputSchema.Obj(
         })
         put("stdin", buildJsonObject {
             put("type", "string")
-            put("maxLength", 65536)
-            put("description", "Optional UTF-8 standard input text, capped at 65536 bytes.")
+            // JSON Schema's maxLength counts Unicode characters, not the UTF-8
+            // bytes consumed by AmberShell. Keep this limit in prose so a
+            // provider cannot advertise a different unit than the executor.
+            put("description", "Optional standard input text. UTF-8 encoded input must not exceed 65536 bytes.")
         })
         put("timeout_seconds", buildJsonObject {
             put("type", "integer")

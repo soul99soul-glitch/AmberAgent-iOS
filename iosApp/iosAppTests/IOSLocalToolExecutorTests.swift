@@ -170,6 +170,58 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         }
     }
 
+    func testAmberShellStdinUTF8BoundaryMatchesApprovalAndExecution() async throws {
+        let store = makeWorkspaceStore()
+        let cases: [(label: String, input: String, bytes: Int)] = [
+            ("ASCII-65535", utf8String(using: "x", bytes: 65_535), 65_535),
+            ("ASCII-65536", utf8String(using: "x", bytes: 65_536), 65_536),
+            ("ASCII-65537", utf8String(using: "x", bytes: 65_537), 65_537),
+            ("CJK-65535", utf8String(using: "中", bytes: 65_535), 65_535),
+            ("CJK-65536", utf8String(using: "中", bytes: 65_536), 65_536),
+            ("CJK-65537", utf8String(using: "中", bytes: 65_537), 65_537),
+            ("emoji-65535", utf8String(using: "😀", bytes: 65_535), 65_535),
+            ("emoji-65536", utf8String(using: "😀", bytes: 65_536), 65_536),
+            ("emoji-65537", utf8String(using: "😀", bytes: 65_537), 65_537),
+        ]
+
+        for testCase in cases {
+            XCTAssertEqual(testCase.input.utf8.count, testCase.bytes, testCase.label)
+            let input = IOSWorkspaceStore.json([
+                "command": "wc -c",
+                "stdin": testCase.input,
+            ])
+            let preview = IOSAmberShellExecuteExecutor.approvalPreview(input: input)
+            let output = await IOSAmberShellExecuteExecutor.execute(
+                input: input,
+                workspaceStore: store
+            )
+            let object = try jsonObject(output)
+
+            if testCase.bytes <= IOSAmberShellInputContract.maxStdinBytes {
+                XCTAssertNotNil(preview, testCase.label)
+                let previewByteDigits = preview?.contextLines
+                    .last(where: { $0.lowercased().contains("stdin") })?
+                    .filter { $0.isNumber }
+                XCTAssertEqual(
+                    previewByteDigits,
+                    "\(testCase.bytes)",
+                    "\(testCase.label): \(preview?.contextLines ?? [])"
+                )
+                XCTAssertEqual(object["status"] as? String, IOSTerminalJobStatus.completed.rawValue, testCase.label)
+                XCTAssertEqual(object["stdout"] as? String, "\(testCase.bytes)\n", testCase.label)
+            } else {
+                XCTAssertNil(preview, testCase.label)
+                XCTAssertEqual(object["status"] as? String, IOSTerminalJobStatus.failed.rawValue, testCase.label)
+                XCTAssertTrue(
+                    (object["error"] as? String)?.contains(
+                        "\(IOSAmberShellInputContract.maxStdinBytes) UTF-8 bytes"
+                    ) == true,
+                    testCase.label
+                )
+            }
+        }
+    }
+
     func testAmberShellLsReadsTheWorkspaceRoot() async throws {
         let store = makeWorkspaceStore()
         let fileName = "ambershell-phase1-\(UUID().uuidString).txt"
@@ -2220,6 +2272,14 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             baseDirectory: FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString, isDirectory: true)
         )
+    }
+
+    private func utf8String(using scalar: String, bytes: Int) -> String {
+        let scalarBytes = scalar.utf8.count
+        let repetitions = bytes / scalarBytes
+        let remainder = bytes % scalarBytes
+        return String(repeating: scalar, count: repetitions)
+            + String(repeating: "x", count: remainder)
     }
 
     private func isolatedDefaults() -> UserDefaults {

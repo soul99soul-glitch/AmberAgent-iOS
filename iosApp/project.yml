@@ -74,6 +74,16 @@ targets:
         type: folder
     putResourcesBeforeSourcesBuildPhase: true
     preBuildScripts:
+      - name: Validate CPython artifact
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          validator="${SRCROOT}/scripts/validate-ambershell-python.sh"
+          if [ ! -x "${validator}" ]; then
+            echo "Missing AmberShell Python artifact validator at ${validator}" >&2
+            exit 1
+          fi
+          "${validator}" "${PROJECT_DIR}/Python.xcframework"
       - name: Build Shared KMP Framework
         basedOnDependencyAnalysis: false
         script: |
@@ -137,7 +147,18 @@ targets:
             export EXPANDED_CODE_SIGN_IDENTITY="-"
             export EXPANDED_CODE_SIGN_IDENTITY_NAME="Ad Hoc"
           fi
-          source "$PROJECT_DIR/Python.xcframework/build/utils.sh"
+          validator="$PROJECT_DIR/scripts/validate-ambershell-python.sh"
+          if [ ! -x "$validator" ]; then
+            echo "Missing AmberShell Python artifact validator at $validator" >&2
+            exit 1
+          fi
+          "$validator" "$PROJECT_DIR/Python.xcframework"
+          build_utils="$PROJECT_DIR/Python.xcframework/build/utils.sh"
+          if [ ! -f "$build_utils" ]; then
+            echo "Missing CPython iOS build utility at $build_utils" >&2
+            exit 1
+          fi
+          source "$build_utils"
           install_python Python.xcframework AmberShellPythonApp
     settings:
       base:

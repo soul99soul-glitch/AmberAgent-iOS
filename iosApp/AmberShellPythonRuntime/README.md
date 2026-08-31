@@ -15,6 +15,12 @@ it cannot forcibly stop a blocking C extension or other native call. The
 caller owns the control object and must keep it alive until the bridge call
 returns.
 
+The interpreter remains process-global, but user jobs do not retain imported
+allowlisted module families. The helper rejects writes and deletes through
+module-derived attributes or subscripts, then restores or evicts allowlisted
+modules on every result path. This is job-state hygiene, not a claim that the
+helper is a security sandbox.
+
 ## Prepare the pinned runtime
 
 Run:
@@ -30,10 +36,13 @@ https://www.python.org/ftp/python/3.14.7/Python-3.14.7.tar.xz
 SHA-256: 3b48dac8fb59f62eaa67ac83c1eb12bda1b7a08406dd286e252c11a66be27f81
 ```
 
-When available, `/private/tmp/cpython-ios-3.14.7-cross-build/iOS/Python.xcframework`
-is reused and copied into `iosApp/Python.xcframework`. Otherwise the script
-downloads and verifies the source, then invokes CPython's official Apple iOS
-build command to produce that artifact.
+Existing repository artifacts and `/private/tmp` prebuilt XCFrameworks are
+never trusted or reused. The script downloads (or reuses) only the pinned
+source archive after verifying its SHA-256, extracts it into a fresh temporary
+source tree, and invokes CPython's official Apple iOS build command. The
+resulting XCFramework receives a complete content manifest plus the adjacent
+`iosApp/Python.xcframework.receipt`; Stable Xcode builds validate both before
+compiling or sourcing CPython's build utilities.
 
 The stable target processes the standard library during its
 `Process Python libraries` post-compile phase with CPython's `install_python`
