@@ -3774,6 +3774,9 @@ final class ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSRecipeToolCatalog.toolNames).sorted()
         ))
+        // WeatherKit is read-only and default-deferred. It enters the full
+        // bridge catalog here so tool_search can expose it on demand.
+        toolDeclarations.append(ToolKt.createWeatherReadToolDeclaration())
         let mcpNetworkEnabled = isCapabilityPolicyEnabled("ios.mcp.tool_call")
         if mcpNetworkEnabled {
             toolDeclarations.append(ToolKt.createMcpCallToolDeclaration())

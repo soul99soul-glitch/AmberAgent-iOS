@@ -674,12 +674,26 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertTrue(NearSilentKeepAliveTone.containsAudibleEnergy(data))
     }
 
-    func testAudioKeepAlivePreferenceDefaultsOn() {
+    func testAudioKeepAlivePreferenceDefaultsOffAndRequiresBackgroundMode() {
         let defaults = UserDefaults(suiteName: "amber.audioKeepAlive.\(UUID().uuidString)")!
-        XCTAssertTrue(BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(defaults: defaults))
-        defaults.set(false, forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
-        XCTAssertFalse(BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(defaults: defaults))
+        XCTAssertFalse(
+            BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
+                defaults: defaults,
+                backgroundModes: ["audio", "processing"]
+            )
+        )
         defaults.set(true, forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
-        XCTAssertTrue(BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(defaults: defaults))
+        XCTAssertFalse(
+            BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
+                defaults: defaults,
+                backgroundModes: ["processing"]
+            )
+        )
+        XCTAssertTrue(
+            BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
+                defaults: defaults,
+                backgroundModes: ["audio", "processing"]
+            )
+        )
     }
 }

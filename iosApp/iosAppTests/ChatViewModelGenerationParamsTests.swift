@@ -218,6 +218,23 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertTrue(payload.contains("ish_handoff"))
     }
 
+    func testWeatherToolIsDiscoverableThroughProductionExposureBridge() {
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
+            localToolExecutor: localToolExecutor(),
+            autoGenerateResponses: false
+        )
+        _ = viewModel.textGenerationParamsForTesting()
+
+        let bridge = viewModel.toolExposureBridgeForTesting()
+        XCTAssertTrue(bridge?.fullToolDeclarations().map(\.name).contains("weather_read") == true)
+        let payload = bridge?.executeToolSearch(
+            argumentsJson: #"{"query":"weather_read","limit":1}"#
+        ) ?? ""
+        XCTAssertTrue(payload.contains("weather_read"), payload)
+    }
+
     func testExternalIshHandoffDiscoverableViaToolSearch() {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),

@@ -142,13 +142,14 @@ final class BackgroundGenerationKeepAlive {
         self.isAudioKeepAliveEnabled = isAudioKeepAliveEnabled
     }
 
-    /// 缺省开：没写过这个 key 就当用户要最狠的后台续跑。
+    /// 近静音音频不是稳定版后台执行策略：缺省关闭，且只有声明了 audio
+    /// background mode 的内部构建才允许显式开启。App Store 构建只走 UIKit
+    /// 短窗和 BGContinuedProcessingTask。
     static func isAudioKeepAlivePreferenceEnabled(
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        backgroundModes: [String] = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
     ) -> Bool {
-        guard defaults.object(forKey: IOSExecutionPreferenceKeys.audioKeepAlive) != nil else {
-            return true
-        }
+        guard backgroundModes.contains("audio") else { return false }
         return defaults.bool(forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
     }
 

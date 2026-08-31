@@ -1,0 +1,97 @@
+{
+  "identifier" : "3D638218-69C2-4C98-9858-14F0961F47A2",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_applicationInternalID" : "",
+    "_developerTeamID" : "",
+    "_failTransactionsEnabled" : false,
+    "_lastSynchronizedDate" : 0,
+    "_locale" : "zh_CN",
+    "_renewalBillingIssuesEnabled" : false,
+    "_storefront" : "CHN",
+    "_storeKitErrors" : [
+
+    ],
+    "_timeRate" : 0
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "8A3BEA35-9212-4C3B-9007-3C16E33B2C03",
+      "localizations" : [
+
+      ],
+      "name" : "Amber Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "18.00",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "35653C0F-7FB4-4A44-BBE3-D3EE14262939",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "解锁 iCloud 私有数据库中的加密跨设备备份。",
+              "displayName" : "Amber Pro 月度",
+              "locale" : "zh_CN"
+            },
+            {
+              "description" : "Unlock encrypted cross-device backups in your private iCloud database.",
+              "displayName" : "Amber Pro Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "app.amber.ios.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Amber Pro Monthly",
+          "subscriptionGroupID" : "8A3BEA35-9212-4C3B-9007-3C16E33B2C03",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "168.00",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "43B85529-27A8-4665-89D9-3D283285BB61",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "解锁 iCloud 私有数据库中的加密跨设备备份。",
+              "displayName" : "Amber Pro 年度",
+              "locale" : "zh_CN"
+            },
+            {
+              "description" : "Unlock encrypted cross-device backups in your private iCloud database.",
+              "displayName" : "Amber Pro Yearly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "app.amber.ios.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Amber Pro Yearly",
+          "subscriptionGroupID" : "8A3BEA35-9212-4C3B-9007-3C16E33B2C03",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

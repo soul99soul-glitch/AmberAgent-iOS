@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct AmberAgentApp: App {
+    @UIApplicationDelegateAdaptor(AmberAppDelegate.self) private var appDelegate
     @State private var settingsStore = SettingsStore()
 
     init() {

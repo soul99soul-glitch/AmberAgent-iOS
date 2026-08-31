@@ -703,21 +703,6 @@ struct IOSCapabilityRegistry {
             gate: freshHighRiskGate
         ),
         capability(
-            id: "ios.health.write",
-            title: "健康数据写入",
-            summary: "Request write authorization for selected HealthKit sample types.",
-            domain: .healthAndMotion,
-            status: .requiresEntitlement,
-            risk: .high,
-            requestKind: .directSystemPrompt,
-            requestEntryPoint: "HKHealthStore.requestAuthorization(toShare:read:)",
-            uiActionNames: ["request_health_write"],
-            requiredInfoPlistKeys: ["NSHealthUpdateUsageDescription"],
-            requiredEntitlements: ["com.apple.developer.healthkit"],
-            defaultEnabled: true,
-            gate: freshHighRiskGate
-        ),
-        capability(
             id: "ios.motion.fitness",
             title: "运动与健身",
             summary: "Request access to Core Motion activity and pedometer data.",

@@ -151,7 +151,6 @@ final class IOSSystemPermissionCoordinator {
         "ios.calendar.write_only",
         "ios.reminders.full",
         "ios.health.read",
-        "ios.health.write",
         "ios.motion.fitness",
         "ios.workoutkit.scheduler",
         "ios.finance.financekit",
@@ -275,9 +274,7 @@ final class IOSSystemPermissionCoordinator {
         case "ios.network.local":
             result = await requestLocalNetworkProbe(capability, now: now)
         case "ios.health.read":
-            result = await requestHealthKit(capability, mode: .read, now: now)
-        case "ios.health.write":
-            result = await requestHealthKit(capability, mode: .write, now: now)
+            result = await requestHealthKit(capability, now: now)
         case "ios.nfc.reader":
             result = nfcStatus(for: capability, now: now)
         case "ios.replaykit.record":
@@ -397,7 +394,7 @@ final class IOSSystemPermissionCoordinator {
             return alarmKitStatus(for: capability, now: now)
         case "ios.bluetooth.ble":
             return bluetoothStatus(for: capability, now: now)
-        case "ios.health.read", "ios.health.write":
+        case "ios.health.read":
             return healthStatus(for: capability, now: now)
         case "ios.nfc.reader":
             return nfcStatus(for: capability, now: now)
@@ -474,7 +471,10 @@ final class IOSSystemPermissionCoordinator {
         guard let task = SecTaskCreateFromSelf(kCFAllocatorDefault) else { return nil }
         return SecTaskCopyValueForEntitlement(task, key as CFString, nil as UnsafeMutablePointer<Unmanaged<CFError>?>?)
         #else
-        let declaredEntitlements = Bundle.main.object(forInfoDictionaryKey: "AmberAgentConfiguredEntitlements") as? [String] ?? []
+        let infoKey = Bundle.main.bundleIdentifier?.contains(".experimental-gpl") == true
+            ? "AmberAgentExperimentalConfiguredEntitlements"
+            : "AmberAgentConfiguredEntitlements"
+        let declaredEntitlements = Bundle.main.object(forInfoDictionaryKey: infoKey) as? [String] ?? []
         return declaredEntitlements.contains(key) ? true : nil
         #endif
     }
@@ -501,11 +501,6 @@ final class IOSSystemPermissionCoordinator {
 private enum IOSLocationRequestMode {
     case whenInUse
     case always
-}
-
-private enum IOSHealthKitRequestMode {
-    case read
-    case write
 }
 
 // MARK: - Framework status and request implementations
@@ -1359,22 +1354,13 @@ private extension IOSSystemPermissionCoordinator {
         guard HKHealthStore.isHealthDataAvailable() else {
             return result(capability, .unavailableOnDevice, "HealthKit data is unavailable on this device.", now)
         }
-        if capability.id == "ios.health.write",
-           let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount) {
-            switch HKHealthStore().authorizationStatus(for: stepType) {
-            case .notDetermined: return result(capability, .notDetermined, "HealthKit write authorization is not determined.", now)
-            case .sharingDenied: return result(capability, .denied, "HealthKit write authorization is denied.", now)
-            case .sharingAuthorized: return result(capability, .authorized, "HealthKit write authorization is granted for step count.", now)
-            @unknown default: return result(capability, .unknown, "Unknown HealthKit write authorization status.", now)
-            }
-        }
         return result(capability, .unknown, "HealthKit read authorization cannot be globally confirmed by public API; request status is tracked by the last request result.", now)
         #else
         return result(capability, .unavailableOnDevice, "HealthKit is unavailable.", now)
         #endif
     }
 
-    func requestHealthKit(_ capability: IOSPlatformCapability, mode: IOSHealthKitRequestMode, now: Date) async -> IOSSystemPermissionResult {
+    func requestHealthKit(_ capability: IOSPlatformCapability, now: Date) async -> IOSSystemPermissionResult {
         #if canImport(HealthKit)
         guard HKHealthStore.isHealthDataAvailable() else {
             return result(capability, .unavailableOnDevice, "HealthKit data is unavailable on this device.", now)
@@ -1383,13 +1369,8 @@ private extension IOSSystemPermissionCoordinator {
             return result(capability, .unavailableOnDevice, "Step count type is unavailable.", now)
         }
         let store = HKHealthStore()
-        let shareTypes: Set<HKSampleType> = mode == .write ? [stepType] : []
-        let readTypes: Set<HKObjectType> = mode == .read ? [stepType] : []
         do {
-            try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
-            if mode == .write {
-                return healthStatus(for: capability, now: Date())
-            }
+            try await store.requestAuthorization(toShare: [], read: [stepType])
             return result(capability, .unknown, "HealthKit read request completed. Public API cannot confirm read grants per type until a query succeeds.", Date())
         } catch {
             return result(capability, .denied, "HealthKit request failed: \(error.localizedDescription)", Date())

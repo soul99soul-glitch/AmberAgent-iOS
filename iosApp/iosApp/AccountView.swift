@@ -3,17 +3,20 @@ import PhotosUI
 import UIKit
 import OSLog
 import Shared
+import AuthenticationServices
 
 struct AccountView: View {
     let sharedSettings: IOSSharedSettingsStore
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var displayName = ""
     @State private var avatarImage: UIImage?
     @State private var avatarItem: PhotosPickerItem?
     @State private var isRenaming = false
     @State private var renameDraft = ""
+    @State private var appleSignInModel = IOSAppleSignInModel()
 
     private var avatarInitial: String {
         let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -35,6 +38,7 @@ struct AccountView: View {
                                 .padding(.bottom, 4)
                         }
                         hero
+                        appleAccountSection
                         statsSection
                     }
                     .padding(.bottom, 36)
@@ -74,6 +78,7 @@ struct AccountView: View {
                 displayName = sharedSettings.displaySetting.userNickname
             }
             avatarImage = AccountAvatarStore.load()
+            Task { await appleSignInModel.refresh() }
         }
     }
 
@@ -166,6 +171,135 @@ struct AccountView: View {
             AmberSectionLabel(text: "统计")
             AccountStatsPanel(sharedSettings: sharedSettings)
                 .padding(.horizontal, 16)
+        }
+    }
+
+    private var appleAccountSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "Apple 账户（可选）")
+            AmberFormGroup {
+                VStack(alignment: .leading, spacing: 12) {
+                    switch appleSignInModel.state {
+                    case .unavailable:
+                        Label("此构建未启用使用 Apple 登录", systemImage: "person.crop.circle.badge.exclamationmark")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                    case .localOnly:
+                        appleSignInButton
+                    case .revoked:
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Apple 已撤销此 App 的账户授权", systemImage: "person.crop.circle.badge.xmark")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text("本机绑定已清除；如需重新绑定，请再次登录。")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                            appleSignInButton
+                        }
+                    case .checking:
+                        HStack(spacing: 10) {
+                            ProgressView().tint(AmberTheme.accent)
+                            Text("正在检查 Apple 账户状态")
+                                .foregroundStyle(AmberTheme.foreground)
+                        }
+                    case .signedIn(let name):
+                        appleSignedInContent(name: name)
+                    case .failed(let message):
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Apple 账户状态不可用")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("重试") { Task { await appleSignInModel.refresh() } }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+
+                    Text("Amber 仍可完全本地使用。绑定只建立可选账户边界，不会上传本地对话、健康数据或模型密钥。")
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+            }
+        }
+    }
+
+    private var appleSignInButton: some View {
+        SignInWithAppleButton(.continue) { request in
+            request.requestedScopes = [.fullName, .email]
+        } onCompletion: { result in
+            handleAppleAuthorization(result)
+        }
+        .signInWithAppleButtonStyle(.black)
+        .frame(maxWidth: .infinity, minHeight: 50)
+        .accessibilityLabel("使用 Apple 账户继续")
+    }
+
+    @ViewBuilder
+    private func appleSignedInContent(name: String) -> some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 10) {
+                appleAccountIdentity(name: name)
+                appleUnlinkButton
+                    .frame(maxWidth: .infinity)
+            }
+        } else {
+            HStack(alignment: .center, spacing: 12) {
+                appleAccountIdentity(name: name)
+                appleUnlinkButton
+            }
+        }
+    }
+
+    private func appleAccountIdentity(name: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "person.crop.circle.badge.checkmark")
+                .font(.title2)
+                .foregroundStyle(AmberTheme.accentGreen)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(name)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("已在本机绑定 Apple 账户")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var appleUnlinkButton: some View {
+        Button("解除本机绑定") {
+            appleSignInModel.unlinkLocalAccount()
+        }
+        .font(.caption.weight(.semibold))
+        .buttonStyle(.bordered)
+        .frame(minHeight: 44)
+    }
+
+    private func handleAppleAuthorization(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                appleSignInModel.fail(ASAuthorizationError(.failed))
+                return
+            }
+            let formatter = PersonNameComponentsFormatter()
+            let fullName = credential.fullName.map(formatter.string(from:))
+            appleSignInModel.complete(IOSAppleAccountCredential(
+                userIdentifier: credential.user,
+                displayName: fullName
+            ))
+        case .failure(let error):
+            appleSignInModel.fail(error)
         }
     }
 }

@@ -19,12 +19,14 @@ struct AppShell: View {
     @State private var conversationStore: IOSConversationStore
     @State private var chatViewModel: ChatViewModel
     @State private var councilChatViewModel: CouncilChatViewModel
+    @State private var storeCoordinator = IOSStoreCoordinator()
     @State private var novelCreationViewModel: NovelCreationViewModel?
     @State private var novelSessionViewModel: NovelSessionViewModel?
     @State private var novelLifecycleCoordinator: NovelWorkspaceLifecycleCoordinator
     @State private var novelCreationErrorMessage: String?
     @State private var rootRouter = RouterPath()
     @State private var pendingAgentActivityTarget: AgentActivityDeepLink.Target?
+    @State private var pendingAppDeepLinkDestination: IOSAppDeepLink.Destination?
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
     @State private var didFinalizeStaleBackgroundJobs = false
@@ -32,6 +34,8 @@ struct AppShell: View {
     @State private var isResolvingThemeTryOn = false
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
+    @AppStorage(IOSAppleIntegrationPreferenceKeys.completionNotificationsEnabled)
+    private var completionNotificationsEnabled = false
     @AppStorage(IOSAppLanguagePreference.defaultsKey)
     private var appLanguage = IOSAppLanguage.system.rawValue
 
@@ -141,6 +145,7 @@ struct AppShell: View {
                     novelCreationViewModel: novelCreationViewModel,
                     novelSessionViewModel: novelSessionViewModel,
                     novelCreationErrorMessage: novelCreationErrorMessage,
+                    storeCoordinator: storeCoordinator,
                     router: rootRouter
                 )
         }
@@ -172,6 +177,19 @@ struct AppShell: View {
         .onChange(of: AmberThemeRuntime.shared.isTryOnActive) { _, active in
             if !active { isResolvingThemeTryOn = false }
         }
+        .task { await storeCoordinator.start() }
+        .onChange(of: chatViewModel.isLoading) { _, isLoading in
+            guard !isLoading, pendingAppDeepLinkDestination != nil else { return }
+            Task { await openPendingAppDeepLinkIfReady() }
+        }
+        .onAppear {
+            IOSDeepLinkInbox.shared.installHandler { url in
+                enqueueAppURL(url)
+            }
+        }
+        .onDisappear {
+            IOSDeepLinkInbox.shared.removeHandler()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .amberThemeTryOnTakenOver)) { _ in
             if let request = chatViewModel.pendingMcpApproval,
                request.toolName == "theme_pack_import" {
@@ -180,6 +198,9 @@ struct AppShell: View {
         }
         .onChange(of: scenePhase) { _, phase in
             handleScenePhaseChange(phase)
+            if phase == .active {
+                Task { await storeCoordinator.refresh() }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .amberWatchOpenTask)) { note in
             guard let runId = note.userInfo?["runId"] as? String,
@@ -192,6 +213,16 @@ struct AppShell: View {
                 focus: focus
             )
             Task { await openPendingAgentActivityIfReady() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .amberChatBackgroundJobDidTerminate)) { note in
+            guard completionNotificationsEnabled,
+                  scenePhase != .active,
+                  let event = note.object as? IOSChatBackgroundJobTerminalEvent else { return }
+            Task {
+                _ = try? await IOSLocalNotificationService.shared.scheduleTaskCompletion(
+                    conversationID: event.conversationId
+                )
+            }
         }
         .task {
             // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
@@ -272,9 +303,10 @@ struct AppShell: View {
                 reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjection
             )
             await openPendingAgentActivityIfReady()
+            await openPendingAppDeepLinkIfReady()
         }
         .onOpenURL { url in
-            enqueueAgentActivityURL(url)
+            enqueueAppURL(url)
         }
     }
 
@@ -377,10 +409,70 @@ struct AppShell: View {
         )
     }
 
-    private func enqueueAgentActivityURL(_ url: URL) {
-        guard let target = AgentActivityDeepLink.parse(url) else { return }
-        pendingAgentActivityTarget = target
-        Task { await openPendingAgentActivityIfReady() }
+    private func enqueueAppURL(_ url: URL) {
+        guard let destination = IOSAppDeepLink.parse(url) else { return }
+        switch destination {
+        case .agentActivity(let target):
+            pendingAgentActivityTarget = target
+            Task { await openPendingAgentActivityIfReady() }
+        default:
+            pendingAppDeepLinkDestination = destination
+            Task { await openPendingAppDeepLinkIfReady() }
+        }
+    }
+
+    private func openPendingAppDeepLinkIfReady() async {
+        guard didBootstrapConversations,
+              let destination = pendingAppDeepLinkDestination else { return }
+
+        switch destination {
+        case .newConversation:
+            guard chatViewModel.prepareForConversationChange(to: nil) else { return }
+            await conversationStore.startNewConversationReusingEmpty()
+            guard pendingAppDeepLinkDestination == destination else { return }
+            rootRouter.path = [.chat]
+
+        case .latestConversation:
+            guard let summary = conversationStore.summaries.first,
+                  chatViewModel.prepareForConversationChange(to: summary.id) else { return }
+            if conversationStore.currentConversation?.id != summary.id {
+                guard await conversationStore.selectConversationIfAvailable(
+                    id: summary.id,
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
+            }
+            guard pendingAppDeepLinkDestination == destination else { return }
+            rootRouter.path = [.chat]
+
+        case .conversation(let id):
+            guard let summary = conversationStore.summaries.first(where: {
+                $0.id.toHexDashString().caseInsensitiveCompare(id) == .orderedSame
+            }), chatViewModel.prepareForConversationChange(to: summary.id) else { return }
+            if conversationStore.currentConversation?.id != summary.id {
+                guard await conversationStore.selectConversationIfAvailable(
+                    id: summary.id,
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
+            }
+            guard pendingAppDeepLinkDestination == destination else { return }
+            rootRouter.path = [.chat]
+
+        case .activeTask:
+            let tasks = IOSAdvancedTaskStore.shared.recent(limit: 80)
+            let task = tasks.first(where: { !$0.status.isTerminal }) ?? tasks.first
+            rootRouter.path = task.map { [.executionTask(id: $0.id)] } ?? [.execution]
+
+        case .healthSummary:
+            rootRouter.path = [.settings, .healthSummary]
+        case .weather:
+            rootRouter.path = [.settings, .weather]
+        case .appleIntegrations:
+            rootRouter.path = [.settings, .appleIntegrations]
+        case .agentActivity(let target):
+            pendingAgentActivityTarget = target
+            Task { await openPendingAgentActivityIfReady() }
+        }
+        pendingAppDeepLinkDestination = nil
     }
 
     private func openPendingAgentActivityIfReady() async {
@@ -576,6 +668,10 @@ enum Route: Hashable {
     case displayFont
     case conversationStorage
     case syncBackup
+    case healthSummary
+    case weather
+    case appleIntegrations
+    case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)
     case skills
@@ -587,6 +683,7 @@ enum Route: Hashable {
     case recipes
     case recipeDetail(name: String)
     case execution
+    case executionTask(id: String)
     case providers
     case providerAdd
     case providerDetail(id: String)
@@ -650,6 +747,7 @@ private extension View {
         novelCreationViewModel: NovelCreationViewModel?,
         novelSessionViewModel: NovelSessionViewModel?,
         novelCreationErrorMessage: String?,
+        storeCoordinator: IOSStoreCoordinator,
         router: RouterPath
     ) -> some View {
         navigationDestination(for: Route.self) { route in
@@ -694,8 +792,19 @@ private extension View {
             case .syncBackup:
                 SyncBackupView(
                     sharedSettings: sharedSettings,
-                    conversationStore: conversationStore
+                    conversationStore: conversationStore,
+                    store: storeCoordinator
                 )
+            case .healthSummary:
+                IOSHealthSummaryView()
+            case .weather:
+                IOSWeatherView()
+            case .appleIntegrations:
+                IOSAppleIntegrationsView(
+                    systemPermissionCoordinator: systemPermissionCoordinator
+                )
+            case .subscription:
+                IOSSubscriptionView(store: storeCoordinator)
             case .capabilities:
                 ToolPermissionsView(
                     permissionStore: permissionStore,
@@ -755,6 +864,8 @@ private extension View {
                 }
             case .execution:
                 ExecutionSettingsView(sharedSettings: sharedSettings)
+            case .executionTask(let id):
+                ExecutionSettingsView(sharedSettings: sharedSettings, focusedTaskID: id)
             case .providers:
                 ProvidersView(settingsStore: settingsStore, providerRegistry: providerRegistry, sharedSettings: sharedSettings)
             case .providerAdd:

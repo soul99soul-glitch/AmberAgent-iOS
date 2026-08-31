@@ -3,12 +3,12 @@ import Shared
 
 struct ExecutionSettingsView: View {
     let sharedSettings: IOSSharedSettingsStore
+    var focusedTaskID: String? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(RouterPath.self) private var router
 
     @AppStorage(IOSExecutionPreferenceKeys.liveActivity) private var liveActivity = true
-    @AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive) private var audioKeepAlive = true
     @AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)
     private var chatMaxToolResumeCount = SettingsStore.defaultChatMaxToolResumeCount
     @AppStorage(IOSExecutionPreferenceKeys.execJavaScriptEnabled)
@@ -24,12 +24,16 @@ struct ExecutionSettingsView: View {
 
                 ScrollView {
                     VStack(spacing: 0) {
+                        if focusedTaskID != nil {
+                            recentTasksSection
+                        }
                         runSection
                         toolLoopSection
                         execJavaScriptSection
-                        recentTasksSection
+                        if focusedTaskID == nil {
+                            recentTasksSection
+                        }
                         liveActivitySection
-                        audioKeepAliveSection
                     }
                     .padding(.bottom, 36)
                 }
@@ -176,34 +180,15 @@ struct ExecutionSettingsView: View {
         }
     }
 
-    private var audioKeepAliveSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "后台续跑")
-            AmberFormGroup {
-                ExecutionToggleRow(
-                    systemImage: "waveform",
-                    title: IOSAppLocalization.string(
-                        "音频保活",
-                        defaultValue: "音频保活"
-                    ),
-                    subtitle: IOSAppLocalization.string(
-                        "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。",
-                        defaultValue: "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。"
-                    ),
-                    isOn: audioKeepAlive
-                ) {
-                    audioKeepAlive.toggle()
-                    BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()
-                }
-            }
-        }
-    }
-
     private var recentTasksSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "最近任务")
             AmberFormGroup {
-                let tasks = taskStore.recent(limit: 6)
+                let recent = taskStore.recent(limit: 6)
+                let focusedTask = focusedTaskID.flatMap { taskStore.task(id: $0) }
+                let tasks = focusedTask.map { focused in
+                    [focused] + Array(recent.filter { $0.id != focused.id }.prefix(5))
+                } ?? recent
                 if tasks.isEmpty {
                     Text("暂无高级执行任务。SubAgent、模型议会和远程命令运行后会出现在这里。")
                         .font(.caption)
@@ -213,7 +198,7 @@ struct ExecutionSettingsView: View {
                         .padding(.vertical, 12)
                 } else {
                     ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
-                        ExecutionTaskRow(task: task)
+                        ExecutionTaskRow(task: task, isFocused: task.id == focusedTaskID)
                         if index < tasks.count - 1 {
                             Divider()
                                 .overlay(AmberTheme.borderSoft)
@@ -229,6 +214,7 @@ struct ExecutionSettingsView: View {
 
 private struct ExecutionTaskRow: View {
     let task: IOSAdvancedTaskRecord
+    var isFocused = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -242,7 +228,7 @@ private struct ExecutionTaskRow: View {
                     .font(.body)
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
-                Text("\(task.kind.title) · \(task.status.title) · \(task.compactSummary)")
+                Text("\(task.kind.title) · \(task.compactSummary)")
                     .font(.caption)
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(2)
@@ -257,6 +243,9 @@ private struct ExecutionTaskRow: View {
         .frame(minHeight: 58)
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
+        .background(isFocused ? AmberTheme.accent.opacity(0.09) : Color.clear)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(isFocused ? "由快捷指令打开的任务" : "")
     }
 
     private var iconName: String {

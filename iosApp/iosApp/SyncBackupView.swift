@@ -3,11 +3,13 @@ import SwiftUI
 import Shared
 import UniformTypeIdentifiers
 
+@MainActor
 struct SyncBackupView: View {
     let sharedSettings: IOSSharedSettingsStore
     let conversationStore: IOSConversationStore
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var passphrase = ""
     @State private var exportedFile: IOSSyncBackupDocument?
@@ -26,24 +28,33 @@ struct SyncBackupView: View {
     @State private var webDAVPath = "AmberAgent"
     @State private var webDAVUsername = ""
     @State private var webDAVPassword = ""
+    @State private var store: IOSStoreCoordinator
 
-    init(sharedSettings: IOSSharedSettingsStore, conversationStore: IOSConversationStore) {
+    init(
+        sharedSettings: IOSSharedSettingsStore,
+        conversationStore: IOSConversationStore,
+        store: IOSStoreCoordinator? = nil
+    ) {
         self.sharedSettings = sharedSettings
         self.conversationStore = conversationStore
         self._remoteStatus = State(initialValue: sharedSettings.remoteSyncStatus)
+        self._store = State(initialValue: store ?? IOSStoreCoordinator())
     }
 
     private var headerSubtitle: String {
-        sharedSettings.isCapabilityGateEnabled(.remoteSync) ? "本地备份 · 文件夹同步 · WebDAV" : "本地设置备份"
+        guard sharedSettings.isCapabilityGateEnabled(.remoteSync) else { return "本地设置备份" }
+        return hasCloudKitProAccess
+            ? "本地备份 · iCloud 私有同步 · WebDAV"
+            : "本地备份 · WebDAV"
     }
 
     private var currentRows: [SyncBackupRow] {
         [
             .init(
                 title: "同步位置",
-                subtitle: "本机文件夹可直接使用；WebDAV 需要填写地址和账号。",
+                subtitle: "iCloud 使用当前 Apple 账户的私有数据库；WebDAV 需要填写地址和账号。",
                 value: providerKind.displayName,
-                color: providerKind == .localFolder || providerKind == .webDAV ? AmberTheme.accentGreen : AmberTheme.accentAmber
+                color: [.localFolder, .cloudKit, .webDAV].contains(providerKind) ? AmberTheme.accentGreen : AmberTheme.accentAmber
             ),
             .init(
                 title: "上次上传",
@@ -77,7 +88,13 @@ struct SyncBackupView: View {
     }
 
     private var selectableRemoteProviders: [IOSRemoteProviderKind] {
-        [.localFolder, .webDAV]
+        hasCloudKitProAccess
+            ? [.localFolder, .cloudKit, .webDAV]
+            : [.localFolder, .webDAV]
+    }
+
+    private var hasCloudKitProAccess: Bool {
+        store.hasPremiumAccess
     }
 
     var body: some View {
@@ -93,6 +110,9 @@ struct SyncBackupView: View {
                         localBackupSection
                         remoteSyncGateSection
                         if sharedSettings.isCapabilityGateEnabled(.remoteSync) {
+                            if !hasCloudKitProAccess {
+                                cloudKitProSection
+                            }
                             remoteStatusSection
                             remoteProviderSection
                             remoteSnapshotSection
@@ -134,6 +154,20 @@ struct SyncBackupView: View {
         }
         .alert(item: $alert) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("好")))
+        }
+        .onChange(of: providerKind) { oldValue, newValue in
+            guard oldValue != newValue else { return }
+            remoteSnapshots = []
+            selectedSnapshotID = nil
+            pendingConflict = nil
+            if pendingRestore?.snapshot != nil {
+                pendingRestore = nil
+            }
+            remoteMessage = "同步位置已切换，请重新列出快照。"
+        }
+        .onChange(of: hasCloudKitProAccess) { _, hasAccess in
+            guard !hasAccess, providerKind == .cloudKit else { return }
+            providerKind = .localFolder
         }
     }
 
@@ -191,7 +225,7 @@ struct SyncBackupView: View {
                         .padding(.vertical, 11)
                         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-                    HStack(spacing: 10) {
+                    adaptiveActionLayout {
                         Button(action: exportSettingsBackup) {
                             Label("导出备份", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
@@ -226,7 +260,7 @@ struct SyncBackupView: View {
                         Text("启用远端同步")
                             .font(.body)
                             .foregroundStyle(AmberTheme.foreground)
-                        Text(sharedSettings.isCapabilityGateEnabled(.remoteSync) ? "已开启 · 可使用本机文件夹和 WebDAV" : "未开启 · 仅保留本地备份")
+                        Text(remoteSyncGateDetail)
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -249,8 +283,54 @@ struct SyncBackupView: View {
                 .padding(.vertical, 5)
             }
             if !sharedSettings.isCapabilityGateEnabled(.remoteSync) {
-                SyncBackupNote("关闭时不会显示 WebDAV、远端快照或上传下载操作。Google Drive 和 S3 当前不可用。")
+                SyncBackupNote("关闭时不会显示 iCloud、WebDAV、远端快照或上传下载操作。Google Drive 和 S3 当前不可用。")
             }
+        }
+    }
+
+    private var remoteSyncGateDetail: String {
+        guard sharedSettings.isCapabilityGateEnabled(.remoteSync) else {
+            return "未开启 · 仅保留本地备份"
+        }
+        return hasCloudKitProAccess
+            ? "已开启 · 可使用本机文件夹、iCloud 和 WebDAV"
+            : "已开启 · 本机文件夹和 WebDAV 可用；iCloud 需 Amber Pro"
+    }
+
+    private var cloudKitProSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "iCloud 跨设备备份")
+            AmberFormGroup {
+                NavigationLink(value: Route.subscription) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 28, height: 28)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Amber Pro 权益")
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text("解锁 CloudKit 私有数据库中的加密快照，供同一 iCloud 账户下的设备手动同步。")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("打开 Amber Pro 订阅与恢复购买")
+            }
+            SyncBackupNote("本机文件夹与 WebDAV 不需要 Amber Pro。iCloud 操作仍由你手动发起。")
         }
     }
 
@@ -276,12 +356,7 @@ struct SyncBackupView: View {
             AmberSectionLabel(text: "同步位置")
             AmberFormGroup {
                 VStack(alignment: .leading, spacing: 12) {
-                    Picker("同步位置", selection: $providerKind) {
-                        ForEach(selectableRemoteProviders) { kind in
-                            Text(kind.displayName).tag(kind)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    remoteProviderPicker
 
                     if providerKind == .localFolder {
                         Text(IOSLocalFolderSyncProvider.defaultFolderURL().path)
@@ -289,6 +364,11 @@ struct SyncBackupView: View {
                             .foregroundStyle(AmberTheme.muted)
                             .lineLimit(3)
                             .textSelection(.enabled)
+                    } else if providerKind == .cloudKit {
+                        Text("加密快照保存在当前 iCloud 账户的 CloudKit 私有数据库中，不会进入公共数据库。首次使用可能需要在真机登录 iCloud。")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else if providerKind == .webDAV {
                         VStack(spacing: 8) {
                             TextField("WebDAV Base URL", text: $webDAVBaseURL)
@@ -326,7 +406,7 @@ struct SyncBackupView: View {
                         .background(AmberTheme.accentAmber.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
 
-                    HStack(spacing: 10) {
+                    adaptiveActionLayout {
                         Button {
                             Task { await listRemoteSnapshots() }
                         } label: {
@@ -368,8 +448,54 @@ struct SyncBackupView: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 13)
             }
-            SyncBackupNote("WebDAV 只有在你填写配置并点击操作时才会发起网络请求。")
+            SyncBackupNote(remoteProviderNetworkNote)
         }
+    }
+
+    @ViewBuilder
+    private var remoteProviderPicker: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            Picker("同步位置", selection: $providerKind) {
+                ForEach(selectableRemoteProviders) { kind in
+                    Text(kind.displayName).tag(kind)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(isRemoteBusy)
+        } else {
+            Picker("同步位置", selection: $providerKind) {
+                ForEach(selectableRemoteProviders) { kind in
+                    Text(kind.displayName).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+            .disabled(isRemoteBusy)
+        }
+    }
+
+    private var remoteProviderNetworkNote: String {
+        switch providerKind {
+        case .localFolder:
+            "本机文件夹操作不会发起网络请求。"
+        case .cloudKit:
+            "iCloud 只会在你点击列出、上传、下载或删除时访问当前账户的私有数据库。"
+        case .webDAV:
+            "WebDAV 只有在你填写配置并点击操作时才会发起网络请求。"
+        case .googleDrive, .s3:
+            "此同步位置当前不可用，不会发起网络请求。"
+        }
+    }
+
+    private var adaptiveActionLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(spacing: 10))
+            : AnyLayout(HStackLayout(spacing: 10))
+    }
+
+    private var adaptiveDataLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 3))
+            : AnyLayout(HStackLayout(spacing: 10))
     }
 
     private var remoteSnapshotSection: some View {
@@ -402,7 +528,7 @@ struct SyncBackupView: View {
             }
 
             if selectedSnapshot != nil {
-                HStack(spacing: 10) {
+                adaptiveActionLayout {
                     Button {
                         Task { await downloadSelectedSnapshotForPreview() }
                     } label: {
@@ -445,11 +571,11 @@ struct SyncBackupView: View {
                         if !pendingRestore.preview.datasets.isEmpty {
                             VStack(spacing: 6) {
                                 ForEach(pendingRestore.preview.datasets, id: \.id) { dataset in
-                                    HStack {
+                                    adaptiveDataLayout {
                                         Text(dataset.id)
                                             .font(.caption)
                                             .foregroundStyle(AmberTheme.foreground2)
-                                        Spacer()
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                         Text("\(dataset.recordCount) / \(formatBytes(dataset.byteCount))")
                                             .font(.caption2.weight(.semibold))
                                             .foregroundStyle(AmberTheme.muted)
@@ -458,7 +584,7 @@ struct SyncBackupView: View {
                             }
                         }
 
-                        HStack(spacing: 10) {
+                        adaptiveActionLayout {
                             Button {
                                 Task { await applyPendingRestore() }
                             } label: {
@@ -654,6 +780,11 @@ struct SyncBackupView: View {
         switch providerKind {
         case .localFolder:
             return IOSLocalFolderSyncProvider()
+        case .cloudKit:
+            guard hasCloudKitProAccess else {
+                throw IOSSyncBackupError.remoteProviderUnavailable("iCloud 加密跨设备备份需要有效的 Amber Pro 订阅")
+            }
+            return IOSCloudKitSyncProvider()
         case .webDAV:
             let config = IOSWebDAVConfig(
                 baseURL: webDAVBaseURL,
@@ -738,35 +869,63 @@ private struct IOSPendingSyncRestore {
 }
 
 private struct SyncRemoteSnapshotRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let snapshot: IOSRemoteSnapshot
     let isSelected: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(isSelected ? AmberTheme.accentGreen : AmberTheme.muted2)
-                .frame(width: 22)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(snapshot.fileName)
-                    .font(.body)
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                Text(snapshotSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top, spacing: 12) {
+                        selectionIcon
+                        snapshotIdentity
+                    }
+                    snapshotSize
+                        .padding(.leading, 34)
+                }
+            } else {
+                HStack(spacing: 12) {
+                    selectionIcon
+                    snapshotIdentity
+                    snapshotSize
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(formatBytes(snapshot.sizeBytes))
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(AmberTheme.foreground2)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(isSelected ? AmberTheme.accentGreen.opacity(0.08) : Color.clear)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(isSelected ? "已选择" : "未选择")
+    }
+
+    private var selectionIcon: some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(isSelected ? AmberTheme.accentGreen : AmberTheme.muted2)
+            .frame(width: 22)
+            .accessibilityHidden(true)
+    }
+
+    private var snapshotIdentity: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(snapshot.fileName)
+                .font(.body)
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 1)
+            Text(snapshotSubtitle)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 4 : 2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var snapshotSize: some View {
+        Text(formatBytes(snapshot.sizeBytes))
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(AmberTheme.foreground2)
     }
 
     private var snapshotSubtitle: String {
@@ -798,31 +957,50 @@ private struct SyncRemoteSnapshotRow: View {
 }
 
 private struct SyncBackupStatusRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let row: SyncBackupRow
 
     var body: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.title)
-                    .font(.body)
-                    .foregroundStyle(AmberTheme.foreground)
-                Text(row.subtitle)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(4)
-                    .fixedSize(horizontal: false, vertical: true)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    rowDescription
+                    rowValue
+                }
+            } else {
+                HStack(spacing: 12) {
+                    rowDescription
+                    rowValue
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            Text(row.value)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(row.color)
-                .multilineTextAlignment(.trailing)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(minHeight: 58)
         .padding(.horizontal, 14)
         .padding(.vertical, 5)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var rowDescription: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(row.title)
+                .font(.body)
+                .foregroundStyle(AmberTheme.foreground)
+            Text(row.subtitle)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var rowValue: some View {
+        Text(row.value)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(row.color)
+            .multilineTextAlignment(dynamicTypeSize.isAccessibilitySize ? .leading : .trailing)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }
 

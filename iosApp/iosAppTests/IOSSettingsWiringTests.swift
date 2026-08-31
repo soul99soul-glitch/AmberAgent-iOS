@@ -24,19 +24,16 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
-    func testAudioKeepAliveIsWiredThroughExecutionSettings() throws {
+    func testReleaseBuildDoesNotExposeOrDeclareAudioKeepAlive() throws {
         let view = try source("iosApp/ExecutionSettingsView.swift")
-        let keys = try source("iosApp/AgentLiveActivityController.swift")
         let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
         let info = try source("iosApp/Info.plist")
 
-        XCTAssertTrue(view.contains("@AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive)"))
-        XCTAssertTrue(view.contains("聊天、小说、议会、深度阅读"))
-        XCTAssertTrue(view.contains("BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()"))
-        XCTAssertTrue(keys.contains("static let audioKeepAlive = \"app.amber.ios.execution.audioKeepAlive\""))
+        XCTAssertFalse(view.contains("@AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive)"))
+        XCTAssertFalse(view.contains("音频保活"))
         XCTAssertTrue(keepAlive.contains("isAudioKeepAlivePreferenceEnabled"))
-        XCTAssertTrue(keepAlive.contains("audioKeepAlive.start()"))
-        XCTAssertTrue(info.contains("<string>audio</string>"))
+        XCTAssertTrue(keepAlive.contains("backgroundModes.contains(\"audio\")"))
+        XCTAssertFalse(info.contains("<string>audio</string>"))
         XCTAssertTrue(info.contains("<string>processing</string>"))
     }
 
@@ -60,8 +57,9 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(council.contains("beginMaterialsKeepAlive()"))
         XCTAssertTrue(deepRead.contains("BackgroundGenerationKeepAlive.shared.begin("))
         XCTAssertTrue(chatHost.contains("backgroundExecution.begin("))
-        XCTAssertTrue(chatBackground.contains("beginChatBackgroundAudioKeepAlive("))
-        XCTAssertTrue(chatBackground.contains("submitSystemTask: false"))
+        XCTAssertTrue(chatBackground.contains("beginChatBackgroundKeepAlive("))
+        XCTAssertTrue(chatBackground.contains("submitSystemFallback: true"))
+        XCTAssertTrue(chatBackground.contains("submitSystemTask: submitSystemFallback"))
         XCTAssertTrue(keepAlive.contains("handoffBridgeLeaseId"))
         XCTAssertTrue(keepAlive.contains(".handoff-bridge"))
         XCTAssertTrue(chatBackground.contains("必须在派发前就把音频腿拉起来"))
@@ -648,13 +646,14 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertFalse(IOSProviderEndpointPolicy.isValidBaseURL("203.0.113.10:8080/v1"))
     }
 
-    func testInfoPlistAllowsInsecureHTTPOnlyForIPAddressRanges() throws {
+    func testInfoPlistAllowsLocalNetworkingWithoutBroadATSExceptions() throws {
         let info = try source("iosApp/Info.plist")
 
         XCTAssertTrue(info.contains("NSAppTransportSecurity"))
-        XCTAssertTrue(info.contains("NSExceptionAllowsInsecureHTTPLoads"))
-        XCTAssertTrue(info.contains("0.0.0.0/0"))
-        XCTAssertTrue(info.contains("::/0"))
+        XCTAssertTrue(info.contains("NSAllowsLocalNetworking"))
+        XCTAssertFalse(info.contains("NSExceptionAllowsInsecureHTTPLoads"))
+        XCTAssertFalse(info.contains("0.0.0.0/0"))
+        XCTAssertFalse(info.contains("::/0"))
         XCTAssertFalse(info.contains("NSAllowsArbitraryLoads"))
     }
 
