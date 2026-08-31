@@ -288,6 +288,9 @@ class ToolSearchIndex(
         if (name.startsWith("terminal_")) {
             addAll(listOf("终端", "命令", "脚本", "运行命令", "terminal"))
         }
+        if (name == "ios_shell_execute") {
+            addAll(listOf("AmberShell", "本地终端", "本地命令", "运行命令", "命令", "脚本", "local command"))
+        }
         if (name.startsWith("mcp_") || category == "mcp") {
             addAll(listOf("mcp", "MCP", "外部工具"))
         }

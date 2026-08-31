@@ -644,6 +644,28 @@ fun createTerminalExecuteToolDeclaration(): Tool = Tool(
     execute = { emptyList() }
 )
 
+fun createIosShellExecuteToolDeclaration(): Tool = Tool(
+    name = "ios_shell_execute",
+    description = """
+        Execute one bounded, non-interactive command inside AmberShell, AmberAgent iOS's stable local command environment.
+        The command runs in the foreground after explicit approval and returns separate stdout, stderr, exit_code,
+        and status fields. It supports pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf,
+        grep, sort, uniq, cut, tr, basename, dirname, env, date, and uname in the app-owned /workspace directory.
+        The stable app target also embeds CPython 3.14 and accepts restricted `python -c <code>` snippets; the
+        ExperimentalGPL target deliberately excludes CPython. Python has no pip, network, PTY, or host file access.
+        It allows at most three pipeline stages and only <, >, and 2> redirection. It does not invoke a system shell,
+        allocate a PTY, install packages, or create a durable background job; control flow, globbing, and command
+        substitution are unavailable. Optional stdin is UTF-8 text capped at 64 KiB. `timeout_seconds` is a
+        foreground cooperative timeout/cancellation request: pure Python bytecode can be interrupted, but Python
+        blocked in a native C extension cannot be force-terminated, so timeout/cancel may wait for that call to return.
+    """.trimIndent().replace("\n", " "),
+    parameters = { iosShellExecuteParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
 fun createTerminalJobStartToolDeclaration(): Tool = Tool(
     name = "terminal_job_start",
     description = """
@@ -1132,6 +1154,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "ish_handoff" to ::createIshHandoffToolDeclaration,
     "ios_ish_execute" to ::createIosIshExecuteToolDeclaration,
     "terminal_execute" to ::createTerminalExecuteToolDeclaration,
+    "ios_shell_execute" to ::createIosShellExecuteToolDeclaration,
     "terminal_job_start" to ::createTerminalJobStartToolDeclaration,
     "terminal_job_read" to ::createTerminalJobReadToolDeclaration,
     "terminal_job_wait" to ::createTerminalJobWaitToolDeclaration,
@@ -2313,6 +2336,36 @@ private fun terminalExecuteParameters(): InputSchema = InputSchema.Obj(
         put("cwd", buildJsonObject {
             put("type", "string")
             put("description", "Optional absolute POSIX working directory on the Remote SSH host. Omit to use the SSH account default directory.")
+        })
+    },
+    required = listOf("command")
+)
+
+private fun iosShellExecuteParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("command", buildJsonObject {
+            put("type", "string")
+            put("maxLength", 4096)
+            put("description", "Required. One bounded AmberShell file or text command under /workspace. The stable target also supports restricted python -c snippets. Supports at most three pipeline stages, <, >, 2> redirection, and fixed PWD/HOME/LANG expansion; no general shell expansion or control flow.")
+        })
+        put("stdin", buildJsonObject {
+            put("type", "string")
+            put("maxLength", 65536)
+            put("description", "Optional UTF-8 standard input text, capped at 65536 bytes.")
+        })
+        put("timeout_seconds", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 1)
+            put("maximum", 180)
+            put("description", "Optional foreground timeout/cancellation request in seconds. Default 60; accepted range 1-180.")
+        })
+        put("purpose", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional short user-facing reason for this AmberShell command.")
+        })
+        put("cwd", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional AmberShell virtual working directory. This phase accepts only /workspace.")
         })
     },
     required = listOf("command")

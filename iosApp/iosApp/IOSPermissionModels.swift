@@ -1362,6 +1362,21 @@ struct IOSCapabilityRegistry {
         ),
 
         capability(
+            id: "ios.local.ambershell",
+            title: "AmberShell 本地命令",
+            summary: "Run approved, bounded file and text commands inside AmberAgent's stable app-owned /workspace and return separate stdout, stderr, and exit code. A system shell, package installation, and durable background execution are not available.",
+            domain: .filesAndPhotos,
+            status: .supported,
+            risk: .high,
+            requestKind: .foregroundSession,
+            requestEntryPoint: "Chat ios_shell_execute",
+            modelToolNames: Array(IOSAmberShellToolCatalog.supportedToolNames).sorted(),
+            defaultEnabled: true,
+            canOpenSettings: false,
+            gate: freshHighRiskGate
+        ),
+
+        capability(
             id: "ios.embedded.ish_runtime",
             title: "内置 iSH Runtime",
             summary: "Run approved non-PTY Linux scripts or process-local asynchronous jobs inside AmberAgent's isolated embedded iSH guest. Shared terminal_job_read/wait/stop tools control those jobs. Jobs have no stdin or relaunch recovery. Linked only in the ExperimentalGPL target.",

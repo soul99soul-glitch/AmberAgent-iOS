@@ -37,6 +37,56 @@ class TerminalToolDeclarationTest {
     @Test
     fun terminalExecuteIsAvailableFromIosDeclarationRegistry() {
         assertEquals("terminal_execute", iosToolDeclaration("terminal_execute")?.name)
+        val amberShell = createIosShellExecuteToolDeclaration()
+        assertEquals("ios_shell_execute", iosToolDeclaration("ios_shell_execute")?.name)
+        assertTrue(amberShell.needsApproval)
+        assertTrue(amberShell.mandatoryApproval)
+        assertFalse(amberShell.allowsAutoApproval)
+        assertTrue("AmberShell" in amberShell.description)
+        assertTrue("does not invoke a system shell" in amberShell.description)
+        assertTrue("mkdir" in amberShell.description)
+        assertTrue("printf" in amberShell.description)
+        assertTrue("python -c" in amberShell.description)
+        assertTrue("no pip" in amberShell.description)
+        assertTrue("ExperimentalGPL" in amberShell.description)
+        assertTrue("three pipeline stages" in amberShell.description)
+        assertTrue("2>" in amberShell.description)
+        assertTrue("control flow" in amberShell.description)
+        val amberShellParameters = amberShell.parameters() as InputSchema.Obj
+        assertEquals(listOf("command"), amberShellParameters.required)
+        assertTrue("cwd" in amberShellParameters.properties)
+        assertTrue("timeout_seconds" in amberShellParameters.properties)
+        assertTrue("purpose" in amberShellParameters.properties)
+        assertEquals(
+            "integer",
+            amberShellParameters.properties["timeout_seconds"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull
+        )
+        assertEquals(
+            "1",
+            amberShellParameters.properties["timeout_seconds"]!!.jsonObject["minimum"]?.jsonPrimitive?.contentOrNull
+        )
+        assertEquals(
+            "180",
+            amberShellParameters.properties["timeout_seconds"]!!.jsonObject["maximum"]?.jsonPrimitive?.contentOrNull
+        )
+        assertTrue("Default 60" in amberShellParameters.properties["timeout_seconds"]!!.jsonObject["description"]?.jsonPrimitive?.contentOrNull.orEmpty())
+        assertTrue("cooperative" in amberShell.description)
+        assertTrue("cancellation" in amberShell.description)
+        assertTrue("pure Python bytecode" in amberShell.description)
+        assertTrue("native C extension" in amberShell.description)
+        assertTrue("force-terminated" in amberShell.description)
+        assertEquals(
+            "string",
+            amberShellParameters.properties["stdin"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull
+        )
+        assertEquals(
+            "65536",
+            amberShellParameters.properties["stdin"]!!.jsonObject["maxLength"]?.jsonPrimitive?.contentOrNull
+        )
+        assertEquals(
+            "4096",
+            amberShellParameters.properties["command"]!!.jsonObject["maxLength"]?.jsonPrimitive?.contentOrNull
+        )
         val embedded = createIosIshExecuteToolDeclaration()
         val parameters = embedded.parameters() as InputSchema.Obj
         assertTrue("cwd" in parameters.properties)

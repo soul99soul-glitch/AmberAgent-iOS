@@ -376,6 +376,9 @@ final class ChatToolRuntime {
         runId: String,
         conversationId: KotlinUuid?
     ) -> Bool {
+        if toolName == IOSAmberShellToolCatalog.executeToolName {
+            return false
+        }
         if ishAutoApprovedRunIds.contains(runId) { return true }
         guard let capabilityId = localToolExecutor?.terminalApprovalCapabilityId(
             toolName: toolName,
@@ -1533,6 +1536,7 @@ final class ChatToolRuntime {
             ?? IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
             ?? "ios.external.ish_handoff"
         let canReturnExecutionOutput = IOSRemoteTerminalToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
+            || IOSAmberShellToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
             || IOSEmbeddedIshToolCatalog.supportedToolNames.contains(pending.toolCall.toolName)
         recordToolApproval(
             capabilityId: capabilityId,

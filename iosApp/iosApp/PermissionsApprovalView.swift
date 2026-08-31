@@ -14,6 +14,7 @@ struct PermissionsApprovalView: View {
             "ios.files.selected_read",
             "ios.workspace.file_read",
             "ios.workspace.file_write",
+            "ios.local.ambershell",
             "ios.agent.memory_write",
             "ios.network.search_tools",
             "ios.mcp.tool_call",
@@ -30,25 +31,27 @@ struct PermissionsApprovalView: View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
+            VStack(spacing: 0) {
+                header
 
-                    Text("管理 Agent 使用文件、记忆和网页会话前是否需要确认。")
-                        .font(.footnote)
-                        .foregroundStyle(AmberTheme.muted)
-                        .lineSpacing(3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
+                ScrollView {
+                    VStack(spacing: 0) {
+                        Text("管理 Agent 使用文件、记忆和网页会话前是否需要确认。")
+                            .font(.footnote)
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineSpacing(3)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 16)
 
-                    systemPermissionsSection
-                    globalApprovalSection
-                    approvalPolicySection
+                        systemPermissionsSection
+                        globalApprovalSection
+                        approvalPolicySection
+                    }
+                    .padding(.bottom, 36)
                 }
-                .padding(.bottom, 36)
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -173,7 +176,9 @@ struct PermissionsApprovalView: View {
     }
 
     private func displayedPolicies(for capability: IOSPlatformCapability) -> [IOSAgentPermissionPolicy] {
-        permissionStore.availablePolicies(for: capability).filter { $0 != .allowOncePerRun }
+        let policies = permissionStore.availablePolicies(for: capability).filter { $0 != .allowOncePerRun }
+        guard capability.id == "ios.local.ambershell" else { return policies }
+        return policies.filter { $0 == .disabled || $0 == .askEveryTime }
     }
 
     private func displayedDecisionSummary(for capability: IOSPlatformCapability) -> String {
@@ -191,6 +196,11 @@ struct PermissionsApprovalView: View {
 
     private func displayedPolicy(for capability: IOSPlatformCapability) -> IOSAgentPermissionPolicy {
         let policy = permissionStore.policy(for: capability)
+        if capability.id == "ios.local.ambershell",
+           policy != .disabled,
+           policy != .askEveryTime {
+            return .askEveryTime
+        }
         return policy == .allowOncePerRun ? .askEveryTime : policy
     }
 
@@ -200,8 +210,12 @@ struct PermissionsApprovalView: View {
     }
 
     private func normalizeDisplayedPolicies() {
-        for capability in approvalCapabilities where permissionStore.policy(for: capability) == .allowOncePerRun {
-            permissionStore.setPolicy(.askEveryTime, for: capability)
+        for capability in approvalCapabilities {
+            let policy = permissionStore.policy(for: capability)
+            if policy == .allowOncePerRun ||
+                (capability.id == "ios.local.ambershell" && policy != .disabled && policy != .askEveryTime) {
+                permissionStore.setPolicy(.askEveryTime, for: capability)
+            }
         }
     }
 }
@@ -235,7 +249,7 @@ private struct PermissionPolicyRow: View {
                     Text(verbatim: permissionSummary)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted2)
-                        .lineLimit(1)
+                        .lineLimit(capability.id == "ios.local.ambershell" ? 2 : 1)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -287,6 +301,8 @@ private struct PermissionPolicyRow: View {
             return IOSAppLocalization.string("读取文件和产出", defaultValue: "读取文件和产出")
         case "ios.workspace.file_write":
             return IOSAppLocalization.string("写入文件、删除产出", defaultValue: "写入文件、删除产出")
+        case "ios.local.ambershell":
+            return IOSAppLocalization.string("在 /workspace 执行受限本地命令", defaultValue: "在 /workspace 执行受限本地命令")
         case "ios.agent.memory_write":
             return IOSAppLocalization.string("新增、编辑或删除记忆", defaultValue: "新增、编辑或删除记忆")
         case "ios.network.search_tools":

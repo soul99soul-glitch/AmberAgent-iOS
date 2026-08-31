@@ -287,6 +287,7 @@ struct CouncilToolApprovalRequest: Identifiable, Equatable {
 enum IshToolApprovalMode: String, Equatable {
     case handoff
     case embeddedExecute
+    case amberShell
     case remoteSSH
     case remoteJobStart
     case remoteJobStop
@@ -317,6 +318,8 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
             "ios.external.ish_handoff"
         case .embeddedExecute, .embeddedJobStart, .embeddedJobStop:
             "ios.embedded.ish_runtime"
+        case .amberShell:
+            "ios.local.ambershell"
         case .remoteSSH, .remoteJobStart, .remoteJobStop:
             "ios.remote.command"
         }
@@ -330,6 +333,8 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
         switch mode {
         case .handoff: "交接到 iSH"
         case .embeddedExecute: "执行内置 iSH"
+        case .amberShell:
+            IOSAppLocalization.string("执行 AmberShell", defaultValue: "执行 AmberShell")
         case .remoteSSH: "执行 Remote SSH"
         case .remoteJobStart: "启动 Remote SSH 作业"
         case .remoteJobStop: "停止 Remote SSH 作业"
@@ -342,6 +347,8 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
         switch mode {
         case .handoff: ("doc.on.clipboard", "复制到剪贴板")
         case .embeddedExecute: ("terminal", "本地执行")
+        case .amberShell:
+            ("terminal.fill", IOSAppLocalization.string("稳定版本地执行", defaultValue: "稳定版本地执行"))
         case .remoteSSH: ("desktopcomputer", "远程执行")
         case .remoteJobStart: ("play.fill", "启动作业")
         case .remoteJobStop: ("stop.fill", "停止作业")
@@ -354,6 +361,8 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
         switch mode {
         case .handoff: ("hand.tap", "需手动粘贴")
         case .embeddedExecute: ("arrowshape.turn.up.left", "回传输出")
+        case .amberShell:
+            ("arrowshape.turn.up.left", IOSAppLocalization.string("回传输出", defaultValue: "回传输出"))
         case .remoteSSH: ("arrowshape.turn.up.left", "回传输出")
         case .remoteJobStart: ("number", "返回 Job ID")
         case .remoteJobStop: ("checkmark.circle", "幂等取消")
@@ -368,6 +377,11 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
             "审批前检查将交接到外部 iSH 的完整命令"
         case .embeddedExecute, .embeddedJobStart, .embeddedJobStop:
             "审批前检查内置 iSH 的完整命令"
+        case .amberShell:
+            IOSAppLocalization.string(
+                "审批前检查 AmberShell 的完整命令",
+                defaultValue: "审批前检查 AmberShell 的完整命令"
+            )
         case .remoteSSH, .remoteJobStart, .remoteJobStop:
             "审批前检查完整的 Remote SSH 命令"
         }
@@ -568,11 +582,14 @@ enum ChatToolApprovalRequestBuilder {
         localToolExecutor: IOSLocalToolExecutor? = nil,
         runId: String? = nil
     ) -> IshHandoffToolApprovalRequest? {
-        if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolCall.toolName) {
-            guard let preview = localToolExecutor?.remoteTerminalApprovalPreview(
+        if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolCall.toolName)
+            || IOSAmberShellToolCatalog.supportedToolNames.contains(toolCall.toolName) {
+            guard let preview = localToolExecutor?.terminalApprovalPreview(
                 toolName: toolCall.toolName,
                 input: toolCall.input
-            ) ?? IOSRemoteTerminalExecuteExecutor.approvalPreview(input: toolCall.input) else {
+            ) ?? (toolCall.toolName == IOSAmberShellToolCatalog.executeToolName
+                ? IOSAmberShellExecuteExecutor.approvalPreview(input: toolCall.input)
+                : IOSRemoteTerminalExecuteExecutor.approvalPreview(input: toolCall.input)) else {
                 return nil
             }
             return IshHandoffToolApprovalRequest(
@@ -876,6 +893,7 @@ enum ChatToolOutputFormatter {
         output: IOSLocalToolExecutionOutput
     ) -> String {
         let canReturnExecutionOutput = IOSRemoteTerminalToolCatalog.supportedToolNames.contains(toolCall.toolName)
+            || IOSAmberShellToolCatalog.supportedToolNames.contains(toolCall.toolName)
             || IOSEmbeddedIshToolCatalog.supportedToolNames.contains(toolCall.toolName)
         switch output {
         case .terminalResult(let result):

@@ -75,6 +75,159 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertTrue(remote.modelToolNames.contains("terminal_execute"))
     }
 
+    func testAmberShellRequiresApprovalAndRunsPwdWhenUserInitiated() async throws {
+        let executor = makeExecutor()
+        let input = #"{"command":"pwd","purpose":"inspect workspace"}"#
+
+        let blocked = await executor.execute(
+            IOSLocalToolExecutionRequest(
+                toolName: IOSAmberShellToolCatalog.executeToolName,
+                operation: input,
+                scopeDigest: "scope",
+                payloadDigest: "payload",
+                isUserInitiated: false
+            )
+        )
+        guard case .needsUserAction(let reason) = blocked else {
+            return XCTFail("Expected AmberShell approval, got \(blocked)")
+        }
+        XCTAssertTrue(reason.contains("AmberShell"))
+
+        let globallyAutoApproved = await executor.execute(
+            IOSLocalToolExecutionRequest(
+                toolName: IOSAmberShellToolCatalog.executeToolName,
+                operation: input,
+                scopeDigest: "scope",
+                payloadDigest: "payload",
+                isUserInitiated: false,
+                executionPolicy: IOSExecutionPolicySnapshot(
+                    capabilityPolicies: [
+                        "ios.local.ambershell": IOSAgentPermissionPolicy.autoApproveHighRisk.rawValue,
+                    ],
+                    globalAutoApproveEnabled: true,
+                    highRiskAutoApproveEnabled: true,
+                    execJavaScriptEnabled: false,
+                    webSearchEnabled: false
+                )
+            )
+        )
+        guard case .needsUserAction = globallyAutoApproved else {
+            return XCTFail("AmberShell must ignore reusable auto-approval, got \(globallyAutoApproved)")
+        }
+
+        let preview = try XCTUnwrap(
+            executor.terminalApprovalPreview(
+                toolName: IOSAmberShellToolCatalog.executeToolName,
+                input: input
+            )
+        )
+        XCTAssertEqual(preview.mode, .amberShell)
+        XCTAssertEqual(preview.capabilityId, "ios.local.ambershell")
+        XCTAssertEqual(preview.commandPreview, "pwd")
+        XCTAssertEqual(
+            preview.title,
+            IOSAppLocalization.string("执行 AmberShell", defaultValue: "执行 AmberShell")
+        )
+        XCTAssertTrue(preview.contextLines.contains(
+            IOSAppLocalization.formatted(
+                "超时：%lld 秒（协作式）",
+                defaultValue: "超时：%lld 秒（协作式）",
+                arguments: [Int64(60)]
+            )
+        ))
+
+        let output = await executor.execute(
+            IOSLocalToolExecutionRequest(
+                toolName: IOSAmberShellToolCatalog.executeToolName,
+                operation: input,
+                scopeDigest: "scope",
+                payloadDigest: "payload",
+                isUserInitiated: true
+            )
+        )
+        guard case .terminalResult(let result) = output else {
+            return XCTFail("Expected AmberShell terminal result, got \(output)")
+        }
+        let object = try jsonObject(result)
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["tool"] as? String, IOSAmberShellToolCatalog.executeToolName)
+        XCTAssertEqual(object["runtime"] as? String, IOSTerminalRuntimeKind.localIOSTools.rawValue)
+        XCTAssertEqual(object["cwd"] as? String, "/workspace")
+        XCTAssertEqual(object["stdout"] as? String, "/workspace\n")
+        XCTAssertEqual(object["stderr"] as? String, "")
+        XCTAssertEqual(object["exit_code"] as? Int, 0)
+    }
+
+    func testAmberShellRejectsInvalidTimeoutValues() async throws {
+        for timeout in ["true", "1.5", "0", "181"] {
+            let result = await IOSAmberShellExecuteExecutor.execute(
+                input: "{\"command\":\"pwd\",\"timeout_seconds\":\(timeout)}",
+                workspaceStore: makeWorkspaceStore()
+            )
+            let object = try jsonObject(result)
+            XCTAssertEqual(object["status"] as? String, IOSTerminalJobStatus.failed.rawValue, timeout)
+            XCTAssertTrue((object["error"] as? String)?.contains("timeout_seconds") == true, timeout)
+        }
+    }
+
+    func testAmberShellLsReadsTheWorkspaceRoot() async throws {
+        let store = makeWorkspaceStore()
+        let fileName = "ambershell-phase1-\(UUID().uuidString).txt"
+        let writeResult = await store.executeTool(
+            toolName: "workspace_file_write",
+            input: IOSWorkspaceStore.json([
+                "path": "/workspace/\(fileName)",
+                "content": "phase1",
+            ])
+        )
+        let fileId = try XCTUnwrap(jsonObject(writeResult)["id"] as? String)
+        defer { try? store.removeFile(id: fileId) }
+
+        let output = await makeExecutor(workspaceStore: store).execute(
+            IOSLocalToolExecutionRequest(
+                toolName: IOSAmberShellToolCatalog.executeToolName,
+                operation: #"{"command":"ls"}"#,
+                scopeDigest: "scope",
+                payloadDigest: "payload",
+                isUserInitiated: true
+            )
+        )
+        guard case .terminalResult(let result) = output else {
+            return XCTFail("Expected AmberShell ls result, got \(output)")
+        }
+        XCTAssertTrue((try jsonObject(result)["stdout"] as? String)?.contains(fileName) == true)
+    }
+
+    func testAmberShellPipelineUsesInjectedStdinAndWorkspace() async throws {
+        let store = makeWorkspaceStore()
+        try store.amberShellCreateDirectory(path: "notes")
+        let input = IOSWorkspaceStore.json([
+            "command": "sort | uniq -c > notes/counts.txt",
+            "stdin": "b\na\nb\n",
+            "purpose": "count sorted lines",
+        ])
+
+        let output = await makeExecutor(workspaceStore: store).execute(
+            IOSLocalToolExecutionRequest(
+                toolName: IOSAmberShellToolCatalog.executeToolName,
+                operation: input,
+                scopeDigest: "scope",
+                payloadDigest: "payload",
+                isUserInitiated: true
+            )
+        )
+        guard case .terminalResult(let result) = output else {
+            return XCTFail("Expected AmberShell terminal result, got \(output)")
+        }
+        let object = try jsonObject(result)
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["stdout"] as? String, "")
+        XCTAssertEqual(
+            try store.amberShellReadText(path: "notes/counts.txt", maxBytes: 64 * 1024),
+            "1 a\n2 b\n"
+        )
+    }
+
     func testFilePickIsDeniedBecauseItIsUIOnly() async {
         let output = await makeExecutor().execute(
             IOSLocalToolExecutionRequest(

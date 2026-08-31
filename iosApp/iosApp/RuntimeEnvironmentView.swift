@@ -75,19 +75,22 @@ struct RuntimeEnvironmentView: View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 0) {
-                    header
-                    intro
-                    runtimeStatusSection
-                    runtimeOverviewSection
-                    connectionOverviewSection
-                    agentToolsOverviewSection
-                    diagnosticsOverviewSection
+            VStack(spacing: 0) {
+                header
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        intro
+                        runtimeStatusSection
+                        runtimeOverviewSection
+                        connectionOverviewSection
+                        agentToolsOverviewSection
+                        diagnosticsOverviewSection
+                    }
+                    .padding(.bottom, 36)
                 }
-                .padding(.bottom, 36)
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -136,13 +139,27 @@ struct RuntimeEnvironmentView: View {
     }
 
     private var intro: some View {
-        Text("配置 Amber 执行命令与 iSH 工具的边界。默认 Runtime 负责前台验证和远程命令；Agent 的内置 iSH 执行与异步作业会独立走审批。")
+        Text(amberShellIntroText)
             .font(.footnote)
             .foregroundStyle(AmberTheme.muted)
             .lineSpacing(3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.bottom, 16)
+    }
+
+    private var amberShellIntroText: String {
+        #if ENABLE_AMBERSHELL_PYTHON
+        IOSAppLocalization.string(
+            "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限 python -c（CPython 3.14，无 pip、网络或宿主文件访问）；最多三段管道，仅支持 <、>、2> 重定向；不提供 system shell、PTY、控制流、glob、命令替换或 package install。",
+            defaultValue: "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname，以及受限 python -c（CPython 3.14，无 pip、网络或宿主文件访问）；最多三段管道，仅支持 <、>、2> 重定向；不提供 system shell、PTY、控制流、glob、命令替换或 package install。"
+        )
+        #else
+        IOSAppLocalization.string(
+            "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管道，仅支持 <、>、2> 重定向；当前 ExperimentalGPL target 不链接 CPython；不提供 system shell、PTY、控制流、glob、命令替换或 package install。",
+            defaultValue: "配置 AmberShell、Remote SSH 与 iSH 的执行边界。AmberShell 在 App 自有 /workspace 中运行受限非 PTY 命令并逐次审批；支持 pwd、ls、echo、cat、mkdir、touch、cp、mv、rm、head、tail、wc、printf、grep、sort、uniq、cut、tr、basename、dirname、env、date、uname；最多三段管道，仅支持 <、>、2> 重定向；当前 ExperimentalGPL target 不链接 CPython；不提供 system shell、PTY、控制流、glob、命令替换或 package install。"
+        )
+        #endif
     }
 
     private var runtimeStatusSection: some View {
@@ -181,7 +198,10 @@ struct RuntimeEnvironmentView: View {
                 if shouldShowRuntimeOptionsRow {
                     RuntimeDivider()
                     RuntimeNavigationRow(
-                        title: "实验 Runtime",
+                        title: IOSAppLocalization.string(
+                            "实验 Runtime",
+                            defaultValue: "实验 Runtime"
+                        ),
                         subtitle: experimentalRuntimeSubtitle,
                         value: experimentalRuntimeValue,
                         systemImage: "sparkles",
@@ -192,7 +212,7 @@ struct RuntimeEnvironmentView: View {
                 }
             }
 
-            Text("默认 Runtime 只影响前台测试和 Remote SSH 命令；聊天里的 iSH 工具在下方单独控制。")
+            Text("默认 Runtime 影响前台测试与聊天命令入口；AmberShell 逐次审批，支持受限文件/文本命令与最多三段管道，默认 60 秒协作式超时；阻塞的原生扩展需返回后才能结束。iSH 工具在下方单独控制。")
                 .runtimeFootnote()
         }
     }
@@ -202,9 +222,13 @@ struct RuntimeEnvironmentView: View {
             AmberSectionLabel(text: "连接配置")
             AmberFormGroup {
                 RuntimeNavigationRow(
-                    title: "SSH Profile",
+                    title: IOSAppLocalization.string(
+                        "SSH Profile",
+                        defaultValue: "SSH Profile"
+                    ),
                     subtitle: sshConnectionSummary,
-                    value: settingsStore.defaultSSHProfile?.displayName ?? "未配置",
+                    value: settingsStore.defaultSSHProfile?.displayName
+                        ?? IOSAppLocalization.string("未配置", defaultValue: "未配置"),
                     systemImage: "desktopcomputer",
                     accent: AmberTheme.accent
                 ) {
@@ -212,8 +236,14 @@ struct RuntimeEnvironmentView: View {
                 }
                 RuntimeDivider()
                 RuntimeNavigationRow(
-                    title: "Host 信任",
-                    subtitle: "连接前校验 host key；未信任时不会发送密码",
+                    title: IOSAppLocalization.string(
+                        "Host 信任",
+                        defaultValue: "Host 信任"
+                    ),
+                    subtitle: IOSAppLocalization.string(
+                        "连接前校验 host key；未信任时不会发送密码",
+                        defaultValue: "连接前校验 host key；未信任时不会发送密码"
+                    ),
                     value: sshStatusValue,
                     systemImage: "checkmark.shield",
                     accent: sshStatusAccent
@@ -226,13 +256,22 @@ struct RuntimeEnvironmentView: View {
 
     private var agentToolsOverviewSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "Agent iSH 工具")
+            AmberSectionLabel(text: "iSH 工具")
             AmberFormGroup {
                 RuntimeNavigationRow(
-                    title: "iSH 工具能力",
+                    title: IOSAppLocalization.string(
+                        "iSH 工具能力",
+                        defaultValue: "iSH 工具能力"
+                    ),
                     subtitle: embeddedIshAvailable
-                        ? "审批后可运行复杂非 PTY 脚本或异步 Job；外部 iSH 为手动交接"
-                        : "当前 target 未链接内置 iSH；外部 iSH 仅支持手动交接",
+                        ? IOSAppLocalization.string(
+                            "审批后可运行复杂非 PTY 脚本或异步 Job；外部 iSH 为手动交接",
+                            defaultValue: "审批后可运行复杂非 PTY 脚本或异步 Job；外部 iSH 为手动交接"
+                        )
+                        : IOSAppLocalization.string(
+                            "当前 target 未链接内置 iSH；外部 iSH 仅支持手动交接",
+                            defaultValue: "当前 target 未链接内置 iSH；外部 iSH 仅支持手动交接"
+                        ),
                     value: ishToolsSummary,
                     systemImage: "shippingbox",
                     accent: embeddedIshAvailable ? AmberTheme.accentGreen : AmberTheme.accentAmber
@@ -248,7 +287,10 @@ struct RuntimeEnvironmentView: View {
             AmberSectionLabel(text: "验证")
             AmberFormGroup {
                 RuntimeNavigationRow(
-                    title: "Smoke Test 与远程命令",
+                    title: IOSAppLocalization.string(
+                        "Smoke Test 与远程命令",
+                        defaultValue: "Smoke Test 与远程命令"
+                    ),
                     subtitle: diagnosticsSummary,
                     value: diagnosticsValue,
                     systemImage: "play.circle",
@@ -317,9 +359,10 @@ struct RuntimeEnvironmentView: View {
                 .padding(.top, 10)
             }
 
-            Text(IOSTerminalBuildPolicy.experimentalRuntimesLinked
-                ? "默认 Runtime 只影响前台测试和远程命令入口；聊天里的 iSH 工具是否暴露，由下方 Agent 工具能力和权限闸门决定。"
-                : "当前稳定 target 只提供 Remote SSH 和本地轻量工具作为默认 Runtime；聊天里的 iSH 交接能力在下方单独说明。")
+            let runtimeGateText = IOSTerminalBuildPolicy.experimentalRuntimesLinked
+                ? "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 始终逐次前台审批。"
+                : "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 始终逐次前台审批，iSH 交接能力在下方单独说明。"
+            Text(IOSAppLocalization.string(runtimeGateText, defaultValue: runtimeGateText))
                 .runtimeFootnote()
         }
     }
@@ -453,7 +496,7 @@ struct RuntimeEnvironmentView: View {
                 }
             }
 
-            Text("异步只表示 Agent 不必阻塞等待，并非 iOS 后台常驻：App 重启会把未完成作业标记为已中断。Amber 聊天 workspace、Remote SSH 的 cwd 与内置 iSH 的 /workspace 是三个隔离文件域，不会自动同步。")
+            Text("异步只表示 Agent 不必阻塞等待，并非 iOS 后台常驻：App 重启会把未完成作业标记为已中断。AmberShell 与聊天共用 App 自有 /workspace；Remote SSH 的 cwd 与内置 iSH 的 /workspace 与其隔离，不会自动同步。")
                 .runtimeFootnote()
         }
     }
@@ -517,7 +560,7 @@ struct RuntimeEnvironmentView: View {
                     .padding(.top, 10)
             }
 
-            Text("Smoke Test 会验证当前默认 Runtime：Remote SSH 执行 echo amber-terminal-smoke，本地工具与 iSH 执行 pwd。iSH 的 /workspace 位于内置 rootfs，与 Amber 聊天 workspace、Remote SSH cwd 隔离，不会自动同步。")
+            Text("Smoke Test 会验证当前默认 Runtime：Remote SSH 执行 echo amber-terminal-smoke，AmberShell 与 iSH 执行 pwd。AmberShell 与聊天共用 App 自有 /workspace；iSH 的 /workspace 位于内置 rootfs，Remote SSH 使用远端 cwd。")
                 .runtimeFootnote()
 
             if showsCapabilityMatrix {
@@ -633,42 +676,60 @@ struct RuntimeEnvironmentView: View {
 
     private var experimentalRuntimeSubtitle: String {
         guard IOSTerminalBuildPolicy.experimentalRuntimesLinked else {
-            return "当前构建没有链接实验 Runtime"
+            return IOSAppLocalization.string(
+                "当前构建没有链接实验 Runtime",
+                defaultValue: "当前构建没有链接实验 Runtime"
+            )
         }
         return settingsStore.terminalExperimentalRuntimesEnabled
-            ? "iSH Experimental 已显示；仅 ExperimentalGPL target，需 GPL 审核"
-            : "iSH Experimental 默认隐藏；仅 ExperimentalGPL target，需 GPL 审核"
+            ? IOSAppLocalization.string(
+                "iSH Experimental 已显示；仅 ExperimentalGPL target，需 GPL 审核",
+                defaultValue: "iSH Experimental 已显示；仅 ExperimentalGPL target，需 GPL 审核"
+            )
+            : IOSAppLocalization.string(
+                "iSH Experimental 默认隐藏；仅 ExperimentalGPL target，需 GPL 审核",
+                defaultValue: "iSH Experimental 默认隐藏；仅 ExperimentalGPL target，需 GPL 审核"
+            )
     }
 
     private var experimentalRuntimeValue: String {
         if !primaryRuntimeChoices.contains(settingsStore.terminalDefaultRuntime) {
             return settingsStore.terminalDefaultRuntime.displayName
         }
-        return settingsStore.terminalExperimentalRuntimesEnabled ? "已显示" : "已隐藏"
+        return settingsStore.terminalExperimentalRuntimesEnabled
+            ? IOSAppLocalization.string("已显示", defaultValue: "已显示")
+            : IOSAppLocalization.string("已隐藏", defaultValue: "已隐藏")
     }
 
     private var sshConnectionSummary: String {
         guard let profile = settingsStore.defaultSSHProfile else {
-            return "为 Remote SSH 添加 host、端口、用户名和密码"
+            return IOSAppLocalization.string(
+                "为 Remote SSH 添加 host、端口、用户名和密码",
+                defaultValue: "为 Remote SSH 添加 host、端口、用户名和密码"
+            )
         }
         let host = profile.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let user = profile.username.trimmingCharacters(in: .whitespacesAndNewlines)
-        let endpoint = host.isEmpty ? "Host 未填写" : "\(host):\(profile.port)"
+        let endpoint = host.isEmpty
+            ? IOSAppLocalization.string("Host 未填写", defaultValue: "Host 未填写")
+            : "\(host):\(profile.port)"
         return user.isEmpty ? endpoint : "\(user)@\(endpoint)"
     }
 
     private var sshStatusValue: String {
         switch sshStatus {
         case .idle:
-            return settingsStore.defaultSSHProfile?.knownHostSHA256?.isEmpty == false ? "已保存" : "待检查"
+            return settingsStore.defaultSSHProfile?.knownHostSHA256?.isEmpty == false
+                ? IOSAppLocalization.string("已保存", defaultValue: "已保存")
+                : IOSAppLocalization.string("待检查", defaultValue: "待检查")
         case .testing:
-            return "检查中"
+            return IOSAppLocalization.string("检查中", defaultValue: "检查中")
         case .needsTrust:
-            return "需确认"
+            return IOSAppLocalization.string("需确认", defaultValue: "需确认")
         case .success:
-            return "已信任"
+            return IOSAppLocalization.string("已信任", defaultValue: "已信任")
         case .failure:
-            return "异常"
+            return IOSAppLocalization.string("异常", defaultValue: "异常")
         }
     }
 
@@ -689,33 +750,47 @@ struct RuntimeEnvironmentView: View {
 
     private var ishToolsSummary: String {
         if embeddedIshAvailable && externalIshAvailable {
-            return "内置 + 交接"
+            return IOSAppLocalization.string("内置 + 交接", defaultValue: "内置 + 交接")
         }
         if embeddedIshAvailable {
-            return "内置可用"
+            return IOSAppLocalization.string("内置可用", defaultValue: "内置可用")
         }
         if externalIshAvailable {
-            return "外部交接"
+            return IOSAppLocalization.string("外部交接", defaultValue: "外部交接")
         }
-        return "未启用"
+        return IOSAppLocalization.string("未启用", defaultValue: "未启用")
     }
 
     private var diagnosticsSummary: String {
         if isRemoteCommandRunning {
-            return "远程命令正在运行，可进入查看输出或取消"
+            return IOSAppLocalization.string(
+                "远程命令正在运行，可进入查看输出或取消",
+                defaultValue: "远程命令正在运行，可进入查看输出或取消"
+            )
         }
         if let remoteCommandResult {
-            return "最近远程命令：\(terminalStatusTitle(remoteCommandResult.status))"
+            return IOSAppLocalization.formatted(
+                "最近远程命令：%@",
+                defaultValue: "最近远程命令：%@",
+                arguments: [terminalStatusTitle(remoteCommandResult.status)]
+            )
         }
         if let terminalSmokeResult {
-            return "最近 Smoke Test：\(terminalStatusTitle(terminalSmokeResult.status))"
+            return IOSAppLocalization.formatted(
+                "最近 Smoke Test：%@",
+                defaultValue: "最近 Smoke Test：%@",
+                arguments: [terminalStatusTitle(terminalSmokeResult.status)]
+            )
         }
-        return "验证当前 Runtime，或手动运行一次 Remote SSH 命令"
+        return IOSAppLocalization.string(
+            "验证当前 Runtime，或手动运行一次 Remote SSH 命令",
+            defaultValue: "验证当前 Runtime，或手动运行一次 Remote SSH 命令"
+        )
     }
 
     private var diagnosticsValue: String {
         if isRemoteCommandRunning {
-            return "运行中"
+            return IOSAppLocalization.string("运行中", defaultValue: "运行中")
         }
         if let remoteCommandResult {
             return terminalStatusTitle(remoteCommandResult.status)
@@ -723,7 +798,7 @@ struct RuntimeEnvironmentView: View {
         if let terminalSmokeResult {
             return terminalStatusTitle(terminalSmokeResult.status)
         }
-        return "打开"
+        return IOSAppLocalization.string("打开", defaultValue: "打开")
     }
 
     private var diagnosticsAccent: Color {
@@ -757,7 +832,8 @@ struct RuntimeEnvironmentView: View {
     }
 
     private func terminalStatusTitle(_ status: String) -> String {
-        IOSTerminalJobStatus(rawValue: status)?.title ?? status
+        guard let title = IOSTerminalJobStatus(rawValue: status)?.title else { return status }
+        return IOSAppLocalization.string(title, defaultValue: title)
     }
 
     private func terminalTaskAccessibilityLabel(_ task: IOSAdvancedTaskRecord) -> String {
@@ -1192,18 +1268,22 @@ private struct RuntimeStatusCard: View {
 
             HStack(spacing: 8) {
                 RuntimeStatusMetric(
-                    title: "默认",
+                    title: IOSAppLocalization.string("默认", defaultValue: "默认"),
                     value: defaultRuntime.displayName,
                     color: AmberTheme.accent
                 )
                 RuntimeStatusMetric(
-                    title: "内置 iSH",
-                    value: embeddedIshAvailable ? "可回传" : "未链接",
+                    title: IOSAppLocalization.string("内置 iSH", defaultValue: "内置 iSH"),
+                    value: embeddedIshAvailable
+                        ? IOSAppLocalization.string("可回传", defaultValue: "可回传")
+                        : IOSAppLocalization.string("未链接", defaultValue: "未链接"),
                     color: embeddedIshAvailable ? AmberTheme.accentGreen : AmberTheme.muted
                 )
                 RuntimeStatusMetric(
-                    title: "外部 iSH",
-                    value: externalIshAvailable ? "交接" : "不可用",
+                    title: IOSAppLocalization.string("外部 iSH", defaultValue: "外部 iSH"),
+                    value: externalIshAvailable
+                        ? IOSAppLocalization.string("交接", defaultValue: "交接")
+                        : IOSAppLocalization.string("不可用", defaultValue: "不可用"),
                     color: externalIshAvailable ? AmberTheme.accentAmber : AmberTheme.muted
                 )
             }
@@ -1217,14 +1297,33 @@ private struct RuntimeStatusCard: View {
     }
 
     private var strategySummary: String {
-        let profile = sshProfileName ?? "未选择 SSH Profile"
+        let profile = sshProfileName
+            ?? IOSAppLocalization.string(
+                "未选择 SSH Profile",
+                defaultValue: "未选择 SSH Profile"
+            )
         let experimental: String
         if !experimentalRuntimesLinked {
-            experimental = "当前构建未链接实验 Runtime"
+            experimental = IOSAppLocalization.string(
+                "当前构建未链接实验 Runtime",
+                defaultValue: "当前构建未链接实验 Runtime"
+            )
         } else {
-            experimental = experimentalEnabled ? "实验 Runtime 已显示" : "实验 Runtime 已隐藏"
+            experimental = experimentalEnabled
+                ? IOSAppLocalization.string(
+                    "实验 Runtime 已显示",
+                    defaultValue: "实验 Runtime 已显示"
+                )
+                : IOSAppLocalization.string(
+                    "实验 Runtime 已隐藏",
+                    defaultValue: "实验 Runtime 已隐藏"
+                )
         }
-        return "\(profile) · \(experimental)。聊天中的 iSH 工具会单独走前台审批。"
+        return IOSAppLocalization.formatted(
+            "%@ · %@。聊天中的 iSH 工具会单独走前台审批。",
+            defaultValue: "%@ · %@。聊天中的 iSH 工具会单独走前台审批。",
+            arguments: [profile, experimental]
+        )
     }
 }
 
@@ -1273,11 +1372,22 @@ private struct RuntimeChoiceRow: View {
                             .font(.body.weight(.medium))
                             .foregroundStyle(isEnabled ? AmberTheme.foreground : AmberTheme.muted2)
                         if isRecommended {
-                            RuntimePill(text: "推荐", color: AmberTheme.accent)
+                            RuntimePill(
+                                text: IOSAppLocalization.string("推荐", defaultValue: "推荐"),
+                                color: AmberTheme.accent
+                            )
                         }
-                        RuntimePill(text: runtimeTier == .stable ? "稳定" : "实验", color: runtimeTier == .stable ? AmberTheme.accentGreen : AmberTheme.accentAmber)
+                        RuntimePill(
+                            text: runtimeTier == .stable
+                                ? IOSAppLocalization.string("稳定", defaultValue: "稳定")
+                                : IOSAppLocalization.string("实验", defaultValue: "实验"),
+                            color: runtimeTier == .stable ? AmberTheme.accentGreen : AmberTheme.accentAmber
+                        )
                         if !isEnabled {
-                            RuntimePill(text: "未启用", color: AmberTheme.muted)
+                            RuntimePill(
+                                text: IOSAppLocalization.string("未启用", defaultValue: "未启用"),
+                                color: AmberTheme.muted
+                            )
                         }
                     }
 
@@ -1309,10 +1419,24 @@ private struct RuntimeChoiceRow: View {
 
     private var runtimeSummary: String {
         switch runtime {
-        case .remoteSSH: "稳定远程命令主线；需要 SSH Profile、密码和 Host 信任"
-        case .localIOSTools: "本地轻量验证与沙盒工具；不提供 Linux shell"
-        case .remoteMosh: "预留的移动会话方向；当前不建议作为默认环境"
-        case .ishExperimental: "内置 iSH 短命令 runner；无 PTY、stdin 和长会话"
+        case .remoteSSH:
+            return "稳定远程命令主线；需要 SSH Profile、密码和 Host 信任"
+        case .localIOSTools:
+            #if ENABLE_AMBERSHELL_PYTHON
+            return IOSAppLocalization.string(
+                "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY",
+                defaultValue: "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY"
+            )
+            #else
+            return IOSAppLocalization.string(
+                "AmberShell 文件/文本命令、管道与重定向；ExperimentalGPL 不链接 CPython，无 PTY",
+                defaultValue: "AmberShell 文件/文本命令、管道与重定向；ExperimentalGPL 不链接 CPython，无 PTY"
+            )
+            #endif
+        case .remoteMosh:
+            return "预留的移动会话方向；当前不建议作为默认环境"
+        case .ishExperimental:
+            return "内置 iSH 短命令 runner；无 PTY、stdin 和长会话"
         }
     }
 
