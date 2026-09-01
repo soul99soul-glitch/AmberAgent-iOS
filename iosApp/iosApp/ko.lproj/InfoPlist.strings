@@ -1,1 +1,3 @@
-"NSHealthShareUsageDescription" = "사용자가 직접 허용한 경우에만 Amber가 걸음 수를 읽어 이 기기에서 비공개 활동 요약을 표시합니다.";
+"NSHealthShareUsageDescription" = "사용자가 직접 허용한 경우에만 Amber가 활동, 운동 및 수면 요약을 읽어 Agent가 건강과 운동 추세를 분석하도록 돕습니다.";
+"NSSiriUsageDescription" = "Amber는 사용자가 Amber 동작을 실행할 때만 Siri와 단축어를 사용합니다.";
+"NSAlarmKitUsageDescription" = "Agent 요청을 승인한 경우에만 Amber가 눈에 띄는 알람과 타이머를 설정합니다.";

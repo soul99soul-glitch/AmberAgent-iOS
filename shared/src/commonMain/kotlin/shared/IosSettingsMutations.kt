@@ -20,7 +20,9 @@ import app.amber.core.model.reasoningLevelForModel
 import app.amber.core.model.withChatModelReasoningMemory
 import app.amber.core.model.withReasoningLevelForModel
 import app.amber.core.settings.DEFAULT_AUTO_MODEL_ID
+import app.amber.core.settings.DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT
 import app.amber.core.settings.DEFAULT_PROVIDERS
+import app.amber.core.settings.PREVIOUS_DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT
 import app.amber.core.model.InjectionPosition
 import app.amber.core.model.Lorebook
 import app.amber.core.model.PromptInjection
@@ -791,6 +793,9 @@ object IosSettingsMutations {
             .replace("AmberAgent", "Amber")
             .replace("an agent-only Android assistant", "an agent-only iOS assistant")
             .replace("Android System WebView", "the system WebView")
+
+        val previousDefaultPrompt = PREVIOUS_DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT.rebranded()
+        val nextDefaultPrompt = DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT.rebranded()
         return settings.copy(
             agentRuntime = settings.agentRuntime.copy(
                 agentSoulMarkdown = migratedAgentSoulMarkdown(
@@ -804,7 +809,9 @@ object IosSettingsMutations {
                     } else {
                         assistant.name
                     },
-                    systemPrompt = assistant.systemPrompt.rebranded(),
+                    systemPrompt = assistant.systemPrompt.rebranded().let { prompt ->
+                        if (prompt == previousDefaultPrompt) nextDefaultPrompt else prompt
+                    },
                 )
             },
         )

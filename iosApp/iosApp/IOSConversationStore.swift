@@ -203,6 +203,11 @@ final class IOSConversationStore {
             let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
                 ?? URL(fileURLWithPath: NSTemporaryDirectory())
             let conversations = documents.appendingPathComponent("conversations")
+            try? FileManager.default.createDirectory(at: conversations, withIntermediateDirectories: true)
+            var resourceValues = URLResourceValues()
+            resourceValues.isExcludedFromBackup = true
+            var privateConversations = conversations
+            try? privateConversations.setResourceValues(resourceValues)
             baseDirPath = conversations.path
             previewsURL = conversations.appendingPathComponent("list-previews.json")
             iconsURL = conversations.appendingPathComponent("list-icons.json")
@@ -330,6 +335,15 @@ final class IOSConversationStore {
         }
 
         await newConversation()
+    }
+
+    /// Read-only projection for App Entity queries. It deliberately avoids
+    /// bootstrap so querying Shortcuts never creates or selects a conversation.
+    func appIntentSummaries(limit: Int? = 20) async -> [ConversationSummary] {
+        let source = summaries.isEmpty ? ((try? await storage.listSummaries()) ?? []) : summaries
+        guard let limit else { return source }
+        let boundedLimit = max(0, min(limit, 50))
+        return Array(source.prefix(boundedLimit))
     }
 
     /// 切换到指定会话：从磁盘 load 完整对象，设为 current。

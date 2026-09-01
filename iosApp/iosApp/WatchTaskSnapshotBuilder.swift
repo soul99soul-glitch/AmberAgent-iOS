@@ -33,9 +33,6 @@ enum WatchTaskSnapshotBuilder {
         }
 
         var actions: [WatchAction] = []
-        if conversationId != nil {
-            actions.append(.openOnPhone)
-        }
         if let decision = visibleDecision {
             switch decision.type {
             case .approval:
@@ -50,6 +47,16 @@ enum WatchTaskSnapshotBuilder {
             || presentation.phase == .waitingForUser
             || presentation.phase == .reconnecting {
             actions.append(.cancel)
+        }
+        if presentation.phase == .failed,
+           presentation.retryable == true,
+           conversationId != nil {
+            actions.append(.retry)
+        }
+        // A decision card already owns its single open-on-phone affordance.
+        // For ordinary states, keep the state-changing primary action first.
+        if conversationId != nil, visibleDecision == nil {
+            actions.append(.openOnPhone)
         }
 
         var seen = Set<WatchAction>()

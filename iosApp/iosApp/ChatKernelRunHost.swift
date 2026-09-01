@@ -215,6 +215,7 @@ final class ChatKernelRunHost {
         let startedAt = Int64(Date().timeIntervalSince1970 * 1000)
         currentRunId = runId
         currentStartedAt = startedAt
+        WatchTaskCoordinator.shared.registerRun(runId: runId, startedAt: startedAt)
         currentInputDigest = inputDigest
         currentConversationIdForRun = conversationId
         currentParams = params
@@ -410,6 +411,7 @@ final class ChatKernelRunHost {
         let inputDigest = chatInputDigest(for: input)
         currentRunId = runId
         currentStartedAt = startedAt
+        WatchTaskCoordinator.shared.registerRun(runId: runId, startedAt: startedAt)
         currentInputDigest = inputDigest
         currentConversationIdForRun = conversationId
         currentParams = nil
@@ -1397,6 +1399,44 @@ final class ChatKernelRunHost {
         answerPendingAskUser("")
     }
 
+    @discardableResult
+    func resolvePendingToolApprovalFromWatch(
+        runId: String,
+        requestId: String,
+        allow: Bool
+    ) -> Bool {
+        guard currentRunId == runId,
+              let prompt = pendingPrompt,
+              Self.requestId(of: prompt) == requestId,
+              Self.category(of: prompt) != .askUser else {
+            return false
+        }
+        return resolvePendingApproval(
+            decision: allow ? .approve : .deny,
+            category: Self.category(of: prompt),
+            requestId: requestId
+        )
+    }
+
+    @discardableResult
+    func answerPendingAskUserFromWatch(
+        runId: String,
+        requestId: String,
+        answer: String
+    ) -> Bool {
+        guard currentRunId == runId,
+              let prompt = pendingPrompt,
+              case .askUser = prompt,
+              Self.requestId(of: prompt) == requestId else {
+            return false
+        }
+        return resolvePendingApproval(
+            decision: .answer(answer),
+            category: .askUser,
+            requestId: requestId
+        )
+    }
+
     /// 类目 + requestId 核对(mcp/recipe 卡带 id,陈旧点击不消费)→ 清卡 →
     /// 恢复前奏(CG-C :4474-4475/:4598-4610:isLoading + keepalive +
     /// LiveActivity generating;deny 路径 CG-C 在 resumeAfterApproval 才做,
@@ -1450,11 +1490,15 @@ final class ChatKernelRunHost {
 
     private static func requestId(of prompt: ChatToolApprovalPrompt) -> String? {
         switch prompt {
+        case .memory(let request): return request.id
+        case .search(let request): return request.id
         case .webMount(let request): return request.id
+        case .workspace(let request): return request.id
         case .ish(let request): return request.id
         case .mcp(let request): return request.id
+        case .council(let request): return request.id
+        case .askUser(let request): return request.id
         case .recipe(let request): return request.id
-        default: return nil
         }
     }
 
@@ -2191,13 +2235,30 @@ final class ChatKernelRunHost {
             releaseLocalRunAfterTerminalRecordFailure(runId: runId)
             return
         }
+        let currentRunMessages = updated.dropFirst(min(displayBaseline.count, updated.count))
+        let retryableFailure = didPersist
+            && !requiresRecovery
+            && !currentRunMessages.contains { message in
+                message.parts.contains { $0 is UIMessagePart.Tool }
+            }
+        let failurePresentation = AgentActivityPresentation.failed(
+            retryable: retryableFailure
+        )
+        AgentActivityRetryEligibilityStore.shared.setEligible(
+            retryableFailure,
+            runId: runId,
+            conversationId: conversationHex
+        )
         WatchTaskCoordinator.shared.publish(
             runId: runId,
             conversationId: conversationHex,
-            presentation: .failed(),
+            presentation: failurePresentation,
             summary: watchSummary
         )
-        await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
+        await dependencies.liveActivityController.end(
+            runId: runId,
+            presentation: failurePresentation
+        )
         if !didPersist {
             print("[AmberChat] Failed to persist kernel failure terminal run=\(runId)")
         }

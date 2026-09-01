@@ -261,72 +261,67 @@ struct AgentBrowserTaskCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 10) {
-                    taskIdentity
-                    Spacer(minLength: 8)
-                    statusBadge
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    taskIdentity
-                    statusBadge
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 10) {
+                taskIdentity
+                Spacer(minLength: 4)
+                collapseButton
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 11)
 
-            Text(pageSummary)
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            Divider()
+                .overlay(AmberTheme.borderSoft)
+                .padding(.leading, 54)
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                statusBadge
                 backendLabel
-                Spacer(minLength: 8)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
                 Button(action: onOpen) {
-                    Label(openLabel, systemImage: record.backend == .local ? "eye" : "macwindow")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AmberTheme.accent)
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 34)
-                        .background(AmberTheme.surface2, in: Capsule())
+                    HStack(spacing: 4) {
+                        Text(openLabel)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .padding(.horizontal, 8)
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .frame(minHeight: 44)
-                .contentShape(Capsule())
                 .accessibilityLabel("\(openLabel)，\(siteTitle)，\(status.label)")
             }
+            .padding(.leading, 12)
+            .padding(.trailing, 6)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
-        .overlay(alignment: .top) {
-            if onCollapse != nil {
-                collapseHandle
-            }
-        }
+        .simultaneousGesture(collapseGesture)
         .offset(y: min(12, dragTranslation * 0.24))
     }
 
-    private var collapseHandle: some View {
-        Button(action: collapse) {
-            Capsule()
-                .fill(AmberTheme.muted2.opacity(0.5))
-                .frame(width: 30, height: 4)
-                .frame(width: 60, height: 30, alignment: .top)
-                .padding(.top, 6)
-                .contentShape(Rectangle())
+    @ViewBuilder
+    private var collapseButton: some View {
+        if onCollapse != nil {
+            Button(action: collapse) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(AmberTheme.muted)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("收起浏览器任务")
+            .accessibilityHint("向下拖动或轻点收起")
         }
-        .buttonStyle(.plain)
-        .frame(width: 60, height: 44, alignment: .top)
-        .contentShape(Rectangle())
-        .simultaneousGesture(collapseGesture)
-        .accessibilityLabel("收起浏览器任务")
-        .accessibilityHint("向下拖动或轻点收起")
     }
 
     private var collapseGesture: some Gesture {
@@ -362,15 +357,19 @@ struct AgentBrowserTaskCard: View {
                 .background(AmberTheme.surface2, in: Circle())
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Agent 浏览器任务")
+                Text(siteTitle)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
-                Text(siteTitle)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.foreground2)
                     .lineLimit(1)
+                Text(pageSummary)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
     }
 
@@ -380,7 +379,7 @@ struct AgentBrowserTaskCard: View {
             .foregroundStyle(status.tint)
             .padding(.horizontal, 8)
             .frame(minHeight: 24)
-            .background(AmberTheme.surface2, in: Capsule())
+            .background(status.tint.opacity(0.10), in: Capsule())
             .fixedSize(horizontal: true, vertical: false)
     }
 
@@ -428,7 +427,13 @@ struct AgentBrowserTaskCompactBar: View {
                 .frame(width: 22, height: 22)
                 .background(AmberTheme.accent.opacity(0.14), in: Circle())
 
-            AgentBrowserTaskMarqueeText(text: summary)
+            Text(summary)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
             Image(systemName: "chevron.up")
                 .font(.system(size: 9, weight: .bold))
@@ -479,105 +484,6 @@ struct AgentBrowserTaskCompactBar: View {
 
     private var animation: Animation? {
         reduceMotion ? nil : .timingCurve(0.22, 1, 0.36, 1, duration: 0.24)
-    }
-}
-
-private struct AgentBrowserTaskMarqueeText: View {
-    let text: String
-
-    @State private var textWidth: CGFloat = 0
-    @State private var containerWidth: CGFloat = 0
-    @State private var travel: CGFloat = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        Text(text)
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(AmberTheme.foreground)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: AgentBrowserTaskTextWidthPreferenceKey.self,
-                        value: proxy.size.width
-                    )
-                }
-            }
-            .offset(x: -min(travel, overflow))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
-            .background {
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: AgentBrowserTaskContainerWidthPreferenceKey.self,
-                        value: proxy.size.width
-                    )
-                }
-            }
-            .onPreferenceChange(AgentBrowserTaskTextWidthPreferenceKey.self) { textWidth = $0 }
-            .onPreferenceChange(AgentBrowserTaskContainerWidthPreferenceKey.self) { containerWidth = $0 }
-            .task(id: animationKey) {
-                travel = 0
-                guard !reduceMotion, overflow > 8 else { return }
-
-                while !Task.isCancelled {
-                    guard await pause(seconds: 1.4) else { return }
-                    let forwardDuration = marqueeForwardDuration(overflow: overflow)
-                    withAnimation(.linear(duration: forwardDuration)) {
-                        travel = overflow
-                    }
-                    guard await pause(seconds: forwardDuration + 1.2) else { return }
-
-                    let returnDuration = marqueeReturnDuration(overflow: overflow)
-                    withAnimation(.easeInOut(duration: returnDuration)) {
-                        travel = 0
-                    }
-                    guard await pause(seconds: returnDuration + 2.0) else { return }
-                }
-            }
-            .allowsHitTesting(false)
-    }
-
-    private var overflow: CGFloat {
-        max(0, textWidth - containerWidth)
-    }
-
-    private var animationKey: String {
-        "\(text)|\(Int(textWidth.rounded()))|\(Int(containerWidth.rounded()))|\(reduceMotion)"
-    }
-
-    private func marqueeForwardDuration(overflow: CGFloat) -> Double {
-        max(2.5, Double(overflow) / 22)
-    }
-
-    private func marqueeReturnDuration(overflow: CGFloat) -> Double {
-        min(1.6, max(0.7, Double(overflow) / 90))
-    }
-
-    private func pause(seconds: Double) async -> Bool {
-        do {
-            try await Task.sleep(for: .seconds(seconds))
-            return !Task.isCancelled
-        } catch {
-            return false
-        }
-    }
-}
-
-private struct AgentBrowserTaskTextWidthPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
-}
-
-private struct AgentBrowserTaskContainerWidthPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
     }
 }
 
@@ -1000,6 +906,8 @@ struct WebMountSiteView: View {
     @State private var contentHandoff: IOSWebMountContentHandoff?
     @State private var banner: String?
     @State private var isLoading = false
+    @State private var observationRequestID: UUID?
+    @State private var showInspector = false
     @AppStorage("app.amber.ios.highRiskAutoApprove") private var highRiskAutoApprove = false
     private let hasBoundSession: Bool
 
@@ -1099,21 +1007,13 @@ struct WebMountSiteView: View {
 
             VStack(spacing: 0) {
                 header
+                workspaceBrowserBar
 
-                ScrollView {
-                    VStack(spacing: 0) {
-                        if let banner = displayedBanner {
-                            WebMountBanner(text: banner)
-                                .padding(.top, 4)
-                        }
-                        runtimeSection
-                        webViewSection
-                        bridgeSection
-                        cookieSection
-                    }
-                    .padding(.bottom, 36)
+                if let banner = displayedBanner {
+                    WebMountBanner(text: banner)
                 }
-                .scrollIndicators(.hidden)
+
+                webViewSection
             }
         }
         .navigationBarBackButtonHidden(true)
@@ -1144,38 +1044,182 @@ struct WebMountSiteView: View {
                 await openSite()
             }
         }
+        .sheet(isPresented: $showInspector) {
+            inspectorSheet
+        }
     }
 
     private var header: some View {
-        HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回 WebMount", size: 44, symbolSize: 20) {
-                dismiss()
-            }
-
-            Spacer()
-
+        ZStack {
             VStack(spacing: 2) {
                 Text(resolvedSite.displayName)
-                    .font(.title2.weight(.bold))
+                    .font(.headline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.82)
                 Text(resolvedSite.homepageHost)
                     .font(.caption2.weight(.medium))
                     .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
+            .padding(.horizontal, 88)
 
-            Spacer()
+            HStack(spacing: 0) {
+                AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回 WebMount", size: 44, symbolSize: 20) {
+                    dismiss()
+                }
 
-            AmberGlassCircleButton(systemImage: "arrow.clockwise", accessibilityLabel: "重新加载", size: 44, symbolSize: 17) {
-                Task { await openSite() }
+                Spacer()
+
+                AmberGlassCircleButton(systemImage: "arrow.clockwise", accessibilityLabel: "重新加载", size: 44, symbolSize: 17) {
+                    Task { await openSite() }
+                }
+                .disabled(isLoading || !canUserMutate)
+                .opacity(isLoading || !canUserMutate ? 0.45 : 1)
+
+                Button {
+                    showInspector = true
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("打开页面检查器")
             }
-            .disabled(isLoading || !canUserMutate)
-            .opacity(isLoading || !canUserMutate ? 0.45 : 1)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
+        .padding(.top, 4)
+        .padding(.bottom, 4)
+    }
+
+    private var workspaceBrowserBar: some View {
+        HStack(spacing: 4) {
+            workspaceBrowserButton(
+                systemImage: "chevron.left",
+                accessibilityLabel: "网页后退",
+                isEnabled: runtime.snapshot.canGoBack && canUserMutate
+            ) {
+                Task { _ = await runtime.back() }
+            }
+
+            workspaceBrowserButton(
+                systemImage: "chevron.right",
+                accessibilityLabel: "网页前进",
+                isEnabled: runtime.snapshot.canGoForward && canUserMutate
+            ) {
+                Task { _ = await runtime.forward() }
+            }
+
+            TextField("输入网址", text: $openURLText)
+                .font(.system(size: 13, design: .monospaced))
+                .textFieldStyle(.plain)
+                .lineLimit(1)
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .disabled(!canUserMutate)
+                .layoutPriority(1)
+
+            workspaceBrowserButton(
+                systemImage: "arrow.right",
+                accessibilityLabel: "打开网址",
+                isEnabled: !isLoading && canUserMutate
+            ) {
+                Task { await openTypedURL() }
+            }
+
+            workspaceControlButton
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(AmberTheme.surface)
+        .overlay(alignment: .bottom) {
+            Divider().overlay(AmberTheme.borderSoft)
+        }
+    }
+
+    private func workspaceBrowserButton(
+        systemImage: String,
+        accessibilityLabel: String,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isEnabled ? AmberTheme.foreground2 : AmberTheme.muted2)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var workspaceControlButton: some View {
+        Button {
+            if sessionRecord?.controlOwner == .user {
+                handBackToAgent()
+            } else {
+                takeUserControl()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(controlOwnerTint)
+                    .frame(width: 7, height: 7)
+                Text(sessionRecord?.controlOwner == .user ? "交还" : "接管")
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(AmberTheme.foreground2)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 44)
+            .background(
+                isAgentControlActive ? AmberTheme.accent.opacity(0.10) : AmberTheme.surface2,
+                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(isAgentControlActive ? AmberTheme.accent.opacity(0.42) : AmberTheme.borderSoft, lineWidth: 0.7)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(sessionRecord == nil)
+        .opacity(sessionRecord == nil ? 0.45 : 1)
+        .accessibilityLabel(sessionRecord?.controlOwner == .user ? "交还 WebMount 页面给 Agent" : "接管 WebMount 页面")
+    }
+
+    private var inspectorSheet: some View {
+        NavigationStack {
+            ZStack {
+                AmberThemePageBackground(surface: .app)
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        runtimeSection
+                        bridgeSection
+                        cookieSection
+                    }
+                    .padding(.bottom, 32)
+                }
+                .scrollIndicators(.hidden)
+            }
+            .navigationTitle("页面检查器")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { showInspector = false }
+                }
+            }
+        }
+        .presentationDetents([.height(320), .height(620)])
+        .presentationDragIndicator(.visible)
     }
 
     private var runtimeSection: some View {
@@ -1292,7 +1336,7 @@ struct WebMountSiteView: View {
         Button("观察") { Task { await self.observePage() } }
             .buttonStyle(.glass)
             .frame(minHeight: 44)
-            .disabled(!canReadPage)
+            .disabled(!canReadPage || observationRequestID != nil)
         Button("视觉快照") { Task { await visualSnapshot() } }
             .buttonStyle(.glass)
             .frame(minHeight: 44)
@@ -1310,7 +1354,11 @@ struct WebMountSiteView: View {
                 if isWatchMode, registry.site(id: site.siteId) == nil {
                     WebMountBadge(text: "高风险模式", systemImage: "exclamationmark.shield", tint: AmberTheme.accentAmber)
                 } else {
-                    WebMountBadge(text: resolvedSite.enabled ? "已允许" : "已停用", systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield", tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed)
+                    WebMountBadge(
+                        text: resolvedSite.enabled ? "Agent 已允许" : "Agent 未允许",
+                        systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield",
+                        tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed
+                    )
                 }
                 WebMountBadge(text: runtime.snapshot.sessionId, systemImage: "rectangle.stack", tint: AmberTheme.accentIndigo)
                 WebMountBadge(text: controlOwnerBadgeText, systemImage: controlOwnerImage, tint: controlOwnerTint)
@@ -1329,39 +1377,38 @@ struct WebMountSiteView: View {
     }
 
     private var webViewSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "网页")
-            Group {
-                if hasViewablePage {
-                    WebMountRuntimeWebView(runtime: runtime, isInteractive: canUserMutate)
-                        .accessibilityHint(isWatchMode && !canUserMutate ? "观看模式，仅可查看；接管后可操作。" : "")
-                } else {
-                    VStack(spacing: 10) {
-                        Image(systemName: sessionRecord?.needsReopen == true ? "arrow.clockwise" : "rectangle.slash")
-                            .font(.system(size: 28, weight: .medium))
-                            .foregroundStyle(AmberTheme.muted2)
-                        Text(sessionRecord?.needsReopen == true ? "会话需要重新打开" : "会话不存在或已过期")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(AmberTheme.foreground)
-                        Text(sessionRecord?.needsReopen == true
-                             ? "接管后可显式打开页面；旧页面和旧动作不会自动恢复。"
-                             : "返回 Agent 浏览器任务列表重新打开。")
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AmberTheme.surface2)
+        Group {
+            if hasViewablePage {
+                WebMountRuntimeWebView(runtime: runtime, isInteractive: canUserMutate)
+                    .accessibilityHint(isWatchMode && !canUserMutate ? "观看模式，仅可查看；接管后可操作。" : "")
+            } else {
+                VStack(spacing: 10) {
+                    Image(systemName: sessionRecord?.needsReopen == true ? "arrow.clockwise" : "rectangle.slash")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(AmberTheme.muted2)
+                    Text(sessionRecord?.needsReopen == true ? "会话需要重新打开" : "会话不存在或已过期")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                    Text(sessionRecord?.needsReopen == true
+                         ? "接管后可显式打开页面；旧页面和旧动作不会自动恢复。"
+                         : "返回 Agent 浏览器任务列表重新打开。")
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AmberTheme.surface2)
             }
-            .frame(height: 420)
-            .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(AmberTheme.surface)
+        .layoutPriority(1)
+        .overlay(alignment: .top) {
+            if isLoading {
+                ProgressView(value: runtime.snapshot.estimatedProgress)
+                    .tint(AmberTheme.accent)
             }
-            .padding(.horizontal, 16)
         }
     }
 
@@ -1705,6 +1752,7 @@ struct WebMountSiteView: View {
             await openTypedURL()
             return
         }
+        observationRequestID = nil
         isLoading = true
         _ = await controller.openForUser(site: resolvedSite, sessionId: runtime.snapshot.sessionId)
         openURLText = runtime.snapshot.currentURL ?? resolvedSite.homepageURL
@@ -1719,6 +1767,7 @@ struct WebMountSiteView: View {
             banner = "Agent 正在控制此页面，请先接管。"
             return
         }
+        observationRequestID = nil
         isLoading = true
         var input: [String: Any] = [
             "url": openURLText,
@@ -1788,21 +1837,44 @@ struct WebMountSiteView: View {
     }
 
     private func observePage() async {
+        let requestID = UUID()
+        observationRequestID = requestID
+        defer {
+            if observationRequestID == requestID { observationRequestID = nil }
+        }
         do {
-            let readable = try await runtime.extract(mode: "readable", maxChars: 2_000, maxLinks: 20)
-            let interactive = try await runtime.extract(mode: "interactive", maxChars: 0, maxLinks: 80)
-            let visual = try await runtime.extract(mode: "snapshot", maxChars: 0, maxLinks: 80)
-            extractText = IOSWebMountRedactor.redactedText((readable["text"] as? String) ?? extractText)
-            linksText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(readable["links"] ?? []))
-            interactiveText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(interactive["nodes"] ?? []))
-            visualSnapshotText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(visual["visual_candidates"] ?? visual))
-            debugJSONText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject([
-                "readable": readable,
-                "interactive": interactive,
-                "visual": visual
-            ]))
+            let observation = try await runtime.observe(maxChars: 2_000, maxLinks: 20)
+            guard observationRequestID == requestID else { return }
+            let visibleText = IOSWebMountRedactor.redactedText((observation["visible_text"] as? String) ?? "")
+            extractText = visibleText
+            linksText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(observation["links"] ?? []))
+            interactiveText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(observation["interactive_elements"] ?? []))
+            visualSnapshotText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(observation["visual_candidates"] ?? []))
+            debugJSONText = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(observation))
+            if let page = observation["page"] as? [String: Any] {
+                bridgeState = IOSWebMountController.json(IOSWebMountRedactor.redactedJSONObject(page))
+            }
+            let extraction: [String: Any] = [
+                "text": visibleText,
+                "links": observation["links"] ?? [],
+                "title": (observation["page"] as? [String: Any])?["title"] as? String ?? "",
+                "url": (observation["page"] as? [String: Any])?["url"] as? String ?? ""
+            ]
+            contentHandoff = IOSWebMountContentHandoff.from(
+                site: resolvedSite,
+                snapshot: runtime.snapshot,
+                extraction: extraction
+            )
+            IOSWebMountActivityStore.shared.recordExtraction(
+                siteName: resolvedSite.displayName,
+                title: extraction["title"] as? String,
+                characterCount: visibleText.count,
+                linkCount: (observation["links"] as? [[String: Any]])?.count ?? 0
+            )
+            controller.sessionStore.touch(sessionId: runtime.snapshot.sessionId, makeCurrent: false)
             selectedResultTab = .interactive
         } catch {
+            guard observationRequestID == requestID else { return }
             debugJSONText = IOSWebMountController.json(["ok": false, "error": IOSWebMountRedactor.redactedText(error.localizedDescription)])
             selectedResultTab = .debug
         }
@@ -2195,7 +2267,7 @@ private struct WebMountCodeBlock: View {
     }
 }
 
-private struct WebMountDivider: View {
+struct WebMountDivider: View {
     var body: some View {
         Divider()
             .overlay(AmberTheme.borderSoft)

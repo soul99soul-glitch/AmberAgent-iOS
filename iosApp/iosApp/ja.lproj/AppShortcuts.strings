@@ -1,0 +1,5 @@
+"询问 ${applicationName}" = "${applicationName} に質問";
+"让 ${applicationName} 帮我" = "${applicationName} に手伝ってもらう";
+"用 ${applicationName} 生成每日简报" = "${applicationName} でデイリーブリーフを作成";
+"让 ${applicationName} 总结今天" = "${applicationName} に今日をまとめてもらう";
+"运行 ${applicationName} 快捷消息" = "${applicationName} の保存メッセージを実行";

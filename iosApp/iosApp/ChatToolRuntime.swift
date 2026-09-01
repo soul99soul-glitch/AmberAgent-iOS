@@ -54,8 +54,9 @@ private extension IOSLocalToolExecutionOutput {
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return false
         }
-        return object["status"] as? String == "unknown_after_action" &&
-            object["may_have_applied"] as? Bool == true
+        guard object["may_have_applied"] as? Bool == true else { return false }
+        return ["unknown_after_action", "ambiguous", "dispatched_unverified"]
+            .contains(object["status"] as? String ?? "")
     }
 }
 
@@ -727,9 +728,8 @@ final class ChatToolRuntime {
 
         // Advanced tools in background. The foreground approval UI cannot surface
         // during a BGContinuedProcessingTask, so:
-        //  - subagent_dispatch: disabled stays blocked; askEveryTime (including a
-        //    normalized legacy allowOncePerRun value) must return to foreground
-        //    for approval. Only autoApprove may execute silently in background.
+        //  - subagent_dispatch: orchestration may run when enabled. The worker is
+        //    read-only and every nested tool keeps its own permission boundary.
         //  - mcp_call: high-risk (external/remote), mirrors the foreground gate —
         //    only runs when the high-risk auto-approve switch is on, otherwise
         //    denied so the user returns to the app to confirm.
@@ -747,17 +747,6 @@ final class ChatToolRuntime {
                 guard self.isAdvancedToolEnabled(toolName) else {
                     return .failed("\(toolName) 未开启。请先在设置中启用对应能力。")
                 }
-                guard !self.requiresSubAgentApproval() else {
-                    self.recordToolApproval(
-                        capabilityId: "ios.agent.subagent_dispatch",
-                        toolCall: toolCall,
-                        action: .denied,
-                        reason: "Background subagent dispatch requires foreground approval.",
-                        runId: runId,
-                        isUserDecision: false
-                    )
-                    return .denied("后台生成期间需要回到 App 确认子代理调度。")
-                }
                 let result = await self.dispatchAdvancedToolCall(
                     toolCall,
                     providerSetting: providerSetting,
@@ -765,7 +754,6 @@ final class ChatToolRuntime {
                     runId: runId,
                     conversationId: conversationId
                 )
-                self.recordAdvancedToolApprovalIfNeeded(toolCall: toolCall, runId: runId)
                 return .filled(result)
             }
         }
@@ -784,7 +772,23 @@ final class ChatToolRuntime {
                 return .filled(await IOSWeatherToolExecutor.execute(input: arguments))
             }
         }
-
+        if availableToolNames.contains(IOSAppleAgentToolCatalog.workoutPlanPreview) {
+            executors[IOSAppleAgentToolCatalog.workoutPlanPreview] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { name, arguments, _ in
+                .filled(await IOSWorkoutAgentToolExecutor.execute(toolName: name, input: arguments))
+            }
+        }
+        for name in IOSAppleAgentToolCatalog.approvalRequiredToolNames
+        where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
+                .denied("Apple 健康、日历、提醒事项、通知与闹钟工具需要回到 App 前台确认。")
+            }
+        }
+        for name in IOSAppleAgentToolCatalog.pickerToolNames
+        where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { _, _, _ in
+                .denied("个人资料选取需要回到 App 前台使用系统选择器。")
+            }
+        }
         // ask_user is a foreground HITL node. Background cannot present the card or
         // Watch decision, so deny with an explicit return-to-app reason instead of
         // leaving the tool unregistered (engine would otherwise error-fill and continue).
@@ -1069,11 +1073,11 @@ final class ChatToolRuntime {
         if ["session_search", "session_read"].contains(name) { return .sessionRead }
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
-            IOSWeatherToolCatalog.toolName,
             IOSSoulToolCatalog.toolName,
             "spawn_agent", "list_agents", "interrupt_agent",
             "send_message", "followup_task", "wait_agent",
         ])
+        .union(IOSAppleAgentToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)
         .union(IOSMcpManagementToolCatalog.toolNames)
         .union(IOSProviderConfigToolCatalog.toolNames)
@@ -1606,6 +1610,12 @@ final class ChatToolRuntime {
             audit = ("ios.settings.theme_pack", "Theme pack try-on")
         } else if pending.toolCall.toolName == IOSSoulToolCatalog.toolName {
             audit = ("ios.skills.management", "Soul update")
+        } else if IOSAppleAgentToolCatalog.toolNames.contains(pending.toolCall.toolName) {
+            audit = (
+                IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
+                    ?? "ios.apple.agent_tools",
+                "Apple device capability"
+            )
         } else {
             audit = ("ios.skills.management", "local Skill operation")
         }
@@ -1725,12 +1735,8 @@ final class ChatToolRuntime {
         pending: ChatPendingToolApproval,
         allow: Bool
     ) async -> [UIMessage] {
-        let isSubAgent = pending.toolCall.toolName == "subagent_dispatch"
-        let capabilityId = isSubAgent
-            ? "ios.agent.subagent_dispatch"
-            : "ios.agent.model_council_run"
         recordToolApproval(
-            capabilityId: capabilityId,
+            capabilityId: "ios.agent.model_council_run",
             toolCall: pending.toolCall,
             action: allow ? .allowed : .denied,
             reason: allow
@@ -1755,7 +1761,7 @@ final class ChatToolRuntime {
                 "status": "denied",
                 "denied": true,
                 "policy": "user_denied",
-                "reason": isSubAgent ? "用户拒绝调度子代理。" : "用户拒绝启动模型议会。"
+                "reason": "用户拒绝启动模型议会。"
             ])
         }
         return messagesByFinishingToolCall(
@@ -2325,12 +2331,12 @@ final class ChatToolRuntime {
     ) -> UIMessagePart.Tool? {
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
-            IOSWeatherToolCatalog.toolName,
             IOSSoulToolCatalog.toolName,
             // P1-c/P1-d: 线程编排工具（非常驻，tool_search 命中后与 mcp__* 同样可执行）。
             "spawn_agent", "list_agents", "interrupt_agent",
             "send_message", "followup_task", "wait_agent",
         ])
+        .union(IOSAppleAgentToolCatalog.toolNames)
         .union(IOSSkillToolCatalog.toolNames)
         .union(IOSMcpManagementToolCatalog.toolNames)
         .union(IOSProviderConfigToolCatalog.toolNames)
@@ -2521,6 +2527,47 @@ final class ChatToolRuntime {
         recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil
     ) async -> ChatToolRuntimeResult {
         let toolName = pending.toolCall.toolName
+
+        if IOSAppleAgentToolCatalog.pickerToolNames.contains(toolName) {
+            guard isAdvancedToolEnabled(toolName) else {
+                let output = IOSWorkspaceStore.json([
+                    "ok": false,
+                    "tool": toolName,
+                    "status": "denied",
+                    "denied": true,
+                    "policy": "disabled",
+                    "reason": "\(toolName) 未开启。请先在设置中启用对应能力。"
+                ])
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: output,
+                    in: pending.baseMessages
+                ))
+            }
+            let result = await IOSPersonalContextPickerCoordinator.shared.requestResult(
+                toolName: toolName,
+                input: pending.toolCall.input
+            )
+            return .completed(messagesByFinishingToolCall(
+                pending.toolCall,
+                outputParts: result.messageParts,
+                in: pending.baseMessages
+            ))
+        }
+
+        if IOSAppleAgentToolCatalog.approvalRequiredToolNames.contains(toolName),
+           let request = ChatToolApprovalRequestBuilder.appleCapability(
+               for: pending.toolCall,
+               reason: IOSAppleAgentToolCatalog.alarmToolNames.contains(toolName)
+                   ? (IOSAppleAgentToolCatalog.mutatingToolNames.contains(toolName)
+                       ? IOSAlarmCopy.mutatingReason
+                       : IOSAlarmCopy.listReason)
+                   : (IOSAppleAgentToolCatalog.mutatingToolNames.contains(toolName)
+                       ? "该操作会读取或修改你在 iPhone 上的私密 Apple 数据，需要你确认。"
+                       : "该操作会读取你在 iPhone 上的私密 Apple 数据，并交给当前 Agent 处理，需要你确认。")
+           ) {
+            return .waitingForApproval(.mcp(request))
+        }
 
         // Wave B2: `recipe__*` 通用前缀路由（§13.2.5 / §16.1）——镜像 mcp__*
         // 模式，单一路由不为每个 recipe 写分支。manifest 从「当前 round 的
@@ -2817,15 +2864,6 @@ final class ChatToolRuntime {
             return .waitingForApproval(.council(request))
         }
 
-        if pending.toolCall.toolName == "subagent_dispatch",
-           requiresSubAgentApproval(),
-           let request = ChatToolApprovalRequestBuilder.subAgent(
-               for: pending.toolCall,
-               reason: "子代理会发起独立模型请求并使用获准的只读工具，需要你确认。"
-           ) {
-            return .waitingForApproval(.council(request))
-        }
-
         let resultText = await dispatchAdvancedToolCall(
             pending.toolCall,
             providerSetting: pending.providerSetting,
@@ -2835,7 +2873,6 @@ final class ChatToolRuntime {
             nestedTools: nestedTools,
             toolExposureBridge: toolExposureBridge
         )
-        recordAdvancedToolApprovalIfNeeded(toolCall: pending.toolCall, runId: pending.runId)
         return .completed(messagesByFinishingToolCall(
             pending.toolCall,
             outputText: resultText,
@@ -3627,9 +3664,6 @@ final class ChatToolRuntime {
                     reason: "主题试穿会立刻换皮，需要你确认套用或还原。"
                 )
             case "subagent_dispatch":
-                if requiresSubAgentApproval() {
-                    return .approvalRequired(reason: "子代理会发起独立模型请求并使用获准的只读工具，需要你确认。")
-                }
                 return .proceed
             case "model_council_run":
                 if requiresCouncilApproval {
@@ -4083,8 +4117,9 @@ final class ChatToolRuntime {
                           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                         continue
                     }
-                    if object["status"] as? String == "unknown_after_action" &&
-                        object["may_have_applied"] as? Bool == true {
+                    if object["may_have_applied"] as? Bool == true,
+                       ["unknown_after_action", "ambiguous", "dispatched_unverified"]
+                        .contains(object["status"] as? String ?? "") {
                         return true
                     }
                 }
@@ -4261,6 +4296,16 @@ final class ChatToolRuntime {
         switch toolCall.toolName {
         case IOSWeatherToolCatalog.toolName:
             return await IOSWeatherToolExecutor.execute(input: toolCall.input)
+        case IOSHealthAgentToolCatalog.toolName:
+            return await IOSHealthAgentToolExecutor.execute(input: toolCall.input)
+        case let name where IOSAppleAgentToolCatalog.eventKitToolNames.contains(name):
+            return await IOSEventKitAgentToolExecutor.execute(toolName: name, input: toolCall.input)
+        case let name where IOSAppleAgentToolCatalog.notificationToolNames.contains(name):
+            return await IOSNotificationAgentToolExecutor.execute(toolName: name, input: toolCall.input)
+        case let name where IOSAppleAgentToolCatalog.alarmToolNames.contains(name):
+            return await IOSAlarmAgentToolExecutor.execute(toolName: name, input: toolCall.input)
+        case let name where IOSAppleAgentToolCatalog.workoutToolNames.contains(name):
+            return await IOSWorkoutAgentToolExecutor.execute(toolName: name, input: toolCall.input)
         case "subagent_dispatch":
             let args = ChatToolCallParsing.jsonObject(toolCall.input)
             let objective = args?["objective"] as? String ?? toolCall.input
@@ -4685,25 +4730,6 @@ final class ChatToolRuntime {
         )
     }
 
-    private func recordAdvancedToolApprovalIfNeeded(
-        toolCall: UIMessagePart.Tool,
-        runId: String
-    ) {
-        guard toolCall.toolName == "subagent_dispatch" else { return }
-        let capabilityId = "ios.agent.subagent_dispatch"
-        let enabled = isAdvancedToolEnabled(toolCall.toolName)
-        recordToolApproval(
-            capabilityId: capabilityId,
-            toolCall: toolCall,
-            action: enabled ? .allowed : .denied,
-            reason: "\(toolCall.toolName) model tool call \(enabled ? "executed" : "denied").",
-            runId: runId,
-            // Policy-level denial (capability disabled), not a user card
-            // decision — must not become `approvalDenied` evidence (§11.1).
-            isUserDecision: false
-        )
-    }
-
     private func toolCall(name: String, input: String) -> UIMessagePart.Tool {
         UIMessagePart.Tool(
             toolCallId: "subagent-\(name)-\(chatInputDigest(for: input))",
@@ -4921,8 +4947,8 @@ final class ChatToolRuntime {
         switch toolName {
         case "mcp_list", "mcp_describe_tool", "mcp_import_from_skill":
             true
-        case IOSWeatherToolCatalog.toolName:
-            true
+        case let name where IOSAppleAgentToolCatalog.toolNames.contains(name):
+            IOSCapabilityRegistry.capability(forToolName: name).map { isCapabilityPolicyEnabled($0.id) } ?? false
         case "mcp_call", "mcp_test":
             isMcpNetworkAllowed()
         case let name where ToolKt.isExpandedMcpToolName(name: name):
@@ -4974,21 +5000,6 @@ final class ChatToolRuntime {
 
     private var requiresCouncilApproval: Bool {
         let capabilityId = "ios.agent.model_council_run"
-        let policy: IOSAgentPermissionPolicy?
-        if let snapshot = IOSExecutionPolicyContext.snapshot,
-           let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.id == capabilityId }) {
-            policy = snapshot.policy(for: capability)
-        } else {
-            policy = localToolExecutor?.permissionPolicy(capabilityId: capabilityId)
-        }
-        guard let policy else {
-            return false
-        }
-        return policy == .askEveryTime || policy == .allowOncePerRun
-    }
-
-    func requiresSubAgentApproval() -> Bool {
-        let capabilityId = "ios.agent.subagent_dispatch"
         let policy: IOSAgentPermissionPolicy?
         if let snapshot = IOSExecutionPolicyContext.snapshot,
            let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.id == capabilityId }) {

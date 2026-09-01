@@ -284,7 +284,7 @@ fun Tool.invocationPolicy(input: JsonElement?): ToolInvocationPolicy {
             concurrencySafe = false
         }
 
-        "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select" -> {
+        "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select" -> {
             // DOM mutation on a logged-in page — Sensitive by default; the
             // adapter system can pre-approve known-origin tools later.
             mutates = true
@@ -438,7 +438,9 @@ internal fun Tool.category(): String = when {
     name.startsWith("bilibili_") -> "webmount_bilibili"
     name.startsWith("zhihu_") -> "webmount_zhihu"
     name.startsWith("screen_") || name == "vlm_task" -> "screen"
-    name.startsWith("sms_") || name.startsWith("contacts_") || name.startsWith("calendar_") ||
+    name.startsWith("sms_") || name.startsWith("contacts_") || name.startsWith("photos_") ||
+        name.startsWith("journaling_") || name.startsWith("calendar_") ||
+        name.startsWith("workout_") || name.startsWith("workouts_") ||
         name.startsWith("call_") || name.startsWith("apps_") || name.startsWith("app_") ||
         name in setOf("device_phone_state", "media_search", "location_current", "audio_record_once", "notification_list", "usage_stats_list", "battery_status", "network_status", "wifi_status", "device_info", "settings_open", "intent_open", "share_text", "share_file", "notification_post") -> "system"
     name.startsWith("memory_") -> "memory"
@@ -462,6 +464,7 @@ private fun Tool.mutatesState(): Boolean {
     if (name == "deep_read_open") return true
     if (name == "run_plan_update") return false
     if (name == "ios_shell_execute") return true
+    if (name == "workout_schedule" || name == "workout_scheduled_remove") return true
     return hasMutatingNameHint() ||
         name.contains("_install") ||
         name.contains("_stop") ||
@@ -477,7 +480,7 @@ private fun Tool.mutatesState(): Boolean {
         name == "conversation_compact" ||
         name == "deep_read_finish" ||
         name in setOf("subagent_start", "subagent_cancel") ||
-        name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select") ||
+        name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select") ||
         name.startsWith("skill_enable") ||
         name.startsWith("skill_disable") ||
         name == "provider_config_apply" ||
@@ -509,7 +512,7 @@ private fun Tool.riskProfile(): RiskProfile = when {
     name == "memory_tool" -> RiskProfile(ToolRisk.High, explicit = true)
     name == "mcp_call_tool" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name == "wm_eval" -> RiskProfile(ToolRisk.High, explicit = true)
-    name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
+    name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name in setOf("session_read", "session_expand") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name == "pdf_render_page" -> RiskProfile(ToolRisk.High, explicit = true)
     name in setOf("agent_task_cancel", "agent_task_retry", "agent_task_cleanup") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
@@ -527,6 +530,8 @@ private fun Tool.riskProfile(): RiskProfile = when {
         name == "officepro_reply_draft" ||
         name == "officepro_project_context" -> RiskProfile(ToolRisk.High, explicit = true)
     name.startsWith("external_file_") && (name.contains("_write") || name.contains("_delete")) -> RiskProfile(ToolRisk.High, explicit = true)
+    name in setOf("contacts_pick", "photos_pick", "journaling_suggestion_pick") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
+    name.startsWith("workout_") || name.startsWith("workouts_") -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name.startsWith("sms_") || name.startsWith("call_") || name.startsWith("contacts_write") -> RiskProfile(ToolRisk.High, explicit = true)
     name.startsWith("screen_") || name == "vlm_task" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
     name.startsWith("terminal_") || name == "ios_shell_execute" -> RiskProfile(ToolRisk.Sensitive, explicit = true)
@@ -565,6 +570,8 @@ private fun Tool.concurrencySafe(): Boolean = when {
 
 private fun Tool.sensitiveRead(): Boolean =
     name in setOf("session_read", "session_expand") ||
+        name == "workouts_scheduled_list" ||
+        name in setOf("contacts_pick", "photos_pick", "journaling_suggestion_pick") ||
         name.startsWith("screen_") ||
         name in setOf(
             "officepro_read_screen",

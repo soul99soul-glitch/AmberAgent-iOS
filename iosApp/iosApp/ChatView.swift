@@ -132,6 +132,9 @@ struct ChatView: View {
     @State private var focusedRemoteWebMountSessionId: String?
     @State private var collapsedWebMountSessionId: String?
     @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var personalContextPicker = IOSPersonalContextPickerCoordinator.shared
+    @State private var personalContextPhotoItems: [PhotosPickerItem] = []
+    @State private var personalContextPhotoLoadID: UUID?
     @State private var fileImporterConversationId: String?
     @State private var photoPickerConversationId: String?
     @State private var isInputFocused = false
@@ -304,6 +307,66 @@ struct ChatView: View {
         .onChange(of: photoPickerItems) { _, items in
             handlePhotoPickerSelection(items)
         }
+        .sheet(isPresented: personalContactPickerPresented) {
+            IOSContactPickerView(
+                onSelect: { personalContextPicker.receiveContacts($0) },
+                onCancel: { personalContextPicker.cancelActiveRequest() }
+            )
+            .ignoresSafeArea()
+        }
+        .photosPicker(
+            isPresented: personalPhotoPickerPresented,
+            selection: $personalContextPhotoItems,
+            maxSelectionCount: personalContextPicker.activeRequest?.maxSelectionCount ?? 4,
+            matching: .images
+        )
+        .onChange(of: personalContextPhotoItems) { _, items in
+            guard !items.isEmpty else { return }
+            let loadID = UUID()
+            personalContextPhotoLoadID = loadID
+            Task { @MainActor in
+                await personalContextPicker.receivePhotos(items)
+                if personalContextPhotoLoadID == loadID {
+                    personalContextPhotoItems = []
+                    personalContextPhotoLoadID = nil
+                }
+            }
+        }
+        .iosPersonalContextJournalingPicker(
+            isPresented: personalJournalingPickerPresented,
+            coordinator: personalContextPicker
+        )
+        .overlay {
+            if personalContextPicker.activeRequest != nil,
+               personalContextPicker.isLoading,
+               personalContextPicker.preview == nil {
+                ZStack {
+                    Color.black.opacity(0.08)
+                        .ignoresSafeArea()
+                    VStack(spacing: 10) {
+                        ProgressView()
+                        Text("正在准备你选择的内容…")
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("正在准备你选择的内容")
+            }
+        }
+        .sheet(item: personalContextPreviewBinding) { preview in
+            IOSPersonalContextHandoffSheet(
+                preview: preview,
+                isLoading: personalContextPicker.isLoading,
+                onCancel: { personalContextPicker.cancelActiveRequest() },
+                onConfirm: { personalContextPicker.confirmHandoff() }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
         .fullScreenCover(isPresented: $isCameraPresented) {
             CameraPicker { image in
                 if let image { attachPickedImage(image) }
@@ -313,6 +376,9 @@ struct ChatView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear {
+            personalContextPicker.cancelActiveRequest()
+        }
         .alert(item: userVisibleErrorBinding) { error in
             Alert(
                 title: Text(error.title),
@@ -371,6 +437,71 @@ struct ChatView: View {
         .onChange(of: scenePhase) { _, _ in
             syncIslandPresentation()
         }
+    }
+
+    private var personalContactPickerPresented: Binding<Bool> {
+        Binding(
+            get: {
+                personalContextPicker.activeRequest?.kind == .contacts &&
+                    personalContextPicker.preview == nil
+            },
+            set: { presented in
+                if !presented,
+                   personalContextPicker.activeRequest?.kind == .contacts,
+                   personalContextPicker.preview == nil {
+                    personalContextPicker.cancelActiveRequest()
+                }
+            }
+        )
+    }
+
+    private var personalPhotoPickerPresented: Binding<Bool> {
+        Binding(
+            get: {
+                personalContextPicker.activeRequest?.kind == .photos &&
+                    personalContextPicker.preview == nil &&
+                    !personalContextPicker.isLoading
+            },
+            set: { presented in
+                if !presented,
+                   personalContextPicker.activeRequest?.kind == .photos,
+                   personalContextPicker.preview == nil,
+                   !personalContextPicker.isLoading,
+                   personalContextPhotoItems.isEmpty {
+                    personalContextPicker.cancelActiveRequest()
+                }
+            }
+        )
+    }
+
+    private var personalJournalingPickerPresented: Binding<Bool> {
+        Binding(
+            get: {
+                personalContextPicker.activeRequest?.kind == .journaling &&
+                    personalContextPicker.preview == nil &&
+                    !personalContextPicker.isLoading
+            },
+            set: { presented in
+                if !presented,
+                   personalContextPicker.activeRequest?.kind == .journaling,
+                   personalContextPicker.preview == nil,
+                   !personalContextPicker.isLoading {
+                    personalContextPicker.cancelActiveRequest()
+                }
+            }
+        )
+    }
+
+    private var personalContextPreviewBinding: Binding<IOSPersonalContextPreview?> {
+        Binding(
+            get: { personalContextPicker.preview },
+            set: { preview in
+                if preview == nil,
+                   personalContextPicker.preview != nil {
+                    personalContextPicker.cancelActiveRequest()
+                }
+            }
+        )
     }
 
     private func handleChatAppear() {

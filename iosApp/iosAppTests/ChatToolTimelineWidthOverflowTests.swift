@@ -319,6 +319,110 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         ))
         XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, "fitted=\(fitted)")
     }
+
+    func testAgentBrowserTaskCardFitsLongAutomationMetadataWithinChatColumn() {
+        let record = makeLongWebMountRecord()
+        let host = UIHostingController(rootView: AgentBrowserTaskCard(record: record, onOpen: {}))
+        let fitted = host.sizeThatFits(in: CGSize(
+            width: columnWidth,
+            height: UIView.layoutFittingExpandedSize.height
+        ))
+
+        XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, "fitted=\(fitted)")
+    }
+
+    func testAgentBrowserCompactBarDoesNotExpandChatForLongRunSummary() {
+        let longSummary = String(repeating: "网页自动化摘要没有空格", count: 80)
+        let host = UIHostingController(rootView: AgentBrowserTaskCompactBar(
+            record: makeLongWebMountRecord(),
+            runSummary: longSummary,
+            onExpand: {}
+        ))
+        let fitted = host.sizeThatFits(in: CGSize(
+            width: columnWidth,
+            height: UIView.layoutFittingExpandedSize.height
+        ))
+
+        XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, "fitted=\(fitted)")
+    }
+
+    func testWebMountApprovalCardFitsLongAutomationMetadataWithinChatColumn() {
+        let longToken = String(repeating: "segment-without-breaks-", count: 24)
+        let request = WebMountToolApprovalRequest(
+            id: "approval",
+            toolName: "wm_click",
+            siteId: "site-\(longToken)",
+            siteName: "自动化站点-\(longToken)",
+            host: "example.com",
+            backend: IOSWebMountBackendKind.local.rawValue,
+            mcpServerName: nil,
+            redactedURL: "https://example.com/\(longToken)",
+            snapshotId: "snapshot-\(longToken)",
+            target: "target-\(longToken)",
+            action: "点击目标",
+            consequence: "可能提交当前页面内容",
+            screenshotRetentionWarning: nil,
+            requiresHumanHandoff: false,
+            reason: "需要批准当前浏览器动作",
+            sessionId: nil,
+            runId: nil
+        )
+        let host = UIHostingController(rootView: WebMountToolApprovalCard(
+            request: request,
+            onOpenSession: nil,
+            onApprove: {},
+            onDeny: {}
+        ))
+        let fitted = host.sizeThatFits(in: CGSize(
+            width: columnWidth,
+            height: UIView.layoutFittingExpandedSize.height
+        ))
+
+        XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, "fitted=\(fitted)")
+    }
+
+    func testUnverifiedWebMountMutationDoesNotRenderAsCompleted() {
+        let tool = UIMessagePart.Tool(
+            toolCallId: "call_wm_unverified",
+            toolName: "wm_click",
+            input: #"{"target":"css:button","snapshot_id":"document:1"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"status":"dispatched_unverified","may_have_applied":true}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+
+        let model = ChatToolStepModel(tool: tool)
+        XCTAssertEqual(model.state, .failed)
+        XCTAssertTrue(model.detail?.contains("尚未验证") == true)
+    }
+
+    private func makeLongWebMountRecord() -> IOSWebMountSessionRecord {
+        let longToken = String(repeating: "segment-without-breaks-", count: 24)
+        return IOSWebMountSessionRecord(
+            id: "session-\(longToken)",
+            siteId: "site-\(longToken)",
+            siteName: "自动化站点-\(longToken)",
+            title: "页面-\(longToken)",
+            redactedURL: "https://example.com/\(longToken)",
+            status: IOSWebMountRuntimeStatus.ready.rawValue,
+            canGoBack: false,
+            canGoForward: false,
+            lastActivityMillis: 0,
+            isCurrent: true,
+            ownerConversationId: nil,
+            ownerRunId: nil,
+            controlOwner: .agent,
+            leaseExpiresAtMillis: nil,
+            persistentOptIn: false,
+            needsReopen: false,
+            backend: .local,
+            mcpServerName: nil
+        )
+    }
 }
 
 final class ChatToolGlyphMappingTests: XCTestCase {

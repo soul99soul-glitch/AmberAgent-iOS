@@ -251,6 +251,13 @@ class ToolSearchIndex(
             "wait_agent" -> addAll(listOf("等待子代理", "等子线程", "等待线程"))
             "send_message" -> addAll(listOf("发消息给子代理", "子线程消息", "通知子代理"))
             "followup_task" -> addAll(listOf("跟进任务", "子代理追加", "追派任务"))
+            "contacts_pick" -> addAll(listOf("选联系人", "联系人选择", "通讯录选取", "contact picker"))
+            "photos_pick" -> addAll(listOf("选照片", "选择图片", "相册选取", "photo picker"))
+            "journaling_suggestion_pick" -> addAll(listOf("日记建议", "生活回顾", "journaling suggestions", "journal picker"))
+            "workout_plan_preview" -> addAll(listOf("预览训练计划", "训练方案", "健身计划", "WorkoutKit"))
+            "workout_schedule" -> addAll(listOf("安排训练", "同步到手表", "健身计划", "WorkoutKit"))
+            "workouts_scheduled_list" -> addAll(listOf("已安排训练", "训练列表", "健身计划"))
+            "workout_scheduled_remove" -> addAll(listOf("移除训练", "删除健身计划", "取消训练安排"))
         }
         // P3-c: exec cell 续取工具的增量中文词条（纯增量）。wait 与 exec 同开关
         // （execJavaScriptEnabled），非常驻 deferred 池——命中后模型才可调。
@@ -287,6 +294,27 @@ class ToolSearchIndex(
         }
         if (name.startsWith("terminal_")) {
             addAll(listOf("终端", "命令", "脚本", "运行命令", "terminal"))
+        }
+        if (name.startsWith("calendar_")) {
+            addAll(listOf("日历", "日程", "事件", "行程", "calendar"))
+        }
+        if (name.startsWith("reminder_") || name == "reminders_list") {
+            addAll(listOf("提醒", "提醒事项", "待办", "任务", "reminder"))
+        }
+        if (name.startsWith("notification_")) {
+            addAll(listOf("通知", "本地通知", "提醒我", "notification"))
+        }
+        if (name.startsWith("alarm_") || name == "alarms_list") {
+            addAll(listOf("闹钟", "计时器", "倒计时", "响铃", "AlarmKit", "alarm", "timer"))
+        }
+        if (name.startsWith("health_")) {
+            addAll(listOf("健康", "运动数据", "睡眠", "步数", "HealthKit"))
+        }
+        if (name.startsWith("workout_") || name.startsWith("workouts_")) {
+            addAll(listOf("健身计划", "训练计划", "体能训练", "Apple Watch", "WorkoutKit"))
+        }
+        if (name.startsWith("weather_")) {
+            addAll(listOf("天气", "气温", "预报", "WeatherKit"))
         }
         if (name == "ios_shell_execute") {
             addAll(listOf("AmberShell", "本地终端", "本地命令", "运行命令", "命令", "脚本", "local command"))

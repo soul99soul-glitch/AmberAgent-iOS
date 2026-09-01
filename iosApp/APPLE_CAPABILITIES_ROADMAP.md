@@ -111,6 +111,142 @@ Exit evidence:
 - Subscription UI is inspected at standard and large Dynamic Type sizes.
 - Sandbox/TestFlight purchase is external evidence and remains unchecked until observed.
 
+## Phase 5 — EventKit task-management closure
+
+Status: completed on 2026-09-01.
+
+Goal: turn the existing calendar and reminders tools into a complete, identifier-based task-management loop without introducing a second local database.
+
+- Add calendar event update and delete tools alongside the existing list/create tools.
+- Add reminder update and delete tools alongside the existing list/create/complete tools.
+- Preserve EventKit identifiers in every result so a read can feed the next mutation without title matching.
+- Support bounded recurrence for event creation/update and explicit list/calendar selection only when EventKit exposes a stable identifier.
+- Prefer write-only calendar access for create-only requests; require full access only for reads or mutations of existing events.
+- Keep every mutation foreground-approved and return the committed EventKit snapshot rather than echoing requested input.
+
+Exit evidence:
+
+- Read → update/delete and create → read-back paths are deterministic in executor tests.
+- Permission denial, missing identifier, invalid recurrence, and stale/deleted item errors are explicit.
+- The approval card fits long titles, dates, and Dynamic Type without clipping or ambiguous destructive actions.
+- `AppleToolDeclarationTest` and `AppleToolSearchAliasTest` pass on JVM; iOS capability/runtime/Health/notification tests pass on iPhone 17 Pro Simulator.
+- Logic and UI sub-agent reviews completed with no remaining Phase 5 blocking findings.
+
+## Phase 6 — actionable App Intents
+
+Status: completed locally on 2026-09-01. Three actionable intents, durable-store App Entities, opaque foreground handoff, six-language system resources, 5 targeted deep-link tests, and independent logic/UI review passed; Siri/Spotlight behavior remains signed-device evidence.
+
+Goal: expose useful Amber actions to Siri, Spotlight, Shortcuts, widgets, and hardware triggers instead of only opening app destinations.
+
+- Add parameterized intents for asking Amber, generating a bounded daily brief, and running one saved prompt/task.
+- Represent conversations and saved actions as App Entities backed by existing durable stores; do not create a parallel intent-only store.
+- Foreground-handoff any action that needs provider credentials, sensitive tools, or approval. Background execution is limited to deterministic local reads.
+- Return a concise system result and a deep link to the owning conversation/task.
+- Keep the existing navigation intents as fast, non-destructive shortcuts.
+
+Exit evidence:
+
+- Intent parameters, entity lookup, missing/deleted entities, deep links, and foreground handoff are covered by focused tests.
+- App Shortcut phrases are localized and do not duplicate or crowd the Shortcuts catalog.
+- Siri/Spotlight/Shortcut surfaces use short titles and compact result text at accessibility sizes.
+
+Exit evidence:
+
+- Ask Amber, Daily Brief, and Saved Action reuse the existing conversation/settings stores and publish only three promoted App Shortcuts.
+- Provider work uses an in-memory, opaque, single-use handoff; direct URLs cannot inject a prompt, and concurrent deep-link openers are serialized.
+- App Intents, App Shortcuts, and Siri purpose strings are localized for English, Simplified/Traditional Chinese, Japanese, Korean, and Russian.
+- `IOSAppDeepLinkTests` passed on iPhone 17 Pro Simulator; independent logic and UI reviews found no remaining Phase 6 blocking issue.
+
+## Phase 7 — AlarmKit time-critical actions
+
+Status: completed locally on 2026-09-01. AlarmKit scheduling/list/cancel, Amber-owned reconciliation, stop/open App Intents, six-language alarm resources, targeted simulator tests, and independent logic/UI review passed. A signed-device fire/stop check remains part of the final installation gate.
+
+Goal: add prominent alarms and timers for requests that should not be modeled as ordinary local notifications.
+
+- Add schedule, list, and cancel tools using AlarmKit; support one-time alarms, weekly recurrence, and countdown timers.
+- Persist only Amber-owned alarm metadata and reconcile it against `AlarmManager` on launch.
+- Reuse App Intents for stop/secondary actions and the existing Activity widget target for countdown presentation.
+- Keep local notifications for ordinary reminders and task completion; never silently upgrade them to alarms.
+- Add the required usage description and capability diagnostics only when the stable target consumes the framework.
+
+Exit evidence:
+
+- Authorization, schedule validation, recurrence, reconciliation, cancellation, and already-fired behavior are tested.
+- Alarm approval clearly distinguishes an intrusive alarm from an ordinary notification.
+- Signed-device evidence verifies one alarm fires and can be stopped; simulator evidence remains explicitly limited.
+
+Exit evidence:
+
+- One-time, weekly, and timer validation is fail-closed; authorization is rechecked against current time immediately before the system commit, and metadata is written only after AlarmKit succeeds.
+- Amber-owned identifiers drive list reconciliation and cancellation; fired or externally removed alarms are pruned without title matching.
+- Alarm alert/countdown titles use the user title, while stop/open controls and Activity widget copy ship through one six-language resource variant group in both app and widget products.
+- `IOSAlarmKitTests` and `IOSCapabilityRegistryTests` pass on iPhone 17 Pro Simulator; final logic/UI reviews found no remaining Phase 7 code or layout issue.
+- Physical alarm delivery and stop behavior remain explicitly pending until the final paid-signing device install.
+
+## Phase 8 — picker-first personal context
+
+Status: completed locally on 2026-09-01. Contact, photo, and Journaling Suggestions pickers now use explicit foreground selection and confirmation; provider image handoff, bounded temporary storage, targeted tests, and independent logic/UI review passed. The Journaling Suggestions entitlement still requires final paid-signing device evidence.
+
+Goal: let the user deliberately hand selected contacts, photos, and journaling suggestions to Amber without broad background enumeration.
+
+- Add foreground picker tools for contacts and photos; return only the selected items needed by the active request.
+- Add a Journaling Suggestions picker when the paid App ID and signed target contain the required entitlement.
+- Copy selected media into bounded app-owned temporary/workspace storage before model use; revoke picker handles after the run.
+- Do not implement full-library `media_search`, full-address-book search, or silent journaling access.
+- Show a compact preview and explicit handoff action before selected personal context enters a provider request.
+
+Exit evidence:
+
+- Contacts are returned only from `CNContactPickerViewController`; photos only from `PhotosPicker`; Journaling Suggestions only from Apple's foreground picker. Every path ends in a compact confirmation sheet or an explicit cancel/error result.
+- Selected media is downscaled off the main actor, capped at 20 MB per item and 40 MB per request, converted to provider-safe image parts, and removed after handoff, cancellation, failure, or expiry.
+- Cancel, empty selection, unavailable entitlement, stale temporary file, and successful handoff paths are covered; picker sheets were reviewed for safe areas, selection counts, long names, aspect ratios, Dynamic Type, and VoiceOver.
+- Unselected contacts, photos, and suggestions never enter logs, sync, memory, or transcripts.
+- OpenAI Chat/Responses, Claude, and Gemini all preserve picker image tool outputs; `IOSPersonalContextPickerTests`, `IOSGeminiProviderTests`, provider/KMP declaration tests, and capability tests pass.
+- Final independent logic and UI reviews found no remaining Phase 8 P0–P2 issue; signed-device Journaling entitlement and picker behavior remain part of the final installation gate.
+
+## Phase 9 — WorkoutKit planning loop
+
+Status: completed locally on 2026-09-01. Preview, approved schedule/list/remove, stable Amber ownership metadata, unsupported-device handling, targeted tests, generic iPhone build, and independent logic/UI review passed. A paired-Watch schedule remains part of the final physical-device gate.
+
+Goal: turn HealthKit observations into user-approved workout plans that can be previewed and scheduled in the Apple Watch Workout app.
+
+- Add preview, schedule, list, and remove tools for a deliberately small workout vocabulary: time/distance goals, pacer workouts, and bounded work/recovery intervals.
+- Require an explicit user request and foreground approval before scheduling or removing a workout.
+- Keep HealthKit analysis read-only; WorkoutKit owns scheduled plans and no workout samples are written to HealthKit.
+- Return WorkoutKit's committed schedule and stable Amber metadata so later changes are identifier-based.
+
+Exit evidence:
+
+- Unsupported devices, authorization denial, invalid interval structure, capacity limits, scheduling, and removal are tested.
+- The preview makes units, date, duration, and repetition legible without presenting medical advice.
+- `workout_plan_preview` is background-safe; schedule/list/remove remain foreground approval-gated, and unsupported or temporarily unavailable schedulers never erase Amber ownership metadata.
+- Kotlin declarations, registry/search exposure, Swift approval/dispatch, WorkoutKit commit confirmation, reconciliation, and stable-ID removal are covered end to end; HealthKit remains read-only.
+- Targeted Kotlin tests, `IOSWorkoutKitTests`, capability/permission tests, and a generic iPhone build pass; final independent logic and UI reviews found no remaining Phase 9 P0–P2 issue.
+- A paired-Watch schedule remains external evidence until observed on the physical devices.
+
+## Phase 10 — interactive Live Activity and Watch control
+
+Status: completed locally on 2026-09-01. Live Activity and watchOS controls now share durable run ownership, exact command identity, cold-launch recovery, stale-snapshot rejection, and bounded retry eligibility. Targeted simulator tests, generic iOS/watchOS builds, independent logic/UI review, and a paid-Team signed Release build passed; the final control round-trip remains physical-device evidence.
+
+Goal: make long-running Amber work controllable from glanceable Apple surfaces while preserving run ownership and approval boundaries.
+
+- Add App Intent-backed cancel, open, and retry actions to Live Activity where the current durable run state allows them.
+- Add the same bounded controls to the watchOS companion, with WatchConnectivity commands carrying `runId` and an idempotency key.
+- Keep sensitive approvals in the iPhone app unless the approval payload is already safely represented by the existing Watch approval contract.
+- Reconcile stale Live Activities and Watch snapshots on app launch; an old surface must never cancel or relaunch a newer run.
+- Do not claim remote continuation when the provider lacks server-owned execution and cursor recovery.
+
+Exit evidence:
+
+- Success, stale run, duplicate command, offline Watch, cancellation race, and retry ownership paths are tested.
+- Lock Screen, Dynamic Island, StandBy, accessibility sizes, and 40/42/46 mm Watch layouts receive visual review.
+- A physical-device run verifies at least one control round-trip without losing conversation data.
+- Live Activity cancel/retry/open controls execute in the app process, wait for the state-backed owner on cold launch, and never report success unless the matching foreground/background owner accepts the operation.
+- Retry is fail-closed across restarts through a bounded durable eligibility record plus latest-run, conversation-revision, transcript, and orchestrated-child revalidation.
+- Watch protocol v2 rejects offline queuing, duplicate/stale decision IDs, old run generations, and late approval answers; a persisted completed run may still open after cold launch only after durable run-to-conversation validation.
+- Persisted BG continued-processing identifiers register before `applicationDidFinishLaunching` returns and hydrate a headless runtime when SwiftUI has not created `AppShell`.
+- Phase 10 targeted tests, generic iOS/watchOS builds, strict nested-code signature verification, and independent logic/UI reviews pass. The signed artifact uses `app.amber.ios` and paid Team `TY4JTL3V2M`; physical installation/control evidence remains pending while the registered iPhone is unavailable to CoreDevice.
+
 ## Explicitly deferred capabilities
 
-Network Extension/VPN, Apple Pay, Game Center, ClassKit, AutoFill credential provider, Push to Talk, Critical Alerts, Family Controls, Fall Detection, Hotspot, broad Wi-Fi information, NFC, and Wallet are excluded until a concrete product flow justifies their entitlement and review burden.
+Network Extension/VPN, Apple Pay, Game Center, ClassKit, AutoFill credential provider, Push to Talk, Critical Alerts, Family Controls, Fall Detection, Hotspot, broad Wi-Fi information, NFC, Wallet, full-library media search, full-address-book enumeration, and always-on location are excluded until a concrete product flow justifies their entitlement and review burden.

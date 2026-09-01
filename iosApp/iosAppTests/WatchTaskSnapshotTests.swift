@@ -8,6 +8,7 @@ private final class WatchTestTransport: WatchConnectivityTransporting {
     var isWatchAppInstalled = true
     var isReachable = true
     var sendError: Error?
+    private(set) var transferredUserInfoCount = 0
 
     init(sendError: Error? = nil) {
         self.sendError = sendError
@@ -15,7 +16,10 @@ private final class WatchTestTransport: WatchConnectivityTransporting {
 
     func activate() {}
     func updateApplicationContext(_ context: [String: Any]) throws {}
-    func transferUserInfo(_ userInfo: [String: Any]) -> String { "transfer" }
+    func transferUserInfo(_ userInfo: [String: Any]) -> String {
+        transferredUserInfoCount += 1
+        return "transfer"
+    }
     func sendMessage(
         _ message: [String: Any],
         replyHandler: (([String: Any]) -> Void)?,
@@ -24,6 +28,23 @@ private final class WatchTestTransport: WatchConnectivityTransporting {
         if let sendError {
             errorHandler?(sendError)
         }
+    }
+}
+
+private final class WatchNotificationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() {
+        lock.lock()
+        value += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
     }
 }
 
@@ -85,6 +106,35 @@ final class WatchTaskSnapshotTests: XCTestCase {
         bridge.sendAction(request)
 
         await fulfillment(of: [resultReceived], timeout: 1)
+    }
+
+    func testBridgeDoesNotQueueOfflineCommandsForLateDelivery() async {
+        let bridge = WatchConnectivityBridge(actionTimeoutNanoseconds: 1_000_000_000)
+        let transport = WatchTestTransport()
+        transport.isReachable = false
+        bridge.configure(transport: transport)
+        let request = WatchTaskActionRequest(
+            requestId: "request-offline",
+            runId: "run-offline",
+            conversationId: "conversation-offline",
+            decisionId: nil,
+            action: .cancel,
+            optionId: nil,
+            text: nil,
+            createdAt: Date()
+        )
+        let resultReceived = expectation(description: "offline failure")
+        bridge.onActionResult = { result in
+            XCTAssertEqual(result.requestId, request.requestId)
+            XCTAssertFalse(result.accepted)
+            XCTAssertTrue(result.message?.contains("无法连接") == true)
+            resultReceived.fulfill()
+        }
+
+        bridge.sendAction(request)
+
+        await fulfillment(of: [resultReceived], timeout: 1)
+        XCTAssertEqual(transport.transferredUserInfoCount, 0)
     }
 
     func testCoordinatorRejectsDecisionFromEarlierNodeInSameRun() async {
@@ -171,10 +221,11 @@ final class WatchTaskSnapshotTests: XCTestCase {
 
         coordinator.attach(
             chatViewModel: viewModel,
-            reconnecting: WatchTaskReconnectProjection(
+            reconnecting: [WatchTaskReconnectProjection(
                 runId: "hydrated-background-run",
-                conversationId: "hydrated-conversation"
-            )
+                conversationId: "hydrated-conversation",
+                startedAt: 1_700_000_000_000
+            )]
         )
 
         let snapshot = coordinator.currentSnapshot()
@@ -182,6 +233,95 @@ final class WatchTaskSnapshotTests: XCTestCase {
         XCTAssertEqual(snapshot.conversationId, "hydrated-conversation")
         XCTAssertEqual(snapshot.phase, AgentActivityPhase.reconnecting.rawValue)
         XCTAssertNotEqual(snapshot.phase, "idle")
+    }
+
+    func testColdAttachPrimesAllBackgroundRunGenerationsBeforePublishingLatest() {
+        let coordinator = WatchTaskCoordinator(bridge: WatchConnectivityBridge())
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false
+        )
+        coordinator.attach(
+            chatViewModel: viewModel,
+            reconnecting: [
+                WatchTaskReconnectProjection(
+                    runId: "run-old",
+                    conversationId: "conversation-old",
+                    startedAt: 100
+                ),
+                WatchTaskReconnectProjection(
+                    runId: "run-new",
+                    conversationId: "conversation-new",
+                    startedAt: 200
+                )
+            ]
+        )
+
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .generatingResponse(modelName: "model")
+        )
+
+        XCTAssertEqual(coordinator.currentSnapshot().runId, "run-new")
+        XCTAssertEqual(coordinator.currentSnapshot().phase, AgentActivityPhase.reconnecting.rawValue)
+    }
+
+    func testRepeatedAttachDoesNotLetAnOlderRunReclaimTheWatchProjection() {
+        let coordinator = WatchTaskCoordinator(bridge: WatchConnectivityBridge())
+        coordinator.publish(
+            runId: "run-new",
+            conversationId: "conversation-new",
+            presentation: .generatingResponse(modelName: "model")
+        )
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false
+        )
+        coordinator.attach(
+            chatViewModel: viewModel,
+            reconnecting: [
+                WatchTaskReconnectProjection(
+                    runId: "run-old",
+                    conversationId: "conversation-old",
+                    startedAt: 100
+                ),
+                WatchTaskReconnectProjection(
+                    runId: "run-new",
+                    conversationId: "conversation-new",
+                    startedAt: 200
+                )
+            ]
+        )
+
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .completed()
+        )
+
+        XCTAssertEqual(coordinator.currentSnapshot().runId, "run-new")
+        XCTAssertEqual(coordinator.currentSnapshot().phase, AgentActivityPhase.running.rawValue)
+    }
+
+    func testRegisteredStartTimeWinsWhenOlderRunPublishesLater() {
+        let coordinator = WatchTaskCoordinator(bridge: WatchConnectivityBridge())
+        coordinator.registerRun(runId: "run-old", startedAt: 100)
+        coordinator.registerRun(runId: "run-new", startedAt: 200)
+        coordinator.publish(
+            runId: "run-new",
+            conversationId: "conversation-new",
+            presentation: .generatingResponse(modelName: "model")
+        )
+
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .completed()
+        )
+
+        XCTAssertEqual(coordinator.currentSnapshot().runId, "run-new")
+        XCTAssertEqual(coordinator.currentSnapshot().phase, AgentActivityPhase.running.rawValue)
     }
 
     func testCodecRoundTripKeepsDecisionAndSummary() throws {
@@ -348,6 +488,186 @@ final class WatchTaskSnapshotTests: XCTestCase {
         XCTAssertEqual(result.message, "当前任务没有可打开的会话")
     }
 
+    func testCoordinatorDeduplicatesTheSameWatchCommand() async {
+        let coordinator = WatchTaskCoordinator(bridge: WatchConnectivityBridge())
+        coordinator.publish(
+            runId: "run-deduplicated",
+            conversationId: "conversation-deduplicated",
+            presentation: .failed()
+        )
+        let openCount = WatchNotificationCounter()
+        let observer = NotificationCenter.default.addObserver(
+            forName: .amberWatchOpenTask,
+            object: nil,
+            queue: nil
+        ) { _ in
+            openCount.increment()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        let request = WatchTaskActionRequest(
+            requestId: "stable-idempotency-key",
+            runId: "run-deduplicated",
+            conversationId: "conversation-deduplicated",
+            decisionId: nil,
+            action: .openOnPhone,
+            optionId: nil,
+            text: nil,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let first = await coordinator.handleWatchAction(request)
+        let duplicate = await coordinator.handleWatchAction(request)
+
+        XCTAssertTrue(first.accepted)
+        XCTAssertEqual(duplicate, first)
+        XCTAssertEqual(openCount.count, 1)
+    }
+
+    func testCoordinatorOpensPersistedCompletedRunAfterColdAttach() async throws {
+        let runId = "watch-cold-open-\(UUID().uuidString)"
+        let conversationId = "conversation-\(UUID().uuidString)"
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        let dao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao()
+        let run = AgentRunEntity(
+            runId: runId,
+            parentRunId: nil,
+            agentDescriptorId: "chat",
+            agentVersion: "1",
+            conversationId: conversationId,
+            messageNodeId: nil,
+            producesMessageId: nil,
+            assistantId: nil,
+            status: "completed",
+            inputDigest: "watch-cold-open",
+            inputSnapshotRef: nil,
+            inputSchemaVersion: 1,
+            startedAt: now,
+            finishedAt: KotlinLong(value: now),
+            interruptedReason: nil,
+            terminalReason: nil,
+            providerId: nil,
+            modelId: nil,
+            promptVersion: nil,
+            toolCatalogVersion: nil,
+            capabilitySnapshot: nil
+        )
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            dao.insertRunIfAbsent(run: run) { _, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            }
+        }
+
+        let coordinator = WatchTaskCoordinator(bridge: WatchConnectivityBridge())
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false
+        )
+        coordinator.attach(chatViewModel: viewModel)
+        let opened = expectation(description: "persisted run opens on iPhone")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .amberWatchOpenTask,
+            object: nil,
+            queue: nil
+        ) { notification in
+            guard notification.userInfo?["runId"] as? String == runId else { return }
+            XCTAssertEqual(notification.userInfo?["conversationId"] as? String, conversationId)
+            XCTAssertEqual(notification.userInfo?["focus"] as? String, "result")
+            opened.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        let result = await coordinator.handleWatchAction(WatchTaskActionRequest(
+            requestId: "cold-open-\(UUID().uuidString)",
+            runId: runId,
+            conversationId: conversationId,
+            decisionId: nil,
+            action: .openOnPhone,
+            optionId: nil,
+            text: nil,
+            createdAt: Date()
+        ))
+
+        XCTAssertTrue(result.accepted)
+        await fulfillment(of: [opened], timeout: 1)
+    }
+
+    func testCoordinatorRejectsRetryFromAnOlderWatchSnapshot() async {
+        let coordinator = WatchTaskCoordinator(bridge: WatchConnectivityBridge())
+        coordinator.publish(
+            runId: "run-new",
+            conversationId: "conversation-1",
+            presentation: .generatingResponse(modelName: "model")
+        )
+
+        let result = await coordinator.handleWatchAction(WatchTaskActionRequest(
+            requestId: "retry-old",
+            runId: "run-old",
+            conversationId: "conversation-1",
+            decisionId: nil,
+            action: .retry,
+            optionId: nil,
+            text: nil,
+            createdAt: Date()
+        ))
+
+        XCTAssertFalse(result.accepted)
+        XCTAssertEqual(result.message, "这个失败任务已失效")
+    }
+
+    func testOlderRunCannotOverwriteTheNewestWatchProjection() {
+        let bridge = WatchConnectivityBridge()
+        let coordinator = WatchTaskCoordinator(bridge: bridge)
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .generatingResponse(modelName: "model")
+        )
+        coordinator.publish(
+            runId: "run-new",
+            conversationId: "conversation-new",
+            presentation: .generatingResponse(modelName: "model")
+        )
+
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .failed(retryable: true)
+        )
+
+        XCTAssertEqual(coordinator.currentSnapshot().runId, "run-new")
+        XCTAssertEqual(coordinator.currentSnapshot().phase, "running")
+    }
+
+    func testOlderRunCannotReclaimWatchProjectionAfterNewestRunCompletes() {
+        let bridge = WatchConnectivityBridge()
+        let coordinator = WatchTaskCoordinator(bridge: bridge)
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .generatingResponse(modelName: "model")
+        )
+        coordinator.publish(
+            runId: "run-new",
+            conversationId: "conversation-new",
+            presentation: .generatingResponse(modelName: "model")
+        )
+        coordinator.publishCompleted(
+            runId: "run-new",
+            conversationId: "conversation-new",
+            summary: "done"
+        )
+
+        coordinator.publish(
+            runId: "run-old",
+            conversationId: "conversation-old",
+            presentation: .generatingResponse(modelName: "model")
+        )
+
+        XCTAssertEqual(coordinator.currentSnapshot().runId, "run-new")
+        XCTAssertEqual(coordinator.currentSnapshot().phase, "completed")
+    }
+
     func testAskUserDecisionSupportsChoicesAndVoice() {
         let request = WatchAskUserRequest(
             id: "ask-1",
@@ -423,6 +743,28 @@ final class WatchTaskSnapshotTests: XCTestCase {
         XCTAssertFalse(snapshot.actions.contains(.approve))
         XCTAssertFalse(snapshot.actions.contains(.deny))
         XCTAssertTrue(snapshot.actions.contains(.openOnPhone))
+    }
+
+    func testFailedSnapshotOffersRetryButStaleSnapshotDoesNot() {
+        let failed = WatchTaskSnapshotBuilder.make(
+            runId: "run-failed",
+            conversationId: "conversation-1",
+            presentation: .failed(retryable: true)
+        )
+        let stale = WatchTaskSnapshotBuilder.make(
+            runId: "run-stale",
+            conversationId: "conversation-1",
+            presentation: AgentActivityPresentation(
+                kind: .response,
+                phase: .stale,
+                stage: .stale
+            )
+        )
+
+        XCTAssertTrue(failed.actions.contains(.retry))
+        XCTAssertFalse(failed.actions.contains(.cancel))
+        XCTAssertFalse(stale.actions.contains(.retry))
+        XCTAssertFalse(stale.actions.contains(.cancel))
     }
 
     func testDecisionSwitchMapsAskUserPromptToAskUserDecision() {

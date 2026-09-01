@@ -147,7 +147,7 @@ struct MemoryToolApprovalCard: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground2)
                         .padding(.horizontal, 12)
-                        .frame(height: 32)
+                        .frame(minHeight: 32)
                         .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -301,130 +301,178 @@ struct WebMountToolApprovalCard: View {
     let onDeny: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "globe.badge.chevron.backward")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AmberTheme.accentCyan)
-                    .frame(width: 30, height: 30)
-                    .background(AmberTheme.accentCyan.opacity(0.12), in: Circle())
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(spacing: 7) {
+                    Circle()
+                        .fill(AmberTheme.accent)
+                        .frame(width: 8, height: 8)
+                    Text("WebMount 请求")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground2)
+                }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(request.title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground)
+                Text(request.title)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
 
-                    Text(displayReason)
+            WebMountDivider()
+
+            VStack(alignment: .leading, spacing: 14) {
+                approvalTextBlock(label: "意图", value: displayReason)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    approvalSectionLabel("目标页面")
+                    HStack(spacing: 7) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(AmberTheme.muted)
+                        Text(request.redactedURL.nilIfBlank ?? request.host)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: 36)
+                    .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    approvalSectionLabel("本次范围")
+                    approvalScopeRow(label: "站点", value: "\(request.siteName) · \(request.host)")
+                    approvalScopeRow(label: "动作", value: request.action)
+                    approvalScopeRow(label: "影响", value: request.consequence)
+                    approvalScopeRow(label: "环境", value: backendTitle)
+                    if let target = request.target?.nilIfBlank {
+                        approvalScopeRow(label: "目标", value: target)
+                    }
+                }
+
+                HStack(alignment: .top, spacing: 8) {
+                    Circle()
+                        .fill(request.requiresHumanHandoff ? AmberTheme.accentAmber : AmberTheme.accentGreen)
+                        .frame(width: 7, height: 7)
+                        .padding(.top, 5)
+                    Text(riskSummary)
                         .font(.caption)
-                        .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(2)
+                        .foregroundStyle(AmberTheme.foreground2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                Spacer(minLength: 0)
-            }
-
-            VStack(alignment: .leading, spacing: 5) {
-                WebMountApprovalDetailRow(
-                    label: "站点",
-                    value: "\(request.siteName) · \(request.host)"
-                )
-                WebMountApprovalDetailRow(label: "动作", value: request.action)
-                WebMountApprovalDetailRow(label: "后果", value: request.consequence)
-                WebMountApprovalDetailRow(
-                    label: "页面",
-                    value: request.redactedURL.nilIfBlank ?? "当前页面"
-                )
-                WebMountApprovalDetailRow(label: "后端", value: backendTitle)
-                if let mcpServerName = request.mcpServerName?.nilIfBlank {
-                    WebMountApprovalDetailRow(label: "MCP", value: mcpServerName)
-                }
-                if let snapshotId = request.snapshotId?.nilIfBlank {
-                    WebMountApprovalDetailRow(label: "快照", value: snapshotId)
-                }
-                if let target = request.target?.nilIfBlank {
-                    WebMountApprovalDetailRow(label: "目标", value: target)
-                }
                 if let warning = request.screenshotRetentionWarning?.nilIfBlank {
                     Label(warning, systemImage: "exclamationmark.triangle")
                         .font(.caption2)
                         .foregroundStyle(AmberTheme.accentAmber)
                         .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 2)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                AmberTheme.surface.opacity(0.72),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-            )
+            .padding(16)
 
             if let onOpenSession {
+                WebMountDivider()
                 Button(action: onOpenSession) {
                     HStack(spacing: 8) {
-                        Label(openSessionLabel, systemImage: request.backend == IOSWebMountBackendKind.local.rawValue ? "eye" : "macwindow")
+                        Label(
+                            openSessionLabel,
+                            systemImage: request.backend == IOSWebMountBackendKind.local.rawValue ? "eye" : "macwindow"
+                        )
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
                             .font(.caption.weight(.bold))
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(AmberTheme.accentCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(openSessionLabel)，不会批准或继续当前动作")
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    denyButton
-                    approveButton
-                }
-                VStack(alignment: .trailing, spacing: 8) {
-                    denyButton
-                    approveButton
-                }
+            WebMountDivider()
+
+            HStack(spacing: 10) {
+                denyButton
+                approveButton
             }
+            .padding(12)
         }
-        .padding(12)
-        .amberGlass(cornerRadius: 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accentCyan.opacity(0.34), lineWidth: 0.7)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
     }
 
     private var denyButton: some View {
         Button(action: onDeny) {
-            Label("拒绝", systemImage: "xmark")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(AmberTheme.foreground2)
-                .padding(.horizontal, 12)
-                .frame(minHeight: 32)
-                .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
+            Text("拒绝")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                }
         }
         .buttonStyle(.plain)
-        .chatApprovalHitTarget()
+        .frame(maxWidth: .infinity)
         .accessibilityLabel("拒绝 WebMount 前台动作")
     }
 
     private var approveButton: some View {
         Button(action: onApprove) {
-            Label(approveLabel, systemImage: request.requiresHumanHandoff ? "arrow.uturn.forward" : "checkmark")
-                .font(.caption.weight(.bold))
+            Text(approveLabel)
+                .font(.body.weight(.semibold))
                 .foregroundStyle(.white)
-                .padding(.horizontal, 13)
-                .frame(minHeight: 32)
-                .background(AmberTheme.accent, in: Capsule())
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(AmberTheme.accent, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         }
         .buttonStyle(.plain)
-        .chatApprovalHitTarget()
+        .frame(maxWidth: .infinity)
         .accessibilityLabel(approveLabel)
+    }
+
+    private func approvalSectionLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(AmberTheme.muted)
+    }
+
+    private func approvalTextBlock(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            approvalSectionLabel(label)
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(AmberTheme.foreground2)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func approvalScopeRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+                .frame(width: 30, alignment: .leading)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.foreground2)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private var displayReason: String {
@@ -443,26 +491,12 @@ struct WebMountToolApprovalCard: View {
     private var backendTitle: String {
         IOSWebMountBackendKind(rawValue: request.backend)?.title ?? request.backend
     }
-}
 
-private struct WebMountApprovalDetailRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(label)
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(AmberTheme.muted)
-                .frame(width: 36, alignment: .leading)
-
-            Text(value)
-                .font(.caption)
-                .foregroundStyle(AmberTheme.foreground2)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    private var riskSummary: String {
+        if request.requiresHumanHandoff {
+            return "需要你完成登录、验证码或支付等敏感步骤；Agent 不会代为输入凭据。"
         }
+        return "仅批准这一次前台动作，不扩大站点权限。"
     }
 }
 
@@ -671,10 +705,12 @@ struct McpToolApprovalCard: View {
 
     var body: some View {
         let isThemeTryOn = request.themePackPreview != nil
-        let chrome = isThemeTryOn ? AmberTheme.accent : AmberTheme.accentCyan
+        let chrome = request.isDestructiveAppleAction
+            ? AmberTheme.accentRed
+            : (isThemeTryOn ? AmberTheme.accent : AmberTheme.accentCyan)
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: isThemeTryOn ? "swatchpalette" : "point.3.connected.trianglepath.dotted")
+                Image(systemName: request.systemImage)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(chrome)
                     .frame(width: 30, height: 30)
@@ -705,14 +741,14 @@ struct McpToolApprovalCard: View {
                 themePackPreview(preview)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("\(request.serverName) / \(request.toolName)")
+                    Text(request.isAppleCapability ? request.displayToolName : "\(request.serverName) / \(request.toolName)")
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground2)
                         .lineLimit(1)
                     Text(request.argumentsPreview)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(request.isAppleCapability ? .footnote : .system(size: 11, weight: .regular, design: .monospaced))
                         .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(4)
+                        .lineLimit(IOSAppleAgentToolCatalog.workoutToolNames.contains(request.toolName) ? 10 : 4)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 10)
@@ -724,19 +760,39 @@ struct McpToolApprovalCard: View {
                 )
             }
 
+            if let warning = request.appleConsequenceWarning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.accentAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        AmberTheme.accentAmber.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+            }
+
             if request.soulImportPreview == nil
                 && request.mcpImportPreview == nil
                 && request.skillImportPreview == nil
                 && request.themePackPreview == nil {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: 6) {
-                        WebMountApprovalChip(systemImage: "server.rack", title: request.serverName)
-                        WebMountApprovalChip(systemImage: "wrench.and.screwdriver", title: request.toolName)
+                        WebMountApprovalChip(systemImage: request.isAppleCapability ? "iphone" : "server.rack", title: request.serverName)
+                        WebMountApprovalChip(
+                            systemImage: request.isAppleCapability ? request.systemImage : "wrench.and.screwdriver",
+                            title: request.displayToolName
+                        )
                         Spacer(minLength: 0)
                     }
                     VStack(alignment: .leading, spacing: 6) {
-                        WebMountApprovalChip(systemImage: "server.rack", title: request.serverName)
-                        WebMountApprovalChip(systemImage: "wrench.and.screwdriver", title: request.toolName)
+                        WebMountApprovalChip(systemImage: request.isAppleCapability ? "iphone" : "server.rack", title: request.serverName)
+                        WebMountApprovalChip(
+                            systemImage: request.isAppleCapability ? request.systemImage : "wrench.and.screwdriver",
+                            title: request.displayToolName
+                        )
                     }
                 }
             }
@@ -746,13 +802,16 @@ struct McpToolApprovalCard: View {
 
                 Button(action: onDeny) {
                     Label(
-                        request.themePackPreview == nil ? "拒绝" : "还原",
+                        request.isAppleCapability
+                            && IOSAppleAgentToolCatalog.alarmToolNames.contains(request.toolName)
+                            ? IOSAlarmCopy.denyButton
+                            : (request.themePackPreview == nil ? "拒绝" : "还原"),
                         systemImage: request.themePackPreview == nil ? "xmark" : "arrow.uturn.backward"
                     )
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground2)
                         .padding(.horizontal, 12)
-                        .frame(height: 32)
+                        .frame(minHeight: 32)
                         .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
                 }
                 .buttonStyle(.plain)
@@ -760,12 +819,24 @@ struct McpToolApprovalCard: View {
                 .accessibilityLabel(approvalAccessibilityLabel(allow: false))
 
                 Button(action: onApprove) {
-                    Label(request.themePackPreview == nil ? "批准" : "套用", systemImage: "checkmark")
+                    Label(
+                        request.toolName.hasSuffix("_cancel")
+                            ? (IOSAppleAgentToolCatalog.alarmToolNames.contains(request.toolName)
+                                ? IOSAlarmCopy.cancelButton
+                                : "取消")
+                            : (request.isAppleCapability
+                                && IOSAppleAgentToolCatalog.alarmToolNames.contains(request.toolName)
+                                ? IOSAlarmCopy.approveButton
+                                : (request.isDestructiveAppleAction ? "删除" : (request.themePackPreview == nil ? "批准" : "套用"))),
+                        systemImage: request.toolName.hasSuffix("_cancel")
+                            ? "arrow.uturn.backward"
+                            : (request.isDestructiveAppleAction ? "trash" : "checkmark")
+                    )
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 13)
-                        .frame(height: 32)
-                        .background(AmberTheme.accent, in: Capsule())
+                        .frame(minHeight: 32)
+                        .background(request.isDestructiveAppleAction ? AmberTheme.accentRed : AmberTheme.accent, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .chatApprovalHitTarget()
@@ -789,6 +860,7 @@ struct McpToolApprovalCard: View {
         if request.soulImportPreview != nil { return "\(verb)核心指令更新" }
         if request.mcpImportPreview != nil { return "\(verb) MCP 导入" }
         if request.skillImportPreview != nil { return "\(verb) Skill 导入" }
+        if request.isAppleCapability { return "\(verb)\(request.displayToolName)" }
         return "\(verb) MCP 工具"
     }
 
@@ -1048,15 +1120,15 @@ struct CouncilToolApprovalCard: View {
     let onDeny: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .top, spacing: 9) {
                 Image(systemName: request.systemImage)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.accentIndigo)
-                    .frame(width: 30, height: 30)
-                    .background(AmberTheme.accentIndigo.opacity(0.12), in: Circle())
+                    .frame(width: 28, height: 28)
+                    .background(AmberTheme.accentIndigo.opacity(0.10), in: Circle())
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(request.title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
@@ -1064,62 +1136,86 @@ struct CouncilToolApprovalCard: View {
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Spacer(minLength: 0)
             }
 
-            Text(request.objectivePreview)
-                .font(.footnote)
-                .foregroundStyle(AmberTheme.foreground2)
-                .lineLimit(4)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    AmberTheme.surface.opacity(0.72),
-                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                )
-
-            if let maxSeats = request.maxSeats {
-                Label("最多 \(maxSeats) 个席位", systemImage: "person.2")
-                    .font(.caption)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("议题")
+                    .font(.caption2.weight(.semibold))
                     .foregroundStyle(AmberTheme.muted)
+                Text(request.objectivePreview)
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                AmberTheme.surface.opacity(0.58),
+                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+            )
 
-            HStack(spacing: 8) {
-                Spacer()
-                Button(action: onDeny) {
-                    Label("拒绝", systemImage: "xmark")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .padding(.horizontal, 12)
-                        .frame(height: 32)
-                        .background(AmberTheme.surface2.opacity(0.86), in: Capsule())
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    seatLabel
+                    Spacer(minLength: 8)
+                    decisionButtons
                 }
-                .buttonStyle(.plain)
-                .chatApprovalHitTarget()
-                .accessibilityLabel("拒绝模型议会")
-
-                Button(action: onApprove) {
-                    Label("批准", systemImage: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 13)
-                        .frame(height: 32)
-                        .background(AmberTheme.accent, in: Capsule())
+                VStack(alignment: .leading, spacing: 8) {
+                    seatLabel
+                    HStack {
+                        Spacer(minLength: 0)
+                        decisionButtons
+                    }
                 }
-                .buttonStyle(.plain)
-                .chatApprovalHitTarget()
-                .accessibilityLabel("批准模型议会")
             }
         }
-        .padding(12)
-        .amberGlass(cornerRadius: 18)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .amberGlass(cornerRadius: 16)
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accentIndigo.opacity(0.34), lineWidth: 0.7)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AmberTheme.accentIndigo.opacity(0.22), lineWidth: 0.7)
+        }
+    }
+
+    @ViewBuilder
+    private var seatLabel: some View {
+        if let maxSeats = request.maxSeats {
+            Label("最多 \(maxSeats) 席", systemImage: "person.2")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+        }
+    }
+
+    private var decisionButtons: some View {
+        HStack(spacing: 8) {
+            Button("取消", action: onDeny)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+                .padding(.horizontal, 13)
+                .frame(minHeight: 34)
+                .background(AmberTheme.surface2.opacity(0.72), in: Capsule())
+                .buttonStyle(.plain)
+                .chatApprovalHitTarget()
+                .accessibilityLabel("取消启动模型议会")
+
+            Button(action: onApprove) {
+                Label("启动", systemImage: "arrow.up.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 34)
+                    .background(AmberTheme.accent, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .chatApprovalHitTarget()
+            .accessibilityLabel("启动模型议会")
         }
     }
 }

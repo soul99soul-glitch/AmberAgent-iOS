@@ -75,6 +75,28 @@ struct IOSLocalNotificationTests {
         #expect(center.removed == [["amber.task-complete.first", "amber.task-complete.second"]])
     }
 
+    @Test func agentNotificationToolSchedulesAndCancelsItsOwnStableRequest() async throws {
+        let center = FakeLocalNotificationCenter(status: .allowed)
+        let service = IOSLocalNotificationService(center: center, now: { now })
+        let fireAt = ISO8601DateFormatter().string(from: now.addingTimeInterval(600))
+
+        let scheduled = await IOSNotificationAgentToolExecutor.execute(
+            toolName: IOSAppleAgentToolCatalog.notificationSchedule,
+            input: #"{"title":"喝水","body":"休息一下","fire_at":"\#(fireAt)","display_title":"安排喝水提醒"}"#,
+            service: service
+        )
+        #expect(scheduled.contains(#""ok":true"#))
+        #expect(center.requests.last?.identifier == IOSLocalNotificationService.agentReminderIdentifier)
+
+        let cancelled = await IOSNotificationAgentToolExecutor.execute(
+            toolName: IOSAppleAgentToolCatalog.notificationCancel,
+            input: #"{"display_title":"取消喝水提醒"}"#,
+            service: service
+        )
+        #expect(cancelled.contains(#""cancelled":true"#))
+        #expect(center.removed.last == [IOSLocalNotificationService.agentReminderIdentifier])
+    }
+
     @Test func deepLinkInboxBuffersNotificationUntilShellInstallsHandler() throws {
         let inbox = IOSDeepLinkInbox()
         let url = try #require(IOSAppDeepLink.url(for: .latestConversation))

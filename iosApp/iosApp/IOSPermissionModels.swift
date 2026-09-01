@@ -198,12 +198,12 @@ struct IOSCapabilityRegistry {
             summary: "委托任务给子代理角色",
             domain: .networkAndConnectivity,
             status: .supported,
-            risk: .sensitive,
+            risk: .normal,
             requestKind: .foregroundSession,
             requestEntryPoint: "Chat subagent_dispatch tool",
             modelToolNames: ["subagent_dispatch"],
             defaultEnabled: true,
-            gate: reusableSensitiveGate
+            gate: normalGate
         ),
         capability(
             id: "ios.agent.model_council_run",
@@ -365,6 +365,7 @@ struct IOSCapabilityRegistry {
             requestKind: .picker,
             requestEntryPoint: "PhotosPicker / PHPickerViewController",
             uiActionNames: ["photo_pick", "video_pick"],
+            modelToolNames: [IOSAppleAgentToolCatalog.photosPick],
             blockedToolNames: ["media_search"],
             defaultEnabled: true,
             gate: reusableSensitiveGate
@@ -413,11 +414,13 @@ struct IOSCapabilityRegistry {
             title: "日记建议",
             summary: "Present Apple's Journaling Suggestions picker for user-selected suggestions.",
             domain: .filesAndPhotos,
-            status: .degraded,
+            status: .supported,
             risk: .sensitive,
             requestKind: .picker,
             requestEntryPoint: "JournalingSuggestionsPicker",
             uiActionNames: ["open_journaling_suggestions_picker"],
+            modelToolNames: [IOSAppleAgentToolCatalog.journalingSuggestionPick],
+            requiredEntitlements: ["com.apple.developer.journal.allow"],
             defaultEnabled: true,
             gate: reusableSensitiveGate
         ),
@@ -632,11 +635,12 @@ struct IOSCapabilityRegistry {
             title: "通讯录选取",
             summary: "Let the user select one or more contacts through a foreground system picker without broad contacts access.",
             domain: .contacts,
-            status: .degraded,
+            status: .supported,
             risk: .sensitive,
             requestKind: .picker,
             requestEntryPoint: "CNContactPickerViewController",
             uiActionNames: ["open_contacts_picker"],
+            modelToolNames: [IOSAppleAgentToolCatalog.contactsPick],
             defaultEnabled: true,
             gate: reusableSensitiveGate
         ),
@@ -651,7 +655,11 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "EKEventStore.requestFullAccessToEvents()",
             uiActionNames: ["request_calendar_full"],
-            blockedToolNames: ["calendar_list", "calendar_create", "calendar_create_draft"],
+            modelToolNames: [
+                IOSAppleAgentToolCatalog.calendarEventsList,
+                IOSAppleAgentToolCatalog.calendarEventUpdate,
+                IOSAppleAgentToolCatalog.calendarEventDelete
+            ],
             requiredInfoPlistKeys: ["NSCalendarsFullAccessUsageDescription"],
             defaultEnabled: true,
             gate: freshHighRiskGate
@@ -666,6 +674,7 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "EKEventStore.requestWriteOnlyAccessToEvents()",
             uiActionNames: ["request_calendar_write_only"],
+            modelToolNames: [IOSAppleAgentToolCatalog.calendarEventCreate],
             blockedToolNames: ["calendar_create", "calendar_create_draft"],
             requiredInfoPlistKeys: ["NSCalendarsWriteOnlyAccessUsageDescription"],
             defaultEnabled: true,
@@ -681,6 +690,13 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "EKEventStore.requestFullAccessToReminders()",
             uiActionNames: ["request_reminders_full"],
+            modelToolNames: [
+                IOSAppleAgentToolCatalog.remindersList,
+                IOSAppleAgentToolCatalog.reminderCreate,
+                IOSAppleAgentToolCatalog.reminderUpdate,
+                IOSAppleAgentToolCatalog.reminderDelete,
+                IOSAppleAgentToolCatalog.reminderComplete
+            ],
             requiredInfoPlistKeys: ["NSRemindersFullAccessUsageDescription"],
             defaultEnabled: true,
             gate: freshHighRiskGate
@@ -696,11 +712,25 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "HKHealthStore.requestAuthorization(toShare:read:)",
             uiActionNames: ["request_health_read", "health_authorization_status"],
-            blockedToolNames: ["health_step_count_summary"],
+            modelToolNames: [IOSHealthAgentToolCatalog.toolName],
             requiredInfoPlistKeys: ["NSHealthShareUsageDescription"],
             requiredEntitlements: ["com.apple.developer.healthkit"],
             defaultEnabled: true,
             gate: freshHighRiskGate
+        ),
+        capability(
+            id: "ios.weather.read",
+            title: "WeatherKit 天气",
+            summary: "Read current conditions and a bounded forecast through Apple WeatherKit.",
+            domain: .location,
+            status: .requiresEntitlement,
+            risk: .sensitive,
+            requestKind: .entitlementRequired,
+            requestEntryPoint: "WeatherKit entitlement; Core Location only for current-location queries",
+            modelToolNames: [IOSWeatherToolCatalog.toolName],
+            requiredEntitlements: ["com.apple.developer.weatherkit"],
+            defaultEnabled: true,
+            gate: reusableSensitiveGate
         ),
         capability(
             id: "ios.motion.fitness",
@@ -727,6 +757,7 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "WorkoutScheduler.requestAuthorization()",
             uiActionNames: ["request_workoutkit_scheduler", "workoutkit_scheduler_status"],
+            modelToolNames: Array(IOSAppleAgentToolCatalog.workoutToolNames).sorted(),
             defaultEnabled: true,
             gate: reusableSensitiveGate
         ),
@@ -770,6 +801,8 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "AlarmManager.requestAuthorization()",
             uiActionNames: ["request_alarmkit", "alarmkit_status"],
+            modelToolNames: Array(IOSAppleAgentToolCatalog.alarmToolNames).sorted(),
+            requiredInfoPlistKeys: ["NSAlarmKitUsageDescription"],
             defaultEnabled: true,
             gate: reusableSensitiveGate
         ),
@@ -784,7 +817,10 @@ struct IOSCapabilityRegistry {
             requestKind: .directSystemPrompt,
             requestEntryPoint: "UNUserNotificationCenter.requestAuthorization",
             uiActionNames: ["request_notifications"],
-            blockedToolNames: ["notification_post", "notification_schedule"],
+            modelToolNames: [
+                IOSAppleAgentToolCatalog.notificationSchedule,
+                IOSAppleAgentToolCatalog.notificationCancel
+            ],
             defaultEnabled: true,
             gate: reusableSensitiveGate
         ),
@@ -1922,6 +1958,11 @@ final class IOSPermissionStore {
         if capability.status == .unsupported {
             return [.disabled]
         }
+        if capability.id == "ios.agent.subagent_dispatch" {
+            // Dispatching a read-only worker is orchestration, not an external
+            // side effect. Its nested tools keep their own permission gates.
+            return [.disabled, .autoApprove]
+        }
         if capability.risk == .high || capability.gate.requiresFreshUserPresence {
             // 高风险工具：禁用 / 每次询问 / 高风险自动批准
             return [.disabled, .askEveryTime, .autoApproveHighRisk]
@@ -1931,6 +1972,9 @@ final class IOSPermissionStore {
     }
 
     nonisolated static func defaultPolicy(for capability: IOSPlatformCapability) -> IOSAgentPermissionPolicy {
+        if capability.id == "ios.agent.subagent_dispatch" {
+            return capability.defaultEnabled ? .autoApprove : .disabled
+        }
         let preferred: IOSAgentPermissionPolicy = capability.defaultEnabled ? .askEveryTime : .disabled
         return availablePolicies(for: capability).contains(preferred)
             ? preferred

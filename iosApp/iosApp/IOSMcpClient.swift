@@ -692,9 +692,7 @@ final class IOSMcpClient: IOSMcpClienting {
             "name": name,
             "arguments": arguments
         ])
-        guard let content = result["content"] as? [[String: Any]] else {
-            throw IOSMcpClientError.unsupportedContent
-        }
+        let content = result["content"] as? [[String: Any]] ?? []
         let text = content.compactMap { item -> String? in
             guard item["type"] as? String == "text" else { return nil }
             return item["text"] as? String
@@ -703,6 +701,18 @@ final class IOSMcpClient: IOSMcpClienting {
             throw IOSMcpClientError.rpcError(text.nilIfBlank ?? "MCP tool returned an error result.")
         }
         if !text.isEmpty { return text }
+        if let structuredContent = result["structuredContent"],
+           JSONSerialization.isValidJSONObject(structuredContent),
+           let data = try? JSONSerialization.data(
+               withJSONObject: structuredContent,
+               options: [.sortedKeys]
+           ),
+           let serialized = String(data: data, encoding: .utf8) {
+            return serialized
+        }
+        guard !content.isEmpty else {
+            throw IOSMcpClientError.unsupportedContent
+        }
         if let data = try? JSONSerialization.data(withJSONObject: content, options: [.sortedKeys]),
            let serialized = String(data: data, encoding: .utf8) {
             return serialized

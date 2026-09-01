@@ -56,3 +56,5 @@
 "agent.activity.metric.image.progress" = "%ld / %ld images";
 "agent.activity.metric.item.count" = "%ld items processed";
 "agent.activity.metric.item.progress" = "%ld / %ld items";
+"agent.activity.control.cancel" = "Cancel";
+"agent.activity.control.retry" = "Retry";

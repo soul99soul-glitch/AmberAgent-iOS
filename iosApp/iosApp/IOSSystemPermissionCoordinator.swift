@@ -1189,6 +1189,9 @@ private extension IOSSystemPermissionCoordinator {
     func workoutKitSchedulerStatus(for capability: IOSPlatformCapability, now: Date) -> IOSSystemPermissionResult {
         #if canImport(WorkoutKit)
         if #available(iOS 17.0, *) {
+            guard WorkoutScheduler.isSupported else {
+                return result(capability, .unavailableOnDevice, "WorkoutKit scheduled workouts require a supported Apple Watch.", now)
+            }
             return result(capability, .unknown, "WorkoutKit scheduler authorization status requires async refresh.", now)
         }
         return result(capability, .unavailableOnDevice, "WorkoutKit scheduler authorization requires iOS 17 or newer.", now)
@@ -1200,6 +1203,9 @@ private extension IOSSystemPermissionCoordinator {
     func refreshWorkoutKitSchedulerStatus(for capability: IOSPlatformCapability, now: Date) async -> IOSSystemPermissionResult {
         #if canImport(WorkoutKit)
         if #available(iOS 17.0, *) {
+            guard WorkoutScheduler.isSupported else {
+                return result(capability, .unavailableOnDevice, "WorkoutKit scheduled workouts require a supported Apple Watch.", now)
+            }
             let status = await WorkoutScheduler.shared.authorizationState
             return result(capability, mapWorkoutAuthorization(status), "WorkoutKit scheduler authorization status.", Date())
         }
@@ -1212,6 +1218,9 @@ private extension IOSSystemPermissionCoordinator {
     func requestWorkoutKitScheduler(_ capability: IOSPlatformCapability, now: Date) async -> IOSSystemPermissionResult {
         #if canImport(WorkoutKit)
         if #available(iOS 17.0, *) {
+            guard WorkoutScheduler.isSupported else {
+                return result(capability, .unavailableOnDevice, "WorkoutKit scheduled workouts require a supported Apple Watch.", now)
+            }
             let status = await WorkoutScheduler.shared.requestAuthorization()
             return result(capability, mapWorkoutAuthorization(status), "WorkoutKit scheduler authorization request completed.", Date())
         }

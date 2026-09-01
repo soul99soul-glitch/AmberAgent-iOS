@@ -336,6 +336,39 @@ final class IOSGeminiProviderTests: XCTestCase {
         XCTAssertEqual(signedModelParts?.first?["thoughtSignature"] as? String, "sig-1")
     }
 
+    func testPayloadBuilderKeepsToolOutputImages() throws {
+        let tool = UIMessagePart.Tool(
+            toolCallId: "picker-1",
+            toolName: "photos_pick",
+            input: #"{"max_count":1}"#,
+            output: [
+                UIMessagePart.Image(url: "data:image/jpeg;base64,QUJD", metadata: nil),
+                UIMessagePart.Text(text: #"{"ok":true}"#, metadata: nil),
+            ],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let assistant = UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: [tool],
+            annotations: [],
+            createdAt: chatNowLocalDateTime(),
+            finishedAt: nil,
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+
+        let contents = IOSGeminiPayloadBuilder.makeContents([userMessage("选一张图"), assistant])
+        let responseParts = try XCTUnwrap(contents.last?["parts"] as? [[String: Any]])
+        XCTAssertNotNil(responseParts.first?["functionResponse"])
+        let inlineData = try XCTUnwrap(responseParts.last?["inlineData"] as? [String: Any])
+        XCTAssertEqual(inlineData["mimeType"] as? String, "image/jpeg")
+        XCTAssertEqual(inlineData["data"] as? String, "QUJD")
+    }
+
     func testToolDeltaWithThoughtSignatureAppendsWithoutCrashingAccumulator() {
         // Device crash 2026-08-21 08:40: SIGSEGV in JsonObject.get →
         // responsesItemId → MessageStreamAccumulator.appendTool when Gemini 3.7

@@ -56,3 +56,5 @@
 "agent.activity.metric.image.progress" = "%ld / %ld изображений";
 "agent.activity.metric.item.count" = "Обработано элементов: %ld";
 "agent.activity.metric.item.progress" = "%ld / %ld элементов";
+"agent.activity.control.cancel" = "Отменить";
+"agent.activity.control.retry" = "Повторить";

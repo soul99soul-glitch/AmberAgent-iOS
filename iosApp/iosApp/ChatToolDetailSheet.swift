@@ -145,10 +145,7 @@ struct ChatToolDetailSheet: View {
             if text.isEmpty {
                 statusLine(isRunning ? "等待输出…" : "(无输出)")
             } else {
-                Text(Self.markdownAttributed(text))
-                    .font(.callout)
-                    .foregroundStyle(AmberTheme.foreground)
-                    .textSelection(.enabled)
+                LazyToolTextBlock(text: text, style: .markdown)
             }
         }
     }
@@ -167,6 +164,9 @@ struct ChatToolDetailSheet: View {
         }
         if tool.toolName == "ish_handoff" { return "iSH 交接" }
         if tool.toolName == "ios_ish_execute" { return "内置 iSH 执行" }
+        if IOSAppleAgentToolCatalog.toolNames.contains(tool.toolName) {
+            return McpToolApprovalRequest.displayName(for: tool.toolName)
+        }
         if IOSRemoteTerminalToolCatalog.jobToolNames.contains(tool.toolName) {
             let runtime = ChatToolStepModel.firstJSONObject(in: tool.output)?["runtime"] as? String
             return runtime == IOSTerminalRuntimeKind.ishExperimental.rawValue
@@ -238,7 +238,13 @@ struct ChatToolDetailSheet: View {
 }
 
 private struct LazyToolTextBlock: View {
+    enum Style {
+        case code
+        case markdown
+    }
+
     let text: String
+    var style: Style = .code
     @State private var isExpanded = false
 
     private let previewLimit = 1_600
@@ -254,11 +260,7 @@ private struct LazyToolTextBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(displayText)
-                .font(.system(.footnote, design: .monospaced))
-                .foregroundStyle(AmberTheme.foreground2)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            renderedText
 
             if isLong {
                 Divider().overlay(AmberTheme.borderSoft)
@@ -288,6 +290,25 @@ private struct LazyToolTextBlock: View {
         }
         .padding(12)
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var renderedText: some View {
+        Group {
+            switch style {
+            case .code:
+                Text(displayText)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(AmberTheme.foreground2)
+            case .markdown:
+                Text(ChatToolDetailSheet.markdownAttributed(displayText))
+                    .font(.callout)
+                    .foregroundStyle(AmberTheme.foreground)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var byteCountText: String {

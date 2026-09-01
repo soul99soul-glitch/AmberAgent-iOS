@@ -265,6 +265,18 @@ final class ChatMessageProjectionTests: XCTestCase {
         XCTAssertTrue(bubble.contains("toolPart(toolCallId: target.toolCallId)"))
     }
 
+    func testToolDetailLongReceiptWrapsWithinSheetWidth() throws {
+        let detail = try source("iosApp/ChatToolDetailSheet.swift")
+        let renderedTextStart = try XCTUnwrap(detail.range(of: "private var renderedText"))
+        let byteCountStart = try XCTUnwrap(
+            detail.range(of: "private var byteCountText", range: renderedTextStart.upperBound..<detail.endIndex)
+        )
+        let renderedText = detail[renderedTextStart.lowerBound..<byteCountStart.lowerBound]
+
+        XCTAssertTrue(renderedText.contains(".frame(maxWidth: .infinity, alignment: .leading)"))
+        XCTAssertTrue(renderedText.contains(".fixedSize(horizontal: false, vertical: true)"))
+    }
+
     func testNativeTimelineSessionIdentityChangesAcrossConversations() {
         let first = KotlinUuid.companion.random()
         let second = KotlinUuid.companion.random()

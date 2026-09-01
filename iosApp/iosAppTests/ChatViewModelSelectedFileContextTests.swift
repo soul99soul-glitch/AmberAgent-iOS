@@ -413,7 +413,10 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertEqual(recoveredPayload["cancelled"] as? Bool, true)
         XCTAssertEqual(
             recoveredPayload["reason"] as? String,
-            "The previous generation ended before the tool call completed."
+            IOSAppLocalization.string(
+                "The previous generation ended before the tool call completed.",
+                defaultValue: "The previous generation ended before the tool call completed."
+            )
         )
 
         for _ in 0..<100 {
@@ -1559,8 +1562,8 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         )
         XCTAssertEqual(handoffRequest?.requiresHumanHandoff, true)
         let step = ChatToolStepModel(tool: toolCall)
-        XCTAssertFalse(step.detail?.contains("token=secret") == true)
-        XCTAssertTrue(step.detail?.contains("https://github.com/login") == true)
+        XCTAssertFalse(step.title.contains("token=secret"))
+        XCTAssertTrue(step.title.contains("https://github.com/login"))
     }
 
     func testWebMountDirectToolExecutionHelperIsAvailableAfterUserAction() async throws {

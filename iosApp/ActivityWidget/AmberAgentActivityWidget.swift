@@ -1,4 +1,5 @@
 import ActivityKit
+import AlarmKit
 import SwiftUI
 import WidgetKit
 
@@ -6,6 +7,122 @@ import WidgetKit
 struct AmberAgentActivityWidgetBundle: WidgetBundle {
     var body: some Widget {
         AmberAgentActivityWidget()
+        AmberAlarmActivityWidget()
+    }
+}
+
+struct AmberAlarmActivityWidget: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: AlarmAttributes<IOSAmberAlarmMetadata>.self) { context in
+            HStack(spacing: 12) {
+                Image(systemName: "alarm.fill")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(context.attributes.metadata?.title ?? IOSAlarmCopy.defaultTitle)
+                        .font(.headline)
+                        .lineLimit(2)
+                    AmberAlarmStateLabel(mode: context.state.mode)
+                }
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .activityBackgroundTint(.black.opacity(0.92))
+            .activitySystemActionForegroundColor(.white)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    Image(systemName: "alarm.fill")
+                        .font(.title3)
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    Text(context.attributes.metadata?.title ?? IOSAlarmCopy.defaultTitle)
+                        .font(.headline)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    AmberAlarmStateLabel(mode: context.state.mode)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } compactLeading: {
+                Image(systemName: "alarm.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel(IOSAlarmCopy.defaultTitle)
+            } compactTrailing: {
+                AmberAlarmCompactLabel(mode: context.state.mode)
+            } minimal: {
+                Image(systemName: "alarm.fill")
+                    .foregroundStyle(.orange)
+                    .accessibilityLabel(
+                        "\(IOSAlarmCopy.defaultTitle), \(IOSAlarmCopy.accessibilityState(for: context.state.mode))"
+                    )
+            }
+            .keylineTint(.orange)
+        }
+    }
+}
+
+private struct AmberAlarmStateLabel: View {
+    let mode: AlarmPresentationState.Mode
+
+    var body: some View {
+        switch mode {
+        case .countdown(let countdown):
+            if countdown.fireDate > Date() {
+                Text(timerInterval: Date()...countdown.fireDate, countsDown: true)
+                    .monospacedDigit()
+                    .font(.subheadline.weight(.semibold))
+            } else {
+                Text(IOSAlarmCopy.zeroTime)
+                    .monospacedDigit()
+                    .font(.subheadline.weight(.semibold))
+            }
+        case .paused:
+            Label(IOSAlarmCopy.paused, systemImage: "pause.fill")
+                .font(.subheadline.weight(.semibold))
+        case .alert:
+            Label(IOSAlarmCopy.ringing, systemImage: "bell.and.waves.left.and.right.fill")
+                .font(.subheadline.weight(.semibold))
+        @unknown default:
+            Text(IOSAlarmCopy.defaultTitle)
+                .font(.subheadline.weight(.semibold))
+        }
+    }
+}
+
+private struct AmberAlarmCompactLabel: View {
+    let mode: AlarmPresentationState.Mode
+
+    var body: some View {
+        switch mode {
+        case .countdown(let countdown):
+            if countdown.fireDate > Date() {
+                Text(timerInterval: Date()...countdown.fireDate, countsDown: true)
+                    .monospacedDigit()
+                    .font(.caption2.weight(.semibold))
+                    .frame(maxWidth: 52)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            } else {
+                Text(IOSAlarmCopy.zeroTime)
+                    .monospacedDigit()
+                    .font(.caption2.weight(.semibold))
+            }
+        case .paused:
+            Image(systemName: "pause.fill")
+                .accessibilityLabel(IOSAlarmCopy.paused)
+        case .alert:
+            Image(systemName: "bell.fill")
+                .accessibilityLabel(IOSAlarmCopy.ringing)
+        @unknown default:
+            Image(systemName: "alarm")
+                .accessibilityLabel(IOSAlarmCopy.defaultTitle)
+        }
     }
 }
 
@@ -17,6 +134,7 @@ struct AmberAgentActivityWidget: Widget {
                 state: context.state,
                 isStale: context.isStale
             )
+            .activityBackgroundTint(.black.opacity(0.92))
             .activitySystemActionForegroundColor(.white)
             .widgetURL(
                 context.attributes.destinationURL(
@@ -26,24 +144,33 @@ struct AmberAgentActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack(alignment: .center, spacing: 12) {
-                        AgentActivityIslandOrb(
-                            presentation: context.state.presentation,
-                            isStale: context.isStale,
-                            size: 40,
-                            animates: true
-                        )
-                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .center, spacing: 12) {
+                            AgentActivityIslandOrb(
+                                presentation: context.state.presentation,
+                                isStale: context.isStale,
+                                size: 40,
+                                animates: true
+                            )
+                            .accessibilityHidden(true)
 
-                        AgentActivityIslandHeadline(
-                            conversationTitle: context.attributes.conversationTitle,
+                            AgentActivityIslandHeadline(
+                                conversationTitle: context.attributes.conversationTitle,
+                                presentation: context.state.presentation,
+                                startedAt: context.attributes.startedAt,
+                                updatedAt: context.state.updatedAt,
+                                isStale: context.isStale,
+                                languageCode: context.state.languageCode
+                            )
+                            .offset(y: 1)
+                        }
+                        AgentActivityInlineControls(
+                            attributes: context.attributes,
                             presentation: context.state.presentation,
-                            startedAt: context.attributes.startedAt,
-                            updatedAt: context.state.updatedAt,
                             isStale: context.isStale,
-                            languageCode: context.state.languageCode
+                            languageCode: context.state.languageCode,
+                            compact: true
                         )
-                        .offset(y: 1)
                     }
                     .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
                 }
@@ -145,12 +272,12 @@ private struct AgentActivityCompactStatus: View {
 
     var body: some View {
         Text(stage.localizedCompactTitle(languageCode: languageCode))
-            .font(.system(size: 11, weight: .semibold))
+            .font(.caption2.weight(.semibold))
             .tracking(0.22)
             .lineLimit(1)
             .truncationMode(.tail)
             .minimumScaleFactor(0.85)
-            .frame(height: 20, alignment: .center)
+            .frame(minHeight: 20, alignment: .center)
             .frame(maxWidth: 56, alignment: .trailing)
             .modifier(AgentActivityStatusGlint(
                 isActive: presentation.displayPhase(isStale: isStale) == .running,
@@ -186,7 +313,7 @@ private struct AgentActivityIslandHeadline: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(headline.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.subheadline.weight(.semibold))
                     .tracking(-0.15)
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -197,13 +324,14 @@ private struct AgentActivityIslandHeadline: View {
                 AgentActivityIslandElapsedTimer(
                     startedAt: startedAt,
                     presentation: presentation,
-                    updatedAt: updatedAt
+                    updatedAt: updatedAt,
+                    isStale: isStale
                 )
             }
 
             if let subtitle = headline.subtitle {
                 Text(subtitle)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.caption2.weight(.medium))
                     .tracking(0.22)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -216,13 +344,7 @@ private struct AgentActivityIslandHeadline: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(agentActivityIslandAccessibilityLabel(
-            conversationTitle: conversationTitle,
-            presentation: presentation,
-            isStale: isStale,
-            languageCode: languageCode
-        ))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -230,11 +352,13 @@ private struct AgentActivityIslandElapsedTimer: View {
     let startedAt: Date
     let presentation: AgentActivityPresentation
     let updatedAt: Date
+    let isStale: Bool
 
     private var frozenEndDate: Date? {
         AgentActivityElapsedTimePolicy.frozenEndDate(
             for: presentation.phase,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            isStale: isStale
         )
     }
 
@@ -246,7 +370,7 @@ private struct AgentActivityIslandElapsedTimer: View {
                 Text(startedAt, style: .timer)
             }
         }
-            .font(.system(size: 12, weight: .medium))
+            .font(.caption.weight(.medium))
             .tracking(0.24)
             .monospacedDigit()
             .foregroundStyle(.white.opacity(0.55))
@@ -344,7 +468,7 @@ private struct AgentActivityHeadline: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
                 Text(headline.title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.headline.weight(.semibold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -354,13 +478,14 @@ private struct AgentActivityHeadline: View {
                 AgentActivityIslandElapsedTimer(
                     startedAt: startedAt,
                     presentation: presentation,
-                    updatedAt: updatedAt
+                    updatedAt: updatedAt,
+                    isStale: isStale
                 )
             }
 
             if let subtitle = headline.subtitle {
                 Text(subtitle)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.white.opacity(0.58))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -390,8 +515,11 @@ private struct AgentActivityExpandedFooter: View {
                 && state.presentation.metric.localizedDetailText(
                     languageCode: languageCode
                 ) != nil)
-            || (state.presentation.action?.showsLockScreenLabel == true
-                && attributes.destinationURL(for: state.presentation.action) != nil)
+            || !AgentActivityInlineControlPolicy.controls(
+                presentation: state.presentation,
+                isStale: isStale,
+                hasConversation: attributes.conversationId != nil
+            ).isEmpty
     }
 
     var body: some View {
@@ -404,32 +532,96 @@ private struct AgentActivityExpandedFooter: View {
                         .tint(displayPhase.widgetColor)
                 }
 
-                HStack(spacing: 10) {
-                    if displayPhase == .running,
-                       let detail = state.presentation.metric.localizedDetailText(
-                           languageCode: languageCode
-                       ) {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.58))
-                            .lineLimit(1)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    if let action = state.presentation.action,
-                       action.showsLockScreenLabel,
-                       attributes.destinationURL(for: action) != nil {
-                        Label(
-                            action.localizedTitle(languageCode: languageCode),
-                            systemImage: "arrow.up.right"
-                        )
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.amberAccent)
-                    }
+                if displayPhase == .running,
+                   let detail = state.presentation.metric.localizedDetailText(
+                       languageCode: languageCode
+                   ) {
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.58))
+                        .lineLimit(1)
                 }
+
+                AgentActivityInlineControls(
+                    attributes: attributes,
+                    presentation: state.presentation,
+                    isStale: isStale,
+                    languageCode: languageCode,
+                    compact: false
+                )
             }
             .padding(.bottom, 2)
+        }
+    }
+}
+
+private struct AgentActivityInlineControls: View {
+    let attributes: AgentActivityAttributes
+    let presentation: AgentActivityPresentation
+    let isStale: Bool
+    let languageCode: String?
+    let compact: Bool
+
+    private var controls: [AgentActivityInlineControl] {
+        AgentActivityInlineControlPolicy.controls(
+            presentation: presentation,
+            isStale: isStale,
+            hasConversation: attributes.conversationId != nil
+        )
+    }
+
+    var body: some View {
+        if let conversationId = attributes.conversationId, !controls.isEmpty {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: compact ? 6 : 8) { controlButtons(conversationId: conversationId) }
+                VStack(alignment: .leading, spacing: 6) { controlButtons(conversationId: conversationId) }
+            }
+            .font(.caption.weight(.semibold))
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .controlSize(.small)
+            .labelStyle(.titleAndIcon)
+        }
+    }
+
+    @ViewBuilder
+    private func controlButtons(conversationId: String) -> some View {
+        if controls.contains(.cancel) {
+            Button(intent: IOSCancelAgentRunIntent(
+                runId: attributes.runId,
+                conversationId: conversationId
+            )) {
+                Label(
+                    AgentActivityCopy.text("agent.activity.control.cancel", languageCode: languageCode),
+                    systemImage: "stop.fill"
+                )
+            }
+            .tint(.red)
+        }
+
+        if controls.contains(.retry) {
+            Button(intent: IOSRetryAgentRunIntent(
+                runId: attributes.runId,
+                conversationId: conversationId
+            )) {
+                Label(
+                    AgentActivityCopy.text("agent.activity.control.retry", languageCode: languageCode),
+                    systemImage: "arrow.clockwise"
+                )
+            }
+            .tint(.orange)
+        }
+
+        if controls.contains(.open),
+           let destination = attributes.destinationURL(for: presentation.action) {
+            Link(destination: destination) {
+                Label(
+                    presentation.action?.localizedTitle(languageCode: languageCode)
+                        ?? AgentActivityCopy.text("agent.activity.action.openTask", languageCode: languageCode),
+                    systemImage: "arrow.up.right"
+                )
+            }
+            .tint(.orange)
         }
     }
 }

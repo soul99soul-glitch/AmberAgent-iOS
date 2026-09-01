@@ -9,6 +9,17 @@ import XCTest
 @MainActor
 final class IOSSubAgentEngineRunnerTests: XCTestCase {
 
+    func testLiveModelFinishFlushesLatestCoalescedText() {
+        let model = SubAgentLiveModel()
+        model.ingest("first")
+        model.ingest("latest")
+
+        model.finish()
+
+        XCTAssertEqual(model.text, "latest")
+        XCTAssertFalse(model.isRunning)
+    }
+
     private func makeProviderSetting() -> ProviderSetting.OpenAI {
         ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),
@@ -355,7 +366,7 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
         XCTAssertTrue(provider.seenToolNames.contains("subagent_report"))
     }
 
-    func testRunViaEngineCapsParentMaxTokensToRoleOutputBudget() async {
+    func testRunViaEngineDoesNotTurnReportBudgetIntoPerTurnTokenLimit() async {
         let provider = ScriptedProvider([
             makeMessage(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "Done.", metadata: nil)])
         ])
@@ -398,7 +409,7 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
             provider: provider
         )
 
-        XCTAssertEqual(provider.seenMaxTokens, 1_000)
+        XCTAssertEqual(provider.seenMaxTokens, 16_000)
     }
 
     func testStandaloneEngineUsesSavedRolePromptOverride() async {
@@ -600,9 +611,10 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
         // Custom role identity + clamped budgets surface in the result.
         XCTAssertTrue(result.contains("\"role_id\":\"custom\""), result)
         XCTAssertTrue(result.contains("\"role_name\":\"Animation Reviewer\""), result)
-        // max_turns 99 -> clamped to 8; output budget 999999 -> clamped to 24000
-        // chars, so fallback maxTokens = 24000 / 4.
-        XCTAssertEqual(provider.seenMaxTokens, 6_000)
+        // max_turns 99 -> clamped to 8; output budget 999999 -> clamped to
+        // 24000 chars. The report budget must not become a provider max-token
+        // limit; no parent limit means the provider chooses its normal limit.
+        XCTAssertNil(provider.seenMaxTokens)
     }
 
     func testRunViaEngineCustomRoleClampsLowBudgetsUpToDefaults() async {
@@ -624,8 +636,9 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
             provider: provider
         )
 
-        // max_turns 1 -> clamped to 2; output budget 100 -> clamped to 4000 chars.
-        XCTAssertEqual(provider.seenMaxTokens, 1_000)
+        // max_turns 1 -> clamped to 2; output budget 100 -> clamped to 4000
+        // chars, without imposing an unrelated provider output limit.
+        XCTAssertNil(provider.seenMaxTokens)
     }
 
     func testRunViaEngineCustomRoleStillDeniedForWriteTools() async {

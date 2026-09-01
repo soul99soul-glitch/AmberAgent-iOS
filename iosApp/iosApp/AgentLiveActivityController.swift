@@ -260,7 +260,7 @@ final class AgentLiveActivityController {
             runId: runId,
             conversationId: conversationId,
             startedAt: now,
-            conversationTitle: conversationTitle
+            conversationTitle: WatchTaskText.singleLine(conversationTitle, maxLength: 120)
         )
 
         do {

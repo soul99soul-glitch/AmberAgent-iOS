@@ -7,11 +7,16 @@ final class WatchTaskViewModel: ObservableObject {
     @Published private(set) var snapshot: WatchTaskSnapshot = .idle
     @Published private(set) var statusMessage: String?
     @Published private(set) var isSending = false
+    @Published private(set) var isRefreshing = false
     @Published var draftAnswer: String = ""
     @Published var isDictating = false
 
     private let bridge: WatchConnectivityBridge
     private var lastRequestId: String?
+    private var refreshTimeoutTask: Task<Void, Never>?
+    private var freshnessTask: Task<Void, Never>?
+
+    var isBusy: Bool { isSending || isRefreshing }
 
     init(bridge: WatchConnectivityBridge = .shared) {
         self.bridge = bridge
@@ -20,15 +25,17 @@ final class WatchTaskViewModel: ObservableObject {
     func start() {
         bridge.configure()
         bridge.onSnapshotUpdated = { [weak self] snapshot in
-            self?.snapshot = snapshot
+            self?.receive(snapshot)
+        }
+        bridge.onReachabilityChanged = { [weak self] _ in
+            guard let self else { return }
+            self.receive(self.bridge.latestSnapshot)
         }
         bridge.onActionResult = { [weak self] result in
             guard let self, result.requestId == self.lastRequestId else { return }
             self.lastRequestId = nil
             self.isSending = false
-            if let snapshot = result.snapshot {
-                self.snapshot = snapshot
-            }
+            self.receive(self.bridge.latestSnapshot)
             self.statusMessage = result.message.map {
                 WatchTaskLocalization.string(
                     $0,
@@ -42,12 +49,27 @@ final class WatchTaskViewModel: ObservableObject {
             }
         }
         bridge.activateIfNeeded()
-        bridge.requestSnapshotFromPhone()
-        snapshot = bridge.latestSnapshot
+        _ = bridge.requestSnapshotFromPhone()
+        receive(bridge.latestSnapshot)
     }
 
     func refresh() {
-        bridge.requestSnapshotFromPhone()
+        guard !isBusy else { return }
+        isRefreshing = true
+        statusMessage = nil
+        guard bridge.requestSnapshotFromPhone() else {
+            isRefreshing = false
+            statusMessage = localized("无法连接 iPhone，请稍后重试")
+            receive(bridge.latestSnapshot)
+            return
+        }
+        refreshTimeoutTask?.cancel()
+        refreshTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled, let self, self.isRefreshing else { return }
+            self.isRefreshing = false
+            self.statusMessage = self.localized("无法连接 iPhone，请稍后重试")
+        }
     }
 
     func approve() {
@@ -83,6 +105,10 @@ final class WatchTaskViewModel: ObservableObject {
         send(action: .cancel)
     }
 
+    func retry() {
+        send(action: .retry)
+    }
+
     func openOnPhone() {
         send(action: .openOnPhone)
     }
@@ -92,6 +118,7 @@ final class WatchTaskViewModel: ObservableObject {
         optionId: String? = nil,
         text: String? = nil
     ) {
+        guard !isBusy else { return }
         guard snapshot.isActive || action == .refresh else {
             statusMessage = localized("当前没有任务")
             return
@@ -111,6 +138,32 @@ final class WatchTaskViewModel: ObservableObject {
             createdAt: Date()
         )
         bridge.sendAction(request)
+    }
+
+    private func receive(_ authoritativeSnapshot: WatchTaskSnapshot) {
+        refreshTimeoutTask?.cancel()
+        refreshTimeoutTask = nil
+        isRefreshing = false
+        snapshot = WatchSnapshotFreshnessPolicy.presented(
+            authoritativeSnapshot,
+            isPhoneReachable: bridge.isCompanionReachable
+        )
+        freshnessTask?.cancel()
+        guard authoritativeSnapshot.isActive,
+              !bridge.isCompanionReachable else { return }
+        let remaining = max(
+            0,
+            WatchSnapshotFreshnessPolicy.staleAfter
+                - Date().timeIntervalSince(authoritativeSnapshot.updatedAt)
+        )
+        freshnessTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled, let self else { return }
+            self.snapshot = WatchSnapshotFreshnessPolicy.presented(
+                self.bridge.latestSnapshot,
+                isPhoneReachable: self.bridge.isCompanionReachable
+            )
+        }
     }
 
     private func localized(_ key: String) -> String {

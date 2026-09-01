@@ -95,6 +95,8 @@ final class WatchConnectivityBridge: NSObject {
 
     var onSnapshotUpdated: ((WatchTaskSnapshot) -> Void)?
     var onActionResult: ((WatchTaskActionResult) -> Void)?
+    var onReachabilityChanged: ((Bool) -> Void)?
+    var isCompanionReachable: Bool { transport?.isReachable == true }
 
     override init() {
         actionTimeoutNanoseconds = 12_000_000_000
@@ -123,6 +125,12 @@ final class WatchConnectivityBridge: NSObject {
             self.actionHandler = actionHandler
         }
         activateIfNeeded()
+    }
+
+    /// Installs WCSession's delegate during app launch so watchOS messages can
+    /// wake the process before SwiftUI has constructed AppShell.
+    func startReceiving(actionHandler: WatchTaskActionHandling? = nil) {
+        configure(actionHandler: actionHandler)
     }
 
     func activateIfNeeded() {
@@ -158,11 +166,12 @@ final class WatchConnectivityBridge: NSObject {
         publish(idle)
     }
 
-    func requestSnapshotFromPhone() {
-        guard let transport, transport.isSupported else { return }
+    @discardableResult
+    func requestSnapshotFromPhone() -> Bool {
+        guard let transport, transport.isSupported else { return false }
         activateIfNeeded()
         // Only request when reachable; otherwise keep local/applicationContext snapshot.
-        guard transport.isReachable else { return }
+        guard transport.isReachable else { return false }
         let message = WatchTaskCodec.requestSnapshotMessage()
         transport.sendMessage(message, replyHandler: { [weak self] reply in
             let envelope = Self.decodeEnvelope(reply)
@@ -170,6 +179,7 @@ final class WatchConnectivityBridge: NSObject {
                 self?.apply(envelope)
             }
         }, errorHandler: nil)
+        return true
     }
 
     func sendAction(_ request: WatchTaskActionRequest) {
@@ -178,24 +188,25 @@ final class WatchConnectivityBridge: NSObject {
             return
         }
         activateIfNeeded()
+        guard transport.isReachable else {
+            // Interactive commands must not arrive minutes later after Watch has
+            // already reported failure; snapshots still use queued delivery.
+            reportActionFailure(request, message: "无法连接 iPhone，请稍后重试")
+            return
+        }
         scheduleActionTimeout(for: request)
         do {
             let message = try WatchTaskCodec.actionMessage(for: request)
-            if transport.isReachable {
-                transport.sendMessage(message, replyHandler: { [weak self] reply in
-                    let envelope = Self.decodeEnvelope(reply)
-                    Task { @MainActor in
-                        self?.apply(envelope)
-                    }
-                }, errorHandler: { [weak self] _ in
-                    _ = transport.transferUserInfo(message)
-                    Task { @MainActor in
-                        self?.reportActionFailure(request, message: "发送到 iPhone 失败，请稍后重试")
-                    }
-                })
-            } else {
-                _ = transport.transferUserInfo(message)
-            }
+            transport.sendMessage(message, replyHandler: { [weak self] reply in
+                let envelope = Self.decodeEnvelope(reply)
+                Task { @MainActor in
+                    self?.apply(envelope)
+                }
+            }, errorHandler: { [weak self] _ in
+                Task { @MainActor in
+                    self?.reportActionFailure(request, message: "发送到 iPhone 失败，请稍后重试")
+                }
+            })
         } catch {
             reportActionFailure(request, message: "发送到 iPhone 失败，请稍后重试")
         }
@@ -232,8 +243,7 @@ final class WatchConnectivityBridge: NSObject {
     fileprivate func apply(_ envelope: WatchInboundEnvelope) {
         switch envelope {
         case .snapshot(let snapshot):
-            latestSnapshot = snapshot
-            onSnapshotUpdated?(snapshot)
+            applySnapshotIfNewer(snapshot)
         case .action(let request):
             #if os(iOS)
             Task { @MainActor in
@@ -255,8 +265,7 @@ final class WatchConnectivityBridge: NSObject {
         case .actionResult(let result):
             actionTimeoutTasks.removeValue(forKey: result.requestId)?.cancel()
             if let snapshot = result.snapshot {
-                latestSnapshot = snapshot
-                onSnapshotUpdated?(snapshot)
+                applySnapshotIfNewer(snapshot)
             }
             onActionResult?(result)
         case .requestSnapshot:
@@ -266,6 +275,16 @@ final class WatchConnectivityBridge: NSObject {
         case .ignored:
             break
         }
+    }
+
+    private func applySnapshotIfNewer(_ snapshot: WatchTaskSnapshot) {
+        if snapshot.updatedAt < latestSnapshot.updatedAt { return }
+        if snapshot.updatedAt == latestSnapshot.updatedAt,
+           snapshot != latestSnapshot {
+            return
+        }
+        latestSnapshot = snapshot
+        onSnapshotUpdated?(snapshot)
     }
 
     #if os(iOS)
@@ -349,7 +368,9 @@ extension WatchConnectivityBridge: WCSessionDelegate {
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         let reachable = session.isReachable
         Task { @MainActor [weak self] in
-            guard let self, reachable else { return }
+            guard let self else { return }
+            self.onReachabilityChanged?(reachable)
+            guard reachable else { return }
             #if os(watchOS)
             self.requestSnapshotFromPhone()
             #else

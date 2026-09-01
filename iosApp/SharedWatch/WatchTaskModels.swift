@@ -41,6 +41,31 @@ struct WatchTaskSnapshot: Codable, Hashable, Sendable {
     }
 }
 
+enum WatchSnapshotFreshnessPolicy {
+    static let staleAfter: TimeInterval = 60
+
+    static func presented(
+        _ snapshot: WatchTaskSnapshot,
+        isPhoneReachable: Bool,
+        now: Date = Date()
+    ) -> WatchTaskSnapshot {
+        guard snapshot.isActive,
+              !isPhoneReachable,
+              now.timeIntervalSince(snapshot.updatedAt) >= staleAfter else {
+            return snapshot
+        }
+        var stale = snapshot
+        stale.phase = "stale"
+        stale.stage = "stale"
+        stale.detail = nil
+        stale.metricText = nil
+        stale.decision = nil
+        stale.actions = stale.actions.filter { $0 == .openOnPhone }
+        stale.isStale = true
+        return stale
+    }
+}
+
 struct WatchDecision: Codable, Hashable, Sendable {
     var id: String
     var type: WatchDecisionType
@@ -84,6 +109,7 @@ enum WatchAction: String, Codable, Hashable, Sendable {
     case choose
     case dictate
     case cancel
+    case retry
 }
 
 struct WatchTaskActionRequest: Codable, Hashable, Sendable {
@@ -103,6 +129,7 @@ enum WatchInboundAction: String, Codable, Hashable, Sendable {
     case choose
     case answer
     case cancel
+    case retry
     case openOnPhone
     case refresh
 }
@@ -121,7 +148,7 @@ enum WatchConnectivityPayloadKey {
     static let action = "action"
     static let result = "result"
     static let protocolVersion = "protocolVersion"
-    static let currentProtocolVersion = 1
+    static let currentProtocolVersion = 2
 
     static let typeSnapshot = "snapshot"
     static let typeAction = "action"

@@ -84,6 +84,8 @@
     </array>
     <key>NSAppleMusicUsageDescription</key>
     <string>AmberAgent can request access to Apple Music and the media library when you choose to enable media capabilities.</string>
+    <key>NSAlarmKitUsageDescription</key>
+    <string>Amber schedules prominent alarms and timers only after you approve an agent request.</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>AmberAgent can request Bluetooth access when you choose to enable nearby device capabilities.</string>
     <key>NSBonjourServices</key>
@@ -103,7 +105,7 @@
     <key>NSGKFriendListUsageDescription</key>
     <string>AmberAgent can request Game Center friend list access when you choose to enable Game Center capabilities.</string>
     <key>NSHealthShareUsageDescription</key>
-    <string>Amber reads your step count only after you enable Health access, so it can show a private activity summary on this device.</string>
+    <string>Amber reads activity, workout, and sleep summaries only after you approve access, so its agent can help analyze your health and fitness trends.</string>
     <key>NSHomeKitUsageDescription</key>
     <string>AmberAgent can request HomeKit access when you choose to enable home capabilities.</string>
     <key>NSIdentityUsageDescription</key>
@@ -158,6 +160,7 @@
         <string>com.apple.developer.healthkit</string>
         <string>com.apple.developer.icloud-container-identifiers</string>
         <string>com.apple.developer.icloud-services</string>
+        <string>com.apple.developer.journal.allow</string>
         <string>com.apple.developer.weatherkit</string>
     </array>
     <key>AmberAgentExperimentalConfiguredEntitlements</key>

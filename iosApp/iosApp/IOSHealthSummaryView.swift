@@ -166,6 +166,317 @@ final class IOSHealthSummaryService: IOSHealthSummaryProviding {
     }
 }
 
+struct IOSHealthAgentDailySummary: Equatable {
+    let date: Date
+    let steps: Double
+    let activeEnergyKilocalories: Double
+    let exerciseMinutes: Double
+    let sleepHours: Double
+}
+
+struct IOSHealthAgentWorkoutSummary: Equatable {
+    let activity: String
+    let startedAt: Date
+    let durationMinutes: Double
+    let energyKilocalories: Double?
+    let distanceKilometers: Double?
+}
+
+struct IOSHealthAgentSummary: Equatable {
+    let days: [IOSHealthAgentDailySummary]
+    let workouts: [IOSHealthAgentWorkoutSummary]
+}
+
+@MainActor
+protocol IOSHealthAgentSummaryProviding: AnyObject {
+    func requestAuthorization() async throws
+    func loadSummary(days: Int, includeWorkouts: Bool, now: Date, calendar: Calendar) async throws -> IOSHealthAgentSummary
+}
+
+@MainActor
+final class IOSHealthAgentSummaryService: IOSHealthAgentSummaryProviding {
+    #if canImport(HealthKit)
+    private let store: HKHealthStore
+
+    init(store: HKHealthStore = HKHealthStore()) {
+        self.store = store
+    }
+    #else
+    init() {}
+    #endif
+
+    func requestAuthorization() async throws {
+        #if canImport(HealthKit)
+        guard HKHealthStore.isHealthDataAvailable() else { throw IOSHealthSummaryError.unavailable }
+        try await store.requestAuthorization(toShare: [], read: readTypes)
+        #else
+        throw IOSHealthSummaryError.unavailable
+        #endif
+    }
+
+    func loadSummary(
+        days: Int,
+        includeWorkouts: Bool,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) async throws -> IOSHealthAgentSummary {
+        #if canImport(HealthKit)
+        guard HKHealthStore.isHealthDataAvailable() else { throw IOSHealthSummaryError.unavailable }
+        let boundedDays = min(max(days, 1), 30)
+        let today = calendar.startOfDay(for: now)
+        guard let start = calendar.date(byAdding: .day, value: -(boundedDays - 1), to: today),
+              let end = calendar.date(byAdding: .day, value: 1, to: today) else {
+            throw IOSHealthSummaryError.invalidDateRange
+        }
+
+        async let steps = dailyQuantity(
+            identifier: .stepCount,
+            unit: .count(),
+            start: start,
+            end: end,
+            anchor: today,
+            calendar: calendar
+        )
+        async let energy = dailyQuantity(
+            identifier: .activeEnergyBurned,
+            unit: .kilocalorie(),
+            start: start,
+            end: end,
+            anchor: today,
+            calendar: calendar
+        )
+        async let exercise = dailyQuantity(
+            identifier: .appleExerciseTime,
+            unit: .minute(),
+            start: start,
+            end: end,
+            anchor: today,
+            calendar: calendar
+        )
+        async let sleep = dailySleepHours(start: start, end: end, calendar: calendar)
+        async let workouts = includeWorkouts
+            ? recentWorkouts(start: start, end: end, limit: 20)
+            : []
+
+        let (stepValues, energyValues, exerciseValues, sleepValues, workoutValues) = try await (
+            steps, energy, exercise, sleep, workouts
+        )
+        let summaries = (0..<boundedDays).compactMap { index -> IOSHealthAgentDailySummary? in
+            guard let date = calendar.date(byAdding: .day, value: index, to: start) else { return nil }
+            let day = calendar.startOfDay(for: date)
+            return IOSHealthAgentDailySummary(
+                date: day,
+                steps: stepValues[day] ?? 0,
+                activeEnergyKilocalories: energyValues[day] ?? 0,
+                exerciseMinutes: exerciseValues[day] ?? 0,
+                sleepHours: sleepValues[day] ?? 0
+            )
+        }
+        return IOSHealthAgentSummary(days: summaries, workouts: workoutValues)
+        #else
+        throw IOSHealthSummaryError.unavailable
+        #endif
+    }
+
+    #if canImport(HealthKit)
+    private var readTypes: Set<HKObjectType> {
+        var types: Set<HKObjectType> = [HKObjectType.workoutType()]
+        [
+            HKQuantityTypeIdentifier.stepCount,
+            .activeEnergyBurned,
+            .appleExerciseTime
+        ].compactMap(HKQuantityType.quantityType(forIdentifier:)).forEach { types.insert($0) }
+        if let sleep = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) {
+            types.insert(sleep)
+        }
+        return types
+    }
+
+    private func dailyQuantity(
+        identifier: HKQuantityTypeIdentifier,
+        unit: HKUnit,
+        start: Date,
+        end: Date,
+        anchor: Date,
+        calendar: Calendar
+    ) async throws -> [Date: Double] {
+        guard let type = HKQuantityType.quantityType(forIdentifier: identifier) else { return [:] }
+        return try await withCheckedThrowingContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [.strictStartDate])
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type,
+                quantitySamplePredicate: predicate,
+                options: [.cumulativeSum],
+                anchorDate: anchor,
+                intervalComponents: DateComponents(day: 1)
+            )
+            query.initialResultsHandler = { _, collection, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                var values: [Date: Double] = [:]
+                collection?.enumerateStatistics(from: start, to: end) { statistics, _ in
+                    let day = calendar.startOfDay(for: statistics.startDate)
+                    guard day < end else { return }
+                    values[day] = statistics.sumQuantity()?.doubleValue(for: unit) ?? 0
+                }
+                continuation.resume(returning: values)
+            }
+            store.execute(query)
+        }
+    }
+
+    private func dailySleepHours(
+        start: Date,
+        end: Date,
+        calendar: Calendar
+    ) async throws -> [Date: Double] {
+        guard let type = HKCategoryType.categoryType(forIdentifier: .sleepAnalysis) else { return [:] }
+        let samples: [HKCategorySample] = try await withCheckedThrowingContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
+            let query = HKSampleQuery(
+                sampleType: type,
+                predicate: predicate,
+                limit: HKObjectQueryNoLimit,
+                sortDescriptors: nil
+            ) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: (samples as? [HKCategorySample]) ?? [])
+                }
+            }
+            store.execute(query)
+        }
+        var hours: [Date: Double] = [:]
+        for sample in samples {
+            guard let value = HKCategoryValueSleepAnalysis(rawValue: sample.value),
+                  value != .inBed,
+                  value != .awake else { continue }
+            let day = calendar.startOfDay(for: sample.endDate)
+            hours[day, default: 0] += sample.endDate.timeIntervalSince(sample.startDate) / 3_600
+        }
+        return hours
+    }
+
+    private func recentWorkouts(start: Date, end: Date, limit: Int) async throws -> [IOSHealthAgentWorkoutSummary] {
+        let samples: [HKWorkout] = try await withCheckedThrowingContinuation { continuation in
+            let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [.strictStartDate])
+            let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+            let query = HKSampleQuery(
+                sampleType: HKObjectType.workoutType(),
+                predicate: predicate,
+                limit: limit,
+                sortDescriptors: [sort]
+            ) { _, samples, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: (samples as? [HKWorkout]) ?? [])
+                }
+            }
+            store.execute(query)
+        }
+        return samples.map { workout in
+            IOSHealthAgentWorkoutSummary(
+                activity: Self.activityName(workout.workoutActivityType),
+                startedAt: workout.startDate,
+                durationMinutes: workout.duration / 60,
+                energyKilocalories: workout.totalEnergyBurned?.doubleValue(for: .kilocalorie()),
+                distanceKilometers: workout.totalDistance?.doubleValue(for: .meterUnit(with: .kilo))
+            )
+        }
+    }
+
+    private static func activityName(_ type: HKWorkoutActivityType) -> String {
+        switch type {
+        case .walking: "walking"
+        case .running: "running"
+        case .cycling: "cycling"
+        case .swimming: "swimming"
+        case .hiking: "hiking"
+        case .traditionalStrengthTraining: "strength_training"
+        case .functionalStrengthTraining: "functional_strength_training"
+        case .yoga: "yoga"
+        case .highIntensityIntervalTraining: "hiit"
+        default: "workout_\(type.rawValue)"
+        }
+    }
+    #endif
+}
+
+enum IOSHealthAgentToolCatalog {
+    static let toolName = "health_summary_read"
+}
+
+@MainActor
+enum IOSHealthAgentToolExecutor {
+    static func execute(
+        input: String,
+        service: any IOSHealthAgentSummaryProviding = IOSHealthAgentSummaryService()
+    ) async -> String {
+        guard let data = input.data(using: .utf8),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return failure("参数无效；只支持 days 与 include_workouts。")
+        }
+        object.removeValue(forKey: "display_title")
+        guard
+              Set(object.keys).isSubset(of: ["days", "include_workouts"]) else {
+            return failure("参数无效；只支持 days 与 include_workouts。")
+        }
+        let days = min(max(object["days"] as? Int ?? 7, 1), 30)
+        let includeWorkouts = object["include_workouts"] as? Bool ?? true
+        do {
+            try await service.requestAuthorization()
+            let summary = try await service.loadSummary(
+                days: days,
+                includeWorkouts: includeWorkouts,
+                now: Date(),
+                calendar: .current
+            )
+            let formatter = ISO8601DateFormatter()
+            return json([
+                "ok": true,
+                "tool": IOSHealthAgentToolCatalog.toolName,
+                "privacy": "user_authorized_health_data",
+                "days": summary.days.map { day in
+                    [
+                        "date": formatter.string(from: day.date),
+                        "steps": Int(day.steps.rounded()),
+                        "active_energy_kcal": day.activeEnergyKilocalories,
+                        "exercise_minutes": day.exerciseMinutes,
+                        "sleep_hours": day.sleepHours
+                    ] as [String: Any]
+                },
+                "workouts": summary.workouts.map { workout in
+                    var value: [String: Any] = [
+                        "activity": workout.activity,
+                        "started_at": formatter.string(from: workout.startedAt),
+                        "duration_minutes": workout.durationMinutes
+                    ]
+                    workout.energyKilocalories.map { value["energy_kcal"] = $0 }
+                    workout.distanceKilometers.map { value["distance_km"] = $0 }
+                    return value
+                }
+            ])
+        } catch {
+            return failure(error.localizedDescription)
+        }
+    }
+
+    private static func failure(_ reason: String) -> String {
+        json(["ok": false, "tool": IOSHealthAgentToolCatalog.toolName, "reason": reason])
+    }
+
+    private static func json(_ payload: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+            return #"{"ok":false,"tool":"health_summary_read","reason":"无法编码健康摘要。"}"#
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
 enum IOSHealthSummaryError: LocalizedError {
     case notConfigured
     case unavailable
@@ -307,7 +618,7 @@ struct IOSHealthSummaryView: View {
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(AmberTheme.accent)
                         .frame(width: 28, height: 28)
-                    Text("Amber 只读取步数并在本页临时展示，不会写入健康数据，也不会保存到同步备份或发送给模型。")
+                    Text("你可以在本页查看步数，也可以在对话中逐次批准 Agent 读取运动与睡眠摘要。含健康数据的会话不会进入 Amber 同步备份。")
                         .font(.subheadline)
                         .foregroundStyle(AmberTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)

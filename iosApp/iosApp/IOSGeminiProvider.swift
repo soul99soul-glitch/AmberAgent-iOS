@@ -256,7 +256,10 @@ enum IOSGeminiPayloadBuilder {
                     buffer = []
                 }
                 contents.append(["role": "model", "parts": [functionCallPart(tool)]])
-                contents.append(["role": "user", "parts": [functionResponsePart(tool)]])
+                contents.append([
+                    "role": "user",
+                    "parts": [functionResponsePart(tool)] + tool.output.compactMap(inlineImagePart),
+                ])
                 continue
             }
             if let tool = part as? UIMessagePart.Tool, !tool.isExecuted {
@@ -294,9 +297,29 @@ enum IOSGeminiPayloadBuilder {
         if let text = part as? UIMessagePart.Text {
             return ["text": text.text]
         }
-        // Images/audio/video/other modalities are not supported by the iOS Gemini
-        // transport yet — dropped silently so text chats keep working.
+        if let image = part as? UIMessagePart.Image {
+            return inlineImagePart(image)
+        }
+        // Audio/video/other modalities are not supported by the iOS Gemini transport yet.
         return nil
+    }
+
+    private static func inlineImagePart(_ part: UIMessagePart) -> [String: Any]? {
+        guard let image = part as? UIMessagePart.Image else { return nil }
+        return inlineImagePart(image)
+    }
+
+    private static func inlineImagePart(_ image: UIMessagePart.Image) -> [String: Any]? {
+        let prefix = "data:"
+        guard image.url.hasPrefix(prefix),
+              let separator = image.url.range(of: ";base64,"),
+              separator.lowerBound > image.url.startIndex else {
+            return nil
+        }
+        let mimeType = String(image.url[image.url.index(image.url.startIndex, offsetBy: prefix.count)..<separator.lowerBound])
+        let data = String(image.url[separator.upperBound...])
+        guard mimeType.hasPrefix("image/"), !data.isEmpty else { return nil }
+        return ["inlineData": ["mimeType": mimeType, "data": data]]
     }
 
     static func functionDeclarations(tools: [Tool]) -> [[String: Any]] {

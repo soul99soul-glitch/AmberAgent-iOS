@@ -101,7 +101,85 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
             .union(IOSAmberShellToolCatalog.supportedToolNames)
             .union(IOSRemoteTerminalToolCatalog.supportedToolNames)
+            .union(IOSAppleAgentToolCatalog.toolNames)
         XCTAssertEqual(IOSCapabilityRegistry.executableToolNames, expected)
+    }
+
+    func testAppleCapabilitiesMapAgentToolsToSystemPermissionOwners() {
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSHealthAgentToolCatalog.toolName)?.id,
+            "ios.health.read"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.calendarEventsList)?.id,
+            "ios.calendar.full"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.calendarEventCreate)?.id,
+            "ios.calendar.write_only"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.calendarEventUpdate)?.id,
+            "ios.calendar.full"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.calendarEventDelete)?.id,
+            "ios.calendar.full"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.reminderCreate)?.id,
+            "ios.reminders.full"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.reminderUpdate)?.id,
+            "ios.reminders.full"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.reminderDelete)?.id,
+            "ios.reminders.full"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.notificationSchedule)?.id,
+            "ios.notifications.alerts"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSWeatherToolCatalog.toolName)?.id,
+            "ios.weather.read"
+        )
+        for toolName in IOSAppleAgentToolCatalog.alarmToolNames {
+            XCTAssertEqual(
+                IOSCapabilityRegistry.capability(forToolName: toolName)?.id,
+                "ios.alarmkit.alarms"
+            )
+        }
+        for toolName in IOSAppleAgentToolCatalog.workoutToolNames {
+            XCTAssertEqual(
+                IOSCapabilityRegistry.capability(forToolName: toolName)?.id,
+                "ios.workoutkit.scheduler"
+            )
+        }
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.contactsPick)?.id,
+            "ios.contacts.picker"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.photosPick)?.id,
+            "ios.photos.picker"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capability(forToolName: IOSAppleAgentToolCatalog.journalingSuggestionPick)?.id,
+            "ios.journaling_suggestions.picker"
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.journaling_suggestions.picker" }?.requiredEntitlements,
+            ["com.apple.developer.journal.allow"]
+        )
+        XCTAssertEqual(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.alarmkit.alarms" }?.requiredInfoPlistKeys,
+            ["NSAlarmKitUsageDescription"]
+        )
+        XCTAssertTrue(IOSAppleAgentToolCatalog.mutatingToolNames.isSubset(of: IOSAppleAgentToolCatalog.approvalRequiredToolNames))
+        XCTAssertTrue(IOSAppleAgentToolCatalog.pickerToolNames.isDisjoint(with: IOSAppleAgentToolCatalog.approvalRequiredToolNames))
     }
 
     func testAdvancedExecutionCapabilitiesKeepRemoteCommandForegroundAndApproved() throws {

@@ -3734,7 +3734,6 @@ struct SettingsHomeView: View {
 
     private var dataEntries: [SettingsHomeEntry] {
         [
-            .init(title: "Apple 集成", systemImage: "apple.logo", route: .appleIntegrations),
             .init(title: "Amber Pro", subtitle: "订阅与恢复购买", systemImage: "checkmark.seal", route: .subscription),
             .init(title: "Workspace", systemImage: "folder.badge.gearshape", route: .workspace),
             .init(title: "同步备份", systemImage: "icloud", route: .syncBackup),

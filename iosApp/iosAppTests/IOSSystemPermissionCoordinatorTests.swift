@@ -1,5 +1,8 @@
 import XCTest
 @testable import iosApp
+#if canImport(WorkoutKit)
+import WorkoutKit
+#endif
 
 @MainActor
 final class IOSSystemPermissionCoordinatorTests: XCTestCase {
@@ -39,6 +42,18 @@ final class IOSSystemPermissionCoordinatorTests: XCTestCase {
         let result = await coordinator.refreshStatus(for: camera)
 
         XCTAssertNotEqual(result.status, .missingUsageDescription)
+    }
+
+    func testWorkoutSchedulerReportsUnavailableWithoutSupportedWatch() async throws {
+        #if canImport(WorkoutKit)
+        guard #available(iOS 17.0, *), !WorkoutScheduler.isSupported else { return }
+        let coordinator = IOSSystemPermissionCoordinator()
+        let workout = try capability("ios.workoutkit.scheduler")
+
+        let result = await coordinator.refreshStatus(for: workout)
+
+        XCTAssertEqual(result.status, .unavailableOnDevice)
+        #endif
     }
 
     func testConfiguredEntitlementsMatchSourceEntitlements() throws {

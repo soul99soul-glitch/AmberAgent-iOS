@@ -13,22 +13,76 @@ import SwiftUI
 final class SubAgentLiveModel {
     private(set) var text: String = ""
     private(set) var isRunning: Bool = true
+    @ObservationIgnored private let pendingText = SubAgentLiveTextBuffer()
 
-    func ingest(_ newText: String) {
-        // The engine streams the FULL accumulated text each time, and the
-        // per-chunk `Task { @MainActor }` hops aren't ordered — so a stale
-        // (shorter) update can land after a newer one. Only move forward.
-        guard newText.count >= text.count else { return }
-        text = newText
+    /// The provider publishes the full accumulated text for every token. Keep
+    /// only the newest snapshot and schedule at most one main-actor publisher,
+    /// instead of queueing one UI task per token.
+    nonisolated func ingest(_ newText: String) {
+        guard pendingText.offer(newText) else { return }
+        Task { [weak self, pendingText] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 64_000_000)
+                guard let latest = pendingText.takeLatest() else { return }
+                await self?.publish(latest)
+            }
+        }
     }
 
     func finish() {
+        if let latest = pendingText.finish() {
+            text = latest
+        }
         isRunning = false
+    }
+
+    private func publish(_ newText: String) {
+        guard isRunning else { return }
+        text = newText
     }
 
     // The engine drives updates; these satisfy the sheet's `.task` / `.onDisappear`.
     func start() async {}
     func stop() {}
+}
+
+private final class SubAgentLiveTextBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: String?
+    private var publisherScheduled = false
+    private var isFinished = false
+
+    /// Returns true only for the update that must start the single publisher.
+    func offer(_ text: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isFinished else { return false }
+        pending = text
+        guard !publisherScheduled else { return false }
+        publisherScheduled = true
+        return true
+    }
+
+    func takeLatest() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isFinished else { return nil }
+        guard let latest = pending else {
+            publisherScheduled = false
+            return nil
+        }
+        pending = nil
+        return latest
+    }
+
+    func finish() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        isFinished = true
+        publisherScheduled = false
+        defer { pending = nil }
+        return pending
+    }
 }
 
 /// Process-wide registry linking a subagent dispatch tool call (by `toolCallId`)

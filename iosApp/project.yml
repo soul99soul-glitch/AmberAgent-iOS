@@ -58,6 +58,7 @@ targets:
           - NovelCreation/AGENTS.md
           - AmberSubscriptions.storekit
       - path: SharedWatch
+      - path: AlarmKitResources
       # Deep Read editorial reader fonts owned by the iOS app and bundled as resources.
       - path: Resources/Fonts/noto_serif_sc.otf
         buildPhase: resources
@@ -265,12 +266,15 @@ targets:
     sources:
       - path: ActivityWidget
       - path: iosApp/AgentActivityModels.swift
+      - path: iosApp/AgentActivityControlIntents.swift
+      - path: iosApp/IOSAlarmActivityModels.swift
       - path: iosApp/ThinkingOrbEngine.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: iosApp/Localizable.xcstrings
         buildPhase: resources
       - path: iosApp/AgentActivity.strings
         buildPhase: resources
+      - path: AlarmKitResources
       - path: iosApp/en.lproj
       - path: iosApp/zh-Hans.lproj
       - path: iosApp/zh-Hant.lproj
@@ -285,6 +289,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SKIP_INSTALL: "YES"
         APPLICATION_EXTENSION_API_ONLY: "YES"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ACTIVITY_WIDGET_EXTENSION"
         SUPPORTED_PLATFORMS:
           - iphoneos
           - iphonesimulator
@@ -294,12 +299,15 @@ targets:
     sources:
       - path: ActivityWidget
       - path: iosApp/AgentActivityModels.swift
+      - path: iosApp/AgentActivityControlIntents.swift
+      - path: iosApp/IOSAlarmActivityModels.swift
       - path: iosApp/ThinkingOrbEngine.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: iosApp/Localizable.xcstrings
         buildPhase: resources
       - path: iosApp/AgentActivity.strings
         buildPhase: resources
+      - path: AlarmKitResources
       - path: iosApp/en.lproj
       - path: iosApp/zh-Hans.lproj
       - path: iosApp/zh-Hant.lproj
@@ -314,6 +322,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         SKIP_INSTALL: "YES"
         APPLICATION_EXTENSION_API_ONLY: "YES"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) ACTIVITY_WIDGET_EXTENSION"
         SUPPORTED_PLATFORMS:
           - iphoneos
           - iphonesimulator
@@ -326,6 +335,7 @@ targets:
           - NovelCreation/AGENTS.md
           - AmberSubscriptions.storekit
       - path: SharedWatch
+      - path: AlarmKitResources
       - path: Resources/Fonts/noto_serif_sc.otf
         buildPhase: resources
       - path: Resources/Fonts/jetbrains_mono.ttf

@@ -83,6 +83,44 @@ final class IOSHealthSummaryTests: XCTestCase {
         XCTAssertEqual(model.state, .failed("query failed"))
     }
 
+    func testHealthAgentToolReturnsBoundedSummaryAfterExplicitAuthorization() async throws {
+        let service = HealthAgentSummaryServiceDouble(summary: IOSHealthAgentSummary(
+            days: [IOSHealthAgentDailySummary(
+                date: now,
+                steps: 8_200,
+                activeEnergyKilocalories: 430,
+                exerciseMinutes: 35,
+                sleepHours: 7.5
+            )],
+            workouts: []
+        ))
+
+        let output = await IOSHealthAgentToolExecutor.execute(
+            input: #"{"days":7,"include_workouts":false,"display_title":"分析健康摘要"}"#,
+            service: service
+        )
+        let data = try XCTUnwrap(output.data(using: .utf8))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual((object["days"] as? [[String: Any]])?.count, 1)
+        XCTAssertEqual(service.authorizationCallCount, 1)
+        XCTAssertEqual(service.requestedDays, 7)
+        XCTAssertFalse(service.requestedWorkouts)
+    }
+
+    func testHealthAgentToolRejectsUnknownArgumentsBeforeRequestingHealthAccess() async {
+        let service = HealthAgentSummaryServiceDouble(summary: IOSHealthAgentSummary(days: [], workouts: []))
+
+        let output = await IOSHealthAgentToolExecutor.execute(
+            input: #"{"days":7,"raw_samples":true}"#,
+            service: service
+        )
+
+        XCTAssertTrue(output.contains(#""ok":false"#))
+        XCTAssertEqual(service.authorizationCallCount, 0)
+    }
+
     private func makeModel(_ service: HealthSummaryServiceDouble) -> IOSHealthSummaryViewModel {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -100,6 +138,33 @@ final class IOSHealthSummaryTests: XCTestCase {
             )
         }
         return IOSHealthStepSummary(days: days)
+    }
+}
+
+@MainActor
+private final class HealthAgentSummaryServiceDouble: IOSHealthAgentSummaryProviding {
+    let summary: IOSHealthAgentSummary
+    private(set) var authorizationCallCount = 0
+    private(set) var requestedDays = 0
+    private(set) var requestedWorkouts = false
+
+    init(summary: IOSHealthAgentSummary) {
+        self.summary = summary
+    }
+
+    func requestAuthorization() async throws {
+        authorizationCallCount += 1
+    }
+
+    func loadSummary(
+        days: Int,
+        includeWorkouts: Bool,
+        now: Date,
+        calendar: Calendar
+    ) async throws -> IOSHealthAgentSummary {
+        requestedDays = days
+        requestedWorkouts = includeWorkouts
+        return summary
     }
 }
 

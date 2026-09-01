@@ -56,3 +56,5 @@
 "agent.activity.metric.image.progress" = "%ld / %ld개 이미지";
 "agent.activity.metric.item.count" = "%ld개 항목 처리됨";
 "agent.activity.metric.item.progress" = "%ld / %ld개 항목";
+"agent.activity.control.cancel" = "취소";
+"agent.activity.control.retry" = "재시도";

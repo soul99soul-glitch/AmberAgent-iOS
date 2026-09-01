@@ -616,7 +616,7 @@ enum IOSWeatherToolExecutor {
     ) async -> String {
         guard let data = input.data(using: .utf8),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: ["location", "use_current_location"]) else {
+              Set(object.keys).isSubset(of: ["location", "use_current_location", "display_title"]) else {
             return failure(IOSWeatherError.invalidToolInput.localizedDescription)
         }
         let location = (object["location"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)

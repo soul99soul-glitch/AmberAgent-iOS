@@ -8,6 +8,7 @@ extension Notification.Name {
 struct WatchTaskReconnectProjection: Equatable, Sendable {
     let runId: String
     let conversationId: String
+    let startedAt: Int64
 }
 
 /// Owns the current watch-facing task snapshot and translates Watch intents
@@ -25,6 +26,22 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private var currentApprovalPrompt: ChatToolApprovalPrompt?
     private var currentSummary: String?
     private var pendingAskUser: WatchAskUserRequest?
+    private var isAttached = false
+    private var attachmentWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
+    private var runGeneration: [String: UInt64] = [:]
+    private var runStartedAt: [String: Int64] = [:]
+    private var nextRunGeneration: UInt64 = 0
+    private struct ProcessedAction {
+        let request: WatchTaskActionRequest
+        let result: WatchTaskActionResult
+    }
+    private struct InFlightAction {
+        let request: WatchTaskActionRequest
+        let task: Task<WatchTaskActionResult, Never>
+    }
+    private var processedActions: [String: ProcessedAction] = [:]
+    private var processedActionOrder: [String] = []
+    private var inFlightActions: [String: InFlightAction] = [:]
 
     private var resolvedLanguageCode: String {
         IOSAppLanguagePreference.selected().resolvedLanguage().rawValue
@@ -36,13 +53,26 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
 
     func attach(
         chatViewModel: ChatViewModel,
-        reconnecting: WatchTaskReconnectProjection? = nil
+        reconnecting: [WatchTaskReconnectProjection] = []
     ) {
         self.chatViewModel = chatViewModel
+        isAttached = true
+        let waiters = attachmentWaiters.values
+        attachmentWaiters.removeAll()
+        waiters.forEach { $0.resume() }
         bridge.configure(actionHandler: self)
         bridge.activateIfNeeded()
+        for projection in reconnecting.sorted(by: { lhs, rhs in
+            if lhs.startedAt == rhs.startedAt { return lhs.runId < rhs.runId }
+            return lhs.startedAt < rhs.startedAt
+        }) {
+            registerRun(runId: projection.runId, startedAt: projection.startedAt)
+        }
         if currentPresentation == nil {
-            if let reconnecting {
+            if let reconnecting = reconnecting.max(by: { lhs, rhs in
+                if lhs.startedAt == rhs.startedAt { return lhs.runId < rhs.runId }
+                return lhs.startedAt < rhs.startedAt
+            }) {
                 publish(
                     runId: reconnecting.runId,
                     conversationId: reconnecting.conversationId,
@@ -56,13 +86,35 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         }
     }
 
+    /// Records the durable run ordering token before any asynchronous Watch
+    /// projection can arrive. Arrival order remains only a legacy fallback for
+    /// call sites that do not own a persisted start time.
+    func registerRun(runId: String, startedAt: Int64) {
+        runStartedAt[runId] = startedAt
+        if runGeneration[runId] == nil {
+            nextRunGeneration &+= 1
+            runGeneration[runId] = nextRunGeneration
+        }
+    }
+
+    @discardableResult
     func publish(
         runId: String,
         conversationId: String?,
         presentation: AgentActivityPresentation,
         summary: String? = nil,
         decision: WatchDecision? = nil
-    ) {
+    ) -> Bool {
+        let isKnownRun = runGeneration[runId] != nil
+        if !isKnownRun {
+            nextRunGeneration &+= 1
+            runGeneration[runId] = nextRunGeneration
+        }
+        if let currentRunId,
+           currentRunId != runId,
+           !isNewerRun(runId, than: currentRunId) {
+            return false
+        }
         if currentRunId != runId {
             currentSummary = nil
             currentDecision = nil
@@ -90,6 +142,18 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             pendingAskUser = nil
         }
         republish()
+        return true
+    }
+
+    private func isNewerRun(_ incomingRunId: String, than currentRunId: String) -> Bool {
+        if let incomingStartedAt = runStartedAt[incomingRunId],
+           let currentStartedAt = runStartedAt[currentRunId] {
+            if incomingStartedAt == currentStartedAt {
+                return incomingRunId > currentRunId
+            }
+            return incomingStartedAt > currentStartedAt
+        }
+        return (runGeneration[incomingRunId] ?? 0) > (runGeneration[currentRunId] ?? 0)
     }
 
     func publishWaitingApproval(
@@ -98,7 +162,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         prompt: ChatToolApprovalPrompt
     ) {
         pendingAskUser = nil
-        publish(
+        let accepted = publish(
             runId: runId,
             conversationId: conversationId,
             presentation: .waitingForUser(kind: prompt.activityKind),
@@ -107,7 +171,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 languageCode: resolvedLanguageCode
             )
         )
-        currentApprovalPrompt = prompt
+        if accepted { currentApprovalPrompt = prompt }
     }
 
     func publishAskUser(
@@ -116,7 +180,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         request: WatchAskUserRequest
     ) {
         currentApprovalPrompt = nil
-        publish(
+        let accepted = publish(
             runId: runId,
             conversationId: conversationId,
             presentation: .waitingForUser(kind: .workflow),
@@ -125,7 +189,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
                 languageCode: resolvedLanguageCode
             )
         )
-        pendingAskUser = request
+        if accepted { pendingAskUser = request }
     }
 
     func publishCompleted(
@@ -182,15 +246,87 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     }
 
     func handleWatchAction(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult {
+        if !isAttached {
+            await waitForAttachment()
+        }
+        if let processed = processedActions[request.requestId] {
+            return processed.request == request
+                ? processed.result
+                : rejected(request, "请求标识已被另一项操作使用")
+        }
+        if let inFlight = inFlightActions[request.requestId] {
+            guard inFlight.request == request else {
+                return rejected(request, "请求标识已被另一项操作使用")
+            }
+            return await inFlight.task.value
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                return WatchTaskActionResult(
+                    requestId: request.requestId,
+                    runId: request.runId,
+                    accepted: false,
+                    message: "iPhone 当前无法处理手表操作",
+                    snapshot: nil
+                )
+            }
+            return await self.handleWatchActionUncached(request)
+        }
+        inFlightActions[request.requestId] = InFlightAction(request: request, task: task)
+        let result = await task.value
+        inFlightActions.removeValue(forKey: request.requestId)
+        processedActions[request.requestId] = ProcessedAction(request: request, result: result)
+        processedActionOrder.append(request.requestId)
+        if processedActionOrder.count > 64 {
+            let expired = processedActionOrder.removeFirst()
+            processedActions.removeValue(forKey: expired)
+        }
+        return result
+    }
+
+    private func waitForAttachment() async {
+        guard !isAttached else { return }
+        let waiterId = UUID()
+        await withCheckedContinuation { continuation in
+            attachmentWaiters[waiterId] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                guard let continuation = self?.attachmentWaiters.removeValue(forKey: waiterId) else {
+                    return
+                }
+                continuation.resume()
+            }
+        }
+    }
+
+    private func handleWatchActionUncached(_ request: WatchTaskActionRequest) async -> WatchTaskActionResult {
         switch request.action {
         case .refresh:
             return accepted(request, message: nil)
         case .openOnPhone:
-            guard let conversationId = currentConversationId, !conversationId.isEmpty else {
+            let conversationId: String
+            if request.runId == currentRunId,
+               let currentConversationId,
+               !currentConversationId.isEmpty,
+               request.conversationId == nil
+                || request.conversationId?.caseInsensitiveCompare(currentConversationId) == .orderedSame {
+                conversationId = currentConversationId
+            } else if let requestedConversationId = request.conversationId,
+                      !requestedConversationId.isEmpty,
+                      let chatViewModel,
+                      await chatViewModel.recordedAgentRunBelongsToConversation(
+                        runId: request.runId,
+                        conversationId: requestedConversationId
+                      ) {
+                conversationId = requestedConversationId
+            } else {
                 return rejected(request, "当前任务没有可打开的会话")
             }
             let focus: String
-            if currentDecision?.type == .approval
+            if request.runId != currentRunId {
+                focus = "result"
+            } else if currentDecision?.type == .approval
                 || currentDecision?.type == .askUser
                 || currentDecision?.type == .voiceReply {
                 focus = "confirmation"
@@ -210,17 +346,36 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             )
             return accepted(request, message: "已在 iPhone 打开任务")
         case .cancel:
-            guard let chatViewModel,
-                  let runId = currentRunId,
-                  request.runId == runId else {
+            guard let currentRunId, request.runId == currentRunId else {
                 return rejected(request, "当前没有可取消的任务")
             }
             // The run may already belong to the background coordinator. Only
             // report success after the current foreground/background owner accepts it.
-            guard chatViewModel.cancelGeneration(runId: runId) else {
+            let acceptedByForeground = chatViewModel?.cancelGeneration(runId: currentRunId) == true
+            let acceptedByBackground = acceptedByForeground
+                ? false
+                : IOSChatBackgroundGenerationCoordinator.shared.cancelJob(runId: currentRunId)
+            guard acceptedByForeground || acceptedByBackground else {
                 return rejected(request, "当前任务已经结束或不再由 iPhone 执行")
             }
             return accepted(request, message: "已取消")
+        case .retry:
+            guard let chatViewModel,
+                  let runId = currentRunId,
+                  request.runId == runId,
+                  currentPresentation?.phase == .failed,
+                  currentPresentation?.retryable == true,
+                  let conversationId = currentConversationId,
+                  request.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame else {
+                return rejected(request, "这个失败任务已失效")
+            }
+            guard await chatViewModel.retryFailedGeneration(
+                sourceRunId: runId,
+                conversationId: conversationId
+            ) else {
+                return rejected(request, "当前无法重试这个任务")
+            }
+            return accepted(request, message: "已重试")
         case .approve, .deny:
             return await handleApproval(request)
         case .choose, .answer:
@@ -259,10 +414,12 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             }
         }
 
-        if allow {
-            await chatViewModel.approveAnyPendingToolFromWatch()
-        } else {
-            await chatViewModel.denyAnyPendingToolFromWatch()
+        guard chatViewModel.resolvePendingToolApprovalFromWatch(
+            runId: runId,
+            requestId: decision.id,
+            allow: allow
+        ) else {
+            return rejected(request, "这个确认步骤已失效")
         }
         // Awaited finish/resume path publishes the next watch snapshot before we reply.
         return accepted(request, message: allow ? "已允许" : "已拒绝")
@@ -304,6 +461,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         // first or report success before that Bool is true.
         let acceptedSend = chatViewModel.submitWatchUserAnswer(
             runId: runId,
+            requestId: decision.id,
             text: answer
         )
         guard acceptedSend else {

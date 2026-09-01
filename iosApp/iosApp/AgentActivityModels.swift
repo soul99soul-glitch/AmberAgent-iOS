@@ -23,19 +23,24 @@ struct AgentActivityPresentation: Codable, Hashable, Sendable {
     var stage: AgentActivityStage
     var metric: AgentActivityMetric
     var action: AgentActivityAction?
+    /// `true` only after the matching durable run was committed as failed.
+    /// `nil` keeps previously encoded ActivityKit states decodable and fail-closed.
+    var retryable: Bool?
 
     init(
         kind: AgentActivityKind,
         phase: AgentActivityPhase,
         stage: AgentActivityStage,
         metric: AgentActivityMetric = .none,
-        action: AgentActivityAction? = .openTask
+        action: AgentActivityAction? = .openTask,
+        retryable: Bool? = nil
     ) {
         self.kind = kind
         self.phase = phase
         self.stage = stage
         self.metric = metric.validated
         self.action = action
+        self.retryable = retryable
     }
 }
 
@@ -117,6 +122,51 @@ enum AgentActivityAction: String, Codable, Hashable, Sendable {
     case openTask
     case openConfirmation
     case viewResult
+}
+
+enum AgentActivityInlineControl: Equatable {
+    case open
+    case cancel
+    case retry
+}
+
+enum AgentActivityInlineControlPolicy {
+    static func controls(
+        presentation: AgentActivityPresentation,
+        isStale: Bool,
+        hasConversation: Bool
+    ) -> [AgentActivityInlineControl] {
+        guard hasConversation else { return [] }
+        switch presentation.displayPhase(isStale: isStale) {
+        case .running, .reconnecting:
+            return [.cancel]
+        case .waitingForUser:
+            return [.cancel, .open]
+        case .failed:
+            return presentation.retryable == true ? [.retry, .open] : [.open]
+        case .stale, .completed, .cancelled:
+            return [.open]
+        }
+    }
+}
+
+struct AgentActivityDurableRunIdentity: Equatable, Sendable {
+    let runId: String
+    let conversationId: String
+    let status: String
+}
+
+enum AgentActivityRetryOwnershipPolicy {
+    static func allows(
+        sourceRunId: String,
+        conversationId: String,
+        latestRun: AgentActivityDurableRunIdentity?
+    ) -> Bool {
+        guard let latestRun else { return false }
+        return latestRun.runId == sourceRunId
+            && latestRun.conversationId.caseInsensitiveCompare(conversationId) == .orderedSame
+            && latestRun.status == "failed"
+    }
 }
 
 enum AgentActivityDeepLink {
@@ -303,12 +353,16 @@ extension AgentActivityPresentation {
         )
     }
 
-    static func failed(toolTitle: String = "生成回复") -> AgentActivityPresentation {
+    static func failed(
+        toolTitle: String = "生成回复",
+        retryable: Bool = false
+    ) -> AgentActivityPresentation {
         AgentActivityPresentation(
             kind: kind(forPublicToolTitle: toolTitle),
             phase: .failed,
             stage: .failed,
-            action: .openTask
+            action: .openTask,
+            retryable: retryable
         )
     }
 
@@ -430,13 +484,15 @@ enum AgentActivityResponseStagePolicy {
 enum AgentActivityElapsedTimePolicy {
     static func frozenEndDate(
         for phase: AgentActivityPhase,
-        updatedAt: Date
+        updatedAt: Date,
+        isStale: Bool = false
     ) -> Date? {
+        if isStale { return updatedAt }
         switch phase {
         case .completed, .failed, .cancelled:
-            updatedAt
+            return updatedAt
         case .running, .reconnecting, .waitingForUser, .stale:
-            nil
+            return nil
         }
     }
 }
@@ -751,7 +807,9 @@ enum AgentActivityLifecyclePolicy {
     static func lockScreenDismissalDelay(for phase: AgentActivityPhase) -> TimeInterval {
         switch phase {
         // Keep a brief terminal glance, then clear — long hangs feel like a stuck banner.
-        case .failed, .stale:
+        case .failed:
+            30
+        case .stale:
             8
         case .completed:
             12

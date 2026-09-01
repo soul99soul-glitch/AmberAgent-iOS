@@ -56,3 +56,5 @@
 "agent.activity.metric.image.progress" = "%ld / %ld枚の画像";
 "agent.activity.metric.item.count" = "%ld件の項目を処理済み";
 "agent.activity.metric.item.progress" = "%ld / %ld件の項目";
+"agent.activity.control.cancel" = "キャンセル";
+"agent.activity.control.retry" = "再試行";

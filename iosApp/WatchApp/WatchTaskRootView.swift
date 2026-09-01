@@ -51,6 +51,8 @@ struct WatchTaskRootView: View {
                 Text(metric)
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.orange)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
         }
     }
@@ -60,7 +62,7 @@ struct WatchTaskRootView: View {
             Label(phaseTitle, systemImage: phaseSymbol)
                 .font(.subheadline.weight(.semibold))
             if model.snapshot.isActive {
-                Text(model.snapshot.detail ?? model.snapshot.stage.replacingOccurrences(of: "_", with: " "))
+                Text(model.snapshot.detail ?? phaseTitle)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
@@ -90,14 +92,9 @@ struct WatchTaskRootView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if decision.type == .approval {
-                HStack(spacing: 8) {
-                    Button(localized("拒绝")) { model.deny() }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isSending)
-                    Button(localized("允许")) { model.approve() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                        .disabled(model.isSending)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { approvalButtons }
+                    VStack(spacing: 8) { approvalButtons }
                 }
             }
 
@@ -114,7 +111,7 @@ struct WatchTaskRootView: View {
                     model.choose(optionId: option.id)
                 }
                 .buttonStyle(.bordered)
-                .disabled(model.isSending)
+                .disabled(model.isBusy)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -144,15 +141,9 @@ struct WatchTaskRootView: View {
             TextField(localized("对 iPhone 说下一步…"), text: $model.draftAnswer, axis: .vertical)
                 .lineLimit(2...4)
                 .textFieldStyle(.plain)
-            HStack {
-                Button(localized("提交")) { model.submitDraftAnswer() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    .disabled(model.isSending || model.draftAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button(localized("收起")) {
-                    model.isDictating = false
-                }
-                .buttonStyle(.bordered)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { voiceButtons }
+                VStack(spacing: 8) { voiceButtons }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -160,20 +151,57 @@ struct WatchTaskRootView: View {
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
+    @ViewBuilder
+    private var approvalButtons: some View {
+        Button(localized("拒绝")) { model.deny() }
+            .buttonStyle(.bordered)
+            .disabled(model.isBusy)
+        Button(localized("允许")) { model.approve() }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .disabled(model.isBusy)
+    }
+
+    @ViewBuilder
+    private var voiceButtons: some View {
+        Button(localized("提交")) { model.submitDraftAnswer() }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .disabled(
+                model.isBusy
+                    || model.draftAnswer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
+        Button(localized("收起")) {
+            model.isDictating = false
+        }
+        .buttonStyle(.bordered)
+        .disabled(model.isBusy)
+    }
+
     private var actions: some View {
         VStack(spacing: 8) {
-            if model.snapshot.actions.contains(.openOnPhone) {
-                Button(localized("在 iPhone 打开")) { model.openOnPhone() }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isSending)
+            if model.isBusy {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            if model.snapshot.actions.contains(.retry) {
+                Button(localized("重试")) { model.retry() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    .disabled(model.isBusy)
             }
             if model.snapshot.actions.contains(.cancel) {
                 Button(localized("取消任务"), role: .destructive) { model.cancel() }
-                    .disabled(model.isSending)
+                    .disabled(model.isBusy)
+            }
+            if model.snapshot.actions.contains(.openOnPhone) {
+                Button(localized("在 iPhone 打开")) { model.openOnPhone() }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isBusy)
             }
             Button(localized("刷新")) { model.refresh() }
                 .buttonStyle(.bordered)
-                .disabled(model.isSending)
+                .disabled(model.isBusy)
         }
         .frame(maxWidth: .infinity)
     }

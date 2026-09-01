@@ -4,6 +4,49 @@ import Shared
 
 @MainActor
 final class IOSToolRuntimeTests: XCTestCase {
+    func testAppleMutationApprovalUsesReadableDestructivePresentation() throws {
+        let tool = UIMessagePart.Tool(
+            toolCallId: "delete-event",
+            toolName: IOSAppleAgentToolCatalog.calendarEventDelete,
+            input: #"{"event_id":"event-123","display_title":"旧标题"}"#,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+
+        let request = try XCTUnwrap(
+            ChatToolApprovalRequestBuilder.appleCapability(for: tool, reason: "日历事件将被删除。")
+        )
+
+        XCTAssertEqual(request.title, "确认日历操作")
+        XCTAssertEqual(request.displayToolName, "删除日历事件")
+        XCTAssertTrue(request.isDestructiveAppleAction)
+        XCTAssertTrue(request.argumentsPreview.contains("事件 ID：event-123"))
+        XCTAssertFalse(request.argumentsPreview.contains("display_title"))
+    }
+
+    func testAppleCreateApprovalSummarizesTitleAndDates() throws {
+        let tool = UIMessagePart.Tool(
+            toolCallId: "create-event",
+            toolName: IOSAppleAgentToolCatalog.calendarEventCreate,
+            input: #"{"title":"产品评审","start_at":"2026-09-02T02:00:00Z","end_at":"2026-09-02T03:00:00Z"}"#,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+
+        let request = try XCTUnwrap(
+            ChatToolApprovalRequestBuilder.appleCapability(for: tool, reason: "将写入 Apple 日历。")
+        )
+
+        XCTAssertFalse(request.isDestructiveAppleAction)
+        XCTAssertTrue(request.argumentsPreview.contains("标题：产品评审"))
+        XCTAssertTrue(request.argumentsPreview.contains("开始：2026-09-02T02:00:00Z"))
+        XCTAssertTrue(request.argumentsPreview.contains("结束：2026-09-02T03:00:00Z"))
+    }
+
     func testTerminalToolFailureOutputIsStructuredAndRecognized() throws {
         let output = ChatToolOutputFormatter.toolFailureJSON(
             toolName: "search_web",
@@ -169,8 +212,12 @@ final class IOSToolRuntimeTests: XCTestCase {
         }
     }
 
-    func testSubAgentAskEveryTimePromptsInForegroundAndDeniesInBackground() async throws {
+    func testSubAgentLegacyApprovalPolicyMigratesAndDispatchesWithoutPrompt() async throws {
         let defaults = isolatedDefaults()
+        defaults.set(
+            ["ios.agent.subagent_dispatch": IOSAgentPermissionPolicy.askEveryTime.rawValue],
+            forKey: "app.amber.ios.permissionPolicies.v2"
+        )
         let permissionStore = IOSPermissionStore(userDefaults: defaults, taskStore: nil)
         let capability = try XCTUnwrap(
             IOSCapabilityRegistry.capabilities.first { $0.id == "ios.agent.subagent_dispatch" }
@@ -222,7 +269,7 @@ final class IOSToolRuntimeTests: XCTestCase {
         let toolCall = UIMessagePart.Tool(
             toolCallId: "subagent-permission",
             toolName: "subagent_dispatch",
-            input: #"{"objective":"审查后台状态"}"#,
+            input: #"{"objective":"审查后台状态","role_id":"invalid-test-role"}"#,
             output: [],
             approvalState: ToolApprovalState.Auto.shared,
             streamIndex: nil,
@@ -240,15 +287,16 @@ final class IOSToolRuntimeTests: XCTestCase {
             baseMessages: [assistant]
         )
 
-        permissionStore.setPolicy(.askEveryTime, for: capability)
+        XCTAssertEqual(permissionStore.policy(for: capability), .autoApprove)
+        XCTAssertEqual(permissionStore.availablePolicies(for: capability), [.disabled, .autoApprove])
+
         let foreground = await runtime.execute(
             ChatPendingToolCall(kind: .advanced, toolCall: toolCall),
             context: context
         )
-        guard case .waitingForApproval(.council(let request)) = foreground else {
-            return XCTFail("Expected foreground SubAgent approval card, got \(foreground)")
+        guard case .completed = foreground else {
+            return XCTFail("SubAgent orchestration must not pause for approval, got \(foreground)")
         }
-        XCTAssertEqual(request.kind, .subAgent)
 
         let backgroundExecutor = IOSToolRuntimeUncheckedExecutorBox(try XCTUnwrap(
             runtime.backgroundToolExecutors(
@@ -262,37 +310,32 @@ final class IOSToolRuntimeTests: XCTestCase {
             arguments: toolCall.input,
             isUserInitiated: false
         )
-        guard case .denied(let reason) = background else {
-            return XCTFail("Expected background SubAgent denial, got \(background)")
+        guard case .filled(let output) = background else {
+            return XCTFail("Enabled SubAgent must also dispatch in background, got \(background)")
         }
-        XCTAssertTrue(reason.contains("回到 App"))
-
-        // 历史 allowOncePerRun 值会先归一成 askEveryTime，不能绕过上述门禁。
-        permissionStore.setPolicy(.allowOncePerRun, for: capability)
-        XCTAssertEqual(permissionStore.policy(for: capability), .askEveryTime)
-        XCTAssertTrue(runtime.requiresSubAgentApproval())
+        XCTAssertTrue(output.contains("Unknown sub-agent role_id"), output)
     }
 
-    func testSubAgentApprovalCardUsesSubAgentIdentity() throws {
+    func testCouncilApprovalCardUsesCouncilIdentity() throws {
         let call = UIMessagePart.Tool(
-            toolCallId: "subagent-approval",
-            toolName: "subagent_dispatch",
-            input: #"{"objective":"审查后台状态","role_id":"reviewer"}"#,
+            toolCallId: "council-approval",
+            toolName: "model_council_run",
+            input: #"{"objective":"审查后台状态","max_seats":3}"#,
             output: [],
             approvalState: ToolApprovalState.Auto.shared,
             streamIndex: nil,
             metadata: nil
         )
 
-        let request = try XCTUnwrap(ChatToolApprovalRequestBuilder.subAgent(
+        let request = try XCTUnwrap(ChatToolApprovalRequestBuilder.council(
             for: call,
             reason: "需要确认"
         ))
 
-        XCTAssertEqual(request.kind, .subAgent)
-        XCTAssertEqual(request.title, "调度子代理")
-        XCTAssertEqual(request.capabilityId, "ios.agent.subagent_dispatch")
+        XCTAssertEqual(request.title, "启动模型议会")
+        XCTAssertEqual(request.capabilityId, "ios.agent.model_council_run")
         XCTAssertEqual(request.objectivePreview, "审查后台状态")
+        XCTAssertEqual(request.maxSeats, 3)
     }
 
     // MARK: - 工具输出漏斗收口（真机 1MB Exa 全文 bug 的兜底层）
@@ -417,6 +460,19 @@ final class IOSToolRuntimeTests: XCTestCase {
 
         // 已带压缩标记的输出豁免：不二次截断，原样保留。
         XCTAssertEqual(text, output)
+    }
+
+    func testWebMountAmbiguousOutcomeIsPromotedToOutcomeUnknown() {
+        let runtime = makeRuntime()
+        let toolCall = makePendingToolCall(toolName: "wm_click", toolCallId: "wm-ambiguous")
+        let messages = [makeAssistantMessage(parts: [toolCall])]
+        let resolved = runtime.messagesByFinishingToolCall(
+            toolCall,
+            outputText: #"{"ok":false,"status":"ambiguous","may_have_applied":true}"#,
+            in: messages
+        )
+
+        XCTAssertTrue(runtime.isWebMountOutcomeUnknown(in: resolved, toolCallId: "wm-ambiguous"))
     }
 
     private func makeTempFile(size: Int) throws -> URL {

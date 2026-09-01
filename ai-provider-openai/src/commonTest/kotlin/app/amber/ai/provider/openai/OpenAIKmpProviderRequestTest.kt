@@ -12,6 +12,7 @@ import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
@@ -183,6 +184,38 @@ class OpenAIKmpProviderRequestTest {
             stream = false,
         )
         assertEquals("xhigh", body.getValue("reasoning_effort").jsonPrimitive.content)
+    }
+
+    @Test
+    fun toolOutputImagesReachBothOpenAiRequestFormats() {
+        val imageUrl = "data:image/jpeg;base64,/9j/2Q=="
+        val messages = listOf(UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(UIMessagePart.Tool(
+                toolCallId = "call_picker",
+                toolName = "photos_pick",
+                input = "{}",
+                output = listOf(
+                    UIMessagePart.Image(url = imageUrl),
+                    UIMessagePart.Text("{\"ok\":true}"),
+                ),
+            )),
+        ))
+
+        val chatMessages = provider.buildChatCompletionRequest(
+            providerSetting = setting,
+            messages = messages,
+            params = TextGenerationParams(model = toolModel(), tools = listOf(testTool())),
+        ).getValue("messages").jsonArray
+        assertTrue(chatMessages.last().toString().contains(imageUrl))
+
+        val responsesInput = provider.buildResponsesRequestBody(
+            providerSetting = setting,
+            messages = messages,
+            params = TextGenerationParams(model = toolModel(), tools = listOf(testTool())),
+            stream = false,
+        ).getValue("input").jsonArray
+        assertTrue(responsesInput.last().toString().contains(imageUrl))
     }
 
     private fun reasoningModel(modelId: String): Model = Model(

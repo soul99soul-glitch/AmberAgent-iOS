@@ -249,7 +249,7 @@ final class AgentActivityPresentationTests: XCTestCase {
         )
         XCTAssertEqual(
             AgentActivityLifecyclePolicy.lockScreenDismissalDelay(for: .failed),
-            8
+            30
         )
         XCTAssertEqual(
             AgentActivityLifecyclePolicy.lockScreenDismissalDelay(for: .cancelled),
@@ -262,6 +262,74 @@ final class AgentActivityPresentationTests: XCTestCase {
         )
     }
 
+    func testInlineControlsRespectRunPhaseAndStaleness() {
+        XCTAssertEqual(
+            AgentActivityInlineControlPolicy.controls(
+                presentation: .generatingResponse(modelName: "model"),
+                isStale: false,
+                hasConversation: true
+            ),
+            [.cancel]
+        )
+        XCTAssertEqual(
+            AgentActivityInlineControlPolicy.controls(
+                presentation: .failed(retryable: true),
+                isStale: false,
+                hasConversation: true
+            ),
+            [.retry, .open]
+        )
+        XCTAssertEqual(
+            AgentActivityInlineControlPolicy.controls(
+                presentation: .generatingResponse(modelName: "model"),
+                isStale: true,
+                hasConversation: true
+            ),
+            [.open]
+        )
+        XCTAssertEqual(
+            AgentActivityInlineControlPolicy.controls(
+                presentation: .failed(retryable: true),
+                isStale: false,
+                hasConversation: false
+            ),
+            []
+        )
+    }
+
+    func testRetryOwnershipAllowsOnlyLatestFailedRunForTheConversation() {
+        let latest = AgentActivityDurableRunIdentity(
+            runId: "run-new",
+            conversationId: "conversation-a",
+            status: "failed"
+        )
+
+        XCTAssertTrue(AgentActivityRetryOwnershipPolicy.allows(
+            sourceRunId: "run-new",
+            conversationId: "CONVERSATION-A",
+            latestRun: latest
+        ))
+        XCTAssertFalse(AgentActivityRetryOwnershipPolicy.allows(
+            sourceRunId: "run-old",
+            conversationId: "conversation-a",
+            latestRun: latest
+        ))
+        XCTAssertFalse(AgentActivityRetryOwnershipPolicy.allows(
+            sourceRunId: "run-new",
+            conversationId: "conversation-b",
+            latestRun: latest
+        ))
+        XCTAssertFalse(AgentActivityRetryOwnershipPolicy.allows(
+            sourceRunId: "run-new",
+            conversationId: "conversation-a",
+            latestRun: AgentActivityDurableRunIdentity(
+                runId: "run-new",
+                conversationId: "conversation-a",
+                status: "completed"
+            )
+        ))
+    }
+
     func testElapsedTimerFreezesOnlyForTerminalPhases() {
         let updatedAt = Date(timeIntervalSince1970: 1_120)
 
@@ -270,6 +338,14 @@ final class AgentActivityPresentationTests: XCTestCase {
                 for: .running,
                 updatedAt: updatedAt
             )
+        )
+        XCTAssertEqual(
+            AgentActivityElapsedTimePolicy.frozenEndDate(
+                for: .running,
+                updatedAt: updatedAt,
+                isStale: true
+            ),
+            updatedAt
         )
         XCTAssertNil(
             AgentActivityElapsedTimePolicy.frozenEndDate(

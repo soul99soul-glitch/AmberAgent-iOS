@@ -248,6 +248,8 @@ final class ChatViewModel {
     @ObservationIgnored private var cachedTokenRevision: Int = -1
     @ObservationIgnored private var imageGenerationResumeCache: [String: ImageGenerationResumeCacheEntry] = [:]
     @ObservationIgnored private var imageGenerationResumeCacheStoreID: ObjectIdentifier?
+    @ObservationIgnored private var retryingFailedRunIds: Set<String> = []
+    @ObservationIgnored private var retryMutationRunId: String?
     var pendingMemoryApproval: MemoryToolApprovalRequest?
     var pendingSearchApproval: SearchToolApprovalRequest?
     var pendingWebMountApproval: WebMountToolApprovalRequest?
@@ -563,6 +565,20 @@ final class ChatViewModel {
 
     @discardableResult
     func prepareForConversationChange(to targetConversationId: KotlinUuid?) -> Bool {
+        guard retryMutationRunId == nil else {
+            conversationStore?.publishUserVisibleError(IOSUserVisibleError(
+                title: IOSAppLocalization.string(
+                    "暂时无法切换会话",
+                    defaultValue: "暂时无法切换会话"
+                ),
+                message: IOSAppLocalization.string(
+                    "当前会话仍在生成中，正在执行的工具完成后才能切换。",
+                    defaultValue: "当前会话仍在生成中，正在执行的工具完成后才能切换。"
+                ),
+                severity: .warning
+            ))
+            return false
+        }
         let canChangeConversation: Bool
         let foregroundActiveConversationId = kernelRunHost.activeConversationId
         if !kernelRunHost.isRunning {
@@ -618,6 +634,108 @@ final class ChatViewModel {
             agentRuntimeDao.getRun(id: runId) { result, _ in
                 let belongs = result?.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame
                 continuation.resume(returning: belongs)
+            }
+        }
+    }
+
+    @discardableResult
+    func retryFailedGeneration(
+        sourceRunId: String,
+        conversationId: String
+    ) async -> Bool {
+        guard retryingFailedRunIds.insert(sourceRunId).inserted else { return false }
+        defer { retryingFailedRunIds.remove(sourceRunId) }
+        guard !isGenerationActive, let store = conversationStore else { return false }
+        guard AgentActivityRetryEligibilityStore.shared.isEligible(
+            runId: sourceRunId,
+            conversationId: conversationId
+        ) else { return false }
+        let entryConversationRevision = store.conversationSwitchedRevision
+        let availableConversations = await store.appIntentSummaries(limit: nil)
+        let latestRun = await latestChatRun(conversationId: conversationId)
+        guard !isGenerationActive,
+              AgentActivityRetryOwnershipPolicy.allows(
+                  sourceRunId: sourceRunId,
+                  conversationId: conversationId,
+                  latestRun: latestRun
+              ),
+              let summary = availableConversations.first(where: {
+                  $0.id.toHexDashString().caseInsensitiveCompare(conversationId) == .orderedSame
+              }),
+              store.conversationSwitchedRevision == entryConversationRevision,
+              prepareForConversationChange(to: summary.id) else {
+            return false
+        }
+
+        if store.currentConversation?.id != summary.id {
+            guard await store.selectConversationIfAvailable(
+                id: summary.id,
+                commitIf: {
+                    store.conversationSwitchedRevision == entryConversationRevision
+                        && !self.isGenerationActive
+                }
+            ) else { return false }
+        }
+        guard retryMutationRunId == nil else { return false }
+        retryMutationRunId = sourceRunId
+        defer { retryMutationRunId = nil }
+        let ownedConversationRevision = store.conversationSwitchedRevision
+        reloadFromStore(reason: .conversationSwitch)
+        await refreshCurrentConversationOrchestratedStatus()
+        let revalidatedRun = await latestChatRun(conversationId: conversationId)
+        guard !isGenerationActive,
+              store.conversationSwitchedRevision == ownedConversationRevision,
+              store.currentConversation?.id == summary.id,
+              AgentActivityRetryOwnershipPolicy.allows(
+                  sourceRunId: sourceRunId,
+                  conversationId: conversationId,
+                  latestRun: revalidatedRun
+              ),
+              !currentConversationIsOrchestratedChild,
+              let index = messages.lastIndex(where: {
+                  $0.role == MessageRole.user || $0.role == MessageRole.assistant
+              }),
+              let lastUserIndex = messages.lastIndex(where: { $0.role == MessageRole.user }),
+              !messages[lastUserIndex...].contains(where: { message in
+                  message.parts.contains { $0 is UIMessagePart.Tool }
+              }) else {
+            return false
+        }
+        guard AgentActivityRetryEligibilityStore.shared.consume(
+            runId: sourceRunId,
+            conversationId: conversationId
+        ) else { return false }
+        let started = await regenerateImmediately(atMessageIndex: index)
+        if !started {
+            AgentActivityRetryEligibilityStore.shared.setEligible(
+                true,
+                runId: sourceRunId,
+                conversationId: conversationId
+            )
+        }
+        return started
+    }
+
+    private func latestChatRun(conversationId: String) async -> AgentActivityDurableRunIdentity? {
+        await withCheckedContinuation { continuation in
+            agentRuntimeDao.listAllRuns { result, _ in
+                let latest = (result ?? [])
+                    .filter {
+                        IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains($0.agentDescriptorId)
+                            && $0.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame
+                    }
+                    .max {
+                        if $0.startedAt == $1.startedAt { return $0.runId < $1.runId }
+                        return $0.startedAt < $1.startedAt
+                    }
+                continuation.resume(returning: latest.flatMap { run in
+                    guard let owner = run.conversationId else { return nil }
+                    return AgentActivityDurableRunIdentity(
+                        runId: run.runId,
+                        conversationId: owner,
+                        status: run.status
+                    )
+                })
             }
         }
     }
@@ -702,6 +820,9 @@ final class ChatViewModel {
         // 评级低），未决期拦截的方案会让 Room 查询挂起/变慢时 composer 永久死锁，弃用。
         if currentConversationIsOrchestratedChild {
             return .orchestratedThread
+        }
+        if retryMutationRunId != nil {
+            return .generationActive
         }
         if isGenerationActive {
             // 生成中发送改为入队（含图/附件）；队列满时回到禁用态。
@@ -2461,7 +2582,8 @@ final class ChatViewModel {
         startLiveActivity(
             runId: activityRunId,
             conversationId: currentConversationId,
-            presentation: .readingSelectedFile
+            presentation: .readingSelectedFile,
+            publishToWatch: false
         )
         defer {
             if attachRequestId == requestId {
@@ -2763,70 +2885,31 @@ final class ChatViewModel {
         answerPendingAskUser("")
     }
 
-    /// Watch 全量入口走 VM 自身的 Host 审批路由；各 VM 入口自身是 fire-and-forget,卡清/续跑的
-    /// Watch 快照经 bindings 异步回流,与 iPhone 路径同语义。
-    func approveAnyPendingToolFromWatch() async {
-        if pendingMemoryApproval != nil {
-            approvePendingMemoryTool()
-        } else if pendingSearchApproval != nil {
-            approvePendingSearchTool()
-        } else if let request = pendingWebMountApproval {
-            approvePendingWebMountTool(requestId: request.id)
-        } else if pendingWorkspaceApproval != nil {
-            approvePendingWorkspaceTool()
-        } else if let request = pendingIshHandoffApproval {
-            approvePendingIshHandoffTool(requestId: request.id, requestRunId: request.runId)
-        } else if let request = pendingMcpApproval {
-            // Slice B 同款纪律:Watch 路径把 UI 展示的 request id 传回核对。
-            approvePendingMcpTool(requestId: request.id)
-        } else if pendingCouncilApproval != nil {
-            approvePendingCouncilTool()
-        } else if let request = pendingRecipeApproval {
-            // Slice B（B2）：Watch 路径也把 UI 展示的 request id 传回，
-            // 消费前核对当前 pending request id。
-            approvePendingRecipeTool(requestId: request.id)
-        }
-    }
-
-    func denyAnyPendingToolFromWatch() async {
-        if pendingMemoryApproval != nil {
-            denyPendingMemoryTool()
-        } else if pendingSearchApproval != nil {
-            denyPendingSearchTool()
-        } else if let request = pendingWebMountApproval {
-            denyPendingWebMountTool(requestId: request.id)
-        } else if pendingWorkspaceApproval != nil {
-            denyPendingWorkspaceTool()
-        } else if let request = pendingIshHandoffApproval {
-            denyPendingIshHandoffTool(requestId: request.id, requestRunId: request.runId)
-        } else if let request = pendingMcpApproval {
-            denyPendingMcpTool(requestId: request.id)
-        } else if pendingCouncilApproval != nil {
-            denyPendingCouncilTool()
-        } else if pendingAskUser != nil {
-            skipPendingAskUser()
-        } else if let request = pendingRecipeApproval {
-            // Slice B（B2）：Watch deny 同样传回 UI 展示的 request id。
-            denyPendingRecipeTool(requestId: request.id)
-        }
+    @discardableResult
+    func resolvePendingToolApprovalFromWatch(
+        runId: String,
+        requestId: String,
+        allow: Bool
+    ) -> Bool {
+        kernelRunHost.resolvePendingToolApprovalFromWatch(
+            runId: runId,
+            requestId: requestId,
+            allow: allow
+        )
     }
 
     @discardableResult
-    func submitWatchUserAnswer(runId: String, text: String) -> Bool {
+    func submitWatchUserAnswer(
+        runId: String,
+        requestId: String,
+        text: String
+    ) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        // First-class ask_user pending node resumes the current tool, not a new user turn.
-        // Empty text is an explicit skip (denied tool output), matching iPhone skip.
-        if pendingAskUser != nil, canOpenActivityConfirmation(runId: runId) {
-            return answerPendingAskUser(trimmed)
-        }
-        guard !trimmed.isEmpty else { return false }
-        // Tool approvals must use allow/deny, not free text.
-        if canOpenActivityConfirmation(runId: runId) {
-            return false
-        }
-        guard !isGenerationActive else { return false }
-        inputText = trimmed
-        return sendMessage()
+        return kernelRunHost.answerPendingAskUserFromWatch(
+            runId: runId,
+            requestId: requestId,
+            answer: trimmed
+        )
     }
 
     func cancelGeneration() {
@@ -2879,48 +2962,49 @@ final class ChatViewModel {
     ///   retention is surfaced via selectVariant for nodes that already have
     ///   multiple siblings).
     func regenerate(atMessageIndex index: Int) {
+        Task { @MainActor in
+            _ = await regenerateImmediately(atMessageIndex: index)
+        }
+    }
+
+    @discardableResult
+    private func regenerateImmediately(atMessageIndex index: Int) async -> Bool {
         guard !rejectVisionRecognitionMutationIfNeeded(), !isGenerationActive,
-              !currentConversationIsOrchestratedChild else { return }
-        guard let store = conversationStore,
+              !currentConversationIsOrchestratedChild,
+              let store = conversationStore,
               let conversation = store.currentConversation,
-              index >= 0, index < conversation.messageNodes.count else { return }
+              index >= 0, index < conversation.messageNodes.count else {
+            return false
+        }
 
         let targetNode = conversation.messageNodes[index]
         if targetNode.role == MessageRole.user {
-            Task { @MainActor in
-                pendingAssistantRegeneration = nil
-                await store.truncateAfter(messageIndex: index)
-                // Re-sync the flat projection from the mutated tree.
-                if let updated = store.currentConversation {
-                    self.messages = updated.currentMessages
-                    self.bumpMessageRevision(reason: .branchChange)
-                }
-                let digest = chatInputDigest(for: regenerateDigestSeed())
-                generateResponse(inputDigest: digest, conversationId: currentConversationId)
+            pendingAssistantRegeneration = nil
+            await store.truncateAfter(messageIndex: index)
+            if let updated = store.currentConversation {
+                messages = updated.currentMessages
+                bumpMessageRevision(reason: .branchChange)
             }
+            let digest = chatInputDigest(for: regenerateDigestSeed())
+            generateResponse(inputDigest: digest, conversationId: currentConversationId)
         } else {
-            // Assistant: regenerate from the user turn immediately before it.
-            // Keep the original assistant node in storage. The new assistant
-            // turn is appended as a variant after streaming completes.
-            // messageNodes is a Kotlin List — convert to Swift Array so we can
-            // use Swift's lastIndex(where:) on the prefix.
+            // Keep the original assistant node; the new answer is appended as a variant.
             let nodes = Array(conversation.messageNodes.prefix(index))
             guard let precedingUser = nodes.lastIndex(where: { $0.role == MessageRole.user }) else {
-                return
+                return false
             }
-            Task { @MainActor in
-                let uploadMessages = Array(conversation.currentMessages.prefix(precedingUser + 1))
-                self.pendingAssistantRegeneration = PendingAssistantRegeneration(
-                    conversationId: conversation.id,
-                    targetMessageIndex: index,
-                    generatedMessageIndex: uploadMessages.count
-                )
-                self.messages = uploadMessages
-                self.bumpMessageRevision(reason: .branchChange)
-                let digest = chatInputDigest(for: regenerateDigestSeed())
-                generateResponse(inputDigest: digest, conversationId: conversation.id)
-            }
+            let uploadMessages = Array(conversation.currentMessages.prefix(precedingUser + 1))
+            pendingAssistantRegeneration = PendingAssistantRegeneration(
+                conversationId: conversation.id,
+                targetMessageIndex: index,
+                generatedMessageIndex: uploadMessages.count
+            )
+            messages = uploadMessages
+            bumpMessageRevision(reason: .branchChange)
+            let digest = chatInputDigest(for: regenerateDigestSeed())
+            generateResponse(inputDigest: digest, conversationId: conversation.id)
         }
+        return kernelRunHost.isRunning
     }
 
     /// Edit a user message in place and re-run generation from it. The edited
@@ -3508,14 +3592,17 @@ final class ChatViewModel {
     private func startLiveActivity(
         runId: String,
         conversationId: KotlinUuid?,
-        presentation: AgentActivityPresentation
+        presentation: AgentActivityPresentation,
+        publishToWatch: Bool = true
     ) {
         let conversationHex = conversationId?.toHexDashString()
-        WatchTaskCoordinator.shared.publish(
-            runId: runId,
-            conversationId: conversationHex,
-            presentation: presentation
-        )
+        if publishToWatch {
+            WatchTaskCoordinator.shared.publish(
+                runId: runId,
+                conversationId: conversationHex,
+                presentation: presentation
+            )
+        }
         guard liveActivityPreferenceEnabled else { return }
         // 只在 conversationId 匹配当前会话时传标题，避免审批恢复/后台 handoff
         // 时用户已切会话导致灵动岛显示错误标题。
@@ -3774,9 +3861,11 @@ final class ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSRecipeToolCatalog.toolNames).sorted()
         ))
-        // WeatherKit is read-only and default-deferred. It enters the full
-        // bridge catalog here so tool_search can expose it on demand.
-        toolDeclarations.append(ToolKt.createWeatherReadToolDeclaration())
+        // Apple device capabilities are default-deferred. They enter the full
+        // bridge catalog so tool_search can expose them only when relevant.
+        toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
+            names: Array(IOSAppleAgentToolCatalog.toolNames).sorted()
+        ))
         let mcpNetworkEnabled = isCapabilityPolicyEnabled("ios.mcp.tool_call")
         if mcpNetworkEnabled {
             toolDeclarations.append(ToolKt.createMcpCallToolDeclaration())

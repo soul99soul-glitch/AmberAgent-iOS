@@ -114,7 +114,7 @@ struct IOSWeatherTests {
         ))
 
         let valid = await IOSWeatherToolExecutor.execute(
-            input: #"{"location":"上海"}"#,
+            input: #"{"location":"上海","display_title":"查询上海天气"}"#,
             service: service
         )
         let data = try #require(valid.data(using: .utf8))

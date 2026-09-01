@@ -274,10 +274,6 @@ final class SubAgentRunner {
             UIMessage.companion.user(prompt: userPrompt)
         ]
 
-        let roleMaxTokens = Int32(role.outputBudgetChars / 4)
-        let effectiveMaxTokens = baseParams?.maxTokens
-            .map { min(Int32(truncating: $0), roleMaxTokens) }
-            ?? roleMaxTokens
         let fallbackModel = Model(
                 modelId: modelId,
                 displayName: modelId,
@@ -296,7 +292,13 @@ final class SubAgentRunner {
             model: baseParams?.model ?? fallbackModel,
             temperature: baseParams?.temperature,
             topP: baseParams?.topP,
-            maxTokens: KotlinInt(value: effectiveMaxTokens),
+            // `outputBudgetChars` bounds the report returned to the parent; it
+            // is not a per-provider-turn token limit. Coupling the two caused
+            // reasoning models to hit finish_reason=length before they could
+            // call subagent_report, and lowering the report budget made the
+            // failure more likely. Preserve an explicit parent model limit,
+            // otherwise let the provider use its normal output allowance.
+            maxTokens: baseParams?.maxTokens,
             tools: Self.buildSubAgentToolDeclarations(names: [SUBAGENT_REPORT_TOOL_NAME_swift] + tools),
             reasoningLevel: baseParams?.reasoningLevel ?? .off,
             customHeaders: baseParams?.customHeaders ?? [],
@@ -441,7 +443,7 @@ final class SubAgentRunner {
                 messages: input.messages,
                 params: input.params,
                 onAssistantText: { text in
-                    Task { @MainActor in liveModel.ingest(text) }
+                    liveModel.ingest(text)
                 }
             )
         }

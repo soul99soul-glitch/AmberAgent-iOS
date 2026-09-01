@@ -226,7 +226,18 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
     }
 
     var title: String {
-        if toolName == "soul_import" {
+        if serverName == "iPhone" {
+            switch toolName {
+            case let name where name.hasPrefix("calendar_"): "确认日历操作"
+            case let name where name.hasPrefix("reminder_"): "确认提醒事项操作"
+            case let name where name.hasPrefix("notification_"): "确认通知操作"
+            case let name where name.hasPrefix("alarm_") || name == "alarms_list": IOSAlarmCopy.approvalTitle
+            case let name where name.hasPrefix("workout_") || name == "workouts_scheduled_list": "确认健身计划操作"
+            case let name where name.hasPrefix("health_"): "确认健康数据读取"
+            case let name where name.hasPrefix("weather_"): "确认天气读取"
+            default: "确认 iPhone 操作"
+            }
+        } else if toolName == "soul_import" {
             "更新核心指令"
         } else if toolName == "skill_import" {
             "导入技能"
@@ -240,6 +251,79 @@ struct McpToolApprovalRequest: Identifiable, Equatable {
             "执行 MCP 工具"
         }
     }
+
+    var isAppleCapability: Bool { serverName == "iPhone" }
+
+    var isDestructiveAppleAction: Bool {
+        isAppleCapability && (
+            toolName.hasSuffix("_delete")
+                || toolName.hasSuffix("_cancel")
+                || toolName.hasSuffix("_remove")
+        )
+    }
+
+    var displayToolName: String {
+        Self.displayName(for: toolName)
+    }
+
+    var appleConsequenceWarning: String? {
+        guard isAppleCapability else { return nil }
+        return switch toolName {
+        case IOSAppleAgentToolCatalog.alarmSchedule:
+            IOSAlarmCopy.scheduleWarning
+        case IOSAppleAgentToolCatalog.alarmCancel:
+            IOSAlarmCopy.cancelWarning
+        case IOSAppleAgentToolCatalog.workoutSchedule:
+            "批准后，这个计划会出现在 Apple Watch 的体能训练 App 中。"
+        case IOSAppleAgentToolCatalog.scheduledWorkoutRemove:
+            "批准后，这个 Amber 健身计划会从体能训练 App 中移除。"
+        default:
+            nil
+        }
+    }
+
+    static func displayName(for toolName: String) -> String {
+        let names = [
+            "calendar_events_list": "查看日历事件",
+            "calendar_event_create": "新建日历事件",
+            "calendar_event_update": "更新日历事件",
+            "calendar_event_delete": "删除日历事件",
+            "reminders_list": "查看提醒事项",
+            "reminder_create": "新建提醒事项",
+            "reminder_update": "更新提醒事项",
+            "reminder_delete": "删除提醒事项",
+            "reminder_complete": "完成提醒事项",
+            "notification_schedule": "安排本地通知",
+            "notification_cancel": "取消本地通知",
+            "alarm_schedule": IOSAlarmCopy.scheduleTool,
+            "alarms_list": IOSAlarmCopy.listTool,
+            "alarm_cancel": IOSAlarmCopy.cancelTool,
+            "contacts_pick": "选择联系人",
+            "photos_pick": "选择照片",
+            "journaling_suggestion_pick": "选择日记建议",
+            "workout_plan_preview": "预览健身计划",
+            "workout_schedule": "安排健身计划",
+            "workouts_scheduled_list": "查看已安排训练",
+            "workout_scheduled_remove": "移除健身计划",
+            "health_summary_read": "读取健康摘要",
+            "weather_read": "读取天气"
+        ]
+        return names[toolName] ?? toolName
+    }
+
+    var systemImage: String {
+        if toolName.hasPrefix("calendar_") { return "calendar.badge.clock" }
+        if toolName.hasPrefix("reminder_") { return "checklist" }
+        if toolName.hasPrefix("notification_") { return "bell.badge" }
+        if toolName.hasPrefix("alarm_") || toolName == "alarms_list" { return "alarm" }
+        if toolName == IOSAppleAgentToolCatalog.contactsPick { return "person.crop.circle.badge.checkmark" }
+        if toolName == IOSAppleAgentToolCatalog.photosPick { return "photo.on.rectangle.angled" }
+        if toolName == IOSAppleAgentToolCatalog.journalingSuggestionPick { return "book.pages" }
+        if IOSAppleAgentToolCatalog.workoutToolNames.contains(toolName) { return "figure.run" }
+        if toolName.hasPrefix("health_") { return "heart.text.clipboard" }
+        if toolName.hasPrefix("weather_") { return "cloud.sun" }
+        return themePackPreview == nil ? "point.3.connected.trianglepath.dotted" : "swatchpalette"
+    }
 }
 
 struct ChatAskUserRequest: Identifiable, Equatable {
@@ -250,38 +334,15 @@ struct ChatAskUserRequest: Identifiable, Equatable {
     var title: String { "需要你的回答" }
 }
 
-enum CouncilToolApprovalKind: Equatable {
-    case council
-    case subAgent
-}
-
 struct CouncilToolApprovalRequest: Identifiable, Equatable {
     let id: String
-    let kind: CouncilToolApprovalKind
     let objectivePreview: String
     let maxSeats: Int?
     let reason: String
 
-    var title: String {
-        switch kind {
-        case .council: "启动模型议会"
-        case .subAgent: "调度子代理"
-        }
-    }
-
-    var capabilityId: String {
-        switch kind {
-        case .council: "ios.agent.model_council_run"
-        case .subAgent: "ios.agent.subagent_dispatch"
-        }
-    }
-
-    var systemImage: String {
-        switch kind {
-        case .council: "person.3.sequence"
-        case .subAgent: "person.crop.circle.badge.gearshape"
-        }
-    }
+    var title: String { "启动模型议会" }
+    var capabilityId: String { "ios.agent.model_council_run" }
+    var systemImage: String { "person.3.sequence" }
 }
 
 enum IshToolApprovalMode: String, Equatable {
@@ -709,6 +770,74 @@ enum ChatToolApprovalRequestBuilder {
         )
     }
 
+    static func appleCapability(
+        for toolCall: UIMessagePart.Tool,
+        reason: String
+    ) -> McpToolApprovalRequest? {
+        let args = ChatToolCallParsing.jsonObject(toolCall.input) ?? [:]
+        return McpToolApprovalRequest(
+            id: ChatToolCallParsing.requestId(for: toolCall),
+            serverName: "iPhone",
+            toolName: toolCall.toolName,
+            argumentsPreview: appleArgumentsPreview(toolName: toolCall.toolName, arguments: args),
+            reason: reason
+        )
+    }
+
+    private static func appleArgumentsPreview(toolName: String, arguments: [String: Any]) -> String {
+        if IOSAppleAgentToolCatalog.workoutToolNames.contains(toolName) {
+            return IOSWorkoutAgentToolExecutor.approvalPreview(arguments: arguments)
+        }
+        if IOSAppleAgentToolCatalog.alarmToolNames.contains(toolName) {
+            let labels: [(String, String)] = [
+                ("title", IOSAlarmCopy.titleField),
+                ("fire_at", IOSAlarmCopy.timeField),
+                ("kind", IOSAlarmCopy.typeField),
+                ("weekdays", IOSAlarmCopy.weekdaysField),
+                ("hour", IOSAlarmCopy.hourField),
+                ("minute", IOSAlarmCopy.minuteField),
+                ("duration_seconds", IOSAlarmCopy.durationField),
+                ("alarm_id", IOSAlarmCopy.identifierField)
+            ]
+            let lines = labels.compactMap { key, label -> String? in
+                guard let value = arguments[key] else { return nil }
+                let text = String(describing: value).trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { return nil }
+                return "\(label): \(String(text.prefix(160)))"
+            }
+            if !lines.isEmpty { return lines.joined(separator: "\n") }
+            return arguments.isEmpty
+                ? IOSAlarmCopy.noAdditionalParameters
+                : ChatToolCallParsing.truncatedMcpArguments(arguments)
+        }
+        let labels: [(String, String)] = [
+            ("title", "标题"),
+            ("start_at", "开始"),
+            ("end_at", "结束"),
+            ("due_at", "到期"),
+            ("fire_at", "时间"),
+            ("kind", "类型"),
+            ("weekdays", "星期"),
+            ("hour", "小时"),
+            ("minute", "分钟"),
+            ("duration_seconds", "时长（秒）"),
+            ("recurrence", "重复"),
+            ("event_id", "事件 ID"),
+            ("reminder_id", "提醒 ID"),
+            ("alarm_id", "闹钟 ID")
+        ]
+        let lines = labels.compactMap { key, label -> String? in
+            guard let value = arguments[key] else { return nil }
+            let text = String(describing: value).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return "\(label)：\(String(text.prefix(160)))"
+        }
+        if !lines.isEmpty { return lines.joined(separator: "\n") }
+        return arguments.isEmpty
+            ? "无需额外参数"
+            : ChatToolCallParsing.truncatedMcpArguments(arguments)
+    }
+
     static func council(
         for toolCall: UIMessagePart.Tool,
         reason: String
@@ -717,25 +846,8 @@ enum ChatToolApprovalRequestBuilder {
         let objective = args?["objective"] as? String ?? toolCall.input
         return CouncilToolApprovalRequest(
             id: ChatToolCallParsing.requestId(for: toolCall),
-            kind: .council,
             objectivePreview: ChatToolCallParsing.truncatedSearchTarget(objective),
             maxSeats: args?["max_seats"] as? Int,
-            reason: reason
-        )
-    }
-
-    static func subAgent(
-        for toolCall: UIMessagePart.Tool,
-        reason: String
-    ) -> CouncilToolApprovalRequest? {
-        guard toolCall.toolName == "subagent_dispatch" else { return nil }
-        let args = ChatToolCallParsing.jsonObject(toolCall.input)
-        let objective = args?["objective"] as? String ?? toolCall.input
-        return CouncilToolApprovalRequest(
-            id: ChatToolCallParsing.requestId(for: toolCall),
-            kind: .subAgent,
-            objectivePreview: ChatToolCallParsing.truncatedSearchTarget(objective),
-            maxSeats: nil,
             reason: reason
         )
     }

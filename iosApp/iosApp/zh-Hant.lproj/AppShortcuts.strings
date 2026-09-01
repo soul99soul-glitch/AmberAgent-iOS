@@ -1,0 +1,5 @@
+"询问 ${applicationName}" = "詢問 ${applicationName}";
+"让 ${applicationName} 帮我" = "讓 ${applicationName} 幫我";
+"用 ${applicationName} 生成每日简报" = "用 ${applicationName} 產生每日簡報";
+"让 ${applicationName} 总结今天" = "讓 ${applicationName} 彙整今天";
+"运行 ${applicationName} 快捷消息" = "執行 ${applicationName} 快捷訊息";

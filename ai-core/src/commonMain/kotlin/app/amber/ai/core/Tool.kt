@@ -541,19 +541,19 @@ fun createWebMountSiteRemoveToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountClickToolDeclaration(): Tool = webMountTool(
     name = "wm_click",
-    description = "Click a visible element on the current iOS WebMount page by selector or target ref.",
+    description = "Click a visible element on the current iOS WebMount page. Agent calls must use a target ref from the latest observation; CSS selectors remain available for direct user actions.",
     parameters = webMountTargetParameters(requireSessionSnapshot = true)
 )
 
 fun createWebMountTapToolDeclaration(): Tool = webMountTool(
     name = "wm_tap",
-    description = "Tap a coordinate or target on the current iOS WebMount page; prefer wm_click when a selector/ref exists.",
+    description = "Tap the current iOS WebMount page. Agent calls must use a target ref from the latest observation; coordinates and CSS selectors remain available for direct user actions.",
     parameters = webMountTargetParameters(includeCoordinates = true, requireSessionSnapshot = true)
 )
 
 fun createWebMountTypeToolDeclaration(): Tool = webMountTool(
     name = "wm_type",
-    description = "Type text into an input element on the current iOS WebMount page.",
+    description = "Type text into an input element on the current iOS WebMount page. Agent calls must use a target ref from the latest observation.",
     parameters = webMountTextInteractionParameters(requireSessionSnapshot = true)
 )
 
@@ -571,7 +571,7 @@ fun createWebMountScrollToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountSelectToolDeclaration(): Tool = webMountTool(
     name = "wm_select",
-    description = "Select an option value in a select element on the current iOS WebMount page.",
+    description = "Select an option value in a select element on the current iOS WebMount page. Agent calls must use a target ref from the latest observation.",
     parameters = webMountTextInteractionParameters(requireSessionSnapshot = true)
 )
 
@@ -833,6 +833,516 @@ fun createWeatherReadToolDeclaration(): Tool = Tool(
             },
         )
     },
+    execute = { emptyList() },
+)
+
+fun createHealthSummaryReadToolDeclaration(): Tool = Tool(
+    name = "health_summary_read",
+    description = """
+        Read a compact HealthKit activity and sleep summary for the current user after foreground permission.
+        Returns daily steps, active energy, exercise minutes, sleep duration, and optional recent workouts.
+        Use only when the user explicitly asks for personal health or fitness analysis.
+    """.trimIndent(),
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("days", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional number of recent days, clamped to 1...30. Defaults to 7.")
+                })
+                put("include_workouts", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Optional. Include up to 20 recent workout summaries. Defaults to true.")
+                })
+            },
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createCalendarEventsListToolDeclaration(): Tool = Tool(
+    name = "calendar_events_list",
+    description = "Read calendar events in a bounded time range after the user grants EventKit access.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("start_at", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional ISO-8601 start time. Defaults to now.")
+                })
+                put("end_at", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional ISO-8601 end time. Defaults to seven days after start_at.")
+                })
+                put("limit", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional maximum results, clamped to 1...100. Defaults to 30.")
+                })
+            },
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createCalendarEventCreateToolDeclaration(): Tool = Tool(
+    name = "calendar_event_create",
+    description = "Create one event in Apple Calendar. The host requires foreground approval before writing.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("title", buildJsonObject { put("type", "string") })
+                put("start_at", buildJsonObject {
+                    put("type", "string")
+                    put("description", "ISO-8601 event start time.")
+                })
+                put("end_at", buildJsonObject {
+                    put("type", "string")
+                    put("description", "ISO-8601 event end time; must be later than start_at.")
+                })
+                put("location", buildJsonObject { put("type", "string") })
+                put("notes", buildJsonObject { put("type", "string") })
+                put("calendar_id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional EventKit calendar identifier. Omit to use the default calendar.")
+                })
+                putCalendarRecurrenceFields()
+            },
+            required = listOf("title", "start_at", "end_at"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createCalendarEventUpdateToolDeclaration(): Tool = Tool(
+    name = "calendar_event_update",
+    description = "Update one existing Apple Calendar event by event_id. Only provided fields change. Foreground approval is required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("event_id", buildJsonObject { put("type", "string") })
+                put("title", buildJsonObject { put("type", "string") })
+                put("start_at", buildJsonObject { put("type", "string"); put("description", "Optional ISO-8601 start time.") })
+                put("end_at", buildJsonObject { put("type", "string"); put("description", "Optional ISO-8601 end time.") })
+                put("location", buildJsonObject { put("type", "string"); put("description", "Optional. Pass an empty string to clear.") })
+                put("notes", buildJsonObject { put("type", "string"); put("description", "Optional. Pass an empty string to clear.") })
+                put("calendar_id", buildJsonObject { put("type", "string"); put("description", "Optional destination EventKit calendar identifier.") })
+                putCalendarRecurrenceFields()
+            },
+            required = listOf("event_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createCalendarEventDeleteToolDeclaration(): Tool = Tool(
+    name = "calendar_event_delete",
+    description = "Delete one existing Apple Calendar event by event_id. Foreground approval is required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("event_id", buildJsonObject { put("type", "string") })
+            },
+            required = listOf("event_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createRemindersListToolDeclaration(): Tool = Tool(
+    name = "reminders_list",
+    description = "Read a bounded list of Apple Reminders after the user grants EventKit access.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("include_completed", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Optional. Include completed reminders. Defaults to false.")
+                })
+                put("limit", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional maximum results, clamped to 1...100. Defaults to 30.")
+                })
+            },
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createReminderCreateToolDeclaration(): Tool = Tool(
+    name = "reminder_create",
+    description = "Create one item in the user's default Apple Reminders list. The host requires foreground approval before writing.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("title", buildJsonObject { put("type", "string") })
+                put("due_at", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional ISO-8601 due time.")
+                })
+                put("notes", buildJsonObject { put("type", "string") })
+                put("priority", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional EventKit priority from 0 (none) to 9.")
+                })
+                put("list_id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional EventKit reminders-list identifier. Omit to use the default list.")
+                })
+            },
+            required = listOf("title"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createReminderUpdateToolDeclaration(): Tool = Tool(
+    name = "reminder_update",
+    description = "Update one Apple Reminder by reminder_id. Only provided fields change. Foreground approval is required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("reminder_id", buildJsonObject { put("type", "string") })
+                put("title", buildJsonObject { put("type", "string") })
+                put("due_at", buildJsonObject { put("type", "string"); put("description", "Optional ISO-8601 due time.") })
+                put("remove_due_date", buildJsonObject { put("type", "boolean"); put("description", "Optional. Set true to clear the due date.") })
+                put("notes", buildJsonObject { put("type", "string"); put("description", "Optional. Pass an empty string to clear.") })
+                put("priority", buildJsonObject { put("type", "integer"); put("description", "Optional EventKit priority from 0 to 9.") })
+                put("list_id", buildJsonObject { put("type", "string"); put("description", "Optional destination reminders-list identifier.") })
+            },
+            required = listOf("reminder_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createReminderDeleteToolDeclaration(): Tool = Tool(
+    name = "reminder_delete",
+    description = "Delete one Apple Reminder by reminder_id. Foreground approval is required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("reminder_id", buildJsonObject { put("type", "string") })
+            },
+            required = listOf("reminder_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createReminderCompleteToolDeclaration(): Tool = Tool(
+    name = "reminder_complete",
+    description = "Mark one Apple Reminder complete by identifier. The host requires foreground approval before writing.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("reminder_id", buildJsonObject { put("type", "string") })
+            },
+            required = listOf("reminder_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+private fun JsonObjectBuilder.putCalendarRecurrenceFields() {
+    put("recurrence", buildJsonObject {
+        put("type", "string")
+        put("description", "Optional recurrence. Use none to remove recurrence on update.")
+        put("enum", buildJsonArray { add("none"); add("daily"); add("weekly"); add("monthly") })
+    })
+    put("recurrence_interval", buildJsonObject {
+        put("type", "integer")
+        put("description", "Optional recurrence interval, clamped to 1...30. Defaults to 1.")
+    })
+    put("recurrence_end_at", buildJsonObject {
+        put("type", "string")
+        put("description", "Optional ISO-8601 recurrence end time; must be later than event start.")
+    })
+}
+
+fun createNotificationScheduleToolDeclaration(): Tool = Tool(
+    name = "notification_schedule",
+    description = "Schedule one local Amber notification. The host requires foreground approval before scheduling it.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("title", buildJsonObject { put("type", "string") })
+                put("body", buildJsonObject { put("type", "string") })
+                put("fire_at", buildJsonObject {
+                    put("type", "string")
+                    put("description", "ISO-8601 time at least five seconds in the future.")
+                })
+            },
+            required = listOf("title", "fire_at"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createNotificationCancelToolDeclaration(): Tool = Tool(
+    name = "notification_cancel",
+    description = "Cancel a local notification previously scheduled by the Amber agent.",
+    parameters = { emptyObjectParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createAlarmScheduleToolDeclaration(): Tool = Tool(
+    name = "alarm_schedule",
+    description = "Schedule one prominent AlarmKit alarm or timer that can sound through Focus or silent mode. Foreground approval is always required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("title", buildJsonObject { put("type", "string"); put("description", "Required, maximum 80 characters.") })
+                put("kind", buildJsonObject {
+                    put("type", "string")
+                    put("enum", buildJsonArray { add("one_time"); add("weekly"); add("timer") })
+                })
+                put("fire_at", buildJsonObject { put("type", "string"); put("description", "For one_time only: ISO-8601 time at least five seconds in the future.") })
+                put("weekdays", buildJsonObject {
+                    put("type", "array")
+                    put("description", "For weekly only. One or more English weekday names.")
+                    put("items", buildJsonObject {
+                        put("type", "string")
+                        put("enum", buildJsonArray {
+                            add("sunday"); add("monday"); add("tuesday"); add("wednesday")
+                            add("thursday"); add("friday"); add("saturday")
+                        })
+                    })
+                })
+                put("hour", buildJsonObject { put("type", "integer"); put("description", "For weekly only: 0...23.") })
+                put("minute", buildJsonObject { put("type", "integer"); put("description", "For weekly only: 0...59.") })
+                put("duration_seconds", buildJsonObject { put("type", "number"); put("description", "For timer only: 10...86400 seconds.") })
+            },
+            required = listOf("title", "kind"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createAlarmsListToolDeclaration(): Tool = Tool(
+    name = "alarms_list",
+    description = "List only the active alarms and timers previously scheduled by Amber. Foreground approval is required.",
+    parameters = { emptyObjectParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createAlarmCancelToolDeclaration(): Tool = Tool(
+    name = "alarm_cancel",
+    description = "Cancel one Amber-owned AlarmKit alarm by alarm_id. Foreground approval is always required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("alarm_id", buildJsonObject { put("type", "string") })
+            },
+            required = listOf("alarm_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createContactsPickToolDeclaration(): Tool = Tool(
+    name = "contacts_pick",
+    description = "Present the foreground system contact picker, then ask the user to confirm the selected contacts before returning only those contacts to the current agent. Never enumerates the address book.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("max_count", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional maximum selected contacts, 1...8. Defaults to 8.")
+                })
+            },
+        )
+    },
+    needsApproval = false,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createPhotosPickToolDeclaration(): Tool = Tool(
+    name = "photos_pick",
+    description = "Present the foreground system photo picker, copy only the chosen images into bounded app-owned storage, and ask the user to confirm before returning them to the current agent. Never searches or enumerates the photo library.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("max_count", buildJsonObject {
+                    put("type", "integer")
+                    put("description", "Optional maximum selected images, 1...4. Defaults to 4.")
+                })
+            },
+        )
+    },
+    needsApproval = false,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createJournalingSuggestionPickToolDeclaration(): Tool = Tool(
+    name = "journaling_suggestion_pick",
+    description = "Present Apple's foreground Journaling Suggestions picker and ask the user to confirm the single chosen suggestion before returning it to the current agent. Requires the signed Journaling Suggestions entitlement.",
+    parameters = { emptyObjectParameters() },
+    needsApproval = false,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+private fun workoutPlanProperties(includeSchedule: Boolean): JsonObject = buildJsonObject {
+    put("title", buildJsonObject {
+        put("type", "string")
+        put("description", "Short user-visible plan name, maximum 60 characters.")
+    })
+    put("kind", buildJsonObject {
+        put("type", "string")
+        put("enum", buildJsonArray { add("goal"); add("pacer"); add("intervals") })
+    })
+    put("activity", buildJsonObject {
+        put("type", "string")
+        put("enum", buildJsonArray { add("running"); add("walking"); add("cycling"); add("hiking") })
+    })
+    put("location", buildJsonObject {
+        put("type", "string")
+        put("description", "Optional; defaults to outdoor.")
+        put("enum", buildJsonArray { add("indoor"); add("outdoor") })
+    })
+    put("goal_type", buildJsonObject {
+        put("type", "string")
+        put("description", "For kind=goal only.")
+        put("enum", buildJsonArray { add("time"); add("distance") })
+    })
+    put("goal_value", buildJsonObject {
+        put("type", "number")
+        put("description", "For a time goal: minutes. For a distance goal: kilometers.")
+    })
+    put("distance_km", buildJsonObject {
+        put("type", "number")
+        put("description", "For kind=pacer only.")
+    })
+    put("duration_minutes", buildJsonObject {
+        put("type", "number")
+        put("description", "For kind=pacer only.")
+    })
+    put("work_seconds", buildJsonObject {
+        put("type", "number")
+        put("description", "For kind=intervals only; 10...3600 seconds.")
+    })
+    put("recovery_seconds", buildJsonObject {
+        put("type", "number")
+        put("description", "For kind=intervals only; 10...3600 seconds.")
+    })
+    put("repetitions", buildJsonObject {
+        put("type", "integer")
+        put("description", "For kind=intervals only; 1...20.")
+    })
+    put("warmup_minutes", buildJsonObject {
+        put("type", "number")
+        put("description", "Optional for intervals; 0...120 minutes.")
+    })
+    put("cooldown_minutes", buildJsonObject {
+        put("type", "number")
+        put("description", "Optional for intervals; 0...120 minutes.")
+    })
+    if (includeSchedule) {
+        put("schedule_at", buildJsonObject {
+            put("type", "string")
+            put("description", "ISO-8601 time between one minute and one year in the future.")
+        })
+    }
+}
+
+fun createWorkoutPlanPreviewToolDeclaration(): Tool = Tool(
+    name = "workout_plan_preview",
+    description = "Validate and preview a small WorkoutKit plan without reading or writing HealthKit and without scheduling it. This is fitness planning, not medical advice.",
+    parameters = {
+        InputSchema.Obj(
+            properties = workoutPlanProperties(includeSchedule = false),
+            required = listOf("title", "kind", "activity"),
+        )
+    },
+    execute = { emptyList() },
+)
+
+fun createWorkoutScheduleToolDeclaration(): Tool = Tool(
+    name = "workout_schedule",
+    description = "Schedule one validated workout plan in Apple's Workout app. Requires a paired supported Watch, WorkoutKit authorization, an explicit user request, and foreground approval.",
+    parameters = {
+        InputSchema.Obj(
+            properties = workoutPlanProperties(includeSchedule = true),
+            required = listOf("title", "kind", "activity", "schedule_at"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createScheduledWorkoutsListToolDeclaration(): Tool = Tool(
+    name = "workouts_scheduled_list",
+    description = "List only active WorkoutKit plans previously scheduled by Amber, reconciled by their stable Amber plan IDs.",
+    parameters = { emptyObjectParameters() },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() },
+)
+
+fun createScheduledWorkoutRemoveToolDeclaration(): Tool = Tool(
+    name = "workout_scheduled_remove",
+    description = "Remove one Amber-owned WorkoutKit plan by workout_id. Foreground approval is always required.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("workout_id", buildJsonObject { put("type", "string") })
+            },
+            required = listOf("workout_id"),
+        )
+    },
+    needsApproval = true,
+    mandatoryApproval = true,
+    allowsAutoApproval = false,
     execute = { emptyList() },
 )
 
@@ -1186,6 +1696,28 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "terminal_job_stop" to ::createTerminalJobStopToolDeclaration,
     "permissions_status" to ::createPermissionsStatusToolDeclaration,
     "weather_read" to ::createWeatherReadToolDeclaration,
+    "health_summary_read" to ::createHealthSummaryReadToolDeclaration,
+    "calendar_events_list" to ::createCalendarEventsListToolDeclaration,
+    "calendar_event_create" to ::createCalendarEventCreateToolDeclaration,
+    "calendar_event_update" to ::createCalendarEventUpdateToolDeclaration,
+    "calendar_event_delete" to ::createCalendarEventDeleteToolDeclaration,
+    "reminders_list" to ::createRemindersListToolDeclaration,
+    "reminder_create" to ::createReminderCreateToolDeclaration,
+    "reminder_update" to ::createReminderUpdateToolDeclaration,
+    "reminder_delete" to ::createReminderDeleteToolDeclaration,
+    "reminder_complete" to ::createReminderCompleteToolDeclaration,
+    "notification_schedule" to ::createNotificationScheduleToolDeclaration,
+    "notification_cancel" to ::createNotificationCancelToolDeclaration,
+    "alarm_schedule" to ::createAlarmScheduleToolDeclaration,
+    "alarms_list" to ::createAlarmsListToolDeclaration,
+    "alarm_cancel" to ::createAlarmCancelToolDeclaration,
+    "contacts_pick" to ::createContactsPickToolDeclaration,
+    "photos_pick" to ::createPhotosPickToolDeclaration,
+    "journaling_suggestion_pick" to ::createJournalingSuggestionPickToolDeclaration,
+    "workout_plan_preview" to ::createWorkoutPlanPreviewToolDeclaration,
+    "workout_schedule" to ::createWorkoutScheduleToolDeclaration,
+    "workouts_scheduled_list" to ::createScheduledWorkoutsListToolDeclaration,
+    "workout_scheduled_remove" to ::createScheduledWorkoutRemoveToolDeclaration,
     "tools_list" to ::createToolsListToolDeclaration,
     "subagent_report" to ::createSubAgentReportToolDeclaration,
     "spawn_agent" to ::createSpawnAgentToolDeclaration,
@@ -2863,6 +3395,35 @@ private fun JsonObjectBuilder.putWebMountSnapshotId(required: Boolean = false) {
     })
 }
 
+private fun JsonObjectBuilder.putWebMountPostcondition() {
+    put("postcondition", buildJsonObject {
+        put("type", "object")
+        put("description", "Optional outcome to wait for after dispatch. If it is not met, the action is reported as ambiguous rather than successful.")
+        put("properties", buildJsonObject {
+            put("condition", buildJsonObject {
+                put("type", "string")
+                put("enum", buildJsonArray {
+                    add("selector")
+                    add("text")
+                    add("url_contains")
+                    add("ready_state")
+                    add("dom_stable")
+                })
+            })
+            put("value", buildJsonObject {
+                put("type", "string")
+                put("description", "Expected selector, text, URL fragment, or ready state. Omit only for dom_stable.")
+            })
+            put("timeout_ms", buildJsonObject {
+                put("type", "integer")
+                put("description", "Bounded wait in milliseconds, clamped to 100...30000. Defaults to 5000.")
+            })
+        })
+        put("required", buildJsonArray { add("condition") })
+        put("additionalProperties", false)
+    })
+}
+
 private fun webMountSessionParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         putWebMountSessionId()
@@ -3036,13 +3597,14 @@ private fun webMountTargetParameters(
     properties = buildJsonObject {
         putWebMountSessionId(required = requireSessionSnapshot)
         putWebMountSnapshotId(required = requireSessionSnapshot)
+        putWebMountPostcondition()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "CSS selector for the target element")
+            put("description", "CSS selector for direct user actions; Agent calls must use target")
         })
         put("target", buildJsonObject {
             put("type", "string")
-            put("description", "Target ref from wm_extract/wm_find, when available")
+            put("description", "Target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations")
         })
         if (includeCoordinates) {
             put("x", buildJsonObject {
@@ -3062,13 +3624,14 @@ private fun webMountTextInteractionParameters(requireSessionSnapshot: Boolean = 
     properties = buildJsonObject {
         putWebMountSessionId(required = requireSessionSnapshot)
         putWebMountSnapshotId(required = requireSessionSnapshot)
+        putWebMountPostcondition()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "CSS selector for the target element")
+            put("description", "CSS selector for direct user actions; Agent calls must use target")
         })
         put("target", buildJsonObject {
             put("type", "string")
-            put("description", "Target ref from wm_extract/wm_find, when available")
+            put("description", "Target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations")
         })
         put("text", buildJsonObject {
             put("type", "string")
@@ -3086,6 +3649,7 @@ private fun webMountScrollParameters(requireSessionSnapshot: Boolean = false): I
     properties = buildJsonObject {
         putWebMountSessionId(required = requireSessionSnapshot)
         putWebMountSnapshotId(required = requireSessionSnapshot)
+        putWebMountPostcondition()
         put("selector", buildJsonObject {
             put("type", "string")
             put("description", "Optional CSS selector to scroll")

@@ -53,6 +53,7 @@ struct IOSSyncBackup {
         "list-previews.json",
         "list-icons.json",
     ]
+    private static let healthToolName = "health_summary_read"
 
     /// Exports an encrypted backup archive. Includes settings (always) plus an
     /// optional conversations bundle (Android SyncArchiveManager parity — iOS
@@ -138,12 +139,15 @@ struct IOSSyncBackup {
             isConversationDocumentName($0.lastPathComponent)
         }
         guard !jsonFiles.isEmpty else { return nil }
-        let zipEntries = try jsonFiles.map { file in
-            IOSStoredZipArchive.Entry(
-                name: file.lastPathComponent,
-                data: try Data(contentsOf: file)
-            )
+        let zipEntries = try jsonFiles.compactMap { file -> IOSStoredZipArchive.Entry? in
+            let data = try Data(contentsOf: file)
+            // HealthKit data must never enter Amber's local export or remote
+            // CloudKit/WebDAV snapshot. A health tool call makes the whole
+            // conversation private because later assistant text may summarize it.
+            guard !containsHealthToolCall(data) else { return nil }
+            return IOSStoredZipArchive.Entry(name: file.lastPathComponent, data: data)
         }
+        guard !zipEntries.isEmpty else { return nil }
         return try IOSStoredZipArchive.write(entries: zipEntries)
     }
 
@@ -188,6 +192,25 @@ struct IOSSyncBackup {
         let component = (name as NSString).lastPathComponent.lowercased()
         return (component as NSString).pathExtension == "json"
             && !conversationMetadataEntries.contains(component)
+    }
+
+    private static func containsHealthToolCall(_ data: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return false }
+        return containsHealthToolCall(root)
+    }
+
+    private static func containsHealthToolCall(_ value: Any) -> Bool {
+        if let object = value as? [String: Any] {
+            if object["toolName"] as? String == healthToolName
+                || object["tool_name"] as? String == healthToolName {
+                return true
+            }
+            return object.values.contains(where: containsHealthToolCall)
+        }
+        if let array = value as? [Any] {
+            return array.contains(where: containsHealthToolCall)
+        }
+        return false
     }
 
     static func restorePreview(data: Data, passphrase: String?, fileName: String? = nil) throws -> IOSSyncPreview {

@@ -210,7 +210,7 @@ final class ProviderRegistryStoreTests: XCTestCase {
         XCTAssertTrue(viewModel.configurationError?.contains("API Key") == true)
     }
 
-    func testWatchAnswerReportsFailureWhenProviderConfigurationBlocksSend() {
+    func testWatchAnswerWithoutMatchingApprovalDoesNotCreateMessage() {
         let viewModel = ChatViewModel(
             settingsStore: makeSettings(apiKey: "", modelId: "claude-sonnet-4-5"),
             sharedSettings: makeSharedSettingsWithClaudeProvider(apiKey: ""),
@@ -219,12 +219,13 @@ final class ProviderRegistryStoreTests: XCTestCase {
 
         let accepted = viewModel.submitWatchUserAnswer(
             runId: "watch-run-without-approval",
+            requestId: "stale-watch-request",
             text: "Hello from Watch"
         )
 
         XCTAssertFalse(accepted)
         XCTAssertTrue(viewModel.messages.isEmpty)
-        XCTAssertEqual(viewModel.inputText, "Hello from Watch")
+        XCTAssertTrue(viewModel.inputText.isEmpty)
         XCTAssertEqual(viewModel.configurationIssue, .missingAPIKey)
     }
 

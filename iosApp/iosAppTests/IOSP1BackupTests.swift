@@ -69,6 +69,37 @@ final class IOSP1BackupTests: XCTestCase {
         XCTAssertEqual(try IOSSyncBackup.conversationDocuments(zipData: zip), [#"{"id":"conversation-1"}"#])
     }
 
+    func testConversationBackupExcludesConversationContainingHealthToolCall() throws {
+        let dir = try makeTempDir("ConvHealthPrivacy")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{"id":"safe","messageNodes":[]}"#.write(
+            to: dir.appendingPathComponent("safe.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"id":"health","messageNodes":[{"parts":[{"type":"tool","toolName":"health_summary_read","output":[{"type":"text","text":"private"}]}]}]}"#.write(
+            to: dir.appendingPathComponent("health.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let zip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: dir))
+
+        XCTAssertEqual(try IOSSyncBackup.conversationDocuments(zipData: zip), [#"{"id":"safe","messageNodes":[]}"#])
+    }
+
+    func testConversationBackupReturnsNilWhenOnlyHealthConversationExists() throws {
+        let dir = try makeTempDir("OnlyHealthPrivacy")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #"{"parts":[{"tool_name":"health_summary_read"}]}"#.write(
+            to: dir.appendingPathComponent("health.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        XCTAssertNil(try IOSSyncBackup.conversationsZip(fromDirectory: dir))
+    }
+
     func testRestoreConversationsRoundTripsIntoDirectory() throws {
         let sourceDir = try makeTempDir("ConvSrc")
         let destDir = try makeTempDir("ConvDest")

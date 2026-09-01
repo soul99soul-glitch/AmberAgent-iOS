@@ -200,9 +200,54 @@ private struct IOSWebMountDesktopSemanticElement: Equatable {
     let tag: String?
     let visible: Bool?
     let focused: Bool?
+    let actionable: Bool?
+    let disabled: Bool?
 
-    func matches(_ target: String) -> Bool {
-        refs.contains(target) || selectors.contains(target)
+    func matchesReference(_ target: String) -> Bool {
+        refs.contains(target)
+    }
+
+    func matchesSelector(_ target: String) -> Bool {
+        selectors.contains(target)
+    }
+
+    func hasSameIdentity(as other: Self) -> Bool {
+        [role, name, inputType, tag].map(Self.normalizedIdentityPart)
+            == [other.role, other.name, other.inputType, other.tag].map(Self.normalizedIdentityPart)
+    }
+
+    private static func normalizedIdentityPart(_ value: String?) -> String? {
+        value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .nilIfBlank
+    }
+
+    var contractDictionary: [String: Any] {
+        var value: [String: Any] = [:]
+        if let ref = refs.sorted().first { value["ref"] = ref }
+        if let selector = selectors.sorted().first { value["selector"] = selector }
+        if let role { value["role"] = role }
+        if let name { value["name"] = name }
+        if let inputType { value["input_type"] = inputType }
+        if let tag { value["tag"] = tag }
+        if let visible { value["visible"] = visible }
+        if let focused { value["focused"] = focused }
+        if let actionable { value["actionable"] = actionable }
+        if let disabled { value["disabled"] = disabled }
+        return value
+    }
+}
+
+private struct IOSWebMountDesktopPageIdentity: Equatable {
+    let documentID: String?
+    let currentURL: String?
+
+    func matches(_ other: Self) -> Bool {
+        if documentID != nil || other.documentID != nil {
+            return documentID != nil && documentID == other.documentID
+        }
+        return currentURL != nil && currentURL == other.currentURL
     }
 }
 
@@ -266,11 +311,13 @@ final class IOSWebMountDesktopBackendAdapter {
     private var connections: [String: Connection] = [:]
     private var snapshotIDs: [String: String] = [:]
     private var snapshotElements: [String: [IOSWebMountDesktopSemanticElement]] = [:]
+    private var snapshotPageIdentities: [String: IOSWebMountDesktopPageIdentity] = [:]
+    private var snapshotRevisions: [String: Int] = [:]
 
     private(set) var statuses: [String: IOSWebMountDesktopBackendStatus] = [:]
 
     init(
-        clientFactory: @escaping ClientFactory = { IOSMcpClient() },
+        clientFactory: @escaping ClientFactory = { IOSMcpClient(requestTimeoutSeconds: 30) },
         endpointPolicy: IOSWebMountDesktopEndpointPolicy = .init()
     ) {
         self.clientFactory = clientFactory
@@ -321,6 +368,8 @@ final class IOSWebMountDesktopBackendAdapter {
             connections.removeValue(forKey: sessionId)
             snapshotIDs.removeValue(forKey: sessionId)
             snapshotElements.removeValue(forKey: sessionId)
+            snapshotPageIdentities.removeValue(forKey: sessionId)
+            snapshotRevisions.removeValue(forKey: sessionId)
             statuses[sessionId] = .failed(Self.redactedError(error))
             throw error
         }
@@ -353,7 +402,7 @@ final class IOSWebMountDesktopBackendAdapter {
                 mayHaveApplied: false
             )
         }
-        guard let mapping = Self.mappings[toolName] else {
+        guard Self.mappings[toolName] != nil else {
             return failureOutput(
                 toolName: toolName,
                 sessionId: sessionId,
@@ -381,6 +430,7 @@ final class IOSWebMountDesktopBackendAdapter {
             )
         }
 
+        var didDispatchMutation = false
         do {
             let mapping = try resolvedMapping(
                 toolName: toolName,
@@ -405,12 +455,94 @@ final class IOSWebMountDesktopBackendAdapter {
             ) {
                 return preflight
             }
+            if mapping.requiresSnapshot, mapping.mutating {
+                let priorTarget: IOSWebMountDesktopSemanticElement
+                guard let priorPageIdentity = snapshotPageIdentities[sessionId] else {
+                    throw IOSWebMountDesktopBackendError.staleSnapshot
+                }
+                switch toolName {
+                case "wm_click", "wm_tap", "wm_type", "wm_select":
+                    let target = try semanticTarget(arguments, toolName: toolName)
+                    guard let element = semanticElement(
+                        matching: target,
+                        arguments: arguments,
+                        elements: snapshotElements[sessionId] ?? []
+                    ) else {
+                        throw IOSWebMountDesktopBackendError.staleSnapshot
+                    }
+                    priorTarget = element
+                case "wm_keys":
+                    guard let element = snapshotElements[sessionId]?.first(where: { $0.focused == true }) else {
+                        throw IOSWebMountDesktopBackendError.staleSnapshot
+                    }
+                    priorTarget = element
+                default:
+                    throw IOSWebMountDesktopBackendError.staleSnapshot
+                }
+                guard let snapshotTool = connection.tools["browser_snapshot"] else {
+                    throw IOSWebMountDesktopBackendError.gatewayToolMissing("browser_snapshot")
+                }
+                let freshRawResult = try await connection.client.callTool(
+                    name: snapshotTool.tool.name,
+                    arguments: [:]
+                )
+                if let remoteError = Self.remoteErrorMessage(from: freshRawResult) {
+                    throw IOSMcpClientError.rpcError(remoteError)
+                }
+                let freshElements = Self.semanticElements(
+                    from: freshRawResult,
+                    backend: connection.backend,
+                    remoteToolName: snapshotTool.tool.name
+                )
+                let freshPageIdentity = Self.pageIdentity(
+                    from: freshRawResult,
+                    backend: connection.backend
+                )
+                guard !freshElements.isEmpty,
+                      let freshPageIdentity,
+                      priorPageIdentity.matches(freshPageIdentity) else {
+                    snapshotIDs.removeValue(forKey: sessionId)
+                    snapshotElements.removeValue(forKey: sessionId)
+                    snapshotPageIdentities.removeValue(forKey: sessionId)
+                    throw IOSWebMountDesktopBackendError.staleSnapshot
+                }
+                let freshTarget: IOSWebMountDesktopSemanticElement?
+                if toolName == "wm_keys" {
+                    freshTarget = freshElements.first(where: { $0.focused == true })
+                } else {
+                    let target = try semanticTarget(arguments, toolName: toolName)
+                    freshTarget = semanticElement(
+                        matching: target,
+                        arguments: arguments,
+                        elements: freshElements
+                    )
+                }
+                guard let freshTarget, priorTarget.hasSameIdentity(as: freshTarget) else {
+                    snapshotIDs.removeValue(forKey: sessionId)
+                    snapshotElements.removeValue(forKey: sessionId)
+                    snapshotPageIdentities.removeValue(forKey: sessionId)
+                    throw IOSWebMountDesktopBackendError.staleSnapshot
+                }
+                snapshotElements[sessionId] = freshElements
+                snapshotPageIdentities[sessionId] = freshPageIdentity
+                snapshotRevisions[sessionId, default: 0] += 1
+            }
+            if let preflight = actionPreflightOutput(
+                toolName: toolName,
+                arguments: arguments,
+                sessionId: sessionId,
+                connection: connection,
+                approvedHighConsequence: approvedHighConsequence
+            ) {
+                return preflight
+            }
             let mapped = try mappedArguments(
                 toolName: toolName,
                 arguments: arguments,
                 remoteTool: remoteTool,
                 sessionId: sessionId
             )
+            didDispatchMutation = mapping.mutating
             let rawResult = try await connection.client.callTool(
                 name: mapping.remoteToolName,
                 arguments: mapped
@@ -424,17 +556,27 @@ final class IOSWebMountDesktopBackendAdapter {
                 remoteToolName: mapping.remoteToolName
             )
             let snapshotID: String?
-            if ["browser_snapshot", "browser_find", "browser_extract"].contains(mapping.remoteToolName)
+            let containsSnapshot = mapping.remoteToolName == "browser_snapshot"
                 || (connection.backend == .playwright_mcp
-                    && Self.playwrightResponseContainsSnapshot(rawResult)) {
+                    && Self.playwrightResponseContainsSnapshot(rawResult))
+            let carriesSemanticTargets = !semanticElements.isEmpty
+                && ["browser_find", "browser_extract"].contains(mapping.remoteToolName)
+            if containsSnapshot || carriesSemanticTargets {
                 let generated = "remote_" + String(UUID().uuidString.prefix(12))
                 snapshotIDs[sessionId] = generated
                 snapshotElements[sessionId] = semanticElements
+                if let pageIdentity = Self.pageIdentity(from: rawResult, backend: connection.backend) {
+                    snapshotPageIdentities[sessionId] = pageIdentity
+                } else if containsSnapshot {
+                    snapshotPageIdentities.removeValue(forKey: sessionId)
+                }
+                snapshotRevisions[sessionId, default: 0] += 1
                 snapshotID = generated
             } else {
                 if mapping.mutating {
                     snapshotIDs.removeValue(forKey: sessionId)
                     snapshotElements.removeValue(forKey: sessionId)
+                    snapshotPageIdentities.removeValue(forKey: sessionId)
                 }
                 snapshotID = nil
             }
@@ -443,15 +585,18 @@ final class IOSWebMountDesktopBackendAdapter {
                 sessionId: sessionId,
                 connection: connection,
                 rawResult: rawResult,
-                snapshotID: snapshotID
+                snapshotID: snapshotID,
+                semanticElements: semanticElements
             )
         } catch {
-            let mayHaveApplied = mapping.mutating && Self.mayBeUnknownAfterDispatch(error)
+            let mayHaveApplied = didDispatchMutation && Self.mayBeUnknownAfterDispatch(error)
             if let clientError = error as? IOSMcpClientError, clientError == .mcpSessionExpired {
                 statuses[sessionId] = .needsReopen
                 connections.removeValue(forKey: sessionId)?.client.disconnect()
                 snapshotIDs.removeValue(forKey: sessionId)
                 snapshotElements.removeValue(forKey: sessionId)
+                snapshotPageIdentities.removeValue(forKey: sessionId)
+                snapshotRevisions.removeValue(forKey: sessionId)
             }
             return failureOutput(
                 toolName: toolName,
@@ -524,6 +669,26 @@ final class IOSWebMountDesktopBackendAdapter {
         }
     }
 
+    func supportsVerifiedWait(
+        arguments: [String: Any],
+        logicalSessionId: String
+    ) -> Bool {
+        guard let connection = connections[logicalSessionId],
+              statuses[logicalSessionId] == .connected,
+              let mapping = Self.mappings["wm_wait"],
+              let remoteTool = connection.tools[mapping.remoteToolName],
+              remoteTool.explicitlySupports("timeout_ms") || remoteTool.explicitlySupports("timeout"),
+              (try? mappedArguments(
+                toolName: "wm_wait",
+                arguments: arguments,
+                remoteTool: remoteTool,
+                sessionId: logicalSessionId
+              )) != nil else {
+            return false
+        }
+        return true
+    }
+
     func allowsCurrentConfiguration(
         _ config: IOSMcpServerConfig,
         toolName: String,
@@ -544,6 +709,8 @@ final class IOSWebMountDesktopBackendAdapter {
         connections.removeValue(forKey: logicalSessionId)?.client.disconnect()
         snapshotIDs.removeValue(forKey: logicalSessionId)
         snapshotElements.removeValue(forKey: logicalSessionId)
+        snapshotPageIdentities.removeValue(forKey: logicalSessionId)
+        snapshotRevisions.removeValue(forKey: logicalSessionId)
         statuses[logicalSessionId] = .closed
     }
 
@@ -646,7 +813,11 @@ final class IOSWebMountDesktopBackendAdapter {
             guard let url = string(arguments, "url") else {
                 throw IOSWebMountDesktopBackendError.invalidArguments("wm_open requires url.")
             }
-            return ["url": url]
+            return applyingRemoteTimeout(
+                from: arguments,
+                remoteTool: remoteTool,
+                to: ["url": url]
+            )
         case "wm_back", "wm_forward", "wm_state", "wm_observe":
             return [:]
         case "wm_extract":
@@ -770,13 +941,13 @@ final class IOSWebMountDesktopBackendAdapter {
                 guard remoteTool.explicitlySupports("text") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/text")
                 }
-                return ["text": text]
+                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: ["text": text])
             }
             if condition == "text_gone", let text = string(arguments, "text") {
                 guard remoteTool.explicitlySupports("textGone") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/text_gone")
                 }
-                return ["textGone": text]
+                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: ["textGone": text])
             }
             if condition == "delay", let milliseconds = number(arguments, "timeout_ms") {
                 guard remoteTool.explicitlySupports("time") else {
@@ -788,25 +959,25 @@ final class IOSWebMountDesktopBackendAdapter {
                 guard remoteTool.explicitlySupports("selector") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/selector")
                 }
-                return ["selector": target]
+                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: ["selector": target])
             }
             if condition == "url_contains", let fragment = string(arguments, "url_contains") {
                 guard remoteTool.explicitlySupports("url_contains") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/url_contains")
                 }
-                return ["url_contains": fragment]
+                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: ["url_contains": fragment])
             }
             if condition == "ready_state", let readyState = string(arguments, "ready_state") {
                 guard remoteTool.explicitlySupports("ready_state") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/ready_state")
                 }
-                return ["ready_state": readyState]
+                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: ["ready_state": readyState])
             }
             if condition == "dom_stable" {
                 guard remoteTool.explicitlySupports("dom_stable") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/dom_stable")
                 }
-                return [:]
+                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: [:])
             }
             throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/\(condition.nilIfBlank ?? "condition")")
         default:
@@ -856,6 +1027,17 @@ final class IOSWebMountDesktopBackendAdapter {
         throw IOSWebMountDesktopBackendError.mappingUnsupported("\(toolName)/target")
     }
 
+    private func semanticElement(
+        matching target: String,
+        arguments: [String: Any],
+        elements: [IOSWebMountDesktopSemanticElement]
+    ) -> IOSWebMountDesktopSemanticElement? {
+        if string(arguments, "selector") != nil {
+            return elements.first(where: { $0.matchesSelector(target) })
+        }
+        return elements.first(where: { $0.matchesReference(target) })
+    }
+
     private func requireSafeTarget(
         _ arguments: [String: Any],
         toolName: String,
@@ -863,7 +1045,11 @@ final class IOSWebMountDesktopBackendAdapter {
     ) throws -> String {
         let target = try semanticTarget(arguments, toolName: toolName)
         guard !Self.isSensitiveTarget(target),
-              let element = snapshotElements[sessionId]?.first(where: { $0.matches(target) }),
+              let element = semanticElement(
+                  matching: target,
+                  arguments: arguments,
+                  elements: snapshotElements[sessionId] ?? []
+              ),
               Self.isSafe(element, for: toolName) else {
             throw IOSWebMountDesktopBackendError.sensitiveFieldRequiresHuman
         }
@@ -887,7 +1073,11 @@ final class IOSWebMountDesktopBackendAdapter {
             disposition = Self.actionDisposition(element: element, toolName: toolName, arguments: arguments)
         case "wm_click", "wm_tap", "wm_type", "wm_select":
             guard let target = try? semanticTarget(arguments, toolName: toolName),
-                  let element = snapshotElements[sessionId]?.first(where: { $0.matches(target) }) else {
+                  let element = semanticElement(
+                      matching: target,
+                      arguments: arguments,
+                      elements: snapshotElements[sessionId] ?? []
+                  ) else {
                 return failureOutput(
                     toolName: toolName,
                     sessionId: sessionId,
@@ -899,7 +1089,11 @@ final class IOSWebMountDesktopBackendAdapter {
             disposition = Self.actionDisposition(element: element, toolName: toolName, arguments: arguments)
         case "wm_get":
             guard let target = try? semanticTarget(arguments, toolName: toolName),
-                  let element = snapshotElements[sessionId]?.first(where: { $0.matches(target) }) else {
+                  let element = semanticElement(
+                      matching: target,
+                      arguments: arguments,
+                      elements: snapshotElements[sessionId] ?? []
+                  ) else {
                 return failureOutput(
                     toolName: toolName,
                     sessionId: sessionId,
@@ -961,6 +1155,12 @@ final class IOSWebMountDesktopBackendAdapter {
         arguments: [String: Any]
     ) -> IOSWebMountDesktopActionDisposition {
         let label = element.name?.nilIfBlank ?? element.role?.nilIfBlank ?? "page element"
+        guard element.visible == true else {
+            return .human(reason: "target_visibility_unconfirmed", label: label)
+        }
+        guard element.disabled != true, element.actionable != false else {
+            return .human(reason: "target_not_actionable", label: label)
+        }
         guard hasSufficientSemantics(element) else {
             return .human(reason: "target_semantics_unconfirmed", label: label)
         }
@@ -1013,6 +1213,7 @@ final class IOSWebMountDesktopBackendAdapter {
         kind: String
     ) -> Bool {
         guard element.visible == true,
+              element.disabled != true,
               hasSufficientSemantics(element),
               !isSensitiveElement(element) else {
             return false
@@ -1037,6 +1238,26 @@ final class IOSWebMountDesktopBackendAdapter {
 
     private func number(_ values: [String: Any], _ key: String) -> Double? {
         (values[key] as? NSNumber)?.doubleValue
+    }
+
+    private func applyingRemoteTimeout(
+        from arguments: [String: Any],
+        remoteTool: IOSWebMountDesktopToolDescriptor,
+        to mapped: [String: Any]
+    ) -> [String: Any] {
+        guard let timeout = number(arguments, "timeout_ms") else { return mapped }
+        var result = mapped
+        let clamped = Int(timeout).clamped(to: 100...30_000)
+        if remoteTool.explicitlySupports("timeout_ms") {
+            result["timeout_ms"] = clamped
+        } else if remoteTool.explicitlySupports("timeout") {
+            result["timeout"] = clamped
+        }
+        if let stable = number(arguments, "stable_ms"),
+           remoteTool.explicitlySupports("stable_ms") {
+            result["stable_ms"] = Int(stable).clamped(to: 50...5_000)
+        }
+        return result
     }
 
     private static func isSensitiveTarget(_ target: String) -> Bool {
@@ -1065,7 +1286,10 @@ final class IOSWebMountDesktopBackendAdapter {
         _ element: IOSWebMountDesktopSemanticElement,
         for toolName: String
     ) -> Bool {
-        guard !isSensitiveElement(element) else { return false }
+        guard element.visible == true,
+              element.disabled != true,
+              element.actionable != false,
+              !isSensitiveElement(element) else { return false }
         let role = element.role?.lowercased() ?? ""
         let tag = element.tag?.lowercased() ?? ""
         let inputType = element.inputType?.lowercased() ?? "text"
@@ -1129,6 +1353,10 @@ final class IOSWebMountDesktopBackendAdapter {
                     ?? (dictionary["is_visible"] as? NSNumber)?.boolValue
                 let focused = (dictionary["focused"] as? NSNumber)?.boolValue
                     ?? (dictionary["is_focused"] as? NSNumber)?.boolValue
+                let actionable = (dictionary["actionable"] as? NSNumber)?.boolValue
+                    ?? (dictionary["is_actionable"] as? NSNumber)?.boolValue
+                let disabled = (dictionary["disabled"] as? NSNumber)?.boolValue
+                    ?? (dictionary["aria_disabled"] as? NSNumber)?.boolValue
                 if !refs.isEmpty || !selectors.isEmpty {
                     let element = IOSWebMountDesktopSemanticElement(
                         refs: refs,
@@ -1138,7 +1366,9 @@ final class IOSWebMountDesktopBackendAdapter {
                         inputType: inputType,
                         tag: tag,
                         visible: visible,
-                        focused: focused
+                        focused: focused,
+                        actionable: actionable,
+                        disabled: disabled
                     )
                     let isDuplicate = elements.contains {
                         !$0.refs.isDisjoint(with: element.refs)
@@ -1153,7 +1383,14 @@ final class IOSWebMountDesktopBackendAdapter {
         }
 
         visit(root)
-        return elements
+        return elements.sorted { lhs, rhs in
+            let lhsComplete = hasSufficientSemantics(lhs)
+            let rhsComplete = hasSufficientSemantics(rhs)
+            if lhsComplete != rhsComplete { return lhsComplete }
+            let lhsKey = lhs.refs.sorted().first ?? lhs.selectors.sorted().first ?? ""
+            let rhsKey = rhs.refs.sorted().first ?? rhs.selectors.sorted().first ?? ""
+            return lhsKey < rhsKey
+        }
     }
 
     private static func playwrightSemanticElements(
@@ -1191,6 +1428,10 @@ final class IOSWebMountDesktopBackendAdapter {
                 name = nil
             }
             let roleMetadata = playwrightRoleMetadata(role)
+            let disabled = line.range(
+                of: #"\[disabled(?:=true)?\]"#,
+                options: [.regularExpression, .caseInsensitive]
+            ) != nil
             let element = IOSWebMountDesktopSemanticElement(
                 refs: [ref],
                 selectors: [],
@@ -1198,11 +1439,17 @@ final class IOSWebMountDesktopBackendAdapter {
                 name: name,
                 inputType: roleMetadata.inputType,
                 tag: roleMetadata.tag,
-                visible: nil,
+                // Playwright's accessibility snapshot excludes aria-hidden and
+                // display-hidden nodes; parsed entries are therefore visible in
+                // the semantic tree. Structured gateways must still send an
+                // explicit visible=true flag.
+                visible: true,
                 focused: line.range(
                     of: #"\[focused(?:=true)?\]"#,
                     options: [.regularExpression, .caseInsensitive]
-                ) != nil
+                ) != nil,
+                actionable: !disabled,
+                disabled: disabled
             )
             if !elements.contains(where: { $0.refs.contains(ref) }) {
                 elements.append(element)
@@ -1258,6 +1505,12 @@ final class IOSWebMountDesktopBackendAdapter {
             if let error = object["error"] as? String, !error.isEmpty { return error }
             return "MCP tool returned an error result."
         }
+        if object["ok"] as? Bool == false {
+            for key in ["reason", "message", "error", "detail"] {
+                if let message = (object[key] as? String)?.nilIfBlank { return message }
+            }
+            return "MCP tool returned ok=false."
+        }
         if let error = object["error"] as? [String: Any] {
             return (error["message"] as? String)?.nilIfBlank ?? "MCP JSON-RPC error"
         }
@@ -1294,24 +1547,39 @@ final class IOSWebMountDesktopBackendAdapter {
         sessionId: String,
         connection: Connection,
         rawResult: String,
-        snapshotID: String?
+        snapshotID: String?,
+        semanticElements: [IOSWebMountDesktopSemanticElement]
     ) -> String {
         let result = Self.sanitizedValue(
             rawResult,
             removeURLFields: Self.mappings[toolName]?.mutating == true
         )
+        let remoteObject = rawResult.data(using: .utf8).flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        }
+        let remoteMayHaveApplied = remoteObject?["may_have_applied"] as? Bool == true
+        let remoteStatus = (remoteObject?["status"] as? String)?.nilIfBlank
+        let remoteOutcomeUnknown = Self.mappings[toolName]?.mutating == true
+            && (remoteMayHaveApplied
+                || remoteStatus.map { ["unknown_after_action", "ambiguous"].contains($0) } == true)
         var output: [String: Any] = baseOutput(
             toolName: toolName,
             sessionId: sessionId,
             connection: connection
         )
         output.merge([
-            "ok": true,
-            "status": "completed",
+            "ok": !remoteOutcomeUnknown,
+            "status": remoteOutcomeUnknown ? (remoteStatus ?? "unknown_after_action") : "completed",
             "mapped_tool": toolName,
-            "may_have_applied": false,
+            "may_have_applied": remoteOutcomeUnknown,
             "result": result
         ]) { _, new in new }
+        if remoteOutcomeUnknown {
+            output["error_code"] = (remoteObject?["error_code"] as? String)?.nilIfBlank
+                ?? "unknown_after_action"
+            output["verified"] = false
+            output["needs_reopen"] = true
+        }
         if let currentURL = Self.topLevelCurrentURL(from: rawResult, backend: connection.backend),
            let redactedURL = IOSWebMountRedactor.redactedURL(currentURL) {
             output["current_url"] = redactedURL
@@ -1320,6 +1588,23 @@ final class IOSWebMountDesktopBackendAdapter {
             output["state"] = result
         }
         if let snapshotID { output["snapshot_id"] = snapshotID }
+        if toolName == "wm_wait" {
+            let matched = Self.waitMatched(from: rawResult)
+            output["matched"] = matched ?? false
+            output["match_explicit"] = matched != nil
+        }
+        if toolName == "wm_observe" {
+            output.merge(
+                Self.normalizedObservation(
+                    rawResult: rawResult,
+                    sessionId: sessionId,
+                    backend: connection.backend,
+                    snapshotID: snapshotID,
+                    pageRevision: snapshotRevisions[sessionId] ?? 0,
+                    semanticElements: semanticElements
+                )
+            ) { _, normalized in normalized }
+        }
         return Self.json(output)
     }
 
@@ -1372,6 +1657,7 @@ final class IOSWebMountDesktopBackendAdapter {
             }
         } ?? []
         return [
+            "contract_version": "webmount.desktop.v2",
             "tool": toolName,
             "session_id": sessionId,
             "backend": connection?.backend.rawValue ?? "desktop",
@@ -1393,6 +1679,92 @@ final class IOSWebMountDesktopBackendAdapter {
         }
         let sanitized = removeURLFields ? removingURLFields(from: value) : value
         return IOSWebMountRedactor.redactedJSONObject(sanitized)
+    }
+
+    private static func waitMatched(from text: String) -> Bool? {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return (object["matched"] as? NSNumber)?.boolValue
+    }
+
+    private static func normalizedObservation(
+        rawResult: String,
+        sessionId: String,
+        backend: IOSWebMountBackendKind,
+        snapshotID: String?,
+        pageRevision: Int,
+        semanticElements: [IOSWebMountDesktopSemanticElement]
+    ) -> [String: Any] {
+        let root: [String: Any]? = rawResult.data(using: .utf8).flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        }
+        let payload: [String: Any]? = {
+            guard let root else { return nil }
+            for key in ["webmount", "observation", "snapshot"] {
+                if let nested = root[key] as? [String: Any] { return nested }
+            }
+            return root
+        }()
+        let explicitSemanticVersion = (payload?["contract_version"] as? String)?.nilIfBlank
+        let parseQuality: String
+        if explicitSemanticVersion != nil {
+            parseQuality = "versioned_structured"
+        } else if root != nil {
+            parseQuality = "structured_compat"
+        } else if backend == .playwright_mcp, playwrightResponseContainsSnapshot(rawResult) {
+            parseQuality = "playwright_accessibility"
+        } else {
+            parseQuality = "opaque"
+        }
+
+        let rawPage = payload?["page"] as? [String: Any]
+        let rawURL = (rawPage?["url"] as? String)
+            ?? (payload?["current_url"] as? String)
+            ?? topLevelCurrentURL(from: rawResult, backend: backend)
+        let rawTitle = (rawPage?["title"] as? String)
+            ?? (payload?["title"] as? String)
+            ?? playwrightPageTitle(from: rawResult)
+        var page: [String: Any] = [
+            "document_id": (payload?["document_id"] as? String)?.nilIfBlank ?? "remote:\(sessionId)",
+            "page_revision": pageRevision,
+            "snapshot_id": snapshotID ?? ""
+        ]
+        if let rawURL, let url = IOSWebMountRedactor.redactedURL(rawURL) { page["url"] = url }
+        if let title = rawTitle?.nilIfBlank { page["title"] = IOSWebMountRedactor.redactedText(title) }
+        if let readyState = (rawPage?["ready_state"] as? String)?.nilIfBlank
+            ?? (payload?["ready_state"] as? String)?.nilIfBlank {
+            page["ready_state"] = readyState
+        }
+
+        let accessibilityText = semanticElements.compactMap(\.name).joined(separator: "\n")
+        let visibleText = ((payload?["visible_text"] as? String)
+            ?? (payload?["text"] as? String)
+            ?? (parseQuality == "playwright_accessibility" ? accessibilityText : ""))
+        let links = (payload?["links"] as? [[String: Any]] ?? [])
+            .prefix(100)
+            .map { IOSWebMountRedactor.redactedJSONObject($0) }
+        let visualCandidates = (payload?["visual_candidates"] as? [[String: Any]] ?? [])
+            .prefix(100)
+            .map { IOSWebMountRedactor.redactedJSONObject($0) }
+        let interactiveElements = semanticElements
+            .prefix(200)
+            .map(\.contractDictionary)
+
+        return [
+            "semantic_contract_version": "webmount.semantic.v2",
+            "source_contract_version": explicitSemanticVersion ?? "",
+            "parse_quality": parseQuality,
+            "document_id": page["document_id"] ?? "remote:\(sessionId)",
+            "page_revision": pageRevision,
+            "snapshot_id": snapshotID ?? "",
+            "page": page,
+            "visible_text": String(IOSWebMountRedactor.redactedText(visibleText).prefix(20_000)),
+            "links": links,
+            "interactive_elements": interactiveElements,
+            "visual_candidates": visualCandidates
+        ]
     }
 
     private static func removingURLFields(from value: Any) -> Any {
@@ -1420,6 +1792,18 @@ final class IOSWebMountDesktopBackendAdapter {
                     return url
                 }
             }
+            let payload = (object["webmount"] as? [String: Any])
+                ?? (object["observation"] as? [String: Any])
+                ?? object
+            if ["webmount.semantic.v2", "wm/2"].contains(payload["contract_version"] as? String ?? "") {
+                if let url = (payload["current_url"] as? String)?.nilIfBlank {
+                    return url
+                }
+                if let page = payload["page"] as? [String: Any],
+                   let url = (page["url"] as? String)?.nilIfBlank {
+                    return url
+                }
+            }
         }
         guard backend == .playwright_mcp else { return nil }
         let lines = text
@@ -1436,6 +1820,53 @@ final class IOSWebMountDesktopBackendAdapter {
                 return nil
             }
             let prefix = "- Page URL:"
+            if line.hasPrefix(prefix) {
+                return String(line.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .nilIfBlank
+            }
+        }
+        return nil
+    }
+
+    private static func pageIdentity(
+        from text: String,
+        backend: IOSWebMountBackendKind
+    ) -> IOSWebMountDesktopPageIdentity? {
+        let root: [String: Any]? = text.data(using: .utf8).flatMap {
+            try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+        }
+        let payload = (root?["webmount"] as? [String: Any])
+            ?? (root?["observation"] as? [String: Any])
+            ?? (root?["snapshot"] as? [String: Any])
+            ?? root
+        let documentID = (payload?["document_id"] as? String)?.nilIfBlank
+            ?? ((payload?["page"] as? [String: Any])?["document_id"] as? String)?.nilIfBlank
+        let rawURL = topLevelCurrentURL(from: text, backend: backend)
+        let normalizedURL: String? = rawURL.flatMap { value in
+            guard var components = URLComponents(string: value) else { return value.nilIfBlank }
+            components.user = nil
+            components.password = nil
+            components.fragment = nil
+            return components.string?.nilIfBlank
+        }
+        guard documentID != nil || normalizedURL != nil else { return nil }
+        return IOSWebMountDesktopPageIdentity(documentID: documentID, currentURL: normalizedURL)
+    }
+
+    private static func playwrightPageTitle(from text: String) -> String? {
+        let lines = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+        guard let stateIndex = lines.firstIndex(where: { $0 == "### Page state" }) else {
+            return nil
+        }
+        for lineSlice in lines[(stateIndex + 1)...] {
+            let line = String(lineSlice)
+            if line == "- Page Snapshot:" || line == "- Page Snapshot" || line.hasPrefix("### ") {
+                return nil
+            }
+            let prefix = "- Page Title:"
             if line.hasPrefix(prefix) {
                 return String(line.dropFirst(prefix.count))
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1487,7 +1918,10 @@ final class IOSWebMountRemotePlaceholderRuntime: IOSWebMountRuntimeServicing {
         snapshot.status = ok ? .ready : .failed
         if let requestedURL {
             snapshot.requestedURL = IOSWebMountRedactor.redactedURL(requestedURL)
-            if ok { snapshot.currentURL = snapshot.requestedURL }
+        }
+        if ok {
+            snapshot.currentURL = IOSWebMountRedactor.redactedURL(object?["current_url"] as? String)
+                ?? snapshot.requestedURL
         }
         snapshot.title = ok ? "Desktop · \(toolName)" : snapshot.title
         snapshot.error = ok ? nil : IOSWebMountRedactor.redactedText(object?["error"] as? String ?? "Desktop gateway failed")

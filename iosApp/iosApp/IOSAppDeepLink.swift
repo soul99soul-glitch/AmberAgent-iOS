@@ -7,6 +7,7 @@ enum IOSAppDeepLink {
         case newConversation
         case latestConversation
         case conversation(id: String)
+        case agentPrompt(handoffID: String)
         case activeTask
         case healthSummary
         case weather
@@ -24,27 +25,31 @@ enum IOSAppDeepLink {
 
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme?.caseInsensitiveCompare(expectedScheme) == .orderedSame,
-              components.queryItems?.isEmpty != false,
               components.fragment == nil,
               let host = components.host?.lowercased() else { return nil }
 
         let path = components.path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        let queryItems = components.queryItems ?? []
         switch (host, path) {
-        case ("conversation", ["new"]):
+        case ("conversation", ["new"]) where queryItems.isEmpty:
             return .newConversation
-        case ("conversation", ["latest"]):
+        case ("conversation", ["latest"]) where queryItems.isEmpty:
             return .latestConversation
-        case ("conversation", let parts) where parts.count == 1:
+        case ("conversation", let parts) where parts.count == 1 && queryItems.isEmpty:
             let id = parts[0]
             guard isSafeIdentifier(id, maxLength: 64) else { return nil }
             return .conversation(id: id)
-        case ("task", ["active"]):
+        case ("agent", let parts) where parts.count == 2 && parts[0] == "ask":
+            guard queryItems.isEmpty,
+                  isSafeIdentifier(parts[1], maxLength: 64) else { return nil }
+            return .agentPrompt(handoffID: parts[1])
+        case ("task", ["active"]) where queryItems.isEmpty:
             return .activeTask
-        case ("settings", ["health"]):
+        case ("settings", ["health"]) where queryItems.isEmpty:
             return .healthSummary
-        case ("settings", ["weather"]):
+        case ("settings", ["weather"]) where queryItems.isEmpty:
             return .weather
-        case ("settings", ["apple-integrations"]):
+        case ("settings", ["apple-integrations"]) where queryItems.isEmpty:
             return .appleIntegrations
         default:
             return nil
@@ -68,6 +73,10 @@ enum IOSAppDeepLink {
             guard isSafeIdentifier(id, maxLength: 64) else { return nil }
             components.host = "conversation"
             components.path = "/\(id)"
+        case .agentPrompt(let handoffID):
+            guard isSafeIdentifier(handoffID, maxLength: 64) else { return nil }
+            components.host = "agent"
+            components.path = "/ask/\(handoffID)"
         case .activeTask:
             components.host = "task"
             components.path = "/active"
@@ -96,5 +105,14 @@ enum IOSAppDeepLink {
             charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
         )
         return value.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
+    static let maximumPromptLength = 2_000
+
+    static func normalizedPrompt(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= maximumPromptLength else { return nil }
+        return trimmed
     }
 }

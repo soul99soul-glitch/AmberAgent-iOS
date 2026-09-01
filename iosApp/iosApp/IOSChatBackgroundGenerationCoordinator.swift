@@ -472,6 +472,9 @@ final class IOSChatBackgroundGenerationCoordinator {
     /// A side-effect result awaiting explicit user reconciliation must not be
     /// overwritten by the ordinary Stop path while terminal UI is settling.
     private var outcomeUnknownRequestIds: Set<String> = []
+    /// Retains the composition root used only when iOS launches the process for
+    /// a background task before SwiftUI creates AppShell.
+    private var headlessChatViewModel: ChatViewModel?
     private lazy var db: AgentRuntimeDatabase = IosDatabaseFactory.shared.createDatabase()
     private lazy var runStore = IOSDurableRunStore(dao: db.agentRuntimeDao())
     // W1 durable ledger (I-1): background-continued tool execution accounts
@@ -480,6 +483,54 @@ final class IOSChatBackgroundGenerationCoordinator {
     private lazy var toolLedger: IOSAgentRunLedgering = IOSAgentRunLedger(dao: db.agentRuntimeDao())
 
     private init() {}
+
+    /// BGTaskScheduler requires every persisted dynamic identifier to be
+    /// registered before applicationDidFinishLaunching returns. Install the
+    /// handler first, then build the same runtime dependencies AppShell uses so
+    /// a headless launch can hydrate the persisted handoff without a window.
+    func prepareForApplicationLaunch() {
+        let requestIds = Array(taskMap().keys)
+        for requestId in requestIds where !register(requestId: requestId) {
+            finish(requestId: requestId)
+        }
+        guard !requestIds.isEmpty, dependencies == nil else { return }
+
+        let settingsStore = SettingsStore()
+        let sharedSettings = IOSSharedSettingsStore()
+        let conversationStore = IOSConversationStore()
+        let permissionStore = IOSPermissionStore()
+        let documentStore = DocumentAccessStore()
+        let systemPermissionCoordinator = IOSSystemPermissionCoordinator()
+        let localToolExecutor = IOSLocalToolExecutor(
+            permissionStore: permissionStore,
+            documentStore: documentStore,
+            workspaceStore: .shared,
+            systemPermissionCoordinator: systemPermissionCoordinator,
+            settingsStore: settingsStore
+        )
+        let chatViewModel = ChatViewModel(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            localToolExecutor: localToolExecutor
+        )
+        chatViewModel.conversationStore = conversationStore
+        dependencies = IOSChatBackgroundDependencies(
+            conversationStore: conversationStore,
+            toolRuntime: chatViewModel.makeBackgroundToolRuntime(),
+            sharedSettings: sharedSettings,
+            liveActivityController: .shared,
+            saveMiniAppIfPresent: { [chatViewModel] messages, conversationId in
+                chatViewModel.applyMiniAppOutputIfPresentPublic(
+                    to: messages,
+                    conversationId: conversationId
+                )
+            }
+        )
+        headlessChatViewModel = chatViewModel
+        for requestId in requestIds where activeJobs[requestId] == nil {
+            _ = job(for: requestId)
+        }
+    }
 
     /// 生命周期快照里属于本协调器的那一段：只读内存态，不碰磁盘。
     var lifecycleSnapshotDetail: String {
@@ -506,12 +557,17 @@ final class IOSChatBackgroundGenerationCoordinator {
         return Set(requestIds.compactMap { persisted[$0] ?? activeJobs[$0]?.runId })
     }
 
-    var reconnectingWatchProjection: WatchTaskReconnectProjection? {
-        guard let job = activeJobs.values.first else { return nil }
-        return WatchTaskReconnectProjection(
-            runId: job.runId,
-            conversationId: job.conversationId.toHexDashString()
-        )
+    var reconnectingWatchProjections: [WatchTaskReconnectProjection] {
+        activeJobs.values.sorted(by: { lhs, rhs in
+            if lhs.startedAt == rhs.startedAt { return lhs.runId < rhs.runId }
+            return lhs.startedAt < rhs.startedAt
+        }).map { job in
+            WatchTaskReconnectProjection(
+                runId: job.runId,
+                conversationId: job.conversationId.toHexDashString(),
+                startedAt: job.startedAt
+            )
+        }
     }
 
     func configure(
@@ -546,6 +602,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         liveActivityController: AgentLiveActivityController,
         saveMiniAppIfPresent: (@MainActor ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?)? = nil
     ) -> Bool {
+        WatchTaskCoordinator.shared.registerRun(
+            runId: handoff.runId,
+            startedAt: handoff.startedAt
+        )
         if handoff.mode == .resumeResponse {
             let requestId = requestIdentifier(for: handoff.runId)
             let alreadyHeldAudio = BackgroundGenerationKeepAlive.shared.holdsLease(
@@ -654,6 +714,10 @@ final class IOSChatBackgroundGenerationCoordinator {
               handoff.responseId != nil else {
             return false
         }
+        WatchTaskCoordinator.shared.registerRun(
+            runId: handoff.runId,
+            startedAt: handoff.startedAt
+        )
         let requestId = requestIdentifier(for: handoff.runId)
         guard register(requestId: requestId) else { return false }
         do {
@@ -2589,14 +2653,26 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         publishStateEvent(for: job)
         let presentation = AgentActivityPresentation.reconnecting(kind: .response)
+        let hasDeclaredTools = !job.params.tools.isEmpty || !job.fullToolNames.isEmpty
+        let resumesAutomatically = job.mode == .resumeResponse
+            || Self.canAutomaticallyResumeOrdinaryJob(
+                mode: job.mode,
+                hasDeclaredTools: hasDeclaredTools
+            )
+        let resumeSummary = resumesAutomatically
+            ? IOSAppLocalization.string(
+                "后台执行已暂停，回到 Amber 后自动继续。",
+                defaultValue: "后台执行已暂停，回到 Amber 后自动继续。"
+            )
+            : IOSAppLocalization.string(
+                "后台任务包含不能安全自动重放的操作，请回到会话重试。",
+                defaultValue: "后台任务包含不能安全自动重放的操作，请回到会话重试。"
+            )
         WatchTaskCoordinator.shared.publish(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
             presentation: presentation,
-            summary: IOSAppLocalization.string(
-                "后台执行已暂停，回到 Amber 后自动继续。",
-                defaultValue: "后台执行已暂停，回到 Amber 后自动继续。"
-            )
+            summary: resumeSummary
         )
         await job.liveActivityController.update(
             runId: job.runId,
@@ -2931,6 +3007,10 @@ final class IOSChatBackgroundGenerationCoordinator {
               let handoff = loadHandoff(requestId: requestId) else {
             return nil
         }
+        WatchTaskCoordinator.shared.registerRun(
+            runId: handoff.runId,
+            startedAt: handoff.startedAt
+        )
         let job = runtimeJob(
             handoff: handoff,
             conversationStore: dependencies.conversationStore,

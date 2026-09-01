@@ -921,12 +921,15 @@ enum ChatImageEncoder {
     static let maxThumbnailDimension: CGFloat = 160
 
     static func encode(_ image: UIImage) -> (dataUrl: String, previewData: Data)? {
-        let sized = downscaled(image, maxDimension: maxSendDimension)
-        guard let jpeg = sized.jpegData(compressionQuality: 0.7) else { return nil }
+        guard let jpeg = sendJPEGData(image) else { return nil }
         let dataUrl = "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
         let thumb = downscaled(image, maxDimension: maxThumbnailDimension)
         let previewData = thumb.jpegData(compressionQuality: 0.6) ?? jpeg
         return (dataUrl, previewData)
+    }
+
+    static func sendJPEGData(_ image: UIImage) -> Data? {
+        downscaled(image, maxDimension: maxSendDimension).jpegData(compressionQuality: 0.7)
     }
 
     private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {

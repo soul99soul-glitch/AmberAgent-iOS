@@ -20,7 +20,6 @@ struct PermissionsApprovalView: View {
             "ios.mcp.tool_call",
             "ios.webmount.browser",
             "ios.remote.command",
-            "ios.agent.subagent_dispatch",
             "ios.agent.model_council_run"
         ].compactMap { id in
             IOSCapabilityRegistry.capabilities.first { $0.id == id }
@@ -313,8 +312,6 @@ private struct PermissionPolicyRow: View {
             return IOSAppLocalization.string("读取或操作网页会话", defaultValue: "读取或操作网页会话")
         case "ios.remote.command":
             return IOSAppLocalization.string("SSH 远程执行单条命令", defaultValue: "SSH 远程执行单条命令")
-        case "ios.agent.subagent_dispatch":
-            return IOSAppLocalization.string("委托任务给子代理", defaultValue: "委托任务给子代理")
         case "ios.agent.model_council_run":
             return "发起议会讨论"
         default:

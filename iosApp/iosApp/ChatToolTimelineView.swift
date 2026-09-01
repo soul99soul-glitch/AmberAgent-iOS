@@ -18,6 +18,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
     case subagent
     case council
     case memory
+    case apple
     case code
     case generic
 
@@ -25,6 +26,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
         let name = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.contains("subagent_dispatch") { return .subagent }
         if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(name) { return .terminal }
+        if IOSAppleAgentToolCatalog.toolNames.contains(name) { return .apple }
         switch name {
         case "search_web": return .search
         case "scrape_web": return .web
@@ -76,6 +78,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
         case .subagent: .solidUsers
         case .council: .solidPeopleGroup
         case .memory: .solidBrain
+        case .apple: .solidDocument
         case .code: .solidCode
         case .generic: .solidWrench
         }
@@ -95,6 +98,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
         case .subagent: "person.2.fill"
         case .council: "person.3.sequence"
         case .memory: "brain.head.profile"
+        case .apple: "iphone"
         case .code: "chevron.left.forwardslash.chevron.right"
         case .generic: "wrench.and.screwdriver"
         }
@@ -110,7 +114,7 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
             .green
         case .subagent, .council:
             .indigo
-        case .memory:
+        case .memory, .apple:
             .amber
         default:
             .accent
@@ -551,6 +555,8 @@ struct ChatToolStepModel: Identifiable {
             let executed = !tool.output.isEmpty
             let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
                 .map(IOSWebMountRedactor.redactedText)
+            let uncertainReason = Self.webMountUncertainReason(from: tool.output)
+            let outcomeReason = failureReason ?? uncertainReason
             self.init(
                 id: stableID,
                 visualKind: kind,
@@ -558,8 +564,8 @@ struct ChatToolStepModel: Identifiable {
                     executed ? Self.webMountCompletedTitle(for: tool) : Self.webMountPendingTitle(for: tool.toolName),
                     Self.webMountInputSummary(for: tool.toolName, from: tool.input)
                 ),
-                detail: executed ? (failureReason ?? Self.webMountResultSummary(from: tool.output)) : nil,
-                state: Self.state(executed: executed, failureReason: failureReason)
+                detail: executed ? (outcomeReason ?? Self.webMountResultSummary(from: tool.output)) : nil,
+                state: Self.state(executed: executed, failureReason: outcomeReason)
             )
             return
         }
@@ -638,7 +644,23 @@ struct ChatToolStepModel: Identifiable {
             "terminal_execute": Self.localized("Remote SSH 执行"),
             "ios_shell_execute": Self.localized("AmberShell 执行"),
             "ish_handoff": Self.localized("iSH 交接"),
-            "read_health": Self.localized("读取健康数据"),
+            "health_summary_read": Self.localized("读取健康摘要"),
+            "weather_read": Self.localized("读取天气"),
+            "calendar_events_list": Self.localized("查看日历事件"),
+            "calendar_event_create": Self.localized("新建日历事件"),
+            "calendar_event_update": Self.localized("更新日历事件"),
+            "calendar_event_delete": Self.localized("删除日历事件"),
+            "reminders_list": Self.localized("查看提醒事项"),
+            "reminder_create": Self.localized("新建提醒事项"),
+            "reminder_update": Self.localized("更新提醒事项"),
+            "reminder_delete": Self.localized("删除提醒事项"),
+            "reminder_complete": Self.localized("完成提醒事项"),
+            "notification_schedule": Self.localized("安排本地通知"),
+            "notification_cancel": Self.localized("取消本地通知"),
+            "workout_plan_preview": Self.localized("预览健身计划"),
+            "workout_schedule": Self.localized("安排健身计划"),
+            "workouts_scheduled_list": Self.localized("查看已安排训练"),
+            "workout_scheduled_remove": Self.localized("移除健身计划"),
             "provider_config_status": Self.localized("查看模型配置"),
             "provider_config_apply": Self.localized("应用提供商配置"),
             "provider_refresh_models": Self.localized("刷新模型列表"),
@@ -1221,6 +1243,16 @@ struct ChatToolStepModel: Identifiable {
             )
         }
         return Self.localized("已返回 WebMount 结果")
+    }
+
+    private static func webMountUncertainReason(from output: [UIMessagePart]) -> String? {
+        guard let object = firstJSONObject(in: output),
+              object["may_have_applied"] as? Bool == true,
+              let status = (object["status"] as? String)?.lowercased(),
+              ["dispatched_unverified", "ambiguous", "unknown_after_action"].contains(status) else {
+            return nil
+        }
+        return Self.localized("操作已发送，但结果尚未验证；请先重新观察页面。")
     }
 
 }

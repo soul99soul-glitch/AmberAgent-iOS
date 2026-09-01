@@ -384,6 +384,15 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
                             )
                         })
                     }
+                    val outputImages = group.tools
+                        .flatMap { it.output.filterIsInstance<UIMessagePart.Image>() }
+                        .mapNotNull { it.imageUrlBlock() }
+                    if (outputImages.isNotEmpty()) {
+                        add(buildJsonObject {
+                            put("role", "user")
+                            putJsonArray("content") { outputImages.forEach { add(it) } }
+                        })
+                    }
                 }
             }
         }
@@ -911,6 +920,11 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
                                     .joinToString("\n") { it.text },
                             )
                         })
+                    }
+                    val outputImages = group.tools
+                        .flatMap { it.output.filterIsInstance<UIMessagePart.Image>() }
+                    if (outputImages.isNotEmpty()) {
+                        addResponsesContentItem(MessageRole.USER, outputImages)
                     }
                 }
             }

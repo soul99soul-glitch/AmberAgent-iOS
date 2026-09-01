@@ -56,3 +56,5 @@
 "agent.activity.metric.image.progress" = "%ld / %ld 张图片";
 "agent.activity.metric.item.count" = "已处理 %ld 项";
 "agent.activity.metric.item.progress" = "%ld / %ld 项";
+"agent.activity.control.cancel" = "取消";
+"agent.activity.control.retry" = "重试";

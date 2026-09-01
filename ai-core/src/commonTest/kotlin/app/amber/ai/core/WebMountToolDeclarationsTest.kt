@@ -19,6 +19,7 @@ class WebMountToolDeclarationsTest {
         tools.forEach { tool ->
             val parameters = assertIs<InputSchema.Obj>(tool.parameters())
             assertEquals(listOf("session_id", "snapshot_id"), parameters.required, tool.name)
+            assertEquals(true, "postcondition" in parameters.properties, tool.name)
         }
 
         val getParameters = assertIs<InputSchema.Obj>(createWebMountGetToolDeclaration().parameters())

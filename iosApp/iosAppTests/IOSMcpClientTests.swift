@@ -75,6 +75,26 @@ final class IOSMcpClientTests: XCTestCase {
         XCTAssertEqual(transport.sentRequestHeaders[3]["Mcp-Session-Id"], "session-1")
     }
 
+    func testCallToolReturnsStructuredContentWhenTextContentIsAbsent() async throws {
+        let transport = FakeMcpHTTPTransport(responses: [
+            ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+            ["jsonrpc": "2.0", "id": 2, "result": [
+                "structuredContent": ["ok": true, "value": "ready"]
+            ]],
+        ])
+        let client = IOSMcpClient(transport: transport)
+
+        _ = try await client.connect(
+            config: .streamableHTTP(name: "docs", url: "https://example.com/mcp")
+        )
+        let output = try await client.callTool(name: "state", arguments: [:])
+        let data = try XCTUnwrap(output.data(using: .utf8))
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+
+        XCTAssertEqual(object["ok"] as? Bool, true)
+        XCTAssertEqual(object["value"] as? String, "ready")
+    }
+
     func testMcpManagerBlocksRawBrowserCdpAndDevtoolsToolsFromExposureAndExecution() async throws {
         let config = IOSMcpServerConfig.streamableHTTP(
             name: "docs",

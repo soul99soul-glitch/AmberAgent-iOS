@@ -91,6 +91,7 @@ enum IOSLocalNotificationScheduleResult: Equatable {
 final class IOSLocalNotificationService {
     static let shared = IOSLocalNotificationService()
     static let manualReminderIdentifier = "amber.reminder.manual"
+    static let agentReminderIdentifier = "amber.reminder.agent"
 
     private let center: any IOSLocalNotificationCenter
     private let permissionCoordinator: IOSSystemPermissionCoordinator
@@ -184,6 +185,34 @@ final class IOSLocalNotificationService {
         center.removePendingRequests(identifiers: [Self.manualReminderIdentifier])
     }
 
+    func scheduleAgentNotification(
+        title: String,
+        body: String,
+        fireDate: Date
+    ) async throws -> IOSLocalNotificationScheduleResult {
+        guard fireDate.timeIntervalSince(now()) >= 5 else { return .invalidDate }
+        if await center.authorization() != .allowed,
+           await requestAuthorization() == false {
+            return .notAuthorized
+        }
+        guard let deepLink = IOSAppDeepLink.url(for: .latestConversation) else { return .notAuthorized }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        center.removePendingRequests(identifiers: [Self.agentReminderIdentifier])
+        try await center.add(IOSLocalNotificationRequest(
+            identifier: Self.agentReminderIdentifier,
+            title: cleanTitle.isEmpty ? "Amber 提醒" : String(cleanTitle.prefix(80)),
+            body: cleanBody.isEmpty ? "点按返回最近对话。" : String(cleanBody.prefix(240)),
+            fireDate: fireDate,
+            deepLink: deepLink
+        ))
+        return .scheduled(identifier: Self.agentReminderIdentifier)
+    }
+
+    func cancelAgentNotification() {
+        center.removePendingRequests(identifiers: [Self.agentReminderIdentifier])
+    }
+
     func cancelTaskCompletionNotifications() async {
         completionCancellationRevision &+= 1
         let identifiers = await center.pendingRequestIdentifiers().filter {
@@ -195,11 +224,86 @@ final class IOSLocalNotificationService {
 }
 
 @MainActor
+enum IOSNotificationAgentToolExecutor {
+    static func execute(
+        toolName: String,
+        input: String,
+        service: IOSLocalNotificationService = .shared
+    ) async -> String {
+        guard let data = input.data(using: .utf8),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return json(["ok": false, "tool": toolName, "reason": "参数不是有效的 JSON 对象。"])
+        }
+        object.removeValue(forKey: "display_title")
+        switch toolName {
+        case IOSAppleAgentToolCatalog.notificationSchedule:
+            guard Set(object.keys).isSubset(of: ["title", "body", "fire_at"]),
+                  let title = object["title"] as? String,
+                  let value = object["fire_at"] as? String,
+                  let fireDate = parseDate(value) else {
+                return json(["ok": false, "tool": toolName, "reason": "需要 title 与 ISO-8601 fire_at。"])
+            }
+            do {
+                let result = try await service.scheduleAgentNotification(
+                    title: title,
+                    body: object["body"] as? String ?? "",
+                    fireDate: fireDate
+                )
+                switch result {
+                case .scheduled(let identifier):
+                    return json([
+                        "ok": true, "tool": toolName, "identifier": identifier,
+                        "fire_at": ISO8601DateFormatter().string(from: fireDate)
+                    ])
+                case .notAuthorized:
+                    return json(["ok": false, "tool": toolName, "reason": "未获得通知权限。"])
+                case .invalidDate:
+                    return json(["ok": false, "tool": toolName, "reason": "提醒时间至少需要在 5 秒以后。"])
+                }
+            } catch {
+                return json(["ok": false, "tool": toolName, "reason": error.localizedDescription])
+            }
+        case IOSAppleAgentToolCatalog.notificationCancel:
+            guard object.isEmpty else {
+                return json(["ok": false, "tool": toolName, "reason": "notification_cancel 不接受参数。"])
+            }
+            service.cancelAgentNotification()
+            return json(["ok": true, "tool": toolName, "cancelled": true])
+        default:
+            return json(["ok": false, "tool": toolName, "reason": "未知通知工具。"])
+        }
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+
+    private static func json(_ payload: [String: Any]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+@MainActor
 final class IOSDeepLinkInbox {
     static let shared = IOSDeepLinkInbox()
 
     private var pending: [URL] = []
     private var handler: ((URL) -> Void)?
+    private var promptHandoffs: [String: String] = [:]
+
+    func preparePromptHandoff(_ prompt: String) -> IOSAppDeepLink.Destination? {
+        guard let prompt = IOSAppDeepLink.normalizedPrompt(prompt) else { return nil }
+        let id = UUID().uuidString.lowercased()
+        promptHandoffs[id] = prompt
+        return .agentPrompt(handoffID: id)
+    }
+
+    func consumePromptHandoff(id: String) -> String? {
+        promptHandoffs.removeValue(forKey: id.lowercased())
+    }
 
     func submit(_ url: URL) {
         guard IOSAppDeepLink.parse(url) != nil else { return }
@@ -222,12 +326,17 @@ final class IOSDeepLinkInbox {
     }
 }
 
+@MainActor
 final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        WatchConnectivityBridge.shared.startReceiving(
+            actionHandler: WatchTaskCoordinator.shared
+        )
+        IOSChatBackgroundGenerationCoordinator.shared.prepareForApplicationLaunch()
         return true
     }
 

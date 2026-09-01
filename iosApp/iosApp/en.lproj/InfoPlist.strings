@@ -1,1 +1,3 @@
-"NSHealthShareUsageDescription" = "Amber reads your step count only after you enable Health access, so it can show a private activity summary on this device.";
+"NSHealthShareUsageDescription" = "Amber reads activity, workout, and sleep summaries only after you approve access, so its agent can help analyze your health and fitness trends.";
+"NSSiriUsageDescription" = "Amber uses Siri and Shortcuts only when you run an Amber action.";
+"NSAlarmKitUsageDescription" = "Amber schedules prominent alarms and timers only after you approve an agent request.";

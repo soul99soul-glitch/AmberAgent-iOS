@@ -1,1 +1,3 @@
-"NSHealthShareUsageDescription" = "仅在你主动授权后，Amber 才会读取步数，用于在本机展示私密的活动摘要。";
+"NSHealthShareUsageDescription" = "仅在你主动授权后，Amber 才会读取活动、训练与睡眠摘要，让 Agent 帮你分析健康与运动趋势。";
+"NSSiriUsageDescription" = "仅在你运行 Amber 操作时，Amber 才会使用 Siri 与快捷指令。";
+"NSAlarmKitUsageDescription" = "仅在你批准 Agent 请求后，Amber 才会安排会响铃的系统闹钟或计时器。";

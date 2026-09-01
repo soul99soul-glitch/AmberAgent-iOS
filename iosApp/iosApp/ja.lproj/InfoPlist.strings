@@ -1,1 +1,3 @@
-"NSHealthShareUsageDescription" = "許可した場合にのみ、Amber は歩数を読み取り、このデバイス上で非公開のアクティビティ概要を表示します。";
+"NSHealthShareUsageDescription" = "許可した場合にのみ、Amber はアクティビティ、ワークアウト、睡眠の概要を読み取り、Agent が健康と運動の傾向を分析できるようにします。";
+"NSSiriUsageDescription" = "Amber のアクションを実行したときにのみ、Siri とショートカットを使用します。";
+"NSAlarmKitUsageDescription" = "Agent のリクエストを承認した場合にのみ、Amber は目立つアラームやタイマーを設定します。";

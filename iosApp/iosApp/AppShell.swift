@@ -27,6 +27,7 @@ struct AppShell: View {
     @State private var rootRouter = RouterPath()
     @State private var pendingAgentActivityTarget: AgentActivityDeepLink.Target?
     @State private var pendingAppDeepLinkDestination: IOSAppDeepLink.Destination?
+    @State private var isOpeningPendingAppDeepLink = false
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
     @State private var didFinalizeStaleBackgroundJobs = false
@@ -225,6 +226,13 @@ struct AppShell: View {
             }
         }
         .task {
+            // Attach the state-backed instance. AppShell.init may be re-evaluated
+            // while SwiftUI preserves the existing @State object.
+            AgentActivityControlCenter.shared.attach(chatViewModel: chatViewModel)
+            WatchTaskCoordinator.shared.attach(
+                chatViewModel: chatViewModel,
+                reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjections
+            )
             // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
             // run recovery 不是幂等操作；在任务的第一个 await 前占位，避免 .task
             // 重启时把本进程正在运行的前台 run 改写为 interrupted。
@@ -280,6 +288,7 @@ struct AppShell: View {
                 AgentLiveActivityController.shared.restoreExistingActivity(
                     ownedRunIds: backgroundRunIds
                 )
+                IOSAlarmService.shared.reconcileOnLaunch()
                 IOSChatBackgroundGenerationCoordinator.shared.resumeDetachedResponsesIfNeeded()
                 if scenePhase == .active {
                     IOSChatBackgroundGenerationCoordinator.shared
@@ -298,10 +307,6 @@ struct AppShell: View {
                 didBootstrapConversations = true
             }
             sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
-            WatchTaskCoordinator.shared.attach(
-                chatViewModel: chatViewModel,
-                reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjection
-            )
             await openPendingAgentActivityIfReady()
             await openPendingAppDeepLinkIfReady()
         }
@@ -422,8 +427,17 @@ struct AppShell: View {
     }
 
     private func openPendingAppDeepLinkIfReady() async {
-        guard didBootstrapConversations,
+        guard !isOpeningPendingAppDeepLink,
+              didBootstrapConversations,
               let destination = pendingAppDeepLinkDestination else { return }
+        isOpeningPendingAppDeepLink = true
+        defer {
+            isOpeningPendingAppDeepLink = false
+            if let pendingAppDeepLinkDestination,
+               pendingAppDeepLinkDestination != destination {
+                Task { await openPendingAppDeepLinkIfReady() }
+            }
+        }
 
         switch destination {
         case .newConversation:
@@ -433,13 +447,31 @@ struct AppShell: View {
             rootRouter.path = [.chat]
 
         case .latestConversation:
-            guard let summary = conversationStore.summaries.first,
-                  chatViewModel.prepareForConversationChange(to: summary.id) else { return }
+            guard let summary = conversationStore.summaries.first else {
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: "无法打开最近对话",
+                    message: "目前没有可打开的对话。",
+                    severity: .warning
+                ))
+                pendingAppDeepLinkDestination = nil
+                return
+            }
+            guard chatViewModel.prepareForConversationChange(to: summary.id) else { return }
             if conversationStore.currentConversation?.id != summary.id {
-                guard await conversationStore.selectConversationIfAvailable(
+                let didSelect = await conversationStore.selectConversationIfAvailable(
                     id: summary.id,
                     commitIf: { pendingAppDeepLinkDestination == destination }
-                ) else { return }
+                )
+                guard didSelect else {
+                    guard pendingAppDeepLinkDestination == destination else { return }
+                    conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                        title: "无法打开最近对话",
+                        message: "这段对话已被删除或暂时无法读取。",
+                        severity: .warning
+                    ))
+                    pendingAppDeepLinkDestination = nil
+                    return
+                }
             }
             guard pendingAppDeepLinkDestination == destination else { return }
             rootRouter.path = [.chat]
@@ -447,15 +479,69 @@ struct AppShell: View {
         case .conversation(let id):
             guard let summary = conversationStore.summaries.first(where: {
                 $0.id.toHexDashString().caseInsensitiveCompare(id) == .orderedSame
-            }), chatViewModel.prepareForConversationChange(to: summary.id) else { return }
+            }) else {
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: "无法打开对话",
+                    message: "这段对话已被删除或不存在。",
+                    severity: .warning
+                ))
+                pendingAppDeepLinkDestination = nil
+                return
+            }
+            guard chatViewModel.prepareForConversationChange(to: summary.id) else { return }
             if conversationStore.currentConversation?.id != summary.id {
-                guard await conversationStore.selectConversationIfAvailable(
+                let didSelect = await conversationStore.selectConversationIfAvailable(
                     id: summary.id,
                     commitIf: { pendingAppDeepLinkDestination == destination }
-                ) else { return }
+                )
+                guard didSelect else {
+                    guard pendingAppDeepLinkDestination == destination else { return }
+                    conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                        title: "无法打开对话",
+                        message: "这段对话已被删除或暂时无法读取。",
+                        severity: .warning
+                    ))
+                    pendingAppDeepLinkDestination = nil
+                    return
+                }
             }
             guard pendingAppDeepLinkDestination == destination else { return }
             rootRouter.path = [.chat]
+
+        case .agentPrompt(let handoffID):
+            guard chatViewModel.prepareForConversationChange(to: nil) else { return }
+            guard let prompt = IOSDeepLinkInbox.shared.consumePromptHandoff(id: handoffID) else {
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: "无法运行快捷指令",
+                    message: "这次请求已失效，请从 Siri 或“快捷指令”重新运行。",
+                    severity: .warning
+                ))
+                pendingAppDeepLinkDestination = nil
+                return
+            }
+            await conversationStore.startNewConversationReusingEmpty()
+            guard pendingAppDeepLinkDestination == destination else { return }
+            chatViewModel.reloadFromStore(reason: .conversationSwitch)
+            await chatViewModel.refreshCurrentConversationOrchestratedStatus()
+            guard pendingAppDeepLinkDestination == destination else { return }
+            if chatViewModel.currentConversationIsOrchestratedChild {
+                await conversationStore.newConversation()
+                guard pendingAppDeepLinkDestination == destination else { return }
+                chatViewModel.reloadFromStore(reason: .conversationSwitch)
+                await chatViewModel.refreshCurrentConversationOrchestratedStatus()
+            }
+            guard pendingAppDeepLinkDestination == destination else { return }
+            rootRouter.path = [.chat]
+            chatViewModel.inputText = prompt
+            if !chatViewModel.sendMessage() {
+                let message = chatViewModel.composerSendBlockReason(for: prompt)?.userVisibleMessage
+                    ?? "请求已放入输入框，请检查当前状态后重试。"
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: "未能发送请求",
+                    message: message,
+                    severity: .warning
+                ))
+            }
 
         case .activeTask:
             let tasks = IOSAdvancedTaskStore.shared.recent(limit: 80)
@@ -482,7 +568,21 @@ struct AppShell: View {
 
         guard let summary = conversationStore.summaries.first(where: {
             $0.id.toHexDashString().caseInsensitiveCompare(target.conversationId) == .orderedSame
-        }) else { return }
+        }) else {
+            pendingAgentActivityTarget = nil
+            conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                title: IOSAppLocalization.string(
+                    "无法打开任务",
+                    defaultValue: "无法打开任务"
+                ),
+                message: String(
+                    localized: "这段对话已被删除，请重新选择。",
+                    table: "AppIntents"
+                ),
+                severity: .warning
+            ))
+            return
+        }
         let ownsActivity = AgentLiveActivityController.shared.ownsActivity(
             runId: target.runId,
             conversationId: target.conversationId
