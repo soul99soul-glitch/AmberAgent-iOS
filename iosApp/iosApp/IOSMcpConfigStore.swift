@@ -2,6 +2,30 @@ import Foundation
 import Observation
 import Shared
 
+struct IOSMcpImportParseIssue: Equatable {
+    let serverName: String
+    let code: String
+    let message: String
+}
+
+struct IOSMcpImportParseResult: Equatable {
+    let servers: [IOSMcpServerConfig]
+    let errors: [IOSMcpImportParseIssue]
+}
+
+enum IOSMcpImportParsingError: LocalizedError, Equatable {
+    case invalidEntries([IOSMcpImportParseIssue])
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidEntries(let issues):
+            issues.map { issue in
+                issue.serverName.isEmpty ? issue.message : "\(issue.serverName)：\(issue.message)"
+            }.joined(separator: "\n")
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class IOSMcpConfigStore {
@@ -52,13 +76,38 @@ final class IOSMcpConfigStore {
         persist()
     }
 
-    @discardableResult
-    func importServers(json: String) -> Int {
-        let parsed = McpImportParserKt.parseMcpServersFromJson(json: json).compactMap(IOSMcpServerConfig.init)
-        for server in parsed {
-            add(server)
+    func parseImport(json: String) -> IOSMcpImportParseResult {
+        let parsed = McpImportParserKt.parseMcpServersWithDiagnostics(json: json)
+        var errors = parsed.errors.map {
+            IOSMcpImportParseIssue(
+                serverName: $0.serverName,
+                code: $0.code,
+                message: $0.message
+            )
         }
-        return parsed.count
+        var servers: [IOSMcpServerConfig] = []
+        for sharedServer in parsed.servers {
+            if let server = IOSMcpServerConfig(sharedServer) {
+                servers.append(server)
+            } else {
+                errors.append(IOSMcpImportParseIssue(
+                    serverName: sharedServer.commonOptions.name,
+                    code: "invalid_server",
+                    message: "MCP 服务配置无法转换为 iOS 支持的类型。"
+                ))
+            }
+        }
+        return IOSMcpImportParseResult(servers: servers, errors: errors)
+    }
+
+    @discardableResult
+    func importServers(json: String) throws -> Int {
+        let parsed = parseImport(json: json)
+        guard parsed.errors.isEmpty else {
+            throw IOSMcpImportParsingError.invalidEntries(parsed.errors)
+        }
+        try addBatch(parsed.servers)
+        return parsed.servers.count
     }
 
     func remove(named name: String) {

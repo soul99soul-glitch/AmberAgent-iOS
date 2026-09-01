@@ -261,6 +261,7 @@ struct McpImportView: View {
     let configStore: IOSMcpConfigStore
     @Environment(\.dismiss) private var dismiss
     @FocusState private var isJSONEditorFocused: Bool
+    @State private var saveError: String?
 
     @State private var jsonText = """
     {
@@ -279,10 +280,13 @@ struct McpImportView: View {
 
             VStack(spacing: 0) {
                 McpDraftHeader(title: "导入服务器", doneTitle: "保存") {
-                    if !parsedServers.isEmpty {
-                        configStore.importServers(json: jsonText)
+                    do {
+                        guard parsedImport.errors.isEmpty, !parsedImport.servers.isEmpty else { return }
+                        try configStore.importServers(json: jsonText)
+                        dismiss()
+                    } catch {
+                        saveError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                     }
-                    dismiss()
                 }
 
                 ScrollView {
@@ -298,6 +302,9 @@ struct McpImportView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: jsonText) { _, _ in
+            saveError = nil
+        }
     }
 
     private var introSection: some View {
@@ -377,27 +384,49 @@ struct McpImportView: View {
             AmberFormGroup {
                 McpPreviewRow(title: "根字段文本", value: jsonText.contains("\"mcpServers\"") ? "mcpServers" : "未检测到")
                 McpDivider()
-                McpPreviewRow(title: "解析条目数", value: "\(parsedServers.count)")
+                McpPreviewRow(title: "解析条目数", value: "\(parsedImport.servers.count)")
                 McpDivider()
-                McpPreviewRow(title: "保存结果", value: parsedServers.isEmpty ? "无可保存条目" : "可保存")
+                McpPreviewRow(title: "错误条目数", value: "\(parsedImport.errors.count)")
+                ForEach(Array(parsedImport.errors.enumerated()), id: \.offset) { _, issue in
+                    McpDivider()
+                    McpPreviewRow(
+                        title: issue.serverName.isEmpty ? "文档错误" : issue.serverName,
+                        value: issue.message
+                    )
+                }
+                McpDivider()
+                McpPreviewRow(
+                    title: "保存结果",
+                    value: parsedImport.errors.isEmpty && !parsedImport.servers.isEmpty ? "可保存" : "不会写入配置"
+                )
             }
         }
     }
 
     private var validationText: String {
+        if let saveError {
+            return saveError
+        }
+
         if !jsonText.contains("\"mcpServers\"") {
             return "未检测到 mcpServers 文本；保存不会写入配置。"
         }
 
-        if parsedServers.isEmpty {
+        if !parsedImport.errors.isEmpty {
+            return parsedImport.errors.map { issue in
+                issue.serverName.isEmpty ? issue.message : "\(issue.serverName)：\(issue.message)"
+            }.joined(separator: "\n")
+        }
+
+        if parsedImport.servers.isEmpty {
             return "文本包含 mcpServers，但没有解析到服务器条目。"
         }
 
-        return "解析到 \(parsedServers.count) 个服务器；点击保存后写入本机配置。"
+        return "解析到 \(parsedImport.servers.count) 个服务器；点击保存后写入本机配置。"
     }
 
-    private var parsedServers: [McpServerConfig] {
-        McpImportParserKt.parseMcpServersFromJson(json: jsonText)
+    private var parsedImport: IOSMcpImportParseResult {
+        configStore.parseImport(json: jsonText)
     }
 
     private func replaceWithClipboard() {

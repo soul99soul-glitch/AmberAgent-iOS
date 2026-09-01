@@ -9,18 +9,34 @@ struct IOSMcpTool: Codable, Equatable, Identifiable {
     /// `tools/list` result, or nil for legacy persisted data / servers that
     /// omit a schema. The text is always a complete JSON value.
     let inputSchema: String?
+    /// MCP tool annotation. Only an explicit `true` is strong enough to prove
+    /// that replaying the tool after reconnect is safe.
+    let readOnlyHint: Bool?
 
     var id: String { name }
 
-    init(name: String, description: String?, enabled: Bool = true, inputSchema: String? = nil) {
+    init(
+        name: String,
+        description: String?,
+        enabled: Bool = true,
+        inputSchema: String? = nil,
+        readOnlyHint: Bool? = nil
+    ) {
         self.name = name
         self.description = description
         self.enabled = enabled
         self.inputSchema = inputSchema
+        self.readOnlyHint = readOnlyHint
     }
 
     func withEnabled(_ enabled: Bool) -> IOSMcpTool {
-        IOSMcpTool(name: name, description: description, enabled: enabled, inputSchema: inputSchema)
+        IOSMcpTool(
+            name: name,
+            description: description,
+            enabled: enabled,
+            inputSchema: inputSchema,
+            readOnlyHint: readOnlyHint
+        )
     }
 }
 
@@ -596,7 +612,7 @@ private final class LegacySSEMcpSession {
 }
 
 @MainActor
-protocol IOSMcpClienting {
+protocol IOSMcpClienting: AnyObject {
     func connect(config: IOSMcpServerConfig) async throws -> Bool
     func listTools() async throws -> [IOSMcpTool]
     func callTool(name: String, arguments: [String: Any]) async throws -> String
@@ -652,7 +668,8 @@ final class IOSMcpClient: IOSMcpClienting {
             return IOSMcpTool(
                 name: name,
                 description: item["description"] as? String,
-                inputSchema: Self.persistedSchemaText(item["inputSchema"])
+                inputSchema: Self.persistedSchemaText(item["inputSchema"]),
+                readOnlyHint: (item["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool
             )
         }
     }

@@ -302,7 +302,27 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
         XCTAssertEqual(visibleObject["mapped_tool"] as? String, "wm_get")
         let capabilities = try XCTUnwrap(visibleObject["capabilities"] as? [String])
         XCTAssertTrue(capabilities.allSatisfy { $0.hasPrefix("wm_") })
-        XCTAssertTrue(adapter.capabilities(logicalSessionId: "get-session").allSatisfy { $0.remoteToolName.hasPrefix("wm_") })
+        let remoteToolsByAmberName = Dictionary(
+            uniqueKeysWithValues: adapter.capabilities(logicalSessionId: "get-session").map {
+                ($0.amberToolName, $0.remoteToolName)
+            }
+        )
+        XCTAssertEqual(remoteToolsByAmberName, [
+            "wm_back": "browser_navigate_back",
+            "wm_click": "browser_click",
+            "wm_extract": "browser_extract",
+            "wm_find": "browser_find",
+            "wm_forward": "browser_navigate_forward",
+            "wm_get": "browser_get",
+            "wm_keys": "browser_press_key",
+            "wm_observe": "browser_snapshot",
+            "wm_open": "browser_navigate",
+            "wm_select": "browser_select_option",
+            "wm_state": "browser_snapshot",
+            "wm_tap": "browser_click",
+            "wm_type": "browser_type",
+            "wm_wait": "browser_wait_for"
+        ])
         XCTAssertEqual(client.calls.last?.name, "browser_get")
 
         let hiddenFind = await adapter.execute(

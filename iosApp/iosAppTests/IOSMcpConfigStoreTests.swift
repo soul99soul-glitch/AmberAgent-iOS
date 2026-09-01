@@ -18,10 +18,10 @@ final class IOSMcpConfigStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.servers, [.streamableHTTP(name: "docs", url: "https://example.com/mcp", headers: ["Authorization": "Bearer token"])])
     }
 
-    func testImportJsonPersistsParsedServers() {
+    func testImportJsonPersistsParsedServers() throws {
         let store = IOSMcpConfigStore(userDefaults: isolatedDefaults())
 
-        let imported = store.importServers(json: """
+        let imported = try store.importServers(json: """
         {
           "mcpServers": {
             "docs": { "type": "sse", "url": "https://example.com/sse" },
@@ -32,6 +32,76 @@ final class IOSMcpConfigStoreTests: XCTestCase {
 
         XCTAssertEqual(imported, 2)
         XCTAssertEqual(store.servers.map(\.name), ["docs", "search"])
+    }
+
+    func testImportPreservesTransportAliasesThroughSwiftConsumer() throws {
+        let store = IOSMcpConfigStore(userDefaults: isolatedDefaults())
+
+        let imported = try store.importServers(json: """
+        {
+          "mcpServers": {
+            "legacy": { "transport": " SSE ", "url": "https://example.com/sse" },
+            "modern": {
+              "type": "streamable-http",
+              "transport": "streamableHttp",
+              "url": "https://example.com/mcp"
+            },
+            "default": { "url": "https://example.com/default" }
+          }
+        }
+        """)
+
+        XCTAssertEqual(imported, 3)
+        XCTAssertEqual(store.servers, [
+            .sse(name: "legacy", url: "https://example.com/sse"),
+            .streamableHTTP(name: "modern", url: "https://example.com/mcp"),
+            .streamableHTTP(name: "default", url: "https://example.com/default"),
+        ])
+    }
+
+    func testImportFailsClosedAndReportsPerEntryTransportErrors() {
+        let store = IOSMcpConfigStore(userDefaults: isolatedDefaults())
+        let json = """
+        {
+          "mcpServers": {
+            "valid": { "transport": "sse", "url": "https://example.com/sse" },
+            "conflict": {
+              "type": "sse",
+              "transport": "streamable_http",
+              "url": "https://example.com/conflict"
+            },
+            "unknown": { "transport": "websocket", "url": "https://example.com/unknown" }
+          }
+        }
+        """
+
+        let parsed = store.parseImport(json: json)
+        XCTAssertEqual(parsed.servers.map(\.name), ["valid"])
+        XCTAssertEqual(
+            parsed.errors.map { "\($0.serverName):\($0.code)" },
+            ["conflict:conflicting_transport", "unknown:unsupported_transport"]
+        )
+        XCTAssertThrowsError(try store.importServers(json: json))
+        XCTAssertTrue(store.servers.isEmpty)
+    }
+
+    func testImportConflictDoesNotReplaceExistingServer() {
+        let store = IOSMcpConfigStore(userDefaults: isolatedDefaults())
+        let existing = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://trusted.example/mcp",
+            headers: ["Authorization": "Bearer existing"]
+        )
+        store.add(existing)
+
+        XCTAssertThrowsError(try store.importServers(json: """
+        {
+          "mcpServers": {
+            "docs": { "transport": "sse", "url": "https://other.example/sse" }
+          }
+        }
+        """))
+        XCTAssertEqual(store.servers, [existing])
     }
 
     func testRemoveDeletesStoredServer() {

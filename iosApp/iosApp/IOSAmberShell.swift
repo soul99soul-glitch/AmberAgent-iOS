@@ -7,6 +7,21 @@ struct IOSAmberShellCommandResult: Equatable {
     let stdoutTruncated: Bool
     let stderrTruncated: Bool
     let termination: IOSAmberShellTermination?
+    let dispatchOutcome: IOSAmberShellDispatchOutcome
+}
+
+enum IOSAmberShellDispatchOutcome: Equatable {
+    /// No mutating store call crossed its dispatch boundary.
+    case notDispatched
+    /// Every dispatched mutation returned, so the command outcome is final.
+    case completed
+    /// A mutation may have applied, but later work did not reach a final outcome.
+    case mayHaveApplied
+}
+
+enum IOSAmberShellExecutionEvent: Equatable {
+    case mutationCommitted(command: String)
+    case redirectCommitted(stream: String)
 }
 
 enum IOSAmberShellTermination: Error, Equatable, Sendable, LocalizedError {
@@ -45,8 +60,10 @@ enum IOSAmberShellEngine {
         command: String,
         stdin: String? = nil,
         workspaceStore: IOSWorkspaceStore,
-        control: IOSAmberShellExecutionControl? = nil
+        control: IOSAmberShellExecutionControl? = nil,
+        onExecutionEvent: ((IOSAmberShellExecutionEvent) -> Void)? = nil
     ) async -> IOSAmberShellCommandResult {
+        let dispatchBoundary = IOSAmberShellDispatchBoundary()
         do {
             try control?.checkpoint()
             guard command.count <= maxCommandCharacters else {
@@ -94,7 +111,9 @@ enum IOSAmberShellEngine {
                         arguments: stage.arguments,
                         stdin: stageInput,
                         workspaceStore: workspaceStore,
-                        control: control
+                        control: control,
+                        dispatchBoundary: dispatchBoundary,
+                        onExecutionEvent: onExecutionEvent
                     )
                 } catch let termination as IOSAmberShellTermination {
                     throw termination
@@ -108,7 +127,14 @@ enum IOSAmberShellEngine {
                     let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                     result = IOSAmberShellStageResult(exitCode: 74, stdout: "", stderr: message + "\n")
                 }
-                try control?.checkpoint()
+                let hasPendingWork = index < program.stages.count - 1
+                    || program.stdoutRedirect != nil
+                    || program.stderrRedirect != nil
+                // A checkpoint may still stop pending work, but it must not
+                // rewrite the known outcome of the command's final mutation.
+                if !dispatchBoundary.hasCommittedEffect || hasPendingWork {
+                    try control?.checkpoint()
+                }
 
                 stdout = result.stdout
                 stderr += result.stderr
@@ -127,34 +153,55 @@ enum IOSAmberShellEngine {
 
             if let path = program.stdoutRedirect {
                 try control?.checkpoint()
-                try await workspaceStore.amberShellWriteText(path: path, text: stdout)
-                try control?.checkpoint()
+                try await dispatchBoundary.performAsync {
+                    try await workspaceStore.amberShellWriteText(path: path, text: stdout)
+                }
+                onExecutionEvent?(.redirectCommitted(stream: "stdout"))
+                if program.stderrRedirect != nil {
+                    try control?.checkpoint()
+                }
                 stdout = ""
             }
             if let path = program.stderrRedirect {
                 try control?.checkpoint()
-                try await workspaceStore.amberShellWriteText(path: path, text: stderr)
-                try control?.checkpoint()
+                try await dispatchBoundary.performAsync {
+                    try await workspaceStore.amberShellWriteText(path: path, text: stderr)
+                }
+                onExecutionEvent?(.redirectCommitted(stream: "stderr"))
                 stderr = ""
             }
-            try control?.checkpoint()
-            return boundedResult(exitCode: exitCode, stdout: stdout, stderr: stderr)
+            if !dispatchBoundary.hasCommittedEffect {
+                try control?.checkpoint()
+            }
+            return boundedResult(
+                exitCode: exitCode,
+                stdout: stdout,
+                stderr: stderr,
+                dispatchOutcome: dispatchBoundary.finalOutcome
+            )
         } catch let termination as IOSAmberShellTermination {
             return boundedResult(
                 exitCode: nil,
                 stdout: "",
                 stderr: (termination.errorDescription ?? "AmberShell execution stopped.") + "\n",
-                termination: termination
+                termination: termination,
+                dispatchOutcome: dispatchBoundary.couldHaveApplied ? .mayHaveApplied : .notDispatched
             )
         } catch let error as IOSAmberShellCommandError {
             return boundedResult(
                 exitCode: error.exitCode,
                 stdout: "",
-                stderr: error.localizedDescription + "\n"
+                stderr: error.localizedDescription + "\n",
+                dispatchOutcome: dispatchBoundary.finalOutcome
             )
         } catch {
             let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            return boundedResult(exitCode: 74, stdout: "", stderr: message + "\n")
+            return boundedResult(
+                exitCode: 74,
+                stdout: "",
+                stderr: message + "\n",
+                dispatchOutcome: dispatchBoundary.finalOutcome
+            )
         }
     }
 
@@ -162,7 +209,9 @@ enum IOSAmberShellEngine {
         arguments: [String],
         stdin: String,
         workspaceStore: IOSWorkspaceStore,
-        control: IOSAmberShellExecutionControl?
+        control: IOSAmberShellExecutionControl?,
+        dispatchBoundary: IOSAmberShellDispatchBoundary,
+        onExecutionEvent: ((IOSAmberShellExecutionEvent) -> Void)?
     ) async throws -> IOSAmberShellStageResult {
         try control?.checkpoint()
         guard let name = arguments.first else {
@@ -209,27 +258,42 @@ enum IOSAmberShellEngine {
 
         case "mkdir":
             try requireOperandCount(operands, command: name, allowed: 1...1)
-            try workspaceStore.amberShellCreateDirectory(path: operands[0])
+            try dispatchBoundary.perform {
+                try workspaceStore.amberShellCreateDirectory(path: operands[0])
+            }
+            onExecutionEvent?(.mutationCommitted(command: name))
             return success("")
 
         case "touch":
             try requireOperandCount(operands, command: name, allowed: 1...1)
-            try await workspaceStore.amberShellTouch(path: operands[0])
+            try await dispatchBoundary.performAsync {
+                try await workspaceStore.amberShellTouch(path: operands[0])
+            }
+            onExecutionEvent?(.mutationCommitted(command: name))
             return success("")
 
         case "cp":
             try requireOperandCount(operands, command: name, allowed: 2...2)
-            try await workspaceStore.amberShellCopy(from: operands[0], to: operands[1])
+            try await dispatchBoundary.performAsync {
+                try await workspaceStore.amberShellCopy(from: operands[0], to: operands[1])
+            }
+            onExecutionEvent?(.mutationCommitted(command: name))
             return success("")
 
         case "mv":
             try requireOperandCount(operands, command: name, allowed: 2...2)
-            try await workspaceStore.amberShellMove(from: operands[0], to: operands[1])
+            try await dispatchBoundary.performAsync {
+                try await workspaceStore.amberShellMove(from: operands[0], to: operands[1])
+            }
+            onExecutionEvent?(.mutationCommitted(command: name))
             return success("")
 
         case "rm":
             try requireOperandCount(operands, command: name, allowed: 1...1)
-            try workspaceStore.amberShellRemove(path: operands[0])
+            try dispatchBoundary.perform {
+                try workspaceStore.amberShellRemove(path: operands[0])
+            }
+            onExecutionEvent?(.mutationCommitted(command: name))
             return success("")
 
         case "head", "tail":
@@ -583,7 +647,8 @@ enum IOSAmberShellEngine {
         exitCode: Int?,
         stdout: String,
         stderr: String,
-        termination: IOSAmberShellTermination? = nil
+        termination: IOSAmberShellTermination? = nil,
+        dispatchOutcome: IOSAmberShellDispatchOutcome = .notDispatched
     ) -> IOSAmberShellCommandResult {
         let boundedStdout = bounded(stdout)
         let boundedStderr = bounded(stderr)
@@ -593,7 +658,8 @@ enum IOSAmberShellEngine {
             stderr: boundedStderr.value,
             stdoutTruncated: boundedStdout.truncated,
             stderrTruncated: boundedStderr.truncated,
-            termination: termination
+            termination: termination,
+            dispatchOutcome: dispatchOutcome
         )
     }
 
@@ -611,6 +677,50 @@ private struct IOSAmberShellStageResult {
     let exitCode: Int
     let stdout: String
     let stderr: String
+}
+
+@MainActor
+private final class IOSAmberShellDispatchBoundary {
+    private(set) var hasCommittedEffect = false
+    private var dispatchInFlight = false
+
+    var couldHaveApplied: Bool {
+        dispatchInFlight || hasCommittedEffect
+    }
+
+    var finalOutcome: IOSAmberShellDispatchOutcome {
+        if dispatchInFlight { return .mayHaveApplied }
+        return hasCommittedEffect ? .completed : .notDispatched
+    }
+
+    func perform<T>(_ operation: () throws -> T) rethrows -> T {
+        dispatchInFlight = true
+        do {
+            let result = try operation()
+            didCommit()
+            return result
+        } catch {
+            dispatchInFlight = false
+            throw error
+        }
+    }
+
+    func performAsync<T>(_ operation: () async throws -> T) async rethrows -> T {
+        dispatchInFlight = true
+        do {
+            let result = try await operation()
+            didCommit()
+            return result
+        } catch {
+            dispatchInFlight = false
+            throw error
+        }
+    }
+
+    private func didCommit() {
+        dispatchInFlight = false
+        hasCommittedEffect = true
+    }
 }
 
 private struct IOSAmberShellProgram {

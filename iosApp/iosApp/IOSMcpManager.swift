@@ -11,15 +11,29 @@ struct IOSMcpDiscoveredTool: Equatable, Identifiable {
 
 enum IOSMcpManagerError: LocalizedError, Equatable {
     case browserToolBlocked
+    case ambiguousServerName(String)
 
     var errorDescription: String? {
-        "MCP browser_*, cdp_*, and devtools_* tools are not available through the iOS MCP manager."
+        switch self {
+        case .browserToolBlocked:
+            "MCP browser_*, cdp_*, and devtools_* tools are not available through the iOS MCP manager."
+        case .ambiguousServerName(let name):
+            "MCP server name is ambiguous across configured sources: \(name)"
+        }
     }
 }
 
 @MainActor
 @Observable
 final class IOSMcpManager {
+    private struct SessionRecovery {
+        let id: UUID
+        let generation: UInt64
+        let server: IOSMcpServerConfig
+        let client: IOSMcpClienting
+        let task: Task<Void, Error>
+    }
+
     private static let blockedToolPrefixes = ["browser_", "cdp_", "devtools_"]
 
     private let serverProvider: () -> [IOSMcpServerConfig]
@@ -27,6 +41,9 @@ final class IOSMcpManager {
     private let isEnabled: () -> Bool
     private let discoveredToolSink: (String, [IOSMcpTool]) -> [IOSMcpTool]?
     private var clientsByServer: [String: IOSMcpClienting] = [:]
+    private var ambiguousServerNames: Set<String> = []
+    private var sessionRecoveriesByServer: [String: SessionRecovery] = [:]
+    private var sessionRecoveryGenerationByServer: [String: UInt64] = [:]
 
     private(set) var servers: [IOSMcpServerConfig] = []
     private(set) var tools: [IOSMcpDiscoveredTool] = []
@@ -59,8 +76,21 @@ final class IOSMcpManager {
     }
 
     func refreshServers() {
-        servers = serverProvider().map { server in
+        invalidateAllSessionRecoveries(disconnectClients: true)
+        let configuredServers = serverProvider()
+        let serversByName = Dictionary(grouping: configuredServers, by: \.name)
+        ambiguousServerNames = Set(serversByName.compactMap { name, candidates in
+            guard let first = candidates.first else { return nil }
+            return candidates.dropFirst().allSatisfy { $0 == first } ? nil : name
+        })
+        var seenServerNames = Set<String>()
+        servers = configuredServers.filter {
+            !ambiguousServerNames.contains($0.name) && seenServerNames.insert($0.name).inserted
+        }.map { server in
             server.withTools(Self.toolsForExposure(server.tools))
+        }
+        for name in ambiguousServerNames {
+            statusByServer[name] = .error(IOSMcpManagerError.ambiguousServerName(name).localizedDescription)
         }
         for server in servers where statusByServer[server.name] == nil {
             statusByServer[server.name] = .idle
@@ -81,7 +111,13 @@ final class IOSMcpManager {
         for staleServerName in Array(clientsByServer.keys) where !currentServerNames.contains(staleServerName) {
             clientsByServer[staleServerName]?.disconnect()
             clientsByServer.removeValue(forKey: staleServerName)
-            statusByServer.removeValue(forKey: staleServerName)
+            if ambiguousServerNames.contains(staleServerName) {
+                statusByServer[staleServerName] = .error(
+                    IOSMcpManagerError.ambiguousServerName(staleServerName).localizedDescription
+                )
+            } else {
+                statusByServer.removeValue(forKey: staleServerName)
+            }
         }
 
         for server in servers {
@@ -120,6 +156,12 @@ final class IOSMcpManager {
         if servers.isEmpty || clientsByServer[serverName] == nil {
             await syncAll(enabledOverride: enabledOverride)
         }
+        if let recovery = sessionRecoveriesByServer[serverName] {
+            try await recovery.task.value
+        }
+        guard !ambiguousServerNames.contains(serverName) else {
+            throw IOSMcpManagerError.ambiguousServerName(serverName)
+        }
         guard let server = servers.first(where: { $0.name == serverName }) else {
             throw IOSMcpClientError.serverNotFound(serverName)
         }
@@ -135,7 +177,30 @@ final class IOSMcpManager {
         guard let client = clientsByServer[serverName] else {
             throw IOSMcpClientError.notConnected(serverName)
         }
-        return try await client.callTool(name: toolName, arguments: arguments)
+        do {
+            return try await client.callTool(name: toolName, arguments: arguments)
+        } catch let error as IOSMcpClientError where error == .mcpSessionExpired {
+            try await recoverExpiredSession(server: server, client: client)
+            guard let refreshedServer = servers.first(where: { $0.name == serverName }) else {
+                throw IOSMcpClientError.serverNotFound(serverName)
+            }
+            guard let refreshedTool = refreshedServer.tools.first(where: { $0.name == toolName }) else {
+                throw IOSMcpClientError.toolNotFound(server: serverName, tool: toolName)
+            }
+            guard refreshedTool.enabled else {
+                throw IOSMcpClientError.toolDisabled(server: serverName, tool: toolName)
+            }
+            guard refreshedTool.readOnlyHint == true else {
+                throw error
+            }
+            do {
+                return try await client.callTool(name: toolName, arguments: arguments)
+            } catch let retryError as IOSMcpClientError where retryError == .mcpSessionExpired {
+                client.disconnect()
+                statusByServer[serverName] = .error(retryError.localizedDescription)
+                throw retryError
+            }
+        }
     }
 
     func refreshFromCurrentSettings() {
@@ -146,6 +211,7 @@ final class IOSMcpManager {
     }
 
     func disconnectAll() {
+        invalidateAllSessionRecoveries(disconnectClients: false)
         clientsByServer.values.forEach { $0.disconnect() }
         clientsByServer.removeAll()
         for server in servers {
@@ -182,6 +248,7 @@ final class IOSMcpManager {
         let now = Date()
         var retried: [String] = []
         for serverName in failed {
+            invalidateSessionRecovery(serverName: serverName, disconnectClient: true)
             let attempts = reconnectAttempts[serverName] ?? 0
             guard attempts < Self.maxReconnectAttempts else { continue }
             // Backoff: 2^n seconds since the last attempt. Skip if still within
@@ -205,9 +272,12 @@ final class IOSMcpManager {
                 _ = try await client.connect(config: server)
                 let listedTools = try await client.listTools()
                 let exposedTools = Self.toolsForExposure(listedTools)
-                let merged = Self.toolsForExposure(discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
-                    discovered: exposedTools,
-                    existing: server.tools
+                let merged = Self.toolsForExposure(Self.applyingAuthoritativeSafetyAnnotations(
+                    from: exposedTools,
+                    to: discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
+                        discovered: exposedTools,
+                        existing: server.tools
+                    )
                 ))
                 if let index = servers.firstIndex(where: { $0.name == server.name }) {
                     servers[index] = server.withTools(merged)
@@ -233,12 +303,212 @@ final class IOSMcpManager {
                 name: tool.name,
                 description: tool.description ?? old.description,
                 enabled: old.enabled,
-                inputSchema: tool.inputSchema ?? old.inputSchema
+                inputSchema: tool.inputSchema ?? old.inputSchema,
+                readOnlyHint: tool.readOnlyHint
             )
         }
     }
 
+    private static func applyingAuthoritativeSafetyAnnotations(
+        from discovered: [IOSMcpTool],
+        to merged: [IOSMcpTool]
+    ) -> [IOSMcpTool] {
+        let discoveredByName = Dictionary(uniqueKeysWithValues: discovered.map { ($0.name, $0) })
+        return merged.map { tool in
+            IOSMcpTool(
+                name: tool.name,
+                description: tool.description,
+                enabled: tool.enabled,
+                inputSchema: tool.inputSchema,
+                readOnlyHint: discoveredByName[tool.name]?.readOnlyHint
+            )
+        }
+    }
+
+    private func recoverExpiredSession(
+        server: IOSMcpServerConfig,
+        client: IOSMcpClienting
+    ) async throws {
+        if let recovery = sessionRecoveriesByServer[server.name] {
+            return try await recovery.task.value
+        }
+
+        let recoveryID = UUID()
+        let generation = advanceSessionRecoveryGeneration(serverName: server.name)
+        let task = Task { @MainActor [weak self] in
+            guard let self else { throw IOSMcpClientError.invalidResponse }
+            try self.validateSessionRecoveryOwnership(
+                id: recoveryID,
+                generation: generation,
+                server: server,
+                client: client
+            )
+            client.disconnect()
+            self.statusByServer[server.name] = .reconnecting
+            do {
+                try self.validateSessionRecoveryOwnership(
+                    id: recoveryID,
+                    generation: generation,
+                    server: server,
+                    client: client
+                )
+                _ = try await client.connect(config: server)
+                try self.validateSessionRecoveryOwnership(
+                    id: recoveryID,
+                    generation: generation,
+                    server: server,
+                    client: client
+                )
+                let listedTools = try await client.listTools()
+                try self.validateSessionRecoveryOwnership(
+                    id: recoveryID,
+                    generation: generation,
+                    server: server,
+                    client: client
+                )
+                let exposedTools = Self.toolsForExposure(listedTools)
+                try self.validateSessionRecoveryOwnership(
+                    id: recoveryID,
+                    generation: generation,
+                    server: server,
+                    client: client
+                )
+                let mergedTools = Self.toolsForExposure(Self.applyingAuthoritativeSafetyAnnotations(
+                    from: exposedTools,
+                    to: self.discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
+                        discovered: exposedTools,
+                        existing: server.tools
+                    )
+                ))
+                try self.validateSessionRecoveryOwnership(
+                    id: recoveryID,
+                    generation: generation,
+                    server: server,
+                    client: client
+                )
+                if let index = self.servers.firstIndex(where: { $0.name == server.name }) {
+                    self.servers[index] = server.withTools(mergedTools)
+                }
+                self.tools.removeAll { $0.serverName == server.name }
+                self.tools.append(contentsOf: mergedTools.map {
+                    IOSMcpDiscoveredTool(serverName: server.name, tool: $0)
+                })
+                self.statusByServer[server.name] = .connected
+            } catch {
+                if self.isCurrentSessionRecovery(
+                    id: recoveryID,
+                    generation: generation,
+                    server: server,
+                    client: client
+                ) {
+                    self.statusByServer[server.name] = .error(
+                        IOSWebMountRedactor.redactedText(error.localizedDescription)
+                    )
+                }
+                throw error
+            }
+        }
+        sessionRecoveriesByServer[server.name] = SessionRecovery(
+            id: recoveryID,
+            generation: generation,
+            server: server,
+            client: client,
+            task: task
+        )
+        do {
+            try await task.value
+            if isRegisteredSessionRecovery(
+                id: recoveryID,
+                generation: generation,
+                serverName: server.name
+            ) {
+                sessionRecoveriesByServer.removeValue(forKey: server.name)
+            }
+        } catch {
+            if isRegisteredSessionRecovery(
+                id: recoveryID,
+                generation: generation,
+                serverName: server.name
+            ) {
+                sessionRecoveriesByServer.removeValue(forKey: server.name)
+            }
+            throw error
+        }
+    }
+
+    private func advanceSessionRecoveryGeneration(serverName: String) -> UInt64 {
+        let generation = (sessionRecoveryGenerationByServer[serverName] ?? 0) &+ 1
+        sessionRecoveryGenerationByServer[serverName] = generation
+        return generation
+    }
+
+    private func invalidateAllSessionRecoveries(disconnectClients: Bool) {
+        for serverName in Array(sessionRecoveriesByServer.keys) {
+            invalidateSessionRecovery(serverName: serverName, disconnectClient: disconnectClients)
+        }
+    }
+
+    private func invalidateSessionRecovery(serverName: String, disconnectClient: Bool) {
+        _ = advanceSessionRecoveryGeneration(serverName: serverName)
+        guard let recovery = sessionRecoveriesByServer.removeValue(forKey: serverName) else { return }
+        recovery.task.cancel()
+        guard disconnectClient,
+              let currentClient = clientsByServer[serverName],
+              currentClient === recovery.client else { return }
+        currentClient.disconnect()
+        clientsByServer.removeValue(forKey: serverName)
+    }
+
+    private func validateSessionRecoveryOwnership(
+        id: UUID,
+        generation: UInt64,
+        server: IOSMcpServerConfig,
+        client: IOSMcpClienting
+    ) throws {
+        try Task.checkCancellation()
+        guard isCurrentSessionRecovery(
+            id: id,
+            generation: generation,
+            server: server,
+            client: client
+        ) else {
+            throw CancellationError()
+        }
+    }
+
+    private func isCurrentSessionRecovery(
+        id: UUID,
+        generation: UInt64,
+        server: IOSMcpServerConfig,
+        client: IOSMcpClienting
+    ) -> Bool {
+        guard sessionRecoveryGenerationByServer[server.name] == generation,
+              let recovery = sessionRecoveriesByServer[server.name],
+              recovery.id == id,
+              recovery.generation == generation,
+              recovery.server == server,
+              recovery.client === client,
+              clientsByServer[server.name] === client,
+              servers.first(where: { $0.name == server.name }) == server else {
+            return false
+        }
+        return true
+    }
+
+    private func isRegisteredSessionRecovery(
+        id: UUID,
+        generation: UInt64,
+        serverName: String
+    ) -> Bool {
+        guard sessionRecoveryGenerationByServer[serverName] == generation,
+              let recovery = sessionRecoveriesByServer[serverName] else {
+            return false
+        }
+        return recovery.id == id && recovery.generation == generation
+    }
+
     private func sync(server: IOSMcpServerConfig) async {
+        invalidateSessionRecovery(serverName: server.name, disconnectClient: true)
         guard server.enabled else {
             clientsByServer[server.name]?.disconnect()
             clientsByServer.removeValue(forKey: server.name)
@@ -254,9 +524,12 @@ final class IOSMcpManager {
             _ = try await client.connect(config: server)
             let listedTools = try await client.listTools()
             let exposedTools = Self.toolsForExposure(listedTools)
-            let mergedTools = Self.toolsForExposure(discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
-                discovered: exposedTools,
-                existing: server.tools
+            let mergedTools = Self.toolsForExposure(Self.applyingAuthoritativeSafetyAnnotations(
+                from: exposedTools,
+                to: discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
+                    discovered: exposedTools,
+                    existing: server.tools
+                )
             ))
             if let index = servers.firstIndex(where: { $0.name == server.name }) {
                 servers[index] = server.withTools(mergedTools)

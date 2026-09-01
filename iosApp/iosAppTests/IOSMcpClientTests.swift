@@ -144,6 +144,334 @@ final class IOSMcpClientTests: XCTestCase {
         XCTAssertEqual(transport.sentMethods, ["initialize", "notifications/initialized", "tools/list"])
     }
 
+    func testMcpManagerFailsClosedForAmbiguousSameNameServersRegardlessOfSourceOrder() async throws {
+        let urlA = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://a.example/mcp",
+            headers: ["Authorization": "Bearer a"],
+            tools: [IOSMcpTool(name: "search", description: "Search A")]
+        )
+        let urlB = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://b.example/mcp",
+            headers: ["Authorization": "Bearer b"],
+            tools: [IOSMcpTool(name: "search", description: "Search B")]
+        )
+        let headerB = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://a.example/mcp",
+            headers: ["Authorization": "Bearer other"],
+            tools: [IOSMcpTool(name: "search", description: "Search other")]
+        )
+
+        for configs in [[urlA, urlB], [urlB, urlA], [urlA, headerB], [headerB, urlA]] {
+            let client = RecordingMcpClient()
+            let manager = IOSMcpManager(
+                serverProvider: { configs },
+                clientFactory: { _ in client }
+            )
+
+            var thrownError: Error?
+            do {
+                _ = try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+            } catch {
+                thrownError = error
+            }
+
+            XCTAssertNotNil(thrownError)
+            XCTAssertTrue(thrownError?.localizedDescription.contains("ambiguous") == true)
+            XCTAssertTrue(client.connectedConfigs.isEmpty, "ambiguous configs must not reach either transport")
+            XCTAssertEqual(client.callCount, 0)
+        }
+    }
+
+    func testMcpManagerDeduplicatesIdenticalSameNameServers() async throws {
+        let config = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://example.com/mcp",
+            headers: ["Authorization": "Bearer same"],
+            tools: [IOSMcpTool(name: "search", description: "Search")]
+        )
+        let client = RecordingMcpClient()
+        let manager = IOSMcpManager(
+            serverProvider: { [config, config] },
+            clientFactory: { _ in client }
+        )
+
+        let output = try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+
+        XCTAssertEqual(output, "unexpected")
+        XCTAssertEqual(client.connectedConfigs, [config])
+        XCTAssertEqual(client.callCount, 1)
+    }
+
+    func testExpiredSessionReconnectsAndRetriesExplicitReadOnlyToolExactlyOnce() async throws {
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 2, "result": ["tools": [[
+                    "name": "search",
+                    "description": "Search docs",
+                    "annotations": ["readOnlyHint": true],
+                ]]]],
+                ["jsonrpc": "2.0", "id": 3, "error": ["message": "expired"]],
+                ["jsonrpc": "2.0", "id": 4, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 5, "result": ["tools": [[
+                    "name": "search",
+                    "description": "Fresh search docs",
+                    "annotations": ["readOnlyHint": true],
+                ]]]],
+                ["jsonrpc": "2.0", "id": 6, "result": ["content": [["type": "text", "text": "fresh"]]]],
+            ],
+            responseStatuses: [200, 200, 404, 200, 200, 200],
+            responseHeaders: [
+                ["Mcp-Session-Id": "session-1"],
+                [:],
+                [:],
+                ["Mcp-Session-Id": "session-2"],
+                [:],
+                [:],
+            ]
+        )
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+        let manager = IOSMcpManager(
+            serverProvider: { [config] },
+            clientFactory: { _ in IOSMcpClient(transport: transport) }
+        )
+        await manager.syncAll()
+
+        let output = try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+
+        XCTAssertEqual(output, "fresh")
+        XCTAssertEqual(transport.disconnectedServers, ["docs"])
+        XCTAssertEqual(transport.sentMethods, [
+            "initialize", "notifications/initialized", "tools/list", "tools/call",
+            "initialize", "notifications/initialized", "tools/list", "tools/call",
+        ])
+        XCTAssertEqual(transport.sentRequestHeaders[3]["Mcp-Session-Id"], "session-1")
+        XCTAssertNil(transport.sentRequestHeaders[4]["Mcp-Session-Id"])
+        XCTAssertEqual(transport.sentRequestHeaders[7]["Mcp-Session-Id"], "session-2")
+        XCTAssertEqual(manager.statusByServer["docs"], .connected)
+    }
+
+    func testExpiredSessionReconnectsButNeverReplaysMutationOrUnknownSafetyTool() async throws {
+        let scenarios: [(initial: [String: Bool], recovered: [String: Bool])] = [
+            (["readOnlyHint": false], ["readOnlyHint": false]),
+            ([:], [:]),
+            (["readOnlyHint": true], ["readOnlyHint": false]),
+            (["readOnlyHint": true], [:]),
+        ]
+        for scenario in scenarios {
+            let transport = FakeMcpHTTPTransport(
+                responses: [
+                    ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                    ["jsonrpc": "2.0", "id": 2, "result": ["tools": [[
+                        "name": "write",
+                        "description": "Write docs",
+                        "annotations": scenario.initial,
+                    ]]]],
+                    ["jsonrpc": "2.0", "id": 3, "error": ["message": "expired"]],
+                    ["jsonrpc": "2.0", "id": 4, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                    ["jsonrpc": "2.0", "id": 5, "result": ["tools": [[
+                        "name": "write",
+                        "description": "Fresh write docs",
+                        "annotations": scenario.recovered,
+                    ]]]],
+                ],
+                responseStatuses: [200, 200, 404, 200, 200],
+                responseHeaders: [
+                    ["Mcp-Session-Id": "session-1"],
+                    [:],
+                    [:],
+                    ["Mcp-Session-Id": "session-2"],
+                    [:],
+                ]
+            )
+            let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+            let manager = IOSMcpManager(
+                serverProvider: { [config] },
+                clientFactory: { _ in IOSMcpClient(transport: transport) }
+            )
+            await manager.syncAll()
+
+            do {
+                _ = try await manager.callTool(serverName: "docs", toolName: "write", arguments: [:])
+                XCTFail("Expected the dispatched write to fail closed after session expiry")
+            } catch let error as IOSMcpClientError {
+                XCTAssertEqual(error, .mcpSessionExpired)
+            }
+
+            XCTAssertEqual(transport.disconnectedServers, ["docs"])
+            XCTAssertEqual(transport.sentMethods, [
+                "initialize", "notifications/initialized", "tools/list", "tools/call",
+                "initialize", "notifications/initialized", "tools/list",
+            ])
+            XCTAssertEqual(manager.statusByServer["docs"], .connected)
+        }
+    }
+
+    func testConcurrentExpiredCallsShareOneReconnectAndRefresh() async throws {
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 2, "result": ["tools": [[
+                    "name": "search",
+                    "annotations": ["readOnlyHint": true],
+                ]]]],
+                ["jsonrpc": "2.0", "id": 3, "error": ["message": "expired"]],
+                ["jsonrpc": "2.0", "id": 4, "error": ["message": "expired"]],
+                ["jsonrpc": "2.0", "id": 5, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 6, "result": ["tools": [[
+                    "name": "search",
+                    "annotations": ["readOnlyHint": true],
+                ]]]],
+                ["jsonrpc": "2.0", "id": 7, "result": ["content": [["type": "text", "text": "fresh-a"]]]],
+                ["jsonrpc": "2.0", "id": 8, "result": ["content": [["type": "text", "text": "fresh-b"]]]],
+            ],
+            responseStatuses: [200, 200, 404, 404, 200, 200, 200, 200],
+            responseHeaders: [
+                ["Mcp-Session-Id": "session-1"], [:], [:], [:],
+                ["Mcp-Session-Id": "session-2"], [:], [:], [:],
+            ],
+            delayedMethods: ["tools/call": 20_000_000]
+        )
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+        let manager = IOSMcpManager(
+            serverProvider: { [config] },
+            clientFactory: { _ in IOSMcpClient(transport: transport) }
+        )
+        await manager.syncAll()
+
+        let first = Task { try await manager.callTool(serverName: "docs", toolName: "search", arguments: ["q": "a"]) }
+        let second = Task { try await manager.callTool(serverName: "docs", toolName: "search", arguments: ["q": "b"]) }
+        let outputs = try await [first.value, second.value]
+
+        XCTAssertEqual(outputs.sorted(), ["fresh-a", "fresh-b"])
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "initialize" }.count, 2)
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/list" }.count, 2)
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/call" }.count, 4)
+        XCTAssertEqual(transport.disconnectedServers, ["docs"])
+        XCTAssertEqual(manager.statusByServer["docs"], .connected)
+    }
+
+    func testSequentialSessionExpiriesStartDistinctRecoveries() async throws {
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 2, "result": ["tools": [["name": "search", "annotations": ["readOnlyHint": true]]]]],
+                ["jsonrpc": "2.0", "id": 3, "error": ["message": "expired-1"]],
+                ["jsonrpc": "2.0", "id": 4, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 5, "result": ["tools": [["name": "search", "annotations": ["readOnlyHint": true]]]]],
+                ["jsonrpc": "2.0", "id": 6, "result": ["content": [["type": "text", "text": "first"]]]],
+                ["jsonrpc": "2.0", "id": 7, "error": ["message": "expired-2"]],
+                ["jsonrpc": "2.0", "id": 8, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                ["jsonrpc": "2.0", "id": 9, "result": ["tools": [["name": "search", "annotations": ["readOnlyHint": true]]]]],
+                ["jsonrpc": "2.0", "id": 10, "result": ["content": [["type": "text", "text": "second"]]]],
+            ],
+            responseStatuses: [200, 200, 404, 200, 200, 200, 404, 200, 200, 200],
+            responseHeaders: [
+                ["Mcp-Session-Id": "session-1"], [:], [:],
+                ["Mcp-Session-Id": "session-2"], [:], [:], [:],
+                ["Mcp-Session-Id": "session-3"], [:], [:],
+            ]
+        )
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+        let manager = IOSMcpManager(
+            serverProvider: { [config] },
+            clientFactory: { _ in IOSMcpClient(transport: transport) }
+        )
+        await manager.syncAll()
+
+        let first = try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+        let second = try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+
+        XCTAssertEqual([first, second], ["first", "second"])
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "initialize" }.count, 3)
+        XCTAssertEqual(transport.sentMethods.filter { $0 == "tools/list" }.count, 3)
+        XCTAssertEqual(transport.disconnectedServers, ["docs", "docs"])
+    }
+
+    func testCapabilityDisableInvalidatesInFlightRecoveryWithoutRepublishingState() async throws {
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://old.example/mcp")
+        let client = SuspendingRecoveryMcpClient()
+        let manager = IOSMcpManager(
+            serverProvider: { [config] },
+            clientFactory: { _ in client }
+        )
+        await manager.syncAll()
+
+        let call = Task {
+            try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+        }
+        for _ in 0..<1_000 where !client.recoveryConnectStarted {
+            await Task.yield()
+        }
+        XCTAssertTrue(client.recoveryConnectStarted)
+
+        await manager.syncAll(enabledOverride: false)
+        client.resumeRecoveryConnect()
+
+        do {
+            _ = try await call.value
+            XCTFail("Expected disabled capability to invalidate recovery")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertTrue(manager.servers.isEmpty)
+        XCTAssertTrue(manager.tools.isEmpty)
+        XCTAssertTrue(manager.statusByServer.isEmpty)
+        XCTAssertEqual(client.listToolsCount, 1, "stale recovery must not list or republish tools")
+    }
+
+    func testConfigChangeInvalidatesInFlightRecoveryWithoutOverwritingNewServer() async throws {
+        let oldConfig = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://old.example/mcp",
+            headers: ["Authorization": "Bearer old"]
+        )
+        let newConfig = IOSMcpServerConfig.streamableHTTP(
+            name: "docs",
+            url: "https://new.example/mcp",
+            headers: ["Authorization": "Bearer new"]
+        )
+        var currentConfig = oldConfig
+        let oldClient = SuspendingRecoveryMcpClient()
+        let newClient = RecordingMcpClient()
+        let manager = IOSMcpManager(
+            serverProvider: { [currentConfig] },
+            clientFactory: { config -> IOSMcpClienting in
+                config.url == oldConfig.url ? oldClient : newClient
+            }
+        )
+        await manager.syncAll()
+
+        let call = Task {
+            try await manager.callTool(serverName: "docs", toolName: "search", arguments: [:])
+        }
+        for _ in 0..<1_000 where !oldClient.recoveryConnectStarted {
+            await Task.yield()
+        }
+        XCTAssertTrue(oldClient.recoveryConnectStarted)
+
+        currentConfig = newConfig
+        await manager.sync(serverName: "docs")
+        oldClient.resumeRecoveryConnect()
+
+        do {
+            _ = try await call.value
+            XCTFail("Expected changed config to invalidate old recovery")
+        } catch is CancellationError {
+            // Expected.
+        }
+        XCTAssertEqual(manager.servers.count, 1)
+        XCTAssertEqual(manager.servers.first?.url, newConfig.url)
+        XCTAssertEqual(manager.servers.first?.headers, newConfig.headers)
+        XCTAssertEqual(manager.statusByServer["docs"], .connected)
+        XCTAssertEqual(manager.tools.map(\.serverName), ["docs"])
+        XCTAssertEqual(oldClient.listToolsCount, 1, "old recovery must not publish after config replacement")
+        XCTAssertEqual(newClient.connectedConfigs, [newConfig])
+    }
+
     func testConnectDisconnectsPreviousConfigWhenServerChanges() async throws {
         let transport = FakeMcpHTTPTransport(responses: [
             ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:], "serverInfo": ["name": "fake", "version": "1"]]],
@@ -453,5 +781,60 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
 
     func disconnect(config: IOSMcpServerConfig) {
         disconnectedServers.append(config.name)
+    }
+}
+
+private final class RecordingMcpClient: IOSMcpClienting {
+    private(set) var connectedConfigs: [IOSMcpServerConfig] = []
+    private(set) var callCount = 0
+
+    func connect(config: IOSMcpServerConfig) async throws -> Bool {
+        connectedConfigs.append(config)
+        return true
+    }
+
+    func listTools() async throws -> [IOSMcpTool] {
+        [IOSMcpTool(name: "search", description: "Search")]
+    }
+
+    func callTool(name: String, arguments: [String: Any]) async throws -> String {
+        callCount += 1
+        return "unexpected"
+    }
+
+    func disconnect() {}
+}
+
+private final class SuspendingRecoveryMcpClient: IOSMcpClienting {
+    private(set) var connectCount = 0
+    private(set) var listToolsCount = 0
+    private(set) var recoveryConnectStarted = false
+    private var recoveryContinuation: CheckedContinuation<Void, Never>?
+
+    func connect(config: IOSMcpServerConfig) async throws -> Bool {
+        connectCount += 1
+        if connectCount == 2 {
+            recoveryConnectStarted = true
+            await withCheckedContinuation { continuation in
+                recoveryContinuation = continuation
+            }
+        }
+        return true
+    }
+
+    func listTools() async throws -> [IOSMcpTool] {
+        listToolsCount += 1
+        return [IOSMcpTool(name: "search", description: "Search", readOnlyHint: true)]
+    }
+
+    func callTool(name: String, arguments: [String: Any]) async throws -> String {
+        throw IOSMcpClientError.mcpSessionExpired
+    }
+
+    func disconnect() {}
+
+    func resumeRecoveryConnect() {
+        recoveryContinuation?.resume()
+        recoveryContinuation = nil
     }
 }

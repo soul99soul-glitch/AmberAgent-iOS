@@ -11,6 +11,7 @@ struct IOSPreparedMcpImport: Equatable {
 
 enum IOSMcpImportError: LocalizedError, Equatable {
     case invalidJSON
+    case invalidEntry(name: String, message: String)
     case emptyServers
     case unsupportedTransport(name: String, type: String)
     case invalidURL(name: String)
@@ -22,6 +23,8 @@ enum IOSMcpImportError: LocalizedError, Equatable {
         switch self {
         case .invalidJSON:
             "mcp.json 无法解析。"
+        case .invalidEntry(let name, let message):
+            name.isEmpty ? message : "MCP 服务 \(name) 配置无效：\(message)"
         case .emptyServers:
             "mcp.json 不包含可导入的 MCP 服务。"
         case .unsupportedTransport(let name, let type):
@@ -736,47 +739,18 @@ struct IOSSkillMcpToolService {
     }
 
     static func parseSupportedMcpServers(json: String) throws -> [IOSMcpServerConfig] {
-        guard let data = json.data(using: .utf8),
-              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let mcpServers = root["mcpServers"] as? [String: Any] else {
+        let result = McpImportParserKt.parseMcpServersWithDiagnostics(json: json)
+        if let issue = result.errors.first {
+            throw IOSMcpImportError.invalidEntry(
+                name: issue.serverName,
+                message: issue.message
+            )
+        }
+        let servers = result.servers.compactMap(IOSMcpServerConfig.init)
+        guard servers.count == result.servers.count else {
             throw IOSMcpImportError.invalidJSON
         }
-        var parsed: [IOSMcpServerConfig] = []
-        for (name, raw) in mcpServers.sorted(by: { $0.key < $1.key }) {
-            guard let object = raw as? [String: Any] else {
-                throw IOSMcpImportError.invalidJSON
-            }
-            let type = ((object["type"] as? String) ?? "streamable_http")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-            if type == "stdio" || object["command"] != nil && object["url"] == nil {
-                throw IOSMcpImportError.unsupportedTransport(name: name, type: type.isEmpty ? "stdio" : type)
-            }
-            let normalizedType: String
-            switch type {
-            case "", "streamable_http", "streamablehttp", "http":
-                normalizedType = "streamable_http"
-            case "sse":
-                normalizedType = "sse"
-            default:
-                throw IOSMcpImportError.unsupportedTransport(name: name, type: type)
-            }
-            guard let url = object["url"] as? String, !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                throw IOSMcpImportError.invalidURL(name: name)
-            }
-            var headers: [String: String] = [:]
-            if let rawHeaders = object["headers"] as? [String: Any] {
-                for (key, value) in rawHeaders {
-                    headers[key] = String(describing: value)
-                }
-            }
-            if normalizedType == "sse" {
-                parsed.append(.sse(name: name, url: url, headers: headers, enabled: true, tools: []))
-            } else {
-                parsed.append(.streamableHTTP(name: name, url: url, headers: headers, enabled: true, tools: []))
-            }
-        }
-        return parsed
+        return servers.sorted { $0.name < $1.name }
     }
 
     static func redactedOrigin(_ urlString: String) -> String {
