@@ -630,7 +630,7 @@ final class NovelSessionViewModel {
             (
                 id: choice.material.id.description,
                 title: choice.title,
-                aliases: choice.material.aliases
+                aliases: workspace.effectiveAliases(for: choice.material)
             )
         }
         guard let match = NovelCharacterIdentityResolver.recommendedIdentityMatch(

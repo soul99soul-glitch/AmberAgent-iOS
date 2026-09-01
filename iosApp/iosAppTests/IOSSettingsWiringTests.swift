@@ -332,7 +332,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(detail.contains("tokenPlanSection"))
         XCTAssertTrue(detail.contains("headerDisguiseSection"))
         XCTAssertTrue(detail.contains("OpenAICompatUserAgents.shared.OPENCODE"))
-        XCTAssertTrue(detail.contains("notice = \"服务商配置已保存。\""))
+        XCTAssertTrue(detail.contains("notice = IOSAppLocalization.string("))
+        XCTAssertTrue(detail.contains("\"服务商配置已保存。\""))
         XCTAssertFalse(detail.contains("alert = .saved"))
         XCTAssertFalse(detail.contains("alert = .currentModelSet"))
 

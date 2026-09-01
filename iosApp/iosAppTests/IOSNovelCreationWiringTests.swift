@@ -364,8 +364,8 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let sheet = materials[sheetStart.lowerBound..<nextSheet.lowerBound]
 
         XCTAssertTrue(sheet.contains("hasUnsavedChanges"))
-        XCTAssertTrue(sheet.contains("NovelTextInputCommitter.perform { requestDismiss() }"))
-        XCTAssertTrue(sheet.contains("NovelTextInputCommitter.perform { save() }"))
+        XCTAssertTrue(sheet.contains("NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }"))
+        XCTAssertTrue(sheet.contains("NovelTextInputCommitter.perform(fieldBank: imeBank) { save() }"))
         XCTAssertTrue(sheet.contains(".interactiveDismissDisabled()"))
         XCTAssertTrue(sheet.contains("let saved = await viewModel.setPolishPreference(preference)"))
         XCTAssertTrue(sheet.contains("guard saved else"))
@@ -428,7 +428,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(materialSheet.contains("private var hasUnsavedChanges: Bool"))
         XCTAssertTrue(materialSheet.contains("currentDraft != initialDraft"))
         XCTAssertTrue(materialSheet.contains("aliases: normalizedAliases"))
-        XCTAssertTrue(materialSheet.contains("NovelTextInputCommitter.perform { requestDismiss() }"))
+        XCTAssertTrue(materialSheet.contains("NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }"))
         XCTAssertTrue(materialSheet.contains(
             "guard isEditable, !isSaving else { return }"
         ))
@@ -442,7 +442,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
             "guard viewModel.canMutate, !isSubmitting else { return }"
         ))
         XCTAssertTrue(branchSheet.contains("guard canSave else"))
-        XCTAssertTrue(branchSheet.contains("NovelTextInputCommitter.perform { requestDismiss() }"))
+        XCTAssertTrue(branchSheet.contains("NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }"))
         XCTAssertTrue(branchSheet.contains("let saved = await viewModel.setBranchMaterialOverride("))
         XCTAssertTrue(branchSheet.contains("guard saved else"))
         XCTAssertTrue(viewModel.contains(") async -> Bool"))
@@ -461,7 +461,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
 
         XCTAssertTrue(createSheet.contains("@State private var isConfirmingDiscard = false"))
         XCTAssertTrue(createSheet.contains("private var hasUnsavedChanges: Bool"))
-        XCTAssertTrue(createSheet.contains("NovelTextInputCommitter.perform { requestDismiss() }"))
+        XCTAssertTrue(createSheet.contains("NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }"))
         XCTAssertTrue(createSheet.contains("guard canCreate else"))
         XCTAssertTrue(createSheet.contains(".disabled(viewModel.isProjectSelectionBlocked)"))
         XCTAssertTrue(createSheet.contains(".interactiveDismissDisabled()"))
@@ -481,7 +481,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(regenerationSheet.contains("private var hasUnsavedChanges: Bool"))
         XCTAssertTrue(regenerationSheet.contains("if hasUnsavedChanges"))
         XCTAssertTrue(regenerationSheet.contains(
-            "NovelTextInputCommitter.perform { requestDismiss() }"
+            "NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }"
         ))
         XCTAssertTrue(regenerationSheet.contains("isConfirmingCoreIdeaLoad"))
         XCTAssertTrue(regenerationSheet.contains(".interactiveDismissDisabled()"))
@@ -621,7 +621,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let creationViewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
 
         XCTAssertTrue(characters.contains("viewModel.effectiveAliases(for: material)"))
-        XCTAssertTrue(sessionViewModel.contains("workspace.effectiveAliases(for: material)"))
+        XCTAssertTrue(sessionViewModel.contains("workspace.effectiveAliases(for: choice.material)"))
         XCTAssertTrue(creationViewModel.contains("func effectiveAliases(for material:"))
     }
 
@@ -753,13 +753,13 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertFalse(workspace.contains("NovelProjectSettingsSheet("))
         XCTAssertFalse(sheets.contains("struct NovelProjectSettingsSheet"))
         XCTAssertTrue(sheets.contains("Picker(\"项目控制\", selection: $selectedTab)"))
-        XCTAssertTrue(sheets.contains("case .preferences: \"模式与偏好\""))
-        XCTAssertTrue(sheets.contains("case .context: \"上下文注入\""))
+        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"模式与偏好\", defaultValue: \"模式与偏好\")"))
+        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"上下文注入\", defaultValue: \"上下文注入\")"))
         XCTAssertTrue(sheets.contains("Text(\"代笔进度\")"))
         XCTAssertTrue(sheets.contains("Text(ghostwriteAdvanceSectionTitle)"))
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
         XCTAssertTrue(session.contains("ghostwriteContinueBlockerMessage"))
-        XCTAssertTrue(sheets.contains("return \"开始代笔\""))
+        XCTAssertTrue(sheets.contains("return IOSAppLocalization.string(\"开始代笔\", defaultValue: \"开始代笔\")"))
         XCTAssertTrue(sheets.contains("NovelGhostwriteSheetChrome.leadingActionTitle("))
         XCTAssertTrue(sheets.contains("toolbarGhostwriteActionTitle"))
         XCTAssertTrue(sheets.contains("结束本批代笔？"))
@@ -772,12 +772,13 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(sheets.contains("upsertUpcomingArc"))
         XCTAssertTrue(sheets.contains("boardStepSummary"))
         XCTAssertTrue(sheets.contains("reviewModelLabel"))
-        XCTAssertTrue(sheets.contains("小说默认 · \\(name)"))
+        XCTAssertTrue(sheets.contains("\"小说默认 · %@\""))
+        XCTAssertTrue(sheets.contains("arguments: [name]"))
         XCTAssertTrue(workspace.contains("sharedSettings: sharedSettings"))
         XCTAssertTrue(sheets.contains("NavigationLink(value: ContextRoute.materials(category))"))
-        XCTAssertTrue(sheets.contains("case .characters: \"人物角色\""))
-        XCTAssertTrue(sheets.contains("case .world: \"世界观\""))
-        XCTAssertTrue(sheets.contains("case .story: \"剧情大纲\""))
+        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"人物角色\", defaultValue: \"人物角色\")"))
+        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"世界观\", defaultValue: \"世界观\")"))
+        XCTAssertTrue(sheets.contains("IOSAppLocalization.string(\"剧情大纲\", defaultValue: \"剧情大纲\")"))
         XCTAssertFalse(workspace.contains("case .branchPicker:"))
         XCTAssertFalse(workspace.contains("NovelBranchPickerSheet"))
         XCTAssertFalse(compendium.contains("Section(\"项目\")"))
