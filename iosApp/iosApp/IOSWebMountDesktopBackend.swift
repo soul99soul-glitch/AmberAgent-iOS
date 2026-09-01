@@ -518,7 +518,7 @@ final class IOSWebMountDesktopBackendAdapter {
             } ?? false
             return IOSWebMountDesktopCapability(
                 amberToolName: toolName,
-                remoteToolName: toolName,
+                remoteToolName: mapping.remoteToolName,
                 available: available
             )
         }

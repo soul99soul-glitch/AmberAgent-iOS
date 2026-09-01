@@ -32,6 +32,12 @@ class AmberShellPythonTests(unittest.TestCase):
         self.assertEqual(stdout, "")
         self.assertIn("module attributes are read-only", stderr)
 
+    def assertStaticCostRejected(self, source, reason):
+        exit_code, stdout, stderr = self.execute(source)
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(stdout, "")
+        self.assertIn("AmberShell Python rejected: " + reason, stderr)
+
     def test_allowlisted_module_attribute_assignment_is_rejected(self):
         self.assertModuleMutationRejected(
             "import json; json.amber_state = input()"
@@ -102,6 +108,121 @@ class AmberShellPythonTests(unittest.TestCase):
             "print(twice(6))"
         )
         self.assertEqual((exit_code, stdout, stderr), (0, "1440\n", ""))
+
+    def test_static_guard_rejects_direct_huge_c_level_allocations(self):
+        # Keep dangerous expressions inside an uncalled function.  These cases
+        # therefore stay safe even when this regression test is run against a
+        # helper that does not yet reject them before execution.
+        cases = (
+            ('return "a" * 1048577', "static text result exceeds"),
+            ('return "a" * (2 ** 30)', "static text result exceeds"),
+            ("return [0] * 100001", "static collection result exceeds"),
+            ("return [0] * (10 ** 9)", "static collection result exceeds"),
+            ("return 2 ** 1000001", "static integer result exceeds"),
+            ("return pow(2, 1000001)", "static integer result exceeds"),
+            ("return (2 ** 500000) ** 3", "static integer result exceeds"),
+            ("return list(range(100001))", "materialized range exceeds"),
+            ("return tuple(range(10 ** 9))", "materialized range exceeds"),
+            ("return [*range(100001)]", "materialized range exceeds"),
+            ("return dict.fromkeys(range(100001))", "materialized range exceeds"),
+            ("return bytes(1048577)", "static text result exceeds"),
+            ("return bytes(range(10 ** 9))", "materialized range exceeds"),
+            (
+                "return dict(enumerate(range(10 ** 9)))",
+                "materialized range exceeds",
+            ),
+            ('return ("a" + "b") * (10 ** 9)', "static text result exceeds"),
+            ("return str(1) * (10 ** 9)", "static text result exceeds"),
+            (
+                'return str("a" + "b") * (10 ** 9)',
+                "static text result exceeds",
+            ),
+            (
+                'return "a" * ((2 ** 30) + 1)',
+                "static text result exceeds",
+            ),
+            (
+                "return list(range((10 ** 9) + 1))",
+                "materialized range exceeds",
+            ),
+            ("return bytes((10 ** 9) + 1)", "static text result exceeds"),
+        )
+        for expression, reason in cases:
+            with self.subTest(expression=expression):
+                self.assertStaticCostRejected(
+                    "def never_called():\n    " + expression,
+                    reason,
+                )
+
+    def test_static_guard_rejects_oversized_source_literals_and_asts(self):
+        self.assertStaticCostRejected(
+            "#" * 262145,
+            "source exceeds 262144 UTF-8 bytes",
+        )
+        self.assertStaticCostRejected(
+            "value = " + repr("x" * 131073),
+            "literal data exceeds 131072 bytes",
+        )
+        self.assertStaticCostRejected(
+            "\n".join("x = 0" for _ in range(5001)),
+            "AST exceeds 20000 nodes",
+        )
+        self.assertStaticCostRejected(
+            "value = " + "-" * 101 + "1",
+            "AST depth exceeds 100",
+        )
+
+    def test_static_guard_allows_reasonable_programs_at_each_cost_limit(self):
+        exit_code, stdout, stderr = self.execute(
+            "text = 'a' * 1048576\n"
+            "items = [0] * 100000\n"
+            "number = 2 ** 999999\n"
+            "values = list(range(100000))\n"
+            "print(len(text), len(items), number.bit_length(), len(values))"
+        )
+        self.assertEqual(
+            (exit_code, stdout, stderr),
+            (0, "1048576 100000 1000000 100000\n", ""),
+        )
+
+        structural_cases = (
+            "#" * 262144,
+            "value = " + repr("x" * 131072),
+            "\n".join("x = 0" for _ in range(4999)),
+            "value = " + "-" * 97 + "1",
+        )
+        for source in structural_cases:
+            with self.subTest(source_length=len(source)):
+                self.assertEqual(self.execute(source), (0, "", ""))
+
+    def test_static_guard_allows_new_materializers_and_sequences_at_limits(self):
+        exit_code, stdout, stderr = self.execute(
+            "raw = bytes(map(lambda value: 0, range(100000)))\n"
+            "zeroes = bytes(1048576)\n"
+            "mapping = dict(enumerate(range(100000)))\n"
+            "joined = ('a' + 'b') * 524288\n"
+            "rendered = str(1) * 1048576\n"
+            "composed = str('a' + 'b') * 524288\n"
+            "cancelled_text = 'a' * ((2 ** 30) - (2 ** 30) + 1048576)\n"
+            "cancelled_values = list(\n"
+            "    range((10 ** 9) - (10 ** 9) + 100000)\n"
+            ")\n"
+            "cancelled_bytes = bytes(\n"
+            "    (10 ** 9) - (10 ** 9) + 1048576\n"
+            ")\n"
+            "print(len(raw), len(zeroes), len(mapping), len(joined), "
+            "len(rendered), len(composed), len(cancelled_text), "
+            "len(cancelled_values), len(cancelled_bytes))"
+        )
+        self.assertEqual(
+            (exit_code, stdout, stderr),
+            (
+                0,
+                "100000 1048576 100000 1048576 1048576 1048576 "
+                "1048576 100000 1048576\n",
+                "",
+            ),
+        )
 
 
 if __name__ == "__main__":

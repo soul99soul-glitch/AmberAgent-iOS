@@ -826,7 +826,8 @@ final class IOSTerminalRuntime {
         timeoutSeconds: TimeInterval = 60,
         jobId: String? = nil,
         workspaceStore: IOSWorkspaceStore = .shared,
-        amberShellStdin: String? = nil
+        amberShellStdin: String? = nil,
+        amberShellExecutionEvent: ((IOSAmberShellExecutionEvent) -> Void)? = nil
     ) async -> IOSTerminalJobSnapshot {
         let now = Date()
         let capability = IOSTerminalRuntimeCapabilities.capability(for: runtime)
@@ -882,7 +883,8 @@ final class IOSTerminalRuntime {
                     amberShellStdin: amberShellStdin,
                     timeoutSeconds: timeoutSeconds,
                     now: now,
-                    jobId: jobId
+                    jobId: jobId,
+                    onExecutionEvent: amberShellExecutionEvent
                 )
             } catch {
                 return failedSnapshot(
@@ -1180,7 +1182,8 @@ final class IOSTerminalRuntime {
         amberShellStdin: String?,
         timeoutSeconds: TimeInterval,
         now: Date,
-        jobId: String?
+        jobId: String?,
+        onExecutionEvent: ((IOSAmberShellExecutionEvent) -> Void)?
     ) async throws -> IOSTerminalJobSnapshot {
         let control = try IOSAmberShellExecutionControl(timeoutSeconds: timeoutSeconds)
         let result = await withTaskCancellationHandler {
@@ -1188,41 +1191,52 @@ final class IOSTerminalRuntime {
                 command: command,
                 stdin: amberShellStdin,
                 workspaceStore: workspaceStore,
-                control: control
+                control: control,
+                onExecutionEvent: onExecutionEvent
             )
         } onCancel: {
             control.cancel()
         }
 
         var finalTermination = result.termination
-        do {
-            try control.checkpoint()
-        } catch let termination as IOSAmberShellTermination {
-            finalTermination = termination
+        // A final checkpoint is valid only before any mutation was dispatched.
+        // Otherwise it can turn a known commit into a retryable cancellation.
+        if result.dispatchOutcome == .notDispatched {
+            do {
+                try control.checkpoint()
+            } catch let termination as IOSAmberShellTermination {
+                finalTermination = termination
+            }
         }
 
-        let status: IOSTerminalJobStatus
+        let mayHaveApplied = result.dispatchOutcome == .mayHaveApplied
+        let status: String
         let terminationError: String?
-        switch finalTermination {
-        case .cancelled:
-            status = .cancelled
+        switch (mayHaveApplied, finalTermination) {
+        case (true, _):
+            status = "unknown_after_action"
+            terminationError = "AmberShell action may have applied before execution stopped; the outcome is unknown."
+        case (false, .cancelled):
+            status = IOSTerminalJobStatus.cancelled.rawValue
             terminationError = "AmberShell command was cancelled."
-        case .timedOut:
-            status = .timedOut
+        case (false, .timedOut):
+            status = IOSTerminalJobStatus.timedOut.rawValue
             terminationError = "AmberShell command timed out after \(Int(timeoutSeconds)) seconds."
-        case nil:
-            status = result.exitCode == 0 ? .completed : .failed
+        case (false, nil):
+            status = result.exitCode == 0
+                ? IOSTerminalJobStatus.completed.rawValue
+                : IOSTerminalJobStatus.failed.rawValue
             terminationError = nil
         }
         let stderr = terminationError.map { $0 + "\n" } ?? result.stderr
         let outputTail = result.stdout + stderr
-        let completed = status == .completed
+        let completed = status == IOSTerminalJobStatus.completed.rawValue
 
         return IOSTerminalJobSnapshot(
             id: jobId ?? UUID().uuidString,
             runtime: .localIOSTools,
-            status: status.rawValue,
-            exitCode: finalTermination == nil ? result.exitCode : nil,
+            status: status,
+            exitCode: finalTermination == nil && !mayHaveApplied ? result.exitCode : nil,
             outputTail: outputTail,
             stdoutTail: result.stdout,
             stderrTail: stderr,
@@ -1593,7 +1607,8 @@ enum IOSAmberShellExecuteExecutor {
     static func execute(
         input: String,
         runtime: IOSTerminalRuntime = .shared,
-        workspaceStore: IOSWorkspaceStore = .shared
+        workspaceStore: IOSWorkspaceStore = .shared,
+        onExecutionEvent: ((IOSAmberShellExecutionEvent) -> Void)? = nil
     ) async -> String {
         do {
             let request = try parseRequest(input)
@@ -1606,10 +1621,12 @@ enum IOSAmberShellExecuteExecutor {
                 sshPassword: nil,
                 timeoutSeconds: request.timeoutSeconds,
                 workspaceStore: workspaceStore,
-                amberShellStdin: request.stdin
+                amberShellStdin: request.stdin,
+                amberShellExecutionEvent: onExecutionEvent
             )
             let completed = snapshot.status == IOSTerminalJobStatus.completed.rawValue
                 && snapshot.exitCode == 0
+            let mayHaveApplied = snapshot.status == "unknown_after_action"
             return IOSWorkspaceStore.json([
                 "ok": completed,
                 "tool": IOSAmberShellToolCatalog.executeToolName,
@@ -1626,6 +1643,8 @@ enum IOSAmberShellExecuteExecutor {
                 "stdout_truncated": snapshot.stdoutTruncated,
                 "stderr_truncated": snapshot.stderrTruncated,
                 "timed_out": snapshot.status == IOSTerminalJobStatus.timedOut.rawValue,
+                "error_code": mayHaveApplied ? "unknown_after_action" : "",
+                "may_have_applied": mayHaveApplied,
                 "error": snapshot.error ?? "",
             ])
         } catch {

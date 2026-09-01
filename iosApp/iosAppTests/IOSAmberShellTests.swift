@@ -167,6 +167,184 @@ final class IOSAmberShellTests: XCTestCase {
         XCTAssertNil(store.fileRecord(idOrPath: "/workspace/created-before-redirect.txt"))
     }
 
+    func testCommittedMutationsDoNotBecomeOrdinaryCancellation() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSAmberShellCommittedMutationTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
+
+        let touchControl = try IOSAmberShellExecutionControl(timeoutSeconds: .infinity)
+        let touched = await executeAcrossCommitBarrier(
+            command: "touch committed.txt",
+            store: store,
+            control: touchControl,
+            event: .mutationCommitted(command: "touch")
+        ) {
+            touchControl.cancel()
+        }
+        XCTAssertEqual(touched.exitCode, 0, touched.stderr)
+        XCTAssertNil(touched.termination)
+        XCTAssertEqual(touched.dispatchOutcome, .completed)
+        XCTAssertNotNil(store.fileRecord(idOrPath: "/workspace/committed.txt"))
+
+        try await store.amberShellWriteText(path: "source.txt", text: "copy me")
+        let copyControl = try IOSAmberShellExecutionControl(timeoutSeconds: .infinity)
+        let copied = await executeAcrossCommitBarrier(
+            command: "cp source.txt copied.txt",
+            store: store,
+            control: copyControl,
+            event: .mutationCommitted(command: "cp")
+        ) {
+            copyControl.cancel()
+        }
+        XCTAssertEqual(copied.exitCode, 0, copied.stderr)
+        XCTAssertNil(copied.termination)
+        XCTAssertEqual(copied.dispatchOutcome, .completed)
+        XCTAssertEqual(
+            try store.amberShellReadText(path: "copied.txt", maxBytes: 64 * 1024),
+            "copy me"
+        )
+
+        let moveControl = try IOSAmberShellExecutionControl(timeoutSeconds: .infinity)
+        let moved = await executeAcrossCommitBarrier(
+            command: "mv copied.txt moved.txt",
+            store: store,
+            control: moveControl,
+            event: .mutationCommitted(command: "mv")
+        ) {
+            moveControl.cancel()
+        }
+        XCTAssertEqual(moved.exitCode, 0, moved.stderr)
+        XCTAssertNil(moved.termination)
+        XCTAssertEqual(moved.dispatchOutcome, .completed)
+        XCTAssertNil(store.fileRecord(idOrPath: "/workspace/copied.txt"))
+        XCTAssertEqual(
+            try store.amberShellReadText(path: "moved.txt", maxBytes: 64 * 1024),
+            "copy me"
+        )
+
+        let removeControl = try IOSAmberShellExecutionControl(timeoutSeconds: .infinity)
+        let removed = await executeAcrossCommitBarrier(
+            command: "rm committed.txt",
+            store: store,
+            control: removeControl,
+            event: .mutationCommitted(command: "rm")
+        ) {
+            removeControl.cancel()
+        }
+        XCTAssertEqual(removed.exitCode, 0, removed.stderr)
+        XCTAssertNil(removed.termination)
+        XCTAssertEqual(removed.dispatchOutcome, .completed)
+        XCTAssertNil(store.fileRecord(idOrPath: "/workspace/committed.txt"))
+    }
+
+    func testCommittedRedirectDoesNotBecomeOrdinaryTimeout() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSAmberShellCommittedRedirectTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
+        let control = try IOSAmberShellExecutionControl(timeoutSeconds: 0.05)
+
+        let result = await executeAcrossCommitBarrier(
+            command: "echo committed > redirected.txt",
+            store: store,
+            control: control,
+            event: .redirectCommitted(stream: "stdout")
+        ) {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        XCTAssertEqual(result.exitCode, 0, result.stderr)
+        XCTAssertNil(result.termination)
+        XCTAssertEqual(result.dispatchOutcome, .completed)
+        XCTAssertEqual(
+            try store.amberShellReadText(path: "redirected.txt", maxBytes: 64 * 1024),
+            "committed\n"
+        )
+
+        let stderrControl = try IOSAmberShellExecutionControl(timeoutSeconds: .infinity)
+        let stderrResult = await executeAcrossCommitBarrier(
+            command: "unsupported 2> redirected-stderr.txt",
+            store: store,
+            control: stderrControl,
+            event: .redirectCommitted(stream: "stderr")
+        ) {
+            stderrControl.cancel()
+        }
+        XCTAssertEqual(stderrResult.exitCode, 127, stderrResult.stderr)
+        XCTAssertNil(stderrResult.termination)
+        XCTAssertEqual(stderrResult.dispatchOutcome, .completed)
+        XCTAssertTrue(
+            try store.amberShellReadText(path: "redirected-stderr.txt", maxBytes: 64 * 1024)
+                .contains("当前不支持命令")
+        )
+    }
+
+    func testPreDispatchCancellationAndTimeoutStayOrdinaryAndDoNotMutate() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSAmberShellPreDispatchTerminationTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
+
+        let cancelledControl = try IOSAmberShellExecutionControl(timeoutSeconds: .infinity)
+        cancelledControl.cancel()
+        let cancelled = await IOSAmberShellEngine.execute(
+            command: "touch cancelled.txt",
+            workspaceStore: store,
+            control: cancelledControl
+        )
+        XCTAssertEqual(cancelled.termination, .cancelled)
+        XCTAssertEqual(cancelled.dispatchOutcome, .notDispatched)
+        XCTAssertNil(store.fileRecord(idOrPath: "/workspace/cancelled.txt"))
+
+        let timeoutControl = try IOSAmberShellExecutionControl(timeoutSeconds: 0)
+        let timedOut = await IOSAmberShellEngine.execute(
+            command: "touch timed-out.txt",
+            workspaceStore: store,
+            control: timeoutControl
+        )
+        XCTAssertEqual(timedOut.termination, .timedOut)
+        XCTAssertEqual(timedOut.dispatchOutcome, .notDispatched)
+        XCTAssertNil(store.fileRecord(idOrPath: "/workspace/timed-out.txt"))
+    }
+
+    func testPostDispatchTimeoutMapsToOutcomeUnknownInsteadOfOrdinaryTimeout() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSAmberShellOutcomeUnknownTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+        let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
+
+        let committed = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            committed.wait()
+            Thread.sleep(forTimeInterval: 1.1)
+            release.signal()
+        }
+        var crossedBarrier = false
+        let output = await IOSAmberShellExecuteExecutor.execute(
+            input: IOSWorkspaceStore.json([
+                "command": "touch maybe-applied.txt | cat",
+                "timeout_seconds": 1,
+            ]),
+            workspaceStore: store
+        ) { event in
+            guard event == .mutationCommitted(command: "touch"), !crossedBarrier else { return }
+            crossedBarrier = true
+            committed.signal()
+            XCTAssertEqual(release.wait(timeout: .now() + 3), .success)
+        }
+
+        let result = try jsonObject(output)
+        XCTAssertEqual(result["ok"] as? Bool, false)
+        XCTAssertEqual(result["status"] as? String, "unknown_after_action")
+        XCTAssertEqual(result["error_code"] as? String, "unknown_after_action")
+        XCTAssertEqual(result["may_have_applied"] as? Bool, true)
+        XCTAssertEqual(result["timed_out"] as? Bool, false)
+        XCTAssertTrue(result["exit_code"] is NSNull)
+        XCTAssertNotNil(store.fileRecord(idOrPath: "/workspace/maybe-applied.txt"))
+    }
+
     func testStdinUTF8ByteLimitUsesExactASCIIAndUnicodeBoundaries() async {
         let baseDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("IOSAmberShellUTF8LimitTests-\(UUID().uuidString)", isDirectory: true)
@@ -342,5 +520,33 @@ final class IOSAmberShellTests: XCTestCase {
     private func jsonObject(_ text: String) throws -> [String: Any] {
         let data = try XCTUnwrap(text.data(using: .utf8))
         return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    private func executeAcrossCommitBarrier(
+        command: String,
+        store: IOSWorkspaceStore,
+        control: IOSAmberShellExecutionControl,
+        event targetEvent: IOSAmberShellExecutionEvent,
+        afterCommit: @escaping @Sendable () -> Void
+    ) async -> IOSAmberShellCommandResult {
+        let committed = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            committed.wait()
+            afterCommit()
+            release.signal()
+        }
+
+        var crossedBarrier = false
+        return await IOSAmberShellEngine.execute(
+            command: command,
+            workspaceStore: store,
+            control: control
+        ) { event in
+            guard event == targetEvent, !crossedBarrier else { return }
+            crossedBarrier = true
+            committed.signal()
+            XCTAssertEqual(release.wait(timeout: .now() + 2), .success)
+        }
     }
 }

@@ -21,8 +21,8 @@ final class IOSSkillMcpToolsTests: XCTestCase {
 
         let installed = IOSBuiltinSkills.installIfMissing(into: store, enableWith: settings)
 
-        XCTAssertEqual(Set(installed), Set(["skill-creator", "visual-svg"]))
-        XCTAssertEqual(Set(store.listSkillDirNames()), Set(["skill-creator", "visual-svg"]))
+        XCTAssertEqual(Set(installed), Set(["skill-creator", "visual-svg", "provider-setup"]))
+        XCTAssertEqual(Set(store.listSkillDirNames()), Set(["skill-creator", "visual-svg", "provider-setup"]))
         XCTAssertTrue(settings.isSkillEnabled("skill-creator"))
         XCTAssertFalse(settings.isSkillEnabled("visual-svg"), "optional seed must not auto-enable")
         XCTAssertFalse(settings.isSkillEnabled("会议准备"))
@@ -891,6 +891,44 @@ final class IOSSkillMcpToolsTests: XCTestCase {
         XCTAssertEqual(counting.disconnects, 1)
     }
 
+    func testSkillMcpParserUsesSharedTransportContractAndFailsClosed() throws {
+        let parsed = try IOSSkillMcpToolService.parseSupportedMcpServers(json: """
+        {
+          "mcpServers": {
+            "legacy": {
+              "transport": " SSE ",
+              "url": "https://example.com/sse"
+            },
+            "modern": {
+              "type": "streamable-http",
+              "url": "https://example.com/mcp"
+            }
+          }
+        }
+        """)
+        XCTAssertEqual(parsed, [
+            .sse(name: "legacy", url: "https://example.com/sse"),
+            .streamableHTTP(name: "modern", url: "https://example.com/mcp"),
+        ])
+
+        XCTAssertThrowsError(try IOSSkillMcpToolService.parseSupportedMcpServers(json: """
+        {
+          "mcpServers": {
+            "docs": {
+              "type": "sse",
+              "transport": "streamable_http",
+              "url": "https://example.com/mcp"
+            }
+          }
+        }
+        """)) { error in
+            XCTAssertEqual(
+                error as? IOSMcpImportError,
+                .invalidEntry(name: "docs", message: "MCP server type and transport disagree")
+            )
+        }
+    }
+
     func testMcpImportApplyDoesNotConnectWhenNetworkDisabled() async throws {
         let root = tempRoot()
         let skillStore = IOSSkillFileStore(baseDirectory: root)
@@ -998,6 +1036,7 @@ final class IOSSkillMcpToolsTests: XCTestCase {
             autoGenerateResponses: false
         )
 
+        _ = viewModel.currentToolDeclarationNames()
         let names = Set(
             viewModel.toolExposureBridgeForTesting()?.fullToolDeclarations().map(\.name) ?? []
         )

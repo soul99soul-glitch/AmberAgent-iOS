@@ -16,6 +16,19 @@ _MAX_STDIN_BYTES = 64 * 1024
 _MAX_OUTPUT_BYTES = 128 * 1024
 _OUTPUT_LIMIT_ERROR = "AmberShell Python output exceeded 131072 UTF-8 bytes.\n"
 
+# These pre-execution limits reject statically obvious allocation bombs before
+# CPython enters C helpers that output limits or cooperative tracing cannot
+# interrupt.
+# They reduce accidental resource exhaustion; they are not a memory sandbox.
+_MAX_SOURCE_BYTES = 256 * 1024
+_MAX_AST_NODES = 20_000
+_MAX_AST_DEPTH = 100
+_MAX_LITERAL_BYTES = 128 * 1024
+_MAX_STATIC_TEXT_BYTES = 1024 * 1024
+_MAX_STATIC_COLLECTION_ITEMS = 100_000
+_MAX_STATIC_INTEGER_BITS = 1_000_000
+_MAX_MATERIALIZED_RANGE_ITEMS = 100_000
+
 # These are intentionally explicit. They are selected for deterministic,
 # non-I/O data processing; adding a module requires an audit of its imports
 # and APIs. The list is not a security sandbox.
@@ -530,6 +543,402 @@ def _reject_module_attribute_mutations(tree, module_bindings):
         )
 
 
+def _clamp_integer(value, cap):
+    if value > cap:
+        return cap + 1, False
+    if value < -cap:
+        return -cap - 1, False
+    return value, True
+
+
+def _static_integer(node, cap):
+    """Return a bounded integer value for a small constant expression.
+
+    The boolean indicates whether the returned value is exact.  Inexact
+    values retain only their sign and the fact that they exceeded *cap*; this
+    helper never constructs the huge integer it is intended to detect.
+    """
+    if isinstance(node, _ast.Constant) and isinstance(node.value, int):
+        return _clamp_integer(node.value, cap)
+
+    if isinstance(node, _ast.UnaryOp) and isinstance(
+        node.op, (_ast.UAdd, _ast.USub)
+    ):
+        result = _static_integer(node.operand, cap)
+        if result is None:
+            return None
+        value, exact = result
+        if isinstance(node.op, _ast.USub):
+            value = -value
+        return value, exact
+
+    if not isinstance(node, _ast.BinOp):
+        return None
+    left = _static_integer(node.left, cap)
+    right = _static_integer(node.right, cap)
+    if left is None or right is None:
+        return None
+    left_value, left_exact = left
+    right_value, right_exact = right
+
+    if not left_exact or not right_exact:
+        if isinstance(node.op, _ast.Add):
+            if not left_exact and not right_exact:
+                if (left_value > 0) == (right_value > 0):
+                    return left_value, False
+            elif not left_exact and (
+                (left_value > 0 and right_value >= 0)
+                or (left_value < 0 and right_value <= 0)
+            ):
+                return left_value, False
+            elif not right_exact and (
+                (right_value > 0 and left_value >= 0)
+                or (right_value < 0 and left_value <= 0)
+            ):
+                return right_value, False
+            return None
+
+        if isinstance(node.op, _ast.Sub):
+            if not left_exact and not right_exact:
+                if (left_value > 0) != (right_value > 0):
+                    return left_value, False
+            elif not left_exact and (
+                (left_value > 0 and right_value <= 0)
+                or (left_value < 0 and right_value >= 0)
+            ):
+                return left_value, False
+            elif not right_exact and (
+                (right_value > 0 and left_value <= 0)
+                or (right_value < 0 and left_value >= 0)
+            ):
+                sign = -1 if right_value > 0 else 1
+                return sign * (cap + 1), False
+            return None
+
+        if isinstance(node.op, _ast.Mult):
+            if (left_exact and left_value == 0) or (
+                right_exact and right_value == 0
+            ):
+                return 0, True
+            sign = -1 if (left_value < 0) != (right_value < 0) else 1
+            return sign * (cap + 1), False
+
+        if (
+            isinstance(node.op, _ast.FloorDiv)
+            and not left_exact
+            and right_exact
+            and abs(right_value) == 1
+        ):
+            sign = -1 if (left_value < 0) != (right_value < 0) else 1
+            return sign * (cap + 1), False
+
+        if isinstance(node.op, _ast.Pow):
+            if right_exact:
+                if right_value < 0:
+                    return None
+                if right_value == 0:
+                    return 1, True
+                if not left_exact:
+                    sign = -1 if left_value < 0 and right_value % 2 else 1
+                    return sign * (cap + 1), False
+            elif right_value > 0:
+                if left_exact and left_value in {0, 1}:
+                    return left_value, True
+                if left_value > 1:
+                    return cap + 1, False
+            return None
+
+        return None
+
+    try:
+        if isinstance(node.op, _ast.Add):
+            value = left_value + right_value
+        elif isinstance(node.op, _ast.Sub):
+            value = left_value - right_value
+        elif isinstance(node.op, _ast.Mult):
+            value = left_value * right_value
+        elif isinstance(node.op, _ast.FloorDiv):
+            value = left_value // right_value
+        elif isinstance(node.op, _ast.Mod):
+            value = left_value % right_value
+        elif isinstance(node.op, _ast.Pow):
+            if right_value < 0:
+                return None
+            if abs(left_value) >= 2 and right_value > cap.bit_length() + 1:
+                sign = -1 if left_value < 0 and right_value % 2 else 1
+                return sign * (cap + 1), False
+            value = left_value**right_value
+        else:
+            return None
+    except (OverflowError, ZeroDivisionError):
+        return None
+    return _clamp_integer(value, cap)
+
+
+def _static_sequence_size(node):
+    """Return ``(kind, units)`` for a directly repeated sequence expression."""
+    if isinstance(node, _ast.Constant):
+        if isinstance(node.value, str):
+            return "str", len(node.value.encode("utf-8"))
+        if isinstance(node.value, bytes):
+            return "bytes", len(node.value)
+    if isinstance(node, (_ast.List, _ast.Tuple)):
+        return "collection", len(node.elts)
+    if (
+        isinstance(node, _ast.Call)
+        and isinstance(node.func, _ast.Name)
+        and node.func.id == "str"
+        and len(node.args) <= 1
+        and not node.keywords
+    ):
+        if not node.args:
+            return "str", 0
+        value_node = node.args[0]
+        sequence = _static_sequence_size(value_node)
+        if sequence is not None and sequence[0] == "str":
+            return sequence
+        if isinstance(value_node, _ast.Constant):
+            value = value_node.value
+        elif (
+            isinstance(value_node, _ast.UnaryOp)
+            and isinstance(value_node.op, (_ast.UAdd, _ast.USub))
+            and isinstance(value_node.operand, _ast.Constant)
+            and isinstance(value_node.operand.value, (int, float, complex))
+        ):
+            value = value_node.operand.value
+            value = value if isinstance(value_node.op, _ast.UAdd) else -value
+        else:
+            return None
+        return "str", len(str(value).encode("utf-8"))
+
+    if not isinstance(node, _ast.BinOp):
+        return None
+
+    if isinstance(node.op, _ast.Add):
+        left = _static_sequence_size(node.left)
+        right = _static_sequence_size(node.right)
+        if left is None or right is None or left[0] != right[0]:
+            return None
+        return left[0], left[1] + right[1]
+    if not isinstance(node.op, _ast.Mult):
+        return None
+
+    sequence = _static_sequence_size(node.left)
+    multiplier_node = node.right
+    if sequence is None:
+        sequence = _static_sequence_size(node.right)
+        multiplier_node = node.left
+    if sequence is None:
+        return None
+
+    kind, units = sequence
+    limit = (
+        _MAX_STATIC_COLLECTION_ITEMS
+        if kind == "collection"
+        else _MAX_STATIC_TEXT_BYTES
+    )
+    multiplier = _static_integer(multiplier_node, limit + 1)
+    if multiplier is None:
+        return None
+    count = max(0, multiplier[0])
+    if units and count > limit // units:
+        return kind, limit + 1
+    return kind, units * count
+
+
+def _static_range_length(node):
+    if not (
+        isinstance(node, _ast.Call)
+        and isinstance(node.func, _ast.Name)
+        and node.func.id == "range"
+        and not node.keywords
+        and 1 <= len(node.args) <= 3
+    ):
+        return None
+
+    cap = _MAX_MATERIALIZED_RANGE_ITEMS + 1
+    values = [_static_integer(argument, cap) for argument in node.args]
+    if any(value is None for value in values):
+        return None
+    if len(values) == 1 and not values[0][1]:
+        return cap if values[0][0] > 0 else 0
+    if not all(value[1] for value in values):
+        return None
+    try:
+        return len(range(*(value[0] for value in values)))
+    except ValueError:
+        return None
+
+
+def _static_iterable_length(node):
+    range_length = _static_range_length(node)
+    if range_length is not None:
+        return range_length
+    if isinstance(node, (_ast.List, _ast.Tuple, _ast.Set)):
+        return len(node.elts)
+    if not (
+        isinstance(node, _ast.Call)
+        and isinstance(node.func, _ast.Name)
+        and not node.keywords
+    ):
+        return None
+    name = node.func.id
+    if name in {"enumerate", "reversed"} and node.args:
+        return _static_iterable_length(node.args[0])
+    if name in {"map", "filter"} and len(node.args) >= 2:
+        return _static_iterable_length(node.args[1])
+    if name == "zip" and node.args:
+        lengths = [_static_iterable_length(argument) for argument in node.args]
+        if all(length is not None for length in lengths):
+            return min(lengths)
+    return None
+
+
+def _static_integer_bit_lower_bound(node):
+    """Return a lower bound for the bit length without building the integer."""
+    if isinstance(node, _ast.Constant) and isinstance(node.value, int):
+        return abs(node.value).bit_length()
+    if isinstance(node, _ast.UnaryOp) and isinstance(
+        node.op, (_ast.UAdd, _ast.USub)
+    ):
+        return _static_integer_bit_lower_bound(node.operand)
+    if not isinstance(node, _ast.BinOp):
+        return None
+
+    if isinstance(node.op, _ast.Pow):
+        base_bits = _static_integer_bit_lower_bound(node.left)
+        exponent = _static_integer(node.right, _MAX_STATIC_INTEGER_BITS + 1)
+        if base_bits is None or exponent is None or exponent[0] < 0:
+            return None
+        if exponent[0] == 0:
+            return 1
+        if base_bits <= 1:
+            return base_bits
+        return (base_bits - 1) * exponent[0] + 1
+
+    if isinstance(node.op, _ast.Mult):
+        left_bits = _static_integer_bit_lower_bound(node.left)
+        right_bits = _static_integer_bit_lower_bound(node.right)
+        if left_bits is None or right_bits is None:
+            return None
+        if left_bits == 0 or right_bits == 0:
+            return 0
+        return left_bits + right_bits - 1
+    return None
+
+
+def _reject_oversized_integer_power(base_node, exponent_node):
+    base_bits = _static_integer_bit_lower_bound(base_node)
+    exponent = _static_integer(exponent_node, _MAX_STATIC_INTEGER_BITS + 1)
+    if base_bits is None or exponent is None or exponent[0] < 0:
+        return
+    exponent_value = exponent[0]
+    if exponent_value == 0 or base_bits <= 1:
+        return
+
+    # (bit_length(base) - 1) * exponent + 1 is a lower bound for the
+    # result's bit length.  A lower bound avoids rejecting a near-limit power
+    # whose exact result remains within the documented budget.
+    lower_bound = (base_bits - 1) * exponent_value + 1
+    if lower_bound > _MAX_STATIC_INTEGER_BITS:
+        raise _RejectedSource(
+            "static integer result exceeds 1000000 bits"
+        )
+
+
+def _validate_static_cost(tree):
+    """Reject statically provable, direct resource-exhaustion expressions."""
+    node_count = 0
+    literal_bytes = 0
+    stack = [(tree, 1)]
+    while stack:
+        node, depth = stack.pop()
+        node_count += 1
+        if node_count > _MAX_AST_NODES:
+            raise _RejectedSource("AST exceeds 20000 nodes")
+        if depth > _MAX_AST_DEPTH:
+            raise _RejectedSource("AST depth exceeds 100")
+        if isinstance(node, _ast.Constant):
+            if isinstance(node.value, str):
+                literal_bytes += len(node.value.encode("utf-8"))
+            elif isinstance(node.value, bytes):
+                literal_bytes += len(node.value)
+            if literal_bytes > _MAX_LITERAL_BYTES:
+                raise _RejectedSource("literal data exceeds 131072 bytes")
+        stack.extend((child, depth + 1) for child in _ast.iter_child_nodes(node))
+
+    for node in _ast.walk(tree):
+        sequence = _static_sequence_size(node)
+        if sequence is not None:
+            kind, units = sequence
+            if kind in {"str", "bytes"} and units > _MAX_STATIC_TEXT_BYTES:
+                raise _RejectedSource(
+                    "static text result exceeds 1048576 bytes"
+                )
+            if kind == "collection" and units > _MAX_STATIC_COLLECTION_ITEMS:
+                raise _RejectedSource(
+                    "static collection result exceeds 100000 items"
+                )
+
+        if isinstance(node, _ast.BinOp) and isinstance(node.op, _ast.Pow):
+            _reject_oversized_integer_power(node.left, node.right)
+        elif (
+            isinstance(node, _ast.Call)
+            and isinstance(node.func, _ast.Name)
+            and node.func.id == "pow"
+            and len(node.args) == 2
+            and not node.keywords
+        ):
+            _reject_oversized_integer_power(node.args[0], node.args[1])
+
+        bytes_integer_argument = False
+        if (
+            isinstance(node, _ast.Call)
+            and isinstance(node.func, _ast.Name)
+            and node.func.id == "bytes"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            count = _static_integer(node.args[0], _MAX_STATIC_TEXT_BYTES + 1)
+            if count is not None:
+                bytes_integer_argument = True
+                if count[0] > _MAX_STATIC_TEXT_BYTES:
+                    raise _RejectedSource(
+                        "static text result exceeds 1048576 bytes"
+                    )
+
+        materialized_node = None
+        if (
+            isinstance(node, _ast.Call)
+            and isinstance(node.func, _ast.Name)
+            and node.func.id
+            in {"list", "tuple", "set", "frozenset", "sorted", "bytes", "dict"}
+            and len(node.args) == 1
+            and not node.keywords
+            and not (node.func.id == "bytes" and bytes_integer_argument)
+        ):
+            materialized_node = node.args[0]
+        elif isinstance(node, _ast.Starred):
+            materialized_node = node.value
+        elif (
+            isinstance(node, _ast.Call)
+            and isinstance(node.func, _ast.Attribute)
+            and isinstance(node.func.value, _ast.Name)
+            and node.func.value.id == "dict"
+            and node.func.attr == "fromkeys"
+            and node.args
+            and not node.keywords
+        ):
+            materialized_node = node.args[0]
+
+        if materialized_node is not None:
+            length = _static_iterable_length(materialized_node)
+            if length is not None and length > _MAX_MATERIALIZED_RANGE_ITEMS:
+                raise _RejectedSource(
+                    "materialized range exceeds 100000 items"
+                )
+
+
 def _validate_node(node):
     node_type = type(node)
     if node_type not in _ALLOWED_AST_NODES:
@@ -595,10 +1004,16 @@ def _validate_node(node):
 
 
 def _validate_source(source):
+    if (
+        len(source) > _MAX_SOURCE_BYTES
+        or len(source.encode("utf-8")) > _MAX_SOURCE_BYTES
+    ):
+        raise _RejectedSource("source exceeds 262144 UTF-8 bytes")
     try:
         tree = _ast.parse(source, filename="<amber-shell-python>", mode="exec")
     except SyntaxError as error:
         raise _RejectedSource("syntax error: " + str(error)) from None
+    _validate_static_cost(tree)
     _validate_node(tree)
     _reject_module_attribute_mutations(tree, _module_bindings(tree))
     return tree
