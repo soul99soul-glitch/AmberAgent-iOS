@@ -1043,6 +1043,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     ///   @unchecked Sendable box, same precedent as
     ///   `IOSChatBackgroundRetryMessages`) and never receives them. Default nil
     ///   keeps every existing caller (SubAgent, Novel) behavior unchanged.
+    /// - Parameter refreshToolExposure: Runs after an executed batch and before
+    ///   the next round reads `visibleTools()`. Chat uses this to publish
+    ///   Recipe lifecycle changes into the existing run-scoped bridge.
     /// - Parameter citationTracker: P2-c. When non-nil, every streamed chunk in
     ///   every step is stripped of `<amber-mem-cite>` markers before
     ///   accumulation (see `streamStep`), and the run-terminal `finish()` flush
@@ -1056,6 +1059,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         params: TextGenerationParams,
         citationTracker: IOSMemoryCitationTracker? = nil,
         toolExposureBridge: IosToolExposureBridge? = nil,
+        refreshToolExposure: (@MainActor @Sendable () async -> Void)? = nil,
         mailboxDrain: (@Sendable () async -> IOSMailboxDrainResult)? = nil,
         drainSteer: (@Sendable () async -> [UIMessage])? = nil,
         prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])? = nil,
@@ -1076,6 +1080,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             params: params,
             citationTracker: citationTracker,
             toolExposureBridge: toolExposureBridge,
+            refreshToolExposure: refreshToolExposure,
             mailboxDrain: mailboxDrain,
             drainSteer: drainSteer,
             prepareRequestMessages: prepareRequestMessages,
@@ -1102,6 +1107,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         params: TextGenerationParams,
         citationTracker: IOSMemoryCitationTracker?,
         toolExposureBridge: IosToolExposureBridge?,
+        refreshToolExposure: (@MainActor @Sendable () async -> Void)?,
         mailboxDrain: (@Sendable () async -> IOSMailboxDrainResult)?,
         drainSteer: (@Sendable () async -> [UIMessage])?,
         prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])?,
@@ -1173,12 +1179,19 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             )
         }
         if preExistingResult.guardStopped {
-            return IOSAgentToolEngineResult(
+            return await finalizeAfterToolLoopGuardStop(
+                providerSetting: providerSetting,
                 messages: working,
+                params: effectiveParams,
                 stepsExecuted: 0,
-                pendingApproval: nil,
-                hitStepLimit: false,
-                guardStopped: true
+                citationTracker: citationTracker,
+                prepareRequestMessages: prepareRequestMessages,
+                onAssistantTurnStarted: onAssistantTurnStarted,
+                onAssistantStage: onAssistantStage,
+                onAssistantText: onAssistantText,
+                onAssistantReasoning: onAssistantReasoning,
+                onAssistantMessageSnapshot: onAssistantMessageSnapshot,
+                onMessagesUpdated: onMessagesUpdated
             )
         }
         if let approval = preExistingResult.pendingApproval,
@@ -1444,6 +1457,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             // hit from THIS round is declared on the NEXT round (background
             // handoff closed loop). Without a bridge the params stay frozen.
             if let bridge = toolExposureBridge {
+                await refreshToolExposure?()
                 effectiveParams = effectiveParams.replacingTools(bridge.visibleTools())
                 // M2: same refresh point — rebuild the executor table for the
                 // current round's visible tools (chat background only; the
@@ -1479,17 +1493,24 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 }
             }
 
-            // I-5: a repeated-signature stop ends the whole run here, mirroring
-            // the maxSteps-exhausted return below — the stop output is already
-            // filled in place above, so the caller sees a terminated loop with
-            // an explicit reason, not a silent extra step.
+            // I-5: do not execute a truly stationary third call, but still give
+            // the model one bounded, tool-free turn to explain what was learned
+            // and what remains incomplete. Ending immediately after the red tool
+            // capsule leaves the user with no answer at all.
             if batchResult.guardStopped {
-                return IOSAgentToolEngineResult(
+                return await finalizeAfterToolLoopGuardStop(
+                    providerSetting: providerSetting,
                     messages: working,
+                    params: effectiveParams,
                     stepsExecuted: steps + 1,
-                    pendingApproval: nil,
-                    hitStepLimit: false,
-                    guardStopped: true
+                    citationTracker: citationTracker,
+                    prepareRequestMessages: prepareRequestMessages,
+                    onAssistantTurnStarted: onAssistantTurnStarted,
+                    onAssistantStage: onAssistantStage,
+                    onAssistantText: onAssistantText,
+                    onAssistantReasoning: onAssistantReasoning,
+                    onAssistantMessageSnapshot: onAssistantMessageSnapshot,
+                    onMessagesUpdated: onMessagesUpdated
                 )
             }
 
@@ -1502,6 +1523,170 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             stepsExecuted: steps,
             pendingApproval: nil,
             hitStepLimit: true
+        )
+    }
+
+    /// A loop-guard stop is a failed run, but it must still be a readable one.
+    /// Give the provider exactly one extra request with an empty tool list and a
+    /// request-only instruction to summarize. The instruction is not persisted
+    /// into the conversation; only the final assistant answer is.
+    private func finalizeAfterToolLoopGuardStop(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams,
+        stepsExecuted: Int,
+        citationTracker: IOSMemoryCitationTracker?,
+        prepareRequestMessages: (@Sendable ([UIMessage]) async throws -> [UIMessage])?,
+        onAssistantTurnStarted: (@MainActor @Sendable () async -> Void)?,
+        onAssistantStage: (@Sendable (AgentActivityStage) -> Void)?,
+        onAssistantText: (@Sendable (String) -> Void)?,
+        onAssistantReasoning: (@Sendable (String) -> Void)?,
+        onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?,
+        onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)?
+    ) async -> IOSAgentToolEngineResult {
+        guard !Task.isCancelled else {
+            return IOSAgentToolEngineResult(
+                messages: messages,
+                stepsExecuted: stepsExecuted,
+                pendingApproval: nil,
+                hitStepLimit: false,
+                wasCancelled: true,
+                guardStopped: true
+            )
+        }
+
+        do {
+            await onAssistantTurnStarted?()
+            try Task.checkCancellation()
+
+            let preparedMessages = try await prepareRequestMessages?(messages) ?? messages
+            let requestMessages = [Self.toolLoopGuardFinalizationInstruction()] + preparedMessages
+            let preparedRequest = try await prepareStepRequest(
+                providerSetting: providerSetting,
+                params: params.replacingTools([])
+            )
+            if let ledger, let ledgerRunId {
+                let snapshot = IOSRunRequestSnapshot.make(
+                    roundIndex: stepsExecuted + 1,
+                    providerSetting: preparedRequest.providerSetting,
+                    messages: requestMessages,
+                    params: preparedRequest.params
+                )
+                guard await ledger.recordRequestSnapshot(runId: ledgerRunId, snapshot: snapshot) else {
+                    throw NSError(
+                        domain: "IOSAgentToolEngine.RequestSnapshot",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "request snapshot ledger write failed"]
+                    )
+                }
+            }
+
+            let chunk = try await streamStep(
+                request: preparedRequest,
+                messages: requestMessages,
+                citationTracker: citationTracker,
+                onAssistantStage: onAssistantStage,
+                onAssistantText: onAssistantText,
+                onAssistantReasoning: onAssistantReasoning,
+                onAssistantMessageSnapshot: onAssistantMessageSnapshot
+            )
+            let reachedOutputLimit = Self.reachedOutputLimit(chunk)
+            var finalMessages = messages
+            if let assistant = toolFreeAssistantMessage(from: assistantMessage(from: chunk)) {
+                finalMessages.append(assistant)
+            } else {
+                finalMessages.append(Self.toolLoopGuardFallbackMessage())
+            }
+            onMessagesUpdated?(finalMessages)
+            return IOSAgentToolEngineResult(
+                messages: finalMessages,
+                stepsExecuted: stepsExecuted + 1,
+                pendingApproval: nil,
+                hitStepLimit: false,
+                providerFailureMessage: reachedOutputLimit ? "模型收尾回复达到输出上限，请重试。" : nil,
+                hitOutputLimit: reachedOutputLimit,
+                guardStopped: true
+            )
+        } catch is CancellationError {
+            return IOSAgentToolEngineResult(
+                messages: messages,
+                stepsExecuted: stepsExecuted,
+                pendingApproval: nil,
+                hitStepLimit: false,
+                wasCancelled: true,
+                guardStopped: true
+            )
+        } catch {
+            let fallback = Self.toolLoopGuardFallbackMessage(error: error.localizedDescription)
+            let finalMessages = messages + [fallback]
+            onMessagesUpdated?(finalMessages)
+            return IOSAgentToolEngineResult(
+                messages: finalMessages,
+                stepsExecuted: stepsExecuted,
+                pendingApproval: nil,
+                hitStepLimit: false,
+                providerFailureMessage: error.localizedDescription,
+                guardStopped: true
+            )
+        }
+    }
+
+    /// A provider may ignore the empty tool list. Never persist another pending
+    /// call from the one-shot finalization request; keep only its readable text.
+    private func toolFreeAssistantMessage(from message: UIMessage?) -> UIMessage? {
+        guard let message, message.role == MessageRole.assistant else { return nil }
+        let parts = message.parts.filter { !($0 is UIMessagePart.Tool) }
+        let hasText = parts.contains { part in
+            guard let text = part as? UIMessagePart.Text else { return false }
+            return !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        guard hasText else { return nil }
+        return UIMessage(
+            id: message.id,
+            role: message.role,
+            parts: parts,
+            annotations: message.annotations,
+            createdAt: message.createdAt,
+            finishedAt: message.finishedAt,
+            modelId: message.modelId,
+            usage: message.usage,
+            translation: message.translation
+        )
+    }
+
+    private static func toolLoopGuardFinalizationInstruction() -> UIMessage {
+        UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.system,
+            parts: [UIMessagePart.Text(
+                text: "工具循环保护刚拒绝了一个连续重复调用。不要再调用任何工具；仅根据已有对话和工具结果直接给用户最终答复，明确说明已确认的信息、未完成的部分及原因，并给出简短的下一步。",
+                metadata: nil
+            )],
+            annotations: [],
+            createdAt: Self.nowLocalDateTime(),
+            finishedAt: Self.nowLocalDateTime(),
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+    }
+
+    private static func toolLoopGuardFallbackMessage(error: String? = nil) -> UIMessage {
+        let suffix = error.map { "收尾回复失败：\($0)" }
+            ?? "模型没有返回可显示的收尾内容。"
+        return UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: [UIMessagePart.Text(
+                text: "已停止连续重复的工具调用，并保留现有结果。\(suffix)",
+                metadata: nil
+            )],
+            annotations: [],
+            createdAt: Self.nowLocalDateTime(),
+            finishedAt: Self.nowLocalDateTime(),
+            modelId: nil,
+            usage: nil,
+            translation: nil
         )
     }
 

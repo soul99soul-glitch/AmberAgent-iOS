@@ -19,6 +19,7 @@ private struct IOSChatBackgroundRuntimeJob {
     let displayMessages: [UIMessage]
     let mode: IOSChatBackgroundHandoffMode
     let fullToolNames: [String]
+    let dynamicToolSnapshot: IOSDynamicToolCatalogSnapshot?
     let responseId: String?
     let responseSequenceNumber: Int64?
     let generativeUiRequirement: IOSGenerativeUiRequirement
@@ -70,6 +71,9 @@ struct IOSChatBackgroundHandoff {
     /// the background bridge). Empty for legacy payloads → fall back to
     /// params.tools.
     let fullToolNames: [String]
+    /// Process-local immutable descriptors. Durable rehydration intentionally
+    /// drops them so a changed/deleted package cannot be retargeted by name.
+    var dynamicToolSnapshot: IOSDynamicToolCatalogSnapshot? = nil
     var executionPolicy: IOSExecutionPolicySnapshot? = nil
 }
 
@@ -1010,7 +1014,8 @@ final class IOSChatBackgroundGenerationCoordinator {
     static func makeBackgroundToolExposureBridge(
         fullToolNames: [String],
         handoffVisibleTools: [Tool],
-        additionalDeclarations: [Tool] = []
+        additionalDeclarations: [Tool] = [],
+        dynamicSearchInfo: [String: String] = [:]
     ) -> IosToolExposureBridge {
         let bridge: IosToolExposureBridge
         if !fullToolNames.isEmpty {
@@ -1019,7 +1024,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             // P0-b: dynamic `mcp__*` declarations cannot be rebuilt from a
             // name (the payload has no server/tool directory), so exclude them
             // from the static mismatch check and append the regenerated ones.
-            let staticNames = fullToolNames.filter { !ToolKt.isExpandedMcpToolName(name: $0) }
+            let staticNames = fullToolNames.filter {
+                !ToolKt.isExpandedMcpToolName(name: $0)
+                    && !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0)
+            }
             if rebuiltNames != Set(staticNames) {
                 backgroundToolExposureLogger.error(
                     "background bridge catalog mismatch: \(rebuilt.count)/\(staticNames.count) declarations rebuilt — a tool name is missing from KMP iosToolDeclaration"
@@ -1028,9 +1036,9 @@ final class IOSChatBackgroundGenerationCoordinator {
             for tool in additionalDeclarations where !rebuiltNames.contains(tool.name) {
                 rebuilt.append(tool)
             }
-            bridge = IosToolExposureBridge(tools: rebuilt)
+            bridge = IosToolExposureBridge(tools: rebuilt, recipeSearchInfo: dynamicSearchInfo)
         } else {
-            bridge = IosToolExposureBridge(tools: handoffVisibleTools)
+            bridge = IosToolExposureBridge(tools: handoffVisibleTools, recipeSearchInfo: dynamicSearchInfo)
         }
         bridge.exposeToolNames(names: handoffVisibleTools.map(\.name))
         return bridge
@@ -1050,13 +1058,27 @@ final class IOSChatBackgroundGenerationCoordinator {
         // IOSAgentToolEngine's per-round params refresh). Legacy payloads
         // without fullToolNames fall back to the previous behavior (visible
         // subset from handoff.params.tools, which may disable lazy mode).
+        let dynamicDescriptors = handoff.dynamicToolSnapshot?.backgroundEligibleDescriptors
+            .filter { handoff.fullToolNames.contains($0.toolId) } ?? []
+        let dynamicDeclarations = dynamicDescriptors.map { descriptor in
+            IosToolExposureBridgeKt.createDynamicWorkflowToolDeclaration(
+                toolId: descriptor.toolId,
+                version: descriptor.version,
+                description: descriptor.description,
+                inputsJson: descriptor.inputsJSON,
+                effectClass: descriptor.effectClassRawValue
+            )
+        }
         let backgroundBridge = Self.makeBackgroundToolExposureBridge(
             fullToolNames: handoff.fullToolNames,
             handoffVisibleTools: handoff.params.tools,
             // P0-b: regenerate the dynamic MCP surface from the runtime's own
             // directory so background tool_search can expose (and the engine
             // can execute) `mcp__*` tools like the foreground run could.
-            additionalDeclarations: toolRuntime.mcpExpandedDeclarations()
+            additionalDeclarations: toolRuntime.mcpExpandedDeclarations() + dynamicDeclarations,
+            dynamicSearchInfo: Dictionary(uniqueKeysWithValues: dynamicDescriptors.map {
+                ($0.toolId, $0.searchInfoJSON)
+            })
         )
         return IOSChatBackgroundRuntimeJob(
             runId: handoff.runId,
@@ -1069,6 +1091,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             displayMessages: handoff.displayMessages,
             mode: handoff.mode,
             fullToolNames: handoff.fullToolNames,
+            dynamicToolSnapshot: handoff.dynamicToolSnapshot,
             responseId: handoff.responseId,
             responseSequenceNumber: handoff.responseSequenceNumber,
             generativeUiRequirement: handoff.generativeUiRequirement,
@@ -1216,6 +1239,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     generativeUiRequirement: job.generativeUiRequirement,
                     generativeUiFallbackAttempted: job.generativeUiFallbackAttempted,
                     fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
+                    dynamicToolSnapshot: job.dynamicToolSnapshot,
                     executionPolicy: job.executionPolicy
                 )
                 nextHandoff.responseId = nil
@@ -1426,6 +1450,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             generativeUiRequirement: job.generativeUiRequirement,
             generativeUiFallbackAttempted: job.generativeUiFallbackAttempted,
             fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
+            dynamicToolSnapshot: job.dynamicToolSnapshot,
             executionPolicy: job.executionPolicy
         )
     }
@@ -1689,7 +1714,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                 conversationId: job.conversationId,
                 // Pad-image enrich must use the job-frozen display snapshot.
                 messages: job.displayMessages,
-                executionPolicy: job.executionPolicy
+                executionPolicy: job.executionPolicy,
+                dynamicToolSnapshot: job.dynamicToolSnapshot
             ),
             // M2: 传了 toolExposureBridge 的路径，每轮 replacingTools 后按当轮
             // effectiveParams 重建 executor 表——tool_search 命中工具下一轮
@@ -1711,7 +1737,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     toolExposureBridge: job.toolExposureBridge,
                     conversationId: job.conversationId,
                     messages: job.displayMessages,
-                    executionPolicy: job.executionPolicy
+                    executionPolicy: job.executionPolicy,
+                    dynamicToolSnapshot: job.dynamicToolSnapshot
                 )
             }
         )
@@ -3074,6 +3101,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             generativeUiRequirement: job.generativeUiRequirement,
             generativeUiFallbackAttempted: true,
             fullToolNames: job.toolExposureBridge.fullToolDeclarations().map(\.name),
+            dynamicToolSnapshot: job.dynamicToolSnapshot,
             executionPolicy: job.executionPolicy
         )
         do {
@@ -3121,6 +3149,10 @@ final class IOSChatBackgroundGenerationCoordinator {
             } else {
                 executionPolicy = nil
             }
+            guard let mode = Self.rehydratedMode(payload.mode) else {
+                NSLog("[AmberChatBG] Invalid background mode \(payload.mode) for \(requestId)")
+                return nil
+            }
             return IOSChatBackgroundHandoff(
                 runId: payload.runId,
                 startedAt: payload.startedAt,
@@ -3131,7 +3163,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 params: params,
                 uploadMessages: payload.uploadMessages,
                 displayMessages: payload.displayMessages,
-                mode: IOSChatBackgroundHandoffMode(rawValue: payload.mode) ?? .continueModel,
+                mode: mode,
                 responseId: payload.responseId,
                 responseSequenceNumber: payload.responseSequenceNumber?.int64Value,
                 generativeUiRequirement: IOSGenerativeUiRequirement(
@@ -3141,6 +3173,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 ),
                 generativeUiFallbackAttempted: payload.generativeUiFallbackAttempted,
                 fullToolNames: payload.fullToolNames,
+                dynamicToolSnapshot: nil,
                 executionPolicy: executionPolicy
             )
         } catch {
@@ -3156,6 +3189,12 @@ final class IOSChatBackgroundGenerationCoordinator {
         } catch {
             NSLog("[AmberChatBG] Failed to resolve payload URL for cleanup: \(error)")
         }
+    }
+
+    /// Persisted values are untrusted after a crash or version change. An
+    /// unknown mode must not widen into a model/tool continuation.
+    private static func rehydratedMode(_ rawValue: String) -> IOSChatBackgroundHandoffMode? {
+        IOSChatBackgroundHandoffMode(rawValue: rawValue)
     }
 
     private func jobsDirectory() throws -> URL {
@@ -3490,6 +3529,10 @@ final class IOSChatBackgroundGenerationCoordinator {
     }
 
 #if DEBUG
+    static func rehydratedModeForTesting(_ rawValue: String) -> IOSChatBackgroundHandoffMode? {
+        rehydratedMode(rawValue)
+    }
+
     static func canAutomaticallyResumeOrdinaryJobForTesting(
         mode: IOSChatBackgroundHandoffMode,
         hasDeclaredTools: Bool

@@ -30,17 +30,24 @@ struct IOSToolLoopGuard {
         "模型连续以相同参数重复调用工具 \(toolName)，已停止本轮以避免空耗。"
     }
 
-    /// 签名 → 已出现次数。纯内存、run 内生效,不做任何 I/O 或跨 run 持久化。
-    private var counts: [String: Int] = [:]
+    /// 只统计紧邻的相同签名。网页观察、会话读取这类工具会在页面或会话发生
+    /// 变化后以完全相同的参数再次调用；把整轮累计次数当成“连续重复”会误杀
+    /// 合法的 observe → click → observe 工作流。
+    private var lastSignature: String?
+    private var consecutiveCount = 0
 
     /// 签名 = toolName + 规范化参数摘要。严格解析闸门会先拒绝非 object JSON；
     /// 这里再用 sortedKeys 消除空格和键顺序差异，避免同一调用仅换一种序列化
     /// 形式就绕过重复检测。单元测试直接传入的非 JSON 夹具保留原文摘要语义。
     mutating func check(toolName: String, input: String) -> Verdict {
         let signature = toolName + "\u{0}" + chatInputDigest(for: Self.canonicalInput(input))
-        let count = (counts[signature] ?? 0) + 1
-        counts[signature] = count
-        switch count {
+        if signature == lastSignature {
+            consecutiveCount += 1
+        } else {
+            lastSignature = signature
+            consecutiveCount = 1
+        }
+        switch consecutiveCount {
         case ..<Self.remindAtCount:
             return .proceed
         case Self.remindAtCount:

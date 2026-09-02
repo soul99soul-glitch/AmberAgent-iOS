@@ -27389,43 +27389,43 @@
         }
       }
     },
-    "单轮工具调用上限": {
+    "单轮上限": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Per-turn tool call limit"
+            "value": "Per-turn limit"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "1ラウンドあたりのツール呼び出し上限"
+            "value": "1回の上限"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "라운드당 도구 호출 한도"
+            "value": "회당 한도"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Лимит вызовов инструментов за раунд"
+            "value": "Лимит за цикл"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "单轮工具调用上限"
+            "value": "单轮上限"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "單輪工具呼叫上限"
+            "value": "單輪上限"
           }
         }
       }
@@ -82657,43 +82657,43 @@
         }
       }
     },
-    "达到上限后模型会用现有信息总结收尾，并说明未完成的步骤": {
+    "达到后自动总结收尾": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Once the limit is reached, the model will wrap up with a summary based on the information available and explain which steps remain unfinished"
+            "value": "Wraps up automatically at the limit"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "上限に達すると、モデルは現在の情報でまとめて終了し、未完了の手順を説明します"
+            "value": "上限で自動的にまとめます"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "한도에 도달하면 모델이 현재 정보로 마무리 요약을 작성하고 완료되지 않은 단계를 설명합니다"
+            "value": "한도에서 자동으로 요약합니다"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "После достижения лимита модель завершит работу сводкой по имеющейся информации и укажет незавершённые шаги."
+            "value": "На лимите завершится сводкой"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "达到上限后模型会用现有信息总结收尾，并说明未完成的步骤"
+            "value": "达到后自动总结收尾"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "達到上限後，模型會使用現有資訊總結收尾，並說明未完成的步驟"
+            "value": "達到後自動總結收尾"
           }
         }
       }
@@ -92621,6 +92621,259 @@
           "ru": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
           "zh-Hans": { "stringUnit": { "state": "translated", "value": "stderr: %@" } },
           "zh-Hant": { "stringUnit": { "state": "translated", "value": "stderr: %@" } }
+        }
+      },
+      "打开网页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Open web page" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Webページを開く" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "웹 페이지 열기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Открыть страницу" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "打开网页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "開啟網頁" } }
+        }
+      },
+      "读取网页标签页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Read browser tabs" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Webタブを読み取る" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "웹 탭 읽기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Прочитать вкладки" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "读取网页标签页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "讀取網頁分頁" } }
+        }
+      },
+      "新建网页标签页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "New browser tab" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "新しいWebタブ" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "새 웹 탭" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Новая вкладка" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "新建网页标签页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "新增網頁分頁" } }
+        }
+      },
+      "关闭网页标签页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Close browser tab" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Webタブを閉じる" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "웹 탭 닫기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Закрыть вкладку" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "关闭网页标签页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "關閉網頁分頁" } }
+        }
+      },
+      "观察网页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Observe web page" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Webページを観察" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "웹 페이지 관찰" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Наблюдать страницу" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "观察网页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "觀察網頁" } }
+        }
+      },
+      "提取网页内容": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Extract page content" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ内容を抽出" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 콘텐츠 추출" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Извлечь содержимое" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "提取网页内容" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "擷取網頁內容" } }
+        }
+      },
+      "读取网页节点": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Read page node" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページノードを読み取る" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 노드 읽기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Прочитать узел страницы" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "读取网页节点" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "讀取網頁節點" } }
+        }
+      },
+      "读取视觉快照": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Read visual snapshot" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ビジュアルスナップショットを読み取る" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "시각적 스냅샷 읽기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Прочитать снимок" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "读取视觉快照" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "讀取視覺快照" } }
+        }
+      },
+      "截取网页视口": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Capture page viewport" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ表示範囲を撮影" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 뷰포트 캡처" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Снять область страницы" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "截取网页视口" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "截取網頁視窗" } }
+        }
+      },
+      "读取网页状态": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Read page state" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ状態を読み取る" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 상태 읽기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Прочитать состояние страницы" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "读取网页状态" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "讀取網頁狀態" } }
+        }
+      },
+      "网页后退": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Go back" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "戻る" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "뒤로 이동" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Назад" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "网页后退" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "網頁後退" } }
+        }
+      },
+      "网页前进": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Go forward" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "進む" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "앞으로 이동" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Вперёд" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "网页前进" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "網頁前進" } }
+        }
+      },
+      "清理 WebMount Session": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Clear WebMount session" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "WebMountセッションを消去" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "WebMount 세션 지우기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Очистить сеанс WebMount" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "清理 WebMount Session" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "清理 WebMount 工作階段" } }
+        }
+      },
+      "移除 WebMount 站点": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Remove WebMount site" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "WebMountサイトを削除" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "WebMount 사이트 제거" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Удалить сайт WebMount" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除 WebMount 站点" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除 WebMount 站點" } }
+        }
+      },
+      "读取 WebMount 站点": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Read WebMount sites" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "WebMountサイトを読み取る" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "WebMount 사이트 읽기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Прочитать сайты WebMount" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "读取 WebMount 站点" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "讀取 WebMount 站點" } }
+        }
+      },
+      "点击网页元素": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Click page element" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ要素をクリック" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 요소 클릭" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Нажать элемент страницы" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "点击网页元素" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "點擊網頁元素" } }
+        }
+      },
+      "点击网页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Tap web page" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Webページをタップ" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "웹 페이지 탭" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Нажать на страницу" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "点击网页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "點擊網頁" } }
+        }
+      },
+      "输入网页字段": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Type in page field" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ項目に入力" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 필드에 입력" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Ввести в поле страницы" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "输入网页字段" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "輸入網頁欄位" } }
+        }
+      },
+      "发送网页按键": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Send page keys" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページにキーを送信" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 키 보내기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Отправить клавиши" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "发送网页按键" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "傳送網頁按鍵" } }
+        }
+      },
+      "滚动网页": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Scroll web page" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "Webページをスクロール" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "웹 페이지 스크롤" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Прокрутить страницу" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "滚动网页" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "捲動網頁" } }
+        }
+      },
+      "选择网页选项": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Select page option" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ項目を選択" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 옵션 선택" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Выбрать параметр" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "选择网页选项" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "選擇網頁選項" } }
+        }
+      },
+      "查找网页内容": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Find page content" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ内容を検索" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 콘텐츠 찾기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Найти на странице" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "查找网页内容" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "尋找網頁內容" } }
+        }
+      },
+      "等待网页条件": {
+        "extractionState": "manual",
+        "localizations": {
+          "en": { "stringUnit": { "state": "translated", "value": "Wait for page condition" } },
+          "ja": { "stringUnit": { "state": "translated", "value": "ページ条件を待機" } },
+          "ko": { "stringUnit": { "state": "translated", "value": "페이지 조건 대기" } },
+          "ru": { "stringUnit": { "state": "translated", "value": "Ждать условие страницы" } },
+          "zh-Hans": { "stringUnit": { "state": "translated", "value": "等待网页条件" } },
+          "zh-Hant": { "stringUnit": { "state": "translated", "value": "等待網頁條件" } }
         }
       },
       "exit %ld · 无输出": {

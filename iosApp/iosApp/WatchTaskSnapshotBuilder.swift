@@ -218,6 +218,13 @@ enum WatchTaskSnapshotBuilder {
                     chips: [request.recipeName, "v\(request.recipeVersion)"],
                     languageCode: languageCode
                 )
+            case .pluginInvocation(let payload):
+                decisionBody = body(
+                    primary: payload.toolId,
+                    fallback: request.reason,
+                    chips: [request.recipeName, "v\(request.recipeVersion)", payload.handler],
+                    languageCode: languageCode
+                )
             case .recipeImport(let payload):
                 decisionBody = body(
                     primary: payload.description,

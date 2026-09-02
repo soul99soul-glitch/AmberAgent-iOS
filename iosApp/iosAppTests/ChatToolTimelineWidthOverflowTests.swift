@@ -10,7 +10,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
     private let screenWidth: CGFloat = 393
     private let columnWidth: CGFloat = 393 - ChatLayout.contentHorizontalInset * 2
 
-    func testWebMountTitlePrefersHumanLabelOverRawJSON() {
+    func testWebMountCapsuleUsesStableActionTitleInsteadOfRawJSON() {
         let input = """
         {"display_name":"GitHub","homepage_url":"https://github.com/openai/codex","site_id":"user_github"}
         """
@@ -24,11 +24,11 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             metadata: nil
         )
         let title = ChatToolStepModel(tool: tool).title
-        XCTAssertTrue(title.contains("GitHub"), "标题应含站点名，实际=\(title)")
+        XCTAssertEqual(title, "添加 WebMount 站点")
         XCTAssertFalse(title.contains("{"), "标题不应再塞整段 JSON，实际=\(title)")
     }
 
-    func testWebMountTitlePrefersNameWhenDisplayNameMissing() {
+    func testWebMountCapsuleActionTitleDoesNotDependOnInputShape() {
         let input = #"{"name":"OpenAI Codex","url":"https://github.com/openai/codex"}"#
         let tool = UIMessagePart.Tool(
             toolCallId: "call_wm_site_add_name",
@@ -40,7 +40,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             metadata: nil
         )
         let title = ChatToolStepModel(tool: tool).title
-        XCTAssertTrue(title.contains("OpenAI Codex"), "标题应优先 name，实际=\(title)")
+        XCTAssertEqual(title, "添加 WebMount 站点")
         XCTAssertFalse(title.contains("https://"), "不应退回整段 URL，实际=\(title)")
     }
 
@@ -56,7 +56,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             metadata: nil
         )
         let typeStep = ChatToolStepModel(tool: typeTool)
-        XCTAssertEqual(typeStep.title, "准备输入网页字段 · #password")
+        XCTAssertEqual(typeStep.title, "输入网页字段")
         XCTAssertFalse(typeStep.title.contains(typedSecret))
         XCTAssertFalse(typeStep.detail?.contains(typedSecret) == true)
 
@@ -76,7 +76,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         let openStep = ChatToolStepModel(tool: openTool)
         XCTAssertFalse(openStep.title.contains(URLSecret))
         XCTAssertFalse(openStep.detail?.contains(URLSecret) == true)
-        XCTAssertTrue(openStep.title.contains("https://example.com/orders"))
+        XCTAssertEqual(openStep.title, "打开网页")
     }
 
     /// cell 自 sizing 用无界提案询问理想宽度：胶囊理想宽必须自身就在列宽预算内，
@@ -185,17 +185,17 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             )).title
         }
 
-        XCTAssertEqual(title(input: ""), "搜索")
-        XCTAssertEqual(title(input: "{"), "搜索")
-        XCTAssertEqual(title(input: #"{"query":"天气"#), "搜索")
-        XCTAssertEqual(title(input: "{}"), "搜索")
-        XCTAssertEqual(title(input: #"{"query":"天气"}"#), "搜索 天气")
+        XCTAssertEqual(title(input: ""), "搜索网页")
+        XCTAssertEqual(title(input: "{"), "搜索网页")
+        XCTAssertEqual(title(input: #"{"query":"天气"#), "搜索网页")
+        XCTAssertEqual(title(input: "{}"), "搜索网页")
+        XCTAssertEqual(title(input: #"{"query":"天气"}"#), "搜索网页")
         XCTAssertEqual(
             title(
                 input: #"{"query":"天气"}"#,
                 output: [UIMessagePart.Text(text: #"{"results":[]}"#, metadata: nil)]
             ),
-            "搜索 天气"
+            "搜索网页"
         )
         for input in ["", "{", #"{"query":"天气"#, "{}", #"{"query":"天气"}"#] {
             XCTAssertFalse(
@@ -281,10 +281,10 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
 
         let toolSearch = model(toolName: "tool_search")
         XCTAssertEqual(toolSearch.title, "查找工具")
-        XCTAssertLessThan(
-            idealWidth(toolSearch) + 20,
-            idealWidth(model(toolName: "search_web")),
-            "tool_search 不应继承 search_web 的固定长标题槽"
+        XCTAssertLessThanOrEqual(
+            idealWidth(toolSearch),
+            idealWidth(model(toolName: "search_web")) + 1,
+            "tool_search 应只按自身可见标题自适应"
         )
 
         let compactColumnWidth = 320 - ChatLayout.contentHorizontalInset * 2
@@ -297,6 +297,192 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             height: UIView.layoutFittingExpandedSize.height
         ))
         XCTAssertLessThanOrEqual(fitted.width, compactColumnWidth + 1, "fitted=\(fitted)")
+    }
+
+    func testToolSearchCapsuleIdealWidthConstantAcrossLifecycle() {
+        func idealWidth(output: [UIMessagePart]) -> CGFloat {
+            let tool = UIMessagePart.Tool(
+                toolCallId: "call_tool_search_lifecycle",
+                toolName: "tool_search",
+                input: #"{"query":"browser automation"}"#,
+                output: output,
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            return UIHostingController(
+                rootView: ChatToolTimeline(
+                    steps: [ChatToolStepModel(tool: tool)],
+                    onTapStep: { _ in }
+                )
+            )
+            .sizeThatFits(in: CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: UIView.layoutFittingExpandedSize.height
+            ))
+            .width
+        }
+
+        let active = idealWidth(output: [])
+        let completed = idealWidth(output: [
+            UIMessagePart.Text(text: #"{"tools":[{"name":"wm_click"}]}"#, metadata: nil)
+        ])
+        let failed = idealWidth(output: [
+            UIMessagePart.Text(text: #"{"error":"tool search failed"}"#, metadata: nil)
+        ])
+
+        XCTAssertEqual(completed, active, "tool_search 完成时不应改变胶囊宽度")
+        XCTAssertEqual(failed, active, "tool_search 失败时不应改变胶囊宽度")
+    }
+
+    func testWebMountCapsuleIdealWidthConstantAcrossStreamingAndLifecycle() {
+        func idealWidth(input: String, output: [UIMessagePart] = []) -> CGFloat {
+            let tool = UIMessagePart.Tool(
+                toolCallId: "call_wm_click_lifecycle",
+                toolName: "wm_click",
+                input: input,
+                output: output,
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            return UIHostingController(
+                rootView: ChatToolTimeline(
+                    steps: [ChatToolStepModel(tool: tool)],
+                    onTapStep: { _ in }
+                )
+            )
+            .sizeThatFits(in: CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: UIView.layoutFittingExpandedSize.height
+            ))
+            .width
+        }
+
+        let empty = idealWidth(input: "")
+        let partialJSON = idealWidth(input: #"{"target":"css:button"#)
+        let completeInput = idealWidth(input: #"{"target":"css:button"}"#)
+        let completed = idealWidth(
+            input: #"{"target":"css:button"}"#,
+            output: [UIMessagePart.Text(text: #"{"ok":true,"status":"ready"}"#, metadata: nil)]
+        )
+        let failed = idealWidth(
+            input: #"{"target":"css:button"}"#,
+            output: [UIMessagePart.Text(text: #"{"error":"click failed"}"#, metadata: nil)]
+        )
+
+        for (phase, width) in [
+            ("partialJSON", partialJSON),
+            ("completeInput", completeInput),
+            ("completed", completed),
+            ("failed", failed),
+        ] {
+            XCTAssertEqual(width, empty, "WebMount 胶囊在 \(phase) 阶段改变宽度")
+        }
+        XCTAssertLessThanOrEqual(empty, columnWidth + 1, "WebMount 胶囊理想宽超出列宽：\(empty)")
+    }
+
+    /// 状态/标签页这类短浏览器动作不携带需要常驻胶囊的目标信息。标题本身应当
+    /// 在执行中、成功、失败间保持稳定，并按可见内容收缩；不能再用 20 字透明
+    /// 占位把短标题撑成近整列宽。
+    func testShortWebMountCapsulesHugStableVisibleTitleWithoutHiddenSentinel() {
+        func model(toolName: String, output: [UIMessagePart]) -> ChatToolStepModel {
+            ChatToolStepModel(tool: UIMessagePart.Tool(
+                toolCallId: "call_\(toolName)_compact",
+                toolName: toolName,
+                input: #"{"session_id":"ios_wm_example"}"#,
+                output: output,
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ))
+        }
+
+        for (toolName, expectedTitle) in [
+            ("wm_state", "读取网页状态"),
+            ("wm_tab_list", "读取网页标签页"),
+        ] {
+            let active = model(toolName: toolName, output: [])
+            let completed = model(
+                toolName: toolName,
+                output: [UIMessagePart.Text(text: #"{"ok":true}"#, metadata: nil)]
+            )
+            let failed = model(
+                toolName: toolName,
+                output: [UIMessagePart.Text(text: #"{"error":"failed"}"#, metadata: nil)]
+            )
+
+            XCTAssertEqual(active.title, expectedTitle)
+            XCTAssertEqual(completed.title, expectedTitle)
+            XCTAssertEqual(failed.title, expectedTitle)
+            let host = UIHostingController(
+                rootView: ChatToolTimeline(steps: [active], onTapStep: { _ in })
+            )
+            let fitted = host.sizeThatFits(in: CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: UIView.layoutFittingExpandedSize.height
+            ))
+            XCTAssertLessThan(
+                fitted.width,
+                columnWidth * 0.75,
+                "短浏览器工具应按内容收缩（\(toolName)）：fitted=\(fitted)"
+            )
+        }
+    }
+
+    func testStatefulToolCapsulesKeepOneAdaptiveTitleAcrossLifecycle() {
+        let cases: [(name: String, title: String, input: String)] = [
+            ("subagent_dispatch", "启动子智能体", #"{"objective":"检查调用链"}"#),
+            ("search_web", "搜索网页", #"{"query":"天气"}"#),
+            ("scrape_web", "读取网页", #"{"url":"https://example.com"}"#),
+            ("memory_tool", "更新核心记忆", "{}"),
+            ("mcp_call", "调用 MCP", #"{"server":"demo","tool":"read"}"#),
+            ("model_council_run", "模型议会", "{}"),
+            ("generate_image", "生成图片", #"{"prompt":"一只猫"}"#),
+            ("ish_handoff", "iSH 交接", "{}"),
+            ("ios_ish_execute", "内置 iSH 执行", "{}"),
+            ("terminal_execute", "Remote SSH 执行", "{}"),
+            (IOSAmberShellToolCatalog.executeToolName, "AmberShell 执行", "{}"),
+            (IOSRemoteTerminalToolCatalog.jobStartToolName, "启动终端作业", "{}"),
+            ("workspace_file_read", "读取 Workspace 文件", #"{"path":"/workspace/a.md"}"#),
+        ]
+
+        func model(_ item: (name: String, title: String, input: String), output: [UIMessagePart]) -> ChatToolStepModel {
+            ChatToolStepModel(tool: UIMessagePart.Tool(
+                toolCallId: "call_\(item.name)",
+                toolName: item.name,
+                input: item.input,
+                output: output,
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ))
+        }
+
+        func idealWidth(_ step: ChatToolStepModel) -> CGFloat {
+            UIHostingController(rootView: ChatToolTimeline(steps: [step], onTapStep: { _ in }))
+                .sizeThatFits(in: CGSize(
+                    width: CGFloat.greatestFiniteMagnitude,
+                    height: UIView.layoutFittingExpandedSize.height
+                ))
+                .width
+        }
+
+        for item in cases {
+            let active = model(item, output: [])
+            let completed = model(item, output: [
+                UIMessagePart.Text(text: #"{"ok":true,"status":"completed"}"#, metadata: nil)
+            ])
+            let failed = model(item, output: [
+                UIMessagePart.Text(text: #"{"ok":false,"status":"failed","error":"failed"}"#, metadata: nil)
+            ])
+            XCTAssertEqual(active.title, item.title, item.name)
+            XCTAssertEqual(completed.title, item.title, item.name)
+            XCTAssertEqual(failed.title, item.title, item.name)
+            XCTAssertEqual(idealWidth(completed), idealWidth(active), item.name)
+            XCTAssertEqual(idealWidth(failed), idealWidth(active), item.name)
+            XCTAssertLessThanOrEqual(idealWidth(active), columnWidth + 1, item.name)
+        }
     }
 
     func testLongWebMountToolTitleFitsWhenColumnWidthIsProposed() {
@@ -381,7 +567,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         XCTAssertLessThanOrEqual(fitted.width, columnWidth + 1, "fitted=\(fitted)")
     }
 
-    func testUnverifiedWebMountMutationDoesNotRenderAsCompleted() {
+    func testDispatchedWebMountMutationKeepsReobserveHintWithoutRenderingAsFailure() {
         let tool = UIMessagePart.Tool(
             toolCallId: "call_wm_unverified",
             toolName: "wm_click",
@@ -396,7 +582,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         )
 
         let model = ChatToolStepModel(tool: tool)
-        XCTAssertEqual(model.state, .failed)
+        XCTAssertEqual(model.state, .done)
         XCTAssertTrue(model.detail?.contains("尚未验证") == true)
     }
 

@@ -106,11 +106,12 @@ struct IOSURLSessionSearchHTTPTransport: IOSSearchHTTPTransport {
     }
 }
 
-private final class IOSBoundedPublicURLSessionLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+final class IOSBoundedPublicURLSessionLoader: NSObject, URLSessionDataDelegate, @unchecked Sendable {
     private let configuration: URLSessionConfiguration
     private let maximumResponseBytes: Int
     private let requiresHTTPS: Bool
     private let resolveHost: @Sendable (String) throws -> [String]
+    private let allowedRedirectDomains: [String]?
     private let lock = NSLock()
 
     private var continuation: CheckedContinuation<(HTTPURLResponse, Data), Error>?
@@ -124,12 +125,14 @@ private final class IOSBoundedPublicURLSessionLoader: NSObject, URLSessionDataDe
         configuration: URLSessionConfiguration,
         maximumResponseBytes: Int,
         requiresHTTPS: Bool,
-        resolveHost: @escaping @Sendable (String) throws -> [String]
+        resolveHost: @escaping @Sendable (String) throws -> [String],
+        allowedRedirectDomains: [String]? = nil
     ) {
         self.configuration = configuration
         self.maximumResponseBytes = maximumResponseBytes
         self.requiresHTTPS = requiresHTTPS
         self.resolveHost = resolveHost
+        self.allowedRedirectDomains = allowedRedirectDomains
     }
 
     func load(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
@@ -198,6 +201,10 @@ private final class IOSBoundedPublicURLSessionLoader: NSObject, URLSessionDataDe
                 throw IOSSearchExecutorError.disallowedURL("HTTPS redirects may not downgrade to HTTP")
             }
             guard let host = validated.host else { throw IOSSearchExecutorError.invalidURL }
+            if let allowedRedirectDomains,
+               !allowedRedirectDomains.contains(where: { host == $0 || host.hasSuffix(".\($0)") }) {
+                throw IOSSearchExecutorError.disallowedURL("redirect leaves the declared plugin domain scope")
+            }
             let addresses = try resolveHost(host)
             guard !addresses.isEmpty, addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
                 throw IOSSearchExecutorError.disallowedURL("host resolves to a non-public address")

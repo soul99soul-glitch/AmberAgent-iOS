@@ -103,6 +103,7 @@ final class ChatKernelRunHost {
     private var currentConversationIdForRun: KotlinUuid?
     private var currentParams: TextGenerationParams?
     private var currentToolExposureBridge: IosToolExposureBridge?
+    private var currentDynamicToolSnapshot: IOSDynamicToolCatalogSnapshot?
     /// I-4:run 开始时定格的设置快照(逐轮压缩配置只从这里取,CG-C
     /// settingsSnapshot(forRun:) 等价)。
     private var runSettings: Settings?
@@ -203,7 +204,8 @@ final class ChatKernelRunHost {
         inputDigest: String,
         conversationId: KotlinUuid?,
         uploadMessages: [UIMessage],
-        toolExposureBridge: IosToolExposureBridge? = nil
+        toolExposureBridge: IosToolExposureBridge? = nil,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil
     ) {
         if isRunning {
             cancel()
@@ -236,7 +238,13 @@ final class ChatKernelRunHost {
         )
         displayBaseline = uploadMessages
         let bridge = toolExposureBridge ?? IosToolExposureBridge(tools: params.tools)
+        // Capture at start, before MCP/provider awaits. Production passes the
+        // same snapshot that built `bridge`; the fallback keeps direct Host
+        // callers deterministic at their own start boundary.
+        let pinnedRecipeCatalog = recipeCatalogSnapshot
+            ?? IOSDynamicToolRegistry.shared.currentSnapshot
         currentToolExposureBridge = bridge
+        currentDynamicToolSnapshot = pinnedRecipeCatalog
         currentGenerativeUiRequirement = .none
         currentGenerativeUiFallbackAttempted = false
         currentGenerativeUiRetryIssue = nil
@@ -374,6 +382,7 @@ final class ChatKernelRunHost {
                 conversationId: conversationId,
                 initialMessages: uploadMessages,
                 toolExposureBridge: bridge,
+                recipeCatalogSnapshot: pinnedRecipeCatalog,
                 citationTracker: tracker
             )
             self.adapterDidStart = true
@@ -387,6 +396,7 @@ final class ChatKernelRunHost {
                 inputDigest: inputDigest,
                 conversationId: conversationId,
                 bridge: bridge,
+                recipeCatalogSnapshot: pinnedRecipeCatalog,
                 tracker: tracker
             )
             guard self.currentRunId == runId else { return }
@@ -899,6 +909,7 @@ final class ChatKernelRunHost {
         conversationId: KotlinUuid?,
         initialMessages: [UIMessage],
         toolExposureBridge: IosToolExposureBridge,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
         citationTracker: IOSMemoryCitationTracker
     ) -> ChatRunKernelAdapter.RunRequest {
         let bindingsBox = UncheckedHostBindingsBox(bindings)
@@ -913,7 +924,10 @@ final class ChatKernelRunHost {
             conversationId: conversationId,
             initialMessages: initialMessages,
             toolExposureBridge: toolExposureBridge,
-            recipeCatalogSnapshot: IOSDynamicToolRegistry.shared.currentSnapshot,
+            recipeCatalogSnapshot: recipeCatalogSnapshot,
+            recipeCatalogRefresh: {
+                await IOSDynamicToolRegistry.shared.refresh()
+            },
             executionPolicy: runExecutionPolicy,
             maxToolResumeCount: dependencies.settingsStore.chatMaxToolResumeCount,
             drainSteer: {
@@ -953,6 +967,7 @@ final class ChatKernelRunHost {
         inputDigest: String,
         conversationId: KotlinUuid?,
         bridge: IosToolExposureBridge,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?,
         tracker: IOSMemoryCitationTracker
     ) async {
         guard terminalWireName == AgentRunStatus.completed.wireName,
@@ -989,6 +1004,7 @@ final class ChatKernelRunHost {
             conversationId: conversationId,
             initialMessages: retryBase,
             toolExposureBridge: bridge,
+            recipeCatalogSnapshot: recipeCatalogSnapshot,
             citationTracker: tracker
         )
         _ = await repairAdapter.run(request)
@@ -1196,6 +1212,7 @@ final class ChatKernelRunHost {
             generativeUiRequirement: handoff.generativeUiRequirement,
             generativeUiFallbackAttempted: handoff.generativeUiFallbackAttempted,
             fullToolNames: handoff.fullToolNames,
+            dynamicToolSnapshot: handoff.dynamicToolSnapshot,
             executionPolicy: handoff.executionPolicy
         )
     }
@@ -1881,6 +1898,14 @@ final class ChatKernelRunHost {
             backgroundHandoff = nil
             return
         }
+        let dynamicSnapshot = currentDynamicToolSnapshot
+        let backgroundDynamicNames = Set(
+            dynamicSnapshot?.backgroundEligibleDescriptors.map(\.toolId) ?? []
+        )
+        let backgroundVisibleTools = params.tools.filter { tool in
+            !IOSDynamicToolRegistry.isDynamicWorkflowToolName(tool.name)
+                || backgroundDynamicNames.contains(tool.name)
+        }
         backgroundHandoff = IOSChatBackgroundHandoff(
             runId: runId,
             startedAt: currentStartedAt,
@@ -1888,14 +1913,18 @@ final class ChatKernelRunHost {
             conversationId: conversationId,
             providerId: providerSetting.id.toHexDashString(),
             providerSetting: providerSetting,
-            params: params,
+            params: params.replacingTools(backgroundVisibleTools),
             uploadMessages: uploadMessages,
             displayMessages: bindings.getMessages(),
             mode: .continueModel,
             generativeUiRequirement: currentGenerativeUiRequirement,
             generativeUiFallbackAttempted: currentGenerativeUiFallbackAttempted,
             fullToolNames: (currentToolExposureBridge?.fullToolDeclarations().map(\.name) ?? [])
-                .filter { !IOSDynamicToolRegistry.isRecipeToolName($0) },
+                .filter {
+                    !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0)
+                        || backgroundDynamicNames.contains($0)
+                },
+            dynamicToolSnapshot: dynamicSnapshot,
             executionPolicy: runExecutionPolicy
         )
     }
@@ -2420,6 +2449,7 @@ final class ChatKernelRunHost {
         currentConversationIdForRun = nil
         currentParams = nil
         currentToolExposureBridge = nil
+        currentDynamicToolSnapshot = nil
         runSettings = nil
         runExecutionPolicy = nil
         displayBaseline = []

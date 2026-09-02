@@ -92,6 +92,7 @@ enum IOSRecipeRunOutcome: Equatable {
 
 struct IOSRecipeRunner: Sendable {
     let manifest: IOSRecipeManifest
+    let artifactId: String
     let catalog: IOSRecipeCatalogLookup
     /// `(toolId, argsJSON) async throws -> output JSON text`. Throws = step
     /// failure; a returned string is the step's raw output JSON (which later
@@ -108,12 +109,14 @@ struct IOSRecipeRunner: Sendable {
 
     init(
         manifest: IOSRecipeManifest,
+        artifactId: String,
         catalog: @escaping IOSRecipeCatalogLookup,
         executePrimitive: @escaping @MainActor @Sendable (String, String) async throws -> String,
         ledger: (any IOSAgentRunLedgering)?,
         runId: String
     ) {
         self.manifest = manifest
+        self.artifactId = artifactId
         self.catalog = catalog
         self.executePrimitive = executePrimitive
         self.ledger = ledger
@@ -340,7 +343,7 @@ struct IOSRecipeRunner: Sendable {
                 runId: runId,
                 toolCallId: toolCallId,
                 outcome: "completed",
-                artifactId: "recipe__\(plan.recipeName)",
+                artifactId: artifactId,
                 artifactVersion: plan.recipeVersion,
                 outcomeKind: "success",
                 errorCode: nil,
@@ -404,7 +407,7 @@ struct IOSRecipeRunner: Sendable {
         }
         let payload: [String: Any] = [
             "ok": false,
-            "tool": "recipe__\(manifest.name)",
+            "tool": artifactId,
             "step": failedStep ?? NSNull(),
             "reason": reason,
         ]
@@ -560,7 +563,7 @@ struct IOSRecipeRunner: Sendable {
             runId: runId,
             toolCallId: toolCallId,
             outcome: outcome,
-            artifactId: "recipe__\(plan.recipeName)",
+            artifactId: artifactId,
             artifactVersion: plan.recipeVersion,
             outcomeKind: outcomeKind,
             errorCode: errorCode,

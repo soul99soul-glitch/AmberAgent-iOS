@@ -139,6 +139,7 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
         maxOutputChars: Int = IOSJsSandboxEngine.defaultMaxOutputChars,
         tools: IOSJsSandboxTools? = nil,
         store: IOSJsSandboxStore? = nil,
+        restrictedPluginMode: Bool = false,
         completion: (@Sendable (IOSJsSandboxResult) -> Void)? = nil
     ) async -> IOSJsSandboxResult {
         let safeTimeoutMs = max(timeoutMs, 1)
@@ -168,7 +169,14 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
                     box.finish(.failure(message: "exec evaluation cancelled"), evaluationFinished: true)
                 } else {
                     queue.async {
-                        let result = Self.runEvaluation(code: code, tools: tools, store: store, gate: gate)
+                        let result = Self.runEvaluation(
+                            code: code,
+                            maxOutputChars: maxOutputChars,
+                            tools: tools,
+                            store: store,
+                            restrictedPluginMode: restrictedPluginMode,
+                            gate: gate
+                        )
                         box.finish(result, evaluationFinished: true)
                     }
                 }
@@ -209,8 +217,10 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
 
     private static func runEvaluation(
         code: String,
+        maxOutputChars: Int,
         tools: IOSJsSandboxTools? = nil,
         store: IOSJsSandboxStore? = nil,
+        restrictedPluginMode: Bool = false,
         gate: IOSJsNestedToolsGate? = nil
     ) -> IOSJsSandboxResult {
         let virtualMachine = JSVirtualMachine()
@@ -219,7 +229,7 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
             return .failure(message: "could not create JavaScriptCore context")
         }
 
-        let logs = IOSJsLogCollector()
+        let logs = IOSJsLogCollector(maxCharacters: max(maxOutputChars, 1))
 
         // Native sink for the JS console shim: `__amberConsoleSink(level, text)`.
         // Runs synchronously on this queue while evaluateScript executes.
@@ -265,6 +275,16 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
         // shared by all cells of the conversation, persisted by the registry).
         if let store {
             installStoreGlobals(store, into: context)
+        }
+
+        // Installed plugin scripts are declarative package members, not an
+        // interactive REPL. Dynamic source construction adds no capability
+        // and makes review/signature provenance harder to reason about, so
+        // hide its direct globals. Security still rests on the fresh JSC VM
+        // and the capability-checked host bridge, not on this convenience
+        // restriction (constructors remain JavaScript language intrinsics).
+        if restrictedPluginMode {
+            context.evaluateScript("globalThis.eval = undefined; globalThis.Function = undefined;")
         }
 
         // A shim failure must not be mistaken for the user script's exception.
@@ -478,12 +498,24 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
 /// captured value to be Sendable — the lock makes it safe regardless.
 private final class IOSJsLogCollector: @unchecked Sendable {
     private let lock = NSLock()
+    private let maxCharacters: Int
+    private let maxEntries: Int
     private var entries: [String] = []
+    private var characterCount = 0
+
+    init(maxCharacters: Int, maxEntries: Int = 256) {
+        self.maxCharacters = max(maxCharacters, 1)
+        self.maxEntries = max(maxEntries, 1)
+    }
 
     func append(_ entry: String) {
         lock.lock()
-        entries.append(entry)
-        lock.unlock()
+        defer { lock.unlock() }
+        guard entries.count < maxEntries, characterCount < maxCharacters else { return }
+        let remaining = maxCharacters - characterCount
+        let bounded = String(entry.prefix(remaining))
+        entries.append(bounded)
+        characterCount += bounded.count
     }
 
     func snapshot() -> [String] {

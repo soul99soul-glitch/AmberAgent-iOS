@@ -266,7 +266,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertTrue(systemText.contains("tool_search"))
     }
 
-    func testNonLazyRunDoesNotInjectDiscoveryGuidance() {
+    func testNoLocalExecutorStillUsesDiscoveryGuidanceWhenCatalogIsHeavy() {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
             sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
@@ -274,7 +274,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
             autoGenerateResponses: false
         )
         _ = viewModel.currentToolDeclarationNames()
-        XCTAssertEqual(viewModel.toolExposureBridgeForTesting()?.lazyModeEnabled(), false)
+        XCTAssertEqual(viewModel.toolExposureBridgeForTesting()?.lazyModeEnabled(), true)
 
         let uploadMessages = viewModel.preparedUploadMessagesForTesting([
             UIMessage.companion.user(prompt: "hello")
@@ -283,9 +283,9 @@ final class IOSToolSearchExposureTests: XCTestCase {
             .filter { $0.role == MessageRole.system }
             .map { $0.toText() }
             .joined(separator: "\n")
-        XCTAssertFalse(
+        XCTAssertTrue(
             systemText.contains("not callable until"),
-            "non-lazy runs must not inject discovery guidance"
+            "the current no-local-executor catalog still exceeds the lazy threshold"
         )
     }
 
@@ -600,12 +600,12 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertFalse(visibleNames.contains("wm_click"), "unexposed deferred tools must stay hidden")
     }
 
-    // MARK: - Light config (≤40 declared tools → bypass mode)
+    // MARK: - Catalog growth still preserves lazy exposure
 
-    func testLightConfigKeepsFullDeclarationList() {
-        // Without a local tool executor the declared set is small enough to
-        // stay below the 40-tool threshold: every declared tool plus the
-        // bridge-appended tool_search is visible, exactly like pre-P0-a.
+    func testNoLocalExecutorKeepsCompleteCatalogBehindLazyExposure() {
+        // Recipe lifecycle adds enough declarations that even the no-local-
+        // executor configuration exceeds the 40-tool threshold. The full
+        // catalog must stay complete while only resident tools are visible.
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
             sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
@@ -615,12 +615,12 @@ final class IOSToolSearchExposureTests: XCTestCase {
         let names = Set(viewModel.currentToolDeclarationNames())
         let bridge = viewModel.toolExposureBridgeForTesting()
 
-        XCTAssertEqual(bridge?.lazyModeEnabled(), false, "light config must bypass lazy mode")
+        XCTAssertEqual(bridge?.lazyModeEnabled(), true)
         let staticDeclarations: Set<String> = [
             "search_web", "scrape_web", "memory_tool", "ask_user",
             "mcp_call", "mcp_list", "mcp_test", "mcp_describe_tool", "mcp_import_from_skill",
             "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
-            "recipe_import",
+            "recipes_list", "recipe_validate", "recipe_import", "recipe_enable", "recipe_disable", "recipe_delete",
             "subagent_dispatch", "model_council_run",
             // P1-c/P1-d: 线程编排六工具追加进 iOS 声明面（非常驻；轻配置 bypass 模式
             // 下与其余声明一起全量可见——阈值内行为契约随声明面扩展而更新）。
@@ -632,11 +632,20 @@ final class IOSToolSearchExposureTests: XCTestCase {
             // M5: discovery 引导引用的 tools_list（常驻目录工具）。
             "tools_list",
         ]
-        XCTAssertEqual(
-            names,
-            staticDeclarations.union(["tool_search"]),
-            "below threshold every declared tool plus tool_search must be visible"
+        let fullNames = Set(bridge?.fullToolDeclarations().map(\.name) ?? [])
+        XCTAssertTrue(
+            staticDeclarations.union(["tool_search"]).isSubset(of: fullNames),
+            "lazy exposure must not drop core declarations from the searchable catalog"
         )
+        XCTAssertTrue(
+            IOSAppleAgentToolCatalog.toolNames.isSubset(of: fullNames),
+            "Apple capability declarations must remain searchable without a workspace executor"
+        )
+        XCTAssertTrue(IOSProviderConfigToolCatalog.toolNames.isSubset(of: fullNames))
+        XCTAssertTrue(IOSThemePackToolCatalog.toolNames.isSubset(of: fullNames))
+        XCTAssertEqual(names, Set(bridge?.visibleTools().map(\.name) ?? []))
+        XCTAssertTrue(names.contains("recipes_list"))
+        XCTAssertFalse(names.contains("recipe_delete"))
     }
 
     // MARK: - Kotlin→Swift interop smoke

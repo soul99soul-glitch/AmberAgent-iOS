@@ -1043,8 +1043,9 @@ final class IOSThreadOrchestrationToolService {
         // M3: fullToolNames 取 run 的桥全目录（对齐 ChatKernelRunHost
         // handoff 的做法）——params.tools 只是当轮可见子集，子线程目录会被
         // 永久截断（未暴露的 wm_* 等永远不可 search/命中）。桥不可用回退现行为。
-        let fullToolNames = toolExposureBridge?.fullToolDeclarations().map(\.name)
-            ?? params.tools.map { $0.name }
+        let fullToolNames = (toolExposureBridge?.fullToolDeclarations().map(\.name)
+            ?? params.tools.map { $0.name })
+            .filter { !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0) }
         // 子线程是干活线程，不能继承聊天取向的输出上限：聊天下每条回复的
         // maxTokens 通常只有几千 token（或为 nil 吃服务商默认的小上限），长报告
         // 必被截断成"达到输出上限"终态（真机观察到的子代理失败）。地板 32k，

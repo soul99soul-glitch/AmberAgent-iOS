@@ -77,11 +77,15 @@ struct SkillsView: View {
                                     Text(skill.name)
                                         .font(.body.weight(.semibold))
                                         .foregroundStyle(AmberTheme.foreground)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
                                     if !skill.description_.isEmpty {
                                         Text(skill.description_)
                                             .font(.caption)
                                             .foregroundStyle(AmberTheme.muted)
                                             .lineLimit(2)
+                                            .truncationMode(.tail)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -128,6 +132,15 @@ struct SkillsView: View {
                     subtitle: "管理本机 Recipe 组合工具：版本、步骤与回退"
                 ) {
                     router.navigate(to: .recipes)
+                }
+                Divider().overlay(AmberTheme.borderSoft).padding(.leading, 14)
+                SkillUtilityRow(
+                    systemImage: "puzzlepiece.extension",
+                    iconColor: AmberTheme.accentGreen,
+                    title: "插件中心",
+                    subtitle: "导入、授权、隔离与检查动态插件"
+                ) {
+                    router.navigate(to: .plugins)
                 }
             }
         }

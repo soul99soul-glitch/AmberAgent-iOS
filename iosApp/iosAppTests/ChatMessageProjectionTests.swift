@@ -171,11 +171,13 @@ final class ChatMessageProjectionTests: XCTestCase {
         }
 
         let timedOut = model(status: IOSTerminalJobStatus.timedOut.rawValue)
-        XCTAssertEqual(timedOut.title, "Remote SSH 已超时")
+        XCTAssertEqual(timedOut.title, "Remote SSH 执行")
+        XCTAssertEqual(timedOut.detail, "已超时")
         XCTAssertEqual(timedOut.state, .failed)
 
         let cancelled = model(status: IOSTerminalJobStatus.cancelled.rawValue)
-        XCTAssertEqual(cancelled.title, "Remote SSH 已取消")
+        XCTAssertEqual(cancelled.title, "Remote SSH 执行")
+        XCTAssertEqual(cancelled.detail, "已取消")
         XCTAssertEqual(cancelled.state, .cancelled)
     }
 
@@ -195,7 +197,7 @@ final class ChatMessageProjectionTests: XCTestCase {
             metadata: nil
         ))
 
-        XCTAssertEqual(model.title, "内置 iSH 作业已启动")
+        XCTAssertEqual(model.title, "内置 iSH 执行")
         XCTAssertEqual(model.detail, "运行中")
         XCTAssertEqual(model.state, .active)
     }
@@ -216,7 +218,8 @@ final class ChatMessageProjectionTests: XCTestCase {
             metadata: nil
         ))
 
-        XCTAssertEqual(model.title, "内置 iSH 已取消")
+        XCTAssertEqual(model.title, "内置 iSH 执行")
+        XCTAssertEqual(model.detail, "已取消")
         XCTAssertEqual(model.state, .cancelled)
     }
 

@@ -257,7 +257,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .subagent,
-                title: Self.subAgentTitle(from: tool.input),
+                title: Self.localized("启动子智能体"),
                 detail: failureReason ?? Self.subAgentDetail(from: tool.input),
                 state: Self.state(executed: executed, failureReason: failureReason),
                 isSubAgent: true,
@@ -273,11 +273,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .search,
-                // 状态动词在生命周期内恒定（"搜索 <query>"，进行中/完成由尾部转圈/对勾表达，
-                // 与 friendlyToolTitle 同款约定）：若随 executed 换词（正在搜索→已搜索），
-                // 胶囊理想宽在 toolCallStarted/toolResultAppended 间跳变——执行期间撑宽、
-                // 完成缩回（本轮真机 bug）。
-                title: Self.combinedLine(Self.localized("搜索"), query),
+                title: Self.localized("搜索网页"),
                 detail: executed ? (failureReason ?? Self.searchResultSummary(from: tool.output)) : query.map {
                     IOSAppLocalization.formatted(
                         "关键词：%@",
@@ -297,10 +293,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .web,
-                title: Self.combinedLine(
-                    executed ? Self.localized("已读取网页") : Self.localized("正在读取网页"),
-                    url
-                ),
+                title: Self.localized("读取网页"),
                 detail: executed ? (failureReason ?? Self.searchResultSummary(from: tool.output)) : url.map {
                     IOSAppLocalization.formatted(
                         "链接：%@",
@@ -319,7 +312,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .memory,
-                title: executed ? Self.localized("已更新核心记忆") : Self.localized("正在更新核心记忆"),
+                title: Self.localized("更新核心记忆"),
                 detail: failureReason,
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
@@ -332,11 +325,8 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .mcp,
-                title: Self.combinedLine(
-                    executed ? Self.localized("已调用 MCP") : Self.localized("正在调用 MCP"),
-                    Self.mcpName(from: tool.input)
-                ),
-                detail: failureReason,
+                title: Self.localized("调用 MCP"),
+                detail: failureReason ?? Self.mcpName(from: tool.input),
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
             return
@@ -348,9 +338,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .council,
-                title: executed
-                    ? (failureReason == nil ? Self.localized("模型议会已完成") : Self.localized("模型议会失败"))
-                    : Self.localized("模型议会进行中"),
+                title: Self.localized("模型议会"),
                 detail: failureReason,
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
@@ -365,7 +353,7 @@ struct ChatToolStepModel: Identifiable {
                 self.init(
                     id: stableID,
                     visualKind: .image,
-                    title: Self.combinedLine(Self.localized("图片生成失败"), prompt),
+                    title: Self.localized("生成图片"),
                     detail: ChatToolOutputFormatter.imageFailureReason(from: tool.output)
                         ?? Self.localized("没有返回图片"),
                     state: .failed
@@ -375,10 +363,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .image,
-                title: Self.combinedLine(
-                    executed ? Self.localized("图片已生成") : Self.localized("正在生成图片"),
-                    prompt
-                ),
+                title: Self.localized("生成图片"),
                 detail: executed
                     ? IOSAppLocalization.formatted(
                         "%ld 张图片",
@@ -403,9 +388,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: .terminal,
-                title: failed
-                    ? Self.localized("iSH 交接失败")
-                    : (executed ? Self.localized("iSH 交接已准备") : Self.localized("准备 iSH 交接")),
+                title: Self.localized("iSH 交接"),
                 detail: executed ? Self.ishHandoffResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
                 state: failed ? .failed : (executed ? .done : .active)
             )
@@ -417,19 +400,10 @@ struct ChatToolStepModel: Identifiable {
             let object = Self.firstJSONObject(in: tool.output)
             let status = object?["status"] as? String
             let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
-            let launchedJob = object?["background"] as? Bool == true
-                && status == IOSTerminalJobStatus.running.rawValue
-            let title = status == IOSTerminalJobStatus.cancelled.rawValue
-                ? Self.localized("内置 iSH 已取消")
-                : (failed
-                    ? Self.localized("内置 iSH 执行失败")
-                    : (launchedJob
-                        ? Self.localized("内置 iSH 作业已启动")
-                        : (executed ? Self.localized("内置 iSH 已执行") : Self.localized("准备执行内置 iSH"))))
             self.init(
                 id: stableID,
                 visualKind: .terminal,
-                title: title,
+                title: Self.localized("内置 iSH 执行"),
                 detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
@@ -440,21 +414,10 @@ struct ChatToolStepModel: Identifiable {
             let executed = !tool.output.isEmpty
             let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
             let status = Self.firstJSONObject(in: tool.output)?["status"] as? String
-            let title: String
-            switch status?.lowercased() {
-            case IOSTerminalJobStatus.timedOut.rawValue:
-                title = Self.localized("Remote SSH 已超时")
-            case IOSTerminalJobStatus.cancelled.rawValue:
-                title = Self.localized("Remote SSH 已取消")
-            default:
-                title = failed
-                    ? Self.localized("Remote SSH 执行失败")
-                    : (executed ? Self.localized("Remote SSH 已执行") : Self.localized("准备执行 Remote SSH"))
-            }
             self.init(
                 id: stableID,
                 visualKind: .terminal,
-                title: title,
+                title: Self.localized("Remote SSH 执行"),
                 detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
@@ -465,21 +428,10 @@ struct ChatToolStepModel: Identifiable {
             let executed = !tool.output.isEmpty
             let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
             let status = Self.firstJSONObject(in: tool.output)?["status"] as? String
-            let title: String
-            switch status?.lowercased() {
-            case IOSTerminalJobStatus.timedOut.rawValue:
-                title = Self.localized("AmberShell 已超时")
-            case IOSTerminalJobStatus.cancelled.rawValue:
-                title = Self.localized("AmberShell 已取消")
-            default:
-                title = failed
-                    ? Self.localized("AmberShell 执行失败")
-                    : (executed ? Self.localized("AmberShell 已执行") : Self.localized("准备执行 AmberShell"))
-            }
             self.init(
                 id: stableID,
                 visualKind: .terminal,
-                title: title,
+                title: Self.localized("AmberShell 执行"),
                 detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
@@ -490,61 +442,22 @@ struct ChatToolStepModel: Identifiable {
             let executed = !tool.output.isEmpty
             let object = Self.firstJSONObject(in: tool.output)
             let status = object?["status"] as? String
-            let runtime = object?["runtime"] as? String
-            let runtimeTitle: String
-            if runtime == IOSTerminalRuntimeKind.ishExperimental.rawValue {
-                runtimeTitle = Self.localized("内置 iSH")
-            } else if runtime == IOSTerminalRuntimeKind.remoteSSH.rawValue
-                        || tool.toolName == IOSRemoteTerminalToolCatalog.jobStartToolName {
-                runtimeTitle = "Remote SSH"
-            } else {
-                runtimeTitle = Self.localized("终端")
-            }
             let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
             let action: String
             switch tool.toolName {
             case IOSRemoteTerminalToolCatalog.jobStartToolName:
-                action = status == IOSTerminalJobStatus.running.rawValue
-                    ? Self.localized("Remote SSH 作业已启动")
-                    : Self.localized("启动 Remote SSH 作业")
+                action = Self.localized("启动终端作业")
             case IOSRemoteTerminalToolCatalog.jobStopToolName:
-                action = IOSAppLocalization.formatted(
-                    "停止 %@ 作业",
-                    defaultValue: "停止 %@ 作业",
-                    arguments: [runtimeTitle]
-                )
+                action = Self.localized("停止终端作业")
             case IOSRemoteTerminalToolCatalog.jobWaitToolName:
-                action = IOSAppLocalization.formatted(
-                    "等待 %@ 作业",
-                    defaultValue: "等待 %@ 作业",
-                    arguments: [runtimeTitle]
-                )
+                action = Self.localized("等待终端作业")
             default:
-                action = IOSAppLocalization.formatted(
-                    "读取 %@ 作业",
-                    defaultValue: "读取 %@ 作业",
-                    arguments: [runtimeTitle]
-                )
-            }
-            let statusTitle: String?
-            switch status {
-            case IOSTerminalJobStatus.completed.rawValue: statusTitle = Self.localized("已完成")
-            case IOSTerminalJobStatus.cancelled.rawValue: statusTitle = Self.localized("已取消")
-            case IOSTerminalJobStatus.timedOut.rawValue: statusTitle = Self.localized("已超时")
-            case IOSTerminalJobStatus.interrupted.rawValue: statusTitle = Self.localized("已中断")
-            case IOSTerminalJobStatus.failed.rawValue: statusTitle = Self.localized("失败")
-            default: statusTitle = nil
+                action = Self.localized("读取终端作业")
             }
             self.init(
                 id: stableID,
                 visualKind: .terminal,
-                title: statusTitle.map {
-                    IOSAppLocalization.formatted(
-                        "%@ · %@",
-                        defaultValue: "%@ · %@",
-                        arguments: [action, $0]
-                    )
-                } ?? action,
+                title: action,
                 detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
@@ -556,16 +469,17 @@ struct ChatToolStepModel: Identifiable {
             let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
                 .map(IOSWebMountRedactor.redactedText)
             let uncertainReason = Self.webMountUncertainReason(from: tool.output)
-            let outcomeReason = failureReason ?? uncertainReason
             self.init(
                 id: stableID,
                 visualKind: kind,
-                title: Self.combinedLine(
-                    executed ? Self.webMountCompletedTitle(for: tool) : Self.webMountPendingTitle(for: tool.toolName),
-                    Self.webMountInputSummary(for: tool.toolName, from: tool.input)
-                ),
-                detail: executed ? (outcomeReason ?? Self.webMountResultSummary(from: tool.output)) : nil,
-                state: Self.state(executed: executed, failureReason: outcomeReason)
+                // 浏览器胶囊只承载稳定动作名，执行状态由尾部图标表达。参数和目标
+                // 已在可点击详情面板中完整展示；不再用透明长标题换取生命周期稳定，
+                // 从而同时做到短标题自适应和 toolCallStarted → result 零宽度抖动。
+                title: Self.webMountActionTitle(for: tool.toolName),
+                detail: executed
+                    ? (failureReason ?? uncertainReason ?? Self.webMountResultSummary(from: tool.output))
+                    : Self.webMountInputSummary(for: tool.toolName, from: tool.input),
+                state: Self.state(executed: executed, failureReason: failureReason)
             )
             return
         }
@@ -576,10 +490,7 @@ struct ChatToolStepModel: Identifiable {
             self.init(
                 id: stableID,
                 visualKind: kind,
-                title: Self.combinedLine(
-                    executed ? Self.workspaceCompletedTitle(for: tool.toolName) : Self.workspacePendingTitle(for: tool.toolName),
-                    Self.workspaceInputSummary(from: tool.input)
-                ),
+                title: Self.workspaceActionTitle(for: tool.toolName),
                 detail: executed ? (failureReason ?? Self.workspaceResultSummary(from: tool.output)) : Self.workspaceInputSummary(from: tool.input),
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
@@ -623,7 +534,7 @@ struct ChatToolStepModel: Identifiable {
     }
 
     /// 未单独映射的工具:给一个友好中文标签,不显示裸工具名。状态由胶囊上的对勾/转圈表示,不再加文字。
-    private static func friendlyToolTitle(_ name: String, executed: Bool) -> String {
+    static func friendlyToolTitle(_ name: String, executed: Bool) -> String {
         let known: [String: String] = [
             "file_read_selected": Self.localized("读取选中文件"),
             "skills_list": Self.localized("列出技能"),
@@ -636,7 +547,20 @@ struct ChatToolStepModel: Identifiable {
             "mcp_list": Self.localized("列出 MCP"),
             "mcp_test": Self.localized("测试 MCP"),
             "mcp_import_from_skill": Self.localized("从技能导入 MCP"),
+            "recipes_list": Self.localized("列出 Recipes"),
+            "recipe_validate": Self.localized("校验 Recipe"),
             "recipe_import": Self.localized("导入 Recipe"),
+            "recipe_enable": Self.localized("启用 Recipe"),
+            "recipe_disable": Self.localized("停用 Recipe"),
+            "recipe_delete": Self.localized("删除 Recipe"),
+            "plugins_list": Self.localized("列出插件"),
+            "plugin_validate": Self.localized("校验插件"),
+            "plugin_import": Self.localized("导入插件"),
+            "plugin_enable": Self.localized("启用插件"),
+            "plugin_disable": Self.localized("停用插件"),
+            "plugin_delete": Self.localized("删除插件"),
+            "plugin_rollback": Self.localized("回退插件"),
+            "plugin_export": Self.localized("导出插件"),
             "permissions_status": Self.localized("查看权限状态"),
             "tool_search": Self.localized("查找工具"),
             "tools_list": Self.localized("列出可用工具"),
@@ -669,7 +593,7 @@ struct ChatToolStepModel: Identifiable {
             "theme_pack_import": Self.localized("试穿主题"),
         ]
         if let mapped = known[name] { return mapped }
-        // 动态工具名同样受列宽预算约束（见 combinedLine 注释），完整名在详情 sheet。
+        // 动态工具名同样受列宽预算约束，完整名在详情 sheet。
         if name.hasPrefix("mcp__") {
             return "MCP " + widthCappedPrefix(name.replacingOccurrences(of: "mcp__", with: ""), units: 32)
         }
@@ -757,50 +681,9 @@ struct ChatToolStepModel: Identifiable {
         return nil
     }
 
-    private static func subAgentTitle(from input: String) -> String {
-        // 胶囊只显示「标签 + 简短目标」,不再把整段 prompt 原样塞进标题。完整目标/输出留给详情 sheet。
-        let role = subAgentRole(from: input)
-        let label = role.map {
-            IOSAppLocalization.formatted(
-                "子智能体 @%@",
-                defaultValue: "子智能体 @%@",
-                arguments: [$0]
-            )
-        } ?? Self.localized("派发子任务")
-        let objective = subAgentTask(from: input).map {
-            String($0.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces).prefix(16))
-        }
-        return combinedLine(label, objective)
-    }
-
     private static func subAgentDetail(from input: String) -> String? {
         guard let task = subAgentTask(from: input) else { return nil }
         return String(task.replacingOccurrences(of: "\n", with: " ").prefix(80))
-    }
-
-    /// "<verb> <subject>" on one line; the subject (query / prompt / target / task) is folded in
-    /// so the pill reads like the action, not just a status word. Trimmed and length-capped.
-    ///
-    /// 上限按聊天列宽预算倒推（footnote 字号下 verb≤6 字 + subject 14 字 + 图标/
-    /// 状态/内边距 ≈ 330pt ≤ 361pt 列宽）：cell 自 sizing 用无界提案询问理想宽度时
-    /// `lineLimit(1)` 不生效，超长 subject 会把胶囊理想宽撑过列宽——轻则列宽随
-    /// toolCallStarted/完成换词跳变，重则整行居中裁切、文字顶到屏幕两端。
-    /// 完整内容在详情 sheet，胶囊只是状态芯片。
-    private static func combinedLine(_ verb: String, _ subject: String?) -> String {
-        guard let subject else { return verb }
-        let oneLine = subject.replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-        guard !oneLine.isEmpty else { return verb }
-        return IOSAppLocalization.formatted(
-            "%@ %@",
-            defaultValue: "%@ %@",
-            arguments: [verb, widthCappedPrefix(oneLine, units: 28)]
-        )
-    }
-
-    /// 搜索胶囊标题槽占位：与 `combinedLine("搜索", subject)` 同一截断预算，
-    /// 让空参 / 截断 JSON / 短 query / 长 query 共用同一理想宽，尾部转圈与对勾不左右挪。
-    static var searchTitleLayoutSentinel: String {
-        combinedLine(localized("搜索"), String(repeating: "字", count: 20))
     }
 
     /// 按显示宽度预算截断（CJK 计 2、ASCII 计 1）：纯按 Character 数会让
@@ -853,63 +736,35 @@ struct ChatToolStepModel: Identifiable {
         return firstLine ?? Self.localized("已返回搜索结果")
     }
 
-    private static func webMountPendingTitle(for toolName: String) -> String {
+    /// 状态无关的浏览器动作名。进行中/完成/失败由尾部状态槽表达；保持标题本身
+    /// 恒定后，胶囊可以按真实内容收缩，不需要任何隐藏宽度占位。
+    private static func webMountActionTitle(for toolName: String) -> String {
         switch toolName {
-        case "wm_open": Self.localized("准备打开网页")
-        case "wm_tab_list": Self.localized("准备读取网页标签页")
-        case "wm_tab_new": Self.localized("准备新建网页标签页")
-        case "wm_tab_close": Self.localized("准备关闭网页标签页")
-        case "wm_observe": Self.localized("准备观察网页")
-        case "wm_extract": Self.localized("准备提取网页")
-        case "wm_get": Self.localized("准备读取网页节点")
-        case "wm_visual_snapshot": Self.localized("准备读取视觉快照")
-        case "wm_screenshot": Self.localized("准备截取网页视口")
-        case "wm_state": Self.localized("准备读取网页状态")
-        case "wm_back": Self.localized("准备后退")
-        case "wm_forward": Self.localized("准备前进")
-        case "wm_clear_session": Self.localized("准备清理 WebMount Session")
-        case "wm_site_add": Self.localized("准备添加 WebMount 站点")
-        case "wm_site_remove": Self.localized("准备移除 WebMount 站点")
-        case "wm_stations": Self.localized("准备读取 WebMount 站点")
-        case "wm_click": Self.localized("准备点击网页元素")
-        case "wm_tap": Self.localized("准备点击网页")
-        case "wm_type": Self.localized("准备输入网页字段")
-        case "wm_keys": Self.localized("准备发送网页按键")
-        case "wm_scroll": Self.localized("准备滚动网页")
-        case "wm_select": Self.localized("准备选择网页选项")
-        case "wm_find": Self.localized("准备查找网页内容")
+        case "wm_open": Self.localized("打开网页")
+        case "wm_tab_list": Self.localized("读取网页标签页")
+        case "wm_tab_new": Self.localized("新建网页标签页")
+        case "wm_tab_close": Self.localized("关闭网页标签页")
+        case "wm_observe": Self.localized("观察网页")
+        case "wm_extract": Self.localized("提取网页内容")
+        case "wm_get": Self.localized("读取网页节点")
+        case "wm_visual_snapshot": Self.localized("读取视觉快照")
+        case "wm_screenshot": Self.localized("截取网页视口")
+        case "wm_state": Self.localized("读取网页状态")
+        case "wm_back": Self.localized("网页后退")
+        case "wm_forward": Self.localized("网页前进")
+        case "wm_clear_session": Self.localized("清理 WebMount Session")
+        case "wm_site_add": Self.localized("添加 WebMount 站点")
+        case "wm_site_remove": Self.localized("移除 WebMount 站点")
+        case "wm_stations": Self.localized("读取 WebMount 站点")
+        case "wm_click": Self.localized("点击网页元素")
+        case "wm_tap": Self.localized("点击网页")
+        case "wm_type": Self.localized("输入网页字段")
+        case "wm_keys": Self.localized("发送网页按键")
+        case "wm_scroll": Self.localized("滚动网页")
+        case "wm_select": Self.localized("选择网页选项")
+        case "wm_find": Self.localized("查找网页内容")
         case "wm_wait": Self.localized("等待网页条件")
         default: toolName
-        }
-    }
-
-    private static func webMountCompletedTitle(for tool: UIMessagePart.Tool) -> String {
-        switch tool.toolName {
-        case "wm_open": Self.localized("网页已打开")
-        case "wm_tab_list": Self.localized("网页标签页已读取")
-        case "wm_tab_new": Self.localized("网页标签页已新建")
-        case "wm_tab_close": Self.localized("网页标签页已关闭")
-        case "wm_observe": Self.localized("网页观察已完成")
-        case "wm_extract": Self.localized("网页内容已提取")
-        case "wm_get": Self.localized("网页节点已读取")
-        case "wm_visual_snapshot": Self.localized("视觉快照已读取")
-        case "wm_screenshot": Self.localized("网页视口截图已保存")
-        case "wm_state": Self.localized("网页状态已读取")
-        case "wm_back": Self.localized("WebMount 已后退")
-        case "wm_forward": Self.localized("WebMount 已前进")
-        case "wm_clear_session": Self.localized("WebMount Session 已处理")
-        case "wm_site_add": Self.localized("WebMount 站点已添加")
-        case "wm_site_remove": Self.localized("WebMount 站点已移除")
-        case "wm_stations": Self.localized("WebMount 站点已读取")
-        case "wm_click": Self.localized("网页元素已点击")
-        case "wm_tap": Self.localized("网页已点击")
-        case "wm_type": Self.localized("网页字段已输入")
-        case "wm_keys": Self.localized("网页按键已发送")
-        case "wm_scroll": Self.localized("网页已滚动")
-        case "wm_select": Self.localized("网页选项已选择")
-        case "wm_find": Self.localized("网页内容已查找")
-        case "wm_wait": Self.localized("网页等待已完成")
-        default: tool.toolName
         }
     }
 
@@ -1013,12 +868,22 @@ struct ChatToolStepModel: Identifiable {
 
     private static func ishExecuteResultSummary(from output: [UIMessagePart]) -> String? {
         guard let object = firstJSONObject(in: output) else { return nil }
+        let status = (object["status"] as? String)?.lowercased()
+        switch status {
+        case IOSTerminalJobStatus.cancelled.rawValue:
+            return Self.localized("已取消")
+        case IOSTerminalJobStatus.timedOut.rawValue:
+            return Self.localized("已超时")
+        case IOSTerminalJobStatus.interrupted.rawValue:
+            return Self.localized("已中断")
+        default:
+            break
+        }
         if let ok = object["ok"] as? Bool, !ok {
             return (object["error"] as? String)?.nilIfBlank
                 ?? (object["stderr"] as? String)?.nilIfBlank
                 ?? Self.localized("执行失败")
         }
-        let status = (object["status"] as? String)?.lowercased()
         let stdout = (object["stdout"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let stderr = (object["stderr"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if status == "queued" || status == IOSTerminalJobStatus.running.rawValue {
@@ -1105,22 +970,12 @@ struct ChatToolStepModel: Identifiable {
         return false
     }
 
-    private static func workspacePendingTitle(for toolName: String) -> String {
+    private static func workspaceActionTitle(for toolName: String) -> String {
         switch toolName {
-        case "workspace_file_read": Self.localized("准备读取 Workspace 文件")
-        case "workspace_file_write": Self.localized("准备写入 Workspace 文件")
-        case "workspace_artifact_read": Self.localized("准备读取 Artifact")
-        case "workspace_artifact_delete": Self.localized("准备删除 Artifact")
-        default: toolName
-        }
-    }
-
-    private static func workspaceCompletedTitle(for toolName: String) -> String {
-        switch toolName {
-        case "workspace_file_read": Self.localized("Workspace 文件已读取")
-        case "workspace_file_write": Self.localized("Workspace 文件已写入")
-        case "workspace_artifact_read": Self.localized("Artifact 已读取")
-        case "workspace_artifact_delete": Self.localized("Artifact 已删除")
+        case "workspace_file_read": Self.localized("读取 Workspace 文件")
+        case "workspace_file_write": Self.localized("写入 Workspace 文件")
+        case "workspace_artifact_read": Self.localized("读取 Artifact")
+        case "workspace_artifact_delete": Self.localized("删除 Artifact")
         default: toolName
         }
     }
@@ -1278,6 +1133,7 @@ struct ChatToolTimeline: View {
                             defaultValue: "%@，状态：%@",
                             arguments: [step.title, step.state.accessibilityTitle]
                         ))
+                        .accessibilityValue(step.detail ?? "")
                 } else {
                     row(step, chevron: false)
                 }
@@ -1332,34 +1188,27 @@ struct ChatToolTimeline: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Capsule(style: .continuous))
-        .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.84), value: step.state)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(step.title)
+        .accessibilityValue(
+            [step.state.accessibilityTitle, step.detail]
+                .compactMap { $0?.nilIfBlank }
+                .joined(separator: "，")
+        )
+        // The parent message animates tool-result updates. Opt this row out so swapping the
+        // spinner/checkmark cannot interpolate its layout and produce a one-frame width shake.
+        .transaction { transaction in
+            transaction.animation = nil
+        }
     }
 
-    /// 网页搜索的流式标题走固定槽，避免 query 尚未闭合时胶囊反复跳宽。
-    /// `tool_search` 等仅借用搜索图标的工具仍按内容自适应，不预留空白。
     @ViewBuilder
     private func titleLabel(for step: ChatToolStepModel) -> some View {
-        let label = Text(step.title)
+        Text(step.title)
             .font(.footnote.weight(.medium))
             .foregroundStyle(AmberTheme.foreground2)
             .lineLimit(1)
             .truncationMode(.tail)
-        let searchVerb = IOSAppLocalization.string("搜索", defaultValue: "搜索")
-        if step.visualKind == .search,
-           step.title == searchVerb || step.title.hasPrefix("\(searchVerb) ") {
-            Text(ChatToolStepModel.searchTitleLayoutSentinel)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.clear)
-                .accessibilityHidden(true)
-                .overlay(alignment: .leading) {
-                    label
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel(step.title)
-        } else {
-            label
-        }
     }
 
     @ViewBuilder

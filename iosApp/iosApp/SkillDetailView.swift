@@ -145,6 +145,9 @@ struct SkillDetailView: View {
             Text(skillName)
                 .font(.title3.weight(.bold))
                 .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .multilineTextAlignment(.center)
 
             HStack(spacing: 6) {
                 Circle()
@@ -586,10 +589,18 @@ private struct SkillStaticValueRow: View {
                 .font(.body)
                 .foregroundStyle(AmberTheme.foreground)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(2)
+                .layoutPriority(1)
 
             Text(value)
                 .font(monospace ? .system(.subheadline, design: .monospaced) : .subheadline)
                 .foregroundStyle(AmberTheme.muted)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .multilineTextAlignment(.trailing)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .layoutPriority(0)
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)

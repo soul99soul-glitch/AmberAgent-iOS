@@ -895,6 +895,10 @@ final class ChatViewModel {
     /// the next round). Rebuilt on every message send — a new run gets a new
     /// bridge with reset exposure.
     @ObservationIgnored private var lastAssembledToolExposureBridge: IosToolExposureBridge?
+    /// The exact dynamic snapshot used to build the bridge above. They travel
+    /// together into the Host so async preamble work cannot swap execution to
+    /// a newer manifest while the first-round declaration is still older.
+    @ObservationIgnored private var lastAssembledDynamicToolSnapshot: IOSDynamicToolCatalogSnapshot?
     /// P1-c: 线程编排工具服务（spawn/list/interrupt + FINAL_ANSWER 回传）。
     /// 测试可注入隔离 DAO 的服务实例（照 mailboxStore 注入先例）；否则用默认
     /// 懒实例（共享 Room + 当前 VM 依赖）。
@@ -3178,7 +3182,8 @@ final class ChatViewModel {
             inputDigest: inputDigest,
             conversationId: conversationId,
             uploadMessages: messages,
-            toolExposureBridge: lastAssembledToolExposureBridge
+            toolExposureBridge: lastAssembledToolExposureBridge,
+            recipeCatalogSnapshot: lastAssembledDynamicToolSnapshot
         )
     }
 
@@ -3861,6 +3866,9 @@ final class ChatViewModel {
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
             names: Array(IOSRecipeToolCatalog.toolNames).sorted()
         ))
+        toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
+            names: Array(IOSPluginToolCatalog.toolNames).sorted()
+        ))
         // Apple device capabilities are default-deferred. They enter the full
         // bridge catalog so tool_search can expose them only when relevant.
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(
@@ -3933,7 +3941,9 @@ final class ChatViewModel {
         // execution availability cannot diverge by revision. No snapshot
         // (store unreadable) → no recipe surface at all.
         var recipeSearchInfo: [String: String] = [:]
-        if let dynamicCatalog = IOSDynamicToolRegistry.shared.currentSnapshot,
+        let dynamicCatalog = IOSDynamicToolRegistry.shared.currentSnapshot
+        lastAssembledDynamicToolSnapshot = dynamicCatalog
+        if let dynamicCatalog,
            !dynamicCatalog.recipeTools.isEmpty {
             toolDeclarations.append(contentsOf: dynamicCatalog.recipeDeclarations())
             recipeSearchInfo = dynamicCatalog.searchInfoByName
@@ -4121,6 +4131,10 @@ final class ChatViewModel {
             isCapabilityPolicyEnabled("ios.mcp.tool_call")
         case "mcp_list", "mcp_import_from_skill",
              "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable":
+            true
+        case let name where IOSRecipeToolCatalog.toolNames.contains(name):
+            true
+        case let name where IOSPluginToolCatalog.toolNames.contains(name):
             true
         case "subagent_dispatch":
             isCapabilityPolicyEnabled("ios.agent.subagent_dispatch")

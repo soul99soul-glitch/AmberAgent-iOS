@@ -95,21 +95,16 @@ final class IOSToolLoopGuardTests: XCTestCase {
         }
     }
 
-    func testInterleavedCallsCountIndependentlyPerSignature() {
+    func testInterleavedCallsResetConsecutiveRepeatCount() {
         var guardian = IOSToolLoopGuard()
-        // A, B, A, B, A — A reaches its 3rd occurrence on the last call and
-        // must stop; B has only reached its 2nd occurrence and must remind.
+        // A, B, A, B, A is not a stationary loop. This is the exact shape of
+        // WebMount's observe -> mutate -> observe workflow: observe keeps the
+        // same session_id while the intervening mutation changes page state.
         XCTAssertEqual(guardian.check(toolName: "search", input: "a"), .proceed)
         XCTAssertEqual(guardian.check(toolName: "search", input: "b"), .proceed)
-        guard case .proceedAndRemind = guardian.check(toolName: "search", input: "a") else {
-            return XCTFail("Expected A's 2nd occurrence to remind")
-        }
-        guard case .proceedAndRemind = guardian.check(toolName: "search", input: "b") else {
-            return XCTFail("Expected B's 2nd occurrence to remind")
-        }
-        guard case .stop = guardian.check(toolName: "search", input: "a") else {
-            return XCTFail("Expected A's 3rd occurrence to stop")
-        }
+        XCTAssertEqual(guardian.check(toolName: "search", input: "a"), .proceed)
+        XCTAssertEqual(guardian.check(toolName: "search", input: "b"), .proceed)
+        XCTAssertEqual(guardian.check(toolName: "search", input: "a"), .proceed)
     }
 
     // MARK: - Layer 1b: appendingToolLoopReminder (pure append-not-replace helper)
@@ -279,14 +274,15 @@ final class IOSToolLoopGuardTests: XCTestCase {
     /// row (a fresh `toolCallId` each time, as a real provider would issue,
     /// but identical `toolName`+`input`). Expected: 1st executes normally,
     /// 2nd executes AND carries the reminder, 3rd never reaches the executor
-    /// and the run terminates with `guardStopped == true` rather than a
-    /// disguised normal completion.
+    /// and the run gets one final tool-free provider turn before returning
+    /// `guardStopped == true` rather than leaving the transcript on a tool row.
     func testEngineRemindsOnSecondRepeatAndStopsOnThird() async {
         let repeatedInput = "{\"query\":\"same thing\"}"
         let provider = ScriptedProvider([
             toolCallMessage(toolCallId: "tc-1", toolName: "search", input: repeatedInput),
             toolCallMessage(toolCallId: "tc-2", toolName: "search", input: repeatedInput),
-            toolCallMessage(toolCallId: "tc-3", toolName: "search", input: repeatedInput)
+            toolCallMessage(toolCallId: "tc-3", toolName: "search", input: repeatedInput),
+            message(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "final summary", metadata: nil)])
         ])
         let executor = RecordingExecutor(.filled("{\"ok\":true}"))
         let engine = IOSAgentToolEngine(
@@ -304,7 +300,12 @@ final class IOSToolLoopGuardTests: XCTestCase {
         XCTAssertEqual(executor.calls.count, 2, "the 3rd identical call must never reach the executor")
         XCTAssertTrue(result.guardStopped, "run must report guardStopped rather than a silent completion")
         XCTAssertFalse(result.hitStepLimit, "guard stop is a distinct terminal from the step-limit terminal")
-        XCTAssertEqual(provider.callCount, 3, "the engine must not ask the model for a 4th turn after stopping")
+        XCTAssertEqual(provider.callCount, 4, "the engine must request exactly one tool-free final answer after stopping")
+        XCTAssertEqual(result.stepsExecuted, 4)
+        XCTAssertEqual(
+            result.messages.last?.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(),
+            "final summary"
+        )
 
         let toolParts = result.messages
             .flatMap(\.parts)
@@ -354,6 +355,43 @@ final class IOSToolLoopGuardTests: XCTestCase {
         XCTAssertFalse(result.guardStopped)
     }
 
+    func testEngineContinuesToFinalAnswerAfterOneToolFailure() async {
+        let provider = ScriptedProvider([
+            toolCallMessage(toolCallId: "tc-failed", toolName: "search", input: #"{"query":"bilibili"}"#),
+            message(role: MessageRole.assistant, parts: [UIMessagePart.Text(
+                text: "网页读取失败；现有信息不足以给出结果。",
+                metadata: nil
+            )])
+        ])
+        let executor = RecordingExecutor(.failed("browser session unavailable"))
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["search": executor],
+            configuration: .init(maxSteps: 8)
+        )
+
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("打开哔哩哔哩")],
+            params: makeParams()
+        )
+
+        XCTAssertEqual(executor.calls.count, 1)
+        XCTAssertEqual(provider.callCount, 2, "ordinary tool failure must return to the model for a conclusion")
+        XCTAssertFalse(result.guardStopped)
+        XCTAssertFalse(result.hitStepLimit)
+        XCTAssertEqual(
+            result.messages.last?.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(),
+            "网页读取失败；现有信息不足以给出结果。"
+        )
+        let failureOutput = result.messages
+            .flatMap(\.parts)
+            .compactMap { $0 as? UIMessagePart.Tool }
+            .first(where: { $0.toolCallId == "tc-failed" })?
+            .output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined() ?? ""
+        XCTAssertTrue(failureOutput.contains("browser session unavailable"))
+    }
+
     func testPreExistingBatchPropagatesGuardStopAndResolvesRemainingTools() async {
         let repeatedInput = #"{"query":"same"}"#
         let preExisting = message(role: MessageRole.assistant, parts: [
@@ -362,7 +400,9 @@ final class IOSToolLoopGuardTests: XCTestCase {
             toolPart(toolCallId: "tc-3", toolName: "search", input: repeatedInput),
             toolPart(toolCallId: "tc-4", toolName: "workspace_write", input: #"{"path":"a"}"#),
         ])
-        let provider = ScriptedProvider([])
+        let provider = ScriptedProvider([
+            message(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "pre-existing summary", metadata: nil)])
+        ])
         let searchExecutor = RecordingExecutor()
         let writeExecutor = RecordingExecutor()
         let engine = IOSAgentToolEngine(
@@ -381,8 +421,8 @@ final class IOSToolLoopGuardTests: XCTestCase {
         )
 
         XCTAssertTrue(result.guardStopped)
-        XCTAssertEqual(result.stepsExecuted, 0)
-        XCTAssertEqual(provider.callCount, 0, "a pre-existing guard stop must end before another model request")
+        XCTAssertEqual(result.stepsExecuted, 1)
+        XCTAssertEqual(provider.callCount, 1, "a pre-existing guard stop still needs one tool-free final answer")
         XCTAssertEqual(searchExecutor.calls.count, 2)
         XCTAssertEqual(writeExecutor.calls.count, 0, "tools after the terminal guard stop must never execute")
 
@@ -394,6 +434,10 @@ final class IOSToolLoopGuardTests: XCTestCase {
             .compactMap { $0 as? UIMessagePart.Text }
             .first?.text ?? ""
         XCTAssertTrue(skipped.contains("tool_not_executed"), "remaining tools need an explicit non-executed result")
+        XCTAssertEqual(
+            result.messages.last?.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(),
+            "pre-existing summary"
+        )
     }
 
     // MARK: - F7: `ChatToolStepModel.firstJSONObject` survives "JSON + appended reminder text"

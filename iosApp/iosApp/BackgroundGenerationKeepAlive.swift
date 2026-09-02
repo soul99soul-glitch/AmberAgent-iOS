@@ -147,10 +147,22 @@ final class BackgroundGenerationKeepAlive {
     /// 短窗和 BGContinuedProcessingTask。
     static func isAudioKeepAlivePreferenceEnabled(
         defaults: UserDefaults = .standard,
-        backgroundModes: [String] = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? []
+        backgroundModes: [String] = Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String] ?? [],
+        defaultEnabled: Bool = defaultAudioKeepAliveEnabled
     ) -> Bool {
         guard backgroundModes.contains("audio") else { return false }
-        return defaults.bool(forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
+        if let stored = defaults.object(forKey: IOSExecutionPreferenceKeys.audioKeepAlive) as? Bool {
+            return stored
+        }
+        return defaultEnabled
+    }
+
+    private static var defaultAudioKeepAliveEnabled: Bool {
+#if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
+        true
+#else
+        false
+#endif
     }
 
     private var bundleIdentifier: String { Bundle.main.bundleIdentifier ?? "app.amber.ios" }

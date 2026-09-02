@@ -1682,7 +1682,21 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "soul_import" to ::createSoulImportToolDeclaration,
     "skill_enable" to ::createSkillEnableToolDeclaration,
     "skill_disable" to ::createSkillDisableToolDeclaration,
+    "recipes_list" to ::createRecipesListToolDeclaration,
+    "recipe_validate" to ::createRecipeValidateToolDeclaration,
     "recipe_import" to ::createRecipeImportToolDeclaration,
+    "recipe_enable" to ::createRecipeEnableToolDeclaration,
+    "recipe_disable" to ::createRecipeDisableToolDeclaration,
+    "recipe_delete" to ::createRecipeDeleteToolDeclaration,
+    "plugins_list" to ::createPluginsListToolDeclaration,
+    "plugin_validate" to ::createPluginValidateToolDeclaration,
+    "plugin_import" to ::createPluginImportToolDeclaration,
+    "plugin_enable" to ::createPluginEnableToolDeclaration,
+    "plugin_disable" to ::createPluginDisableToolDeclaration,
+    "plugin_delete" to ::createPluginDeleteToolDeclaration,
+    "plugin_rollback" to ::createPluginRollbackToolDeclaration,
+    "plugin_restore" to ::createPluginRestoreToolDeclaration,
+    "plugin_export" to ::createPluginExportToolDeclaration,
     "subagent_dispatch" to ::createSubAgentDispatchToolDeclaration,
     "model_council_run" to ::createModelCouncilRunToolDeclaration,
     "file_read_selected" to ::createSelectedFileReadToolDeclaration,
@@ -2425,6 +2439,194 @@ fun createRecipeImportToolDeclaration(): Tool = Tool(
         )
     },
     needsApproval = true,
+    execute = { emptyList() }
+)
+
+fun createRecipesListToolDeclaration(): Tool = Tool(
+    name = "recipes_list",
+    description = "List installed Recipes with their version, hash, validation and enabled state.",
+    parameters = { InputSchema.Obj(properties = buildJsonObject {}) },
+    execute = { emptyList() }
+)
+
+fun createRecipeValidateToolDeclaration(): Tool = Tool(
+    name = "recipe_validate",
+    description = "Validate an installed Recipe by name or a recipe.json under /workspace without changing state.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("name", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Installed Recipe name. Use either name or workspace_path.")
+                })
+                put("workspace_path", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Workspace path to a recipe.json. Use either workspace_path or name.")
+                })
+            }
+        )
+    },
+    execute = { emptyList() }
+)
+
+private fun recipeLifecycleParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("name", buildJsonObject {
+            put("type", "string")
+            put("description", "Installed Recipe name.")
+        })
+        put("expected_hash", buildJsonObject {
+            put("type", "string")
+            put("description", "Exact package hash returned by recipes_list; prevents changing a newer package.")
+        })
+    },
+    required = listOf("name", "expected_hash")
+)
+
+fun createRecipeEnableToolDeclaration(): Tool = Tool(
+    name = "recipe_enable",
+    description = "Enable an installed Recipe. It becomes searchable as recipe__<name> from the next model round.",
+    parameters = { recipeLifecycleParameters() },
+    needsApproval = true,
+    execute = { emptyList() }
+)
+
+fun createRecipeDisableToolDeclaration(): Tool = Tool(
+    name = "recipe_disable",
+    description = "Disable an installed Recipe without deleting its package. In-flight calls keep their pinned version.",
+    parameters = { recipeLifecycleParameters() },
+    needsApproval = true,
+    execute = { emptyList() }
+)
+
+fun createRecipeDeleteToolDeclaration(): Tool = Tool(
+    name = "recipe_delete",
+    description = "Permanently delete an installed Recipe and its rollback slot after explicit approval.",
+    parameters = { recipeLifecycleParameters() },
+    needsApproval = true,
+    execute = { emptyList() }
+)
+
+fun createPluginsListToolDeclaration(): Tool = Tool(
+    name = "plugins_list",
+    description = "List installed dynamic plugins, their exact hashes, enabled state, tools and derived permissions.",
+    parameters = { InputSchema.Obj(properties = buildJsonObject {}) },
+    execute = { emptyList() }
+)
+
+fun createPluginValidateToolDeclaration(): Tool = Tool(
+    name = "plugin_validate",
+    description = "Validate an installed amber.plugin.v1 package by id or a package directory under /workspace without changing state.",
+    parameters = {
+        InputSchema.Obj(properties = buildJsonObject {
+            put("id", buildJsonObject { put("type", "string") })
+            put("workspace_directory", buildJsonObject {
+                put("type", "string")
+                put("description", "Directory containing plugin.json plus recipes/*.json or scripts/*.js.")
+            })
+            put("workspace_path", buildJsonObject {
+                put("type", "string")
+                put("description", "Path to a .amberplugin archive under /workspace.")
+            })
+        })
+    },
+    execute = { emptyList() }
+)
+
+fun createPluginImportToolDeclaration(): Tool = Tool(
+    name = "plugin_import",
+    description = "Preview an amber.plugin.v1 directory under /workspace for explicit user approval. New or permission-expanding packages install disabled.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("workspace_directory", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Directory containing plugin.json plus recipes/*.json or scripts/*.js.")
+                })
+                put("workspace_path", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Path to a .amberplugin archive under /workspace.")
+                })
+            }
+        )
+    },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+private fun pluginLifecycleParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        put("id", buildJsonObject { put("type", "string") })
+        put("expected_hash", buildJsonObject {
+            put("type", "string")
+            put("description", "Exact hash returned by plugins_list.")
+        })
+    },
+    required = listOf("id", "expected_hash")
+)
+
+fun createPluginEnableToolDeclaration(): Tool = Tool(
+    name = "plugin_enable",
+    description = "Enable a validated installed plugin from the next model round.",
+    parameters = { pluginLifecycleParameters() },
+    needsApproval = true,
+    execute = { emptyList() }
+)
+
+fun createPluginDisableToolDeclaration(): Tool = Tool(
+    name = "plugin_disable",
+    description = "Disable a plugin while preserving its package and pinned in-flight calls.",
+    parameters = { pluginLifecycleParameters() },
+    needsApproval = true,
+    execute = { emptyList() }
+)
+
+fun createPluginDeleteToolDeclaration(): Tool = Tool(
+    name = "plugin_delete",
+    description = "Delete an installed plugin and its rollback slot after approval.",
+    parameters = { pluginLifecycleParameters() },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createPluginRollbackToolDeclaration(): Tool = Tool(
+    name = "plugin_rollback",
+    description = "Restore the previous plugin package after approval.",
+    parameters = { pluginLifecycleParameters() },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createPluginRestoreToolDeclaration(): Tool = Tool(
+    name = "plugin_restore",
+    description = "Clear an automatic plugin quarantine after explicit review, without changing the installed package.",
+    parameters = { pluginLifecycleParameters() },
+    needsApproval = true,
+    allowsAutoApproval = false,
+    execute = { emptyList() }
+)
+
+fun createPluginExportToolDeclaration(): Tool = Tool(
+    name = "plugin_export",
+    description = "Export an installed plugin as a safe .amberplugin archive in Workspace, preserving verified signature provenance.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("id", buildJsonObject { put("type", "string") })
+                put("expected_hash", buildJsonObject { put("type", "string") })
+                put("workspace_path", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional /workspace/*.amberplugin destination.")
+                })
+            },
+            required = listOf("id", "expected_hash")
+        )
+    },
+    needsApproval = true,
+    allowsAutoApproval = false,
     execute = { emptyList() }
 )
 

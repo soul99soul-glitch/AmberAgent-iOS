@@ -782,6 +782,8 @@ enum Route: Hashable {
     case skillDetail(name: String, dirName: String?)
     case recipes
     case recipeDetail(name: String)
+    case plugins
+    case pluginDetail(id: String)
     case execution
     case executionTask(id: String)
     case providers
@@ -959,6 +961,18 @@ private extension View {
             case .recipes:
                 if sharedSettings.isCapabilityGateEnabled(.skills) {
                     RecipesView()
+                } else {
+                    CapabilityGateLockedView(gate: .skills)
+                }
+            case .plugins:
+                if sharedSettings.isCapabilityGateEnabled(.skills) {
+                    PluginsView()
+                } else {
+                    CapabilityGateLockedView(gate: .skills)
+                }
+            case .pluginDetail(let id):
+                if sharedSettings.isCapabilityGateEnabled(.skills) {
+                    PluginDetailView(pluginId: id)
                 } else {
                     CapabilityGateLockedView(gate: .skills)
                 }

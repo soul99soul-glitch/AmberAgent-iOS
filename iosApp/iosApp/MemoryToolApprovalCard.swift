@@ -509,8 +509,11 @@ private struct WebMountApprovalChip: View {
             .font(.caption2.weight(.semibold))
             .foregroundStyle(AmberTheme.muted)
             .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: 144, alignment: .leading)
             .padding(.horizontal, 8)
-            .frame(height: 24)
+            .padding(.vertical, 4)
+            .frame(minHeight: 24)
             .background(AmberTheme.surface2.opacity(0.64), in: Capsule())
     }
 }
@@ -563,10 +566,16 @@ struct SearchToolApprovalCard: View {
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
             )
 
-            HStack(spacing: 6) {
-                WebMountApprovalChip(systemImage: "wrench.and.screwdriver", title: request.toolName)
-                WebMountApprovalChip(systemImage: "network", title: request.providerName)
-                Spacer(minLength: 0)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    WebMountApprovalChip(systemImage: "wrench.and.screwdriver", title: request.toolName)
+                    WebMountApprovalChip(systemImage: "network", title: request.providerName)
+                    Spacer(minLength: 0)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    WebMountApprovalChip(systemImage: "wrench.and.screwdriver", title: request.toolName)
+                    WebMountApprovalChip(systemImage: "network", title: request.providerName)
+                }
             }
 
             HStack(spacing: 8) {
@@ -1665,6 +1674,8 @@ struct RecipeToolApprovalCard: View {
     let onApprove: () -> Void
     let onDeny: () -> Void
     @State private var showsFullRecipeSteps = false
+    @State private var showsCapabilityScopes = false
+    @State private var showsFileHashes = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1690,17 +1701,25 @@ struct RecipeToolApprovalCard: View {
                 Spacer(minLength: 0)
             }
 
-            HStack(spacing: 6) {
-                Text("\(request.recipeName) v\(request.recipeVersion)")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(request.recipeName)
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
+                    .lineLimit(2)
+                Text("v\(request.recipeVersion)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             switch request.payload {
             case .step(let payload):
                 recipeStepPayload(payload)
+            case .pluginInvocation(let payload):
+                pluginInvocationPayload(payload)
             case .recipeImport(let payload):
                 recipeImportPayload(payload)
             }
@@ -1718,7 +1737,7 @@ struct RecipeToolApprovalCard: View {
                 }
                 .buttonStyle(.plain)
                 .chatApprovalHitTarget()
-                .accessibilityLabel("拒绝 Recipe 操作")
+                .accessibilityLabel("拒绝工作流操作")
 
                 Button(action: onApprove) {
                     Label("批准", systemImage: "checkmark")
@@ -1730,7 +1749,7 @@ struct RecipeToolApprovalCard: View {
                 }
                 .buttonStyle(.plain)
                 .chatApprovalHitTarget()
-                .accessibilityLabel("批准 Recipe 操作")
+                .accessibilityLabel("批准工作流操作")
             }
         }
         .padding(12)
@@ -1782,10 +1801,48 @@ struct RecipeToolApprovalCard: View {
         )
     }
 
+    private func pluginInvocationPayload(_ payload: PluginInvocationApprovalPayload) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(payload.toolId)
+                    .font(.footnote.monospaced().weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                Text(effectClassTitle(payload.effectClass))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(payload.effectClass == .sideEffect ? AmberTheme.accentAmber : AmberTheme.accentGreen)
+            }
+            Text(payload.handler)
+                .font(.caption2)
+                .foregroundStyle(AmberTheme.muted)
+            if !payload.capabilities.isEmpty {
+                Text(payload.capabilities.joined(separator: " · "))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(payload.argumentsPreview.isEmpty ? "（无参数）" : payload.argumentsPreview)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(6)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            AmberTheme.surface.opacity(0.72),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+    }
+
     private func recipeImportPayload(_ payload: RecipeImportApprovalPayload) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("Recipe \(request.recipeName)")
+                Text("\(payload.artifactKindTitle) \(payload.displayName ?? request.recipeName)")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground2)
                     .lineLimit(2)
@@ -1801,13 +1858,34 @@ struct RecipeToolApprovalCard: View {
                     )
             }
 
+            if payload.displayName != nil {
+                Text(request.recipeName)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(AmberTheme.muted)
+                    .textSelection(.enabled)
+            }
+
             Text(payload.description)
                 .font(.caption)
                 .foregroundStyle(AmberTheme.foreground2)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Label(payload.permissionSummary, systemImage: "lock.shield")
+            if let trustSummary = payload.trustSummary {
+                Label(
+                    trustSummary,
+                    systemImage: trustSummary.contains("未签名")
+                        ? "exclamationmark.triangle.fill"
+                        : "checkmark.seal.fill"
+                )
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(trustSummary.contains("未签名")
+                    ? AmberTheme.accentAmber : AmberTheme.accentGreen)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Label(localizedPermissionSummary(payload), systemImage: "lock.shield")
                 .font(.caption2)
                 .foregroundStyle(payload.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue
                     ? AmberTheme.accentAmber : AmberTheme.muted)
@@ -1842,7 +1920,33 @@ struct RecipeToolApprovalCard: View {
                     }
                     .frame(maxHeight: 180)
                 } label: {
-                    Label("步骤列表（\(payload.stepsSummary.count) 步）", systemImage: "list.number")
+                    Label(payload.artifactKindTitle == "插件"
+                        ? "工具列表（\(payload.stepsSummary.count) 个）"
+                        : "步骤列表（\(payload.stepsSummary.count) 步）", systemImage: "list.number")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accentCyan)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .tint(AmberTheme.accentCyan)
+            }
+
+            if !payload.capabilityScopes.isEmpty {
+                DisclosureGroup(isExpanded: $showsCapabilityScopes) {
+                    payloadRows(payload.capabilityScopes)
+                } label: {
+                    Label("能力范围（\(payload.capabilityScopes.count) 项）", systemImage: "lock.shield")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accentCyan)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .tint(AmberTheme.accentCyan)
+            }
+
+            if !payload.fileHashes.isEmpty {
+                DisclosureGroup(isExpanded: $showsFileHashes) {
+                    payloadRows(payload.fileHashes)
+                } label: {
+                    Label("文件哈希（\(payload.fileHashes.count) 个）", systemImage: "number")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(AmberTheme.accentCyan)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1851,16 +1955,17 @@ struct RecipeToolApprovalCard: View {
             }
 
             if !payload.outputsSummary.isEmpty {
-                Text("输出：\(payload.outputsSummary)")
+                Text("\(payload.artifactKindTitle == "插件" ? "状态" : "输出")：\(payload.outputsSummary)")
                     .font(.caption2)
                     .foregroundStyle(AmberTheme.muted)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            Label("批准后从下一模型轮生效。", systemImage: "arrow.triangle.2.circlepath")
+            Label(payload.activationNotice, systemImage: "arrow.triangle.2.circlepath")
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(AmberTheme.accentGreen)
+                .foregroundStyle(payload.activationNotice.contains("保持停用")
+                    ? AmberTheme.accentAmber : AmberTheme.accentGreen)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 10)
@@ -1870,6 +1975,34 @@ struct RecipeToolApprovalCard: View {
             AmberTheme.surface.opacity(0.72),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
+    }
+
+    private func payloadRows(_ rows: [String]) -> some View {
+        ScrollView(.vertical) {
+            LazyVStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Text(row)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(.bottom, 4)
+        }
+        .frame(maxHeight: 180)
+    }
+
+    private func localizedPermissionSummary(_ payload: RecipeImportApprovalPayload) -> String {
+        switch payload.effectClassRawValue {
+        case IOSToolEffectClass.pure.rawValue: "只读，不产生副作用"
+        case IOSToolEffectClass.networkRead.rawValue: "只读网络访问"
+        case IOSToolEffectClass.idempotent.rawValue: "可重复执行的本地更改"
+        case IOSToolEffectClass.sideEffect.rawValue: "可能更改状态，需要批准"
+        default: payload.permissionSummary
+        }
     }
 
     private func effectClassTitle(_ effectClass: IOSToolEffectClass) -> String {

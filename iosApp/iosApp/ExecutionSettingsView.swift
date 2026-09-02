@@ -14,6 +14,8 @@ struct ExecutionSettingsView: View {
     @AppStorage(IOSExecutionPreferenceKeys.execJavaScriptEnabled)
     private var execJavaScriptEnabled = false
     @State private var taskStore = IOSAdvancedTaskStore.shared
+    @State private var isToolLoopPickerPresented = false
+    @ScaledMetric(relativeTo: .body) private var toolLoopValueWidth: CGFloat = 44
 
     var body: some View {
         ZStack {
@@ -42,6 +44,24 @@ struct ExecutionSettingsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .confirmationDialog(
+            "单轮上限",
+            isPresented: $isToolLoopPickerPresented,
+            titleVisibility: .visible
+        ) {
+            ForEach(SettingsStore.chatMaxToolResumeCountOptions, id: \.self) { option in
+                Button {
+                    chatMaxToolResumeCount = option
+                } label: {
+                    if option == SettingsStore.clampChatMaxToolResumeCount(chatMaxToolResumeCount) {
+                        Label("\(option) 次", systemImage: "checkmark")
+                    } else {
+                        Text("\(option) 次")
+                    }
+                }
+            }
+            Button("取消", role: .cancel) {}
+        }
     }
 
     private var header: some View {
@@ -92,44 +112,50 @@ struct ExecutionSettingsView: View {
         return VStack(spacing: 0) {
             AmberSectionLabel(text: "工具循环")
             AmberFormGroup {
-                HStack(spacing: 12) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .frame(width: 28, height: 28)
+                Button {
+                    isToolLoopPickerPresented = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .frame(width: 28, height: 28)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("单轮工具调用上限")
-                            .font(.body)
-                            .foregroundStyle(AmberTheme.foreground)
-                        Text("达到上限后模型会用现有信息总结收尾，并说明未完成的步骤")
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("单轮上限")
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text("达到后自动总结收尾")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
-                    // 数值与 Stepper 分列：等宽数字 + 固定标签宽，避免「16 次 / 17 次」
-                    // 因比例数字宽窄不同把左侧说明挤成 2/3 行来回跳。
-                    HStack(spacing: 6) {
-                        Text("\(clampedCount) 次")
-                            .font(.body.monospacedDigit())
-                            .foregroundStyle(AmberTheme.muted)
-                            .lineLimit(1)
-                            // 覆盖 range 上限「24 次」的宽度，数值变化时不改列宽。
-                            .frame(width: 44, alignment: .trailing)
-                        Stepper(
-                            "",
-                            value: $chatMaxToolResumeCount,
-                            in: SettingsStore.chatMaxToolResumeCountRange
-                        )
-                        .labelsHidden()
-                        .fixedSize()
+                        // 数字列与箭头宽度固定；24 切到 128 时整行尺寸不变。
+                        HStack(spacing: 8) {
+                            Text("\(clampedCount)")
+                                .font(.body.monospacedDigit())
+                                .foregroundStyle(AmberTheme.muted)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .allowsTightening(true)
+                                .frame(width: toolLoopValueWidth, alignment: .trailing)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AmberTheme.muted2)
+                                .frame(width: 12)
+                        }
                     }
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
                 }
-                .frame(minHeight: 58)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
+                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+                .accessibilityLabel("单轮工具循环上限")
+                .accessibilityValue("\(clampedCount) 次")
+                .accessibilityHint("打开可选次数面板")
             }
         }
     }

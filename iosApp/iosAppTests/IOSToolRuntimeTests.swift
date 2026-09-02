@@ -462,17 +462,29 @@ final class IOSToolRuntimeTests: XCTestCase {
         XCTAssertEqual(text, output)
     }
 
-    func testWebMountAmbiguousOutcomeIsPromotedToOutcomeUnknown() {
+    func testWebMountOnlyInterruptedActionIsPromotedToOutcomeUnknown() {
         let runtime = makeRuntime()
-        let toolCall = makePendingToolCall(toolName: "wm_click", toolCallId: "wm-ambiguous")
-        let messages = [makeAssistantMessage(parts: [toolCall])]
-        let resolved = runtime.messagesByFinishingToolCall(
-            toolCall,
-            outputText: #"{"ok":false,"status":"ambiguous","may_have_applied":true}"#,
-            in: messages
-        )
+        let outcomes = [
+            (status: "unknown_after_action", ok: false, expected: true),
+            (status: "ambiguous", ok: false, expected: false),
+            (status: "dispatched_unverified", ok: true, expected: false),
+        ]
 
-        XCTAssertTrue(runtime.isWebMountOutcomeUnknown(in: resolved, toolCallId: "wm-ambiguous"))
+        for outcome in outcomes {
+            let toolCallId = "wm-\(outcome.status)"
+            let toolCall = makePendingToolCall(toolName: "wm_click", toolCallId: toolCallId)
+            let resolved = runtime.messagesByFinishingToolCall(
+                toolCall,
+                outputText: #"{"ok":\#(outcome.ok),"status":"\#(outcome.status)","may_have_applied":true}"#,
+                in: [makeAssistantMessage(parts: [toolCall])]
+            )
+
+            XCTAssertEqual(
+                runtime.isWebMountOutcomeUnknown(in: resolved, toolCallId: toolCallId),
+                outcome.expected,
+                outcome.status
+            )
+        }
     }
 
     private func makeTempFile(size: Int) throws -> URL {

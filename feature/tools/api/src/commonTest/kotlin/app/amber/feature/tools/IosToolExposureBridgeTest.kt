@@ -43,6 +43,7 @@ class IosToolExposureBridgeTest {
         "wm_select", "wm_find", "wm_wait",
         "mcp_call", "mcp_list", "mcp_test", "mcp_describe_tool", "mcp_import_from_skill",
         "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
+        "recipes_list", "recipe_validate", "recipe_import", "recipe_enable", "recipe_disable", "recipe_delete",
         "subagent_dispatch", "model_council_run", "file_read_selected",
         "ish_handoff", "ios_ish_execute", "terminal_execute", "ios_shell_execute",
         "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
@@ -58,6 +59,7 @@ class IosToolExposureBridgeTest {
         "workspace_artifact_read", "workspace_artifact_delete",
         "mcp_list", "mcp_call", "mcp_describe_tool",
         "skills_list", "use_skill",
+        "recipes_list",
         "subagent_dispatch", "model_council_run",
         "file_read_selected",
     )
@@ -68,6 +70,7 @@ class IosToolExposureBridgeTest {
         "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
         "mcp_test", "mcp_import_from_skill",
         "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
+        "recipe_validate", "recipe_import", "recipe_enable", "recipe_disable", "recipe_delete",
         "subagent_report",
     )
 
@@ -121,6 +124,31 @@ class IosToolExposureBridgeTest {
         val expanded = payload["expanded_tools"]!!.jsonArray.map { it.jsonPrimitive.contentOrNull }
         assertTrue("wm_type" in expanded, "search must return the deferred wm_type tool")
         assertTrue("wm_type" in bridge.visibleTools().map { it.name }, "hit must be exposed for the next model step")
+    }
+
+    @Test
+    fun webMountSearchCoExposesCoreNavigationWorkflow() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+
+        val payload = parseObject(
+            bridge.executeToolSearch("""{"query":"wm_type wm_scroll 输入文本 滚动页面","limit":3}""")
+        )
+
+        val expanded = payload["expanded_tools"]!!.jsonArray
+            .mapNotNull { it.jsonPrimitive.contentOrNull }
+            .toSet()
+        assertTrue("wm_type" in expanded)
+        assertTrue("wm_scroll" in expanded)
+        assertTrue("wm_tab_list" in expanded, "browser work must always be able to acquire a session")
+        assertTrue("wm_open" in expanded, "a new user turn must not lose the navigation tool")
+        assertTrue("wm_observe" in expanded, "navigation must retain the semantic observation step")
+        assertTrue("wm_visual_snapshot" in expanded, "browser work should retain the visual-candidate fallback")
+        assertTrue("wm_wait" in expanded, "browser work should retain page stabilization")
+        assertTrue(
+            payload["workflow_hint"]?.jsonPrimitive?.contentOrNull?.contains("wm_open") == true,
+            "the result must explicitly prevent type/key tools from being mistaken for navigation",
+        )
+        assertTrue(expanded.all { it in bridge.visibleTools().map { tool -> tool.name } })
     }
 
     @Test
@@ -277,6 +305,36 @@ class IosToolExposureBridgeTest {
         val rebuilt = IosToolExposureBridge(tools = visible)
 
         assertEquals(visible.map { it.name }.toSet(), rebuilt.visibleTools().map { it.name }.toSet())
+    }
+
+    @Test
+    fun replacingCatalogPreservesOnlySurvivingExposureAndDefersNewTools() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+        bridge.exposeToolNames(listOf("wm_type"))
+        assertTrue("wm_type" in bridge.visibleTools().map { it.name })
+
+        val added = Tool(
+            name = "recipe__new_tool",
+            description = "new dynamic recipe",
+            execute = { emptyList() },
+        )
+        val nextCatalog = fullIosTools().filterNot { it.name == "wm_type" } + added
+        bridge.replaceFullCatalog(
+            tools = nextCatalog,
+            recipeSearchInfo = mapOf("recipe__new_tool" to "new recipe metadata"),
+        )
+
+        val fullNames = bridge.fullToolDeclarations().map { it.name }.toSet()
+        val visibleNames = bridge.visibleTools().map { it.name }.toSet()
+        assertFalse("wm_type" in fullNames, "removed tools must leave the catalog")
+        assertFalse("wm_type" in visibleNames, "removed exposure must not survive refresh")
+        assertTrue("search_web" in visibleNames, "surviving resident exposure must remain")
+        assertTrue("recipe__new_tool" in fullNames, "new dynamic tools must enter the catalog")
+        assertFalse("recipe__new_tool" in visibleNames, "new recipes stay deferred until tool_search")
+
+        val payload = parseObject(bridge.executeToolSearch("""{"query":"new_tool","limit":1}"""))
+        assertTrue("recipe__new_tool" in payload["expanded_tools"]!!.jsonArray.map { it.jsonPrimitive.contentOrNull })
+        assertTrue("recipe__new_tool" in bridge.visibleTools().map { it.name })
     }
 
     // MARK: - P0-b/P0-c: expanded MCP tools are deferred and cost nothing visible

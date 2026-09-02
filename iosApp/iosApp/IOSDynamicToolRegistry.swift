@@ -25,6 +25,7 @@ enum IOSRecipePrimitiveCatalog {
         if IOSSearchExecutor.supportedToolNames.contains(tool) { return .search }
         if IOSIshToolCatalog.supportedToolNames
             .union(IOSEmbeddedIshToolCatalog.supportedToolNames)
+            .union(IOSAmberShellToolCatalog.supportedToolNames)
             .contains(tool) {
             return .ish
         }
@@ -40,7 +41,9 @@ enum IOSRecipePrimitiveCatalog {
             return .advanced
         }
         if tool == "mcp_call"
-            || IOSAppleAgentToolCatalog.toolNames.contains(tool)
+            || IOSAppleAgentToolCatalog.toolNames
+                .subtracting(IOSAppleAgentToolCatalog.pickerToolNames)
+                .contains(tool)
             || tool == "subagent_dispatch" || tool == "model_council_run"
             || tool == "spawn_agent" || tool == "list_agents" || tool == "interrupt_agent"
             || tool == "send_message" || tool == "followup_task" || tool == "wait_agent"
@@ -89,16 +92,14 @@ enum IOSRecipePrimitiveCatalog {
 //    the process. Across restarts the snapshot is rebuilt from the store's
 //    CURRENT active set (a fresh launch sequences revision 1 from store state;
 //    revisions are not persisted).
-// 4. Recipes are default-deferred (§13.2.4): the declarations are part of the
-//    bridge's FULL catalog (searchable via tool_search) but never enter the
-//    resident/visible set — `recipe__*` is not in `IOS_RESIDENT_TOOL_NAMES`,
-//    so in lazy mode (production catalog) they stay hidden until exposed.
-// 5. Phase 1 background (§16.2): recipes are NOT declared in the background
-//    catalog. The foreground handoff filters `recipe__*` names out of
-//    `fullToolNames` (see ChatKernelRunHost.refreshBackgroundHandoff),
-//    and the background bridge rebuild cannot reconstruct recipe names (they
-//    are not static KMP declarations) — so background behavior is unchanged
-//    and recipes simply do not exist there until the parity wave.
+// 4. Dynamic workflows are not resident: their declarations are part of the
+//    bridge's FULL catalog and are deferred behind tool_search when lazy
+//    exposure is active. The existing small-catalog eager bypass can expose
+//    the whole catalog by design, so "non-resident" is the invariant here.
+// 5. Background execution is an explicit plugin-only allowlist: a process-
+//    local pinned snapshot may carry declarative/remote pure or network-read
+//    handlers that opted in. Restricted JS, mutating handlers, standalone
+//    recipes and cold-restored name-only payloads remain unavailable.
 // 6. Broken recipes fail closed: an active recipe that fails semantic
 //    validation (e.g. references a primitive that no longer exists) is not
 //    declared and is logged — never half-declared.
@@ -116,6 +117,10 @@ struct IOSDynamicRecipeToolDescriptor: Sendable, Equatable {
     /// The model-facing ToolId: `recipe__<name>`.
     let toolId: String
     let recipeName: String
+    /// Non-nil for `plugin__<id>__<tool>` descriptors.
+    let pluginId: String?
+    /// Runtime broker pinned with the same package snapshot.
+    let capabilityBroker: IOSPluginCapabilityBroker?
     /// Manifest `version` string (e.g. "1.0.0").
     let version: String
     /// Store package hash of the exact manifest bytes (invariant 5).
@@ -132,8 +137,14 @@ struct IOSDynamicRecipeToolDescriptor: Sendable, Equatable {
     let inputsJSON: String
     /// Manifest `description`, verbatim (declaration description).
     let description: String
-    /// Immutable manifest copy — the in-flight pinning anchor.
-    let manifest: IOSRecipeManifest
+    /// Immutable handler copy — the in-flight pinning anchor.
+    let implementation: IOSPluginToolImplementation
+    let outputType: IOSPluginOutputType
+    let timeoutMs: Int
+    let maxOutputChars: Int
+    /// Explicit manifest opt-in. Runtime still restricts this further to
+    /// declarative/remote read-only handlers.
+    let backgroundAllowed: Bool
     /// `{"version":...,"permission_summary":...,"source":"custom.recipe"}`
     /// merged into `tool_search` results (§16.3: no manifest body is carried).
     let searchInfoJSON: String
@@ -156,8 +167,8 @@ struct IOSDynamicToolCatalogSnapshot: Sendable, Equatable {
     /// of the same snapshot that carries the manifests (§16.1).
     func recipeDeclarations() -> [Tool] {
         recipeTools.map { descriptor in
-            IosToolExposureBridgeKt.createRecipeToolDeclaration(
-                recipeName: descriptor.recipeName,
+            IosToolExposureBridgeKt.createDynamicWorkflowToolDeclaration(
+                toolId: descriptor.toolId,
                 version: descriptor.version,
                 description: descriptor.description,
                 inputsJson: descriptor.inputsJSON,
@@ -169,6 +180,26 @@ struct IOSDynamicToolCatalogSnapshot: Sendable, Equatable {
     /// toolId → searchInfoJSON, for the bridge's recipe search enrichment.
     var searchInfoByName: [String: String] {
         Dictionary(uniqueKeysWithValues: recipeTools.map { ($0.toolId, $0.searchInfoJSON) })
+    }
+
+    var backgroundEligibleDescriptors: [IOSDynamicRecipeToolDescriptor] {
+        recipeTools.filter(\.isBackgroundEligible)
+    }
+}
+
+extension IOSDynamicRecipeToolDescriptor {
+    var isBackgroundEligible: Bool {
+        guard pluginId != nil, backgroundAllowed,
+              effectClassRawValue == IOSToolEffectClass.pure.rawValue
+                || effectClassRawValue == IOSToolEffectClass.networkRead.rawValue else {
+            return false
+        }
+        switch implementation {
+        case .recipe, .remote:
+            return true
+        case .javascript:
+            return false
+        }
     }
 }
 
@@ -216,7 +247,8 @@ actor IOSDynamicToolRegistry {
         // Seed the synchronous cache with the store's current state at
         // revision 1 (deterministic; no-op when the store is unreadable).
         if let content = IOSDynamicToolRegistry.readCatalogContent(
-            store: IOSRecipeFileStore(baseDirectory: baseDirectory)
+            store: IOSRecipeFileStore(baseDirectory: baseDirectory),
+            pluginStore: IOSPluginFileStore(baseDirectory: baseDirectory)
         ) {
             registry.holder.value = IOSDynamicToolCatalogSnapshot(
                 revision: 1,
@@ -235,10 +267,8 @@ actor IOSDynamicToolRegistry {
     private let baseDirectory: URL
     /// Lock-protected mirror of the latest published snapshot; accessed from
     /// both actor-isolated (`refresh`) and nonisolated (`currentSnapshot`)
-    /// contexts. `nonisolated(unsafe)` is justified by the holder's own lock
-    /// and `@unchecked Sendable` conformance — the snapshot value itself is a
-    /// Sendable immutable value type.
-    nonisolated(unsafe) private let holder = IOSDynamicToolSnapshotHolder()
+    /// contexts. The holder supplies its own lock and is `Sendable`.
+    nonisolated private let holder = IOSDynamicToolSnapshotHolder()
     /// Next revision to issue for genuinely new content. Starts at 2 so the
     /// app-scoped `shared` instance never reissues the warm-seeded revision 1
     /// (see `shared`'s initializer). Non-shared instances (tests) never seed
@@ -255,6 +285,10 @@ actor IOSDynamicToolRegistry {
         IOSRecipeFileStore(baseDirectory: baseDirectory)
     }
 
+    private var pluginStore: IOSPluginFileStore {
+        IOSPluginFileStore(baseDirectory: baseDirectory)
+    }
+
     /// Latest published snapshot (nil only when the store was unreadable and
     /// no snapshot could ever be built). Nonisolated: synchronous readers
     /// (run-start assembly) use this; the actor's `refresh()` stays the only
@@ -269,7 +303,7 @@ actor IOSDynamicToolRegistry {
     /// compare `revision` with the previous round's value to decide whether
     /// to rebuild their exposure bridge.
     func refresh() async -> IOSDynamicToolCatalogSnapshot? {
-        guard let content = Self.readCatalogContent(store: store) else {
+        guard let content = Self.readCatalogContent(store: store, pluginStore: pluginStore) else {
             // Store unreadable: keep serving the last known snapshot rather
             // than dropping the catalog mid-run.
             return holder.value
@@ -313,26 +347,30 @@ actor IOSDynamicToolRegistry {
     /// Reads the store's active recipe set and produces validated descriptors.
     /// Returns nil only when the store is unreadable (fail-safe: keep the last
     /// known snapshot). A missing recipes directory is a valid EMPTY catalog.
-    static func readCatalogContent(store: IOSRecipeFileStore) -> CatalogContent? {
+    static func readCatalogContent(
+        store: IOSRecipeFileStore,
+        pluginStore: IOSPluginFileStore? = nil
+    ) -> CatalogContent? {
         let fileManager = FileManager.default
         let recipesDirectory = store.recipesDirectory
         var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: recipesDirectory.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
-            return .empty
-        }
         let names: [String]
-        do {
-            names = try fileManager.contentsOfDirectory(atPath: recipesDirectory.path)
-                .filter { !$0.hasPrefix(".") }
-                .sorted()
-        } catch {
-            return nil
+        if fileManager.fileExists(atPath: recipesDirectory.path, isDirectory: &isDirectory), isDirectory.boolValue {
+            do {
+                names = try fileManager.contentsOfDirectory(atPath: recipesDirectory.path)
+                    .filter { !$0.hasPrefix(".") }
+                    .sorted()
+            } catch {
+                return nil
+            }
+        } else {
+            names = []
         }
 
         var descriptors: [IOSDynamicRecipeToolDescriptor] = []
         for name in names {
             guard IOSRecipeNames.isValidRecipeName(name) else { continue }
+            guard store.isRecipeEnabled(name: name) else { continue }
             guard let package = try? store.readLiveRecipe(name: name),
                   let manifest = try? IOSRecipeManifest.decode(package.canonicalJSON) else {
                 NSLog("[IOSDynamicToolRegistry] active recipe \(name) unreadable; not declared.")
@@ -356,15 +394,68 @@ actor IOSDynamicToolRegistry {
             descriptors.append(IOSDynamicRecipeToolDescriptor(
                 toolId: toolId,
                 recipeName: manifest.name,
+                pluginId: nil,
+                capabilityBroker: nil,
                 version: manifest.version,
                 manifestHash: package.hash,
                 permissionSummary: permissionSummary,
                 effectClassRawValue: envelope.rawValue,
                 inputsJSON: inputsJSON,
                 description: manifest.description,
-                manifest: manifest,
+                implementation: .recipe(manifest),
+                outputType: .json,
+                timeoutMs: 30_000,
+                maxOutputChars: 32_000,
+                backgroundAllowed: false,
                 searchInfoJSON: searchInfoJSON
             ))
+        }
+
+        if let pluginStore {
+            var seen = Set(descriptors.map(\.toolId))
+            for installed in pluginStore.listInstalledPlugins() where installed.isEnabled {
+                let package = installed.package
+                for tool in package.tools.sorted(by: { $0.toolId < $1.toolId }) {
+                    guard seen.insert(tool.toolId).inserted else {
+                        NSLog("[IOSDynamicToolRegistry] duplicate dynamic tool \(tool.toolId); plugin skipped.")
+                        continue
+                    }
+                    let permissionSummary = Self.permissionSummary(for: tool.effectClass)
+                    guard let inputsJSON = Self.inputsJSON(from: tool.inputs),
+                          let searchInfoJSON = Self.pluginSearchInfoJSON(
+                              pluginId: package.manifest.id,
+                            version: package.manifest.version,
+                            permissionSummary: permissionSummary,
+                            trust: installed.trust,
+                            backgroundAllowed: package.manifest.backgroundAllowed
+                          ) else { continue }
+                    descriptors.append(IOSDynamicRecipeToolDescriptor(
+                        toolId: tool.toolId,
+                        // Runtime attribution/UI use this field as the dynamic
+                        // artifact id for plugins; the executable manifest is
+                        // carried separately below.
+                        recipeName: tool.toolId,
+                        pluginId: package.manifest.id,
+                        capabilityBroker: IOSPluginCapabilityBroker(
+                            pluginId: package.manifest.id,
+                            primitiveTools: tool.primitiveTools,
+                            capabilities: package.manifest.capabilities
+                        ),
+                        version: package.manifest.version,
+                        manifestHash: package.hash,
+                        permissionSummary: permissionSummary,
+                        effectClassRawValue: tool.effectClass.rawValue,
+                        inputsJSON: inputsJSON,
+                        description: tool.description,
+                        implementation: tool.implementation,
+                        outputType: tool.output,
+                        timeoutMs: tool.timeoutMs,
+                        maxOutputChars: tool.maxOutputChars,
+                        backgroundAllowed: package.manifest.backgroundAllowed,
+                        searchInfoJSON: searchInfoJSON
+                    ))
+                }
+            }
         }
         return CatalogContent(recipeTools: descriptors, contentHash: Self.contentHash(of: descriptors))
     }
@@ -373,7 +464,7 @@ actor IOSDynamicToolRegistry {
     /// routing oracle used by execution, so a declared static tool with no
     /// recipe adapter cannot pass validation and fail only at runtime.
     static func primitiveCatalogEntry(for toolName: String) -> IOSRecipeCatalogEntry? {
-        if toolName.hasPrefix("recipe__") { return nil }
+        if isDynamicWorkflowToolName(toolName) { return nil }
         return IOSRecipePrimitiveCatalog.catalogEntry(for: toolName)
     }
 
@@ -381,6 +472,14 @@ actor IOSDynamicToolRegistry {
     /// recipes referencing recipes; this marks the whole class).
     static func isRecipeToolName(_ toolName: String) -> Bool {
         toolName.hasPrefix("recipe__")
+    }
+
+    static func isPluginToolName(_ toolName: String) -> Bool {
+        toolName.hasPrefix("plugin__")
+    }
+
+    static func isDynamicWorkflowToolName(_ toolName: String) -> Bool {
+        isRecipeToolName(toolName) || isPluginToolName(toolName)
     }
 
     static func permissionSummary(for effectClass: IOSToolEffectClass) -> String {
@@ -418,9 +517,33 @@ actor IOSDynamicToolRegistry {
         return String(data: data, encoding: .utf8)
     }
 
+    private static func pluginSearchInfoJSON(
+        pluginId: String,
+        version: String,
+        permissionSummary: String,
+        trust: IOSPluginTrustRecord,
+        backgroundAllowed: Bool
+    ) -> String? {
+        var object: [String: Any] = [
+            "version": version,
+            "permission_summary": permissionSummary,
+            "source": "custom.plugin",
+            "plugin_id": pluginId,
+            "trust": trust.tier.rawValue,
+            "background_allowed": backgroundAllowed,
+        ]
+        if let keyId = trust.keyId { object["signer_key_id"] = keyId }
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
     private static func contentHash(of descriptors: [IOSDynamicRecipeToolDescriptor]) -> String {
         var hasher = SHA256()
-        let lines = descriptors.map { "\($0.toolId)|\($0.version)|\($0.manifestHash)" }
+        let lines = descriptors.map {
+            "\($0.toolId)|\($0.version)|\($0.manifestHash)|\($0.searchInfoJSON)"
+        }
             .joined(separator: "\n")
         hasher.update(data: Data(lines.utf8))
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
@@ -437,6 +560,21 @@ actor IOSDynamicToolRegistry {
 /// surviving tool keeps it).
 @MainActor
 enum IOSDynamicToolBridgeRebuilder {
+    /// In-place counterpart used by the live engine. Keeping bridge identity
+    /// stable is important because tool_search and nested executors retain the
+    /// run-scoped bridge while its Recipe slice changes between model rounds.
+    static func apply(
+        snapshot: IOSDynamicToolCatalogSnapshot,
+        to bridge: IosToolExposureBridge
+    ) {
+        let staticTools = bridge.fullToolDeclarations()
+            .filter { !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0.name) }
+        bridge.replaceFullCatalog(
+            tools: staticTools + snapshot.recipeDeclarations(),
+            recipeSearchInfo: snapshot.searchInfoByName
+        )
+    }
+
     static func rebuiltBridge(
         from oldBridge: IosToolExposureBridge?,
         snapshot: IOSDynamicToolCatalogSnapshot
@@ -446,7 +584,7 @@ enum IOSDynamicToolBridgeRebuilder {
         // snapshot's — declaration and execution availability stay aligned
         // with the SAME snapshot revision (§16.1).
         let oldStatic = (oldBridge?.fullToolDeclarations() ?? [])
-            .filter { !IOSDynamicToolRegistry.isRecipeToolName($0.name) }
+            .filter { !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0.name) }
         let bridge = IosToolExposureBridge(
             tools: oldStatic + snapshot.recipeDeclarations(),
             recipeSearchInfo: snapshot.searchInfoByName

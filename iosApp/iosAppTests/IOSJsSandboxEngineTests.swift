@@ -196,6 +196,20 @@ final class IOSJsSandboxEngineTests: XCTestCase {
         ])
     }
 
+    func testConsoleCaptureIsBoundedByOutputBudget() async {
+        let engine = IOSJsSandboxEngine()
+        let result = await engine.evaluate(
+            code: #"console.log("x".repeat(10_000)); null"#,
+            timeoutMs: 5_000,
+            maxOutputChars: 64
+        )
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertLessThanOrEqual(output.logs.reduce(0) { $0 + $1.count }, 64)
+        XCTAssertEqual(output.logs.count, 1)
+    }
+
     // MARK: - Exception handling (never crashes)
 
     func testScriptExceptionReturnsError() async {

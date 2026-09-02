@@ -30,10 +30,10 @@ private val bridgeJson = Json { ignoreUnknownKeys = true }
  * rounds of that run so a `tool_search` hit becomes callable on the NEXT round.
  */
 class IosToolExposureBridge private constructor(
-    private val allTools: List<Tool>,
-    private val registry: ToolRegistry,
-    private val exposureState: ToolExposureState,
-    private val recipeSearchInfo: Map<String, String>,
+    private var allTools: List<Tool>,
+    private var registry: ToolRegistry,
+    private var exposureState: ToolExposureState,
+    private var recipeSearchInfo: Map<String, String>,
 ) {
     constructor(tools: List<Tool>) : this(
         withSearchTool(tools, ToolRegistry.from(tools)),
@@ -77,6 +77,21 @@ class IosToolExposureBridge private constructor(
      *  bridge rebuilt from a previous bridge's `visibleTools()` already has it —
      *  appending again would make ToolRegistry.from throw on duplicates). */
     private companion object {
+        /**
+         * WebMount is a workflow, not a bag of independent commands. A fresh
+         * user turn gets a fresh bridge, so exposing only the literal search
+         * hits can leave the model with `wm_type`/`wm_scroll` but no way to
+         * navigate or re-observe. Keep this small read/navigation spine
+         * together whenever any WebMount tool is discovered.
+         */
+        val WEB_MOUNT_CORE_TOOL_NAMES = listOf(
+            "wm_tab_list",
+            "wm_open",
+            "wm_observe",
+            "wm_visual_snapshot",
+            "wm_wait",
+        )
+
         fun withSearchTool(tools: List<Tool>, registry: ToolRegistry): List<Tool> =
             if (tools.any { it.name == TOOL_SEARCH_TOOL_NAME }) tools
             else tools + createToolSearchTool(registry)
@@ -103,6 +118,26 @@ class IosToolExposureBridge private constructor(
     }
 
     /**
+     * Replaces the full catalog at a model-round boundary while preserving
+     * exposure for tools that still exist. This keeps one bridge identity for
+     * the whole run, so the engine, tool_search and nested execution all see
+     * the same recipe revision after an import/enable/disable/delete.
+     */
+    fun replaceFullCatalog(tools: List<Tool>, recipeSearchInfo: Map<String, String>) {
+        val previouslyVisible = exposureState.toolsForStep().map { it.name }
+        val nextRegistry = ToolRegistry.from(tools)
+        val nextAllTools = withSearchTool(tools, nextRegistry)
+        allTools = nextAllTools
+        registry = nextRegistry
+        exposureState = ToolExposureState.from(
+            nextAllTools,
+            residentPolicy = ::iosResidentToolPolicy,
+        )
+        this.recipeSearchInfo = recipeSearchInfo
+        exposureState.exposeToolNames(previouslyVisible)
+    }
+
+    /**
      * Executes a `tool_search` call locally: parses query/category/limit, runs
      * the shared search index, feeds the `expanded_tools` names back into the
      * exposure state (so hits are visible on the next model step), and returns
@@ -120,12 +155,39 @@ class IosToolExposureBridge private constructor(
             // permission summary and source=custom.recipe. The manifest body is
             // never included — the model only gets the schema at call time.
             val enriched = enrichRecipeSearchResults(payload)
-            val expanded = enriched["expanded_tools"]?.jsonArray
+            val searchHits = enriched["expanded_tools"]?.jsonArray
                 ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
                 .orEmpty()
+            val expanded = relatedExpandedToolNames(searchHits)
             exposureState.exposeToolNames(expanded)
-            enriched.toString()
+            payloadWithRelatedExposure(enriched, searchHits, expanded).toString()
         }.getOrElse { toolSearchErrorPayload(it.message) }
+    }
+
+    private fun relatedExpandedToolNames(searchHits: List<String>): List<String> {
+        if (searchHits.none { it.startsWith("wm_") }) return searchHits
+        return (searchHits + WEB_MOUNT_CORE_TOOL_NAMES)
+            .filter { registry.metadataFor(it) != null }
+            .distinct()
+    }
+
+    private fun payloadWithRelatedExposure(
+        payload: JsonObject,
+        searchHits: List<String>,
+        expanded: List<String>,
+    ): JsonObject {
+        if (expanded == searchHits) return payload
+        return JsonObject(payload.toMutableMap().apply {
+            put("expanded_tools", buildJsonArray { expanded.forEach { add(it) } })
+            put(
+                "workflow_hint",
+                JsonPrimitive(
+                    "WebMount core workflow is also callable on the next step: get a session with " +
+                        "wm_tab_list, navigate URLs only with wm_open, then use wm_observe or " +
+                        "wm_visual_snapshot. wm_type and wm_keys never navigate.",
+                ),
+            )
+        })
     }
 
     /** Merges per-tool recipe search info into the `tools` entries of a
@@ -215,6 +277,23 @@ fun createRecipeToolDeclaration(
     inputsJson: String,
     effectClass: String,
 ): Tool {
+    return createDynamicWorkflowToolDeclaration(
+        toolId = "recipe__$recipeName",
+        version = version,
+        description = description,
+        inputsJson = inputsJson,
+        effectClass = effectClass,
+    )
+}
+
+/** Shared declaration seam for Recipe v1 and amber.plugin.v1 workflow tools. */
+fun createDynamicWorkflowToolDeclaration(
+    toolId: String,
+    version: String,
+    description: String,
+    inputsJson: String,
+    effectClass: String,
+): Tool {
     val inputs = runCatching {
         (bridgeJson.parseToJsonElement(inputsJson.ifBlank { "{}" }) as? JsonObject)
             ?: JsonObject(emptyMap())
@@ -224,13 +303,13 @@ fun createRecipeToolDeclaration(
             val type = (typeElement as? JsonPrimitive)?.contentOrNull ?: "string"
             put(name, buildJsonObject {
                 put("type", type)
-                put("description", "Recipe input `$name` for `recipe__$recipeName` (recipe v$version).")
+                put("description", "Workflow input `$name` for `$toolId` (v$version).")
             })
         }
     }
     val (needsApproval, allowsAutoApproval) = recipeApprovalFlags(effectClass)
     return Tool(
-        name = "recipe__$recipeName",
+        name = toolId,
         description = description,
         parameters = { InputSchema.Obj(properties = properties, required = inputs.keys.toList()) },
         needsApproval = needsApproval,
@@ -254,7 +333,8 @@ private fun recipeApprovalFlags(effectClass: String): Pair<Boolean, Boolean> = w
  * mirrors the real iOS declaration names from `iosToolDeclaration` in
  * ai-core/Tool.kt. Everything NOT in this set (wm_*, terminal_execute,
  * ios_shell_execute, ish_handoff, ios_ish_execute, mcp_test, mcp_import_from_skill, skill_validate,
- * skill_import, soul_import, skill_enable, skill_disable, subagent_report) is deferred
+ * skill_import, soul_import, skill_enable, skill_disable, recipe lifecycle,
+ * subagent_report) is deferred
  * until `tool_search` exposes it.
  */
 internal val IOS_RESIDENT_TOOL_NAMES: Set<String> = setOf(
@@ -279,6 +359,8 @@ internal val IOS_RESIDENT_TOOL_NAMES: Set<String> = setOf(
     "mcp_describe_tool",
     "skills_list",
     "use_skill",
+    "recipes_list",
+    "plugins_list",
     "subagent_dispatch",
     "model_council_run",
     "file_read_selected",

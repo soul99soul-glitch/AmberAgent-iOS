@@ -324,21 +324,24 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(names.contains("ios_ish_execute"))
     }
 
-    /// G7: 前台工具循环上限参数化——默认 12，clamp 4-24，UserDefaults 持久化。
-    func testChatMaxToolResumeCountDefaultsToTwelveAndClamps() {
+    /// G7: 前台工具循环上限参数化——默认 24，clamp 24-128，UserDefaults 持久化。
+    func testChatMaxToolResumeCountDefaultsToTwentyFourAndClamps() {
         let defaults = isolatedDefaults()
         let store = SettingsStore(userDefaults: defaults)
 
-        XCTAssertEqual(store.chatMaxToolResumeCount, 12)
-
-        store.chatMaxToolResumeCount = 3
-        XCTAssertEqual(store.chatMaxToolResumeCount, 4)
-
-        store.chatMaxToolResumeCount = 100
         XCTAssertEqual(store.chatMaxToolResumeCount, 24)
 
+        store.chatMaxToolResumeCount = 23
+        XCTAssertEqual(store.chatMaxToolResumeCount, 24)
+
+        store.chatMaxToolResumeCount = 128
+        XCTAssertEqual(store.chatMaxToolResumeCount, 128)
+
+        store.chatMaxToolResumeCount = 129
+        XCTAssertEqual(store.chatMaxToolResumeCount, 128)
+
         store.chatMaxToolResumeCount = 9
-        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 9)
+        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 24)
     }
 
     // MARK: - P3-a: exec 工具开关（默认关，开时进 deferred 池）

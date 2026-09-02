@@ -208,6 +208,17 @@ public protocol IOSAgentRunLedgering: Sendable {
         resultPayload: String?
     ) async -> Bool
 
+    /// Closes an outer tool transaction that is paused at an approval card.
+    /// Denial/context loss performs no side effect and therefore must not
+    /// fabricate a second Started transition.
+    @discardableResult
+    func recordWaitingToolApprovalTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?
+    ) async -> Bool
+
     func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]?
 
     func transitionToolTransaction(
@@ -253,6 +264,22 @@ extension IOSAgentRunLedgering {
         resultPayload: String?
     ) async -> Bool {
         await recordToolCallFinished(runId: runId, toolCallId: toolCallId, outcome: outcome)
+    }
+
+    func recordWaitingToolApprovalTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?
+    ) async -> Bool {
+        await transitionToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: .waitingUser,
+            to: .finished,
+            outcome: outcome,
+            resultPayload: resultPayload
+        )
     }
 
     func toolTransactions(runId: String) async -> [IOSToolTransactionSnapshot]? { nil }
@@ -536,6 +563,45 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
             resultPayload: resultPayload,
             fields: ["toolCallId": toolCallId, "outcome": outcome]
         )
+    }
+
+
+    @discardableResult
+    func recordWaitingToolApprovalTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        resultPayload: String?
+    ) async -> Bool {
+        let transitioned = await transitionToolTransaction(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: .waitingUser,
+            to: .finished,
+            outcome: outcome,
+            resultPayload: resultPayload
+        )
+        guard transitioned else {
+            if let current = await toolTransaction(runId: runId, toolCallId: toolCallId),
+               current.state == .finished,
+               current.outcome == outcome,
+               current.resultPayload == resultPayload {
+                return true
+            }
+            return false
+        }
+        let ok = await append(
+            runId: runId,
+            event: makeToolEvent(
+                type: Self.toolFinishedEventType,
+                toolCallId: toolCallId,
+                fields: ["toolCallId": toolCallId, "outcome": outcome]
+            )
+        )
+        if !ok {
+            print("[AmberChat] waiting approval terminal event write failed run=\(runId) toolCallId=\(toolCallId)")
+        }
+        return true
     }
 
     private func finishToolTransaction(
@@ -874,6 +940,8 @@ enum IOSToolEffectClassMapping {
         if toolName == "skills_list"
             || toolName == "use_skill"
             || toolName == "skill_validate"
+            || toolName == "recipes_list"
+            || toolName == "recipe_validate"
             || toolName == "mcp_list"
             || toolName == "mcp_describe_tool" {
             return .pure
@@ -888,7 +956,8 @@ enum IOSToolEffectClassMapping {
             || toolName == "skill_import"
             || toolName == "soul_import"
             || toolName == "skill_enable"
-            || toolName == "skill_disable" {
+            || toolName == "skill_disable"
+            || IOSRecipeToolCatalog.mutatingToolNames.contains(toolName) {
             return .sideEffect
         }
         // P1-c: 编排工具——spawn/interrupt 有真实副作用（建线程/取消 run），

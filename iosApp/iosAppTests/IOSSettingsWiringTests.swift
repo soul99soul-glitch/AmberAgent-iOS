@@ -10,7 +10,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         return try String(contentsOf: fileURL, encoding: .utf8)
     }
 
-    /// G7 接线闭环：设置页可见控件（Stepper）、UserDefaults key、运行时消费
+    /// G7 接线闭环：设置页可见选项面板、UserDefaults key、运行时消费
     /// （coordinator 从 SettingsStore 读上限）三处齐备。
     func testChatToolResumeCapIsWiredThroughExecutionSettings() throws {
         let view = try source("iosApp/ExecutionSettingsView.swift")
@@ -18,9 +18,14 @@ final class IOSSettingsWiringTests: XCTestCase {
         let store = try source("iosApp/SettingsStore.swift")
 
         XCTAssertTrue(view.contains("@AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)"))
-        XCTAssertTrue(view.contains("Stepper("))
-        XCTAssertTrue(view.contains("chatMaxToolResumeCountRange"))
+        XCTAssertTrue(view.contains("confirmationDialog("))
+        XCTAssertTrue(view.contains("chatMaxToolResumeCountOptions"))
+        XCTAssertFalse(view.contains("Stepper("))
+        XCTAssertTrue(view.contains("Text(\"\\(clampedCount)\")"))
+        XCTAssertFalse(view.contains("Text(\"\\(clampedCount) 次\")"))
         XCTAssertTrue(store.contains("chatMaxToolResumeCount"))
+        XCTAssertTrue(store.contains("chatMaxToolResumeCountOptions = [24, 48, 64, 96, 128]"))
+        XCTAssertTrue(store.contains("chatMaxToolResumeCountRange = 24...128"))
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 

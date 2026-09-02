@@ -411,11 +411,11 @@ enum IOSRecipeValidator {
             if trimmedTool.isEmpty || trimmedTool != step.tool || trimmedTool.contains(where: { $0.isWhitespace }) {
                 issues.append(issue(.invalidToolName, path: "\(stepPath).tool",
                                      "tool 必须是 App 已发布的 ToolId 字符串（无空白）。"))
-            } else if trimmedTool.hasPrefix("recipe__") {
+            } else if trimmedTool.hasPrefix("recipe__") || trimmedTool.hasPrefix("plugin__") {
                 // §10.1: no recipe-calling-recipe; recipes only compose
                 // primitives, defense in depth even before catalog lookup.
                 issues.append(issue(.recipeToolReference, path: "\(stepPath).tool",
-                                     "Recipe 不能引用另一个 Recipe（tool「\(trimmedTool)」）。"))
+                                     "工作流不能引用 Recipe 或插件工具（tool「\(trimmedTool)」）。"))
             } else if let entry = catalog(trimmedTool) {
                 if !entry.exists {
                     issues.append(issue(.unknownTool, path: "\(stepPath).tool",
@@ -555,5 +555,640 @@ extension IOSToolEffectClass {
     /// (§10.3.7, invariant 10: permission does not silently widen).
     static func conservativeUpperBound(of classes: [IOSToolEffectClass]) -> IOSToolEffectClass? {
         classes.max { $0.conservativenessRank < $1.conservativenessRank }
+    }
+}
+
+// MARK: - amber.plugin.v1
+
+enum IOSPluginLimits {
+    static let maxFiles = 32
+    static let maxFileBytes = 256 * 1024
+    static let maxPackageBytes = 1024 * 1024
+    static let packageHashDomain = Data("amber.plugin.package.v1\0".utf8)
+}
+
+enum IOSPluginOutputType: String, Codable, Equatable, Sendable {
+    case json
+    case object
+    case array
+    case string
+    case number
+    case boolean
+}
+
+enum IOSPluginRemoteKind: String, Codable, Equatable, Sendable {
+    case mcp
+    case openapi
+}
+
+struct IOSPluginRemoteManifest: Codable, Equatable, Sendable {
+    let kind: IOSPluginRemoteKind
+    /// MCP server name for `.mcp` handlers.
+    let server: String?
+    /// MCP tool name for `.mcp` handlers.
+    let tool: String?
+    /// Fixed endpoint for `.openapi` handlers. Call arguments can never
+    /// replace this URL; GET/HEAD use query items and other methods use JSON.
+    let url: String?
+    let method: String?
+
+    init(
+        kind: IOSPluginRemoteKind,
+        server: String? = nil,
+        tool: String? = nil,
+        url: String? = nil,
+        method: String? = nil
+    ) {
+        self.kind = kind
+        self.server = server
+        self.tool = tool
+        self.url = url
+        self.method = method
+    }
+}
+
+struct IOSPluginToolManifest: Codable, Equatable, Sendable {
+    /// Stable member name used in `plugin__<plugin id>__<name>`.
+    let name: String
+    let description: String?
+    /// Exactly one handler must be present: Recipe, restricted JS or remote.
+    let recipe: String?
+    let script: String?
+    let remote: IOSPluginRemoteManifest?
+    /// Host primitives made visible inside a restricted JS handler.
+    let hostTools: [String]
+    /// Script/remote declaration inputs. Recipe inputs come from recipe.json.
+    let inputs: [String: IOSRecipeInputType]
+    let output: IOSPluginOutputType
+    let timeoutMs: Int
+    let maxOutputChars: Int
+
+    init(
+        name: String,
+        recipe: String,
+        description: String? = nil
+    ) {
+        self.init(
+            name: name,
+            description: description,
+            recipe: recipe,
+            script: nil,
+            remote: nil
+        )
+    }
+
+    init(
+        name: String,
+        description: String? = nil,
+        recipe: String? = nil,
+        script: String? = nil,
+        remote: IOSPluginRemoteManifest? = nil,
+        hostTools: [String] = [],
+        inputs: [String: IOSRecipeInputType] = [:],
+        output: IOSPluginOutputType = .json,
+        timeoutMs: Int = 10_000,
+        maxOutputChars: Int = 10_000
+    ) {
+        self.name = name
+        self.description = description
+        self.recipe = recipe
+        self.script = script
+        self.remote = remote
+        self.hostTools = hostTools
+        self.inputs = inputs
+        self.output = output
+        self.timeoutMs = timeoutMs
+        self.maxOutputChars = maxOutputChars
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, recipe, script, remote, hostTools = "host_tools"
+        case inputs, output, timeoutMs = "timeout_ms", maxOutputChars = "max_output_chars"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            description: try container.decodeIfPresent(String.self, forKey: .description),
+            recipe: try container.decodeIfPresent(String.self, forKey: .recipe),
+            script: try container.decodeIfPresent(String.self, forKey: .script),
+            remote: try container.decodeIfPresent(IOSPluginRemoteManifest.self, forKey: .remote),
+            hostTools: try container.decodeIfPresent([String].self, forKey: .hostTools) ?? [],
+            inputs: try container.decodeIfPresent([String: IOSRecipeInputType].self, forKey: .inputs) ?? [:],
+            output: try container.decodeIfPresent(IOSPluginOutputType.self, forKey: .output) ?? .json,
+            timeoutMs: try container.decodeIfPresent(Int.self, forKey: .timeoutMs) ?? 10_000,
+            maxOutputChars: try container.decodeIfPresent(Int.self, forKey: .maxOutputChars) ?? 10_000
+        )
+    }
+}
+
+struct IOSPluginCapabilities: Codable, Equatable, Sendable {
+    let workspaceReadPrefixes: [String]
+    let workspaceWritePrefixes: [String]
+    let networkDomains: [String]
+    let webMountActions: [String]
+
+    init(
+        workspaceReadPrefixes: [String] = [],
+        workspaceWritePrefixes: [String] = [],
+        networkDomains: [String] = [],
+        webMountActions: [String] = []
+    ) {
+        self.workspaceReadPrefixes = workspaceReadPrefixes
+        self.workspaceWritePrefixes = workspaceWritePrefixes
+        self.networkDomains = networkDomains
+        self.webMountActions = webMountActions
+    }
+}
+
+struct IOSPluginDirectoryMetadata: Codable, Equatable, Sendable {
+    let publisher: String
+    let homepageURL: String?
+    let supportURL: String?
+    let privacyURL: String?
+    let minimumAge: Int?
+
+    init(
+        publisher: String,
+        homepageURL: String? = nil,
+        supportURL: String? = nil,
+        privacyURL: String? = nil,
+        minimumAge: Int? = nil
+    ) {
+        self.publisher = publisher
+        self.homepageURL = homepageURL
+        self.supportURL = supportURL
+        self.privacyURL = privacyURL
+        self.minimumAge = minimumAge
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case publisher
+        case homepageURL = "homepage_url"
+        case supportURL = "support_url"
+        case privacyURL = "privacy_url"
+        case minimumAge = "minimum_age"
+    }
+}
+
+struct IOSPluginManifest: Codable, Equatable, Sendable {
+    static let schemaVersion = "amber.plugin.v1"
+
+    let schema: String
+    let id: String
+    let name: String
+    let version: String
+    let description: String
+    let tools: [IOSPluginToolManifest]
+    let capabilities: IOSPluginCapabilities
+    let backgroundAllowed: Bool
+    /// Optional metadata consumed by a future public index. Its presence does
+    /// not imply that a marketplace or server-side listing exists.
+    let directory: IOSPluginDirectoryMetadata?
+
+    init(
+        schema: String = IOSPluginManifest.schemaVersion,
+        id: String,
+        name: String,
+        version: String,
+        description: String,
+        tools: [IOSPluginToolManifest],
+        capabilities: IOSPluginCapabilities = .init(),
+        backgroundAllowed: Bool = false,
+        directory: IOSPluginDirectoryMetadata? = nil
+    ) {
+        self.schema = schema
+        self.id = id
+        self.name = name
+        self.version = version
+        self.description = description
+        self.tools = tools
+        self.capabilities = capabilities
+        self.backgroundAllowed = backgroundAllowed
+        self.directory = directory
+    }
+
+    static func decode(_ data: Data) throws -> IOSPluginManifest {
+        try JSONDecoder().decode(IOSPluginManifest.self, from: data)
+    }
+
+    func canonicalJSONData() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(self)
+    }
+}
+
+enum IOSPluginToolImplementation: Equatable, Sendable {
+    case recipe(IOSRecipeManifest)
+    case javascript(source: String, hostTools: Set<String>)
+    case remote(IOSPluginRemoteManifest)
+}
+
+struct IOSPluginResolvedTool: Equatable, Sendable {
+    let toolId: String
+    let name: String
+    let description: String
+    let inputs: [String: IOSRecipeInputType]
+    let output: IOSPluginOutputType
+    let timeoutMs: Int
+    let maxOutputChars: Int
+    let implementation: IOSPluginToolImplementation
+    let primitiveTools: Set<String>
+    let effectClass: IOSToolEffectClass
+}
+
+struct IOSPluginValidationResult: Equatable, Sendable {
+    let issues: [String]
+    let tools: [IOSPluginResolvedTool]
+    /// Derived from the recipes' real primitives. The plugin manifest has no
+    /// field that can downgrade this envelope.
+    let primitiveTools: Set<String>
+    let permissionEnvelope: IOSToolEffectClass?
+
+    var isValid: Bool { issues.isEmpty }
+}
+
+enum IOSPluginValidator {
+    static func validate(
+        manifest: IOSPluginManifest,
+        recipes: [String: IOSRecipeManifest],
+        scripts: [String: String] = [:],
+        catalog: @escaping IOSRecipeCatalogLookup
+    ) -> IOSPluginValidationResult {
+        var issues: [String] = []
+        if manifest.schema != IOSPluginManifest.schemaVersion {
+            issues.append("不支持的 schema「\(manifest.schema)」。")
+        }
+        if !IOSRecipeNames.isValidRecipeName(manifest.id) || manifest.id.contains("__") {
+            issues.append("插件 id 必须匹配 ^[a-z][a-z0-9_]{1,31}$。")
+        }
+        if manifest.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("插件名称不能为空。")
+        } else if manifest.name.count > 80 {
+            issues.append("插件名称不能超过 80 个字符。")
+        }
+        if manifest.version.isEmpty || manifest.version.contains(where: { $0.isWhitespace }) {
+            issues.append("插件版本不能为空且不能包含空白。")
+        }
+        if manifest.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("插件描述不能为空。")
+        }
+        if manifest.tools.isEmpty {
+            issues.append("插件至少需要注册一个工具。")
+        }
+
+        var seenNames: Set<String> = []
+        var resolved: [IOSPluginResolvedTool] = []
+        var primitives: Set<String> = []
+        for tool in manifest.tools {
+            guard IOSRecipeNames.isValidMemberName(tool.name), !tool.name.contains("__") else {
+                issues.append("插件工具名「\(tool.name)」无效。")
+                continue
+            }
+            guard seenNames.insert(tool.name).inserted else {
+                issues.append("插件工具名「\(tool.name)」重复。")
+                continue
+            }
+            for input in tool.inputs.keys where !IOSRecipeNames.isValidMemberName(input) {
+                issues.append("插件工具「\(tool.name)」的输入名「\(input)」无效。")
+            }
+            guard (1_000...30_000).contains(tool.timeoutMs) else {
+                issues.append("插件工具「\(tool.name)」的 timeout_ms 必须在 1000...30000。")
+                continue
+            }
+            guard (1_000...32_000).contains(tool.maxOutputChars) else {
+                issues.append("插件工具「\(tool.name)」的 max_output_chars 必须在 1000...32000。")
+                continue
+            }
+
+            let handlerCount = [tool.recipe != nil, tool.script != nil, tool.remote != nil].filter { $0 }.count
+            guard handlerCount == 1 else {
+                issues.append("插件工具「\(tool.name)」必须且只能声明 recipe、script、remote 之一。")
+                continue
+            }
+
+            let implementation: IOSPluginToolImplementation
+            let inputs: [String: IOSRecipeInputType]
+            let effect: IOSToolEffectClass
+            let memberPrimitives: Set<String>
+            if let recipePath = tool.recipe {
+                guard tool.hostTools.isEmpty, tool.inputs.isEmpty else {
+                    issues.append("Recipe 工具「\(tool.name)」的输入和能力必须由 recipe.json 定义。")
+                    continue
+                }
+                guard isCanonicalRecipePath(recipePath) else {
+                    issues.append("Recipe 路径「\(recipePath)」必须位于 recipes/ 且为规范 JSON 路径。")
+                    continue
+                }
+                guard let recipe = recipes[recipePath] else {
+                    issues.append("找不到插件工具「\(tool.name)」引用的 \(recipePath)。")
+                    continue
+                }
+                let validation = IOSRecipeValidator.validate(manifest: recipe, catalog: catalog)
+                if !validation.isValid {
+                    issues.append("\(recipePath) 校验失败：\(validation.issues.map(\.message).joined(separator: "；"))")
+                    continue
+                }
+                guard let envelope = validation.permissionEnvelope else {
+                    issues.append("\(recipePath) 无法计算权限包络。")
+                    continue
+                }
+                let unsupported = recipe.steps.map(\.tool).filter { !isAllowedPublicPluginPrimitive($0) }
+                guard unsupported.isEmpty else {
+                    issues.append("\(recipePath) 使用了公开插件不允许的能力：\(unsupported.joined(separator: "、"))。")
+                    continue
+                }
+                memberPrimitives = Set(recipe.steps.map(\.tool))
+                inputs = recipe.inputs
+                effect = envelope
+                implementation = .recipe(recipe)
+            } else if let scriptPath = tool.script {
+                guard isCanonicalScriptPath(scriptPath) else {
+                    issues.append("脚本路径「\(scriptPath)」必须位于 scripts/ 且为规范 JS 路径。")
+                    continue
+                }
+                guard let source = scripts[scriptPath], !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    issues.append("找不到插件工具「\(tool.name)」引用的 \(scriptPath)，或脚本为空。")
+                    continue
+                }
+                let declared = Set(tool.hostTools)
+                guard declared.count == tool.hostTools.count else {
+                    issues.append("插件工具「\(tool.name)」重复声明了 host_tools。")
+                    continue
+                }
+                let unsupported = declared.filter { !isAllowedPublicPluginPrimitive($0) }.sorted()
+                guard unsupported.isEmpty else {
+                    issues.append("\(scriptPath) 使用了公开插件不允许的能力：\(unsupported.joined(separator: "、"))。")
+                    continue
+                }
+                let effects = declared.compactMap { catalog($0)?.effectClass }
+                guard effects.count == declared.count else {
+                    issues.append("\(scriptPath) 声明了不存在的 host_tools。")
+                    continue
+                }
+                memberPrimitives = declared
+                inputs = tool.inputs
+                effect = IOSToolEffectClass.conservativeUpperBound(of: effects) ?? .pure
+                implementation = .javascript(source: source, hostTools: declared)
+            } else if let remote = tool.remote {
+                guard tool.hostTools.isEmpty else {
+                    issues.append("远端工具「\(tool.name)」不能同时声明 host_tools。")
+                    continue
+                }
+                guard let remoteEffect = validateRemote(
+                    remote,
+                    capabilities: manifest.capabilities,
+                    toolName: tool.name,
+                    issues: &issues
+                ) else { continue }
+                memberPrimitives = []
+                inputs = tool.inputs
+                effect = remoteEffect
+                implementation = .remote(remote)
+            } else {
+                continue
+            }
+            primitives.formUnion(memberPrimitives)
+            resolved.append(IOSPluginResolvedTool(
+                toolId: "plugin__\(manifest.id)__\(tool.name)",
+                name: tool.name,
+                description: tool.description
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .flatMap { $0.isEmpty ? nil : $0 }
+                    ?? manifest.description,
+                inputs: inputs,
+                output: tool.output,
+                timeoutMs: tool.timeoutMs,
+                maxOutputChars: tool.maxOutputChars,
+                implementation: implementation,
+                primitiveTools: memberPrimitives,
+                effectClass: effect
+            ))
+        }
+
+        validateCapabilities(manifest.capabilities, issues: &issues)
+        validateDirectoryMetadata(manifest.directory, issues: &issues)
+        let envelope = issues.isEmpty
+            ? IOSToolEffectClass.conservativeUpperBound(of: resolved.map(\.effectClass))
+            : nil
+        return IOSPluginValidationResult(
+            issues: issues,
+            tools: resolved,
+            primitiveTools: primitives,
+            permissionEnvelope: envelope
+        )
+    }
+
+    static func isCanonicalPackagePath(_ path: String) -> Bool {
+        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"), !path.contains(":"),
+              path == path.precomposedStringWithCanonicalMapping,
+              path.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) else { return false }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !parts.isEmpty && parts.allSatisfy {
+            !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".")
+        }
+    }
+
+    private static func isCanonicalRecipePath(_ path: String) -> Bool {
+        isCanonicalPackagePath(path)
+            && path.hasPrefix("recipes/")
+            && path.hasSuffix(".json")
+            && path.split(separator: "/").count == 2
+    }
+
+    private static func isCanonicalScriptPath(_ path: String) -> Bool {
+        isCanonicalPackagePath(path)
+            && path.hasPrefix("scripts/")
+            && path.hasSuffix(".js")
+            && path.split(separator: "/").count == 2
+    }
+
+    private static func validateRemote(
+        _ remote: IOSPluginRemoteManifest,
+        capabilities: IOSPluginCapabilities,
+        toolName: String,
+        issues: inout [String]
+    ) -> IOSToolEffectClass? {
+        switch remote.kind {
+        case .mcp:
+            guard let server = remote.server?.trimmingCharacters(in: .whitespacesAndNewlines), !server.isEmpty,
+                  let tool = remote.tool?.trimmingCharacters(in: .whitespacesAndNewlines), !tool.isEmpty,
+                  remote.url == nil, remote.method == nil else {
+                issues.append("MCP 工具「\(toolName)」必须且只能声明 server 和 tool。")
+                return nil
+            }
+            return .sideEffect
+        case .openapi:
+            guard remote.server == nil, remote.tool == nil,
+                  let rawURL = remote.url,
+                  let url = URL(string: rawURL),
+                  url.scheme?.lowercased() == "https",
+                  let host = url.host?.lowercased(),
+                  !host.isEmpty,
+                  capabilities.networkDomains.contains(where: { host == $0 || host.hasSuffix(".\($0)") }) else {
+                issues.append("OpenAPI 工具「\(toolName)」必须绑定能力范围内的固定 HTTPS URL。")
+                return nil
+            }
+            let method = (remote.method ?? "GET").uppercased()
+            guard ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"].contains(method),
+                  remote.method == nil || remote.method == method else {
+                issues.append("OpenAPI 工具「\(toolName)」的 method 无效；请使用大写标准方法。")
+                return nil
+            }
+            return method == "GET" || method == "HEAD" ? .networkRead : .sideEffect
+        }
+    }
+
+    private static func validateCapabilities(
+        _ capabilities: IOSPluginCapabilities,
+        issues: inout [String]
+    ) {
+        for prefix in capabilities.workspaceReadPrefixes + capabilities.workspaceWritePrefixes {
+            guard prefix == "/workspace" || prefix.hasPrefix("/workspace/") else {
+                issues.append("Workspace 权限前缀「\(prefix)」必须位于 /workspace。")
+                continue
+            }
+            let relative = String(prefix.dropFirst("/workspace".count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if !relative.isEmpty,
+               relative.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0 == "." || $0 == ".." || $0.isEmpty }) {
+                issues.append("Workspace 权限前缀「\(prefix)」不是规范路径。")
+            }
+        }
+        for domain in capabilities.networkDomains {
+            let normalized = domain.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let labels = normalized.split(separator: ".", omittingEmptySubsequences: false)
+            let validLabels = labels.count >= 2 && labels.allSatisfy { label in
+                guard let first = label.first, let last = label.last,
+                      first.isASCII, last.isASCII, first != "-", last != "-" else { return false }
+                return label.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }
+            }
+            if normalized != domain || normalized.isEmpty || !validLabels {
+                issues.append("网络域名「\(domain)」不是规范主机名。")
+            }
+        }
+        for action in capabilities.webMountActions where !action.hasPrefix("wm_") {
+            issues.append("WebMount 动作「\(action)」必须是 wm_* 工具名。")
+        }
+    }
+
+    private static func validateDirectoryMetadata(
+        _ metadata: IOSPluginDirectoryMetadata?,
+        issues: inout [String]
+    ) {
+        guard let metadata else { return }
+        if metadata.publisher.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("公开索引 publisher 不能为空。")
+        }
+        for (label, raw) in [
+            ("homepage_url", metadata.homepageURL),
+            ("support_url", metadata.supportURL),
+            ("privacy_url", metadata.privacyURL),
+        ] {
+            guard let raw else { continue }
+            guard let url = URL(string: raw), url.scheme?.lowercased() == "https", url.host != nil else {
+                issues.append("公开索引 \(label) 必须是固定 HTTPS 链接。")
+                continue
+            }
+        }
+        if let age = metadata.minimumAge, ![4, 9, 12, 17].contains(age) {
+            issues.append("公开索引 minimum_age 只支持 4、9、12、17。")
+        }
+    }
+
+    /// Public plugins intentionally start with the host primitives whose
+    /// authorization can be decided from one call's arguments. Legacy Recipe
+    /// files keep their broader catalog; terminal/Python, Apple/private data,
+    /// orchestration, exec, MCP and hostless search are not plugin capabilities.
+    static func isAllowedPublicPluginPrimitive(_ tool: String) -> Bool {
+        let pathScopedWorkspace = IOSWorkspaceToolCatalog.supportedToolNames
+            .subtracting(["workspace_artifact_read", "workspace_artifact_delete"])
+        return pathScopedWorkspace.contains(tool)
+            || tool == "scrape_web"
+            || IOSWebMountToolCatalog.supportedToolNames.contains(tool)
+            || tool == "tool_search" || tool == "tools_list"
+    }
+}
+
+/// One enforcement point between a plugin workflow and every host primitive.
+/// It uses the validated package snapshot, never live files or manifest risk labels.
+struct IOSPluginCapabilityBroker: Sendable, Equatable {
+    let pluginId: String
+    let primitiveTools: Set<String>
+    let capabilities: IOSPluginCapabilities
+
+    func authorize(tool: String, argumentsJSON: String) -> String? {
+        guard primitiveTools.contains(tool) else {
+            return "插件 \(pluginId) 未声明工具能力 \(tool)。"
+        }
+        guard IOSPluginValidator.isAllowedPublicPluginPrimitive(tool) else {
+            return "公开插件不允许调用能力 \(tool)。"
+        }
+        let args = ChatToolCallParsing.jsonObject(argumentsJSON) ?? [:]
+        if IOSWorkspaceToolCatalog.supportedToolNames.contains(tool) {
+            if ["file_id", "artifact_id", "id"].contains(where: { args[$0] != nil }) {
+                return "插件 \(pluginId) 的 Workspace 调用必须使用可校验的 path，不能使用对象 ID。"
+            }
+            let write = !IOSWorkspaceToolCatalog.readToolNames.contains(tool)
+            let prefixes = write ? capabilities.workspaceWritePrefixes : capabilities.workspaceReadPrefixes
+            if tool == "workspace_file_list" || tool == "workspace_file_search" {
+                guard prefixes.contains("/workspace") else {
+                    return "插件 \(pluginId) 需要 /workspace 读取范围才能列出或搜索整个 Workspace。"
+                }
+            } else {
+                let requiredKeys = tool == "workspace_file_move" ? ["path", "destination_path"] : ["path"]
+                for key in requiredKeys {
+                    guard let raw = args[key] as? String, !raw.isEmpty else {
+                        return "插件 \(pluginId) 的 Workspace 调用缺少可校验的 \(key)。"
+                    }
+                    if !allowsWorkspacePath(raw, prefixes: prefixes) {
+                        return "插件 \(pluginId) 无权访问 Workspace 路径 \(raw)。"
+                    }
+                }
+            }
+        }
+        if tool.hasPrefix("wm_") && !capabilities.webMountActions.contains(tool) {
+            return "插件 \(pluginId) 未声明 WebMount 动作 \(tool)。"
+        }
+        if tool == "scrape_web" {
+            guard let raw = args["url"] as? String,
+                  let host = URL(string: raw)?.host?.lowercased() else {
+                return "插件 \(pluginId) 的网页读取缺少可校验的 URL。"
+            }
+            if !allowsHost(host) {
+                return "插件 \(pluginId) 无权访问网络域名 \(host)。"
+            }
+        }
+        for key in ["url", "endpoint"] where tool != "scrape_web" {
+            if let raw = args[key] as? String {
+                guard let host = URL(string: raw)?.host?.lowercased(), allowsHost(host) else {
+                    return "插件 \(pluginId) 无权访问网络地址 \(raw)。"
+                }
+            }
+        }
+        return nil
+    }
+
+    private func allowsWorkspacePath(_ raw: String, prefixes: [String]) -> Bool {
+        let normalized: String
+        if raw == "/workspace" || raw.hasPrefix("/workspace/") {
+            normalized = raw
+        } else if !raw.hasPrefix("/") {
+            normalized = "/workspace/\(raw)"
+        } else {
+            return false
+        }
+        guard !normalized.contains("\\"),
+              !normalized.split(separator: "/", omittingEmptySubsequences: false).contains(where: { $0 == "." || $0 == ".." }) else {
+            return false
+        }
+        return prefixes.contains { normalized == $0 || normalized.hasPrefix($0.hasSuffix("/") ? $0 : "\($0)/") }
+    }
+
+    private func allowsHost(_ host: String) -> Bool {
+        capabilities.networkDomains.contains { domain in
+            host == domain || host.hasSuffix(".\(domain)")
+        }
     }
 }

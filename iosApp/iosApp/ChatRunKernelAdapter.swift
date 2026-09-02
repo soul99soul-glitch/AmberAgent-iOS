@@ -84,6 +84,10 @@ final class ChatRunKernelAdapter {
         /// 当前 run 开始时与 recipe declarations 同源的不可变目录快照。
         /// 执行器只从该快照解析 `recipe__*`，不回读 live store。
         var recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot? = nil
+        /// Re-reads the Recipe registry at each post-tool model boundary. The
+        /// adapter applies a changed snapshot to the existing exposure bridge,
+        /// so lifecycle operations are visible on the immediately next round.
+        var recipeCatalogRefresh: (@MainActor () async -> IOSDynamicToolCatalogSnapshot?)? = nil
         var executionPolicy: IOSExecutionPolicySnapshot? = nil
         /// CGC `maxToolResumeCount` 语义:每个工具轮消耗 1,耗尽拒执。
         let maxToolResumeCount: Int
@@ -178,12 +182,28 @@ final class ChatRunKernelAdapter {
         let promptBox = ChatToolRuntime.IOSForegroundApprovalPromptBox()
         // CGC 的预算按 run 累计(currentToolResumeCount),跨审批恢复不重置。
         let budget = ToolRoundBudget(limit: request.maxToolResumeCount)
-        let fullCatalogNames = Set(request.toolExposureBridge.fullToolDeclarations().map(\.name))
+        let fullCatalogNames = KernelExecutorNamesBox(
+            Set(request.toolExposureBridge.fullToolDeclarations().map(\.name))
+        )
+        let recipeCatalog = KernelRecipeCatalogSnapshotBox(request.recipeCatalogSnapshot)
+        let bridgeBox = UncheckedToolExposureBridgeBox(request.toolExposureBridge)
+        let refreshBox = UncheckedRecipeCatalogRefreshBox(request.recipeCatalogRefresh)
+        let refreshToolExposure: @MainActor @Sendable () async -> Void = {
+            guard let refresh = refreshBox.value,
+                  let latest = await refresh(),
+                  latest.contentHash != recipeCatalog.snapshot()?.contentHash else { return }
+            IOSDynamicToolBridgeRebuilder.apply(snapshot: latest, to: bridgeBox.value)
+            recipeCatalog.replace(with: latest)
+            fullCatalogNames.replace(with: Set(bridgeBox.value.fullToolDeclarations().map(\.name)))
+        }
         // B1: Host 上传准备器(MainActor 闭包值也非 Sendable)与消息一样
         // 盒装,供 @Sendable 引擎钩子跨边界调用。
         let uploadPreparer = UncheckedUploadPreparerBox(request.prepareUploadMessages)
         let toolRuntime = runtime
-        let nestedToolRunner = request.nestedToolRunner ?? makeNestedExecToolRunner(request: request)
+        let nestedToolRunner = request.nestedToolRunner ?? makeNestedExecToolRunner(
+            request: request,
+            recipeCatalog: recipeCatalog
+        )
         // 执行器的 baseMessages 锚点:引擎在非隔离上下文调钩子,但执行器
         // 读锚点在 @MainActor dispatch 内(dispatch → baseMessagesProvider),
         // 故弱捕获 self 合法且安全。
@@ -196,6 +216,10 @@ final class ChatRunKernelAdapter {
 
         while true {
             if isStoppedByHost { return working }
+            // Approval finishers (notably recipe_import) complete outside the
+            // engine's post-batch hook. Refresh again at the adapter boundary
+            // so the very next model round sees the published catalog.
+            await refreshToolExposure()
             // tool_search 的 exposure bridge 跨审批暂停继续存活；每次重建
             // Engine 时都从当前可见目录恢复 params，不能退回首轮工具集。
             let effectiveParams = request.params.replacingTools(
@@ -208,7 +232,8 @@ final class ChatRunKernelAdapter {
                 promptBox: promptBox,
                 baseMessagesProvider: baseMessagesProvider,
                 nestedToolRunner: nestedToolRunner,
-                nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider
+                nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
+                recipeCatalogSnapshot: recipeCatalog.snapshot()
             )
             // @Sendable 钩子只携带 Sendable 快照(名字集/目录/计数),不捕获执行器表。
             let executorNames = KernelExecutorNamesBox(Set(executors.keys))
@@ -236,7 +261,8 @@ final class ChatRunKernelAdapter {
                         promptBox: promptBox,
                         baseMessagesProvider: baseMessagesProvider,
                         nestedToolRunner: nestedToolRunner,
-                        nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider
+                        nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
+                        recipeCatalogSnapshot: recipeCatalog.snapshot()
                     )
                     executorNames.replace(with: Set(rebuilt.keys))
                     return rebuilt
@@ -253,6 +279,7 @@ final class ChatRunKernelAdapter {
                     params: effectiveParams,
                     citationTracker: request.citationTracker,
                     toolExposureBridge: request.toolExposureBridge,
+                    refreshToolExposure: refreshToolExposure,
                     mailboxDrain: request.mailboxDrain,
                     drainSteer: request.drainSteer,
                     prepareRequestMessages: { messages in
@@ -299,7 +326,7 @@ final class ChatRunKernelAdapter {
                         Self.preemptReason(
                             for: tools,
                             executorNames: executorNames.snapshot(),
-                            fullCatalogNames: fullCatalogNames,
+                            fullCatalogNames: fullCatalogNames.snapshot(),
                             budget: budget,
                             maxToolResumeCount: maxToolResumeCount
                         )
@@ -308,7 +335,7 @@ final class ChatRunKernelAdapter {
                         Self.guidedSoftFailParts(
                             for: tool,
                             executorNames: executorNames.snapshot(),
-                            fullCatalogNames: fullCatalogNames
+                            fullCatalogNames: fullCatalogNames.snapshot()
                         )
                     },
                     onAssistantTurnStarted: { [weak self] in
@@ -541,7 +568,8 @@ final class ChatRunKernelAdapter {
         promptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox,
         baseMessagesProvider: @escaping @MainActor @Sendable () -> [UIMessage],
         nestedToolRunner: IosExecNestedToolRunner?,
-        nestedOutcomeUnknownProvider: @escaping @MainActor () -> IOSToolOutcomeUnknownSignal?
+        nestedOutcomeUnknownProvider: @escaping @MainActor () -> IOSToolOutcomeUnknownSignal?,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     ) -> [String: any IOSToolExecutor] {
         runtime.foregroundToolExecutors(
             providerSetting: request.providerSetting,
@@ -555,14 +583,17 @@ final class ChatRunKernelAdapter {
             approvalPromptBox: promptBox,
             nestedToolRunner: nestedToolRunner,
             nestedOutcomeUnknownProvider: nestedOutcomeUnknownProvider,
-            recipeCatalogSnapshot: request.recipeCatalogSnapshot,
+            recipeCatalogSnapshot: recipeCatalogSnapshot,
             executionPolicy: request.executionPolicy
         )
     }
 
     /// `exec` 内调用仍走当前 Kernel 的真实 runtime/ledger/审批边界；白名单
     /// 每次调用时从 exposure bridge 读取，避免 tool_search 后使用旧目录。
-    private func makeNestedExecToolRunner(request: RunRequest) -> IosExecNestedToolRunner {
+    private func makeNestedExecToolRunner(
+        request: RunRequest,
+        recipeCatalog: KernelRecipeCatalogSnapshotBox
+    ) -> IosExecNestedToolRunner {
         { [weak self] name, arguments in
             guard let self else {
                 return Self.nestedExecToolUnavailable(name: name)
@@ -573,21 +604,26 @@ final class ChatRunKernelAdapter {
             return await self.runNestedExecTool(
                 name: name,
                 arguments: arguments,
-                request: request
+                request: request,
+                recipeCatalogSnapshot: recipeCatalog.snapshot()
             )
         }
     }
 
 #if DEBUG
     func nestedExecToolRunnerForTesting(request: RunRequest) -> IosExecNestedToolRunner {
-        makeNestedExecToolRunner(request: request)
+        makeNestedExecToolRunner(
+            request: request,
+            recipeCatalog: KernelRecipeCatalogSnapshotBox(request.recipeCatalogSnapshot)
+        )
     }
 #endif
 
     private func runNestedExecTool(
         name: String,
         arguments: String,
-        request: RunRequest
+        request: RunRequest,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
     ) async -> String {
         let whitelist = ChatToolRuntime.execNestedToolWhitelist(
             visibleToolNames: Set(request.toolExposureBridge.visibleTools().map(\.name))
@@ -656,7 +692,7 @@ final class ChatRunKernelAdapter {
             context: pending,
             toolExposureBridge: request.toolExposureBridge,
             nestedToolRunner: request.nestedToolRunner,
-            recipeCatalogSnapshot: request.recipeCatalogSnapshot
+            recipeCatalogSnapshot: recipeCatalogSnapshot
         ) {
         case .completed(let messages):
             guard await recordToolTerminal(
@@ -781,6 +817,8 @@ final class ChatRunKernelAdapter {
         var soulImport: IOSPreparedSoulImport?
         var mcpImport: IOSPreparedMcpImport?
         var recipeImport: IOSPreparedRecipeImport?
+        var pluginImport: IOSPreparedPluginImport?
+        var pluginInvocation: IOSPreparedPluginInvocation?
         var recipeExecution: IOSRecipeExecutionState?
     }
 
@@ -865,10 +903,10 @@ final class ChatRunKernelAdapter {
     /// - memory:Started → resume → finisher → Finished 恒 completed——deny
     ///   策略产出成功形态的结构化拒绝(CG-C :3953);
     /// - askUser:Started → resume → finishAskUserAnswer → Finished(completed);
-    /// - recipe step:批准写 Started(CG-C :4136-4167 不经 claimRunAfterPermission,
-    ///   无 resume 录制点)→ Finished(completed) 或 Finished(paused_for_approval)
-    ///   后重进暂停;拒绝零账本对(无副作用,approval_denied 由 runtime
-    ///   recordToolApproval 漏斗写入)。
+    /// - recipe step:批准写 Started 后先恢复 run，再执行；若下一 mutation
+    ///   step 仍需批准，则 Finished(paused_for_approval) 后重进暂停。拒绝不
+    ///   新增 Started，而是关闭 executeBatch 已建立的 waitingUser 外层事务；
+    ///   approval_denied 仍由 runtime recordToolApproval 漏斗写入。
     /// internal:A2 聚焦单测接缝(见 PreparedApprovalCandidates 注释)。
     func resolveApproval(
         prompt: ChatToolApprovalPrompt,
@@ -1025,11 +1063,67 @@ final class ChatRunKernelAdapter {
                     }
                     return .failed
                 }
-                let messages = await runtime.finishRecipeImportApproval(
+                let messages: [UIMessage]
+                if recipeRequest.isPluginImport || candidates.pluginImport != nil {
+                    messages = await runtime.finishPluginImportApproval(
+                        pending: pending,
+                        allow: allow,
+                        prepared: candidates.pluginImport
+                    )
+                } else {
+                    messages = await runtime.finishRecipeImportApproval(
+                        pending: pending,
+                        allow: allow,
+                        prepared: candidates.recipeImport
+                    )
+                }
+                guard await recordToolTerminal(
+                    runId: pending.runId,
+                    toolCallId: pending.toolCall.toolCallId,
+                    outcome: allow ? "completed" : "denied",
+                    messages: messages
+                ) else { return .failed }
+                return .resumed(messages)
+
+            case .pluginInvocation(let payload):
+                guard let allow = decision.boolValue else { return .failed }
+                guard await recordApprovalAttemptStarted(
+                    pending: pending,
+                    effectClass: payload.effectClass
+                ) else { return .failed }
+                guard await callbacks.onRunResumed() else {
+                    if !(await ledger.recordToolCallFinished(
+                        runId: pending.runId,
+                        toolCallId: pending.toolCall.toolCallId,
+                        outcome: "not_executed_permission_claim_failed"
+                    )) {
+                        markDurabilityFailure()
+                    }
+                    return .failed
+                }
+                let messages = await runtime.finishPluginInvocationApproval(
                     pending: pending,
                     allow: allow,
-                    prepared: candidates.recipeImport
+                    prepared: candidates.pluginInvocation,
+                    toolExposureBridge: request.toolExposureBridge
                 )
+                if allow,
+                   runtime.isPluginOutcomeUnknown(
+                       in: messages,
+                       toolCallId: pending.toolCall.toolCallId
+                   ) {
+                    guard await ledger.recordToolCallRecoveryTransition(
+                        runId: pending.runId,
+                        toolCallId: pending.toolCall.toolCallId,
+                        expected: .started,
+                        to: .outcomeUnknown,
+                        outcome: "executor_reported_unknown_after_action"
+                    ) else {
+                        markDurabilityFailure()
+                        return .failed
+                    }
+                    return .outcomeUnknown(messages)
+                }
                 guard await recordToolTerminal(
                     runId: pending.runId,
                     toolCallId: pending.toolCall.toolCallId,
@@ -1047,17 +1141,24 @@ final class ChatRunKernelAdapter {
                         reason: "Recipe 执行上下文已失效,请重新发起调用。",
                         status: "failed"
                     )
-                    return .resumed(runtime.messagesByFinishingToolCall(
+                    let messages = runtime.messagesByFinishingToolCall(
                         pending.toolCall,
                         outputText: failure,
                         in: pending.baseMessages
-                    ))
+                    )
+                    let didResume = await callbacks.onRunResumed()
+                    guard await recordWaitingApprovalTerminal(
+                        runId: pending.runId,
+                        toolCallId: pending.toolCall.toolCallId,
+                        outcome: "failed_context_lost",
+                        messages: messages
+                    ) else { return .failed }
+                    return didResume ? .resumed(messages) : .failed
                 }
                 switch decision {
                 case .answer:
                     return .failed
                 case .deny:
-                    // CG-C :4119-4132:拒绝零账本对(没有任何副作用发生)。
                     let result = await runtime.finishRecipeStepApproval(
                         pending: pending,
                         allow: false,
@@ -1065,9 +1166,28 @@ final class ChatRunKernelAdapter {
                         toolExposureBridge: request.toolExposureBridge
                     )
                     guard case .completed(let messages) = result else { return .failed }
-                    return .resumed(messages)
+                    // 用户拒绝已经是最终决定：先清掉 recipe checkpoint，再尝试
+                    // 恢复 durable run；即使恢复声明失败，也必须关闭 outer tx。
+                    let didResume = await callbacks.onRunResumed()
+                    guard await recordWaitingApprovalTerminal(
+                        runId: pending.runId,
+                        toolCallId: pending.toolCall.toolCallId,
+                        outcome: "denied",
+                        messages: messages
+                    ) else { return .failed }
+                    return didResume ? .resumed(messages) : .failed
                 case .approve:
                     guard await recordApprovalAttemptStarted(pending: pending, effectClass: .sideEffect) else {
+                        return .failed
+                    }
+                    guard await callbacks.onRunResumed() else {
+                        if !(await ledger.recordToolCallFinished(
+                            runId: pending.runId,
+                            toolCallId: pending.toolCall.toolCallId,
+                            outcome: "not_executed_permission_claim_failed"
+                        )) {
+                            markDurabilityFailure()
+                        }
                         return .failed
                     }
                     let result = await runtime.finishRecipeStepApproval(
@@ -1182,8 +1302,14 @@ final class ChatRunKernelAdapter {
             switch recipeRequest.payload {
             case .step:
                 candidates.recipeExecution = runtime.takePreparedRecipeExecution(toolCallId: toolCallId)
+            case .pluginInvocation:
+                candidates.pluginInvocation = runtime.takePreparedPluginInvocationForApproval(toolCallId: toolCallId)
             case .recipeImport:
-                candidates.recipeImport = runtime.takePreparedRecipeImportForApproval(toolCallId: toolCallId)
+                if recipeRequest.isPluginImport {
+                    candidates.pluginImport = runtime.takePreparedPluginImportForApproval(toolCallId: toolCallId)
+                } else {
+                    candidates.recipeImport = runtime.takePreparedRecipeImportForApproval(toolCallId: toolCallId)
+                }
             }
         case .memory, .search, .webMount, .workspace, .ish, .council, .askUser:
             break
@@ -1214,6 +1340,23 @@ final class ChatRunKernelAdapter {
     ) async -> Bool {
         let parts = Self.toolPart(toolCallId: toolCallId, in: messages)?.output
         let recorded = await ledger.recordToolCallTerminal(
+            runId: runId,
+            toolCallId: toolCallId,
+            outcome: outcome,
+            resultPayload: parts.map { IosToolOutputJsonBridge.shared.encode(parts: $0) }
+        )
+        if !recorded { markDurabilityFailure() }
+        return recorded
+    }
+
+    private func recordWaitingApprovalTerminal(
+        runId: String,
+        toolCallId: String,
+        outcome: String,
+        messages: [UIMessage]
+    ) async -> Bool {
+        let parts = Self.toolPart(toolCallId: toolCallId, in: messages)?.output
+        let recorded = await ledger.recordWaitingToolApprovalTerminal(
             runId: runId,
             toolCallId: toolCallId,
             outcome: outcome,
@@ -1368,6 +1511,35 @@ private struct UncheckedUploadPreparerBox: @unchecked Sendable {
 private struct UncheckedMessageSnapshotBox: @unchecked Sendable {
     let value: UIMessage
     init(_ value: UIMessage) { self.value = value }
+}
+
+private struct UncheckedToolExposureBridgeBox: @unchecked Sendable {
+    let value: IosToolExposureBridge
+    init(_ value: IosToolExposureBridge) { self.value = value }
+}
+
+private struct UncheckedRecipeCatalogRefreshBox: @unchecked Sendable {
+    let value: (@MainActor () async -> IOSDynamicToolCatalogSnapshot?)?
+    init(_ value: (@MainActor () async -> IOSDynamicToolCatalogSnapshot?)?) {
+        self.value = value
+    }
+}
+
+private final class KernelRecipeCatalogSnapshotBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: IOSDynamicToolCatalogSnapshot?
+
+    init(_ value: IOSDynamicToolCatalogSnapshot?) {
+        self.value = value
+    }
+
+    func replace(with value: IOSDynamicToolCatalogSnapshot?) {
+        lock.withLock { self.value = value }
+    }
+
+    func snapshot() -> IOSDynamicToolCatalogSnapshot? {
+        lock.withLock { value }
+    }
 }
 
 /// Engine 内一次 `tool_search` 可同步重建 executor table；软失败/硬失败

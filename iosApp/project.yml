@@ -334,6 +334,7 @@ targets:
         excludes:
           - NovelCreation/AGENTS.md
           - AmberSubscriptions.storekit
+          - Info.plist
       - path: SharedWatch
       - path: AlarmKitResources
       - path: Resources/Fonts/noto_serif_sc.otf
@@ -354,6 +355,15 @@ targets:
         type: folder
     putResourcesBeforeSourcesBuildPhase: true
     preBuildScripts:
+      - name: Prepare Experimental Info.plist
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - "$(DERIVED_FILE_DIR)/AmberExperimental-Info.plist"
+        script: |
+          set -euo pipefail
+          experimental_info="${DERIVED_FILE_DIR}/AmberExperimental-Info.plist"
+          /bin/cp "${SRCROOT}/iosApp/Info.plist" "${experimental_info}"
+          /usr/bin/plutil -replace UIBackgroundModes -json '["audio","processing"]' "${experimental_info}"
       - name: Validate CPython artifact
         basedOnDependencyAnalysis: false
         script: |
@@ -444,7 +454,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl
         AGENT_ACTIVITY_URL_SCHEME: amber-experimental
-        INFOPLIST_FILE: iosApp/Info.plist
+        INFOPLIST_FILE: "$(DERIVED_FILE_DIR)/AmberExperimental-Info.plist"
         CODE_SIGN_ENTITLEMENTS: iosApp/AmberAgentExperimental.entitlements
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"

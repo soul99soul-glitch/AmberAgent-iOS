@@ -26,7 +26,17 @@ struct RecipeStepApprovalPayload: Equatable {
     let effectClass: IOSToolEffectClass
 }
 
+struct PluginInvocationApprovalPayload: Equatable {
+    let toolId: String
+    let handler: String
+    let argumentsPreview: String
+    let effectClass: IOSToolEffectClass
+    let capabilities: [String]
+}
+
 struct RecipeImportApprovalPayload: Equatable {
+    let artifactKindTitle: String
+    let displayName: String?
     let mutationKind: IOSRecipeMutationKind
     let baseHash: String?
     let candidateHash: String
@@ -38,11 +48,16 @@ struct RecipeImportApprovalPayload: Equatable {
     /// scrollable list when long, §14.2).
     let stepsSummary: [String]
     let outputsSummary: String
+    let trustSummary: String?
+    let capabilityScopes: [String]
+    let fileHashes: [String]
+    let activationNotice: String
 }
 
 struct RecipeToolApprovalRequest: Identifiable, Equatable {
     enum Payload: Equatable {
         case step(RecipeStepApprovalPayload)
+        case pluginInvocation(PluginInvocationApprovalPayload)
         case recipeImport(RecipeImportApprovalPayload)
     }
 
@@ -55,15 +70,23 @@ struct RecipeToolApprovalRequest: Identifiable, Equatable {
     var title: String {
         switch payload {
         case .step: "执行 Recipe 步骤"
-        case .recipeImport: "导入 Recipe"
+        case .pluginInvocation: "执行插件工具"
+        case .recipeImport(let payload): payload.artifactKindTitle == "插件" ? "导入插件" : "导入 Recipe"
         }
     }
 
     var activityKind: AgentActivityKind {
         switch payload {
-        case .step: .workflow
+        case .step, .pluginInvocation: .workflow
         case .recipeImport: .workflow
         }
+    }
+
+    var isPluginImport: Bool {
+        if case .recipeImport(let payload) = payload {
+            return payload.artifactKindTitle == "插件"
+        }
+        return false
     }
 }
 
@@ -99,8 +122,21 @@ struct IOSPreparedRecipeImport: Equatable {
 }
 
 enum IOSRecipeToolCatalog {
-    static let toolNames: Set<String> = ["recipe_import"]
-    static let mutatingToolNames: Set<String> = ["recipe_import"]
+    static let toolNames: Set<String> = [
+        "recipes_list",
+        "recipe_validate",
+        "recipe_import",
+        "recipe_enable",
+        "recipe_disable",
+        "recipe_delete",
+    ]
+    static let mutatingToolNames: Set<String> = [
+        "recipe_import",
+        "recipe_enable",
+        "recipe_disable",
+        "recipe_delete",
+    ]
+    static let highRiskToolNames: Set<String> = ["recipe_import", "recipe_delete"]
 }
 
 // MARK: - Execution checkpoint (durable pending-approval state, §13.2 / W1)
@@ -208,15 +244,38 @@ struct IOSRecipeToolService {
     init(
         workspaceStore: IOSWorkspaceStore,
         recipeStore: IOSRecipeFileStore,
-        catalog: @escaping IOSRecipeCatalogLookup = IOSDynamicToolRegistry.primitiveCatalogEntry,
-        refreshRegistry: @escaping @MainActor () async -> IOSDynamicToolCatalogSnapshot? = {
-            await IOSDynamicToolRegistry.shared.refresh()
-        }
+        catalog: @escaping IOSRecipeCatalogLookup,
+        refreshRegistry: @escaping @MainActor () async -> IOSDynamicToolCatalogSnapshot?
     ) {
         self.workspaceStore = workspaceStore
         self.recipeStore = recipeStore
         self.catalog = catalog
         self.refreshRegistry = refreshRegistry
+    }
+
+    func execute(toolName: String, arguments: String) async -> String {
+        let args = ChatToolCallParsing.jsonObject(arguments) ?? [:]
+        do {
+            switch toolName {
+            case "recipes_list":
+                return recipesListJSON()
+            case "recipe_validate":
+                return try recipeValidateJSON(args)
+            case "recipe_enable":
+                return try await setRecipeEnabledJSON(args, enabled: true)
+            case "recipe_disable":
+                return try await setRecipeEnabledJSON(args, enabled: false)
+            case "recipe_delete":
+                return try await deleteRecipeJSON(args)
+            default:
+                return Self.json(["ok": false, "error": "Unknown tool: \(toolName)"])
+            }
+        } catch {
+            return Self.json([
+                "ok": false,
+                "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+            ])
+        }
     }
 
     /// Read-only preview — zero writes (never creates directories).
@@ -310,6 +369,7 @@ struct IOSRecipeToolService {
             "description": reread.description,
             "permission_envelope": reread.effectClassRawValue,
             "permission_summary": reread.permissionSummary,
+            "enabled": recipeStore.isRecipeEnabled(name: receipt.name),
             "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
         ])
     }
@@ -337,6 +397,118 @@ struct IOSRecipeToolService {
     }
 
     // MARK: Private
+
+    private func recipesListJSON() -> String {
+        let installed = recipeStore.listInstalledRecipes()
+        let entries: [[String: Any]] = installed.map { recipe in
+            let validation = IOSRecipeValidator.validate(
+                manifest: recipe.manifest,
+                catalog: catalog
+            )
+            return [
+                "name": recipe.package.name,
+                "version": recipe.package.version,
+                "description": recipe.manifest.description,
+                "hash": recipe.package.hash,
+                "enabled": recipe.isEnabled,
+                "valid": validation.isValid,
+                "permission_summary": validation.permissionEnvelope
+                    .map(IOSDynamicToolRegistry.permissionSummary(for:)) ?? "validation failed",
+                "tools": ["recipe__\(recipe.package.name)"],
+            ]
+        }
+        return Self.json([
+            "ok": true,
+            "installed_count": installed.count,
+            "enabled_count": installed.filter(\.isEnabled).count,
+            "recipes": entries,
+        ])
+    }
+
+    private func recipeValidateJSON(_ args: [String: Any]) throws -> String {
+        let data: Data
+        if let name = normalizedName(args["name"]) {
+            data = try recipeStore.readLiveRecipe(name: name).canonicalJSON
+        } else if let workspacePath = normalizedString(args["workspace_path"]) {
+            data = try readWorkspaceRecipeData(workspacePath: resolveWorkspacePath(workspacePath))
+        } else {
+            throw IOSRecipeToolError.missingArgument("name or workspace_path")
+        }
+
+        let manifest = try IOSRecipeManifest.decode(data)
+        let validation = IOSRecipeValidator.validate(manifest: manifest, catalog: catalog)
+        return Self.json([
+            "ok": true,
+            "valid": validation.isValid,
+            "name": manifest.name,
+            "version": manifest.version,
+            "permission_envelope": validation.permissionEnvelope?.rawValue as Any? ?? NSNull(),
+            "permission_summary": validation.permissionEnvelope
+                .map(IOSDynamicToolRegistry.permissionSummary(for:)) as Any? ?? NSNull(),
+            "issues": validation.issues.map { issue in
+                [
+                    "code": issue.code.rawValue,
+                    "path": issue.path as Any? ?? NSNull(),
+                    "message": issue.message,
+                ]
+            },
+        ])
+    }
+
+    private func setRecipeEnabledJSON(_ args: [String: Any], enabled: Bool) async throws -> String {
+        let (name, expectedHash) = try lifecycleTarget(args)
+        let receipt = try recipeStore.setRecipeEnabled(
+            name: name,
+            enabled: enabled,
+            expectedHash: expectedHash
+        )
+        let snapshot = await refreshRegistry()
+        return Self.json([
+            "ok": true,
+            "status": receipt.changed ? (enabled ? "enabled" : "disabled") : "unchanged",
+            "name": receipt.name,
+            "hash": receipt.hash,
+            "enabled": enabled,
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    private func deleteRecipeJSON(_ args: [String: Any]) async throws -> String {
+        let (name, expectedHash) = try lifecycleTarget(args)
+        let receipt = try recipeStore.deleteRecipe(name: name, expectedHash: expectedHash)
+        let snapshot = await refreshRegistry()
+        return Self.json([
+            "ok": true,
+            "status": "deleted",
+            "name": receipt.name,
+            "hash": receipt.hash,
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    private func lifecycleTarget(_ args: [String: Any]) throws -> (String, String) {
+        guard let name = normalizedName(args["name"]) else {
+            throw IOSRecipeToolError.missingArgument("name")
+        }
+        guard let expectedHash = normalizedString(args["expected_hash"]) else {
+            throw IOSRecipeToolError.missingArgument("expected_hash")
+        }
+        return (name, expectedHash)
+    }
+
+    private func normalizedName(_ value: Any?) -> String? {
+        guard let name = normalizedString(value)?.lowercased(),
+              IOSRecipeNames.isValidRecipeName(name) else {
+            return nil
+        }
+        return name
+    }
+
+    private func normalizedString(_ value: Any?) -> String? {
+        guard let value = value as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     private func makeImportPreview(recipeJSON: Data) throws -> IOSRecipeImportPreview {
         let preparation = try recipeStore.prepareRecipe(recipeJSON: recipeJSON)
@@ -460,6 +632,21 @@ enum RecipeToolApprovalRequestBuilder {
         )
     }
 
+    static func pluginInvocationRequest(
+        for toolCall: UIMessagePart.Tool,
+        pluginId: String,
+        pluginVersion: String,
+        payload: PluginInvocationApprovalPayload
+    ) -> RecipeToolApprovalRequest {
+        RecipeToolApprovalRequest(
+            id: ChatToolCallParsing.requestId(for: toolCall),
+            recipeName: pluginId,
+            recipeVersion: pluginVersion,
+            payload: .pluginInvocation(payload),
+            reason: "该插件将使用声明的主机或远端能力，请核对本次参数后继续。"
+        )
+    }
+
     /// Card for a `recipe_import` promotion (§14.2: manifest summary +
     /// permission envelope + short hashes + step list + next-round copy).
     static func importRequest(
@@ -472,6 +659,8 @@ enum RecipeToolApprovalRequestBuilder {
             recipeName: preview.name,
             recipeVersion: preview.version,
             payload: .recipeImport(RecipeImportApprovalPayload(
+                artifactKindTitle: "Recipe",
+                displayName: nil,
                 mutationKind: preview.kind,
                 baseHash: preview.baseHash,
                 candidateHash: preview.candidateHash,
@@ -480,10 +669,490 @@ enum RecipeToolApprovalRequestBuilder {
                 effectClassRawValue: preview.effectClassRawValue,
                 inputsSummary: preview.inputsSummary,
                 stepsSummary: preview.stepsSummary,
-                outputsSummary: preview.outputsSummary
+                outputsSummary: preview.outputsSummary,
+                trustSummary: nil,
+                capabilityScopes: [],
+                fileHashes: [],
+                activationNotice: "批准后从下一模型轮生效。"
             )),
             reason: "请核对候选 Recipe 的 manifest 摘要与权限包络；批准后会复核 base/candidate 哈希并原子替换 Recipe 包。"
         )
+    }
+
+    static func pluginImportRequest(
+        for toolCall: UIMessagePart.Tool,
+        prepared: IOSPreparedPluginImport
+    ) -> RecipeToolApprovalRequest {
+        let preview = prepared.preview
+        return RecipeToolApprovalRequest(
+            id: ChatToolCallParsing.requestId(for: toolCall),
+            recipeName: preview.id,
+            recipeVersion: preview.version,
+            payload: .recipeImport(RecipeImportApprovalPayload(
+                artifactKindTitle: "插件",
+                displayName: preview.displayName,
+                mutationKind: preview.mutationKind,
+                baseHash: preview.baseHash,
+                candidateHash: preview.candidateHash,
+                description: preview.description,
+                permissionSummary: preview.permissionSummary,
+                effectClassRawValue: preview.effectClassRawValue,
+                inputsSummary: "",
+                stepsSummary: preview.toolsSummary,
+                outputsSummary: preview.mutationKind == .new
+                    ? "新插件默认停用"
+                    : (preview.permissionExpanded ? "权限范围扩大" : "权限范围未扩大"),
+                trustSummary: IOSPluginToolService.trustSummary(preview.trust),
+                capabilityScopes: preview.capabilityScopes,
+                fileHashes: preview.fileHashes,
+                activationNotice: preview.willRemainDisabled
+                    ? "仅安装并保持停用；手动启用后从下一模型轮生效。"
+                    : "安装后保持当前启用状态；目录变更从下一模型轮生效。"
+            )),
+            reason: "请核对插件工具、逐文件哈希与能力范围；批准后会重新读取 Workspace 并复核 base/candidate 哈希。"
+        )
+    }
+}
+
+// MARK: - amber.plugin.v1 management tools
+
+struct IOSPluginImportPreview: Equatable {
+    let id: String
+    let displayName: String
+    let version: String
+    let mutationKind: IOSRecipeMutationKind
+    let baseHash: String?
+    let candidateHash: String
+    let description: String
+    let effectClassRawValue: String
+    let permissionSummary: String
+    let permissionExpanded: Bool
+    let willRemainDisabled: Bool
+    let toolsSummary: [String]
+    let capabilityScopes: [String]
+    let fileHashes: [String]
+    let trust: IOSPluginTrustRecord
+}
+
+enum IOSPluginImportSource: Equatable {
+    case directory(String)
+    case archive(String)
+}
+
+struct IOSPreparedPluginImport: Equatable {
+    let source: IOSPluginImportSource
+    let preview: IOSPluginImportPreview
+}
+
+enum IOSPluginToolCatalog {
+    static let toolNames: Set<String> = [
+        "plugins_list", "plugin_validate", "plugin_import",
+        "plugin_enable", "plugin_disable", "plugin_delete", "plugin_rollback", "plugin_restore", "plugin_export",
+    ]
+    static let mutatingToolNames: Set<String> = [
+        "plugin_import", "plugin_enable", "plugin_disable", "plugin_delete", "plugin_rollback", "plugin_restore", "plugin_export",
+    ]
+    static let highRiskToolNames: Set<String> = ["plugin_import", "plugin_delete", "plugin_rollback", "plugin_restore", "plugin_export"]
+}
+
+@MainActor
+struct IOSPluginToolService {
+    let workspaceStore: IOSWorkspaceStore
+    let pluginStore: IOSPluginFileStore
+    let refreshRegistry: @MainActor () async -> IOSDynamicToolCatalogSnapshot?
+
+    func execute(toolName: String, arguments: String) async -> String {
+        let args = ChatToolCallParsing.jsonObject(arguments) ?? [:]
+        do {
+            switch toolName {
+            case "plugins_list":
+                return listJSON()
+            case "plugin_validate":
+                return try validateJSON(args)
+            case "plugin_enable", "plugin_disable":
+                return try await setEnabledJSON(args, enabled: toolName == "plugin_enable")
+            case "plugin_delete":
+                return try await deleteJSON(args)
+            case "plugin_rollback":
+                return try await rollbackJSON(args)
+            case "plugin_restore":
+                return try await restoreJSON(args)
+            case "plugin_export":
+                return try await exportJSON(args)
+            default:
+                return IOSWorkspaceStore.json(["ok": false, "error": "Unknown tool: \(toolName)"])
+            }
+        } catch {
+            return IOSWorkspaceStore.json([
+                "ok": false,
+                "status": "failed",
+                "error": (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+            ])
+        }
+    }
+
+    func preparePluginImport(arguments: String) throws -> IOSPreparedPluginImport {
+        guard let args = ChatToolCallParsing.jsonObject(arguments) else {
+            throw IOSPluginToolError.missingArgument("workspace_directory or workspace_path")
+        }
+        if let raw = args["workspace_path"] as? String {
+            return try prepared(source: .archive(try normalizeWorkspaceArchivePath(raw)))
+        }
+        guard let raw = args["workspace_directory"] as? String else {
+            throw IOSPluginToolError.missingArgument("workspace_directory or workspace_path")
+        }
+        let directory = try normalizeWorkspaceDirectory(raw)
+        return try prepared(source: .directory(directory))
+    }
+
+    func applyPreparedPluginImport(_ prepared: IOSPreparedPluginImport) async throws -> String {
+        let reread = try self.prepared(source: prepared.source)
+        guard reread.preview.candidateHash == prepared.preview.candidateHash else {
+            throw IOSPluginFileStoreError.candidateChanged
+        }
+        guard reread.preview.baseHash == prepared.preview.baseHash else {
+            throw IOSPluginFileStoreError.baseChanged
+        }
+        let candidate = try candidate(from: prepared.source)
+        let receipt = try pluginStore.applyPlugin(
+            files: candidate.files,
+            expectedBaseHash: prepared.preview.baseHash,
+            expectedCandidateHash: prepared.preview.candidateHash,
+            trust: candidate.preparation.candidateTrust
+        )
+        let snapshot = await refreshRegistry()
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "status": receipt.changed ? "applied" : "unchanged",
+            "id": receipt.id,
+            "hash": receipt.hash,
+            "enabled": receipt.enabled,
+            "permission_expanded": receipt.permissionExpanded,
+            "trust": receipt.trust.tier.rawValue,
+            "signer": receipt.trust.keyId as Any? ?? NSNull(),
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    func importPreviewJSON(_ prepared: IOSPreparedPluginImport) -> String {
+        let preview = prepared.preview
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "status": "preview",
+            "requires_approval": true,
+            "id": preview.id,
+            "version": preview.version,
+            "base_hash": preview.baseHash as Any? ?? NSNull(),
+            "candidate_hash": preview.candidateHash,
+            "permission_summary": preview.permissionSummary,
+            "permission_expanded": preview.permissionExpanded,
+            "will_remain_disabled": preview.willRemainDisabled,
+            "tools": preview.toolsSummary,
+            "files": preview.fileHashes,
+            "trust": preview.trust.tier.rawValue,
+            "signer": preview.trust.keyId as Any? ?? NSNull(),
+        ])
+    }
+
+    private func prepared(source: IOSPluginImportSource) throws -> IOSPreparedPluginImport {
+        let preparation = try candidate(from: source).preparation
+        let package = preparation.candidate
+        return IOSPreparedPluginImport(
+            source: source,
+            preview: IOSPluginImportPreview(
+                id: package.manifest.id,
+                displayName: package.manifest.name,
+                version: package.manifest.version,
+                mutationKind: preparation.base == nil ? .new : .update,
+                baseHash: preparation.base?.hash,
+                candidateHash: package.hash,
+                description: package.manifest.description,
+                effectClassRawValue: package.permissionEnvelope.rawValue,
+                permissionSummary: IOSDynamicToolRegistry.permissionSummary(for: package.permissionEnvelope),
+                permissionExpanded: preparation.permissionExpanded,
+                willRemainDisabled: preparation.base == nil
+                    || preparation.permissionExpanded
+                    || !pluginStore.isPluginEnabled(id: package.manifest.id),
+                toolsSummary: package.tools.map { "\($0.toolId) → \(implementationSummary($0.implementation))" },
+                capabilityScopes: capabilityScopeSummary(package.manifest.capabilities),
+                fileHashes: package.fileHashes.keys.sorted().map {
+                    "\($0):\(package.fileHashes[$0]!)"
+                },
+                trust: preparation.candidateTrust
+            )
+        )
+    }
+
+    private func capabilityScopeSummary(_ capabilities: IOSPluginCapabilities) -> [String] {
+        var rows: [String] = []
+        rows += capabilities.workspaceReadPrefixes.map { "Workspace 读取：\($0)" }
+        rows += capabilities.workspaceWritePrefixes.map { "Workspace 写入：\($0)" }
+        rows += capabilities.networkDomains.map { "网络域名：\($0)" }
+        rows += capabilities.webMountActions.map { "WebMount：\($0)" }
+        return rows.isEmpty ? ["无额外能力范围"] : rows
+    }
+
+    fileprivate nonisolated static func trustSummary(_ trust: IOSPluginTrustRecord) -> String {
+        switch trust.tier {
+        case .builtIn: "信任：内置"
+        case .signed: "信任：已签名（\(trust.keyId ?? "未知签名者")）"
+        case .localUnsigned: "信任：本地未签名"
+        }
+    }
+
+    private func implementationSummary(_ implementation: IOSPluginToolImplementation) -> String {
+        switch implementation {
+        case .recipe: "Recipe"
+        case .javascript(_, let hostTools):
+            hostTools.isEmpty ? "受限 JS" : "受限 JS（\(hostTools.sorted().joined(separator: "、"))）"
+        case .remote(let remote):
+            switch remote.kind {
+            case .mcp: "MCP \(remote.server ?? "?")/\(remote.tool ?? "?")"
+            case .openapi: "\(remote.method ?? "GET") \(remote.url ?? "?")"
+            }
+        }
+    }
+
+    private func listJSON() -> String {
+        let installed = pluginStore.listInstalledPlugins()
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "installed_count": installed.count,
+            "enabled_count": installed.filter(\.isEnabled).count,
+            "plugins": installed.map { item in
+                [
+                    "id": item.package.manifest.id,
+                    "name": item.package.manifest.name,
+                    "version": item.package.manifest.version,
+                    "description": item.package.manifest.description,
+                    "hash": item.package.hash,
+                    "enabled": item.isEnabled,
+                    "configured_enabled": item.isConfiguredEnabled,
+                    "quarantined": item.health.isQuarantined,
+                    "quarantine_reason": item.health.quarantineReason as Any? ?? NSNull(),
+                    "consecutive_failures": item.health.consecutiveFailures,
+                    "trust": item.trust.tier.rawValue,
+                    "signer": item.trust.keyId as Any? ?? NSNull(),
+                    "tools": item.package.tools.map(\.toolId),
+                    "permission_summary": IOSDynamicToolRegistry.permissionSummary(for: item.package.permissionEnvelope),
+                    "background_allowed": item.package.manifest.backgroundAllowed,
+                    "background_eligible_tools": item.package.tools.filter { tool in
+                        guard item.package.manifest.backgroundAllowed,
+                              tool.effectClass == .pure || tool.effectClass == .networkRead else { return false }
+                        switch tool.implementation {
+                        case .recipe, .remote: return true
+                        case .javascript: return false
+                        }
+                    }.map(\.toolId),
+                    "publisher": item.package.manifest.directory?.publisher as Any? ?? NSNull(),
+                    "minimum_age": item.package.manifest.directory?.minimumAge as Any? ?? NSNull(),
+                ] as [String: Any]
+            },
+        ])
+    }
+
+    private func validateJSON(_ args: [String: Any]) throws -> String {
+        let package: IOSPluginPackage
+        if let id = normalized(args["id"]), IOSRecipeNames.isValidRecipeName(id) {
+            package = try pluginStore.readLivePlugin(id: id)
+        } else if let raw = normalizedText(args["workspace_directory"]) {
+            package = try pluginStore.preparePlugin(
+                files: workspacePackageFiles(directory: normalizeWorkspaceDirectory(raw))
+            ).candidate
+        } else if let raw = normalizedText(args["workspace_path"]) {
+            package = try candidate(from: .archive(normalizeWorkspaceArchivePath(raw))).preparation.candidate
+        } else {
+            throw IOSPluginToolError.missingArgument("id, workspace_directory or workspace_path")
+        }
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "valid": true,
+            "id": package.manifest.id,
+            "version": package.manifest.version,
+            "hash": package.hash,
+            "tools": package.tools.map(\.toolId),
+            "file_hashes": package.fileHashes,
+        ])
+    }
+
+    private func setEnabledJSON(_ args: [String: Any], enabled: Bool) async throws -> String {
+        let (id, hash) = try target(args)
+        let receipt = try pluginStore.setPluginEnabled(id: id, enabled: enabled, expectedHash: hash)
+        let snapshot = await refreshRegistry()
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "status": receipt.changed ? (enabled ? "enabled" : "disabled") : "unchanged",
+            "id": id,
+            "hash": receipt.hash,
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    private func deleteJSON(_ args: [String: Any]) async throws -> String {
+        let (id, hash) = try target(args)
+        _ = try pluginStore.deletePlugin(id: id, expectedHash: hash)
+        let snapshot = await refreshRegistry()
+        return IOSWorkspaceStore.json([
+            "ok": true, "status": "deleted", "id": id,
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    private func rollbackJSON(_ args: [String: Any]) async throws -> String {
+        let (id, hash) = try target(args)
+        let receipt = try pluginStore.rollbackPlugin(id: id, expectedCurrentHash: hash)
+        let snapshot = await refreshRegistry()
+        return IOSWorkspaceStore.json([
+            "ok": true, "status": "rolled_back", "id": id,
+            "hash": receipt.hash, "enabled": receipt.enabled,
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    private func restoreJSON(_ args: [String: Any]) async throws -> String {
+        let (id, hash) = try target(args)
+        let receipt = try pluginStore.restorePlugin(id: id, expectedHash: hash)
+        let snapshot = await refreshRegistry()
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "status": receipt.changed ? "restored" : "unchanged",
+            "id": id,
+            "hash": receipt.hash,
+            "catalog_revision": snapshot?.revision as Any? ?? NSNull(),
+        ])
+    }
+
+    private func exportJSON(_ args: [String: Any]) async throws -> String {
+        let (id, hash) = try target(args)
+        let package = try pluginStore.readLivePlugin(id: id)
+        guard package.hash == hash else { throw IOSPluginFileStoreError.baseChanged }
+        let rawPath = normalizedText(args["workspace_path"]) ?? "/workspace/plugins/\(id).amberplugin"
+        let path = try normalizeWorkspaceArchivePath(rawPath)
+        let archive = try pluginStore.exportArchive(id: id)
+        guard let content = String(data: archive, encoding: .utf8) else {
+            throw IOSPluginToolError.packageMissing
+        }
+        let inputData = try JSONSerialization.data(withJSONObject: [
+            "path": "/workspace/\(path)",
+            "content": content,
+            "overwrite": true,
+        ], options: [.sortedKeys])
+        let result = await workspaceStore.executeTool(
+            toolName: "workspace_file_write",
+            input: String(data: inputData, encoding: .utf8) ?? "{}"
+        )
+        if let reason = ChatToolOutputFormatter.workspaceFailureReason(inOutputJSON: result) {
+            throw IOSPluginToolError.exportFailed(reason)
+        }
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "status": "exported",
+            "id": id,
+            "hash": hash,
+            "workspace_path": "/workspace/\(path)",
+            "trust": pluginStore.trustRecord(id: id).tier.rawValue,
+        ])
+    }
+
+    private func target(_ args: [String: Any]) throws -> (String, String) {
+        guard let id = normalized(args["id"]), IOSRecipeNames.isValidRecipeName(id) else {
+            throw IOSPluginToolError.missingArgument("id")
+        }
+        guard let hash = normalized(args["expected_hash"]) else {
+            throw IOSPluginToolError.missingArgument("expected_hash")
+        }
+        return (id, hash)
+    }
+
+    private func workspacePackageFiles(directory: String) throws -> [String: Data] {
+        let prefix = directory.isEmpty ? "" : "\(directory)/"
+        let records = workspaceStore.files.filter { $0.workspacePath.hasPrefix(prefix) }
+        var files: [String: Data] = [:]
+        for record in records {
+            let relative = String(record.workspacePath.dropFirst(prefix.count))
+            guard IOSPluginValidator.isCanonicalPackagePath(relative) else {
+                throw IOSPluginFileStoreError.invalidPath(relative)
+            }
+            let url = workspaceStore.fileURL(for: record)
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw IOSPluginFileStoreError.invalidPath(relative)
+            }
+            files[relative] = try Data(contentsOf: url, options: [.mappedIfSafe])
+        }
+        guard files["plugin.json"] != nil else { throw IOSPluginToolError.packageMissing }
+        return files
+    }
+
+    private func candidate(
+        from source: IOSPluginImportSource
+    ) throws -> (preparation: IOSPluginPackagePreparation, files: [String: Data]) {
+        switch source {
+        case .directory(let directory):
+            let files = try workspacePackageFiles(directory: directory)
+            return (try pluginStore.preparePlugin(files: files), files)
+        case .archive(let path):
+            guard let record = workspaceStore.fileRecord(idOrPath: "/workspace/\(path)") else {
+                throw IOSPluginToolError.packageMissing
+            }
+            let url = workspaceStore.fileURL(for: record)
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw IOSPluginFileStoreError.invalidPath(path)
+            }
+            return try pluginStore.prepareArchive(data: Data(contentsOf: url, options: [.mappedIfSafe]))
+        }
+    }
+
+    private func normalizeWorkspaceDirectory(_ raw: String) throws -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("/workspace/") { value.removeFirst("/workspace/".count) }
+        else if value == "/workspace" { value = "" }
+        else if value.hasPrefix("/") { throw IOSPluginToolError.invalidWorkspaceDirectory }
+        while value.hasSuffix("/") { value.removeLast() }
+        if !value.isEmpty && !IOSPluginValidator.isCanonicalPackagePath(value) {
+            throw IOSPluginToolError.invalidWorkspaceDirectory
+        }
+        return value
+    }
+
+    private func normalizeWorkspaceArchivePath(_ raw: String) throws -> String {
+        var value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("/workspace/") { value.removeFirst("/workspace/".count) }
+        guard value.hasSuffix(".amberplugin"), IOSPluginValidator.isCanonicalPackagePath(value) else {
+            throw IOSPluginToolError.invalidWorkspaceArchive
+        }
+        return value
+    }
+
+    private func normalized(_ value: Any?) -> String? {
+        guard let value = value as? String else { return nil }
+        let result = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return result.isEmpty ? nil : result
+    }
+
+    private func normalizedText(_ value: Any?) -> String? {
+        guard let value = value as? String else { return nil }
+        let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? nil : result
+    }
+}
+
+private enum IOSPluginToolError: LocalizedError {
+    case missingArgument(String)
+    case invalidWorkspaceDirectory
+    case invalidWorkspaceArchive
+    case packageMissing
+    case exportFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingArgument(let name): "Missing required argument: \(name)."
+        case .invalidWorkspaceDirectory: "workspace_directory 必须是 /workspace 下的规范目录。"
+        case .invalidWorkspaceArchive: "workspace_path 必须是 /workspace 下的规范 .amberplugin 文件。"
+        case .packageMissing: "Workspace 中找不到插件包或 plugin.json。"
+        case .exportFailed(let reason): "插件导出失败：\(reason)"
+        }
     }
 }
 

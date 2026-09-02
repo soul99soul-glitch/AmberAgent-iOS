@@ -994,13 +994,15 @@ final class IOSSkillMcpToolsTests: XCTestCase {
         let names = Set(viewModel.currentToolDeclarationNames())
         for tool in [
             "skills_list", "use_skill",
+            "recipes_list",
             "mcp_list", "mcp_describe_tool", "mcp_call",
         ] {
             XCTAssertTrue(names.contains(tool), "\(tool) should be declared")
         }
         for tool in [
             "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
-            "mcp_test", "mcp_import_from_skill", "recipe_import",
+            "mcp_test", "mcp_import_from_skill", "recipe_validate", "recipe_import",
+            "recipe_enable", "recipe_disable", "recipe_delete",
         ] {
             XCTAssertFalse(names.contains(tool), "\(tool) should be deferred behind tool_search")
         }

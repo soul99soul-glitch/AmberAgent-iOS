@@ -54,6 +54,10 @@ struct ChatToolDetailSheet: View {
         return !executed
     }
 
+    private var outputFailureReason: String? {
+        ChatToolOutputFormatter.failureReason(from: tool.output)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -85,6 +89,8 @@ struct ChatToolDetailSheet: View {
             Text(tool.toolName.isEmpty ? friendlyName : tool.toolName)
                 .font(.system(.footnote, design: .monospaced))
                 .foregroundStyle(AmberTheme.muted)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
         let parametersSource: String = {
@@ -100,6 +106,12 @@ struct ChatToolDetailSheet: View {
             if !executed {
                 statusLine("尚未执行或无返回")
             } else {
+                if let notice = webMountUncertainNotice {
+                    Label(notice, systemImage: "arrow.clockwise.circle")
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(AmberTheme.accent)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if !storedOutputText.isEmpty { codeBlock(storedOutputText) }
                 ForEach(Array(outputImages.enumerated()), id: \.offset) { _, img in
                     AsyncImage(url: Self.imageURL(from: img.url)) { image in
@@ -133,6 +145,9 @@ struct ChatToolDetailSheet: View {
                 if isRunning {
                     ProgressView().controlSize(.mini).tint(AmberTheme.accent)
                     Text("正在工作").foregroundStyle(AmberTheme.accent)
+                } else if outputFailureReason != nil {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(AmberTheme.accentRed)
+                    Text("执行失败").foregroundStyle(AmberTheme.accentRed)
                 } else {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(AmberTheme.accentGreen)
                     Text("已完成").foregroundStyle(AmberTheme.accentGreen)
@@ -142,6 +157,12 @@ struct ChatToolDetailSheet: View {
         }
         section("生成内容") {
             let text = subAgentText
+            if let outputFailureReason {
+                Text(outputFailureReason)
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.accentRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if text.isEmpty {
                 statusLine(isRunning ? "等待输出…" : "(无输出)")
             } else {
@@ -164,6 +185,9 @@ struct ChatToolDetailSheet: View {
         }
         if tool.toolName == "ish_handoff" { return "iSH 交接" }
         if tool.toolName == "ios_ish_execute" { return "内置 iSH 执行" }
+        if IOSPluginToolCatalog.toolNames.contains(tool.toolName) {
+            return ChatToolStepModel.friendlyToolTitle(tool.toolName, executed: !tool.output.isEmpty)
+        }
         if IOSAppleAgentToolCatalog.toolNames.contains(tool.toolName) {
             return McpToolApprovalRequest.displayName(for: tool.toolName)
         }
@@ -198,6 +222,17 @@ struct ChatToolDetailSheet: View {
         Text(IOSAppLocalization.string(text, defaultValue: text))
             .font(.footnote)
             .foregroundStyle(AmberTheme.muted)
+    }
+
+    private var webMountUncertainNotice: String? {
+        guard tool.toolName.hasPrefix("wm_"),
+              let object = ChatToolStepModel.firstJSONObject(in: tool.output),
+              object["may_have_applied"] as? Bool == true,
+              let status = (object["status"] as? String)?.lowercased(),
+              ["dispatched_unverified", "ambiguous", "unknown_after_action"].contains(status) else {
+            return nil
+        }
+        return "操作已发送，但结果尚未验证；请先重新观察页面。"
     }
 
     // MARK: - Parsing helpers

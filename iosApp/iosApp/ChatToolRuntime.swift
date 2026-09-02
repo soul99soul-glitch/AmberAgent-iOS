@@ -19,6 +19,17 @@ private enum IOSExecutionPolicyContext {
     @TaskLocal static var snapshot: IOSExecutionPolicySnapshot?
 }
 
+/// Only an interrupted in-flight action is terminal. A dispatched or ambiguous
+/// result stays in the model loop so WebMount can re-observe before continuing.
+private func isWebMountInterruptedOutcome(_ text: String) -> Bool {
+    guard let data = text.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return false
+    }
+    return object["status"] as? String == "unknown_after_action"
+        && object["may_have_applied"] as? Bool == true
+}
+
 private final class IOSClosureToolExecutor: IOSToolExecutor {
     private let handler: @MainActor (String, String, Bool) async -> IOSAgentToolOutcome
     private let executionPolicy: IOSExecutionPolicySnapshot?
@@ -49,14 +60,8 @@ private extension IOSLocalToolExecutionOutput {
     }
 
     var isWebMountOutcomeUnknown: Bool {
-        guard case .webMountResult(let text) = self,
-              let data = text.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return false
-        }
-        guard object["may_have_applied"] as? Bool == true else { return false }
-        return ["unknown_after_action", "ambiguous", "dispatched_unverified"]
-            .contains(object["status"] as? String ?? "")
+        guard case .webMountResult(let text) = self else { return false }
+        return isWebMountInterruptedOutcome(text)
     }
 }
 
@@ -148,6 +153,51 @@ private enum RecipePrimitiveStepResult {
     case outcomeUnknown(String)
 }
 
+private enum IOSPluginRuntimeError: LocalizedError {
+    case invalidRemoteDefinition
+    case requestTooLarge
+    case httpStatus(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRemoteDefinition: "远端处理器定义无效。"
+        case .requestTooLarge: "远端请求体超过 256 KiB。"
+        case .httpStatus(let code): "远端返回 HTTP \(code)。"
+        }
+    }
+}
+
+private struct IOSPluginHostCallFailure: Sendable {
+    let reason: String
+    let mayHaveApplied: Bool
+}
+
+private final class IOSPluginHostCallState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    private var storedFailure: IOSPluginHostCallFailure?
+
+    func markStarted() {
+        lock.lock()
+        started = true
+        lock.unlock()
+    }
+
+    func fail(_ reason: String, mayHaveApplied: Bool = false) {
+        lock.lock()
+        if storedFailure == nil {
+            storedFailure = IOSPluginHostCallFailure(reason: reason, mayHaveApplied: mayHaveApplied)
+        }
+        lock.unlock()
+    }
+
+    func snapshot() -> (started: Bool, failure: IOSPluginHostCallFailure?) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (started, storedFailure)
+    }
+}
+
 /// In-flight execution state of one `recipe__*` call. Lives in
 /// `ChatToolRuntime.preparedRecipeExecutions` keyed by the model's toolCallId
 /// while the call is paused for a mutation-step approval; a JSON mirror is
@@ -161,6 +211,12 @@ struct IOSRecipeExecutionState {
     let executionId: String
     let recipeName: String
     let recipeVersion: String
+    /// Present only when this recipe is a handler inside an installed plugin.
+    /// Kept with the pinned manifest so terminal health attribution cannot
+    /// drift to a newer package revision while an approval is open.
+    let pluginId: String?
+    let pluginPackageHash: String?
+    let capabilityBroker: IOSPluginCapabilityBroker?
     let catalogRevision: Int64?
     let manifest: IOSRecipeManifest
     let plan: IOSRecipeExecutionPlan
@@ -183,6 +239,13 @@ struct IOSRecipeExecutionState {
             executionId: executionId
         )
     }
+}
+
+/// Pinned non-Recipe plugin handler held while its execution approval card is
+/// visible. The original arguments remain in `ChatPendingToolApproval`; this
+/// descriptor keeps execution on the exact package revision the model saw.
+struct IOSPreparedPluginInvocation: Equatable, Sendable {
+    let descriptor: IOSDynamicRecipeToolDescriptor
 }
 
 enum ChatToolApprovalPrompt {
@@ -274,6 +337,8 @@ final class ChatToolRuntime {
     /// Wave B2: `recipe_import` 的获批应用上下文，与 skill_import 同生命周期
     /// （仅内存、按 toolCallId、冷启动不恢复）。
     private var preparedRecipeImportsForApproval: [String: IOSPreparedRecipeImport] = [:]
+    private var preparedPluginImportsForApproval: [String: IOSPreparedPluginImport] = [:]
+    private var preparedPluginInvocationsForApproval: [String: IOSPreparedPluginInvocation] = [:]
     /// Wave B2: 暂停在 mutation step 审批处的 `recipe__*` 执行状态（含已
     /// 完成 steps 的输出与下一 step 索引）。暂停前先持久化 checkpoint，恢复
     /// 走 finisher，不经过模型循环。
@@ -281,6 +346,9 @@ final class ChatToolRuntime {
     /// Wave B2: recipe store 的基目录（nil = documents，与 registry 同源）。
     /// 也用于 checkpoint 落盘（`recipes/.checkpoints/`）。
     private let recipeStoreBaseDirectory: URL?
+    /// Registry over the same store root. Tests with an isolated root must not
+    /// accidentally publish lifecycle changes into the app-global registry.
+    private let recipeRegistry: IOSDynamicToolRegistry
     private let mcpConfigStore: IOSMcpConfigStore
     /// P1-c: 线程编排工具执行体（spawn_agent/list_agents/interrupt_agent）。
     /// 可选：未注入时三工具返回结构化「不可用」错误而不是静默缺失。
@@ -332,14 +400,11 @@ final class ChatToolRuntime {
     )
     /// Wave B2: `recipe_import` 服务（preview → 批准 → CAS apply → registry
     /// refresh）。recipe store 基目录与 registry 同源（nil = documents）。
-    private lazy var recipeToolService = IOSRecipeToolService(
-        workspaceStore: workspaceStore,
-        recipeStore: IOSRecipeFileStore(baseDirectory: recipeStoreBaseDirectory ?? recipeDefaultBaseDirectory)
-    )
+    private let recipeToolService: IOSRecipeToolService
+    private let pluginToolService: IOSPluginToolService
+    private let pluginHealthStore: IOSPluginHealthStore
     /// Wave B2: checkpoint 落盘（`<base>/recipes/.checkpoints/`）。
-    private lazy var recipeExecutionCheckpointStore = IOSRecipeExecutionCheckpointStore(
-        baseDirectory: recipeStoreBaseDirectory ?? recipeDefaultBaseDirectory
-    )
+    private let recipeExecutionCheckpointStore: IOSRecipeExecutionCheckpointStore
 
     private var effectiveGlobalAutoApproveEnabled: Bool {
         IOSExecutionPolicyContext.snapshot?.globalAutoApproveEnabled
@@ -444,15 +509,6 @@ final class ChatToolRuntime {
         }
     }
 
-    private var recipeDefaultBaseDirectory: URL {
-        (try? FileManager.default.url(
-            for: .documentDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? FileManager.default.temporaryDirectory
-    }
-
     init(
         settingsStore: SettingsStore,
         sharedSettings: IOSSharedSettingsStore,
@@ -468,6 +524,7 @@ final class ChatToolRuntime {
         conversationStoreProvider: (() -> IOSConversationStore?)? = nil,
         ledger: IOSAgentRunLedgering? = nil,
         recipeStoreBaseDirectory: URL? = nil,
+        recipeRegistry: IOSDynamicToolRegistry? = nil,
         soulPreviousStore: IOSSoulPreviousStore? = nil,
         mcpImportClientFactory: ((IOSMcpServerConfig) -> any IOSMcpClienting)? = nil
     ) {
@@ -485,6 +542,47 @@ final class ChatToolRuntime {
         self.conversationStoreProvider = conversationStoreProvider
         self.ledger = ledger
         self.recipeStoreBaseDirectory = recipeStoreBaseDirectory
+        let resolvedRecipeRegistry = recipeRegistry
+            ?? recipeStoreBaseDirectory.map(IOSDynamicToolRegistry.init(baseDirectory:))
+            ?? .shared
+        self.recipeRegistry = resolvedRecipeRegistry
+        let resolvedRecipeBaseDirectory = recipeStoreBaseDirectory
+            ?? (try? FileManager.default.url(
+                for: .documentDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            ))
+            ?? FileManager.default.temporaryDirectory
+        self.recipeToolService = IOSRecipeToolService(
+            workspaceStore: workspaceStore,
+            recipeStore: IOSRecipeFileStore(
+                baseDirectory: resolvedRecipeBaseDirectory,
+                fileManager: .default
+            ),
+            catalog: IOSDynamicToolRegistry.primitiveCatalogEntry,
+            refreshRegistry: {
+                await resolvedRecipeRegistry.refresh()
+            }
+        )
+        self.pluginToolService = IOSPluginToolService(
+            workspaceStore: workspaceStore,
+            pluginStore: IOSPluginFileStore(
+                baseDirectory: resolvedRecipeBaseDirectory,
+                fileManager: .default
+            ),
+            refreshRegistry: {
+                await resolvedRecipeRegistry.refresh()
+            }
+        )
+        self.pluginHealthStore = IOSPluginHealthStore(
+            baseDirectory: resolvedRecipeBaseDirectory,
+            fileManager: .default
+        )
+        self.recipeExecutionCheckpointStore = IOSRecipeExecutionCheckpointStore(
+            baseDirectory: resolvedRecipeBaseDirectory,
+            fileManager: .default
+        )
         self.soulPreviousStore = soulPreviousStore ?? IOSSoulPreviousStore()
         self.mcpImportClientFactory = mcpImportClientFactory
     }
@@ -520,6 +618,19 @@ final class ChatToolRuntime {
 
     func discardPreparedRecipeImportForApproval(toolCallId: String) {
         preparedRecipeImportsForApproval.removeValue(forKey: toolCallId)
+        preparedPluginImportsForApproval.removeValue(forKey: toolCallId)
+    }
+
+    func takePreparedPluginImportForApproval(toolCallId: String) -> IOSPreparedPluginImport? {
+        preparedPluginImportsForApproval.removeValue(forKey: toolCallId)
+    }
+
+    func takePreparedPluginInvocationForApproval(toolCallId: String) -> IOSPreparedPluginInvocation? {
+        preparedPluginInvocationsForApproval.removeValue(forKey: toolCallId)
+    }
+
+    func discardPreparedPluginInvocationForApproval(toolCallId: String) {
+        preparedPluginInvocationsForApproval.removeValue(forKey: toolCallId)
     }
 
     /// Wave B2: 暂停中的 `recipe__*` 执行状态。Coordinator 接住审批卡时取走；
@@ -575,7 +686,8 @@ final class ChatToolRuntime {
         /// Job-frozen display messages for generate_image pad-image enrich.
         /// Must be the snapshot that owns this tool call — not a live store read.
         messages: [UIMessage] = [],
-        executionPolicy: IOSExecutionPolicySnapshot? = nil
+        executionPolicy: IOSExecutionPolicySnapshot? = nil,
+        dynamicToolSnapshot: IOSDynamicToolCatalogSnapshot? = nil
     ) -> [String: any IOSToolExecutor] {
         backgroundToolExecutorsWithCurrentPolicy(
             providerSetting: providerSetting,
@@ -584,7 +696,8 @@ final class ChatToolRuntime {
             toolExposureBridge: toolExposureBridge,
             conversationId: conversationId,
             messages: messages,
-            executionPolicy: executionPolicy
+            executionPolicy: executionPolicy,
+            dynamicToolSnapshot: dynamicToolSnapshot
         )
     }
 
@@ -595,7 +708,8 @@ final class ChatToolRuntime {
         toolExposureBridge: IosToolExposureBridge?,
         conversationId: KotlinUuid?,
         messages: [UIMessage],
-        executionPolicy: IOSExecutionPolicySnapshot?
+        executionPolicy: IOSExecutionPolicySnapshot?,
+        dynamicToolSnapshot: IOSDynamicToolCatalogSnapshot?
     ) -> [String: any IOSToolExecutor] {
         var executors: [String: any IOSToolExecutor] = [:]
         let availableToolNames = Set(params.tools.map(\.name))
@@ -622,6 +736,27 @@ final class ChatToolRuntime {
                     return .failed("tools_list is unavailable in this run.")
                 }
                 return .filled(bridge.executeToolsList())
+            }
+        }
+
+        // Dynamic plugins are background-capable only when the exact
+        // process-local snapshot opted in and the handler is declarative or
+        // remote read-only. Restricted JS, side effects, Shell/Python/iSH and
+        // cold-restored name-only payloads never enter this table.
+        for descriptor in dynamicToolSnapshot?.backgroundEligibleDescriptors ?? []
+        where availableToolNames.contains(descriptor.toolId) {
+            executors[descriptor.toolId] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] _, arguments, _ in
+                guard let self else { return .failed("Chat runtime is unavailable.") }
+                return await self.executeBackgroundPlugin(
+                    descriptor: descriptor,
+                    argumentsJSON: arguments,
+                    providerSetting: providerSetting,
+                    params: params,
+                    runId: runId,
+                    conversationId: conversationId,
+                    bridge: toolExposureBridge,
+                    executionPolicy: executionPolicy
+                )
             }
         }
 
@@ -894,16 +1029,34 @@ final class ChatToolRuntime {
             }
         }
 
-        // Wave B2 (§16.2): recipe_import 与 skill_import 同级。`recipe__*` 名字
-        // 在后台桥里本就不存在（B1 的 handoff 过滤）；import 仅在高风险自动批准
-        // 打开时直接 CAS 应用，否则拒绝并要求回到 App。
-        if availableToolNames.contains("recipe_import") {
-            executors["recipe_import"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+        // Recipe 管理工具可在后台读取；写操作只有对应自动批准策略已开启时
+        // 执行。独立 recipe__* 仍不进入后台目录；显式声明且只读的
+        // plugin__* 工具已在上方按固定目录快照注册。
+        for name in IOSRecipeToolCatalog.toolNames where availableToolNames.contains(name) {
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
-                return await self.backgroundHostPublishOutcome(
-                    toolName: toolName,
-                    arguments: arguments
+                if Self.isHostPublishTool(toolName) {
+                    return await self.backgroundHostPublishOutcome(
+                        toolName: toolName,
+                        arguments: arguments
+                    )
+                }
+                let mutating = IOSRecipeToolCatalog.mutatingToolNames.contains(toolName)
+                let highRisk = IOSRecipeToolCatalog.highRiskToolNames.contains(toolName)
+                let autoApproved = highRisk
+                    ? self.effectiveHighRiskAutoApproveEnabled
+                    : self.effectiveGlobalAutoApproveEnabled || self.effectiveHighRiskAutoApproveEnabled
+                if mutating, !autoApproved {
+                    return .denied("后台生成期间需要回到 App 确认 \(toolName)。")
+                }
+                let result = await self.dispatchAdvancedToolCall(
+                    self.toolCall(name: toolName, input: arguments),
+                    providerSetting: providerSetting,
+                    params: params,
+                    runId: runId,
+                    conversationId: conversationId
                 )
+                return .filled(result)
             }
         }
 
@@ -1083,7 +1236,8 @@ final class ChatToolRuntime {
         .union(IOSProviderConfigToolCatalog.toolNames)
         .union(IOSThemePackToolCatalog.toolNames)
         .union(IOSRecipeToolCatalog.toolNames)
-        if IOSDynamicToolRegistry.isRecipeToolName(name) { return .advanced }
+        .union(IOSPluginToolCatalog.toolNames)
+        if IOSDynamicToolRegistry.isDynamicWorkflowToolName(name) { return .advanced }
         if executionPolicy?.execJavaScriptEnabled ?? effectiveExecJavaScriptEnabled {
             advancedNames.formUnion(["exec", "wait"])
         }
@@ -1610,6 +1764,9 @@ final class ChatToolRuntime {
             audit = ("ios.settings.theme_pack", "Theme pack try-on")
         } else if pending.toolCall.toolName == IOSSoulToolCatalog.toolName {
             audit = ("ios.skills.management", "Soul update")
+        } else if IOSRecipeToolCatalog.toolNames.contains(pending.toolCall.toolName)
+                    || IOSPluginToolCatalog.toolNames.contains(pending.toolCall.toolName) {
+            audit = ("ios.recipes.management", "Recipe management operation")
         } else if IOSAppleAgentToolCatalog.toolNames.contains(pending.toolCall.toolName) {
             audit = (
                 IOSCapabilityRegistry.capability(forToolName: pending.toolCall.toolName)?.id
@@ -2357,7 +2514,7 @@ final class ChatToolRuntime {
                         || ToolKt.isExpandedMcpToolName(name: $0.toolName)
                         // Wave B2: `recipe__*` 通用路由——与 mcp__* 同模式，
                         // 命中后下一轮才可执行（声明与执行同 snapshot，§16.1）。
-                        || IOSDynamicToolRegistry.isRecipeToolName($0.toolName))
+                        || IOSDynamicToolRegistry.isDynamicWorkflowToolName($0.toolName))
                         && availableToolNames.contains($0.toolName)
                         && $0.output.isEmpty
                 }) {
@@ -2558,13 +2715,7 @@ final class ChatToolRuntime {
         if IOSAppleAgentToolCatalog.approvalRequiredToolNames.contains(toolName),
            let request = ChatToolApprovalRequestBuilder.appleCapability(
                for: pending.toolCall,
-               reason: IOSAppleAgentToolCatalog.alarmToolNames.contains(toolName)
-                   ? (IOSAppleAgentToolCatalog.mutatingToolNames.contains(toolName)
-                       ? IOSAlarmCopy.mutatingReason
-                       : IOSAlarmCopy.listReason)
-                   : (IOSAppleAgentToolCatalog.mutatingToolNames.contains(toolName)
-                       ? "该操作会读取或修改你在 iPhone 上的私密 Apple 数据，需要你确认。"
-                       : "该操作会读取你在 iPhone 上的私密 Apple 数据，并交给当前 Agent 处理，需要你确认。")
+               reason: appleCapabilityApprovalReason(toolName: toolName)
            ) {
             return .waitingForApproval(.mcp(request))
         }
@@ -2574,12 +2725,32 @@ final class ChatToolRuntime {
         // registry snapshot」解析（in-flight pinning，不用 live store）；
         // snapshot 无此 recipe → 结构化错误（不崩、不静默）。mutation step
         // 走现有审批（invariant 11），在这里与 skill_import 同层拦截。
-        if IOSDynamicToolRegistry.isRecipeToolName(toolName) {
-            return await executeRecipeToolCall(
-                pending,
-                snapshot: recipeCatalogSnapshot,
-                bridge: toolExposureBridge
-            )
+        if IOSDynamicToolRegistry.isDynamicWorkflowToolName(toolName) {
+            guard let descriptor = recipeCatalogSnapshot?.recipeTools.first(where: { $0.toolId == toolName }) else {
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolName,
+                        reason: "此动态工具不在当前目录中；请先调用 tool_search 获取最新工具。",
+                        status: "failed"
+                    ),
+                    in: pending.baseMessages
+                ))
+            }
+            switch descriptor.implementation {
+            case .recipe:
+                return await executeRecipeToolCall(
+                    pending,
+                    snapshot: recipeCatalogSnapshot,
+                    bridge: toolExposureBridge
+                )
+            case .javascript, .remote:
+                return await executePluginToolCall(
+                    pending,
+                    descriptor: descriptor,
+                    bridge: toolExposureBridge
+                )
+            }
         }
 
         if toolName == IOSSoulToolCatalog.toolName {
@@ -2821,6 +2992,54 @@ final class ChatToolRuntime {
             }
         }
 
+        if toolName == "plugin_import" {
+            preparedPluginImportsForApproval.removeValue(forKey: pending.toolCall.toolCallId)
+            do {
+                let prepared = try pluginToolService.preparePluginImport(arguments: pending.toolCall.input)
+                let request = RecipeToolApprovalRequestBuilder.pluginImportRequest(
+                    for: pending.toolCall,
+                    prepared: prepared
+                )
+                // Agent-authored packages are never self-approved, including
+                // when high-risk auto approve is enabled.
+                preparedPluginImportsForApproval[pending.toolCall.toolCallId] = prepared
+                return .waitingForApproval(.recipe(request))
+            } catch {
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolName,
+                        reason: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                        status: "failed"
+                    ),
+                    in: pending.baseMessages
+                ))
+            }
+        }
+
+        let highRiskWorkflow = IOSRecipeToolCatalog.highRiskToolNames.contains(toolName)
+            || IOSPluginToolCatalog.highRiskToolNames.contains(toolName)
+        if highRiskWorkflow,
+           !effectiveHighRiskAutoApproveEnabled,
+           let request = ChatToolApprovalRequestBuilder.extensionMutation(
+               for: pending.toolCall,
+               reason: "该操作会替换或移除本机工作流包与回退版本，需要你确认。"
+           ) {
+            return .waitingForApproval(.mcp(request))
+        }
+
+        let mutatingWorkflow = IOSRecipeToolCatalog.mutatingToolNames.contains(toolName)
+            || IOSPluginToolCatalog.mutatingToolNames.contains(toolName)
+        if mutatingWorkflow,
+           !effectiveGlobalAutoApproveEnabled,
+           !effectiveHighRiskAutoApproveEnabled,
+           let request = ChatToolApprovalRequestBuilder.extensionMutation(
+               for: pending.toolCall,
+               reason: "将修改本机工作流的启用状态，需要你确认。"
+           ) {
+            return .waitingForApproval(.mcp(request))
+        }
+
         // MCP calls and MCP management can access remote services or import
         // connection configuration. Ordinary global auto-approve must not cross
         // this high-risk boundary.
@@ -2895,6 +3114,709 @@ final class ChatToolRuntime {
 
     // MARK: - Wave B2: `recipe__*` generic route (§13.2.5 / §16.1 / §10.3)
 
+    private func executePluginToolCall(
+        _ pending: ChatPendingToolApproval,
+        descriptor: IOSDynamicRecipeToolDescriptor,
+        bridge: IosToolExposureBridge?
+    ) async -> ChatToolRuntimeResult {
+        guard descriptor.pluginId != nil else {
+            return .completed(messagesByFinishingToolCall(
+                pending.toolCall,
+                outputText: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: pending.toolCall.toolName,
+                    reason: "动态工具缺少插件归属。",
+                    status: "failed"
+                ),
+                in: pending.baseMessages
+            ))
+        }
+        guard pluginInputObject(pending.toolCall.input, matches: descriptor) != nil else {
+            return .completed(messagesByFinishingToolCall(
+                pending.toolCall,
+                outputText: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: pending.toolCall.toolName,
+                    reason: "插件参数不是符合声明的 JSON 对象。",
+                    status: "failed"
+                ),
+                in: pending.baseMessages
+            ))
+        }
+
+        let requiresHighRiskApproval = pluginRequiresHighRiskApproval(descriptor)
+        let autoApproved = requiresHighRiskApproval
+            ? effectiveHighRiskAutoApproveEnabled
+            : (effectiveGlobalAutoApproveEnabled || effectiveHighRiskAutoApproveEnabled)
+        if descriptor.effectClassRawValue != IOSToolEffectClass.pure.rawValue, !autoApproved {
+            let capabilities = pluginInvocationCapabilities(descriptor)
+            preparedPluginInvocationsForApproval[pending.toolCall.toolCallId] = IOSPreparedPluginInvocation(
+                descriptor: descriptor
+            )
+            let payload = PluginInvocationApprovalPayload(
+                toolId: descriptor.toolId,
+                handler: pluginHandlerTitle(descriptor.implementation),
+                argumentsPreview: recipeArgumentsPreview(pending.toolCall.input),
+                effectClass: IOSToolEffectClass(rawValue: descriptor.effectClassRawValue) ?? .sideEffect,
+                capabilities: capabilities
+            )
+            return .waitingForApproval(.recipe(
+                RecipeToolApprovalRequestBuilder.pluginInvocationRequest(
+                    for: pending.toolCall,
+                    pluginId: descriptor.pluginId ?? descriptor.recipeName,
+                    pluginVersion: descriptor.version,
+                    payload: payload
+                )
+            ))
+        }
+
+        let output = await executePinnedPlugin(
+            descriptor: descriptor,
+            argumentsJSON: pending.toolCall.input,
+            context: pending,
+            bridge: bridge,
+            isUserInitiated: autoApproved
+        )
+        let messages = messagesByFinishingToolCall(
+            pending.toolCall,
+            outputText: output,
+            in: pending.baseMessages
+        )
+        return Self.isPluginOutcomeUnknown(output)
+            ? .outcomeUnknown(messages)
+            : .completed(messages)
+    }
+
+    private func executeBackgroundPlugin(
+        descriptor: IOSDynamicRecipeToolDescriptor,
+        argumentsJSON: String,
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        runId: String,
+        conversationId: KotlinUuid?,
+        bridge: IosToolExposureBridge?,
+        executionPolicy: IOSExecutionPolicySnapshot?
+    ) async -> IOSAgentToolOutcome {
+        guard descriptor.isBackgroundEligible else {
+            return .denied("该插件处理器未获后台只读执行许可。")
+        }
+        guard pluginInputObject(argumentsJSON, matches: descriptor) != nil else {
+            return .filled(ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "插件参数不是符合声明的 JSON 对象。",
+                status: "failed"
+            ))
+        }
+        let toolCall = UIMessagePart.Tool(
+            toolCallId: "background-plugin-\(UUID().uuidString)",
+            toolName: descriptor.toolId,
+            input: argumentsJSON,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let context = ChatPendingToolApproval(
+            toolCall: toolCall,
+            providerSetting: providerSetting,
+            params: params,
+            runId: runId,
+            startedAt: Int64(Date().timeIntervalSince1970 * 1_000),
+            inputDigest: chatInputDigest(for: argumentsJSON),
+            conversationId: conversationId,
+            baseMessages: [],
+            executionPolicy: executionPolicy
+        )
+        switch descriptor.implementation {
+        case .javascript:
+            return .denied("受限 JavaScript 插件不在后台白名单中。")
+        case .remote:
+            let output = await executePinnedPlugin(
+                descriptor: descriptor,
+                argumentsJSON: argumentsJSON,
+                context: context,
+                bridge: bridge,
+                isUserInitiated: false
+            )
+            let part = UIMessagePart.Text(text: output, metadata: nil)
+            return Self.isPluginOutcomeUnknown(output) ? .outcomeUnknown([part]) : .filled(output)
+        case .recipe(let manifest):
+            let inputs: [String: IOSRecipeJSONValue]
+            do {
+                let decoded = try JSONDecoder().decode(
+                    IOSRecipeJSONValue.self,
+                    from: Data(argumentsJSON.utf8)
+                )
+                guard case .object(let object) = decoded else {
+                    return .filled(ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: descriptor.toolId,
+                        reason: "Recipe 插件参数必须是 JSON 对象。",
+                        status: "failed"
+                    ))
+                }
+                inputs = object
+            } catch {
+                return .filled(ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: descriptor.toolId,
+                    reason: "Recipe 插件参数无法解析。",
+                    status: "failed"
+                ))
+            }
+            let runner = IOSRecipeRunner(
+                manifest: manifest,
+                artifactId: descriptor.toolId,
+                catalog: IOSDynamicToolRegistry.primitiveCatalogEntry,
+                executePrimitive: { [weak self] tool, argsJSON in
+                    guard let self else { throw CancellationError() }
+                    switch await self.executeRecipePrimitiveStep(
+                        tool: tool,
+                        argsJSON: argsJSON,
+                        isUserInitiated: false,
+                        context: context,
+                        bridge: bridge
+                    ) {
+                    case .output(let text): return text
+                    case .failure(let reason), .needsApproval(let reason):
+                        throw IOSRecipeRunError.stepFailed(stepId: "", tool: tool, message: reason)
+                    case .outcomeUnknown(let text):
+                        throw IOSRecipePrimitiveOutcomeUnknownError(outputText: text)
+                    }
+                },
+                ledger: ledger,
+                runId: runId
+            )
+            let outcome = await runner.run(inputs: inputs)
+            switch outcome {
+            case .succeeded(let outputs, let completedSteps):
+                let output = recipeResultJSON(outputs: outputs, completedSteps: completedSteps)
+                _ = pluginHealthStore.recordSuccess(
+                    pluginId: descriptor.pluginId ?? descriptor.recipeName,
+                    packageHash: descriptor.manifestHash
+                )
+                return .filled(output)
+            case .failed(_, let error, _):
+                let output = runner.structuredErrorJSON(for: outcome)
+                    ?? ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: descriptor.toolId,
+                        reason: "后台 Recipe 插件执行失败。",
+                        status: "failed"
+                    )
+                let kind: IOSPluginDiagnosticKind?
+                switch error {
+                case .stepTimeout: kind = .timeout
+                case .outputResolution: kind = .schema
+                case .stepFailed: kind = .exception
+                case .planInvalid, .inputInvalid, .argumentBinding: kind = nil
+                }
+                if let pluginId = descriptor.pluginId, let kind {
+                    let transition = pluginHealthStore.recordFailure(
+                        pluginId: pluginId,
+                        packageHash: descriptor.manifestHash,
+                        toolId: descriptor.toolId,
+                        kind: kind,
+                        detail: output
+                    )
+                    if transition.didQuarantine { _ = await recipeRegistry.refresh() }
+                }
+                return .filled(output)
+            }
+        }
+    }
+
+    func finishPluginInvocationApproval(
+        pending: ChatPendingToolApproval,
+        allow: Bool,
+        prepared: IOSPreparedPluginInvocation?,
+        toolExposureBridge: IosToolExposureBridge?
+    ) async -> [UIMessage] {
+        recordToolApproval(
+            capabilityId: "ios.agent.plugin_execution",
+            toolCall: pending.toolCall,
+            action: allow ? .allowed : .denied,
+            reason: allow ? "User approved plugin invocation." : "User denied plugin invocation.",
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
+        )
+        let output: String
+        if !allow {
+            output = ChatToolOutputFormatter.toolFailureJSON(
+                toolName: pending.toolCall.toolName,
+                reason: "用户拒绝执行插件工具。",
+                denied: true
+            )
+        } else if let prepared,
+                  pluginInputObject(pending.toolCall.input, matches: prepared.descriptor) != nil {
+            output = await executePinnedPlugin(
+                descriptor: prepared.descriptor,
+                argumentsJSON: pending.toolCall.input,
+                context: pending,
+                bridge: toolExposureBridge,
+                isUserInitiated: true
+            )
+        } else {
+            output = ChatToolOutputFormatter.toolFailureJSON(
+                toolName: pending.toolCall.toolName,
+                reason: "插件执行上下文已失效，请重新发起调用。",
+                status: "failed"
+            )
+        }
+        return messagesByFinishingToolCall(
+            pending.toolCall,
+            outputText: output,
+            in: pending.baseMessages
+        )
+    }
+
+    private func executePinnedPlugin(
+        descriptor: IOSDynamicRecipeToolDescriptor,
+        argumentsJSON: String,
+        context: ChatPendingToolApproval,
+        bridge: IosToolExposureBridge?,
+        isUserInitiated: Bool
+    ) async -> String {
+        let output = await executePinnedPluginBody(
+            descriptor: descriptor,
+            argumentsJSON: argumentsJSON,
+            context: context,
+            bridge: bridge,
+            isUserInitiated: isUserInitiated
+        )
+        await recordPluginHealth(output: output, descriptor: descriptor)
+        return output
+    }
+
+    private func executePinnedPluginBody(
+        descriptor: IOSDynamicRecipeToolDescriptor,
+        argumentsJSON: String,
+        context: ChatPendingToolApproval,
+        bridge: IosToolExposureBridge?,
+        isUserInitiated: Bool
+    ) async -> String {
+        switch descriptor.implementation {
+        case .recipe:
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "Recipe 插件处理器进入了错误的执行路径。",
+                status: "failed"
+            )
+        case .javascript(let source, let hostTools):
+            guard let broker = descriptor.capabilityBroker else {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: descriptor.toolId,
+                    reason: "插件能力 Broker 不可用。",
+                    status: "failed"
+                )
+            }
+            let hostCallState = IOSPluginHostCallState()
+            let toolDescriptions = Dictionary(uniqueKeysWithValues: hostTools.map { ($0, "插件声明的主机工具") })
+            let tools = IOSJsSandboxTools(
+                availableToolNames: hostTools.sorted(),
+                hostCall: { [weak self] tool, argsJSON in
+                    guard let self else {
+                        hostCallState.fail("插件运行时已释放。")
+                        return nil
+                    }
+                    if let reason = broker.authorize(tool: tool, argumentsJSON: argsJSON) {
+                        NSLog("[IOSPluginRuntime] capability denied plugin=\(broker.pluginId) tool=\(tool): \(reason)")
+                        hostCallState.fail("主机工具 \(tool) 被能力代理拒绝：\(reason)")
+                        return nil
+                    }
+                    hostCallState.markStarted()
+                    switch await self.executeRecipePrimitiveStep(
+                        tool: tool,
+                        argsJSON: argsJSON,
+                        isUserInitiated: isUserInitiated,
+                        context: context,
+                        bridge: bridge
+                    ) {
+                    case .output(let text): return text
+                    case .failure(let reason):
+                        hostCallState.fail("主机工具 \(tool) 失败：\(reason)")
+                        return nil
+                    case .needsApproval(let reason):
+                        hostCallState.fail("主机工具 \(tool) 仍需批准：\(reason)")
+                        return nil
+                    case .outcomeUnknown(let reason):
+                        hostCallState.fail(
+                            "主机工具 \(tool) 的结果未知：\(reason)",
+                            mayHaveApplied: true
+                        )
+                        return nil
+                    }
+                },
+                toolDescriptions: toolDescriptions
+            )
+            guard let inputLiteral = Self.javascriptStringLiteral(argumentsJSON) else {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: descriptor.toolId,
+                    reason: "插件参数无法安全注入脚本。",
+                    status: "failed"
+                )
+            }
+            let wrapped = """
+            (function () {
+              'use strict';
+              const input = JSON.parse(\(inputLiteral));
+              return (function (input) {
+            \(source)
+              })(input);
+            })()
+            """
+            let result = await jsSandboxEngine.evaluate(
+                code: wrapped,
+                timeoutMs: descriptor.timeoutMs,
+                maxOutputChars: descriptor.maxOutputChars,
+                tools: tools,
+                store: nil,
+                restrictedPluginMode: true
+            )
+            let hostState = hostCallState.snapshot()
+            if let failure = hostState.failure {
+                return pluginHostFailurePayload(failure, descriptor: descriptor)
+            }
+            switch result {
+            case .success(let raw, let logs):
+                return pluginOutputPayload(
+                    rawJSON: raw,
+                    logs: logs,
+                    descriptor: descriptor
+                )
+            case .failure(let message):
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: descriptor.toolId,
+                    reason: "插件脚本失败：\(message)",
+                    status: "failed"
+                )
+            case .timedOut(let timeoutMs):
+                if hostState.started,
+                   descriptor.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue {
+                    return pluginHostFailurePayload(
+                        IOSPluginHostCallFailure(
+                            reason: "插件脚本在主机操作开始后超时，结果无法确认。",
+                            mayHaveApplied: true
+                        ),
+                        descriptor: descriptor
+                    )
+                }
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: descriptor.toolId,
+                    reason: "插件脚本在 \(timeoutMs) ms 后超时；本次结果已丢弃。",
+                    status: "timeout"
+                )
+            }
+        case .remote(let remote):
+            return await executePluginRemote(
+                remote,
+                descriptor: descriptor,
+                argumentsJSON: argumentsJSON
+            )
+        }
+    }
+
+    private func recordPluginHealth(
+        output: String,
+        descriptor: IOSDynamicRecipeToolDescriptor
+    ) async {
+        guard let pluginId = descriptor.pluginId,
+              let object = ChatToolCallParsing.jsonObject(output) else { return }
+        if object["ok"] as? Bool == true {
+            _ = pluginHealthStore.recordSuccess(pluginId: pluginId, packageHash: descriptor.manifestHash)
+            return
+        }
+        let status = object["status"] as? String ?? ""
+        let errorCode = object["error_code"] as? String ?? ""
+        let reason = (object["reason"] as? String) ?? (object["error"] as? String) ?? "插件运行失败。"
+        let kind: IOSPluginDiagnosticKind?
+        if status == "timeout" || errorCode == "step_timeout" || reason.localizedCaseInsensitiveContains("超时") {
+            kind = .timeout
+        } else if errorCode == "output_resolution" || reason.contains("输出不符合") || reason.contains("输出超过") {
+            kind = .schema
+        } else if reason.contains("插件脚本失败") {
+            kind = .exception
+        } else if reason.contains("远端插件") {
+            kind = .remote
+        } else {
+            kind = nil
+        }
+        guard let kind else { return }
+        let transition = pluginHealthStore.recordFailure(
+            pluginId: pluginId,
+            packageHash: descriptor.manifestHash,
+            toolId: descriptor.toolId,
+            kind: kind,
+            detail: reason
+        )
+        if transition.didQuarantine {
+            NSLog("[IOSPluginRuntime] quarantined plugin=\(pluginId) hash=\(descriptor.manifestHash)")
+            _ = await recipeRegistry.refresh()
+        }
+    }
+
+    private func pluginRequiresHighRiskApproval(
+        _ descriptor: IOSDynamicRecipeToolDescriptor
+    ) -> Bool {
+        switch descriptor.implementation {
+        case .recipe:
+            return false
+        case .remote:
+            return descriptor.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue
+        case .javascript(_, let hostTools):
+            return hostTools.contains { tool in
+                IOSCapabilityRegistry.capability(forToolName: tool)?.risk == .high
+            }
+        }
+    }
+
+    private func pluginHostFailurePayload(
+        _ failure: IOSPluginHostCallFailure,
+        descriptor: IOSDynamicRecipeToolDescriptor
+    ) -> String {
+        IOSWorkspaceStore.json([
+            "ok": false,
+            "tool": descriptor.toolId,
+            "status": failure.mayHaveApplied ? "outcome_unknown" : "failed",
+            "reason": failure.reason,
+            "may_have_applied": failure.mayHaveApplied,
+            "retry_safe": !failure.mayHaveApplied,
+        ])
+    }
+
+    private func executePluginRemote(
+        _ remote: IOSPluginRemoteManifest,
+        descriptor: IOSDynamicRecipeToolDescriptor,
+        argumentsJSON: String
+    ) async -> String {
+        guard let arguments = ChatToolCallParsing.jsonObject(argumentsJSON) else {
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "远端插件参数必须是 JSON 对象。",
+                status: "failed"
+            )
+        }
+        var requestMayHaveApplied = false
+        do {
+            let raw: String
+            switch remote.kind {
+            case .mcp:
+                guard let server = remote.server, let tool = remote.tool else {
+                    throw IOSPluginRuntimeError.invalidRemoteDefinition
+                }
+                guard isMcpNetworkAllowed() else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: descriptor.toolId,
+                        reason: "MCP 当前未启用。",
+                        status: "failed"
+                    )
+                }
+                requestMayHaveApplied = descriptor.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue
+                raw = try await mcpManager.callTool(
+                    serverName: server,
+                    toolName: tool,
+                    arguments: arguments,
+                    enabledOverride: isMcpNetworkAllowed()
+                )
+            case .openapi:
+                guard let rawURL = remote.url, var components = URLComponents(string: rawURL) else {
+                    throw IOSPluginRuntimeError.invalidRemoteDefinition
+                }
+                let method = remote.method ?? "GET"
+                if method == "GET" || method == "HEAD" {
+                    let additions = try arguments.keys.sorted().map { key -> URLQueryItem in
+                        URLQueryItem(name: key, value: try Self.queryValue(arguments[key]))
+                    }
+                    components.queryItems = (components.queryItems ?? []) + additions
+                }
+                guard let url = components.url else { throw IOSPluginRuntimeError.invalidRemoteDefinition }
+                var request = URLRequest(url: url)
+                request.httpMethod = method
+                request.timeoutInterval = TimeInterval(descriptor.timeoutMs) / 1_000
+                request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                if method != "GET" && method != "HEAD" {
+                    let body = try JSONSerialization.data(withJSONObject: arguments, options: [.sortedKeys])
+                    guard body.count <= IOSPluginLimits.maxFileBytes else {
+                        throw IOSPluginRuntimeError.requestTooLarge
+                    }
+                    request.httpBody = body
+                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                }
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.httpCookieStorage = nil
+                configuration.urlCache = nil
+                configuration.timeoutIntervalForRequest = TimeInterval(descriptor.timeoutMs) / 1_000
+                let validated = try IOSSearchExecutor.allowedPublicHTTPURL(from: url.absoluteString)
+                guard let host = validated.host else { throw IOSPluginRuntimeError.invalidRemoteDefinition }
+                let addresses = try await Task.detached(priority: .userInitiated) {
+                    try IOSSearchExecutor.resolveIPAddresses(host)
+                }.value
+                guard !addresses.isEmpty, addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
+                    throw IOSSearchExecutorError.disallowedURL("plugin endpoint resolves to a non-public address")
+                }
+                let loader = IOSBoundedPublicURLSessionLoader(
+                    configuration: configuration,
+                    maximumResponseBytes: descriptor.maxOutputChars * 4,
+                    requiresHTTPS: true,
+                    resolveHost: IOSSearchExecutor.resolveIPAddresses,
+                    allowedRedirectDomains: descriptor.capabilityBroker?.capabilities.networkDomains
+                )
+                requestMayHaveApplied = descriptor.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue
+                let (http, data) = try await loader.load(request)
+                guard (200..<300).contains(http.statusCode) else {
+                    throw IOSPluginRuntimeError.httpStatus(http.statusCode)
+                }
+                raw = data.isEmpty ? "null" : (String(data: data, encoding: .utf8) ?? "")
+            }
+            return pluginOutputPayload(rawJSON: raw, logs: [], descriptor: descriptor)
+        } catch {
+            if requestMayHaveApplied, !Self.isMcpLocalPreflightFailure(error) {
+                return pluginHostFailurePayload(
+                    IOSPluginHostCallFailure(
+                        reason: "远端插件请求发出后失败，服务端结果无法确认：\((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)",
+                        mayHaveApplied: true
+                    ),
+                    descriptor: descriptor
+                )
+            }
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "远端插件调用失败：\((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)",
+                status: "failed"
+            )
+        }
+    }
+
+    private static func isMcpLocalPreflightFailure(_ error: Error) -> Bool {
+        if error is IOSMcpManagerError { return true }
+        guard let error = error as? IOSMcpClientError else { return false }
+        switch error {
+        case .invalidURL, .unsafeEndpoint, .serverNotFound, .serverDisabled,
+             .toolNotFound, .toolDisabled, .notConnected:
+            return true
+        case .httpStatus, .mcpSessionExpired, .invalidResponse, .rpcError,
+             .requestTimedOut, .unsupportedContent:
+            return false
+        }
+    }
+
+    private static func isPluginOutcomeUnknown(_ output: String) -> Bool {
+        guard let object = ChatToolCallParsing.jsonObject(output) else { return false }
+        return object["status"] as? String == "outcome_unknown"
+            && object["may_have_applied"] as? Bool == true
+    }
+
+    func isPluginOutcomeUnknown(in messages: [UIMessage], toolCallId: String) -> Bool {
+        for message in messages where message.role == MessageRole.assistant {
+            for case let tool as UIMessagePart.Tool in message.parts
+            where tool.toolCallId == toolCallId {
+                for case let text as UIMessagePart.Text in tool.output
+                where Self.isPluginOutcomeUnknown(text.text) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private func pluginOutputPayload(
+        rawJSON: String,
+        logs: [String],
+        descriptor: IOSDynamicRecipeToolDescriptor
+    ) -> String {
+        guard let data = rawJSON.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+              Self.pluginValue(value, matches: descriptor.outputType) else {
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "插件输出不符合声明的 \(descriptor.outputType.rawValue) 类型。",
+                status: "failed"
+            )
+        }
+        let object: [String: Any] = ["ok": true, "result": value, "logs": logs]
+        guard let payload = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+              let text = String(data: payload, encoding: .utf8),
+              text.count <= descriptor.maxOutputChars else {
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "插件输出超过 \(descriptor.maxOutputChars) 字符上限。",
+                status: "failed"
+            )
+        }
+        return text
+    }
+
+    private func pluginInputObject(
+        _ raw: String,
+        matches descriptor: IOSDynamicRecipeToolDescriptor
+    ) -> [String: Any]? {
+        guard let object = ChatToolCallParsing.jsonObject(raw),
+              Set(object.keys) == Set(descriptorInputTypes(descriptor).keys) else { return nil }
+        for (name, type) in descriptorInputTypes(descriptor) {
+            guard let value = object[name] else { return nil }
+            switch type {
+            case .string where !(value is String): return nil
+            case .number where !(value is NSNumber) || value is Bool: return nil
+            case .boolean where !(value is Bool): return nil
+            default: break
+            }
+        }
+        return object
+    }
+
+    private func descriptorInputTypes(_ descriptor: IOSDynamicRecipeToolDescriptor) -> [String: IOSRecipeInputType] {
+        switch descriptor.implementation {
+        case .recipe(let manifest): manifest.inputs
+        case .javascript, .remote:
+            (try? JSONDecoder().decode(
+                [String: IOSRecipeInputType].self,
+                from: Data(descriptor.inputsJSON.utf8)
+            )) ?? [:]
+        }
+    }
+
+    private func pluginInvocationCapabilities(_ descriptor: IOSDynamicRecipeToolDescriptor) -> [String] {
+        switch descriptor.implementation {
+        case .recipe: []
+        case .javascript(_, let hostTools): hostTools.sorted()
+        case .remote(let remote):
+            switch remote.kind {
+            case .mcp: ["MCP \(remote.server ?? "?")/\(remote.tool ?? "?")"]
+            case .openapi: ["\(remote.method ?? "GET") \(remote.url ?? "?")"]
+            }
+        }
+    }
+
+    private func pluginHandlerTitle(_ implementation: IOSPluginToolImplementation) -> String {
+        switch implementation {
+        case .recipe: "Recipe"
+        case .javascript: "受限 JavaScript"
+        case .remote(let remote): remote.kind == .mcp ? "MCP 适配" : "OpenAPI 适配"
+        }
+    }
+
+    private static func javascriptStringLiteral(_ value: String) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func queryValue(_ value: Any?) throws -> String {
+        guard let value else { return "" }
+        if let string = value as? String { return string }
+        if let number = value as? NSNumber { return number.stringValue }
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed])
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+
+    private static func pluginValue(_ value: Any, matches type: IOSPluginOutputType) -> Bool {
+        switch type {
+        case .json: true
+        case .object: value is [String: Any]
+        case .array: value is [Any]
+        case .string: value is String
+        case .number: value is NSNumber && !(value is Bool)
+        case .boolean: value is Bool
+        }
+    }
+
     /// One `recipe__<name>` call, resolved against the ROUND's pinned catalog
     /// snapshot (never the live store): the manifest for execution is the
     /// snapshot's immutable copy, so a promotion/rollback during the call
@@ -2931,6 +3853,9 @@ final class ChatToolRuntime {
         guard let descriptor = snapshot?.recipeTools.first(where: { $0.toolId == toolName }) else {
             return recipeCallFailure("此 Recipe 不在当前工具目录中（可能已被回退或版本已更新）。请先调用 tool_search 获取最新工具。")
         }
+        guard case .recipe(let recipeManifest) = descriptor.implementation else {
+            return recipeCallFailure("动态工具处理器类型不匹配，请刷新工具目录后重试。")
+        }
         guard preparedRecipeExecutions[pending.toolCall.toolCallId] == nil else {
             // Continuations go through the finisher, never through a second
             // dispatch of the same call; a re-entry is a stale round.
@@ -2948,7 +3873,7 @@ final class ChatToolRuntime {
             return recipeCallFailure("Recipe 调用参数不是合法的 JSON：\(error.localizedDescription)")
         }
 
-        let runner = makeRecipeRunner(manifest: descriptor.manifest, context: pending, bridge: bridge)
+        let runner = makeRecipeRunner(manifest: recipeManifest, context: pending, bridge: bridge)
         let plan: IOSRecipeExecutionPlan
         do {
             plan = try runner.resolvePlan(inputs: inputs)
@@ -2981,8 +3906,11 @@ final class ChatToolRuntime {
             executionId: "recipe-\(UUID().uuidString)",
             recipeName: descriptor.recipeName,
             recipeVersion: descriptor.version,
+            pluginId: descriptor.pluginId,
+            pluginPackageHash: descriptor.pluginId == nil ? nil : descriptor.manifestHash,
+            capabilityBroker: descriptor.capabilityBroker,
             catalogRevision: snapshot?.revision,
-            manifest: descriptor.manifest,
+            manifest: recipeManifest,
             plan: plan,
             inputs: inputs,
             stepOutputs: [:],
@@ -3083,6 +4011,45 @@ final class ChatToolRuntime {
                         ?? ChatToolOutputFormatter.toolFailureJSON(
                             toolName: context.toolCall.toolName,
                             reason: "Recipe 步骤参数解析失败。",
+                            status: "failed"
+                        )
+                ))
+            }
+
+            if let broker = state.capabilityBroker,
+               let reason = broker.authorize(tool: step.tool, argumentsJSON: argsJSON) {
+                let error = IOSRecipeRunError.stepFailed(
+                    stepId: step.id,
+                    tool: step.tool,
+                    message: reason
+                )
+                await recordRecipeStepFinishedOnly(
+                    state: state,
+                    step: step,
+                    errorCode: "capability_denied",
+                    runId: context.runId
+                )
+                await recordRecipeLevelFinished(
+                    recipeName: state.recipeName,
+                    recipeVersion: state.recipeVersion,
+                    executionId: state.executionId,
+                    outcome: "failed",
+                    outcomeKind: "denied",
+                    errorCode: "capability_denied",
+                    runId: context.runId
+                )
+                let outcome = IOSRecipeRunOutcome.failed(
+                    failedStep: step.id,
+                    error: error,
+                    completedSteps: state.completedSteps
+                )
+                return .completed(finishRecipeCall(
+                    state: state,
+                    context: context,
+                    outputText: runner.structuredErrorJSON(for: outcome)
+                        ?? ChatToolOutputFormatter.toolFailureJSON(
+                            toolName: context.toolCall.toolName,
+                            reason: reason,
                             status: "failed"
                         )
                 ))
@@ -3466,6 +4433,46 @@ final class ChatToolRuntime {
         )
     }
 
+    func finishPluginImportApproval(
+        pending: ChatPendingToolApproval,
+        allow: Bool,
+        prepared: IOSPreparedPluginImport?
+    ) async -> [UIMessage] {
+        recordToolApproval(
+            capabilityId: "ios.agent.plugin_import",
+            toolCall: pending.toolCall,
+            action: allow ? .allowed : .denied,
+            reason: allow ? "User approved plugin import." : "User denied plugin import.",
+            runId: pending.runId,
+            executionPolicy: pending.executionPolicy
+        )
+        let resultText: String
+        if allow, let prepared {
+            do {
+                resultText = try await pluginToolService.applyPreparedPluginImport(prepared)
+            } catch {
+                resultText = ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: pending.toolCall.toolName,
+                    reason: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription,
+                    status: "failed"
+                )
+            }
+        } else if allow {
+            resultText = ChatToolOutputFormatter.toolFailureJSON(
+                toolName: pending.toolCall.toolName,
+                reason: "插件导入预览已失效，请重新预览。",
+                status: "failed"
+            )
+        } else {
+            resultText = "用户拒绝导入插件。"
+        }
+        return messagesByFinishingToolCall(
+            pending.toolCall,
+            outputText: resultText,
+            in: pending.baseMessages
+        )
+    }
+
     /// Builds the production primitive executor: every step routes back to
     /// this runtime's EXISTING per-tool execution paths (workspace/search/
     /// iSH/webMount/memory/advanced/skill/discovery), never a duplicated
@@ -3478,6 +4485,7 @@ final class ChatToolRuntime {
     ) -> IOSRecipeRunner {
         IOSRecipeRunner(
             manifest: manifest,
+            artifactId: context.toolCall.toolName,
             catalog: IOSDynamicToolRegistry.primitiveCatalogEntry,
             executePrimitive: { [weak self] tool, argsJSON in
                 guard let self else {
@@ -3545,13 +4553,13 @@ final class ChatToolRuntime {
             }
             return .output(text)
         case .search:
-            return .output(await dispatchSearchToolCall(toolCall))
+            return recipePrimitiveResult(await dispatchSearchToolCall(toolCall))
         case .memory:
             let policy = memoryToolWritePolicy(input: argsJSON, isUserInitiated: isUserInitiated)
             if case .needsUserAction(let reason) = policy {
                 return .needsApproval(reason: reason)
             }
-            return .output(dispatchMemoryToolCall(toolCall, writePolicy: policy))
+            return recipePrimitiveResult(dispatchMemoryToolCall(toolCall, writePolicy: policy))
         case .ish:
             let output = await ishToolExecutionOutput(toolCall, isUserInitiated: isUserInitiated)
             switch output {
@@ -3560,7 +4568,9 @@ final class ChatToolRuntime {
             case .denied(let reason), .failed(let reason):
                 return .failure(reason)
             default:
-                return .output(ChatToolOutputFormatter.ishHandoffResultText(for: toolCall, output: output))
+                return recipePrimitiveResult(
+                    ChatToolOutputFormatter.ishHandoffResultText(for: toolCall, output: output)
+                )
             }
         case .webMount:
             let output = await webMountToolExecutionOutput(
@@ -3575,9 +4585,11 @@ final class ChatToolRuntime {
             if output.isWebMountOutcomeUnknown {
                 return .outcomeUnknown(ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output))
             }
-            return .output(ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output))
+            return recipePrimitiveResult(
+                ChatToolOutputFormatter.webMountResultText(for: toolCall, output: output)
+            )
         case .sessionRead:
-            return .output(await dispatchSessionReadToolCall(toolCall))
+            return recipePrimitiveResult(await dispatchSessionReadToolCall(toolCall))
         case .discovery:
             guard let bridge else {
                 return .failure("\(tool) 当前不可用（缺少工具目录）。")
@@ -3585,16 +4597,16 @@ final class ChatToolRuntime {
             let result = tool == "tools_list"
                 ? bridge.executeToolsList()
                 : bridge.executeToolSearch(argumentsJson: argsJSON)
-            return .output(result)
+            return recipePrimitiveResult(result)
         case .skill:
             let result = await skillMcpToolService.execute(
                 toolName: tool,
                 arguments: argsJSON,
                 mcpEnabledOverride: isMcpNetworkAllowed()
             )
-            return .output(result)
+            return recipePrimitiveResult(result)
         case .advanced:
-            return .output(await dispatchAdvancedToolCall(
+            return recipePrimitiveResult(await dispatchAdvancedToolCall(
                 toolCall,
                 providerSetting: context.providerSetting,
                 params: context.params,
@@ -3606,6 +4618,14 @@ final class ChatToolRuntime {
         case .recipeImport, .unsupported:
             return .failure("工具「\(tool)」不支持作为 Recipe step。")
         }
+    }
+
+    private func recipePrimitiveResult(_ output: String) -> RecipePrimitiveStepResult {
+        let part = UIMessagePart.Text(text: output, metadata: nil)
+        if let reason = ChatToolOutputFormatter.failureReason(from: [part]) {
+            return .failure(reason)
+        }
+        return .output(output)
     }
 
     /// Step-level approval gate, mirroring the TOP-LEVEL approval decisions
@@ -3655,6 +4675,9 @@ final class ChatToolRuntime {
                 context: context
             )
         case .advanced:
+            if IOSAppleAgentToolCatalog.approvalRequiredToolNames.contains(tool) {
+                return .approvalRequired(reason: appleCapabilityApprovalReason(toolName: tool))
+            }
             switch tool {
             case "mcp_call":
                 guard effectiveHighRiskAutoApproveEnabled else {
@@ -3703,6 +4726,17 @@ final class ChatToolRuntime {
         case .unsupported:
             return .unsupported(reason: "工具「\(tool)」不支持作为 Recipe step。")
         }
+    }
+
+    private func appleCapabilityApprovalReason(toolName: String) -> String {
+        if IOSAppleAgentToolCatalog.alarmToolNames.contains(toolName) {
+            return IOSAppleAgentToolCatalog.mutatingToolNames.contains(toolName)
+                ? IOSAlarmCopy.mutatingReason
+                : IOSAlarmCopy.listReason
+        }
+        return IOSAppleAgentToolCatalog.mutatingToolNames.contains(toolName)
+            ? "该操作会读取或修改你在 iPhone 上的私密 Apple 数据，需要你确认。"
+            : "该操作会读取你在 iPhone 上的私密 Apple 数据，并交给当前 Agent 处理，需要你确认。"
     }
 
     /// Mirror of `IOSLocalToolExecutor.resolveWorkspace`'s gate: the policy
@@ -3832,7 +4866,7 @@ final class ChatToolRuntime {
             runId: runId,
             toolCallId: "recipe-level-\(executionId)",
             outcome: outcome,
-            artifactId: "recipe__\(recipeName)",
+            artifactId: Self.dynamicArtifactId(recipeName),
             artifactVersion: recipeVersion,
             outcomeKind: outcomeKind,
             errorCode: errorCode,
@@ -3854,7 +4888,7 @@ final class ChatToolRuntime {
             runId: runId,
             toolCallId: "recipe-\(state.executionId)-\(step.id)",
             outcome: "failed",
-            artifactId: "recipe__\(state.recipeName)",
+            artifactId: Self.dynamicArtifactId(state.recipeName),
             artifactVersion: state.recipeVersion,
             outcomeKind: "error",
             errorCode: errorCode,
@@ -3871,11 +4905,51 @@ final class ChatToolRuntime {
     ) -> [UIMessage] {
         preparedRecipeExecutions.removeValue(forKey: state.toolCallId)
         recipeExecutionCheckpointStore.remove(toolCallId: state.toolCallId)
+        recordRecipePluginHealth(output: outputText, state: state)
         return messagesByFinishingToolCall(
             context.toolCall,
             outputText: outputText,
             in: context.baseMessages
         )
+    }
+
+    private func recordRecipePluginHealth(
+        output: String,
+        state: IOSRecipeExecutionState
+    ) {
+        guard let pluginId = state.pluginId,
+              let packageHash = state.pluginPackageHash,
+              let object = ChatToolCallParsing.jsonObject(output) else { return }
+        if object["ok"] as? Bool == true {
+            _ = pluginHealthStore.recordSuccess(pluginId: pluginId, packageHash: packageHash)
+            return
+        }
+        let status = object["status"] as? String ?? ""
+        let errorCode = object["error_code"] as? String ?? ""
+        let reason = (object["reason"] as? String) ?? (object["error"] as? String) ?? "插件运行失败。"
+        let kind: IOSPluginDiagnosticKind?
+        if status == "timeout" || errorCode == "step_timeout" || reason.localizedCaseInsensitiveContains("超时") {
+            kind = .timeout
+        } else if errorCode == "output_resolution" || reason.contains("输出解析") {
+            kind = .schema
+        } else {
+            kind = nil
+        }
+        guard let kind else { return }
+        let transition = pluginHealthStore.recordFailure(
+            pluginId: pluginId,
+            packageHash: packageHash,
+            toolId: state.recipeName,
+            kind: kind,
+            detail: reason
+        )
+        if transition.didQuarantine {
+            Task { [recipeRegistry] in _ = await recipeRegistry.refresh() }
+        }
+    }
+
+    private static func dynamicArtifactId(_ recipeName: String) -> String {
+        recipeName.hasPrefix("plugin__") ? recipeName : "recipe__\(recipeName)"
     }
 
     private func recipeResultJSON(
@@ -4127,13 +5201,7 @@ final class ChatToolRuntime {
             for case let tool as UIMessagePart.Tool in message.parts
             where tool.toolCallId == toolCallId {
                 for case let text as UIMessagePart.Text in tool.output {
-                    guard let data = text.text.data(using: .utf8),
-                          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                        continue
-                    }
-                    if object["may_have_applied"] as? Bool == true,
-                       ["unknown_after_action", "ambiguous", "dispatched_unverified"]
-                        .contains(object["status"] as? String ?? "") {
+                    if isWebMountInterruptedOutcome(text.text) {
                         return true
                     }
                 }
@@ -4422,12 +5490,22 @@ final class ChatToolRuntime {
                 arguments: toolCall.input,
                 mcpEnabledOverride: isMcpNetworkAllowed()
             )
+        case let name where IOSRecipeToolCatalog.toolNames.contains(name) && name != "recipe_import":
+            return await recipeToolService.execute(toolName: name, arguments: toolCall.input)
+        case let name where IOSPluginToolCatalog.toolNames.contains(name) && name != "plugin_import":
+            return await pluginToolService.execute(toolName: name, arguments: toolCall.input)
         case "recipe_import":
             // Host-publish apply lives in executeAdvancedToolCall / background
             // host-publish; this dispatch table must not silently import.
             return ChatToolOutputFormatter.toolFailureJSON(
                 toolName: toolCall.toolName,
                 reason: "Recipe 导入需要查看候选变更并显式批准。",
+                status: "failed"
+            )
+        case "plugin_import":
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: toolCall.toolName,
+                reason: "插件导入需要查看候选能力并显式批准。",
                 status: "failed"
             )
         case "spawn_agent", "list_agents", "interrupt_agent", "send_message", "followup_task", "wait_agent":
@@ -4971,11 +6049,11 @@ final class ChatToolRuntime {
             true
         case "skills_list", "use_skill", "skill_validate", "skill_import", "skill_enable", "skill_disable":
             true
-        // Wave B2: recipe_import 与 skill_import 同级（恒可用，审批在
-        // executeAdvancedToolCall 内按高风险自动批准决定是否跳卡）；`recipe__*` 声明即执行。
-        case "recipe_import":
+        case let name where IOSRecipeToolCatalog.toolNames.contains(name):
             true
-        case let name where IOSDynamicToolRegistry.isRecipeToolName(name):
+        case let name where IOSPluginToolCatalog.toolNames.contains(name):
+            true
+        case let name where IOSDynamicToolRegistry.isDynamicWorkflowToolName(name):
             true
         case "subagent_dispatch":
             isCapabilityPolicyEnabled("ios.agent.subagent_dispatch")

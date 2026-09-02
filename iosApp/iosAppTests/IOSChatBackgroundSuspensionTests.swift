@@ -109,6 +109,17 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testColdRestoreRejectsUnknownModeInsteadOfWideningToContinueModel() {
+        XCTAssertEqual(
+            IOSChatBackgroundGenerationCoordinator.rehydratedModeForTesting("single_tool_only"),
+            .singleToolOnly
+        )
+        XCTAssertNil(
+            IOSChatBackgroundGenerationCoordinator.rehydratedModeForTesting("corrupt_future_mode")
+        )
+    }
+
     /// 冷启动水合的 `resumeResponse` 没有活跃执行 owner；即使 W3 尚未跑到
     /// （或被 detached-resume 竞态绕过），也必须先把 dangling Started 收口为
     /// outcome-unknown，不能先向服务端重放 response。

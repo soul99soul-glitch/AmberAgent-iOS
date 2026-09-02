@@ -454,6 +454,7 @@ internal fun Tool.category(): String = when {
     name.startsWith("subagent_") ||
         name in setOf("spawn_agent", "list_agents", "interrupt_agent", "wait_agent", "send_message", "followup_task") -> "subagent"
     name.startsWith("model_council_") -> "model_council"
+    name.startsWith("recipe") || name.startsWith("plugin") -> "recipe"
     name.startsWith("skill") || name == "use_skill" -> "skill"
     name.startsWith("mcp_") || name.startsWith("mcp__") -> "mcp"
     else -> "utility"
@@ -483,6 +484,11 @@ private fun Tool.mutatesState(): Boolean {
         name in setOf("wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select") ||
         name.startsWith("skill_enable") ||
         name.startsWith("skill_disable") ||
+        name.startsWith("recipe_enable") ||
+        name.startsWith("recipe_disable") ||
+        name.startsWith("plugin_enable") ||
+        name.startsWith("plugin_disable") ||
+        name.startsWith("plugin_restore") ||
         name == "provider_config_apply" ||
         name == "provider_refresh_models" ||
         name == "settings_set_model_slot" ||

@@ -674,25 +674,43 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertTrue(NearSilentKeepAliveTone.containsAudibleEnergy(data))
     }
 
-    func testAudioKeepAlivePreferenceDefaultsOffAndRequiresBackgroundMode() {
+    func testAudioKeepAlivePreferenceHonorsBuildDefaultOverrideAndRequiresBackgroundMode() {
         let defaults = UserDefaults(suiteName: "amber.audioKeepAlive.\(UUID().uuidString)")!
         XCTAssertFalse(
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
                 defaults: defaults,
-                backgroundModes: ["audio", "processing"]
+                backgroundModes: ["audio", "processing"],
+                defaultEnabled: false
+            )
+        )
+        XCTAssertTrue(
+            BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
+                defaults: defaults,
+                backgroundModes: ["audio", "processing"],
+                defaultEnabled: true
             )
         )
         defaults.set(true, forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
         XCTAssertFalse(
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
                 defaults: defaults,
-                backgroundModes: ["processing"]
+                backgroundModes: ["processing"],
+                defaultEnabled: true
             )
         )
         XCTAssertTrue(
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
                 defaults: defaults,
-                backgroundModes: ["audio", "processing"]
+                backgroundModes: ["audio", "processing"],
+                defaultEnabled: false
+            )
+        )
+        defaults.set(false, forKey: IOSExecutionPreferenceKeys.audioKeepAlive)
+        XCTAssertFalse(
+            BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled(
+                defaults: defaults,
+                backgroundModes: ["audio", "processing"],
+                defaultEnabled: true
             )
         )
     }
