@@ -91759,43 +91759,43 @@
           }
         }
       },
-      "AmberShell 命令始终逐次前台审批。": {
+      "当前策略需要逐次前台审批；开启高风险自动批准后可跳过。": {
         "extractionState": "manual",
         "localizations": {
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell commands always require foreground approval one at a time."
+              "value": "The current policy requires foreground approval for each run; enabling high-risk auto-approval skips it."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell のコマンドは常に1回ずつフォアグラウンドで承認します。"
+              "value": "現在のポリシーでは実行ごとにフォアグラウンド承認が必要です。高リスクの自動承認を有効にすると省略できます。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell 명령은 항상 한 번씩 포그라운드에서 승인해야 합니다."
+              "value": "현재 정책에서는 실행할 때마다 포그라운드 승인이 필요합니다. 고위험 자동 승인을 켜면 건너뜁니다."
             }
           },
           "ru": {
             "stringUnit": {
               "state": "translated",
-              "value": "Для команд AmberShell всегда требуется отдельное подтверждение на переднем плане."
+              "value": "Текущая политика требует подтверждения на переднем плане для каждого запуска; его можно пропустить, включив автоматическое подтверждение высокого риска."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell 命令始终逐次前台审批。"
+              "value": "当前策略需要逐次前台审批；开启高风险自动批准后可跳过。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell 命令一律需要逐次前景核准。"
+              "value": "目前策略需要逐次前景核准；開啟高風險自動核准後可略過。"
             }
           }
         }
@@ -92005,43 +92005,43 @@
           }
         }
       },
-      "默认环境会用于聊天命令和测试。运行 AmberShell 前会向你确认。": {
+      "默认环境会用于聊天命令和测试。AmberShell 是否询问取决于执行策略。": {
         "extractionState": "manual",
         "localizations": {
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "The default environment is used for chat commands and tests. AmberShell asks for confirmation before running."
+              "value": "The default environment is used for chat commands and tests. Whether AmberShell asks first depends on the execution policy."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "デフォルトの環境はチャットのコマンドとテストに使用されます。AmberShell は実行前に確認を求めます。"
+              "value": "デフォルト環境はチャットコマンドとテストに使用されます。AmberShell が確認を求めるかどうかは実行ポリシーによります。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "기본 환경은 채팅 명령과 테스트에 사용됩니다. AmberShell은 실행 전에 확인을 요청합니다."
+              "value": "기본 환경은 채팅 명령과 테스트에 사용됩니다. AmberShell의 확인 여부는 실행 정책에 따라 달라집니다."
             }
           },
           "ru": {
             "stringUnit": {
               "state": "translated",
-              "value": "Среда по умолчанию используется для команд в чате и тестов. Перед запуском AmberShell запросит подтверждение."
+              "value": "Среда по умолчанию используется для команд в чате и тестов. Запрос подтверждения AmberShell зависит от политики выполнения."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "默认环境会用于聊天命令和测试。运行 AmberShell 前会向你确认。"
+              "value": "默认环境会用于聊天命令和测试。AmberShell 是否询问取决于执行策略。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "預設環境會用於聊天命令和測試。執行 AmberShell 前會先向你確認。"
+              "value": "預設環境會用於聊天命令和測試。AmberShell 是否詢問取決於執行策略。"
             }
           }
         }
@@ -92210,84 +92210,84 @@
           }
         }
       },
-      "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 始终逐次前台审批。": {
+      "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 遵循高风险自动批准设置。": {
         "extractionState": "manual",
         "localizations": {
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell, Remote SSH, and iSH use separate capability gates; AmberShell always requires foreground approval for each run."
+              "value": "AmberShell, Remote SSH, and iSH use separate capability gates; AmberShell follows the high-risk auto-approval setting."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell、Remote SSH、iSH はそれぞれ別の機能ゲートを使用し、AmberShell は常に実行ごとにフォアグラウンドでの承認が必要です。"
+              "value": "AmberShell、Remote SSH、iSH はそれぞれ別の機能ゲートを使用し、AmberShell は高リスクの自動承認設定に従います。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell, Remote SSH 및 iSH는 각각 별도의 기능 게이트를 사용하며 AmberShell은 항상 실행할 때마다 포그라운드 승인이 필요합니다."
+              "value": "AmberShell, Remote SSH 및 iSH는 각각 별도의 기능 게이트를 사용하며 AmberShell은 고위험 자동 승인 설정을 따릅니다."
             }
           },
           "ru": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell, Remote SSH и iSH используют отдельные шлюзы возможностей; для AmberShell всегда требуется подтверждение на переднем плане каждого запуска."
+              "value": "AmberShell, Remote SSH и iSH используют отдельные шлюзы возможностей; AmberShell следует настройке автоматического подтверждения высокого риска."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 始终逐次前台审批。"
+              "value": "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 遵循高风险自动批准设置。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell、Remote SSH 與 iSH 使用各自能力閘門；AmberShell 一律需要逐次前景核准。"
+              "value": "AmberShell、Remote SSH 與 iSH 使用各自能力閘門；AmberShell 遵循高風險自動核准設定。"
             }
           }
         }
       },
-      "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 始终逐次前台审批，iSH 交接能力在下方单独说明。": {
+      "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 遵循高风险自动批准设置，iSH 交接能力在下方单独说明。": {
         "extractionState": "manual",
         "localizations": {
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "The stable target provides Remote SSH and AmberShell; AmberShell always requires foreground approval for each run, and iSH handoff is described separately below."
+              "value": "The stable target provides Remote SSH and AmberShell; AmberShell follows the high-risk auto-approval setting, and iSH handoff is described separately below."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "安定版 target では Remote SSH と AmberShell を提供します。AmberShell は常に実行ごとにフォアグラウンドでの承認が必要で、iSH の引き継ぎ機能については下で個別に説明します。"
+              "value": "安定版 target では Remote SSH と AmberShell を提供します。AmberShell は高リスクの自動承認設定に従い、iSH の引き継ぎ機能については下で個別に説明します。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "안정 target은 Remote SSH와 AmberShell을 제공합니다. AmberShell은 항상 실행할 때마다 포그라운드 승인이 필요하며 iSH 인계 기능은 아래에서 별도로 설명합니다."
+              "value": "안정 target은 Remote SSH와 AmberShell을 제공합니다. AmberShell은 고위험 자동 승인 설정을 따르며 iSH 인계 기능은 아래에서 별도로 설명합니다."
             }
           },
           "ru": {
             "stringUnit": {
               "state": "translated",
-              "value": "Стабильный target предоставляет Remote SSH и AmberShell; для AmberShell всегда требуется подтверждение на переднем плане каждого запуска, а передача iSH описана отдельно ниже."
+              "value": "Стабильный target предоставляет Remote SSH и AmberShell; AmberShell следует настройке автоматического подтверждения высокого риска, а передача iSH описана отдельно ниже."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 始终逐次前台审批，iSH 交接能力在下方单独说明。"
+              "value": "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 遵循高风险自动批准设置，iSH 交接能力在下方单独说明。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "穩定 target 提供 Remote SSH 與 AmberShell；AmberShell 一律需要逐次前景核准，iSH 交接能力會在下方個別說明。"
+              "value": "穩定 target 提供 Remote SSH 與 AmberShell；AmberShell 遵循高風險自動核准設定，iSH 交接能力會在下方個別說明。"
             }
           }
         }
@@ -92374,43 +92374,43 @@
           }
         }
       },
-      "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY": {
+      "AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY": {
         "extractionState": "manual",
         "localizations": {
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "Stable AmberShell; bounded file/text commands, pipelines, redirection, and CPython 3.14 python -c, without PTY"
+              "value": "AmberShell; bounded file/text commands, pipelines, redirection, and CPython 3.14 python -c, without PTY"
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "安定版 AmberShell：制限付きのファイル／テキストコマンド、パイプライン、リダイレクト、CPython 3.14 の python -c（PTY なし）"
+              "value": "AmberShell：制限付きのファイル／テキストコマンド、パイプライン、リダイレクト、CPython 3.14 の python -c（PTY なし）"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "안정 버전 AmberShell: 제한된 파일/텍스트 명령, 파이프라인, 리디렉션 및 CPython 3.14 python -c, PTY 없음"
+              "value": "AmberShell: 제한된 파일/텍스트 명령, 파이프라인, 리디렉션 및 CPython 3.14 python -c, PTY 없음"
             }
           },
           "ru": {
             "stringUnit": {
               "state": "translated",
-              "value": "Стабильный AmberShell: ограниченные файловые и текстовые команды, конвейеры, перенаправление и CPython 3.14 python -c, без PTY"
+              "value": "AmberShell: ограниченные файловые и текстовые команды, конвейеры, перенаправление и CPython 3.14 python -c, без PTY"
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY"
+              "value": "AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "穩定版 AmberShell；受限檔案／文字命令、管線、重新導向與 CPython 3.14 python -c，無 PTY"
+              "value": "AmberShell；受限檔案／文字命令、管線、重新導向與 CPython 3.14 python -c，無 PTY"
             }
           }
         }
@@ -92538,43 +92538,43 @@
           }
         }
       },
-      "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；每次执行都需要前台批准。": {
+      "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；当前策略需要前台批准。": {
         "extractionState": "manual",
         "localizations": {
           "en": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell runs local commands in the app-owned /workspace and returns stdout, stderr, and the exit code. Every run requires foreground approval."
+              "value": "AmberShell runs local commands in the app-owned /workspace and returns stdout, stderr, and the exit code. The current policy requires foreground approval."
             }
           },
           "ja": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell はアプリ所有の /workspace でローカルコマンドを実行し、stdout、stderr、終了コードを返します。実行ごとにフォアグラウンドでの承認が必要です。"
+              "value": "AmberShell はアプリ所有の /workspace でローカルコマンドを実行し、stdout、stderr、終了コードを返します。現在のポリシーではフォアグラウンド承認が必要です。"
             }
           },
           "ko": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell은 앱 소유 /workspace에서 로컬 명령을 실행하고 stdout, stderr 및 종료 코드를 반환합니다. 실행할 때마다 포그라운드 승인이 필요합니다."
+              "value": "AmberShell은 앱 소유 /workspace에서 로컬 명령을 실행하고 stdout, stderr 및 종료 코드를 반환합니다. 현재 정책에서는 포그라운드 승인이 필요합니다."
             }
           },
           "ru": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell выполняет локальные команды в принадлежащем приложению /workspace и возвращает stdout, stderr и код завершения. Каждый запуск требует подтверждения на переднем плане."
+              "value": "AmberShell выполняет локальные команды в принадлежащем приложению /workspace и возвращает stdout, stderr и код завершения. Текущая политика требует подтверждения на переднем плане."
             }
           },
           "zh-Hans": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；每次执行都需要前台批准。"
+              "value": "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；当前策略需要前台批准。"
             }
           },
           "zh-Hant": {
             "stringUnit": {
               "state": "translated",
-              "value": "AmberShell 會在 App 自有的 /workspace 中執行本機命令並回傳 stdout、stderr 與結束碼；每次執行都需要前景核准。"
+              "value": "AmberShell 會在 App 自有的 /workspace 中執行本機命令並回傳 stdout、stderr 與結束碼；目前策略需要前景核准。"
             }
           }
         }

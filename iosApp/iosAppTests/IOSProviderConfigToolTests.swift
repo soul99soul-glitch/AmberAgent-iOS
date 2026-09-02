@@ -3,7 +3,8 @@ import XCTest
 @testable import iosApp
 
 /// Provider/model self-configuration tools — status (pure redacted read),
-/// apply (foreground approval + Keychain write), refresh_models, set_model_slot.
+/// apply (foreground approval or explicit high-risk auto-approval + Keychain write),
+/// refresh_models, set_model_slot.
 @MainActor
 final class IOSProviderConfigToolTests: XCTestCase {
 
@@ -340,6 +341,51 @@ final class IOSProviderConfigToolTests: XCTestCase {
         XCTAssertFalse(text.contains(secret))
         // C1: persisted tool.input must be redacted so later turns do not re-upload the key.
         XCTAssertFalse((finishedTool?.input ?? "").contains(secret), "finished input must redact api_key")
+        assertNoSecretLeak(finishedTool?.input ?? "")
+        let openAI = store.snapshot.providers.first { ($0.id.description() as String) == providerId }
+            as? ProviderSetting.OpenAI
+        XCTAssertEqual(openAI?.apiKey, secret)
+    }
+
+    func testApplyHighRiskAutoApproveWritesWithoutPrompt() async {
+        let store = makeStore()
+        let providerId = seedProvider(store: store, apiKey: "")
+        let runtime = makeRuntime(store: store)
+        let secret = "sk-live-auto-approved-write-key"
+        let toolCall = makeToolCall(
+            name: "provider_config_apply",
+            input: #"{"provider_id":"\#(providerId)","api_key":"\#(secret)"}"#
+        )
+        let pending = ChatPendingToolApproval(
+            toolCall: toolCall,
+            providerSetting: makeProviderSetting(),
+            params: makeParams(toolNames: ["provider_config_apply"]),
+            runId: "provider-apply-auto-approved",
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: nil,
+            baseMessages: [makeAssistantMessage(parts: [toolCall])],
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:],
+                globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: true,
+                execJavaScriptEnabled: false,
+                webSearchEnabled: false
+            )
+        )
+
+        let result = await runtime.execute(
+            ChatPendingToolCall(kind: .advanced, toolCall: toolCall),
+            context: pending
+        )
+        guard case .completed(let messages) = result else {
+            return XCTFail("高风险自动批准应直接完成，实际: \(result)")
+        }
+        let finishedTool = messages
+            .flatMap(\.parts)
+            .compactMap { $0 as? UIMessagePart.Tool }
+            .first
+        XCTAssertFalse((finishedTool?.input ?? "").contains(secret))
         assertNoSecretLeak(finishedTool?.input ?? "")
         let openAI = store.snapshot.providers.first { ($0.id.description() as String) == providerId }
             as? ProviderSetting.OpenAI

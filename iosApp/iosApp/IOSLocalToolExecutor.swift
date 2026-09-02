@@ -574,8 +574,8 @@ final class IOSLocalToolExecutor {
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent AmberShell policy")
         }
-        guard request.isUserInitiated else {
-            let reason = "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；每次执行都需要前台批准。"
+        guard terminalAutoApprovalEnabled(for: request, policy: policy) else {
+            let reason = "AmberShell 会在 App 自有 /workspace 中执行本地命令并回传 stdout、stderr 与退出码；当前策略需要前台批准。"
             return .needsUserAction(reason: IOSAppLocalization.string(reason, defaultValue: reason))
         }
         return .allow(capabilityId: capability.id)

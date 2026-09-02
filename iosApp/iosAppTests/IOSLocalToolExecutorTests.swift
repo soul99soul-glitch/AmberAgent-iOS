@@ -75,7 +75,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertTrue(remote.modelToolNames.contains("terminal_execute"))
     }
 
-    func testAmberShellRequiresApprovalAndRunsPwdWhenUserInitiated() async throws {
+    func testAmberShellRequiresApprovalAndHighRiskAutoApproveRunsPwd() async throws {
         let executor = makeExecutor()
         let input = #"{"command":"pwd","purpose":"inspect workspace"}"#
 
@@ -93,7 +93,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         }
         XCTAssertTrue(reason.contains("AmberShell"))
 
-        let globallyAutoApproved = await executor.execute(
+        let highRiskAutoApproved = await executor.execute(
             IOSLocalToolExecutionRequest(
                 toolName: IOSAmberShellToolCatalog.executeToolName,
                 operation: input,
@@ -101,19 +101,18 @@ final class IOSLocalToolExecutorTests: XCTestCase {
                 payloadDigest: "payload",
                 isUserInitiated: false,
                 executionPolicy: IOSExecutionPolicySnapshot(
-                    capabilityPolicies: [
-                        "ios.local.ambershell": IOSAgentPermissionPolicy.autoApproveHighRisk.rawValue,
-                    ],
-                    globalAutoApproveEnabled: true,
+                    capabilityPolicies: [:],
+                    globalAutoApproveEnabled: false,
                     highRiskAutoApproveEnabled: true,
                     execJavaScriptEnabled: false,
                     webSearchEnabled: false
                 )
             )
         )
-        guard case .needsUserAction = globallyAutoApproved else {
-            return XCTFail("AmberShell must ignore reusable auto-approval, got \(globallyAutoApproved)")
+        guard case .terminalResult(let autoApprovedResult) = highRiskAutoApproved else {
+            return XCTFail("High-risk auto-approval must run AmberShell, got \(highRiskAutoApproved)")
         }
+        XCTAssertEqual(try jsonObject(autoApprovedResult)["stdout"] as? String, "/workspace\n")
 
         let preview = try XCTUnwrap(
             executor.terminalApprovalPreview(

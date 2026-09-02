@@ -2675,8 +2675,20 @@ final class ChatToolRuntime {
             }
         }
 
-        // Provider 配置写入：始终弹审批卡（即使 high-risk auto-approve 开着也不静默写密钥）。
+        // Provider 配置写入：高风险自动批准开启时沿用同一安全写入服务并跳过逐次审批。
         if toolName == "provider_config_apply" {
+            if effectiveHighRiskAutoApproveEnabled {
+                let resultText = await providerConfigToolService.execute(
+                    toolName: toolName,
+                    argumentsJSON: pending.toolCall.input
+                )
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: resultText,
+                    in: pending.baseMessages,
+                    conversationId: pending.conversationId
+                ))
+            }
             let request = McpToolApprovalRequest(
                 id: ChatToolCallParsing.requestId(for: pending.toolCall),
                 serverName: "local",
@@ -3655,10 +3667,12 @@ final class ChatToolRuntime {
                 }
                 return .proceed
             case let name where IOSProviderConfigToolCatalog.highRiskToolNames.contains(name):
-                // Apply always needs a human card — even inside recipe steps.
-                return .approvalRequired(
-                    reason: IOSProviderConfigToolCatalog.approvalReason(argumentsJSON: argsJSON)
-                )
+                guard effectiveHighRiskAutoApproveEnabled else {
+                    return .approvalRequired(
+                        reason: IOSProviderConfigToolCatalog.approvalReason(argumentsJSON: argsJSON)
+                    )
+                }
+                return .proceed
             case let name where IOSThemePackToolCatalog.highRiskToolNames.contains(name):
                 return .approvalRequired(
                     reason: "主题试穿会立刻换皮，需要你确认套用或还原。"

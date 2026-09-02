@@ -1340,7 +1340,7 @@ struct IshHandoffToolApprovalCard: View {
                 )
                 .accessibilityLabel("批准范围，仅这一次")
 
-                Text("AmberShell 命令始终逐次前台审批。")
+                Text("当前策略需要逐次前台审批；开启高风险自动批准后可跳过。")
                     .font(.caption2)
                     .foregroundStyle(AmberTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)

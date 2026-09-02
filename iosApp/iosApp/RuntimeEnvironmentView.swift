@@ -210,8 +210,8 @@ struct RuntimeEnvironmentView: View {
 
             Text(
                 IOSAppLocalization.string(
-                    "默认环境会用于聊天命令和测试。运行 AmberShell 前会向你确认。",
-                    defaultValue: "默认环境会用于聊天命令和测试。运行 AmberShell 前会向你确认。"
+                    "默认环境会用于聊天命令和测试。AmberShell 是否询问取决于执行策略。",
+                    defaultValue: "默认环境会用于聊天命令和测试。AmberShell 是否询问取决于执行策略。"
                 )
             )
                 .runtimeFootnote()
@@ -361,8 +361,8 @@ struct RuntimeEnvironmentView: View {
             }
 
             let runtimeGateText = IOSTerminalBuildPolicy.experimentalRuntimesLinked
-                ? "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 始终逐次前台审批。"
-                : "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 始终逐次前台审批，iSH 交接能力在下方单独说明。"
+                ? "AmberShell、Remote SSH 与 iSH 使用各自能力闸门；AmberShell 遵循高风险自动批准设置。"
+                : "稳定 target 提供 Remote SSH 与 AmberShell；AmberShell 遵循高风险自动批准设置，iSH 交接能力在下方单独说明。"
             Text(IOSAppLocalization.string(runtimeGateText, defaultValue: runtimeGateText))
                 .runtimeFootnote()
         }
@@ -1423,17 +1423,10 @@ private struct RuntimeChoiceRow: View {
         case .remoteSSH:
             return "稳定远程命令主线；需要 SSH Profile、密码和 Host 信任"
         case .localIOSTools:
-            #if ENABLE_AMBERSHELL_PYTHON
             return IOSAppLocalization.string(
-                "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY",
-                defaultValue: "稳定版 AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY"
+                "AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY",
+                defaultValue: "AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY"
             )
-            #else
-            return IOSAppLocalization.string(
-                "AmberShell 文件/文本命令、管道与重定向；ExperimentalGPL 不链接 CPython，无 PTY",
-                defaultValue: "AmberShell 文件/文本命令、管道与重定向；ExperimentalGPL 不链接 CPython，无 PTY"
-            )
-            #endif
         case .remoteMosh:
             return "预留的移动会话方向；当前不建议作为默认环境"
         case .ishExperimental:
