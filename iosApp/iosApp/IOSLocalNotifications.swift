@@ -99,6 +99,7 @@ final class IOSLocalNotificationService {
     private let completionNotificationsEnabled: () -> Bool
     private var completionCancellationRevision = 0
     private var manualReminderCancellationRevision = 0
+    private var agentReminderCancellationRevision = 0
 
     init(
         center: any IOSLocalNotificationCenter = IOSUserNotificationCenterAdapter(),
@@ -190,26 +191,41 @@ final class IOSLocalNotificationService {
         body: String,
         fireDate: Date
     ) async throws -> IOSLocalNotificationScheduleResult {
+        let cancellationRevision = agentReminderCancellationRevision
         guard fireDate.timeIntervalSince(now()) >= 5 else { return .invalidDate }
-        if await center.authorization() != .allowed,
-           await requestAuthorization() == false {
-            return .notAuthorized
+        let authorization = await center.authorization()
+        try Task.checkCancellation()
+        if authorization != .allowed {
+            guard await requestAuthorization() else { return .notAuthorized }
+            try Task.checkCancellation()
         }
         guard let deepLink = IOSAppDeepLink.url(for: .latestConversation) else { return .notAuthorized }
         let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let cleanBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cancellationRevision == agentReminderCancellationRevision else { return .notAuthorized }
         center.removePendingRequests(identifiers: [Self.agentReminderIdentifier])
-        try await center.add(IOSLocalNotificationRequest(
-            identifier: Self.agentReminderIdentifier,
-            title: cleanTitle.isEmpty ? "Amber 提醒" : String(cleanTitle.prefix(80)),
-            body: cleanBody.isEmpty ? "点按返回最近对话。" : String(cleanBody.prefix(240)),
-            fireDate: fireDate,
-            deepLink: deepLink
-        ))
+        do {
+            try await center.add(IOSLocalNotificationRequest(
+                identifier: Self.agentReminderIdentifier,
+                title: cleanTitle.isEmpty ? "Amber 提醒" : String(cleanTitle.prefix(80)),
+                body: cleanBody.isEmpty ? "点按返回最近对话。" : String(cleanBody.prefix(240)),
+                fireDate: fireDate,
+                deepLink: deepLink
+            ))
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            center.removePendingRequests(identifiers: [Self.agentReminderIdentifier])
+            throw CancellationError()
+        }
+        guard cancellationRevision == agentReminderCancellationRevision else {
+            center.removePendingRequests(identifiers: [Self.agentReminderIdentifier])
+            return .notAuthorized
+        }
         return .scheduled(identifier: Self.agentReminderIdentifier)
     }
 
     func cancelAgentNotification() {
+        agentReminderCancellationRevision &+= 1
         center.removePendingRequests(identifiers: [Self.agentReminderIdentifier])
     }
 

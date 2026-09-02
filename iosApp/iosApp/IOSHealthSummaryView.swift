@@ -412,6 +412,16 @@ enum IOSHealthAgentToolCatalog {
 
 @MainActor
 enum IOSHealthAgentToolExecutor {
+    private struct Arguments: Decodable {
+        let days: Int?
+        let includeWorkouts: Bool?
+
+        enum CodingKeys: String, CodingKey {
+            case days
+            case includeWorkouts = "include_workouts"
+        }
+    }
+
     static func execute(
         input: String,
         service: any IOSHealthAgentSummaryProviding = IOSHealthAgentSummaryService()
@@ -425,10 +435,14 @@ enum IOSHealthAgentToolExecutor {
               Set(object.keys).isSubset(of: ["days", "include_workouts"]) else {
             return failure("参数无效；只支持 days 与 include_workouts。")
         }
-        let days = min(max(object["days"] as? Int ?? 7, 1), 30)
-        let includeWorkouts = object["include_workouts"] as? Bool ?? true
+        guard let arguments = try? JSONDecoder().decode(Arguments.self, from: data) else {
+            return failure("参数类型无效；days 必须是整数，include_workouts 必须是布尔值。")
+        }
+        let days = min(max(arguments.days ?? 7, 1), 30)
+        let includeWorkouts = arguments.includeWorkouts ?? true
         do {
             try await service.requestAuthorization()
+            try Task.checkCancellation()
             let summary = try await service.loadSummary(
                 days: days,
                 includeWorkouts: includeWorkouts,

@@ -371,30 +371,39 @@ enum IOSEventKitAgentToolExecutor {
             switch toolName {
             case IOSAppleAgentToolCatalog.calendarEventsList:
                 try await ensureEventAccess(store)
+                try Task.checkCancellation()
                 return try listEvents(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.calendarEventCreate:
                 try await ensureEventCreateAccess(store)
+                try Task.checkCancellation()
                 return try createEvent(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.calendarEventUpdate:
                 try await ensureEventAccess(store)
+                try Task.checkCancellation()
                 return try updateEvent(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.calendarEventDelete:
                 try await ensureEventAccess(store)
+                try Task.checkCancellation()
                 return try deleteEvent(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.remindersList:
                 try await ensureReminderAccess(store)
+                try Task.checkCancellation()
                 return try await listReminders(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.reminderCreate:
                 try await ensureReminderAccess(store)
+                try Task.checkCancellation()
                 return try createReminder(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.reminderUpdate:
                 try await ensureReminderAccess(store)
+                try Task.checkCancellation()
                 return try updateReminder(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.reminderDelete:
                 try await ensureReminderAccess(store)
+                try Task.checkCancellation()
                 return try deleteReminder(store, arguments: arguments)
             case IOSAppleAgentToolCatalog.reminderComplete:
                 try await ensureReminderAccess(store)
+                try Task.checkCancellation()
                 return try completeReminder(store, arguments: arguments)
             default:
                 return failure(toolName, "未知 Apple 工具。")

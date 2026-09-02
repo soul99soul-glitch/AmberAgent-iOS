@@ -151,18 +151,34 @@ final class IOSWorkoutService {
             authorization = .authorized
         }
         guard authorization == .authorized else { throw IOSWorkoutServiceError.authorizationDenied }
+        try Task.checkCancellation()
 
         let commitNow = dateProvider()
         try Self.validateScheduleDate(requestedDate, now: commitNow)
         let before = await manager.scheduledWorkouts()
+        try Task.checkCancellation()
         guard before.count < manager.maximumScheduledWorkoutCount else {
             throw IOSWorkoutServiceError.capacityReached
         }
 
         let id = UUID()
-        try await manager.schedule(definition, id: id, at: requestedDate)
-        guard let committed = await manager.scheduledWorkouts().first(where: { $0.id == id }) else {
-            throw IOSWorkoutServiceError.commitFailed
+        let committed: IOSWorkoutSystemSnapshot
+        do {
+            try Task.checkCancellation()
+            try await manager.schedule(definition, id: id, at: requestedDate)
+            try Task.checkCancellation()
+            let snapshots = await manager.scheduledWorkouts()
+            try Task.checkCancellation()
+            guard let snapshot = snapshots.first(where: { $0.id == id }) else {
+                throw IOSWorkoutServiceError.commitFailed
+            }
+            committed = snapshot
+        } catch is CancellationError {
+            let rollback = Task { @MainActor in
+                await manager.remove(id: id)
+            }
+            _ = await rollback.value
+            throw CancellationError()
         }
         let record = IOSAmberWorkoutRecord(
             id: id,

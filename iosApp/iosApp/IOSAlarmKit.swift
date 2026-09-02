@@ -110,11 +110,20 @@ final class IOSAlarmService {
             authorization = .authorized
         }
         guard authorization == .authorized else { throw IOSAlarmServiceError.authorizationDenied }
+        try Task.checkCancellation()
 
         let commitNow = now ?? dateProvider()
         validated = try Self.validate(validated, now: commitNow)
         let id = UUID()
-        let system = try await manager.schedule(validated, id: id)
+        let system: IOSAlarmSystemSnapshot
+        do {
+            try Task.checkCancellation()
+            system = try await manager.schedule(validated, id: id)
+            try Task.checkCancellation()
+        } catch is CancellationError {
+            try? manager.cancel(id: id)
+            throw CancellationError()
+        }
         let record = IOSAmberAlarmRecord(
             id: id,
             title: validated.title,

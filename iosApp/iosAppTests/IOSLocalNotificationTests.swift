@@ -9,6 +9,8 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
     var requests: [IOSLocalNotificationRequest] = []
     var removed: [[String]] = []
     var pendingIdentifiers: [String] = []
+    var blocksAdd = false
+    private(set) var addContinuation: CheckedContinuation<Void, Never>?
 
     init(status: IOSLocalNotificationAuthorization) { self.status = status }
 
@@ -17,9 +19,21 @@ private final class FakeLocalNotificationCenter: IOSLocalNotificationCenter {
         if requestResult { status = .allowed }
         return requestResult
     }
-    func add(_ request: IOSLocalNotificationRequest) async throws { requests.append(request) }
+    func add(_ request: IOSLocalNotificationRequest) async throws {
+        requests.append(request)
+        if blocksAdd {
+            await withCheckedContinuation { continuation in
+                addContinuation = continuation
+            }
+        }
+    }
     func pendingRequestIdentifiers() async -> [String] { pendingIdentifiers }
     func removePendingRequests(identifiers: [String]) { removed.append(identifiers) }
+
+    func resumeAdd() {
+        addContinuation?.resume()
+        addContinuation = nil
+    }
 }
 
 @Suite("Local notifications")
@@ -94,6 +108,28 @@ struct IOSLocalNotificationTests {
             service: service
         )
         #expect(cancelled.contains(#""cancelled":true"#))
+        #expect(center.removed.last == [IOSLocalNotificationService.agentReminderIdentifier])
+    }
+
+    @Test func cancellingInFlightAgentNotificationRemovesCommittedRequest() async {
+        let center = FakeLocalNotificationCenter(status: .allowed)
+        center.blocksAdd = true
+        let service = IOSLocalNotificationService(center: center, now: { now })
+
+        let task = Task {
+            try await service.scheduleAgentNotification(
+                title: "喝水",
+                body: "休息一下",
+                fireDate: now.addingTimeInterval(600)
+            )
+        }
+        while center.addContinuation == nil { await Task.yield() }
+        task.cancel()
+        center.resumeAdd()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
         #expect(center.removed.last == [IOSLocalNotificationService.agentReminderIdentifier])
     }
 

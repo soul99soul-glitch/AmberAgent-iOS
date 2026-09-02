@@ -90,6 +90,26 @@ struct IOSAlarmKitTests {
         #expect(store.load().isEmpty)
     }
 
+    @Test func cancellingInFlightScheduleRollsBackCommittedAlarm() async {
+        let manager = FakeAlarmManager(authorization: .authorized)
+        manager.blocksSchedule = true
+        let (service, store) = makeService(manager: manager)
+
+        let task = Task {
+            try await service.schedule(timer(title: "茶", seconds: 30))
+        }
+        while manager.scheduleContinuation == nil { await Task.yield() }
+        task.cancel()
+        manager.resumeSchedule()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(manager.cancelledIDs.count == 1)
+        #expect(manager.snapshots.isEmpty)
+        #expect(store.load().isEmpty)
+    }
+
     @Test func listReconcilesAlreadyFiredAndCancelUsesIdentifier() async throws {
         let manager = FakeAlarmManager(authorization: .authorized)
         let (service, store) = makeService(manager: manager)
@@ -163,6 +183,8 @@ private final class FakeAlarmManager: IOSAlarmManaging {
     var scheduledInputs: [IOSAlarmScheduleInput] = []
     var snapshots: [IOSAlarmSystemSnapshot] = []
     var cancelledIDs: [UUID] = []
+    var blocksSchedule = false
+    private(set) var scheduleContinuation: CheckedContinuation<Void, Never>?
 
     init(authorization: IOSAlarmAuthorization) {
         authorizationState = authorization
@@ -180,6 +202,11 @@ private final class FakeAlarmManager: IOSAlarmManaging {
         scheduledInputs.append(request)
         let snapshot = IOSAlarmSystemSnapshot(id: id, state: request.kind == .timer ? "countdown" : "scheduled")
         snapshots.append(snapshot)
+        if blocksSchedule {
+            await withCheckedContinuation { continuation in
+                scheduleContinuation = continuation
+            }
+        }
         return snapshot
     }
 
@@ -188,5 +215,10 @@ private final class FakeAlarmManager: IOSAlarmManaging {
     func cancel(id: UUID) throws {
         cancelledIDs.append(id)
         snapshots.removeAll { $0.id == id }
+    }
+
+    func resumeSchedule() {
+        scheduleContinuation?.resume()
+        scheduleContinuation = nil
     }
 }

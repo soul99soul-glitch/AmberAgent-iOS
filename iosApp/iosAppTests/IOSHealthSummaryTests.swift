@@ -121,6 +121,20 @@ final class IOSHealthSummaryTests: XCTestCase {
         XCTAssertEqual(service.authorizationCallCount, 0)
     }
 
+    func testHealthAgentToolRejectsWrongTypesBeforeRequestingHealthAccess() async {
+        let service = HealthAgentSummaryServiceDouble(summary: IOSHealthAgentSummary(days: [], workouts: []))
+
+        for input in [
+            #"{"days":"1","include_workouts":"false"}"#,
+            #"{"days":7,"include_workouts":1}"#,
+        ] {
+            let output = await IOSHealthAgentToolExecutor.execute(input: input, service: service)
+            XCTAssertTrue(output.contains(#""ok":false"#))
+        }
+
+        XCTAssertEqual(service.authorizationCallCount, 0)
+    }
+
     private func makeModel(_ service: HealthSummaryServiceDouble) -> IOSHealthSummaryViewModel {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

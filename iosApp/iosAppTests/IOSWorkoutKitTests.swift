@@ -89,6 +89,27 @@ struct IOSWorkoutKitTests {
         #expect(pair.store.load().isEmpty)
     }
 
+    @Test func cancellingInFlightScheduleRollsBackCommittedWorkout() async {
+        let now = Date(timeIntervalSince1970: 2_000_000_000)
+        let manager = FakeWorkoutManager()
+        manager.blocksSchedule = true
+        let pair = makeService(manager: manager, now: now)
+
+        let task = Task {
+            try await pair.service.schedule(goal(), at: now.addingTimeInterval(3_600))
+        }
+        while manager.scheduleContinuation == nil { await Task.yield() }
+        task.cancel()
+        manager.resumeSchedule()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(manager.removedIDs.count == 1)
+        #expect(manager.snapshots.isEmpty)
+        #expect(pair.store.load().isEmpty)
+    }
+
     @Test func scheduleListAndRemoveUseStableAmberIdentifier() async throws {
         let now = Date(timeIntervalSince1970: 2_000_000_000)
         let manager = FakeWorkoutManager()
@@ -186,6 +207,8 @@ private final class FakeWorkoutManager: IOSWorkoutManaging {
     var scheduleShouldCommit = true
     var snapshots: [IOSWorkoutSystemSnapshot] = []
     var removedIDs: [UUID] = []
+    var blocksSchedule = false
+    private(set) var scheduleContinuation: CheckedContinuation<Void, Never>?
 
     func authorizationState() async -> IOSWorkoutAuthorization { authorization }
 
@@ -201,6 +224,11 @@ private final class FakeWorkoutManager: IOSWorkoutManaging {
         if scheduleShouldCommit {
             snapshots.append(IOSWorkoutSystemSnapshot(id: id, scheduledAt: date))
         }
+        if blocksSchedule {
+            await withCheckedContinuation { continuation in
+                scheduleContinuation = continuation
+            }
+        }
     }
 
     func remove(id: UUID) async -> Bool {
@@ -208,5 +236,10 @@ private final class FakeWorkoutManager: IOSWorkoutManaging {
         removedIDs.append(id)
         snapshots.removeAll { $0.id == id }
         return true
+    }
+
+    func resumeSchedule() {
+        scheduleContinuation?.resume()
+        scheduleContinuation = nil
     }
 }
