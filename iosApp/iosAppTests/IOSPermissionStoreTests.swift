@@ -62,6 +62,37 @@ final class IOSPermissionStoreTests: XCTestCase {
         XCTAssertEqual(persisted[fileCapability.id], IOSAgentPermissionPolicy.askEveryTime.rawValue)
     }
 
+    func testDefaultPolicyMigrationRestoresLegacyDisabledValueOnlyOnce() throws {
+        let defaults = isolatedDefaults()
+        let storageKey = "test.permissionPolicies.migration"
+        let capability = try XCTUnwrap(
+            IOSCapabilityRegistry.capabilities.first { $0.id == "ios.local.ambershell" }
+        )
+        defaults.set(
+            [capability.id: IOSAgentPermissionPolicy.disabled.rawValue],
+            forKey: storageKey
+        )
+
+        let migrated = IOSPermissionStore(
+            capabilities: [capability],
+            userDefaults: defaults,
+            storageKey: storageKey,
+            defaultPolicyMigrationIds: [capability.id],
+            taskStore: nil
+        )
+        XCTAssertEqual(migrated.policy(for: capability), .askEveryTime)
+
+        migrated.setPolicy(.disabled, for: capability)
+        let reloaded = IOSPermissionStore(
+            capabilities: [capability],
+            userDefaults: defaults,
+            storageKey: storageKey,
+            defaultPolicyMigrationIds: [capability.id],
+            taskStore: nil
+        )
+        XCTAssertEqual(reloaded.policy(for: capability), .disabled)
+    }
+
     func testApprovalRecordsPersistAndRedactSensitiveValues() throws {
         let defaults = isolatedDefaults()
         let store = IOSPermissionStore(userDefaults: defaults, taskStore: nil)

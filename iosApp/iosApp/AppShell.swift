@@ -41,7 +41,15 @@ struct AppShell: View {
     private var appLanguage = IOSAppLanguage.system.rawValue
 
     init(settingsStore: SettingsStore) {
-        let permissionStore = IOSPermissionStore()
+        let embeddedIshDefaultPolicyMigrationIds: Set<String> =
+            IOSTerminalBuildPolicy.experimentalRuntimesLinked &&
+            settingsStore.terminalExperimentalRuntimesEnabled &&
+            settingsStore.terminalDefaultRuntime == .ishExperimental
+            ? ["ios.embedded.ish_runtime"]
+            : []
+        let permissionStore = IOSPermissionStore(
+            defaultPolicyMigrationIds: embeddedIshDefaultPolicyMigrationIds
+        )
         let documentAccessStore = DocumentAccessStore()
         let workspaceStore = IOSWorkspaceStore.shared
         let systemPermissionCoordinator = IOSSystemPermissionCoordinator()

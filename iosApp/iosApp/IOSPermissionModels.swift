@@ -1843,6 +1843,7 @@ final class IOSPermissionStore {
         userDefaults: UserDefaults = .standard,
         storageKey: String = "app.amber.ios.permissionPolicies.v2",
         approvalStorageKey: String = "app.amber.ios.toolApprovalRecords.v1",
+        defaultPolicyMigrationIds: Set<String> = [],
         taskStore: IOSAdvancedTaskStore? = IOSAdvancedTaskStore.shared
     ) {
         self.capabilities = capabilities
@@ -1876,6 +1877,18 @@ final class IOSPermissionStore {
             if normalizedPolicy != policy {
                 didDropUnknown = true
             }
+        }
+
+        for id in defaultPolicyMigrationIds {
+            let migrationKey = "\(storageKey).default-policy-migration.v1.\(id)"
+            guard !userDefaults.bool(forKey: migrationKey) else { continue }
+            if savedRaw[id] == IOSAgentPermissionPolicy.disabled.rawValue,
+               let capability = capabilities.first(where: { $0.id == id }),
+               Self.defaultPolicy(for: capability) != .disabled {
+                loaded[id] = Self.defaultPolicy(for: capability)
+                didDropUnknown = true
+            }
+            userDefaults.set(true, forKey: migrationKey)
         }
 
         policies = loaded
