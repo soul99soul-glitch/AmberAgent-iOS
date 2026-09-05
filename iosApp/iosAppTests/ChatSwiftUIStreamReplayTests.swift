@@ -2514,6 +2514,42 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
 
     // MARK: - 5. 会话切换重置并重新锚定
 
+    func testCompletedMarkdownRemountKeepsFormattedContentAndHeight() {
+        let text = """
+        连续正文开始。**已完成的内容**在重新打开时保持格式。
+
+        | 项目 | 结果 |
+        | --- | --- |
+        | 缓存 | 保持原有列宽和换行 |
+        | 终态 | 不重新淡入 |
+        """
+        let messages = [makeAssistantMessage(text: text, finished: true)]
+        let first = makeFixture()
+        first.model.messages = messages
+        first.model.send(.initialLoad)
+        pump(seconds: 0.8)
+        XCTAssertFalse(ScrollFrameProbe.hasRawMarkdown(in: first.host.view))
+        let originalHeight = first.scrollView?.contentSize.height ?? 0
+        XCTAssertGreaterThan(originalHeight, 0)
+        first.tearDown()
+
+        let reopened = makeFixture()
+        defer { reopened.tearDown() }
+        guard let scrollView = reopened.scrollView else {
+            return XCTFail("Expected the native scroll view")
+        }
+        let probe = ScrollFrameProbe(scrollView: scrollView, rootView: reopened.host.view)
+        probe.start()
+        reopened.model.messages = messages
+        reopened.model.send(.initialLoad)
+        pump(seconds: 0.8)
+        probe.stop()
+
+        XCTAssertFalse(probe.samples.isEmpty)
+        XCTAssertFalse(probe.samples.contains { $0.rawMarkdownVisible == true })
+        XCTAssertEqual(scrollView.contentSize.height, originalHeight, accuracy: 0.5)
+    }
+
     func testConversationSwitchResetsAndReanchors() {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

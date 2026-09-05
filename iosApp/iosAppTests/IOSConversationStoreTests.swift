@@ -895,6 +895,7 @@ final class IOSConversationStoreTests: XCTestCase {
         allowPersist?.resume()
         let didSave = await saveTask.value
         XCTAssertTrue(didSave)
+        XCTAssertEqual(store.currentConversation?.title, "renamed while saving")
 
         let restarted = IOSConversationStore(baseDirectory: baseDirectory)
         await restarted.bootstrap()

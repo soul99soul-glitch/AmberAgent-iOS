@@ -233,8 +233,8 @@ final class ChatMessageProjectionTests: XCTestCase {
         XCTAssertFalse(ChatMarkdownOpenURLPolicy.isAllowed(try XCTUnwrap(URL(string: "javascript:alert(1)"))))
     }
 
-    func testInvalidDataImageURLResolvesToFailure() {
-        guard case .failure = ChatDataImageLoadState.resolve(
+    func testInvalidDataImageURLResolvesToFailure() async {
+        guard case .failure = await ChatDataImageLoadState.resolve(
             urlString: "data:image/jpeg;base64,this-is-not-base64"
         ) else {
             return XCTFail("损坏的 data URL 必须结束 loading 并进入失败态")

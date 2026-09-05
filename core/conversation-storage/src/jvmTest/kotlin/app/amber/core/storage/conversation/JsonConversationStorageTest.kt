@@ -248,7 +248,7 @@ class JsonConversationStorageTest {
         )
         storage.updateMetadata(id, title = "renamed", isPinned = true)
 
-        storage.saveConversation(
+        val persisted = storage.saveConversation(
             sampleConversation(
                 id = id,
                 title = "stale title",
@@ -271,6 +271,10 @@ class JsonConversationStorageTest {
             "message 写入不得反向覆盖非消息 owner 的建议状态"
         )
         assertTrue(loaded.autoApproveToolCalls, "message 写入不得反向覆盖工具审批 owner 状态")
+        assertEquals("renamed", persisted.title, "save 返回值必须包含 metadata owner 的标题")
+        assertTrue(persisted.isPinned, "save 返回值必须包含 metadata owner 的置顶状态")
+        assertEquals(listOf("kept suggestion"), persisted.chatSuggestions)
+        assertTrue(persisted.autoApproveToolCalls)
     }
 
     @Test

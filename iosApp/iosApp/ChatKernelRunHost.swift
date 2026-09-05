@@ -1636,23 +1636,12 @@ final class ChatKernelRunHost {
                 )
             }
         }
-        callbacks.onAssistantText = { [weak self] _ in
-            guard let self, self.currentRunId == runId else { return }
-            self.streamClock.noteVisibleDelta()
-            if !self.didReportFirstDeltaThisRound {
-                self.didReportFirstDeltaThisRound = true
-                self.backgroundExecution.updateProgress(
-                    runId,
-                    completed: 2,
-                    total: 4,
-                    subtitle: IOSAppLocalization.string("正在接收回复", defaultValue: "正在接收回复")
-                )
-            }
-        }
-        callbacks.onAssistantReasoning = { [weak self] _ in
-            // 推理增量同样是可见内容(CG-C chunkHasVisibleContent 口径):
-            // 推理优先的模型(o 系/扩展思考)首 chunk 即应推进 2/4。
-            guard let self, self.currentRunId == runId else { return }
+        callbacks.onAssistantFirstVisibleDelta = { [weak self] in
+            // 文本与推理都沿 CG-C chunkHasVisibleContent 口径计为可见内容;
+            // 适配器已按真实模型轮次只转递首次事件。
+            guard let self,
+                  self.currentRunId == runId,
+                  !self.didFinalizeTerminal else { return }
             self.streamClock.noteVisibleDelta()
             if !self.didReportFirstDeltaThisRound {
                 self.didReportFirstDeltaThisRound = true

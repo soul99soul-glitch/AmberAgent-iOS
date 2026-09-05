@@ -656,9 +656,17 @@ final class IOSChatKernelRunHostTests: XCTestCase {
                 output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
             ),
         ])
-        let provider = HostScriptedProvider(rounds: [
-            .init(message: firstBatch, finishReason: "stop"),
-            .init(message: limitedBatch, finishReason: "stop"),
+        let provider = IOSChatScriptedStreamingProvider(streams: [
+            .init(chunks: [
+                F.streamChunk(delta: F.assistantText("准备")),
+                F.streamChunk(delta: F.assistantText("查询")),
+                F.streamChunk(delta: firstBatch),
+            ], intervalNanos: 2_000_000),
+            .init(chunks: [
+                F.streamChunk(delta: F.assistantText("继续")),
+                F.streamChunk(delta: F.assistantText("查询")),
+                F.streamChunk(delta: limitedBatch),
+            ], intervalNanos: 2_000_000),
         ])
         let runtime = ChatToolRuntime(
             settingsStore: harness.dependencies.settingsStore,
@@ -672,8 +680,12 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             ledger: harness.ledger
         )
         var terminal: String?
+        var firstVisibleEvents = 0
+        var textDeltas: [String] = []
         var callbacks = ChatRunKernelAdapter.Callbacks()
         callbacks.onRunTerminal = { terminal = $0 }
+        callbacks.onAssistantFirstVisibleDelta = { firstVisibleEvents += 1 }
+        callbacks.onAssistantText = { textDeltas.append($0) }
         let adapter = ChatRunKernelAdapter(runtime: runtime, ledger: harness.ledger, callbacks: callbacks)
 
         let result = await adapter.run(.init(
@@ -700,6 +712,8 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             return tool
         }
         XCTAssertEqual(startedTools, ["tool_search", "session_search"])
+        XCTAssertEqual(firstVisibleEvents, 2, "每轮只发一次首输出事件")
+        XCTAssertEqual(textDeltas, ["准备", "准备查询", "继续", "继续查询"], "注册的完整流消费者仍收到每次累计文本更新")
         XCTAssertTrue(F.toolOutputText(toolCallId: "tc-unexposed", in: result).contains("tool_not_exposed"))
         XCTAssertEqual(provider.callCount, 2)
         XCTAssertEqual(terminal, AgentRunStatus.failed.wireName)

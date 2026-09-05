@@ -52,9 +52,10 @@ interface ConversationStorageInterface {
     /**
      * upsert 会话内容：不存在则新建；已存在时，消息树/建议等内容字段随入参更新，
      * 但标题和置顶状态由 [updateMetadata] 拥有，不被旧快照反向覆盖。
+     * 返回实际写入的会话（包含 metadata owner 合并后的字段）。
      */
     @Throws(Throwable::class)
-    suspend fun saveConversation(conversation: Conversation)
+    suspend fun saveConversation(conversation: Conversation): Conversation
 
     /**
      * 批量导入完整 Conversation JSON。实现必须先校验整批 payload，再覆盖同 ID

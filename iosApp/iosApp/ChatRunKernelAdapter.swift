@@ -62,8 +62,14 @@ final class ChatRunKernelAdapter {
         var onAssistantTurnStarted: () -> Void = {}
         var onToolExecutionStarted: (String, String) -> Void = { _, _ in }
         var onAssistantStage: (AgentActivityStage) -> Void = { _ in }
-        var onAssistantText: (String) -> Void = { _ in }
-        var onAssistantReasoning: (String) -> Void = { _ in }
+        /// Optional so a Host that only needs first-visible progress does not
+        /// enqueue one MainActor task for every streamed delta. Consumers that
+        /// need the complete per-delta stream still opt in here.
+        var onAssistantText: ((String) -> Void)? = nil
+        var onAssistantReasoning: ((String) -> Void)? = nil
+        /// One signal per model round for progress/latency bookkeeping. The
+        /// full text/reasoning callbacks above remain available independently.
+        var onAssistantFirstVisibleDelta: (() -> Void)? = nil
         /// B2:引擎逐 chunk 推送的在途 assistant 累加器快照(citation 已剥离,
         /// id 本轮稳定且与终态权威消息同 id)——provisional 气泡的唯一数据源。
         var onAssistantMessageSnapshot: (UIMessage) -> Void = { _ in }
@@ -149,6 +155,12 @@ final class ChatRunKernelAdapter {
     /// 覆盖序号大的权威发布(终态/取消把序号钉到 max,之后一律忽略)。
     nonisolated(unsafe) private var snapshotSeq = 0
     private var lastAppliedSnapshotSeq = 0
+    /// The engine invokes text/reasoning hooks serially, while the callbacks
+    /// hop to MainActor. Keep only the first claim for the current round and
+    /// carry its round number into the hop so an old queued signal cannot land
+    /// in a later round.
+    nonisolated(unsafe) private var firstVisibleDeltaRound = 0
+    nonisolated(unsafe) private var didClaimFirstVisibleDelta = false
 
     init(
         runtime: ChatToolRuntime,
@@ -213,6 +225,9 @@ final class ChatRunKernelAdapter {
         let nestedOutcomeUnknownProvider: @MainActor () -> IOSToolOutcomeUnknownSignal? = { [weak self] in
             self?.toolOutcomeUnknownSignal
         }
+        let hasAssistantTextCallback = callbacks.onAssistantText != nil
+        let hasAssistantReasoningCallback = callbacks.onAssistantReasoning != nil
+        let hasFirstVisibleDeltaCallback = callbacks.onAssistantFirstVisibleDelta != nil
 
         while true {
             if isStoppedByHost { return working }
@@ -344,6 +359,8 @@ final class ChatRunKernelAdapter {
                         // 回到 MainActor 的节流快照失效，再发布新一轮状态。
                         self.snapshotSeq += 1
                         self.lastAppliedSnapshotSeq = self.snapshotSeq
+                        self.firstVisibleDeltaRound &+= 1
+                        self.didClaimFirstVisibleDelta = false
                         self.callbacks.onAssistantTurnStarted()
                     },
                     onToolExecutionStarted: { [weak self] toolName, input in
@@ -360,17 +377,43 @@ final class ChatRunKernelAdapter {
                         }
                     },
                     onAssistantText: { [weak self] text in
+                        guard let self else { return }
+                        if hasFirstVisibleDeltaCallback,
+                           let round = self.claimFirstVisibleDeltaRound() {
+                            Task { @MainActor [weak self] in
+                                guard let self,
+                                      !self.isStoppedByHost,
+                                      !self.didReportTerminal,
+                                      self.durabilityFailureMessage == nil,
+                                      self.firstVisibleDeltaRound == round else { return }
+                                self.callbacks.onAssistantFirstVisibleDelta?()
+                            }
+                        }
+                        guard hasAssistantTextCallback else { return }
                         Task { @MainActor [weak self] in
                             guard let self, !self.isStoppedByHost,
                                   self.durabilityFailureMessage == nil else { return }
-                            self.callbacks.onAssistantText(text)
+                            self.callbacks.onAssistantText?(text)
                         }
                     },
                     onAssistantReasoning: { [weak self] text in
+                        guard let self else { return }
+                        if hasFirstVisibleDeltaCallback,
+                           let round = self.claimFirstVisibleDeltaRound() {
+                            Task { @MainActor [weak self] in
+                                guard let self,
+                                      !self.isStoppedByHost,
+                                      !self.didReportTerminal,
+                                      self.durabilityFailureMessage == nil,
+                                      self.firstVisibleDeltaRound == round else { return }
+                                self.callbacks.onAssistantFirstVisibleDelta?()
+                            }
+                        }
+                        guard hasAssistantReasoningCallback else { return }
                         Task { @MainActor [weak self] in
                             guard let self, !self.isStoppedByHost,
                                   self.durabilityFailureMessage == nil else { return }
-                            self.callbacks.onAssistantReasoning(text)
+                            self.callbacks.onAssistantReasoning?(text)
                         }
                     },
                     onAssistantMessageSnapshot: { [weak self] message in
@@ -510,6 +553,15 @@ final class ChatRunKernelAdapter {
             callbacks.onRunTerminal(Self.terminalWireName(of: result))
             return result.messages
         }
+    }
+
+    /// Called only from the engine's serial streaming callbacks. The state is
+    /// deliberately nonisolated(unsafe), matching snapshotSeq above; the
+    /// round-start callback is awaited on MainActor before the next delta.
+    private nonisolated func claimFirstVisibleDeltaRound() -> Int? {
+        guard !didClaimFirstVisibleDelta else { return nil }
+        didClaimFirstVisibleDelta = true
+        return firstVisibleDeltaRound
     }
 
     // MARK: - Host 取消

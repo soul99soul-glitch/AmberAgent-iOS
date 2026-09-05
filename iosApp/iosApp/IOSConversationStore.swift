@@ -592,7 +592,7 @@ final class IOSConversationStore {
     func saveForkedConversation(_ conversation: Conversation) async -> Bool {
         guard !isDeletedConversation(conversation.id) else { return false }
         do {
-            try await storage.saveConversation(conversation: conversation)
+            _ = try await storage.saveConversation(conversation: conversation)
         } catch {
             publishIOError(operation: "保存 fork 会话", detail: "目标 \(conversation.id): \(error)")
             return false
@@ -1316,9 +1316,16 @@ final class IOSConversationStore {
 #endif
             guard !isDeletedConversation(conversation.id) else { return nil }
             guard acceptsWrite(to: conversation.id, baseline: baseline) else { return nil }
-            try await storage.saveConversation(conversation: conversation)
+            let sequenceBeforeSave = writeSequences[sequenceKey(for: conversation.id), default: 0]
+            let persisted = try await storage.saveConversation(conversation: conversation)
+            let changedDuringSave = writeSequences[sequenceKey(for: conversation.id), default: 0] != sequenceBeforeSave
             advanceWriteSequence(for: conversation.id)
-            return try await storage.loadConversation(id: conversation.id) ?? conversation
+            // A concurrent metadata writer may finish before this continuation.
+            // Preserve the existing read-back only when another local write ran.
+            if changedDuringSave {
+                return try await storage.loadConversation(id: conversation.id) ?? persisted
+            }
+            return persisted
         } catch {
             // 写盘失败：不丢内存会话（currentConversation 仍由调用方更新），
             // 但上抛给用户，避免"以为保存了实际没保存"的静默丢数据。

@@ -370,8 +370,8 @@ enum IOSGeminiPayloadBuilder {
         includeThinkingConfig: Bool = true
     ) -> [String: Any] {
         var config: [String: Any] = [:]
-        if let temperature = params.temperature { config["temperature"] = temperature }
-        if let topP = params.topP { config["topP"] = topP }
+        if let temperature = params.temperature { config["temperature"] = temperature.floatValue }
+        if let topP = params.topP { config["topP"] = topP.floatValue }
         if let maxTokens = params.maxTokens, maxTokens.intValue > 0 {
             config["maxOutputTokens"] = Int(maxTokens.intValue)
         } else {
@@ -587,6 +587,14 @@ enum IOSGeminiStreamParser {
 }
 
 // MARK: - Native client
+
+/// The payload builder has already materialized this Foundation JSON graph on
+/// MainActor (it is the boundary that reads KMP messages/params). Encoding the
+/// immutable graph is independent of those KMP values, so it can yield to the
+/// generic executor without moving any KMP object across actors.
+private struct UncheckedGeminiJSONBox: @unchecked Sendable {
+    let value: [String: Any]
+}
 
 /// Executes Gemini chat calls. Pure URLSession (no WebView), so it also runs on
 /// the background executor. MainActor-isolated like `IOSGrokWebClient` so the
@@ -909,7 +917,7 @@ final class IOSGeminiClient {
             request.httpMethod = "POST"
             request.setValue(IOSAntigravityOAuthConstants.userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue(IOSAntigravityOAuthConstants.clientMetadata, forHTTPHeaderField: "Client-Metadata")
-            request.httpBody = try JSONSerialization.data(withJSONObject: wrapper)
+            request.httpBody = try await Self.encodeJSONOffMainActor(wrapper)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             Self.applyCustomHeaders(params.customHeaders, to: &request)
             request.setValue("Bearer \(token.accessToken)", forHTTPHeaderField: "Authorization")
@@ -926,12 +934,23 @@ final class IOSGeminiClient {
             url = target
             request = URLRequest(url: url)
             request.httpMethod = "POST"
-            request.httpBody = try JSONSerialization.data(withJSONObject: inner)
+            request.httpBody = try await Self.encodeJSONOffMainActor(inner)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             Self.applyCustomHeaders(params.customHeaders, to: &request)
             request.setValue(accessKey, forHTTPHeaderField: "x-goog-api-key")
         }
         return (request, wireModelId)
+    }
+
+    /// Request encoding is pure Foundation work. Keep payload construction on
+    /// MainActor because it traverses non-Sendable KMP messages/parameters.
+    private static func encodeJSONOffMainActor(
+        _ object: [String: Any]
+    ) async throws -> Data {
+        let box = UncheckedGeminiJSONBox(value: object)
+        return try await Task.detached(priority: nil) {
+            try JSONSerialization.data(withJSONObject: box.value)
+        }.value
     }
 
     private static func applyCustomHeaders(_ headers: [CustomHeader], to request: inout URLRequest) {

@@ -86,13 +86,15 @@ class JsonConversationStorage(
     }
 
     @Throws(Throwable::class)
-    override suspend fun saveConversation(conversation: Conversation) = operationMutex.withLock {
+    override suspend fun saveConversation(conversation: Conversation): Conversation = operationMutex.withLock {
         saveConversationLocked(conversation)
     }
 
-    private fun saveConversationLocked(conversation: Conversation) {
+    private fun saveConversationLocked(conversation: Conversation): Conversation {
         ensureBaseDir()
-        saveConversationReplacingAllFieldsLocked(mergeMessageWriteWithExistingMetadata(conversation))
+        val conversationToSave = mergeMessageWriteWithExistingMetadata(conversation)
+        saveConversationReplacingAllFieldsLocked(conversationToSave)
+        return conversationToSave
     }
 
     private fun saveConversationReplacingAllFieldsLocked(conversationToSave: Conversation) {

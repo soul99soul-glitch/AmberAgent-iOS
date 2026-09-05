@@ -39,18 +39,20 @@ enum ChatMarkdownRendererPolicy {
     }
 }
 
-enum ChatDataImageLoadState {
+enum ChatDataImageLoadState: Sendable {
     case loading
     case success(UIImage)
     case failure
 
-    static func resolve(urlString: String) -> ChatDataImageLoadState {
-        guard let comma = urlString.firstIndex(of: ","),
-              let data = Data(base64Encoded: String(urlString[urlString.index(after: comma)...])),
-              let image = UIImage(data: data) else {
-            return .failure
-        }
-        return .success(image)
+    static func resolve(urlString: String) async -> ChatDataImageLoadState {
+        await Task.detached(priority: .userInitiated) {
+            guard let comma = urlString.firstIndex(of: ","),
+                  let data = Data(base64Encoded: String(urlString[urlString.index(after: comma)...])),
+                  let image = UIImage(data: data) else {
+                return ChatDataImageLoadState.failure
+            }
+            return ChatDataImageLoadState.success(image)
+        }.value
     }
 }
 
@@ -1877,6 +1879,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
 
     private struct IdentityCacheEntry {
         let text: String
+        let signature: RenderSignature
         let renderable: SwiftStreamingMarkdown.RenderableDocument
     }
 
@@ -1895,6 +1898,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     private var renderedText: String?
     private var renderableDocument: SwiftStreamingMarkdown.RenderableDocument?
     private var renderedSignature: RenderSignature?
+    private var restoredFromCache = false
     private var pendingParse: (
         text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
@@ -1930,7 +1934,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
            rendered == text {
             return (
                 renderableDocument,
-                renderedSignature.speculative != signature.speculative
+                restoredFromCache || renderedSignature.speculative != signature.speculative
             )
         }
         // 解析落后于最新 delta:返回上一次成功解析的结果(对应稍旧的文本前缀),
@@ -2071,33 +2075,49 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         // 半截表格/未闭合强调不会渲染成乱码,而是降级成段落,等后续 delta 补齐再升级。
         let animate = config.shouldAnimateText
         let signature = Self.renderSignature(for: config)
+        if renderedSignature == signature, renderedText == text {
+            return
+        }
+        // Only remounts need a static lookup; an active stream already owns its
+        // newest result and should not hash the growing text on every parse.
+        let cached = renderedText == nil ? Self.cachedExactRenderable(
+            for: text,
+            signature: signature,
+            cacheIdentity: cacheIdentity
+        ) : nil
         let previousText = renderedText
         let previousRenderable = renderedSignature?.visualConfigHash == signature.visualConfigHash
             ? renderableDocument
             : nil
-        let renderable = await Task.detached(priority: .userInitiated) {
-            let parser = SwiftStreamingMarkdown.MarkdownParserImpl()
-            // repairsRejectedStrongEmphasis：修复 CommonMark flanking 拒绝的粗体
-            // （**（重点）**、CJK 紧邻 __…__ 等），流式与完成态同修。
-            let option = SwiftStreamingMarkdown.MarkdownParseOption(
-                speculativeRewrite: animate,
-                repairsRejectedStrongEmphasis: true
-            )
-            let result = await ChatPerfTrace.measure("MarkdownParse", count: { text.utf16.count }) {
-                await parser.parse(text: text, option: option)
-            }
-            let converted = await ChatPerfTrace.measure("MarkdownConvert", count: { text.utf16.count }) {
-                await SwiftStreamingMarkdown.RenderableDocument(
-                    document: result.document,
-                    config: config
+        let renderable: SwiftStreamingMarkdown.RenderableDocument
+        if let cached {
+            renderable = cached
+            ChatPerfTrace.event("MarkdownCacheHit")
+        } else {
+            renderable = await Task.detached(priority: .userInitiated) {
+                let parser = SwiftStreamingMarkdown.MarkdownParserImpl()
+                // repairsRejectedStrongEmphasis：修复 CommonMark flanking 拒绝的粗体
+                // （**（重点）**、CJK 紧邻 __…__ 等），流式与完成态同修。
+                let option = SwiftStreamingMarkdown.MarkdownParseOption(
+                    speculativeRewrite: animate,
+                    repairsRejectedStrongEmphasis: true
                 )
-            }
-            guard let previousText,
-                  let previousRenderable,
-                  text.utf16.count >= previousText.utf16.count,
-                  text.hasPrefix(previousText) else { return converted }
-            return converted.reusingUnchangedPrefix(from: previousRenderable)
-        }.value
+                let result = await ChatPerfTrace.measure("MarkdownParse", count: { text.utf16.count }) {
+                    await parser.parse(text: text, option: option)
+                }
+                let converted = await ChatPerfTrace.measure("MarkdownConvert", count: { text.utf16.count }) {
+                    await SwiftStreamingMarkdown.RenderableDocument(
+                        document: result.document,
+                        config: config
+                    )
+                }
+                guard let previousText,
+                      let previousRenderable,
+                      text.utf16.count >= previousText.utf16.count,
+                      text.hasPrefix(previousText) else { return converted }
+                return converted.reusingUnchangedPrefix(from: previousRenderable)
+            }.value
+        }
         guard !Task.isCancelled else { return }
         guard renderedText != text || renderedSignature != signature || renderableDocument != renderable else {
             return
@@ -2106,6 +2126,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             renderedText = text
             renderableDocument = renderable
             renderedSignature = signature
+            restoredFromCache = cached != nil
             Self.storeCachedRenderable(renderable, for: text, config: config)
             if let cacheIdentity {
                 Self.storeIdentityRenderable(
@@ -2117,6 +2138,25 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
             }
             revision &+= 1
         }
+    }
+
+    // Display reuse allows an older prefix or speculative result. Skipping parsing
+    // requires the same full text and parse mode, including after a row remounts.
+    private static func cachedExactRenderable(
+        for text: String,
+        signature: RenderSignature,
+        cacheIdentity: String?
+    ) -> SwiftStreamingMarkdown.RenderableDocument? {
+        if let cacheIdentity,
+           let entry = identityCache[IdentityCacheKey(
+            identity: cacheIdentity,
+            visualConfigHash: signature.visualConfigHash
+           )],
+           entry.signature == signature,
+           entry.text == text {
+            return entry.renderable
+        }
+        return renderableCache[RenderableCacheKey(text: text, signature: signature)]
     }
 
     private static func cachedRenderable(
@@ -2199,7 +2239,7 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
         if identityCache[key] != nil {
             identityCacheOrder.removeAll { $0 == key }
         }
-        identityCache[key] = IdentityCacheEntry(text: text, renderable: renderable)
+        identityCache[key] = IdentityCacheEntry(text: text, signature: signature, renderable: renderable)
         identityCacheOrder.append(key)
         while identityCacheOrder.count > identityCacheLimit {
             let removed = identityCacheOrder.removeFirst()
@@ -3023,7 +3063,13 @@ private struct ChatGeneratedImageTile: View {
             .modifier(ChatWidthDrivenAspectRatio(aspectRatio: display.aspectRatio))
             .contentShape(Rectangle())
             .onTapGesture {
-                previewTarget = ChatGeneratedImagePreviewTarget(urlString: urlString)
+                let image: UIImage?
+                if case .success(let loadedImage) = dataImageState {
+                    image = loadedImage
+                } else {
+                    image = nil
+                }
+                previewTarget = ChatGeneratedImagePreviewTarget(urlString: urlString, image: image)
             }
             .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
             .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
@@ -3034,7 +3080,9 @@ private struct ChatGeneratedImageTile: View {
             .task(id: urlString) {
                 guard isDataURL else { return }
                 dataImageState = .loading
-                dataImageState = ChatDataImageLoadState.resolve(urlString: urlString)
+                let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
+                guard !Task.isCancelled else { return }
+                dataImageState = resolved
             }
 
             if url != nil || isDataURL {
@@ -3086,7 +3134,7 @@ private struct ChatGeneratedImageTile: View {
             }
         }
         .fullScreenCover(item: $previewTarget) { target in
-            ChatGeneratedImagePreview(urlString: target.urlString)
+            ChatGeneratedImagePreview(urlString: target.urlString, image: target.image)
         }
         .sheet(item: $editTarget) { target in
             ChatGeneratedImageEditSheet { prompt in
@@ -3261,6 +3309,7 @@ private enum ChatGeneratedImagePhotoSaveError: LocalizedError {
 private struct ChatGeneratedImagePreviewTarget: Identifiable {
     let id = UUID()
     let urlString: String
+    let image: UIImage?
 }
 
 private struct ChatGeneratedImageEditTarget: Identifiable {
@@ -3274,6 +3323,11 @@ private struct ChatGeneratedImagePreview: View {
     @Environment(\.dismiss) private var dismiss
     @State private var dataImageState: ChatDataImageLoadState = .loading
     @State private var dragOffset: CGFloat = 0
+
+    init(urlString: String, image: UIImage?) {
+        self.urlString = urlString
+        _dataImageState = State(initialValue: image.map(ChatDataImageLoadState.success) ?? .loading)
+    }
 
     private var isDataURL: Bool { urlString.hasPrefix("data:") }
     private var url: URL? { IOSImageGenerationRepository.resolvedImageURL(from: urlString) }
@@ -3322,8 +3376,11 @@ private struct ChatGeneratedImagePreview: View {
         }
         .task(id: urlString) {
             guard isDataURL else { return }
+            if case .success = dataImageState { return }
             dataImageState = .loading
-            dataImageState = ChatDataImageLoadState.resolve(urlString: urlString)
+            let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
+            guard !Task.isCancelled else { return }
+            dataImageState = resolved
         }
     }
 
@@ -3456,7 +3513,9 @@ private struct ChatUserImageTile: View {
             .task(id: urlString) {
                 guard isDataURL else { return }
                 dataImageState = .loading
-                dataImageState = ChatDataImageLoadState.resolve(urlString: urlString)
+                let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
+                guard !Task.isCancelled else { return }
+                dataImageState = resolved
             }
     }
 

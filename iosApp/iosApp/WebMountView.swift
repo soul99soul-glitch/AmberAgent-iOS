@@ -282,8 +282,8 @@ struct AgentBrowserTaskCard: View {
                 Button(action: onOpen) {
                     HStack(spacing: 4) {
                         Text(openLabel)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.system(size: 11, weight: .semibold))
                     }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground2)
@@ -299,9 +299,9 @@ struct AgentBrowserTaskCard: View {
             .padding(.trailing, 6)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
                 .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
         .simultaneousGesture(collapseGesture)
@@ -350,11 +350,14 @@ struct AgentBrowserTaskCard: View {
 
     private var taskIdentity: some View {
         HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "globe.badge.chevron.backward")
+            Image(systemName: "globe")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(AmberTheme.foreground2)
-                .frame(width: 32, height: 32)
-                .background(AmberTheme.surface2, in: Circle())
+                .frame(width: 34, height: 34)
+                .background(
+                    AmberTheme.surface2,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(siteTitle)
@@ -374,19 +377,33 @@ struct AgentBrowserTaskCard: View {
     }
 
     private var statusBadge: some View {
-        Label(status.label, systemImage: status.image)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(status.tint)
-            .padding(.horizontal, 8)
-            .frame(minHeight: 24)
-            .background(status.tint.opacity(0.10), in: Capsule())
-            .fixedSize(horizontal: true, vertical: false)
+        HStack(spacing: 6) {
+            Image(systemName: status.image)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(status.tint)
+                .frame(width: 24, height: 24)
+                .background(
+                    status.tint.opacity(0.10),
+                    in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                )
+            Circle()
+                .fill(status.tint)
+                .frame(width: 5, height: 5)
+            Text(status.label)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private var backendLabel: some View {
-        Label(record.backend.title, systemImage: record.backend == .local ? "iphone" : "desktopcomputer")
+        Label(backendTitle, systemImage: record.backend == .local ? "iphone" : "desktopcomputer")
             .font(.caption2)
             .foregroundStyle(AmberTheme.muted)
+    }
+
+    private var backendTitle: String {
+        record.backend == .local ? "本机浏览器" : record.backend.title
     }
 
     private var siteTitle: String {
@@ -425,7 +442,7 @@ struct AgentBrowserTaskCompactBar: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(displayInfo.status.tint)
                 .frame(width: 22, height: 22)
-                .background(AmberTheme.accent.opacity(0.14), in: Circle())
+                .background(displayInfo.status.tint.opacity(0.12), in: Circle())
 
             Text(summary)
                 .font(.footnote.weight(.medium))
@@ -545,7 +562,7 @@ private struct AgentBrowserTaskDisplayInfo {
         case .user:
             return ("需要你处理", "person.crop.circle.badge.exclamationmark", AmberTheme.accentAmber)
         case .agent:
-            return ("Agent 浏览中", "sparkles", AmberTheme.accent)
+            return ("Agent 浏览中", "cursorarrow.click.2", AmberTheme.statusAmber)
         case .none:
             break
         }
@@ -1114,16 +1131,15 @@ struct WebMountSiteView: View {
             }
 
             TextField("输入网址", text: $openURLText)
-                .font(.system(size: 13, design: .monospaced))
+                .font(.footnote)
                 .textFieldStyle(.plain)
                 .lineLimit(1)
                 .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .frame(maxWidth: .infinity, minHeight: 38)
+                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .disabled(!canUserMutate)
-                .layoutPriority(1)
 
             workspaceBrowserButton(
                 systemImage: "arrow.right",
@@ -1170,29 +1186,45 @@ struct WebMountSiteView: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Circle()
-                    .fill(controlOwnerTint)
-                    .frame(width: 7, height: 7)
-                Text(sessionRecord?.controlOwner == .user ? "交还" : "接管")
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
+                Image(systemName: controlOwnerImage)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(controlOwnerTint)
+                    .frame(width: 22, height: 22)
+                    .background(
+                        controlOwnerTint.opacity(0.12),
+                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    )
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(workspaceControlOwnerLabel)
+                        .font(.caption2.weight(.bold))
+                    Text(workspaceControlActionLabel)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(controlOwnerTint)
+                }
+                .lineLimit(1)
             }
             .foregroundStyle(AmberTheme.foreground2)
-            .padding(.horizontal, 10)
-            .frame(minHeight: 44)
+            .padding(.horizontal, 8)
+            .frame(minWidth: 86, minHeight: 44)
             .background(
-                isAgentControlActive ? AmberTheme.accent.opacity(0.10) : AmberTheme.surface2,
+                controlOwnerTint.opacity(0.08),
                 in: RoundedRectangle(cornerRadius: 11, style: .continuous)
             )
             .overlay {
                 RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .stroke(isAgentControlActive ? AmberTheme.accent.opacity(0.42) : AmberTheme.borderSoft, lineWidth: 0.7)
+                    .stroke(controlOwnerTint.opacity(0.30), lineWidth: 0.7)
             }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
         .disabled(sessionRecord == nil)
         .opacity(sessionRecord == nil ? 0.45 : 1)
-        .accessibilityLabel(sessionRecord?.controlOwner == .user ? "交还 WebMount 页面给 Agent" : "接管 WebMount 页面")
+        .layoutPriority(2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(workspaceControlAccessibilityLabel)
+        .accessibilityValue(controlOwnerBadgeText)
+        .accessibilityHint("切换页面控制权")
     }
 
     private var inspectorSheet: some View {
@@ -1594,10 +1626,10 @@ struct WebMountSiteView: View {
                 .accessibilityLabel("接管 WebMount 页面")
         } else if sessionRecord?.controlOwner == .user {
             let hasActiveAgent = sessionRecord?.ownerRunId?.nilIfBlank != nil
-            Button(hasActiveAgent ? "交还 Agent" : "释放控制") { handBackToAgent() }
+            Button(hasActiveAgent ? "恢复自动" : "释放控制") { handBackToAgent() }
                 .buttonStyle(.glass)
                 .frame(minHeight: 44)
-                .accessibilityLabel(hasActiveAgent ? "交还 WebMount 页面给 Agent" : "释放 WebMount 页面控制权")
+                .accessibilityLabel(hasActiveAgent ? "恢复 Agent 自动浏览" : "释放 WebMount 页面控制权")
         }
     }
 
@@ -1717,7 +1749,7 @@ struct WebMountSiteView: View {
             return "页面仍可观察；打开、导航和网页交互需先接管。"
         case .user:
             if sessionRecord?.ownerRunId?.nilIfBlank != nil {
-                return "完成登录、验证码、CAPTCHA 或支付敏感步骤后点“交还 Agent”；Amber 不会自动夺回控制。"
+                return "完成登录、验证码、CAPTCHA 或支付敏感步骤后点“恢复自动”；Amber 不会自动夺回控制。"
             }
             return "你可以操作页面；当前没有活动 Agent 任务。"
         default:
@@ -1727,7 +1759,7 @@ struct WebMountSiteView: View {
 
     private var controlOwnerImage: String {
         switch sessionRecord?.controlOwner {
-        case .agent: "cpu"
+        case .agent: "cursorarrow"
         case .user: "person.crop.circle"
         default: "lock.open"
         }
@@ -1739,6 +1771,26 @@ struct WebMountSiteView: View {
         case .user: AmberTheme.accentGreen
         default: AmberTheme.muted2
         }
+    }
+
+    private var workspaceControlOwnerLabel: String {
+        switch sessionRecord?.controlOwner {
+        case .agent: "Agent"
+        case .user: "用户"
+        default: "空闲"
+        }
+    }
+
+    private var workspaceControlActionLabel: String {
+        guard sessionRecord?.controlOwner == .user else { return "接管" }
+        return sessionRecord?.ownerRunId?.nilIfBlank == nil ? "释放" : "自动"
+    }
+
+    private var workspaceControlAccessibilityLabel: String {
+        guard sessionRecord?.controlOwner == .user else { return "接管 WebMount 页面" }
+        return sessionRecord?.ownerRunId?.nilIfBlank == nil
+            ? "释放 WebMount 页面控制权"
+            : "恢复 Agent 自动浏览"
     }
 
     private func openSite() async {
@@ -1931,11 +1983,13 @@ struct WebMountSiteView: View {
     }
 
     private func handBackToAgent() {
+        let resumesAutomation = sessionRecord?.ownerRunId?.nilIfBlank != nil
         do {
             _ = try controller.sessionStore.handBackToAgent(sessionId: runtime.snapshot.sessionId)
-            banner = "已将此 WebMount 页面交还 Agent。"
+            banner = resumesAutomation ? "已恢复 Agent 自动浏览。" : "已释放此 WebMount 页面控制权。"
         } catch {
-            banner = "交还失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"
+            let action = resumesAutomation ? "恢复自动" : "释放"
+            banner = "\(action)失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"
         }
     }
 

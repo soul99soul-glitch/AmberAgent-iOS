@@ -123,6 +123,9 @@ li{margin:.34em 0;}
   var totalSlides = 0;
   var deckEl = null;
   var deckSpec = null;
+  var lastRenderedSpecJson = null;
+  var viewportHeightBound = false;
+  var deckScrollBound = false;
 
   function esc(value){
     return String(value == null ? '' : value)
@@ -392,6 +395,8 @@ li{margin:.34em 0;}
   };
 
   window.__renderSlides = function(slidesJson){
+    if(lastRenderedSpecJson === slidesJson) return;
+    lastRenderedSpecJson = null;
     try{
       var parsed = JSON.parse(slidesJson);
       deckSpec = normalizeDeck(parsed);
@@ -420,18 +425,25 @@ li{margin:.34em 0;}
         deckEl.querySelectorAll('.slide').forEach(function(s){ s.style.height = vh + 'px'; });
       }
       applyViewportHeight();
-      window.addEventListener('resize', applyViewportHeight);
-      var raf = null;
-      deckEl.addEventListener('scroll', function(){
-        if(raf) cancelAnimationFrame(raf);
-        raf = requestAnimationFrame(function(){
-          if(!deckEl.clientWidth) return;
-          var idx = Math.round(deckEl.scrollLeft / deckEl.clientWidth);
-          idx = Math.max(0, Math.min(totalSlides - 1, idx));
-          if(idx !== currentSlide){ currentSlide = idx; updateIndicator(); }
-        });
-      }, {passive:true});
+      if(!viewportHeightBound){
+        window.addEventListener('resize', applyViewportHeight);
+        viewportHeightBound = true;
+      }
+      if(!deckScrollBound){
+        var raf = null;
+        deckEl.addEventListener('scroll', function(){
+          if(raf) cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(function(){
+            if(!deckEl.clientWidth) return;
+            var idx = Math.round(deckEl.scrollLeft / deckEl.clientWidth);
+            idx = Math.max(0, Math.min(totalSlides - 1, idx));
+            if(idx !== currentSlide){ currentSlide = idx; updateIndicator(); }
+          });
+        }, {passive:true});
+        deckScrollBound = true;
+      }
       try{ AmberWidget.resize(Math.max(window.innerHeight, 360)); }catch(e){}
+      lastRenderedSpecJson = slidesJson;
     }catch(e){
       document.getElementById('error').style.display='block';
       document.getElementById('error').textContent='幻灯片渲染失败: '+(e.message||e);

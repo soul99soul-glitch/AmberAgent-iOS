@@ -27,7 +27,9 @@ final class ChatKernelProjection {
     func publishProvisionalAssistant(_ message: UIMessage) {
         provisionalAssistant = message
         var messages = bindings.getMessages()
-        if let index = messages.firstIndex(where: { $0.id == message.id }) {
+        if messages.last?.id == message.id {
+            messages[messages.count - 1] = message
+        } else if let index = messages.firstIndex(where: { $0.id == message.id }) {
             messages[index] = message
         } else {
             messages.append(message)

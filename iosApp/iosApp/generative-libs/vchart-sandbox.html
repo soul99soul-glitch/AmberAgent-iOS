@@ -18,6 +18,8 @@ html,body{margin:0;padding:0;background:transparent;font-family:system-ui,-apple
 <script>
 (function(){
   var rendered = false;
+  var lastRenderedSpecJson = null;
+  var chart = null;
   var timeout = setTimeout(function(){
     if(!rendered){
       document.getElementById('loading').style.display='none';
@@ -28,6 +30,8 @@ html,body{margin:0;padding:0;background:transparent;font-family:system-ui,-apple
   }, 5000);
 
   window.__renderChart = function(specJson){
+    if(lastRenderedSpecJson === specJson) return;
+    lastRenderedSpecJson = null;
     try{
       clearTimeout(timeout);
       rendered = true;
@@ -36,8 +40,13 @@ html,body{margin:0;padding:0;background:transparent;font-family:system-ui,-apple
       // Ensure responsive sizing
       if(!spec.width) spec.width = '100%';
       if(!spec.height) spec.height = 320;
-      var chart = new VChart.default(spec, {dom:'root', animation: true});
+      if(chart) {
+        chart.release();
+        chart = null;
+      }
+      chart = new VChart.default(spec, {dom:'root', animation: true});
       chart.renderSync();
+      lastRenderedSpecJson = specJson;
       setTimeout(function(){
         var h = Math.max(
           document.getElementById('root').scrollHeight,

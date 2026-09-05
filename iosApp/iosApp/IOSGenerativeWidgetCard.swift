@@ -698,6 +698,7 @@ private struct IOSRichSandboxWebView: UIViewRepresentable {
         var specJson: String
         let maxHeight: CGFloat
         private weak var webView: WKWebView?
+        private var lastRenderedSpecJson: String?
 
         init(renderer: String, specJson: String, maxHeight: CGFloat) {
             self.renderer = renderer
@@ -722,15 +723,18 @@ private struct IOSRichSandboxWebView: UIViewRepresentable {
             webView.loadHTMLString(html, baseURL: baseURL)
         }
 
-        func render(in webView: WKWebView? = nil) {
-            guard validate().valid else { return }
+        func render(in webView: WKWebView? = nil, force: Bool = false) {
+            guard force || lastRenderedSpecJson != specJson,
+                  validate().valid else { return }
             let target = webView ?? self.webView
+            guard let target else { return }
             let fn = renderer == "slides" ? "__renderSlides" : "__renderChart"
             let safeJson = specJson.toScriptSafeJsonString()
-            target?.evaluateJavaScript("""
+            target.evaluateJavaScript("""
             window.__setAmberFontCss && window.__setAmberFontCss("");
             window.\(fn) && window.\(fn)(\(jsStringLiteral(safeJson)));
             """)
+            lastRenderedSpecJson = specJson
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -739,7 +743,7 @@ private struct IOSRichSandboxWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            render(in: webView)
+            render(in: webView, force: true)
         }
 
         func webView(
