@@ -1046,6 +1046,55 @@ final class ChatMessageProjectionTests: XCTestCase {
         XCTAssertFalse(withTokens.latestRenderToken.isEmpty)
     }
 
+    func testToolRoundsShareAssistantHeaderUntilNextUserMessage() throws {
+        let user = UIMessage.companion.user(prompt: "查一下资料")
+        let toolRound = UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: [UIMessagePart.Tool(
+                toolCallId: "search-1",
+                toolName: "search_web",
+                input: "{}",
+                output: [UIMessagePart.Text(text: "检索结果", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )],
+            annotations: [],
+            createdAt: chatNowLocalDateTime(),
+            finishedAt: chatNowLocalDateTime(),
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+        let answer = UIMessage.companion.assistant(prompt: "根据检索结果回答")
+        let messages = [user, toolRound, answer]
+        let loaded = NativeTimelineProjector.build(messages: messages, event: .conversationLoaded)
+        XCTAssertEqual(loaded.entries.filter { $0.kind == .message }.map(\.isAssistantContinuation),
+                       [false, false, true])
+        XCTAssertEqual(loaded.entries.compactMap(\.messageId), messages.map(ChatMessageProjector.messageId(for:)))
+
+        let streaming = try XCTUnwrap(NativeTimelineProjector.replacingStreamingTail(
+            in: loaded,
+            messages: messages,
+            event: .assistantStreamDelta,
+            isGenerationActive: true,
+            viewportState: ChatViewportState()
+        ))
+        XCTAssertTrue(try XCTUnwrap(streaming.entries.last { $0.kind == .message }).isAssistantContinuation)
+
+        let nextTurn = messages + [UIMessage.companion.user(prompt: "继续解释"),
+                                   UIMessage.companion.assistant(prompt: "新的回复")]
+        let plan = ChatTimelinePlanner.build(messages: nextTurn, event: .conversationLoaded)
+        XCTAssertEqual(plan.entries.compactMap { entry -> Bool? in
+            guard case let .message(message) = entry else { return nil }
+            return message.rowModel.isAssistantContinuation
+        }, [false, false, true, false, false])
+
+        let afterDeletion = NativeTimelineProjector.build(messages: [user, answer], event: .branchChanged)
+        XCTAssertFalse(try XCTUnwrap(afterDeletion.entries.last { $0.kind == .message }).isAssistantContinuation)
+    }
+
     func testNativeTimelineProjectionMirrorsTimelinePlanIdentityAndDecorations() {
         let user = UIMessage.companion.user(prompt: "问题")
         let assistant = UIMessage.companion.assistant(prompt: "回答")

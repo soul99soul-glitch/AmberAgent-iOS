@@ -60,6 +60,7 @@ struct MessageBubbleView: View {
 
     let message: UIMessage
     var messageIndex: Int = 0
+    var isAssistantContinuation: Bool = false
     var variantInfo: IOSConversationStore.VariantInfo? = nil
     var displaySetting: DisplaySetting? = nil
     var generativeUiSetting: GenerativeUiSetting? = nil
@@ -126,10 +127,14 @@ struct MessageBubbleView: View {
                 }
             } else {
                 ChatAssistantStack {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        ChatAgentName()
-                        if variantInfo?.hasMultipleVariants == true {
-                            variantBadge
+                    if !isAssistantContinuation || variantInfo?.hasMultipleVariants == true {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            if !isAssistantContinuation {
+                                ChatAgentName()
+                            }
+                            if variantInfo?.hasMultipleVariants == true {
+                                variantBadge
+                            }
                         }
                     }
                     variantSwitcher

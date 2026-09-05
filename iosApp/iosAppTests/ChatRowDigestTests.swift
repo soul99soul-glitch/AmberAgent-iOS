@@ -40,6 +40,27 @@ final class ChatRowDigestTests: XCTestCase {
         )
     }
 
+    func testAssistantContinuationChangesLayoutForHeaderRemoval() {
+        var row = makeRow(message: UIMessage.companion.assistant(prompt: "回复"))
+        func digest() -> ChatRowDigest {
+            ChatRowDigests.digest(
+                row: row,
+                renderState: makeRenderState(),
+                contentHash: 1,
+                isGenerationActive: false,
+                displaySettingSignature: "display",
+                generativeUiSettingSignature: "generative",
+                hasMultipleVariants: false,
+                reasoningLevelLabel: nil
+            )
+        }
+        let first = digest()
+        row.isAssistantContinuation = true
+        let continuation = digest()
+        XCTAssertNotEqual(first.layout, continuation.layout)
+        XCTAssertEqual(first.presentation, continuation.presentation)
+    }
+
     func testTextContentChangeChangesLayout() {
         let row = makeRow(message: UIMessage.companion.assistant(prompt: "回复"))
         let renderState = makeRenderState()

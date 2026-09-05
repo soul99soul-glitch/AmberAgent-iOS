@@ -27,6 +27,7 @@ enum ChatRowDigests {
         layout.combine(row.messageId)
         layout.combine(String(describing: row.role))
         layout.combine(contentHash)
+        layout.combine(row.isAssistantContinuation)
         layout.combine(row.isLast)
         layout.combine(row.isStreaming)
         layout.combine(row.hasEverStreamed)

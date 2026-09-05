@@ -2514,6 +2514,34 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
 
     // MARK: - 5. 会话切换重置并重新锚定
 
+    func testAssistantContinuationHasNoRepeatedHeaderGap() throws {
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let first = makeAssistantMessage(text: "第一轮工具后的说明", finished: true)
+        let next = makeAssistantMessage(text: "下一轮工具后的结论", finished: false)
+        fixture.model.messages = [makeUserMessage("查询资料"), first]
+        fixture.model.send(.initialLoad)
+        pump(seconds: 0.5)
+        let scrollView = try XCTUnwrap(fixture.scrollView)
+        let firstHeight = scrollView.contentSize.height
+        fixture.model.isGenerationActive = true
+        fixture.model.messages.append(next)
+        fixture.model.send(.streamDelta)
+        pump(seconds: 0.8)
+
+        let nextParagraph = try XCTUnwrap(ScrollFrameProbe.paragraph(
+            in: fixture.host.view, withPrefix: "下一轮工具后的结论"
+        ))
+        let continuedHeight = scrollView.contentSize.height
+        XCTAssertEqual(continuedHeight - firstHeight, nextParagraph.bounds.height + 14, accuracy: 1,
+                       "续答只增加正文与列表间距，不应重复标题或预留标题空白")
+        fixture.model.isGenerationActive = false
+        fixture.model.messages[2] = makeAssistantMessage(id: next.id, text: "下一轮工具后的结论", finished: true)
+        fixture.model.send(.generationCompleted)
+        pump(seconds: 0.8)
+        XCTAssertEqual(scrollView.contentSize.height, continuedHeight, accuracy: 1)
+    }
+
     func testCompletedMarkdownRemountKeepsFormattedContentAndHeight() {
         let text = """
         连续正文开始。**已完成的内容**在重新打开时保持格式。

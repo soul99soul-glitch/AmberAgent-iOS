@@ -194,6 +194,8 @@ struct ChatMessageRowModel: Identifiable {
     let hasEverStreamed: Bool
     let canAnimateInsertion: Bool
 
+    var isAssistantContinuation: Bool = false
+
     var id: String { rowId }
 }
 
@@ -231,6 +233,8 @@ struct ChatTimelineMessageEntry: Equatable {
     let renderer: ChatTimelineRendererKind
     let renderToken: String
 
+    var isAssistantContinuation: Bool = false
+
     var rowModel: ChatMessageRowModel {
         ChatMessageRowModel(
             rowId: messageId,
@@ -242,7 +246,8 @@ struct ChatTimelineMessageEntry: Equatable {
             isLast: isLast,
             isStreaming: isStreaming,
             hasEverStreamed: hasEverStreamed,
-            canAnimateInsertion: canAnimateInsertion
+            canAnimateInsertion: canAnimateInsertion,
+            isAssistantContinuation: isAssistantContinuation
         )
     }
 }
@@ -290,6 +295,8 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     let variantInfo: NativeTimelineVariantInfo?
     let renderState: ChatRenderState?
     let renderDigest: ChatRowDigest?
+
+    var isAssistantContinuation: Bool = false
 
     var hasMultipleVariants: Bool {
         variantInfo?.hasMultipleVariants == true
@@ -465,7 +472,8 @@ enum NativeTimelineProjector {
             isLast: true,
             isStreaming: true,
             hasEverStreamed: true,
-            canAnimateInsertion: false
+            canAnimateInsertion: false,
+            isAssistantContinuation: ChatMessageProjector.isAssistantContinuation(at: messages.count - 1, in: messages)
         )
         let renderState = renderStateStore?.stateForRow(
             row,
@@ -511,7 +519,8 @@ enum NativeTimelineProjector {
             renderToken: streamingTailRenderToken(row: row, streamedMessageIDs: streamedMessageIDs),
             variantInfo: variantInfo,
             renderState: renderState,
-            renderDigest: digest
+            renderDigest: digest,
+            isAssistantContinuation: row.isAssistantContinuation
         )
         return NativeTimelineProjection(
             entries: entries,
@@ -573,7 +582,8 @@ enum NativeTimelineProjector {
                 renderToken: message.renderToken,
                 variantInfo: variantInfo,
                 renderState: renderState,
-                renderDigest: digest
+                renderDigest: digest,
+                isAssistantContinuation: row.isAssistantContinuation
             )
         case let .pendingAssistant(id):
             return NativeTimelineEntry(
@@ -632,6 +642,7 @@ enum NativeTimelineProjector {
     ) -> String {
         var hasher = Hasher()
         hasher.combine(row.messageId)
+        hasher.combine(row.isAssistantContinuation)
         hasher.combine(row.parts.count)
         hasher.combine(streamedMessageIDs.contains(row.messageId))
         for part in row.parts {
@@ -737,7 +748,8 @@ enum ChatTimelinePlanner {
                     hasEverStreamed: row.hasEverStreamed,
                     canAnimateInsertion: row.canAnimateInsertion,
                     renderer: rendererKind(for: row),
-                    renderToken: includeRenderTokens ? renderToken(for: row) : ""
+                    renderToken: includeRenderTokens ? renderToken(for: row) : "",
+                    isAssistantContinuation: row.isAssistantContinuation
                 )
             )
         }
@@ -775,7 +787,7 @@ enum ChatTimelinePlanner {
 
     private static func renderToken(for row: ChatMessageRowModel) -> String {
         let partTokens = row.parts.map { compactRenderToken(for: $0) }.joined(separator: "|")
-        return "\(row.messageId):\(row.role.name):\(row.isStreaming):\(row.hasEverStreamed):\(partTokens)"
+        return "\(row.messageId):\(row.role.name):\(row.isStreaming):\(row.hasEverStreamed):\(row.isAssistantContinuation):\(partTokens)"
     }
 
     private static func compactRenderToken(for part: UIMessagePart) -> String {
@@ -809,6 +821,11 @@ enum ChatMessageProjector {
         message.id.toHexDashString()
     }
 
+    static func isAssistantContinuation(at index: Int, in messages: [UIMessage]) -> Bool {
+        index > 0 && messages[index].role == MessageRole.assistant &&
+            messages[index - 1].role == MessageRole.assistant
+    }
+
     static func rows(
         messages: [UIMessage],
         event: ChatEvent,
@@ -834,7 +851,8 @@ enum ChatMessageProjector {
                 isLast: isLast,
                 isStreaming: isStreaming,
                 hasEverStreamed: hasEverStreamed,
-                canAnimateInsertion: canAnimateInsertion
+                canAnimateInsertion: canAnimateInsertion,
+                isAssistantContinuation: isAssistantContinuation(at: index, in: messages)
             )
         }
     }

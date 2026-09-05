@@ -761,7 +761,8 @@ struct NativeChatTimelineView: View {
             isLast: entry.isLastMessage,
             isStreaming: entry.isStreaming,
             hasEverStreamed: entry.renderHasEverStreamed,
-            canAnimateInsertion: entry.canAnimateInsertion
+            canAnimateInsertion: entry.canAnimateInsertion,
+            isAssistantContinuation: entry.isAssistantContinuation
         )
         let renderState = entry.renderState ?? renderStateStore.stateForRow(
             row,
@@ -876,7 +877,8 @@ struct NativeChatTimelineView: View {
             isLast: isLast,
             isStreaming: isStreaming,
             hasEverStreamed: isStreaming || streamedMessageIDs.contains(messageID),
-            canAnimateInsertion: false
+            canAnimateInsertion: false,
+            isAssistantContinuation: ChatMessageProjector.isAssistantContinuation(at: indexedMessage.offset, in: messages)
         )
         let renderState = renderStateStore.stateForRow(
             row,
@@ -2608,6 +2610,7 @@ private struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
         MessageBubbleView(
             message: row.message,
             messageIndex: row.index,
+            isAssistantContinuation: row.isAssistantContinuation,
             variantInfo: variantInfo,
             displaySetting: displaySetting,
             generativeUiSetting: generativeUiSetting,
@@ -2638,6 +2641,7 @@ private struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
 
     static func == (lhs: ChatSwiftUIMessageBubble, rhs: ChatSwiftUIMessageBubble) -> Bool {
         guard lhs.entryID == rhs.entryID,
+              lhs.row.isAssistantContinuation == rhs.row.isAssistantContinuation,
               lhs.updatesSuspended == rhs.updatesSuspended else { return false }
         if lhs.updatesSuspended {
             return true
@@ -2693,6 +2697,7 @@ private struct NativeTimelineMessageBubble: View, @MainActor Equatable {
               lhs.model.row.messageId == rhs.model.row.messageId,
               lhs.model.row.role == rhs.model.row.role,
               lhs.model.row.index == rhs.model.row.index,
+              lhs.model.row.isAssistantContinuation == rhs.model.row.isAssistantContinuation,
               lhs.model.row.isLast == rhs.model.row.isLast,
               lhs.model.row.hasEverStreamed == rhs.model.row.hasEverStreamed,
               lhs.model.row.canAnimateInsertion == rhs.model.row.canAnimateInsertion,
@@ -2755,6 +2760,7 @@ private struct ChatMessageHostedBubble: View {
         MessageBubbleView(
             message: message,
             messageIndex: model.row.index,
+            isAssistantContinuation: model.row.isAssistantContinuation,
             variantInfo: model.variantInfo,
             displaySetting: displaySetting,
             generativeUiSetting: generativeUiSetting,
@@ -2888,7 +2894,8 @@ final class ChatRenderStateStore {
                 hasEverStreamed: row.hasEverStreamed,
                 canAnimateInsertion: row.canAnimateInsertion,
                 renderer: renderer,
-                renderToken: row.messageId
+                renderToken: row.messageId,
+                isAssistantContinuation: row.isAssistantContinuation
             ),
             isLiveRenderingFarFromBottom: isLiveRenderingFarFromBottom
         )
