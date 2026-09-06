@@ -3,6 +3,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 struct AppearanceSettingsView: View {
+    let prepareGeneration: () -> String?
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
@@ -16,6 +17,8 @@ struct AppearanceSettingsView: View {
     @State private var isManagingThemes = false
     @State private var selectedRemovableIds: Set<String> = []
     @State private var showRemoveConfirm = false
+    @State private var themeDescription = ""
+    @State private var generationError: String?
 
     private var selectedMode: IOSAppearanceMode {
         IOSAppearanceMode(rawValue: appearanceMode) ?? .system
@@ -49,6 +52,10 @@ struct AppearanceSettingsView: View {
                     }
 
                     if !isManagingThemes {
+                        section("让 Amber 设计主题") {
+                            themeGenerationForm
+                        }
+
                         DisclosureGroup {
                             VStack(alignment: .leading, spacing: 22) {
                                 section("背景色") { backgroundCards }
@@ -224,7 +231,7 @@ struct AppearanceSettingsView: View {
 
     private var themePackGrid: some View {
         LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+            columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)],
             spacing: 12
         ) {
             ForEach(AmberThemePack.builtins) { pack in
@@ -347,7 +354,7 @@ struct AppearanceSettingsView: View {
         // Non-immersive papers only (includes cream draft + Notion warm-white).
         let canvases: [AmberThemeRuntime.Paper] = [.paper, .neutral, .white, .pi, .notion]
         return LazyVGrid(
-            columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)],
+            columns: [GridItem(.flexible(), spacing: 12, alignment: .top), GridItem(.flexible(), spacing: 12, alignment: .top)],
             spacing: 12
         ) {
             ForEach(canvases, id: \.self) { paper in
@@ -424,8 +431,7 @@ struct AppearanceSettingsView: View {
                 Text(footerTitle)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(footerForeground)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.85)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 4)
                 if showsLock {
                     Image(systemName: "lock.fill")
@@ -438,7 +444,8 @@ struct AppearanceSettingsView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .frame(height: 48)
+            .padding(.vertical, 12)
+            .frame(minHeight: 48)
             .background(footerBackground)
         }
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -508,6 +515,47 @@ struct AppearanceSettingsView: View {
         .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
+    private var themeGenerationForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("例如：雨天书店，暖灰纸张与墨绿色", text: $themeDescription, axis: .vertical)
+                .lineLimit(2...4)
+                .font(.body)
+                .padding(12)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityLabel("主题风格描述")
+            transferButton(title: "生成并试穿", systemImage: "sparkles") {
+                startThemeGeneration()
+            }
+            .disabled(themeDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Text("将在新对话中生成并试穿。满意后点“套用”保存，也可随时还原。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+            if let generationError {
+                Text(generationError)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.accentRed)
+            }
+        }
+    }
+
+    private func startThemeGeneration() {
+        generationError = nil
+        guard let prompt = IOSThemePackToolCatalog.generationPrompt(style: themeDescription) else {
+            generationError = "请简短描述你想要的主题风格后重试。"
+            return
+        }
+        if let error = prepareGeneration() {
+            generationError = error
+            return
+        }
+        guard let destination = IOSDeepLinkInbox.shared.preparePromptHandoff(prompt),
+              let url = IOSAppDeepLink.url(for: destination) else {
+            generationError = "请简短描述你想要的主题风格后重试。"
+            return
+        }
+        IOSDeepLinkInbox.shared.submit(url)
+    }
+
     // MARK: 5 · 主题文件（导入 / 导出）
 
     private var themeTransferRow: some View {
@@ -532,7 +580,8 @@ struct AppearanceSettingsView: View {
             }
             .foregroundStyle(AmberTheme.foreground)
             .frame(maxWidth: .infinity)
-            .frame(height: 44)
+            .padding(.vertical, 12)
+            .frame(minHeight: 44)
             .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)

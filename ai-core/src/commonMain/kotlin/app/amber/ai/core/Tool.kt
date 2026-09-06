@@ -462,6 +462,7 @@ fun createWebMountOpenToolDeclaration(): Tool = webMountTool(
     description = """
         Open a URL or station in the iOS WebMount session.
         Use `site_id` from wm_stations when possible. Unlisted public hosts are available only while high-risk auto-approve is enabled.
+        After navigation settles, use wm_visual_read for visual confirmation when a vision-capable model and manual approval or high-risk auto-approval are available.
     """.trimIndent(),
     parameters = webMountOpenParameters()
 )
@@ -474,7 +475,7 @@ fun createWebMountStateToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountObserveToolDeclaration(): Tool = webMountTool(
     name = "wm_observe",
-    description = "Observe the current iOS WebMount page: state, visible text, link summary, interactive elements, and DOM visual candidates. Does not expose cookies, tokens, or headers.",
+    description = "Observe the current iOS WebMount page: state, visible text, link summary, interactive elements, and DOM visual candidates. Does not expose cookies, tokens, or headers. After a key browser action, use wm_visual_read for visual confirmation when a vision-capable model and manual approval or high-risk auto-approval are available.",
     parameters = webMountSessionParameters()
 )
 
@@ -496,9 +497,16 @@ fun createWebMountVisualSnapshotToolDeclaration(): Tool = webMountTool(
     parameters = webMountSessionParameters()
 )
 
+fun createWebMountVisualReadToolDeclaration(): Tool = webMountTool(
+    name = "wm_visual_read",
+    description = "For the local iOS WKWebView backend only, capture the current WebMount viewport and ask the current chat model first when it natively supports images; otherwise use the configured auxiliary vision model to verify what is visibly rendered. Use after navigation or a key browser action when visual confirmation matters; use wm_observe for DOM targets. This sends the screenshot to the provider and requires manual approval or high-risk auto-approval. It never clicks, types, solves CAPTCHAs, or treats wm_visual_snapshot as an image. If vision is unavailable, the backend is remote, or neither approval path is available, explicitly say visual verification has not occurred and do not claim visual confirmation succeeded; DOM-verifiable results may still be reported honestly. An ok result only means the image was analyzed, not that a browser action succeeded.",
+    parameters = webMountVisualReadParameters(),
+    needsApproval = true
+)
+
 fun createWebMountScreenshotToolDeclaration(): Tool = webMountTool(
     name = "wm_screenshot",
-    description = "Capture only the current iOS WebMount viewport to a local artifact. Returns artifact metadata, not base64 image data.",
+    description = "Capture only the current iOS WebMount viewport to a local artifact after manual approval or high-risk auto-approval. Returns artifact metadata, not base64 image data.",
     parameters = webMountSessionParameters(),
     needsApproval = true
 )
@@ -519,7 +527,7 @@ fun createWebMountClearSessionToolDeclaration(): Tool = webMountTool(
     name = "wm_clear_session",
     description = """
         Clear cookies and website data for one iOS WebMount station.
-        This requires an explicit foreground user action.
+        This requires manual approval or high-risk auto-approval.
     """.trimIndent(),
     parameters = webMountClearSessionParameters(),
     needsApproval = true
@@ -527,22 +535,22 @@ fun createWebMountClearSessionToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountSiteAddToolDeclaration(): Tool = webMountTool(
     name = "wm_site_add",
-    description = "Add and enable a local iOS WebMount station after foreground approval. The URL allowlist is synced; no login or OAuth is performed.",
+    description = "Add and enable a local iOS WebMount station after manual approval or high-risk auto-approval. The URL allowlist is synced; no login or OAuth is performed.",
     parameters = webMountSiteAddParameters(),
     needsApproval = true
 )
 
 fun createWebMountSiteRemoveToolDeclaration(): Tool = webMountTool(
     name = "wm_site_remove",
-    description = "Remove a local iOS WebMount station after foreground approval. This does not clear cookies or website data.",
+    description = "Remove a local iOS WebMount station after manual approval or high-risk auto-approval. This does not clear cookies or website data.",
     parameters = webMountSiteRemoveParameters(),
     needsApproval = true
 )
 
 fun createWebMountClickToolDeclaration(): Tool = webMountTool(
     name = "wm_click",
-    description = "Click a visible element on the current iOS WebMount page. Agent calls must use a target ref from the latest observation; CSS selectors remain available for direct user actions.",
-    parameters = webMountTargetParameters(requireSessionSnapshot = true)
+    description = "Click a visible element on the current iOS WebMount page, including accessible same-origin frames. Use click_count=2 for a double-click, such as opening a folder, then verify the resulting page. Agent calls must use a target ref from the latest observation; CSS selectors remain available for direct user actions.",
+    parameters = webMountTargetParameters(requireSessionSnapshot = true, includeClickCount = true)
 )
 
 fun createWebMountTapToolDeclaration(): Tool = webMountTool(
@@ -565,7 +573,7 @@ fun createWebMountKeysToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountScrollToolDeclaration(): Tool = webMountTool(
     name = "wm_scroll",
-    description = "Scroll the current iOS WebMount page or an element into view.",
+    description = "Scroll the page, an accessible same-origin iframe, or a scrollable container using its target ref; other element targets are scrolled into view.",
     parameters = webMountScrollParameters(requireSessionSnapshot = true)
 )
 
@@ -1656,6 +1664,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "wm_extract" to ::createWebMountExtractToolDeclaration,
     "wm_get" to ::createWebMountGetToolDeclaration,
     "wm_visual_snapshot" to ::createWebMountVisualSnapshotToolDeclaration,
+    "wm_visual_read" to ::createWebMountVisualReadToolDeclaration,
     "wm_screenshot" to ::createWebMountScreenshotToolDeclaration,
     "wm_back" to ::createWebMountBackToolDeclaration,
     "wm_forward" to ::createWebMountForwardToolDeclaration,
@@ -3699,6 +3708,17 @@ private fun webMountSessionParameters(): InputSchema = InputSchema.Obj(
     }
 )
 
+private fun webMountVisualReadParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        putWebMountSessionId(required = true)
+        put("question", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional visual verification target, such as whether the iCloud login form is visible or which button is currently shown.")
+        })
+    },
+    required = listOf("session_id")
+)
+
 private fun webMountTabNewParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         put("backend", buildJsonObject {
@@ -3861,7 +3881,8 @@ private fun webMountSiteRemoveParameters(): InputSchema = InputSchema.Obj(
 
 private fun webMountTargetParameters(
     includeCoordinates: Boolean = false,
-    requireSessionSnapshot: Boolean = false
+    requireSessionSnapshot: Boolean = false,
+    includeClickCount: Boolean = false
 ): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         putWebMountSessionId(required = requireSessionSnapshot)
@@ -3875,6 +3896,13 @@ private fun webMountTargetParameters(
             put("type", "string")
             put("description", "Target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations")
         })
+        if (includeClickCount) {
+            put("click_count", buildJsonObject {
+                put("type", "integer")
+                put("enum", buildJsonArray { add(1); add(2) })
+                put("description", "1 (default) for single-click; 2 for double-click on the same target")
+            })
+        }
         if (includeCoordinates) {
             put("x", buildJsonObject {
                 put("type", "number")

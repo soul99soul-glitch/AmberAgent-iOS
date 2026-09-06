@@ -13,6 +13,7 @@ private struct IOSConversationCompact: Codable, Equatable {
     let createdAt: Int64
     let updatedAt: Int64
     let status: String
+    var timelineAnchorMessageId: String? = nil
 }
 
 private struct IOSCompactPolicy {
@@ -26,7 +27,8 @@ private struct IOSCompactPolicy {
     init(_ setting: ContextCompactionSetting) {
         enabled = setting.enabled
         notifyOnly = setting.notifyOnly
-        precompactRatio = Double(setting.precompactRatio)
+        // iOS uses one trigger: the configured force threshold (85% by default).
+        precompactRatio = Double(setting.forceRatio)
         forceRatio = Double(setting.forceRatio)
         keepRecentTurns = Int(setting.keepRecentTurns)
         maxSummaryTokens = Int(setting.maxSummaryTokens)
@@ -61,18 +63,7 @@ enum ChatContextCompactEventRouter {
         eventRunId: String,
         currentRunId: String?
     ) -> Bool {
-        if currentRunId == eventRunId {
-            return true
-        }
-        guard currentRunId == nil else {
-            return false
-        }
-        switch event {
-        case .idle, .completed, .failed:
-            return true
-        case .planning, .compacting:
-            return false
-        }
+        currentRunId == eventRunId
     }
 }
 
@@ -81,13 +72,34 @@ final class IOSContextCompactionCoordinator {
     static let shared = IOSContextCompactionCoordinator()
 
     private let store = IOSConversationCompactStore()
-    private var runningCompactions: Set<String> = []
     private var activeCompactionTasks: [String: Task<IOSConversationCompact?, Error>] = [:]
 
-    private init() {}
+    private let textProvider: any IOSAgentTextProvider
+
+    init(textProvider: any IOSAgentTextProvider = OpenAIKmpProviderAdapter()) {
+        self.textProvider = textProvider
+    }
 
     static func estimatedTokensForRequest(_ messages: [UIMessage]) -> Int {
         estimateTokens(messages)
+    }
+
+    func timelineBoundaries(conversationId: KotlinUuid?, messages: [UIMessage]) -> [ChatContextCompactBoundary] {
+        guard let conversationId else { return [] }
+        let ids = Set(messages.map(Self.messageId))
+        return Self.validCompletedCompacts(store.load(conversationId: String(describing: conversationId)), existingMessageIds: ids)
+            .compactMap { compact in
+                let covered = Set(compact.sourceMessageIds)
+                guard let anchor = compact.timelineAnchorMessageId
+                    ?? messages.last(where: { covered.contains(Self.messageId($0)) }).map(Self.messageId),
+                      ids.contains(anchor) else { return nil }
+                return ChatContextCompactBoundary(
+                    id: compact.id, afterMessageId: anchor, coveredMessageIds: covered,
+                    state: ChatContextCompactState(status: .completed,
+                        summary: Self.timelineSummary(compact.summary) ?? "上下文已压缩。",
+                        updatedAt: Date(timeIntervalSince1970: Double(compact.createdAt) / 1_000))
+                )
+            }
     }
 
     /// Tokens the next send is expected to load: last fresh usage (prompt+completion)
@@ -128,7 +140,9 @@ final class IOSContextCompactionCoordinator {
             assistant: settings.getCurrentAssistant(),
             model: params.model
         ).contextMessageSize)
-        let overheadEstimate = Self.requestOverheadTokens(
+        let systemMessages = uploadMessages.filter { $0.role == MessageRole.system }
+        let historyMessages = uploadMessages.filter { $0.role != MessageRole.system }
+        let overheadEstimate = Self.estimateTokens(systemMessages) + Self.requestOverheadTokens(
             params: params,
             promptOverheadTokens: promptOverheadTokens
         )
@@ -142,13 +156,14 @@ final class IOSContextCompactionCoordinator {
         } else {
             edited = (uploadMessages, 0)
         }
-        let editedMessages = edited.messages
         let removedToolResults = edited.removedToolResults
 
         guard policy.enabled, let conversationId else {
-            return Self.limitContext(editedMessages, size: contextMessageSize)
+            return Self.limitContext(edited.messages, size: contextMessageSize)
         }
 
+        // Request-only system instructions retain their identity and budget, but are not durable history.
+        let editedMessages = edited.messages.filter { $0.role != MessageRole.system }
         let conversationKey = String(describing: conversationId)
         var compacts = store.load(conversationId: conversationKey)
         let plan = Self.planCompaction(
@@ -161,41 +176,30 @@ final class IOSContextCompactionCoordinator {
 
         if plan.shouldCompact && !policy.notifyOnly {
             onEvent?(.planning)
-            if plan.reason == "force_threshold" {
-                onEvent?(.compacting)
-                let result = try await compactConversation(
-                    messages: uploadMessages,
-                    conversationKey: conversationKey,
-                    settings: settings,
-                    policy: policy,
-                    model: params.model,
-                    fallbackProvider: fallbackProvider,
-                    reason: "auto_force",
-                    force: true
+            onEvent?(.compacting)
+            let force = plan.reason == "force_threshold"
+            let result = try await compactConversation(
+                messages: historyMessages,
+                conversationKey: conversationKey,
+                settings: settings,
+                policy: policy,
+                model: params.model,
+                fallbackProvider: fallbackProvider,
+                reason: force ? "auto_force" : "auto_precompact",
+                force: force
+            )
+            if let result {
+                onEvent?(.completed(summary: Self.timelineSummary(result.summary) ?? "上下文已压缩。"))
+            } else if force {
+                onEvent?(.failed(message: "没有可压缩的历史"))
+                throw NSError(
+                    domain: "AmberAgent.ContextCompaction", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "上下文已超过强制压缩阈值，但没有可压缩的历史。"]
                 )
-                if result == nil {
-                    onEvent?(.failed(message: "没有可压缩的历史"))
-                    throw NSError(
-                        domain: "AmberAgent.ContextCompaction",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "上下文已超过强制压缩阈值，但没有可压缩的历史。"]
-                    )
-                }
-                if let result {
-                    onEvent?(.completed(summary: Self.timelineSummary(result.summary) ?? "上下文已压缩。"))
-                }
-                compacts = store.load(conversationId: conversationKey)
             } else {
-                schedulePrecompact(
-                    messages: uploadMessages,
-                    conversationKey: conversationKey,
-                    settings: settings,
-                    policy: policy,
-                    model: params.model,
-                    fallbackProvider: fallbackProvider,
-                    onEvent: onEvent
-                )
+                onEvent?(.idle)
             }
+            compacts = store.load(conversationId: conversationKey)
         }
 
         var preparedMessages = Self.prepareMessagesWithCompacts(
@@ -211,7 +215,8 @@ final class IOSContextCompactionCoordinator {
         let targetMessageBudget = max(softTotalBudget - overheadEstimate, 1_000)
         var estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
 
-        if !policy.notifyOnly && estimate > forceBudget {
+        // At most one summary cycle per request; use the existing local budget fit afterwards.
+        if !policy.notifyOnly && estimate > forceBudget && !plan.shouldCompact {
             let fitPolicy = IOSCompactPolicy(
                 enabled: policy.enabled,
                 notifyOnly: policy.notifyOnly,
@@ -222,7 +227,7 @@ final class IOSContextCompactionCoordinator {
             )
             onEvent?(.compacting)
             let compact = try await compactConversation(
-                messages: uploadMessages,
+                messages: historyMessages,
                 conversationKey: conversationKey,
                 settings: settings,
                 policy: fitPolicy,
@@ -263,7 +268,7 @@ final class IOSContextCompactionCoordinator {
             overheadTokens: overheadEstimate,
             forceBudget: forceBudget
         )
-        return preparedMessages
+        return systemMessages + preparedMessages
     }
 
     func finalizedMessagesForRequest(
@@ -286,44 +291,6 @@ final class IOSContextCompactionCoordinator {
             forceBudget: forceBudget
         )
         return fitted
-    }
-
-    private func schedulePrecompact(
-        messages: [UIMessage],
-        conversationKey: String,
-        settings: Settings,
-        policy: IOSCompactPolicy,
-        model: Model,
-        fallbackProvider: ProviderSetting,
-        onEvent: ((IOSContextCompactionEvent) -> Void)?
-    ) {
-        guard !runningCompactions.contains(conversationKey) else { return }
-        runningCompactions.insert(conversationKey)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.runningCompactions.remove(conversationKey) }
-            do {
-                onEvent?(.compacting)
-                let compact = try await self.compactConversation(
-                    messages: messages,
-                    conversationKey: conversationKey,
-                    settings: settings,
-                    policy: policy,
-                    model: model,
-                    fallbackProvider: fallbackProvider,
-                    reason: "auto_precompact",
-                    force: false
-                )
-                if let compact {
-                    onEvent?(.completed(summary: Self.timelineSummary(compact.summary) ?? "上下文已压缩。"))
-                } else {
-                    onEvent?(.idle)
-                }
-            } catch {
-                onEvent?(.failed(message: error.localizedDescription))
-                NSLog("[ContextCompact] background precompact failed: \(error.localizedDescription)")
-            }
-        }
     }
 
     private func compactConversation(
@@ -358,7 +325,11 @@ final class IOSContextCompactionCoordinator {
             )
         }
         activeCompactionTasks[conversationKey] = task
-        return try await task.value
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     private func compactConversationLocked(
@@ -478,13 +449,14 @@ final class IOSContextCompactionCoordinator {
             ]),
             createdAt: createdAt,
             updatedAt: Self.nowMillis(),
-            status: "completed"
+            status: "completed",
+            timelineAnchorMessageId: messages.last.map(Self.messageId)
         )
         compacts = store.load(conversationId: conversationKey)
         if !compacts.contains(where: { $0.id == compact.id }) {
             compacts.append(compact)
         }
-        store.save(compacts, conversationId: conversationKey)
+        try store.save(compacts, conversationId: conversationKey)
         NSLog("[ContextCompact] \(reason) compacted \(plan.sourceMessageCount) messages into \(compact.id)")
         return compact
     }
@@ -513,7 +485,7 @@ final class IOSContextCompactionCoordinator {
             ),
             provider: provider
         )
-        let chunk = try await OpenAIKmpProviderAdapter().generateText(
+        let chunk = try await textProvider.generateText(
             providerSetting: provider,
             messages: [UIMessage.companion.user(prompt: prompt)],
             params: params
@@ -559,14 +531,10 @@ private final class IOSConversationCompactStore {
         return (try? decoder.decode([IOSConversationCompact].self, from: data)) ?? []
     }
 
-    func save(_ compacts: [IOSConversationCompact], conversationId: String) {
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try encoder.encode(compacts)
-            try data.write(to: fileURL(conversationId: conversationId), options: .atomic)
-        } catch {
-            NSLog("[ContextCompact] failed to persist compacts: \(error.localizedDescription)")
-        }
+    func save(_ compacts: [IOSConversationCompact], conversationId: String) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try encoder.encode(compacts)
+        try data.write(to: fileURL(conversationId: conversationId), options: .atomic)
     }
 
     private func fileURL(conversationId: String) -> URL {
@@ -621,7 +589,10 @@ private extension IOSContextCompactionCoordinator {
             } else {
                 tail = []
             }
-            base = Int(usage.promptTokens) + Int(usage.completionTokens)
+            // Tool outputs arrive after this assistant's provider usage was measured.
+            let newToolOutputChars = lastAssistant.parts.compactMap { $0 as? UIMessagePart.Tool }
+                .flatMap(\.output).reduce(0) { $0 + estimatedChars($1) }
+            base = Int(usage.promptTokens) + Int(usage.completionTokens) + newToolOutputChars / 4
                 + (tail.isEmpty ? 0 : estimateTokens(tail))
         } else {
             base = estimatePreparedMessages(messages, activeCompacts: completed)
@@ -634,14 +605,15 @@ private extension IOSContextCompactionCoordinator {
         _ messages: [UIMessage],
         activeCompacts: [IOSConversationCompact]
     ) -> Int {
-        guard !activeCompacts.isEmpty else { return estimateTokens(messages) }
         let existingIds = Set(messages.map(messageId))
+        let completed = validCompletedCompacts(activeCompacts, existingMessageIds: existingIds)
+        guard !completed.isEmpty else { return estimateTokens(messages) }
         let selected = selectCompactsForInjection(
-            activeCompacts: activeCompacts,
+            activeCompacts: completed,
             existingMessageIds: existingIds
         )
         let summaries = selected.map { UIMessage.companion.system(prompt: injectionText($0)) }
-        let covered = Set(activeCompacts.flatMap(\.sourceMessageIds))
+        let covered = Set(completed.flatMap(\.sourceMessageIds))
         let recent = messages.filter { !covered.contains(messageId($0)) }
         return estimateTokens(summaries + recent)
     }
@@ -669,7 +641,7 @@ private extension IOSContextCompactionCoordinator {
         guard policy.enabled, !messages.isEmpty else {
             return skipped(reason: "disabled", messages: messages, modelContextWindowTokens: modelContextWindowTokens)
         }
-        let estimatedTokens = estimateTokens(messages) + max(extraTokenEstimate, 0)
+        let estimatedTokens = estimatePreparedMessages(messages, activeCompacts: activeCompacts) + max(extraTokenEstimate, 0)
         let contextWindow = estimateContextWindow(modelContextWindowTokens)
         let ratio = Double(estimatedTokens) / Double(contextWindow)
         guard ratio >= policy.precompactRatio else {
@@ -1741,6 +1713,23 @@ enum ChatGenerationRequestPreparationTestSupport {
 /// 移除计数与截尾注记的真实行为(不经过 provider/存储)。
 @MainActor
 enum ContextCompactionEditTestSupport {
+    static func automaticPlan(
+        messages: [UIMessage], coveredIds: [String], overheadTokens: Int = 0
+    ) -> (shouldCompact: Bool, estimatedTokens: Int) {
+        let compact = IOSConversationCompact(
+            id: "compact-test", conversationId: "conv", summary: "A short handoff.", level: 1,
+            sourceStartIndex: 0, sourceEndIndex: coveredIds.count - 1, sourceMessageIds: coveredIds,
+            tokenEstimate: 20, createdAt: 1, updatedAt: 1, status: "completed"
+        )
+        let plan = IOSContextCompactionCoordinator.planCompaction(
+            messages: messages, activeCompacts: coveredIds.isEmpty ? [] : [compact],
+            policy: IOSCompactPolicy(enabled: true, notifyOnly: false, precompactRatio: 0.7,
+                                     forceRatio: 0.9, keepRecentTurns: 2, maxSummaryTokens: 200),
+            modelContextWindowTokens: 10_000, extraTokenEstimate: overheadTokens
+        )
+        return (plan.shouldCompact, plan.estimatedTokens)
+    }
+
     static func editedMessagesWithCount(
         messages: [UIMessage],
         keepRecentMessages: Int

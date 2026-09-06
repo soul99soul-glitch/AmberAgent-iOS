@@ -259,7 +259,8 @@ final class IOSLocalToolExecutor {
 
     func execute(
         _ request: IOSLocalToolExecutionRequest,
-        now: Date = Date()
+        now: Date = Date(),
+        visualRead: IOSWebMountVisualReadHandler? = nil
     ) async -> IOSLocalToolExecutionOutput {
         if request.toolName == "permissions_status" {
             return .permissionsStatus(permissionsStatus(now: now))
@@ -392,12 +393,18 @@ final class IOSLocalToolExecutor {
                 let output = await webMountController.execute(
                     toolName: request.toolName,
                     input: request.operation,
-                    isUserInitiated: request.isUserInitiated,
+                    // This flag grants approval; the unchanged context still
+                    // identifies the caller as an agent for session ownership.
+                    isUserInitiated: request.isUserInitiated || webMountAllowsUnlistedHosts(
+                        request: request,
+                        capability: capability
+                    ),
                     context: webMountContext,
                     allowUnlistedHosts: webMountAllowsUnlistedHosts(
                         request: request,
                         capability: capability
-                    )
+                    ),
+                    visualRead: visualRead
                 )
                 if let reason = Self.webMountHumanActionReason(output) {
                     return .needsUserAction("human_handoff: \(reason)")
@@ -503,6 +510,10 @@ final class IOSLocalToolExecutor {
         let policy = executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)
         if policy == .disabled {
             return .deny(reason: "Disabled by AmberAgent policy")
+        }
+        if policy == .autoApproveHighRisk
+            || (executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled) {
+            return .allow(capabilityId: capability.id)
         }
         if !isUserInitiated {
             if toolName == "wm_clear_session" {
@@ -813,8 +824,16 @@ final class IOSLocalToolExecutor {
         toolName: String,
         input: String,
         runId: String,
-        conversationId: String
+        conversationId: String,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
     ) async -> String? {
+        // Execution still checks targets and human handoff. Auto-approved
+        // recipes do not need a separate approval-only preflight.
+        if let capability = IOSCapabilityRegistry.capability(forToolName: toolName),
+           (executionPolicy?.policy(for: capability) ?? permissionStore.policy(for: capability)) == .autoApproveHighRisk
+            || (executionPolicy?.highRiskAutoApproveEnabled ?? Self.isHighRiskAutoApproveEnabled) {
+            return nil
+        }
         let context: IOSWebMountExecutionContext? = runId.isEmpty && conversationId.isEmpty
             ? nil
             : IOSWebMountExecutionContext(runId: runId, conversationId: conversationId)
@@ -872,6 +891,7 @@ final class IOSLocalToolExecutor {
         case "wm_keys": "向页面发送按键"
         case "wm_select": "选择页面选项"
         case "wm_screenshot": "保存当前完整视口截图"
+        case "wm_visual_read": "截图并调用视觉模型验证页面"
         case "wm_clear_session": "清除站点登录状态"
         case "wm_site_add": "新增 WebMount 站点"
         case "wm_site_remove": "移除 WebMount 站点"
@@ -893,6 +913,8 @@ final class IOSLocalToolExecutor {
         switch toolName {
         case "wm_screenshot":
             return "会在本机创建一个限时截图文件。"
+        case "wm_visual_read":
+            return "会将当前页面截图发送给已配置的视觉模型服务商进行分析，截图可能包含页面中的敏感信息。不会自动点击或提交表单。"
         case "wm_clear_session":
             return "会删除该站点的 Cookie 与网站数据。"
         case "wm_site_add", "wm_site_remove":
@@ -1437,6 +1459,8 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
     case missingHost
     case embeddedCredentialsNotAllowed
     case privateHostNotAllowed(String)
+    case hostResolutionFailed(String)
+    case resolvedHostNotPublic(String)
     case navigationTargetNotVerified(String)
     case hostNotAllowed(String)
 
@@ -1452,10 +1476,28 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
             "Embedded URL credentials are not allowed"
         case .privateHostNotAllowed(let host):
             "Local, loopback, link-local, and private hosts are not allowed: \(host)"
+        case .hostResolutionFailed(let host):
+            "DNS resolution failed or returned no addresses for: \(host). Check DNS and VPN/proxy settings. Navigation to this host was blocked."
+        case .resolvedHostNotPublic(let host):
+            "DNS returned a non-public or reserved address for: \(host). VPN/proxy Fake-IP mode (such as 198.18.0.0/15) may cause this. Configure real DNS resolution for this host and retry."
         case .navigationTargetNotVerified(let host):
             "Navigation target was not verified before commit: \(host)"
         case .hostNotAllowed(let host):
             "Host is not in the WebMount allowlist: \(host)"
+        }
+    }
+
+    var errorCode: String {
+        switch self {
+        case .invalidURL: "invalid_url"
+        case .unsupportedScheme: "unsupported_scheme"
+        case .missingHost: "missing_host"
+        case .embeddedCredentialsNotAllowed: "embedded_credentials_not_allowed"
+        case .privateHostNotAllowed: "private_host_not_allowed"
+        case .hostResolutionFailed: "dns_resolution_failed"
+        case .resolvedHostNotPublic: "dns_non_public_address"
+        case .navigationTargetNotVerified: "navigation_target_not_verified"
+        case .hostNotAllowed: "host_not_allowed"
         }
     }
 }
@@ -1520,17 +1562,25 @@ struct IOSWebMountURLPolicy {
             guard allowUnlistedHosts, let host = Self.normalizedHost(url.host) else {
                 return .success(url)
             }
+            // Auto-approval expands access to unlisted hosts; it must preserve
+            // the existing allowlist path for registered sites behind proxy DNS.
+            let registeredHosts = allowedHosts.union(site?.allowedHosts.compactMap(Self.normalizedHost) ?? [])
+            if Self.host(host, matchesAnyOf: Array(registeredHosts)) {
+                return .success(url)
+            }
             do {
                 let addresses = try await Task.detached(priority: .userInitiated) {
                     try resolveHost(host)
                 }.value
-                guard !addresses.isEmpty,
-                      addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
-                    return .failure(.privateHostNotAllowed(host))
+                guard !addresses.isEmpty else {
+                    return .failure(.hostResolutionFailed(host))
+                }
+                guard addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
+                    return .failure(.resolvedHostNotPublic(host))
                 }
                 return .success(url)
             } catch {
-                return .failure(.privateHostNotAllowed(host))
+                return .failure(.hostResolutionFailed(host))
             }
         }
     }
@@ -1693,6 +1743,8 @@ struct IOSWebMountScreenshotCapture: Equatable {
     let format: String
 }
 
+typealias IOSWebMountVisualReadHandler = @MainActor (IOSWebMountScreenshotCapture, String) async throws -> String
+
 @MainActor
 protocol IOSWebMountRuntimeServicing: AnyObject {
     var snapshot: IOSWebMountRuntimeSnapshot { get }
@@ -1742,6 +1794,11 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     private var navigationHostResolver: IOSWebMountHostResolver = IOSSearchExecutor.resolveIPAddresses
     private var navigationDecisionSequence = 0
     private var approvedMainFrameDestination: String?
+    private var fragmentNavigationTarget: URL?
+    private var verifiedFragmentLoadId: Int?
+    private var urlObservation: NSKeyValueObservation?
+    private var subframeNavigationDenialCount = 0
+    private var lastSubframeNavigationDenial: [String: Any]?
 
     override convenience init() {
         self.init(sessionId: nil)
@@ -1754,12 +1811,27 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        // Agent-owned sessions can stay detached from SwiftUI's foreground layout.
+        // Give those sessions a real viewport; a mounted view will replace this
+        // frame through its normal layout pass.
+        let webView = WKWebView(frame: UIScreen.main.bounds, configuration: configuration)
         self.webView = webView
         self.snapshot = .idle(sessionId: resolvedSessionId)
         super.init()
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor [weak self] in
+                guard let self, let webView = self.webView,
+                      let target = self.fragmentNavigationTarget,
+                      let pendingLoad = self.pendingLoad,
+                      self.verifiedFragmentLoadId == pendingLoad.id,
+                      webView.url == target else { return }
+                // Fragment-only navigation changes URL without didFinish.
+                // Use the same verified-destination gate as a full load.
+                self.finishNavigation(webView)
+            }
+        }
     }
 
     func setNavigationPolicy(
@@ -1767,11 +1839,18 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         site: IOSWebMountSite?,
         resolveHost: @escaping IOSWebMountHostResolver = IOSSearchExecutor.resolveIPAddresses
     ) {
+        let policyChanged = navigationPolicy?.allowedSchemes != policy.allowedSchemes
+            || navigationPolicy?.allowedHosts != policy.allowedHosts
+            || navigationPolicy?.allowUnlistedHosts != policy.allowUnlistedHosts
+            || navigationSite != site
         navigationPolicy = policy
         navigationSite = site
         navigationHostResolver = resolveHost
         navigationDecisionSequence += 1
         approvedMainFrameDestination = nil
+        if policyChanged {
+            resetNavigationDiagnostics()
+        }
     }
 
     func open(_ url: URL, timeoutMillis: UInt64 = 30_000) async -> IOSWebMountRuntimeSnapshot {
@@ -1784,6 +1863,19 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         let loadId = loadSequence
         pendingLoad?.continuation.resume(returning: snapshot)
         pendingLoad = nil
+        fragmentNavigationTarget = nil
+        verifiedFragmentLoadId = nil
+        if !webView.isLoading, let currentURL = webView.url,
+           currentURL != url || url.fragment != nil,
+           var currentDocument = URLComponents(url: currentURL, resolvingAgainstBaseURL: true),
+           var requestedDocument = URLComponents(url: url, resolvingAgainstBaseURL: true) {
+            currentDocument.fragment = nil
+            requestedDocument.fragment = nil
+            if currentDocument == requestedDocument {
+                fragmentNavigationTarget = url
+            }
+        }
+        resetNavigationDiagnostics()
         snapshot = IOSWebMountRuntimeSnapshot(
             sessionId: snapshot.sessionId,
             status: .loading,
@@ -1796,9 +1888,44 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
             error: nil,
             updatedAtMillis: IOSWebMountClock.nowMillis()
         )
-        webView.load(URLRequest(url: url))
         return await withCheckedContinuation { continuation in
             pendingLoad = (loadId, continuation)
+            if fragmentNavigationTarget == nil {
+                webView.load(URLRequest(url: url))
+            } else {
+                let decisionSequence = navigationDecisionSequence
+                Task { @MainActor [weak self] in
+                    guard let self, self.pendingLoad?.id == loadId else { return }
+                    // WebKit may omit navigation delegate callbacks for fragments.
+                    // Verify these destinations before loading, including no-op retries.
+                    if self.fragmentNavigationTarget != nil, let policy = self.navigationPolicy {
+                        let result = await policy.validateResolvedPublicHost(
+                            url.absoluteString,
+                            site: self.navigationSite,
+                            resolveHost: self.navigationHostResolver
+                        )
+                        guard self.pendingLoad?.id == loadId else { return }
+                        guard self.navigationDecisionSequence == decisionSequence else {
+                            self.rejectNavigation(.navigationTargetNotVerified(url.host ?? ""), url: url, webView: webView)
+                            return
+                        }
+                        switch result {
+                        case .success(let verifiedURL):
+                            self.approvedMainFrameDestination = Self.navigationDestinationKey(verifiedURL)
+                        case .failure(let error):
+                            self.rejectNavigation(error, url: url, webView: webView)
+                            return
+                        }
+                    }
+                    guard self.pendingLoad?.id == loadId else { return }
+                    self.verifiedFragmentLoadId = loadId
+                    if self.fragmentNavigationTarget != nil, webView.url == url {
+                        self.finishNavigation(webView)
+                    } else {
+                        webView.load(URLRequest(url: url))
+                    }
+                }
+            }
             Task { @MainActor [weak self] in
                 let nanos = timeoutMillis * 1_000_000
                 try? await Task.sleep(nanoseconds: nanos)
@@ -1815,7 +1942,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func state() async throws -> [String: Any] {
-        let bridgeState = try await evaluateJSON(IOSWebMountBridgeScripts.state)
+        var bridgeState = try await evaluateJSON(IOSWebMountBridgeScripts.state)
+        bridgeState["navigation_diagnostics"] = navigationDiagnostics
         return bridgeState.merging(snapshot.dictionary(redactURLs: true)) { page, _ in page }
     }
 
@@ -1827,9 +1955,11 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 maxLinks: maxLinks
             )
         )
-        let page = (observation["page"] as? [String: Any] ?? [:])
+        var page = (observation["page"] as? [String: Any] ?? [:])
             .merging(snapshot.dictionary(redactURLs: true)) { page, _ in page }
+        page["navigation_diagnostics"] = navigationDiagnostics
         observation["page"] = page
+        observation["navigation_diagnostics"] = navigationDiagnostics
         observation["observation_consistency"] = "atomic"
         return observation
     }
@@ -2145,6 +2275,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
             case .failure(let error):
                 if isMainFrame, decisionSequence == self.navigationDecisionSequence {
                     self.rejectNavigation(error, url: url, webView: webView)
+                } else if !isMainFrame, decisionSequence == self.navigationDecisionSequence {
+                    self.recordSubframeNavigationDenial(error, url: url)
                 }
                 decisionHandler(.cancel)
             }
@@ -2217,6 +2349,13 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finishNavigation(webView)
+    }
+
+    private func finishNavigation(_ webView: WKWebView) {
+        if let target = fragmentNavigationTarget, let pendingLoad {
+            guard verifiedFragmentLoadId == pendingLoad.id, webView.url == target else { return }
+        }
         guard committedNavigationIsAllowed(webView) else { return }
         snapshot.status = .ready
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
@@ -2247,6 +2386,37 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         snapshot.error = error.localizedDescription
         snapshot.updatedAtMillis = IOSWebMountClock.nowMillis()
         completePendingLoad()
+    }
+
+    private var navigationDiagnostics: [String: Any] {
+        var diagnostics: [String: Any] = [
+            "subframe_navigation_denied_count": subframeNavigationDenialCount
+        ]
+        if let lastSubframeNavigationDenial {
+            diagnostics["last_subframe_navigation_denial"] = lastSubframeNavigationDenial
+        }
+        return diagnostics
+    }
+
+    private func recordSubframeNavigationDenial(
+        _ error: IOSWebMountURLPolicyError,
+        url: URL
+    ) {
+        subframeNavigationDenialCount += 1
+        lastSubframeNavigationDenial = [
+            "frame": "subframe",
+            "decision": "cancel",
+            "url": IOSWebMountRedactor.redactedURL(url.absoluteString) ?? "",
+            "host": IOSWebMountURLPolicy.normalizedHost(url.host) ?? "",
+            "error_code": error.errorCode,
+            "reason": error.localizedDescription,
+            "count": subframeNavigationDenialCount
+        ]
+    }
+
+    private func resetNavigationDiagnostics() {
+        subframeNavigationDenialCount = 0
+        lastSubframeNavigationDenial = nil
     }
 
     private func committedNavigationIsAllowed(_ webView: WKWebView) -> Bool {
@@ -2296,6 +2466,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     private func completePendingLoad() {
         guard let pendingLoad else { return }
         self.pendingLoad = nil
+        fragmentNavigationTarget = nil
         pendingLoad.continuation.resume(returning: snapshot)
     }
 
@@ -2328,65 +2499,175 @@ enum IOSWebMountRuntimeError: Error {
 
 enum IOSWebMountBridgeScripts {
     private static let semanticPrelude = """
+      function amberSafeURL(raw,base){
+        try{var u=new URL(raw,(base&&base.location&&base.location.href)||location.href);return u.origin+u.pathname;}
+        catch(e){return "";}
+      }
       function amberBridge(){
         var bridge=window.__amberWebMountBridgeV1;
-        if(!bridge || bridge.document!==document){
+        if(!bridge || bridge.document!==document || !bridge.frames){
           var documentId=(Date.now().toString(36)+Math.random().toString(36).slice(2,10));
-          bridge={document:document,documentId:documentId,revision:0,nextRef:1,refs:{},elementRefs:new WeakMap()};
+          bridge={document:document,window:window,documentId:documentId,revision:0,nextRef:1,nextFrame:1,refs:{},elementRefs:new WeakMap(),frames:[],frameDiagnostics:[]};
           bridge.snapshotId=function(){return bridge.documentId+":"+bridge.revision;};
           bridge.bump=function(){bridge.revision+=1;return bridge.snapshotId();};
+          bridge.pruneRefs=function(){
+            Object.keys(bridge.refs).forEach(function(key){
+              var item=bridge.refs[key];
+              if(!item || !item.isConnected || !item.ownerDocument){delete bridge.refs[key];}
+            });
+          };
           bridge.refFor=function(el){
             if(!el || el.nodeType!==1) return "";
             var existing=bridge.elementRefs.get(el);
             if(existing) return existing;
-            if(Object.keys(bridge.refs).length>256){
-              Object.keys(bridge.refs).forEach(function(key){if(!bridge.refs[key]||!bridge.refs[key].isConnected) delete bridge.refs[key];});
-            }
+            bridge.pruneRefs();
             var ref="wm:"+bridge.documentId+":"+(bridge.nextRef++);
             bridge.elementRefs.set(el,ref);bridge.refs[ref]=el;return ref;
           };
+          bridge.frameForDocument=function(doc){
+            for(var i=0;i<bridge.frames.length;i++) if(bridge.frames[i].document===doc) return bridge.frames[i];
+            return null;
+          };
+          bridge.queryAll=function(selector,maxResults){
+            var matches=[], limit=maxResults||600;
+            for(var i=0;i<bridge.frames.length && matches.length<limit;i++){
+              try{
+                var found=bridge.frames[i].document.querySelectorAll(selector);
+                for(var j=0;j<found.length && matches.length<limit;j++) matches.push(found[j]);
+              }catch(e){return {errorCode:"invalid_selector",matches:[]};}
+            }
+            return {errorCode:"",matches:matches};
+          };
           bridge.resolve=function(raw){
-            var target=String(raw||"");
+            var target=String(raw||""), frameId="", selector=target;
             if(target.indexOf("wm:")===0){
               if(target.indexOf("wm:"+bridge.documentId+":")!==0) return {errorCode:"stale_ref",element:null};
               var referenced=bridge.refs[target];
-              if(!referenced || !referenced.isConnected) return {errorCode:"stale_ref",element:null};
+              if(!referenced || !referenced.isConnected || !bridge.frameForDocument(referenced.ownerDocument)){
+                return {errorCode:"stale_ref",element:null};
+              }
               return {errorCode:"",element:referenced};
             }
-            if(target.indexOf("css:")===0) target=target.slice(4);
-            if(!target) return {errorCode:"missing_target",element:null};
-            try{return {errorCode:"",element:document.querySelector(target)};}
-            catch(e){return {errorCode:"invalid_selector",element:null};}
+            if(target.indexOf("frame:")===0){
+              var marker=target.indexOf(":css:");
+              if(marker<0) return {errorCode:"invalid_selector",element:null};
+              frameId=target.slice(6,marker); selector=target.slice(marker+5);
+              for(var f=0;f<bridge.frames.length;f++) if(bridge.frames[f].id===frameId){
+                try{return {errorCode:"",element:bridge.frames[f].document.querySelector(selector)};}
+                catch(e){return {errorCode:"invalid_selector",element:null};}
+              }
+              return {errorCode:"stale_frame",element:null};
+            }
+            if(selector.indexOf("css:")===0) selector=selector.slice(4);
+            if(!selector) return {errorCode:"missing_target",element:null};
+            var result=bridge.queryAll(selector,1);
+            return result.errorCode ? {errorCode:result.errorCode,element:null} : {errorCode:"",element:result.matches[0]||null};
           };
-          try{
-            bridge.observer=new MutationObserver(function(){
-              bridge.revision+=1;
-              if(Object.keys(bridge.refs).length>256){
-                Object.keys(bridge.refs).forEach(function(key){if(!bridge.refs[key]||!bridge.refs[key].isConnected) delete bridge.refs[key];});
+          bridge.refreshFrames=function(){
+            var previous=bridge.frames||[], next=[], diagnostics=[], changed=false;
+            function previousForFrame(frameElement){
+              for(var p=0;p<previous.length;p++) if(previous[p].frameElement===frameElement) return previous[p];
+              return null;
+            }
+            function append(doc,win,frameElement,parent,depth){
+              if(depth>8 || next.length>=64) return;
+              var old=frameElement?previousForFrame(frameElement):previous[0];
+              var state={
+                id:frameElement?(old?old.id:"f"+(bridge.nextFrame++)):"root",
+                document:doc,window:win,frameElement:frameElement,parentId:parent?parent.id:null,depth:depth,
+                observer:old&&old.document===doc?old.observer:null,observedDocument:old&&old.document===doc?old.observedDocument:null
+              };
+              if(!old || old.document!==doc) changed=true;
+              next.push(state);
+              var children=[];
+              try{children=doc.querySelectorAll("iframe,frame");}catch(e){return;}
+              for(var i=0;i<children.length;i++){
+                var child=children[i], childDoc=null, childWin=null, src=child.getAttribute("src")||"";
+                try{
+                  childDoc=child.contentDocument;
+                  childWin=child.contentWindow;
+                  if(!childDoc || !childWin){
+                    var crossOrigin=false;
+                    try{if(childWin) void childWin.location.href;}catch(e){crossOrigin=true;}
+                    diagnostics.push({frame_id:state.id+"/"+i,frame_ref:bridge.refFor(child),accessible:false,error_code:crossOrigin?"cross_origin_frame":"frame_not_ready",url:amberSafeURL(src,doc.defaultView)});
+                    continue;
+                  }
+                  void childDoc.location.href;
+                  append(childDoc,childWin,child,state,depth+1);
+                }catch(e){
+                  diagnostics.push({frame_id:state.id+"/"+i,frame_ref:bridge.refFor(child),accessible:false,error_code:"cross_origin_frame",url:amberSafeURL(src,doc.defaultView)});
+                }
+              }
+            }
+            append(document,window,null,null,0);
+            previous.forEach(function(old){
+              var still=next.some(function(item){return item.document===old.document;});
+              if(!still){
+                changed=true;
+                Object.keys(bridge.refs).forEach(function(key){
+                  var item=bridge.refs[key];
+                  if(item && item.ownerDocument===old.document) delete bridge.refs[key];
+                });
+                if(old.observer&&old.observer.disconnect) try{old.observer.disconnect();}catch(e){}
               }
             });
-            bridge.observer.observe(document,{subtree:true,childList:true,attributes:true,characterData:true});
-          }catch(e){}
-          try{
-            bridge.eventBump=function(){bridge.revision+=1;};
-            document.addEventListener("input",bridge.eventBump,true);
-            document.addEventListener("change",bridge.eventBump,true);
-            window.addEventListener("scroll",bridge.eventBump,true);
-          }catch(e){}
+            bridge.frames=next;
+            bridge.frameDiagnostics=diagnostics;
+            next.forEach(function(state){
+              if(state.observedDocument===state.document) return;
+              try{
+                state.observer=new MutationObserver(function(){bridge.revision+=1;bridge.pruneRefs();});
+                state.observer.observe(state.document,{subtree:true,childList:true,attributes:true,characterData:true});
+                state.observedDocument=state.document;
+              }catch(e){}
+              try{
+                state.eventBump=function(){bridge.revision+=1;};
+                state.document.addEventListener("input",state.eventBump,true);
+                state.document.addEventListener("change",state.eventBump,true);
+                state.window.addEventListener("scroll",state.eventBump,true);
+              }catch(e){}
+            });
+            if(changed) bridge.revision+=1;
+            bridge.pruneRefs();
+          };
           window.__amberWebMountBridgeV1=bridge;
         }
+        bridge.refreshFrames();
         return bridge;
+      }
+      function amberFrameForDocument(doc){
+        var bridge=window.__amberWebMountBridgeV1;
+        return bridge&&bridge.frameForDocument?bridge.frameForDocument(doc):null;
+      }
+      function amberTopRect(el){
+        var rect=el.getBoundingClientRect(), left=rect.left, top=rect.top, state=amberFrameForDocument(el.ownerDocument), guard=0;
+        while(state&&state.frameElement&&guard++<8){
+          var frame=state.frameElement, frameRect=frame.getBoundingClientRect();
+          left+=frameRect.left+(frame.clientLeft||0);top+=frameRect.top+(frame.clientTop||0);
+          state=amberFrameForDocument(frame.ownerDocument);
+        }
+        return {left:left,top:top,right:left+rect.width,bottom:top+rect.height,width:rect.width,height:rect.height};
       }
       function amberVisible(el){
         if(!el || !el.isConnected) return false;
-        var node=el;
-        while(node && node.nodeType===1){
-          var style=window.getComputedStyle?window.getComputedStyle(node):null;
-          if(node.hidden || (style && (style.display==="none" || style.visibility==="hidden" || Number(style.opacity)===0))) return false;
+        var ownerDocument=el.ownerDocument, ownerWindow=ownerDocument&&ownerDocument.defaultView||window, node=el;
+        while(node&&node.nodeType===1){
+          var style=ownerWindow.getComputedStyle?ownerWindow.getComputedStyle(node):null;
+          if(node.hidden || (style&&(style.display==="none"||style.visibility==="hidden"||Number(style.opacity)===0))) return false;
           node=node.parentElement;
         }
         var rect=el.getBoundingClientRect();
-        return !!(rect.width&&rect.height&&rect.bottom>=0&&rect.right>=0&&rect.top<=(window.innerHeight||0)&&rect.left<=(window.innerWidth||0));
+        if(!(rect.width&&rect.height&&rect.bottom>=0&&rect.right>=0&&rect.top<=(ownerWindow.innerHeight||0)&&rect.left<=(ownerWindow.innerWidth||0))) return false;
+        var topRect=amberTopRect(el), bridge=window.__amberWebMountBridgeV1;
+        if(!(topRect.width&&topRect.height&&topRect.bottom>=0&&topRect.right>=0&&topRect.top<=(bridge.window.innerHeight||0)&&topRect.left<=(bridge.window.innerWidth||0))) return false;
+        var state=amberFrameForDocument(ownerDocument);
+        while(state&&state.frameElement){
+          var frame=state.frameElement, frameRect=amberTopRect(frame);
+          if(!frame.isConnected || !amberVisible(frame)) return false;
+          if(topRect.right<=frameRect.left||topRect.left>=frameRect.right||topRect.bottom<=frameRect.top||topRect.top>=frameRect.bottom) return false;
+          state=amberFrameForDocument(frame.ownerDocument);
+        }
+        return true;
       }
       function amberRole(el){
         var explicit=el&&el.getAttribute?el.getAttribute("role"):"";
@@ -2403,15 +2684,22 @@ enum IOSWebMountBridgeScripts {
       }
       function amberName(el){
         if(!el) return "";
-        var tag=(el.tagName||"").toLowerCase();
-        var label=el.getAttribute&&(el.getAttribute("aria-label")||el.getAttribute("alt")||el.getAttribute("title")||el.getAttribute("placeholder"))||"";
-        if(!label && el.getAttribute){
+        var tag=(el.tagName||"").toLowerCase(), ownerDocument=el.ownerDocument, label=el.getAttribute&&(el.getAttribute("aria-label")||el.getAttribute("alt")||el.getAttribute("title")||el.getAttribute("placeholder"))||"";
+        if(!label&&el.getAttribute){
           var labelledBy=String(el.getAttribute("aria-labelledby")||"").trim().split(/\\s+/).filter(Boolean);
-          label=labelledBy.map(function(id){var node=document.getElementById(id);return node?(node.innerText||node.textContent||""):"";}).join(" ");
+          label=labelledBy.map(function(id){var node=ownerDocument.getElementById(id);return node?(node.innerText||node.textContent||""):"";}).join(" ");
         }
-        if(!label && el.labels && el.labels.length && amberVisible(el.labels[0])){label=el.labels[0].innerText||"";}
-        var text=label || ((tag==="input"||tag==="textarea"||tag==="select")?"":(el.innerText||""));
+        if(!label&&el.labels&&el.labels.length&&amberVisible(el.labels[0])) label=el.labels[0].innerText||"";
+        var text=label||((tag==="input"||tag==="textarea"||tag==="select")?"":(el.innerText||""));
         return String(text).replace(/\\s+/g," ").trim().slice(0,240);
+      }
+      function amberSelectorForElement(el,path){
+        var frame=amberFrameForDocument(el&&el.ownerDocument);
+        return frame&&frame.id!=="root"?"frame:"+frame.id+":css:"+path:"css:"+path;
+      }
+      function amberFrameSummary(){
+        var bridge=window.__amberWebMountBridgeV1;
+        return (bridge.frames||[]).map(function(frame){return {frame_id:frame.id,parent_frame_id:frame.parentId||"",accessible:true,url:amberSafeURL(frame.document.location&&frame.document.location.href,frame.document.defaultView),depth:frame.depth};});
       }
       function amberSensitiveField(el){
         if(!el || !el.getAttribute) return false;
@@ -2424,12 +2712,14 @@ enum IOSWebMountBridgeScripts {
       }
       function amberActionable(el){
         if(!amberVisible(el)) return false;
-        var node=el;
+        var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window, node=el;
         while(node && node.nodeType===1){
-          var style=window.getComputedStyle?window.getComputedStyle(node):null;
+          var style=ownerWindow.getComputedStyle?ownerWindow.getComputedStyle(node):null;
           if(node.inert || node.getAttribute("aria-hidden")==="true" || (style&&style.pointerEvents==="none")) return false;
           node=node.parentElement;
         }
+        var frame=amberFrameForDocument(el.ownerDocument);
+        if(frame&&frame.frameElement&&!amberActionable(frame.frameElement)) return false;
         return !(el.disabled || (el.getAttribute&&el.getAttribute("aria-disabled")==="true"));
       }
       function amberActionIdentity(el){
@@ -2464,6 +2754,13 @@ enum IOSWebMountBridgeScripts {
       function cleanUrl(raw){try{var u=new URL(raw);return u.origin+u.pathname;}catch(e){return "";}}
       var bridge=amberBridge();
       var body=document.body;
+      var textLength=0, linksCount=0;
+      bridge.frames.forEach(function(frame){
+        if(frame.id!=="root"&&!amberVisible(frame.frameElement)) return;
+        var frameBody=frame.document.body;
+        textLength+=frameBody&&frameBody.innerText?frameBody.innerText.length:0;
+        try{linksCount+=frame.document.links?frame.document.links.length:0;}catch(e){}
+      });
       return JSON.stringify({
         url: cleanUrl(location.href),
         title: document.title || "",
@@ -2471,8 +2768,11 @@ enum IOSWebMountBridgeScripts {
         document_id: bridge.documentId,
         page_revision: bridge.revision,
         snapshot_id: bridge.snapshotId(),
-        text_length: body && body.innerText ? body.innerText.length : 0,
-        links_count: document.links ? document.links.length : 0,
+        text_length: textLength,
+        links_count: linksCount,
+        frame_count: bridge.frames.length,
+        frames: amberFrameSummary(),
+        frame_diagnostics: bridge.frameDiagnostics,
         viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
         scroll: { x: window.scrollX || 0, y: window.scrollY || 0 }
       });
@@ -2506,11 +2806,14 @@ enum IOSWebMountBridgeScripts {
           var mode=\(mode);
           var body=document.body;
           if(mode==="interactive" || mode==="snapshot"){
-            var nodes=Array.prototype.slice.call(document.querySelectorAll("a,button,input,textarea,select,[contenteditable='true'],[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='checkbox'],[role='radio'],[role='combobox'],[role='textbox'],[role='switch']"),0,200).filter(amberVisible).slice(0,100).map(function(el,idx){
-                var rect=el.getBoundingClientRect();
+            var interactiveQuery="a,button,input,textarea,select,[contenteditable='true'],[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='checkbox'],[role='radio'],[role='combobox'],[role='textbox'],[role='switch'],[role='row'],[role='treeitem'],[role='gridcell'],[role='option']";
+            var queriedNodes=bridge.queryAll(interactiveQuery,200);
+            if(queriedNodes.errorCode) return JSON.stringify({ok:false,error_code:queriedNodes.errorCode,snapshot_id:bridge.snapshotId()});
+            var nodes=queriedNodes.matches.filter(amberVisible).slice(0,100).map(function(el,idx){
+                var rect=amberTopRect(el);
               return {
                 ref:bridge.refFor(el),
-                selector:"css:"+cssPath(el),
+                selector:amberSelectorForElement(el,cssPath(el)),
                 tag:(el.tagName||"").toLowerCase(),
                 role:amberRole(el),
                 name:amberName(el),
@@ -2520,17 +2823,17 @@ enum IOSWebMountBridgeScripts {
                 actionable: amberActionable(el),
                 disabled: !!el.disabled,
                 checked: typeof el.checked==="boolean" ? el.checked : null,
-                focused: document.activeElement===el,
+                focused: el.ownerDocument.activeElement===el,
                 rect: {
-                  x: Math.round(rect.x || 0),
-                  y: Math.round(rect.y || 0),
+                  x: Math.round(rect.left || 0),
+                  y: Math.round(rect.top || 0),
                   width: Math.round(rect.width || 0),
                   height: Math.round(rect.height || 0)
                 }
               };
             });
             if(mode==="interactive"){
-              return JSON.stringify({ mode: mode, url: cleanUrl(location.href), document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), nodes: nodes });
+              return JSON.stringify({ mode: mode, url: cleanUrl(location.href), document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), nodes: nodes, frame_count:bridge.frames.length, frames:amberFrameSummary(), frame_diagnostics:bridge.frameDiagnostics });
             }
             function nearbyText(el){
               var text="";
@@ -2538,29 +2841,39 @@ enum IOSWebMountBridgeScripts {
               if(!text && el.parentElement) text = el.parentElement.innerText || "";
               return String(text || "").replace(/\\s+/g," ").trim().slice(0,240);
             }
-            var candidates=Array.prototype.slice.call(document.querySelectorAll("img,iframe,canvas,video,svg,picture,h1,h2,h3,p,blockquote,article,section"),0,120).map(function(el){
-              var rect=el.getBoundingClientRect();
+            var queriedCandidates=bridge.queryAll("img,iframe,canvas,video,svg,picture,h1,h2,h3,p,blockquote,article,section",120);
+            if(queriedCandidates.errorCode) return JSON.stringify({ok:false,error_code:queriedCandidates.errorCode,snapshot_id:bridge.snapshotId()});
+            var candidates=queriedCandidates.matches.map(function(el){
+              var rect=amberTopRect(el);
               return {
                 ref:bridge.refFor(el),
-                selector:"css:"+cssPath(el),
+                selector:amberSelectorForElement(el,cssPath(el)),
                 tag:(el.tagName||"").toLowerCase(),
                 src: el.currentSrc ? cleanUrl(el.currentSrc) : (el.src ? cleanUrl(el.src) : ""),
                 href: el.href ? cleanUrl(el.href) : "",
                 alt: el.getAttribute ? (el.getAttribute("alt") || "") : "",
                 title: el.getAttribute ? (el.getAttribute("title") || "") : "",
                 nearby_text: nearbyText(el),
-                visible: !!(rect.width && rect.height && rect.bottom >= 0 && rect.right >= 0 && rect.top <= (window.innerHeight || 0) && rect.left <= (window.innerWidth || 0)),
+                visible: amberVisible(el),
                 rect: {
-                  x: Math.round(rect.x || 0),
-                  y: Math.round(rect.y || 0),
+                  x: Math.round(rect.left || 0),
+                  y: Math.round(rect.top || 0),
                   width: Math.round(rect.width || 0),
                   height: Math.round(rect.height || 0)
                 }
               };
             }).filter(function(item){ return item.visible && (item.rect.width || item.rect.height); });
-            var visibleText=(body && body.innerText ? body.innerText : "").replace(/\\s+/g," ").trim().slice(0,\(maxChars));
-            var links=Array.prototype.slice.call(document.querySelectorAll("a[href]"),0,500).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
+            var visibleText=bridge.frames.filter(function(frame){return frame.id==="root"||amberVisible(frame.frameElement);}).map(function(frame){return frame.document.body&&frame.document.body.innerText?frame.document.body.innerText:"";}).join(" ").replace(/\\s+/g," ").trim().slice(0,\(maxChars));
+            var queriedLinks=bridge.queryAll("a[href]",500);
+            var links=(queriedLinks.matches||[]).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
               return { text:(a.innerText||a.getAttribute("aria-label")||"").trim().slice(0,200), href: cleanUrl(a.href) };
+            });
+            var totalTextLength=0,totalLinksCount=0;
+            bridge.frames.forEach(function(frame){
+              if(frame.id!=="root"&&!amberVisible(frame.frameElement)) return;
+              var frameBody=frame.document.body;
+              totalTextLength+=frameBody&&frameBody.innerText?frameBody.innerText.length:0;
+              try{totalLinksCount+=frame.document.links?frame.document.links.length:0;}catch(e){}
             });
             var page={
               url:cleanUrl(location.href),
@@ -2569,8 +2882,11 @@ enum IOSWebMountBridgeScripts {
               document_id:bridge.documentId,
               page_revision:bridge.revision,
               snapshot_id:bridge.snapshotId(),
-              text_length:body&&body.innerText?body.innerText.length:0,
-              links_count:document.links?document.links.length:0,
+              text_length:totalTextLength,
+              links_count:totalLinksCount,
+              frame_count:bridge.frames.length,
+              frames:amberFrameSummary(),
+              frame_diagnostics:bridge.frameDiagnostics,
               viewport:{width:window.innerWidth||0,height:window.innerHeight||0},
               scroll:{x:window.scrollX||0,y:window.scrollY||0}
             };
@@ -2587,14 +2903,18 @@ enum IOSWebMountBridgeScripts {
               viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
               interactive_nodes: nodes,
               visual_candidates: candidates,
+              frame_count:bridge.frames.length,
+              frames:amberFrameSummary(),
+              frame_diagnostics:bridge.frameDiagnostics,
               redacted: true
             });
           }
-          var text=(body && body.innerText ? body.innerText : "").slice(0,\(maxChars));
-          var links=Array.prototype.slice.call(document.querySelectorAll("a[href]"),0,500).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
+          var text=bridge.frames.filter(function(frame){return frame.id==="root"||amberVisible(frame.frameElement);}).map(function(frame){return frame.document.body&&frame.document.body.innerText?frame.document.body.innerText:"";}).join(" ").slice(0,\(maxChars));
+          var queriedReadableLinks=bridge.queryAll("a[href]",500);
+          var links=(queriedReadableLinks.matches||[]).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
             return { text:(a.innerText||a.getAttribute("aria-label")||"").trim().slice(0,200), href: cleanUrl(a.href) };
           });
-          return JSON.stringify({ mode:"readable", url: cleanUrl(location.href), title: document.title || "", document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), text: text, links: links });
+          return JSON.stringify({ mode:"readable", url: cleanUrl(location.href), title: document.title || "", document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), text: text, links: links, frame_count:bridge.frames.length, frames:amberFrameSummary(), frame_diagnostics:bridge.frameDiagnostics });
         })();
         """
     }
@@ -2625,7 +2945,7 @@ enum IOSWebMountBridgeScripts {
           }
           var value="";
           if(kind==="value"){ value=el.value || ""; }
-          else if(kind==="attr"){ value=attr ? (el.getAttribute(attr) || "") : ""; if(attr==="href" || attr==="src") value=cleanUrl(value); }
+          else if(kind==="attr"){ value=attr ? (el.getAttribute(attr) || "") : ""; if(attr==="href" || attr==="src") value=amberSafeURL(value,el.ownerDocument.defaultView); }
           else if(kind==="html"){ value=el.outerHTML || ""; }
           else { value=el.innerText || ""; }
           return JSON.stringify({ok:true,target_ref:bridge.refFor(el),kind:kind,value:String(value).slice(0,\(maxChars)),document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()});
@@ -2651,6 +2971,7 @@ enum IOSWebMountBridgeScripts {
         let xLiteral = intOption(["x"]).map(String.init) ?? "null"
         let yLiteral = intOption(["y"]).map(String.init) ?? "null"
         let byY = intOption(["dy", "by_y"]) ?? 0
+        let clickCount = max(1, min(intOption(["click_count"]) ?? 1, 2))
         let namedPosition = (options["to"] as? String)?.lowercased() ?? ""
         let maxResults = max(1, min(intOption(["max_results"]) ?? 10, 20))
         let allowHighConsequence = options["_amber_allow_high_consequence"] as? Bool ?? false
@@ -2662,6 +2983,7 @@ enum IOSWebMountBridgeScripts {
           var bridge=amberBridge();
           var method=\(jsString(method)), target=\(jsString(target)), text=\(jsString(text ?? ""));
           var expectedSnapshot=\(jsString(snapshotId));
+          var clickCount=\(clickCount);
           var allowHighConsequence=\(allowHighConsequence ? "true" : "false");
           var preflightOnly=\(preflightOnly ? "true" : "false");
           function base(extra){
@@ -2701,19 +3023,30 @@ enum IOSWebMountBridgeScripts {
           }
           function isDisabled(el){return !!(el && (el.disabled || (el.getAttribute&&el.getAttribute("aria-disabled")==="true")));}
           function topmost(el){
-            var rect=el.getBoundingClientRect(), x=rect.left+rect.width/2, y=rect.top+rect.height/2;
-            var hit=document.elementFromPoint(x,y);
-            return !hit || hit===el || el.contains(hit);
+            var ownerDocument=el.ownerDocument, rect=el.getBoundingClientRect(), x=rect.left+rect.width/2, y=rect.top+rect.height/2;
+            var hit=ownerDocument.elementFromPoint(x,y);
+            if(hit && hit!==el && !el.contains(hit)) return false;
+            var state=amberFrameForDocument(ownerDocument), localX=x, localY=y;
+            while(state&&state.frameElement){
+              var frame=state.frameElement, frameDocument=frame.ownerDocument, frameRect=frame.getBoundingClientRect();
+              var parentX=frameRect.left+(frame.clientLeft||0)+localX, parentY=frameRect.top+(frame.clientTop||0)+localY;
+              var parentHit=frameDocument.elementFromPoint(parentX,parentY);
+              if(parentHit&&parentHit!==frame&&!frame.contains(parentHit)) return false;
+              localX=parentX;localY=parentY;state=amberFrameForDocument(frameDocument);
+            }
+            return true;
           }
           function nativeSetValue(el,value){
             if(el && el.isContentEditable){el.textContent=value;return;}
-            var proto=el.tagName==="TEXTAREA"?window.HTMLTextAreaElement&&HTMLTextAreaElement.prototype:window.HTMLInputElement&&HTMLInputElement.prototype;
+            var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window;
+            var proto=el.tagName==="TEXTAREA"?ownerWindow.HTMLTextAreaElement&&ownerWindow.HTMLTextAreaElement.prototype:ownerWindow.HTMLInputElement&&ownerWindow.HTMLInputElement.prototype;
             var descriptor=proto&&Object.getOwnPropertyDescriptor(proto,"value");
             if(descriptor&&descriptor.set) descriptor.set.call(el,value); else el.value=value;
           }
-          function keyEvent(el,type,key){return el.dispatchEvent(new KeyboardEvent(type,{key:key,bubbles:true,cancelable:true}));}
+          function keyEvent(el,type,key){var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,Constructor=ownerWindow.KeyboardEvent||KeyboardEvent;return el.dispatchEvent(new Constructor(type,{key:key,bubbles:true,cancelable:true}));}
           function inputEvent(el,type,data){
-            try{return el.dispatchEvent(new InputEvent("beforeinput",{inputType:type,data:data,bubbles:true,cancelable:true}));}
+            var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,Constructor=ownerWindow.InputEvent||InputEvent;
+            try{return el.dispatchEvent(new Constructor("beforeinput",{inputType:type,data:data,bubbles:true,cancelable:true}));}
             catch(e){return true;}
           }
           function insertText(el,value){
@@ -2722,9 +3055,55 @@ enum IOSWebMountBridgeScripts {
             var next=current.slice(0,start)+value+current.slice(end);
             nativeSetValue(el,next);
             try{el.setSelectionRange(start+value.length,start+value.length);}catch(e){}
-            try{el.dispatchEvent(new InputEvent("input",{inputType:"insertText",data:value,bubbles:true}));}
-            catch(e){el.dispatchEvent(new Event("input",{bubbles:true}));}
+            var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,InputConstructor=ownerWindow.InputEvent||InputEvent,EventConstructor=ownerWindow.Event||Event;
+            try{el.dispatchEvent(new InputConstructor("input",{inputType:"insertText",data:value,bubbles:true}));}
+            catch(e){el.dispatchEvent(new EventConstructor("input",{bubbles:true}));}
             return next.length;
+          }
+          function activeElementDeep(){
+            var active=document.activeElement, guard=0;
+            while(active&&active.tagName&&active.tagName.toLowerCase()==="iframe"&&active.contentDocument&&guard++<8){active=active.contentDocument.activeElement;}
+            return active;
+          }
+          function elementAtViewportPoint(x,y){
+            var currentDocument=bridge.document, hit=currentDocument.elementFromPoint(x,y), guard=0;
+            while(hit&&hit.tagName&&hit.tagName.toLowerCase()==="iframe"&&hit.contentDocument&&guard++<8){
+              var frameRect=hit.getBoundingClientRect();
+              currentDocument=hit.contentDocument;
+              hit=currentDocument.elementFromPoint(x-frameRect.left-(hit.clientLeft||0),y-frameRect.top-(hit.clientTop||0));
+            }
+            return hit;
+          }
+          function scrollElement(el,position,byY){
+            var ownerDocument=el&&el.ownerDocument||bridge.document, ownerWindow=ownerDocument.defaultView||window;
+            if(el&&el.tagName&&el.tagName.toLowerCase()==="iframe"&&el.contentWindow&&el.contentDocument){
+              if(position==="top") el.contentWindow.scrollTo({top:0});
+              else if(position==="bottom") el.contentWindow.scrollTo({top:el.contentDocument.documentElement.scrollHeight});
+              else el.contentWindow.scrollBy({top:byY||400});
+              return {window:el.contentWindow,element:el};
+            }
+            if(el){
+              var style=ownerWindow.getComputedStyle?ownerWindow.getComputedStyle(el):null;
+              var scrollable=style&&/(auto|scroll|overlay)/.test(style.overflowY||"")&&el.scrollHeight>el.clientHeight;
+              if(scrollable){
+                if(position==="top") el.scrollTop=0;
+                else if(position==="bottom") el.scrollTop=el.scrollHeight;
+                else if(el.scrollBy) el.scrollBy({top:byY||400});
+                else el.scrollTop+=byY||400;
+              }else{
+                el.scrollIntoView({block:position==="top"?"start":position==="bottom"?"end":"center",inline:"nearest"});
+                var frameState=amberFrameForDocument(ownerDocument);
+                while(frameState&&frameState.frameElement){
+                  frameState.frameElement.scrollIntoView({block:position==="top"?"start":position==="bottom"?"end":"center",inline:"nearest"});
+                  frameState=amberFrameForDocument(frameState.frameElement.ownerDocument);
+                }
+              }
+              return {window:ownerWindow,element:el};
+            }
+            if(position==="top") ownerWindow.scrollTo({top:0});
+            else if(position==="bottom") ownerWindow.scrollTo({top:ownerDocument.documentElement.scrollHeight});
+            else ownerWindow.scrollBy({top:byY||400});
+            return {window:ownerWindow,element:null};
           }
           if(expectedSnapshot && expectedSnapshot!==bridge.snapshotId()){
             return fail("stale_snapshot",{expected_snapshot_id:expectedSnapshot});
@@ -2732,14 +3111,14 @@ enum IOSWebMountBridgeScripts {
 
           if(method==="click" || method==="tap"){
             var el=null, x=\(xLiteral), y=\(yLiteral);
-            if(method==="tap" && x!==null && y!==null){el=document.elementFromPoint(x,y);}
+            if(method==="tap" && x!==null && y!==null){el=elementAtViewportPoint(x,y);}
             else {
               var resolved=resolveTarget(true);
               if(resolved.errorCode) return fail(resolved.errorCode);
               el=resolved.element;
             }
             if(!el) return fail("target_not_found");
-            if(!preflightOnly && method==="click") el.scrollIntoView({block:"center",inline:"nearest"});
+            if(!preflightOnly && method==="click") scrollElement(el,"center",0);
             if(!amberVisible(el)) return fail("target_not_visible",{target_ref:bridge.refFor(el)});
             if(!amberActionable(el)) return fail("target_not_actionable",{target_ref:bridge.refFor(el)});
             if(isDisabled(el)) return fail("target_disabled",{target_ref:bridge.refFor(el)});
@@ -2747,16 +3126,26 @@ enum IOSWebMountBridgeScripts {
             var blocked=dispositionFailure(el,method==="tap" && x!==null && y!==null);
             if(blocked) return blocked;
             if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
-            el.click(); bridge.bump();
-            return finish({found:true,target_ref:bridge.refFor(el),dispatched:true,verified:false});
+            var doubleClickEvent=null;
+            if(clickCount===2){
+              try{
+                var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,MouseConstructor=ownerWindow.MouseEvent||MouseEvent;
+                doubleClickEvent=new MouseConstructor("dblclick",{bubbles:true,cancelable:true,detail:2,view:ownerWindow});
+              }catch(e){return fail("double_click_dispatch_failed",{target_ref:bridge.refFor(el)});}
+              el.dispatchEvent(new MouseConstructor("click",{bubbles:true,cancelable:true,detail:1,view:ownerWindow}));
+              el.dispatchEvent(new MouseConstructor("click",{bubbles:true,cancelable:true,detail:2,view:ownerWindow}));
+              el.dispatchEvent(doubleClickEvent);
+            }else el.click();
+            bridge.bump();
+            return finish({found:true,target_ref:bridge.refFor(el),dispatched:true,click_count:clickCount,dblclick_dispatched:clickCount===2,verified:false});
           }
 
           if(method==="type" || method==="keys"){
             var hasExplicitTarget=!!target, resolved=resolveTarget(method==="type"), el=resolved.element;
             if(resolved.errorCode) return fail(resolved.errorCode);
-            if(!el && method==="keys" && !hasExplicitTarget) el=document.activeElement;
+            if(!el && method==="keys" && !hasExplicitTarget) el=activeElementDeep();
             if(!el) return fail(hasExplicitTarget?"target_not_found":"focused_field_not_found");
-            if(el===document.body || el===document.documentElement) return fail("focused_field_not_found");
+            if(el===el.ownerDocument.body || el===el.ownerDocument.documentElement) return fail("focused_field_not_found");
             if(amberSensitiveField(el)) return fail("sensitive_field_requires_human",{requires_human:true,handoff:true,resume_condition:"user_hands_back_control",target_ref:bridge.refFor(el)});
             var contentEditable=!!el.isContentEditable;
             if(!(el.tagName==="INPUT" || el.tagName==="TEXTAREA" || (method==="type" && contentEditable))) return fail("target_not_typeable",{target_ref:bridge.refFor(el)});
@@ -2771,7 +3160,7 @@ enum IOSWebMountBridgeScripts {
             if(blocked) return blocked;
             if(isDisabled(el) || el.readOnly) return fail("target_not_editable",{target_ref:bridge.refFor(el)});
             if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
-            var wasFocused=document.activeElement===el;
+            var wasFocused=el.ownerDocument.activeElement===el;
             el.focus();
             if(method==="keys" && !wasFocused && typeof el.setSelectionRange==="function"){
               var end=String(el.value||"").length;
@@ -2780,12 +3169,13 @@ enum IOSWebMountBridgeScripts {
             if(method==="type"){
               if(!inputEvent(el,"insertText",text)) return fail("input_cancelled",{target_ref:bridge.refFor(el)});
               nativeSetValue(el,text);
-              try{el.dispatchEvent(new InputEvent("input",{inputType:"insertText",data:text,bubbles:true}));}
-              catch(e){el.dispatchEvent(new Event("input",{bubbles:true}));}
+              var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,InputConstructor=ownerWindow.InputEvent||InputEvent,EventConstructor=ownerWindow.Event||Event;
+              try{el.dispatchEvent(new InputConstructor("input",{inputType:"insertText",data:text,bubbles:true}));}
+              catch(e){el.dispatchEvent(new EventConstructor("input",{bubbles:true}));}
               bridge.bump();
               var resolvedValue=contentEditable?String(el.textContent||""):String(el.value||"");
               var typeVerified=resolvedValue===text;
-              return finish({found:true,target_ref:bridge.refFor(el),value_length:resolvedValue.length,focused:document.activeElement===el,verified:typeVerified});
+              return finish({found:true,target_ref:bridge.refFor(el),value_length:resolvedValue.length,focused:el.ownerDocument.activeElement===el,verified:typeVerified});
             }
             var special={enter:"Enter",tab:"Tab",escape:"Escape",backspace:"Backspace",arrowup:"ArrowUp",arrowdown:"ArrowDown",arrowleft:"ArrowLeft",arrowright:"ArrowRight"};
             var key=special[text.toLowerCase()]||"", defaultApplied=false;
@@ -2796,7 +3186,8 @@ enum IOSWebMountBridgeScripts {
                 if(start===end && start>0) start-=1;
                 nativeSetValue(el,current.slice(0,start)+current.slice(end));
                 try{el.setSelectionRange(start,start);}catch(e){}
-                el.dispatchEvent(new Event("input",{bubbles:true})); defaultApplied=true;
+                var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,EventConstructor=ownerWindow.Event||Event;
+                el.dispatchEvent(new EventConstructor("input",{bubbles:true})); defaultApplied=true;
               }
               keyEvent(el,"keyup",key); bridge.bump();
               return finish({found:true,target_ref:bridge.refFor(el),key:key,event_dispatched:true,default_applied:defaultApplied,trusted:false,value_length:String(el.value||"").length,verified:defaultApplied});
@@ -2815,16 +3206,17 @@ enum IOSWebMountBridgeScripts {
           if(method==="scroll"){
             var resolved=resolveTarget(false), el=resolved.element;
             if(resolved.errorCode) return fail(resolved.errorCode);
+            if(el && /^(IFRAME|FRAME)$/.test(el.tagName) && !bridge.frames.some(function(frame){return frame.frameElement===el;})){
+              var frameDiagnostic=bridge.frameDiagnostics.find(function(item){return item.frame_ref===bridge.refFor(el);});
+              return fail(frameDiagnostic?frameDiagnostic.error_code:"frame_not_ready",{target_ref:bridge.refFor(el)});
+            }
             if(preflightOnly) return finish({preflight_only:true,target_ref:el?bridge.refFor(el):"",target_label:el?amberName(el):"",verified:true});
             var position=\(jsString(namedPosition)), byY=\(byY);
-            var beforeX=Math.round(window.scrollX||0), beforeY=Math.round(window.scrollY||0);
-            if(el){el.scrollIntoView({block:position==="top"?"start":position==="bottom"?"end":"center",inline:"nearest"});}
-            else if(position==="top"){window.scrollTo({top:0});}
-            else if(position==="bottom"){window.scrollTo({top:document.documentElement.scrollHeight});}
-            else {window.scrollBy({top:byY||400});}
+            var beforeWindow=el&&el.tagName&&el.tagName.toLowerCase()==="iframe"&&el.contentWindow?el.contentWindow:el&&el.ownerDocument&&el.ownerDocument.defaultView||window;
+            var beforeX=Math.round(beforeWindow.scrollX||0), beforeY=Math.round(beforeWindow.scrollY||0), beforeElementScrollTop=el&&typeof el.scrollTop==="number"?el.scrollTop:null, beforeTopRect=el?amberTopRect(el):null, scrollResult=scrollElement(el,position,byY);
             bridge.bump();
-            var afterX=Math.round(window.scrollX||0), afterY=Math.round(window.scrollY||0);
-            return finish({found:!!el,target_ref:el?bridge.refFor(el):"",scroll_x:afterX,scroll_y:afterY,verified:beforeX!==afterX||beforeY!==afterY});
+            var afterWindow=scrollResult.window||beforeWindow, afterX=Math.round(afterWindow.scrollX||0), afterY=Math.round(afterWindow.scrollY||0), elementScrollTop=scrollResult.element&&scrollResult.element.scrollTop, afterTopRect=el?amberTopRect(el):null, topRectChanged=beforeTopRect&&afterTopRect&&(beforeTopRect.left!==afterTopRect.left||beforeTopRect.top!==afterTopRect.top);
+            return finish({found:!!el,target_ref:el?bridge.refFor(el):"",scroll_x:afterX,scroll_y:afterY,element_scroll_top:typeof elementScrollTop==="number"?Math.round(elementScrollTop):null,verified:beforeX!==afterX||beforeY!==afterY||(typeof elementScrollTop==="number"&&elementScrollTop!==beforeElementScrollTop)||!!topRectChanged});
           }
 
           if(method==="select"){
@@ -2839,7 +3231,8 @@ enum IOSWebMountBridgeScripts {
             if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
             var option=Array.prototype.find.call(el.options,function(item){return item.value===text;});
             if(!option) return fail("option_not_found",{target_ref:bridge.refFor(el)});
-            el.value=text; el.dispatchEvent(new Event("input",{bubbles:true})); el.dispatchEvent(new Event("change",{bubbles:true})); bridge.bump();
+            var ownerWindow=el.ownerDocument&&el.ownerDocument.defaultView||window,EventConstructor=ownerWindow.Event||Event;
+            el.value=text; el.dispatchEvent(new EventConstructor("input",{bubbles:true})); el.dispatchEvent(new EventConstructor("change",{bubbles:true})); bridge.bump();
             return finish({found:true,target_ref:bridge.refFor(el),selected_index:el.selectedIndex,verified:el.value===text});
           }
 
@@ -2850,14 +3243,20 @@ enum IOSWebMountBridgeScripts {
                 var resolved=bridge.resolve(target);
                 if(resolved.errorCode) return fail(resolved.errorCode);
                 if(resolved.element) matches=[resolved.element];
+              } else if(target.indexOf("frame:")===0){
+                var resolved=bridge.resolve(target);
+                if(resolved.errorCode) return fail(resolved.errorCode);
+                if(resolved.element) matches=[resolved.element];
               } else {
                 var css=target.indexOf("css:")===0?target.slice(4):target;
-                try{matches=Array.prototype.slice.call(document.querySelectorAll(css),0,maxResults);}
-                catch(e){return fail("invalid_selector");}
+                var queried=bridge.queryAll(css,maxResults);
+                if(queried.errorCode) return fail(queried.errorCode);
+                matches=queried.matches;
               }
             } else if(query){
-              var candidates=Array.prototype.slice.call(document.querySelectorAll("a,button,input,textarea,select,[contenteditable='true'],label,p,span,div,main,li,h1,h2,h3,h4,h5,h6,td,th,article,section,[role]"),0,600);
-              matches=candidates.filter(function(item){return amberVisible(item) && amberName(item).toLowerCase().indexOf(query)>=0;}).slice(0,maxResults);
+              var queried=bridge.queryAll("a,button,input,textarea,select,[contenteditable='true'],label,p,span,div,main,li,h1,h2,h3,h4,h5,h6,td,th,article,section,[role]",600);
+              if(queried.errorCode) return fail(queried.errorCode);
+              matches=queried.matches.filter(function(item){return amberVisible(item) && amberName(item).toLowerCase().indexOf(query)>=0;}).slice(0,maxResults);
             }
             var output=matches.filter(amberVisible).slice(0,maxResults).map(function(item){return {ref:bridge.refFor(item),tag:(item.tagName||"").toLowerCase(),role:amberRole(item),name:amberName(item),visible:true};});
             return finish({found:output.length>0,count:output.length,matches:output,verified:output.length>0});
@@ -2881,7 +3280,7 @@ enum IOSWebMountBridgeScripts {
             var resolved=bridge.resolve(\(jsString(selector)));
             errorCode=resolved.errorCode||""; matched=!!resolved.element && amberVisible(resolved.element);
           } else if(condition==="text"){
-            matched=String(document.body&&document.body.innerText||"").indexOf(\(jsString(text)))>=0;
+            matched=bridge.frames.some(function(frame){return (frame.id==="root"||amberVisible(frame.frameElement)) && String(frame.document.body&&frame.document.body.innerText||"").indexOf(\(jsString(text)))>=0;});
           } else if(condition==="url_contains"){
             matched=String(location.href||"").indexOf(\(jsString(urlFragment)))>=0;
           } else if(condition==="ready_state"){
@@ -3787,6 +4186,7 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_get", description: "Read a visible element's text, checked value, or non-sensitive attribute through a restricted bridge. Raw HTML reads are disabled on iOS.", requiresUserAction: false),
         .init(name: "wm_visual_snapshot", description: "Return viewport visual candidates from DOM rectangles without calling an external vision model.", requiresUserAction: false),
         .init(name: "wm_screenshot", description: "Capture the current viewport to a local WebMount artifact after foreground approval.", requiresUserAction: true),
+        .init(name: "wm_visual_read", description: "Read a real local viewport screenshot with a vision model after approval. Use after navigation and key actions to verify the visible result; DOM candidates alone are not visual verification.", requiresUserAction: true),
         .init(name: "wm_back", description: "Navigate the current WebMount session backward.", requiresUserAction: false),
         .init(name: "wm_forward", description: "Navigate the current WebMount session forward.", requiresUserAction: false),
         .init(name: "wm_clear_session", description: "Clear cookies and website data for one station after explicit user action.", requiresUserAction: true),
@@ -3813,8 +4213,7 @@ enum IOSWebMountToolCatalog {
         "wm_oauth_connect",
         "wm_oauth_refresh",
         "wm_profile_synthesize",
-        "wm_site_adapter",
-        "wm_visual_read"
+        "wm_site_adapter"
     ]
 }
 
@@ -3941,7 +4340,8 @@ final class IOSWebMountController {
         input: String,
         isUserInitiated: Bool,
         context: IOSWebMountExecutionContext? = nil,
-        allowUnlistedHosts: Bool = false
+        allowUnlistedHosts: Bool = false,
+        visualRead: IOSWebMountVisualReadHandler? = nil
     ) async -> String {
         guard IOSWebMountToolCatalog.supportedToolNames.contains(toolName) else {
             return Self.unsupportedToolResult(toolName: toolName)
@@ -3965,6 +4365,9 @@ final class IOSWebMountController {
                let sessionId = (args["session_id"] as? String)?.nilIfBlank,
                let record = sessionStore.record(sessionId: sessionId),
                record.backend != .local {
+                if toolName == "wm_visual_read" {
+                    return Self.json(["ok": false, "error_code": "unsupported_backend", "reason": "wm_visual_read currently supports local WKWebView sessions only."])
+                }
                 return try await desktopResult(
                     toolName: toolName,
                     args: args,
@@ -4006,6 +4409,11 @@ final class IOSWebMountController {
                 return try await getResult(args: args, context: context)
             case "wm_visual_snapshot":
                 return try await visualSnapshotResult(args: args, context: context)
+            case "wm_visual_read":
+                guard isUserInitiated else {
+                    return Self.json(["ok": false, "needs_user_action": true, "reason": "Visual reading sends the viewport screenshot to the configured vision provider and requires foreground approval."])
+                }
+                return try await visualReadResult(args: args, context: context, reader: visualRead)
             case "wm_screenshot":
                 guard isUserInitiated else {
                     return Self.json([
@@ -4347,6 +4755,14 @@ final class IOSWebMountController {
             default:
                 return Self.unsupportedToolResult(toolName: toolName)
             }
+        } catch let error as IOSWebMountVisionReader.RequestFailure {
+            return Self.json([
+                "ok": false,
+                "tool": toolName,
+                "error_code": "vision_request_failed",
+                "error": error.localizedDescription,
+                "diagnostics": error.diagnostics
+            ])
         } catch let error as IOSWebMountSessionError {
             return Self.json([
                 "ok": false,
@@ -4481,8 +4897,6 @@ final class IOSWebMountController {
     static func unsupportedToolResult(toolName: String) -> String {
         let reason: String
         switch toolName {
-        case "wm_visual_read":
-            reason = "wm_visual_read is unsupported on iOS because it requires an external vision provider and a separate privacy approval path."
         case "wm_signed_fetch", "wm_network_inspect", "wm_fetch_replay", "wm_recipe_candidates":
             reason = "This network replay capability is unsupported on iOS until WebMount has isolated signed-fetch and network-log handling."
         case "wm_eval":
@@ -5331,7 +5745,7 @@ final class IOSWebMountController {
     ]
 
     private static let localSessionPolicyToolNames: Set<String> = [
-        "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot", "wm_screenshot",
+        "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot", "wm_screenshot", "wm_visual_read",
         "wm_back", "wm_forward", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
         "wm_select", "wm_find", "wm_wait"
     ]
@@ -5516,6 +5930,7 @@ final class IOSWebMountController {
             return Self.json([
                 "ok": false,
                 "denied": true,
+                "error_code": error.errorCode,
                 "reason": error.localizedDescription,
                 "url": IOSWebMountRedactor.redactedURL(rawURL) ?? ""
             ])
@@ -5691,6 +6106,53 @@ final class IOSWebMountController {
             "state": runtime.snapshot.dictionary(redactURLs: true),
             "result": IOSWebMountRedactor.redactedJSONObject(result),
             "redacted": true
+        ])
+    }
+
+    private func visualReadResult(
+        args: [String: Any],
+        context: IOSWebMountExecutionContext?,
+        reader: IOSWebMountVisualReadHandler?
+    ) async throws -> String {
+        guard let reader else {
+            return Self.json(["ok": false, "error_code": "vision_unavailable", "reason": "No vision model reader is connected. Visual verification was not performed."])
+        }
+        let question = (args["question"] as? String)?.nilIfBlank
+            ?? "Describe the visible page, loading errors, dialogs and controls. Verify whether the intended browser action visibly succeeded; state uncertainty."
+        guard question.count <= 4_000 else {
+            return Self.json(["ok": false, "error_code": "invalid_arguments", "reason": "question must be at most 4000 characters."])
+        }
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
+        let before = try await runtime.state()
+        let snapshotId = before["snapshot_id"] as? String ?? ""
+        let capturedAt = IOSWebMountClock.nowMillis()
+        let capture = try await runtime.screenshot()
+        let afterCapture = try await runtime.state()
+        guard !snapshotId.isEmpty, afterCapture["snapshot_id"] as? String == snapshotId else {
+            return Self.json(["ok": false, "error_code": "page_changed", "requires_reobserve": true, "reason": "The page changed during capture. Wait for a stable page and retry visual reading."])
+        }
+        try Task.checkCancellation()
+        let analysis = try await reader(capture, question)
+        try Task.checkCancellation()
+        let current = try? await runtime.state()
+        let stale = current?["snapshot_id"] as? String != snapshotId
+            || sessionStore.record(sessionId: runtime.snapshot.sessionId) == nil
+        touch(sessionId: runtime.snapshot.sessionId, context: context)
+        return Self.json([
+            "ok": !stale,
+            "tool": "wm_visual_read",
+            "session_id": runtime.snapshot.sessionId,
+            "snapshot_id": snapshotId,
+            "captured_at_ms": capturedAt,
+            "width": capture.width,
+            "height": capture.height,
+            "verification_source": "screenshot",
+            "observation_only": true,
+            "untrusted_page_content": true,
+            "requires_reobserve": stale,
+            "error_code": stale ? "stale_visual_read" : "",
+            "reason": stale ? "The page changed while the vision model was reading. This analysis describes an older screenshot; observe again before acting." : "",
+            "analysis": IOSWebMountRedactor.redactedText(String(analysis.prefix(16_000)))
         ])
     }
 

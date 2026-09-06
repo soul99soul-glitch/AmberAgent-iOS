@@ -91,6 +91,13 @@ struct ChatContextCompactState: Equatable {
     }
 }
 
+struct ChatContextCompactBoundary: Equatable, Identifiable {
+    let id: String
+    let afterMessageId: String
+    let coveredMessageIds: Set<String>
+    let state: ChatContextCompactState
+}
+
 extension ChatContextSnapshot {
     /// Fallback only when the model and registry both omit a window.
     static let defaultContextWindowTokens: Double = 200_000
@@ -269,6 +276,7 @@ final class ChatViewModel {
 
     var configurationError: String?
     var contextCompactState: ChatContextCompactState = .idle
+    var contextCompactBoundaries: [ChatContextCompactBoundary] = []
 
     // MARK: - Steer 队列（P1-a）
 
@@ -561,6 +569,21 @@ final class ChatViewModel {
     private var hasActiveBackgroundGenerationForCurrentConversation: Bool {
         guard let currentConversationId else { return false }
         return IOSChatBackgroundGenerationCoordinator.shared.hasActiveJob(conversationId: currentConversationId)
+    }
+
+    /// The settings entry must not discard a composer draft or queue a blocked navigation.
+    func prepareForThemeGeneration() -> String? {
+        guard inputText.isEmpty, pendingImages.isEmpty, pendingSelectedFilePreview == nil,
+              !isAttachingSelectedFile, !isRecognizingImages else {
+            return "聊天中还有未发送的文字或附件，请先发送或清空草稿，再生成主题。"
+        }
+        guard prepareForConversationChange(to: nil) else {
+            let message = conversationStore?.lastUserVisibleError?.message
+                ?? "当前会话仍在生成中，正在执行的工具完成后才能生成主题。"
+            conversationStore?.clearUserVisibleError()
+            return message
+        }
+        return nil
     }
 
     @discardableResult
@@ -1129,6 +1152,7 @@ final class ChatViewModel {
                 setContextCompactState: { [weak self] state in
                     withAnimation(.easeOut(duration: 0.22)) {
                         self?.contextCompactState = state
+                        if state.status == .completed { self?.refreshContextCompactBoundaries() }
                     }
                 },
                 persistMessages: { [weak self] conversationId in
@@ -1265,6 +1289,7 @@ final class ChatViewModel {
         let storedMessages = store.currentMessages
         messages = messagesByTerminatingStaleSearches(in: storedMessages, store: store) ?? storedMessages
         contextCompactState = .idle
+        refreshContextCompactBoundaries()
         // P1-a: 队列随会话切换重灌（冷启动恢复：只进队列 UI，不自动发送）。
         steerQueue = steerQueueStore.load(conversationId: currentConversationId)
         bumpMessageRevision(reason: reason)
@@ -1274,6 +1299,12 @@ final class ChatViewModel {
         orchestratedStatusRefreshTask = Task { @MainActor [weak self] in
             await self?.refreshCurrentConversationOrchestratedStatus()
         }
+    }
+
+    private func refreshContextCompactBoundaries() {
+        contextCompactBoundaries = IOSContextCompactionCoordinator.shared.timelineBoundaries(
+            conversationId: currentConversationId, messages: messages
+        )
     }
 
     private func messagesByTerminatingStaleSearches(

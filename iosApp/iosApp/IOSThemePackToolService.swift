@@ -155,6 +155,19 @@ final class IOSThemePackToolService {
 }
 
 enum IOSThemePackToolCatalog {
+    static func generationPrompt(style: String) -> String? {
+        let style = style.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !style.isEmpty else { return nil }
+        return IOSAppDeepLink.normalizedPrompt("""
+            请为 Amber 生成一个主题并直接在 App 中试穿。
+            先调用 tool_search 搜索“生成主题”，再调用 theme_pack_status 读取当前主题和允许的选项，最后根据我的风格要求设计配方并调用 theme_pack_import；不要只输出 JSON 或操作说明。
+            使用新的主题 id，保持文字对比度，不修改浅深模式和聊天正文字体。试穿后由我选择“套用”保存或“还原”，未确认前不要声称已经保存。
+
+            风格要求：
+            \(style)
+            """)
+    }
+
     static let toolNames: Set<String> = [
         "theme_pack_status",
         "theme_pack_import",

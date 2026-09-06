@@ -5,6 +5,32 @@ import WebKit
 
 @MainActor
 final class ChatViewModelSelectedFileContextTests: XCTestCase {
+    func testThemeGenerationPreservesDraftAndCanRetryAfterComposerIsCleared() {
+        let viewModel = ChatViewModel(settingsStore: SettingsStore(), autoGenerateResponses: false)
+        viewModel.inputText = "未发送的草稿"
+        XCTAssertNotNil(viewModel.prepareForThemeGeneration())
+        XCTAssertEqual(viewModel.inputText, "未发送的草稿")
+
+        viewModel.inputText = ""
+        let image = ChatViewModel.PendingChatImage(
+            dataUrl: "data:image/png;base64,QUJD", previewData: Data("preview".utf8)
+        )
+        viewModel.pendingImages = [image]
+        XCTAssertNotNil(viewModel.prepareForThemeGeneration())
+        XCTAssertEqual(viewModel.pendingImages.first?.id, image.id)
+
+        viewModel.pendingImages = []
+        viewModel.isAttachingSelectedFile = true
+        XCTAssertNotNil(viewModel.prepareForThemeGeneration())
+        XCTAssertTrue(viewModel.isAttachingSelectedFile)
+        viewModel.isAttachingSelectedFile = false
+        viewModel.isRecognizingImages = true
+        XCTAssertNotNil(viewModel.prepareForThemeGeneration())
+        XCTAssertTrue(viewModel.isRecognizingImages)
+        viewModel.isRecognizingImages = false
+        XCTAssertNil(viewModel.prepareForThemeGeneration())
+    }
+
     func testComposerAllowsImageOnlyDraft() {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
@@ -164,13 +190,13 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertNil(viewModel.configurationError)
     }
 
-    func testStaleCompactTerminalEventIsAppliedAfterRunFinishes() {
-        XCTAssertTrue(ChatContextCompactEventRouter.shouldApply(
+    func testStaleCompactEventsAreRejectedAfterRunFinishes() {
+        XCTAssertFalse(ChatContextCompactEventRouter.shouldApply(
             event: .completed(summary: "上下文已压缩。"),
             eventRunId: "run-a",
             currentRunId: nil
         ))
-        XCTAssertTrue(ChatContextCompactEventRouter.shouldApply(
+        XCTAssertFalse(ChatContextCompactEventRouter.shouldApply(
             event: .idle,
             eventRunId: "run-a",
             currentRunId: nil
@@ -184,6 +210,12 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             event: .completed(summary: "旧任务完成"),
             eventRunId: "run-a",
             currentRunId: "run-b"
+        ))
+        XCTAssertFalse(ChatContextCompactEventRouter.shouldApply(
+            event: .failed(message: "旧任务失败"), eventRunId: "run-a", currentRunId: nil
+        ))
+        XCTAssertTrue(ChatContextCompactEventRouter.shouldApply(
+            event: .completed(summary: "本次完成"), eventRunId: "run-a", currentRunId: "run-a"
         ))
     }
 

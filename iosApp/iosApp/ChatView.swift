@@ -1079,6 +1079,7 @@ struct ChatView: View {
             isLoading: viewModel.isLoading,
             isRecognizingImages: viewModel.isRecognizingImages,
             contextCompactState: viewModel.contextCompactState,
+            contextCompactBoundaries: viewModel.contextCompactBoundaries,
             followGeneration: followGeneration,
             displaySetting: sharedSettings.displaySetting,
             generativeUiSetting: sharedSettings.agentRuntime.generativeUi,

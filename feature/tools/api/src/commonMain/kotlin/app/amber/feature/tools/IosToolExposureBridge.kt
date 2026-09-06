@@ -90,6 +90,7 @@ class IosToolExposureBridge private constructor(
             "wm_tab_list",
             "wm_open",
             "wm_observe",
+            "wm_visual_read",
             "wm_visual_snapshot",
             "wm_wait",
         )
@@ -194,8 +195,17 @@ class IosToolExposureBridge private constructor(
                 "workflow_hint",
                 JsonPrimitive(
                     "WebMount core workflow is also callable on the next step: get a session with " +
-                        "wm_tab_list, navigate URLs only with wm_open, then use wm_observe or " +
-                        "wm_visual_snapshot. wm_type and wm_keys never navigate.",
+                        "wm_tab_list, navigate URLs only with wm_open, then use wm_observe for DOM " +
+                        "targets. For the local iOS WKWebView backend, when a vision-capable model is " +
+                        "available, call wm_visual_read after " +
+                        "navigation or a key browser action to verify the real viewport when " +
+                        "manual approval or high-risk auto-approval is available. " +
+                        "wm_visual_snapshot returns DOM visual candidates, not an image. " +
+                        "If visual access is unavailable, the backend is remote, or neither approval " +
+                        "path is available, explicitly say visual verification has not occurred and do not " +
+                        "claim visual confirmation succeeded; DOM-verifiable results may still be " +
+                        "reported honestly. An ok result only means the image was analyzed, not that a browser action " +
+                        "succeeded. wm_type and wm_keys never navigate.",
                 ),
             )
         })

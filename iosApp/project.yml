@@ -9,6 +9,7 @@ options:
 
 settings:
   base:
+    AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl
     SWIFT_VERSION: "6.1"
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     WATCHOS_DEPLOYMENT_TARGET: "11.0"
@@ -316,7 +317,7 @@ targets:
       - path: iosApp/ru.lproj
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl.activity
+        PRODUCT_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER).activity"
         INFOPLIST_FILE: ActivityWidget/Info.plist
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"
@@ -452,7 +453,7 @@ targets:
           install_python Python.xcframework AmberShellPythonApp
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl
+        PRODUCT_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER)"
         AGENT_ACTIVITY_URL_SCHEME: amber-experimental
         INFOPLIST_FILE: "$(DERIVED_FILE_DIR)/AmberExperimental-Info.plist"
         CODE_SIGN_ENTITLEMENTS: iosApp/AmberAgentExperimental.entitlements
@@ -554,8 +555,8 @@ targets:
         buildPhase: resources
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl.watchkitapp
-        AMBER_COMPANION_APP_BUNDLE_IDENTIFIER: app.amber.ios.experimental-gpl
+        PRODUCT_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER).watchkitapp"
+        AMBER_COMPANION_APP_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER)"
         INFOPLIST_FILE: WatchApp/Info.plist
         MARKETING_VERSION: "1.0.0"
         CURRENT_PROJECT_VERSION: "1"

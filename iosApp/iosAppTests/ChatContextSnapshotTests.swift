@@ -120,6 +120,25 @@ final class ChatContextSnapshotTests: XCTestCase {
         XCTAssertEqual(metrics.tokensPerSecond ?? -1, 45, accuracy: 0.01)
     }
 
+    func testFreshUsageIncludesToolOutputAddedToSameAssistantMessage() {
+        let reply = assistant(promptTokens: 1_000, completionTokens: 100, cachedTokens: 0,
+                              startSecond: 0, durationSeconds: 3)
+        let tool = UIMessagePart.Tool(
+            toolCallId: "call", toolName: "file_read", input: "{}",
+            output: [UIMessagePart.Text(text: String(repeating: "x", count: 4_000), metadata: nil)],
+            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+        )
+        let filled = UIMessage(
+            id: reply.id, role: reply.role, parts: reply.parts + [tool], annotations: reply.annotations,
+            createdAt: reply.createdAt, finishedAt: reply.finishedAt, modelId: reply.modelId,
+            usage: reply.usage, translation: reply.translation
+        )
+        let occupancy = ContextCompactionEditTestSupport.nextTurnOccupancyTokens(
+            messages: [filled], compactSourceIds: [], compactCreatedAt: 0, draftText: ""
+        )
+        XCTAssertEqual(occupancy, 2_100, "Provider usage precedes tool execution; add only the new output")
+    }
+
     func testFreshUsageAddsMessagesAfterLastAssistant() {
         let reply = assistant(
             promptTokens: 8_000,

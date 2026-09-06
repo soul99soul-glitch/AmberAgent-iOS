@@ -39,7 +39,7 @@ class IosToolExposureBridgeTest {
         "workspace_artifact_read", "workspace_artifact_delete",
         "generate_image",
         "wm_stations", "wm_tab_list", "wm_tab_new", "wm_tab_close", "wm_open",
-        "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot",
+        "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot", "wm_visual_read",
         "wm_screenshot", "wm_back", "wm_forward", "wm_clear_session", "wm_site_add",
         "wm_site_remove", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
         "wm_select", "wm_find", "wm_wait",
@@ -144,12 +144,22 @@ class IosToolExposureBridgeTest {
         assertTrue("wm_tab_list" in expanded, "browser work must always be able to acquire a session")
         assertTrue("wm_open" in expanded, "a new user turn must not lose the navigation tool")
         assertTrue("wm_observe" in expanded, "navigation must retain the semantic observation step")
+        assertTrue("wm_visual_read" in expanded, "browser work must retain visual viewport verification")
         assertTrue("wm_visual_snapshot" in expanded, "browser work should retain the visual-candidate fallback")
         assertTrue("wm_wait" in expanded, "browser work should retain page stabilization")
         assertTrue(
             payload["workflow_hint"]?.jsonPrimitive?.contentOrNull?.contains("wm_open") == true,
             "the result must explicitly prevent type/key tools from being mistaken for navigation",
         )
+        val workflowHint = payload["workflow_hint"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        assertTrue(workflowHint.contains("wm_visual_read"))
+        assertTrue(workflowHint.contains("wm_visual_snapshot"))
+        assertTrue(workflowHint.contains("not an image"))
+        assertTrue(workflowHint.contains("remote"))
+        assertTrue(workflowHint.contains("manual approval or high-risk auto-approval"))
+        assertTrue(workflowHint.contains("visual verification has not occurred"))
+        assertTrue(workflowHint.contains("DOM-verifiable results may still be reported honestly"))
+        assertTrue(workflowHint.contains("image was analyzed"))
         assertTrue(expanded.all { it in bridge.visibleTools().map { tool -> tool.name } })
     }
 

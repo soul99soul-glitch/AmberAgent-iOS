@@ -297,6 +297,8 @@ struct NativeTimelineEntry: Identifiable, Equatable {
     let renderDigest: ChatRowDigest?
 
     var isAssistantContinuation: Bool = false
+    var isCompactedHistory: Bool = false
+    var compactState: ChatContextCompactState? = nil
 
     var hasMultipleVariants: Bool {
         variantInfo?.hasMultipleVariants == true
@@ -342,6 +344,7 @@ enum NativeTimelineProjector {
         isLoading: Bool = false,
         isRecognizingImages: Bool = false,
         contextCompactState: ChatContextCompactState = .idle,
+        contextCompactBoundaries: [ChatContextCompactBoundary] = [],
         viewportState: ChatViewportState = ChatViewportState(),
         displaySettingSignature: String = "",
         generativeUiSettingSignature: String = "",
@@ -391,11 +394,18 @@ enum NativeTimelineProjector {
             )
         }
 
+        let existingIds = Set(messages.map(ChatMessageProjector.messageId(for:)))
+        let boundaries = contextCompactBoundaries.filter {
+            $0.coveredMessageIds.isSubset(of: existingIds) && existingIds.contains($0.afterMessageId)
+        }
+        let anchors = Set(boundaries.map(\.afterMessageId))
+        let compactedEnd = messages.lastIndex { anchors.contains(ChatMessageProjector.messageId(for: $0)) }
+        let compactedIds = Set(messages.prefix(compactedEnd.map { $0 + 1 } ?? 0).map(ChatMessageProjector.messageId(for:)))
+        let boundariesByAnchor = Dictionary(grouping: boundaries, by: \.afterMessageId)
         for entry in plan.entries {
             switch entry {
             case .message, .pendingAssistant:
-                entries.append(
-                    nativeEntry(
+                var projected = nativeEntry(
                         for: entry,
                         isGenerationActive: isGenerationActive,
                         viewportState: viewportState,
@@ -407,7 +417,18 @@ enum NativeTimelineProjector {
                         variantInfoProvider: variantInfoProvider,
                         contentHashProvider: contentHashProvider
                     )
-                )
+                projected.isCompactedHistory = projected.messageId.map(compactedIds.contains) ?? false
+                entries.append(projected)
+                if let messageId = projected.messageId {
+                    for boundary in boundariesByAnchor[messageId] ?? [] {
+                        var marker = decorationEntry(
+                            id: "context-compact-\(boundary.id)", kind: .contextMarker,
+                            renderToken: "\(boundary.id)-\(boundary.state.summary)"
+                        )
+                        marker.compactState = boundary.state
+                        entries.append(marker)
+                    }
+                }
             case let .bottomAnchor(id):
                 if isRecognizingImages {
                     entries.append(
@@ -418,7 +439,7 @@ enum NativeTimelineProjector {
                         )
                     )
                 }
-                if contextCompactState.isVisible {
+                if contextCompactState.isVisible && contextCompactState.status != .completed {
                     let contextID = "context-compact-\(String(describing: contextCompactState.status))-\(contextCompactState.updatedAt.timeIntervalSince1970)"
                     entries.append(
                         decorationEntry(

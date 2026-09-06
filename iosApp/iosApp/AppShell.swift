@@ -892,7 +892,7 @@ private extension View {
             case .settings:
                 SettingsHomeView(settingsStore: settingsStore, sharedSettings: sharedSettings)
             case .appearance:
-                AppearanceSettingsView()
+                AppearanceSettingsView(prepareGeneration: chatViewModel.prepareForThemeGeneration)
             case .language:
                 LanguageSettingsView()
             case .displayFont:

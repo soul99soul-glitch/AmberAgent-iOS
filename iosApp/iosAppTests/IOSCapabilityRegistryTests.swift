@@ -312,8 +312,7 @@ final class IOSCapabilityRegistryTests: XCTestCase {
             "contacts_search",
             "calendar_create",
             "wm_eval",
-            "wm_signed_fetch",
-            "wm_visual_read"
+            "wm_signed_fetch"
         ]
 
         for toolName in blocked {
@@ -350,7 +349,7 @@ final class IOSCapabilityRegistryTests: XCTestCase {
         XCTAssertTrue(capability.blockedToolNames.contains("wm_eval"))
         XCTAssertTrue(capability.blockedToolNames.contains("wm_signed_fetch"))
         XCTAssertTrue(capability.blockedToolNames.contains("wm_network_inspect"))
-        XCTAssertTrue(capability.blockedToolNames.contains("wm_visual_read"))
+        XCTAssertTrue(capability.modelToolNames.contains("wm_visual_read"))
         XCTAssertTrue(capability.modelToolNames.contains("wm_visual_snapshot"))
         XCTAssertTrue(capability.modelToolNames.contains("wm_screenshot"))
         XCTAssertEqual(capability.risk, .high)

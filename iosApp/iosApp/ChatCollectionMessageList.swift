@@ -86,6 +86,7 @@ private final class NativeTimelineProjectionCache {
         isLoading: Bool,
         isRecognizingImages: Bool,
         contextCompactState: ChatContextCompactState,
+        contextCompactBoundaries: [ChatContextCompactBoundary],
         viewportState: ChatViewportState,
         displaySettingSignature: String,
         generativeUiSettingSignature: String,
@@ -103,6 +104,7 @@ private final class NativeTimelineProjectionCache {
             isLoading: isLoading,
             isRecognizingImages: isRecognizingImages,
             contextCompactState: contextCompactState,
+            contextCompactBoundaries: contextCompactBoundaries,
             displaySettingSignature: displaySettingSignature,
             generativeUiSettingSignature: generativeUiSettingSignature,
             reasoningLevelLabel: reasoningLevelLabel
@@ -139,6 +141,7 @@ private final class NativeTimelineProjectionCache {
             isLoading: isLoading,
             isRecognizingImages: isRecognizingImages,
             contextCompactState: contextCompactState,
+            contextCompactBoundaries: contextCompactBoundaries,
             viewportState: viewportState,
             displaySettingSignature: displaySettingSignature,
             generativeUiSettingSignature: generativeUiSettingSignature,
@@ -169,6 +172,7 @@ private final class NativeTimelineProjectionCache {
         isLoading: Bool,
         isRecognizingImages: Bool,
         contextCompactState: ChatContextCompactState,
+        contextCompactBoundaries: [ChatContextCompactBoundary],
         displaySettingSignature: String,
         generativeUiSettingSignature: String,
         reasoningLevelLabel: String?
@@ -179,6 +183,7 @@ private final class NativeTimelineProjectionCache {
             "loading=\(isLoading)",
             "vision=\(isRecognizingImages)",
             "context=\(String(describing: contextCompactState.status)):\(contextCompactState.updatedAt.timeIntervalSince1970):\(contextCompactState.summary)",
+            "boundaries=\(contextCompactBoundaries.map { $0.id + "@" + $0.afterMessageId }.joined(separator: ","))",
             "display=\(displaySettingSignature)",
             "generative=\(generativeUiSettingSignature)",
             "reasoning=\(reasoningLevelLabel ?? "")"
@@ -195,6 +200,7 @@ struct NativeChatTimelineView: View {
     var isLoading: Bool
     var isRecognizingImages: Bool
     var contextCompactState: ChatContextCompactState
+    var contextCompactBoundaries: [ChatContextCompactBoundary] = []
     var followGeneration: Bool
     var displaySetting: DisplaySetting
     var generativeUiSetting: GenerativeUiSetting
@@ -256,6 +262,7 @@ struct NativeChatTimelineView: View {
             isLoading: isLoading,
             isRecognizingImages: isRecognizingImages,
             contextCompactState: contextCompactState,
+            contextCompactBoundaries: contextCompactBoundaries,
             viewportState: renderViewportState,
             displaySettingSignature: displaySettingSignature,
             generativeUiSettingSignature: generativeUiSettingSignature,
@@ -712,6 +719,8 @@ struct NativeChatTimelineView: View {
                     onAction: onAction
                 )
                 .equatable()
+                .saturation(entry.isCompactedHistory ? 0 : 1)
+                .opacity(entry.isCompactedHistory && entry.role != MessageRole.user ? 0.7 : 1)
                 .environment(workspaceStore)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(
@@ -738,7 +747,7 @@ struct NativeChatTimelineView: View {
         case .visionRecognition:
             VisionRecognitionIndicator()
         case .contextMarker:
-            ContextCompactTimelineMarker(state: contextCompactState)
+            ContextCompactTimelineMarker(state: entry.compactState ?? contextCompactState)
         case .bottomAnchor:
             Color.clear
                 .frame(height: ChatLayout.bottomRestGap)

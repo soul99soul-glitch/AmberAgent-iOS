@@ -1,11 +1,56 @@
 import XCTest
 import Combine
+import SwiftUI
 import Shared
 @testable import SwiftStreamingMarkdown
 @testable import iosApp
 
 @MainActor
 final class ChatMessageProjectionTests: XCTestCase {
+    func testNativeCompactTimelineVisualLayout() async throws {
+        let old = UIMessage.companion.user(prompt: "这部分历史已压缩")
+        let recent = UIMessage.companion.assistant(prompt: "继续对话，新的内容显示在分界线下方。")
+        let oldID = String(describing: old.id)
+        let boundary = ChatContextCompactBoundary(
+            id: "visual", afterMessageId: oldID, coveredMessageIds: [oldID],
+            state: ChatContextCompactState(
+                status: .completed,
+                summary: "完成态摘要不应在分隔线下重复显示",
+                updatedAt: Date()
+            )
+        )
+        let defaults = UserDefaults(suiteName: "CompactVisual-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        let view = NativeChatTimelineView(
+            signal: ChatMessageUpdateSignal(), configurationIssue: nil, isGenerationActive: false,
+            isLoading: false, isRecognizingImages: false,
+            contextCompactState: ChatContextCompactState(status: .compacting, summary: "", updatedAt: Date()),
+            contextCompactBoundaries: [boundary], followGeneration: false,
+            displaySetting: settings.displaySetting, generativeUiSetting: settings.agentRuntime.generativeUi,
+            reasoningLevelLabel: nil, workspaceStore: IOSWorkspaceStore(), scrollToBottomTrigger: 0,
+            scrollToBottomSource: .button, messageAnchor: nil, currentConversationID: "compact-visual",
+            messagesProvider: { [old, recent] }, variantInfoProvider: { _ in nil },
+            onAction: { _ in }, onViewportStateChange: { _ in }, onDismissKeyboard: {}
+        )
+        let host = UIHostingController(rootView: view)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+        window.backgroundColor = .systemBackground
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        host.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "compact-native-timeline"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        XCTAssertEqual(host.view.bounds.width, 390)
+    }
 
     private func source(_ relativePath: String) throws -> String {
         let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -1140,7 +1185,7 @@ final class ChatMessageProjectionTests: XCTestCase {
 
     func testNativeTimelineProjectionIncludesTailDecorationsBeforeBottomAnchor() {
         let context = ChatContextCompactState(
-            status: .completed,
+            status: .compacting,
             summary: "已压缩上下文",
             updatedAt: Date(timeIntervalSince1970: 1)
         )
@@ -1157,6 +1202,32 @@ final class ChatMessageProjectionTests: XCTestCase {
             .contextMarker,
             .bottomAnchor
         ])
+    }
+
+    func testCompactBoundaryStaysWithCoveredHistoryWhenConversationContinues() throws {
+        let old = UIMessage.companion.user(prompt: "old history")
+        let recent = UIMessage.companion.assistant(prompt: "recent answer")
+        let new = UIMessage.companion.user(prompt: "continue")
+        let oldID = String(describing: old.id)
+        let boundary = ChatContextCompactBoundary(
+            id: "compact-1", afterMessageId: String(describing: recent.id), coveredMessageIds: [oldID],
+            state: ChatContextCompactState(status: .completed, summary: "summary", updatedAt: Date())
+        )
+        for messages in [[old, recent], [old, recent, new]] {
+            let projection = NativeTimelineProjector.build(
+                messages: messages, event: .conversationLoaded, contextCompactBoundaries: [boundary]
+            )
+            XCTAssertEqual(projection.entries[2].id, "context-compact-compact-1")
+            XCTAssertEqual(projection.entries[2].compactState?.status, .completed)
+            XCTAssertTrue(try XCTUnwrap(projection.messageEntry(for: oldID)).isCompactedHistory)
+            XCTAssertTrue(try XCTUnwrap(projection.messageEntry(for: String(describing: recent.id))).isCompactedHistory)
+            XCTAssertFalse(projection.messageEntry(for: String(describing: new.id))?.isCompactedHistory ?? false)
+            XCTAssertEqual(projection.entries.filter { $0.kind == .contextMarker }.count, 1)
+        }
+        let switched = NativeTimelineProjector.build(
+            messages: [recent, new], event: .branchChanged, contextCompactBoundaries: [boundary]
+        )
+        XCTAssertFalse(switched.entries.contains { $0.kind == .contextMarker || $0.isCompactedHistory })
     }
 
     func testNativeTimelineProjectionLeavesWaitingStatusToTopIslandByDefault() {

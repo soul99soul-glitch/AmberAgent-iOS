@@ -11,6 +11,159 @@ import XCTest
 /// 3. `fitMessagesToTokenBudget` 截尾丢弃消息时,注入侧必须可见(不得静默)。
 @MainActor
 final class IOSContextCompactionCoordinatorTests: XCTestCase {
+    func testRequestSystemMessagesDoNotInvalidateSavedCompaction() async throws {
+        let provider = SuccessfulCompactProvider()
+        let coordinator = IOSContextCompactionCoordinator(textProvider: provider)
+        let defaults = UserDefaults(suiteName: "CompactSystem-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults).snapshot
+        let model = Model(
+            modelId: "compact-test", displayName: "Compact Test", id: KotlinUuid.companion.random(),
+            type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: KotlinInt(value: 10_000), providerOverwrite: nil
+        )
+        let fallback = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Test", models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""), builtIn: false,
+            descriptionText: nil, shortDescriptionText: nil, apiKey: "test", baseUrl: "https://example.test",
+            chatCompletionsPath: "/chat/completions", useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let params = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [], reasoningLevel: .off,
+            customHeaders: [], customBody: []
+        )
+        let conversationId = KotlinUuid.companion.random()
+        let file = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("conversation-compacts/\(conversationId).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let history = (0..<26).map { _ in
+            UIMessage.companion.user(prompt: String(repeating: "x", count: 1_400))
+        }
+        let firstSystem = UIMessage.companion.system(prompt: "Request-only guidance")
+        let first = try await coordinator.prepareMessagesForRequest(
+            uploadMessages: [firstSystem] + history, conversationId: conversationId,
+            settings: settings, params: params, fallbackProvider: fallback
+        )
+        XCTAssertTrue(first.contains { $0.id == firstSystem.id })
+        let boundaries = coordinator.timelineBoundaries(conversationId: conversationId, messages: history)
+        XCTAssertEqual(boundaries.count, 1)
+        XCTAssertFalse(boundaries.contains { $0.coveredMessageIds.contains(String(describing: firstSystem.id)) })
+        let callsAfterFirst = provider.calls
+        XCTAssertGreaterThan(callsAfterFirst, 0)
+        let nextSystem = UIMessage.companion.system(prompt: "Updated request-only guidance")
+        let next = try await coordinator.prepareMessagesForRequest(
+            uploadMessages: [nextSystem] + history, conversationId: conversationId,
+            settings: settings, params: params, fallbackProvider: fallback
+        )
+        XCTAssertEqual(provider.calls, callsAfterFirst, "A new request system ID must not trigger another compression")
+        XCTAssertTrue(next.contains { $0.id == nextSystem.id })
+        XCTAssertFalse(next.contains { $0.id == firstSystem.id })
+        XCTAssertEqual(IOSContextCompactionCoordinator().timelineBoundaries(
+            conversationId: conversationId, messages: history
+        ).map(\.id), boundaries.map(\.id))
+    }
+
+    func testTimelineBoundariesRestoreFromPersistedCompacts() throws {
+        let conversationId = KotlinUuid.companion.random()
+        let old = UIMessage.companion.user(prompt: "old")
+        let recent = UIMessage.companion.user(prompt: "recent")
+        let oldID = String(describing: old.id)
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("conversation-compacts", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("\(conversationId).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        var record: [String: Any] = [
+            "id": "saved-compact", "conversationId": String(describing: conversationId), "summary": "Saved summary",
+            "level": 1, "sourceStartIndex": 0, "sourceEndIndex": 0, "sourceMessageIds": [oldID],
+            "tokenEstimate": 10, "createdAt": 1_000, "updatedAt": 1_000, "status": "completed"
+        ]
+        try JSONSerialization.data(withJSONObject: [record]).write(to: file)
+        let restored = IOSContextCompactionCoordinator().timelineBoundaries(conversationId: conversationId, messages: [old, recent])
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(restored.first?.id, "saved-compact")
+        XCTAssertEqual(restored.first?.afterMessageId, oldID)
+        XCTAssertEqual(restored.first?.coveredMessageIds, [oldID])
+        XCTAssertTrue(IOSContextCompactionCoordinator().timelineBoundaries(conversationId: conversationId, messages: [recent]).isEmpty)
+        record["timelineAnchorMessageId"] = String(describing: recent.id)
+        try JSONSerialization.data(withJSONObject: [record]).write(to: file)
+        let anchored = IOSContextCompactionCoordinator().timelineBoundaries(conversationId: conversationId, messages: [old, recent])
+        XCTAssertEqual(anchored.first?.afterMessageId, String(describing: recent.id))
+        XCTAssertTrue(IOSContextCompactionCoordinator().timelineBoundaries(conversationId: conversationId, messages: [old]).isEmpty)
+    }
+
+    func testSingleThresholdWaitsBeforeReturningUploadMessagesAndCancelsWithRequest() async throws {
+        let provider = BlockingCompactProvider()
+        let coordinator = IOSContextCompactionCoordinator(textProvider: provider)
+        let defaults = UserDefaults(suiteName: "CompactWait-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults).snapshot
+        let model = Model(
+            modelId: "compact-test", displayName: "Compact Test", id: KotlinUuid.companion.random(),
+            type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: KotlinInt(value: 10_000), providerOverwrite: nil
+        )
+        let fallback = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Test", models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""), builtIn: false,
+            descriptionText: nil, shortDescriptionText: nil, apiKey: "test", baseUrl: "https://example.test",
+            chatCompletionsPath: "/chat/completions", useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let params = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [], reasoningLevel: .off,
+            customHeaders: [], customBody: []
+        )
+        let messages = (0..<22).map { _ in UIMessage.companion.user(prompt: String(repeating: "x", count: 1_400)) }
+        _ = try await coordinator.prepareMessagesForRequest(
+            uploadMessages: messages, conversationId: KotlinUuid.companion.random(), settings: settings,
+            params: params, fallbackProvider: fallback
+        )
+        XCTAssertFalse(provider.started, "Below 85% must not call the compression model")
+        let overThreshold = messages + (0..<4).map { _ in UIMessage.companion.user(prompt: String(repeating: "x", count: 1_400)) }
+        var returned = false
+        let task = Task { @MainActor in
+            defer { returned = true }
+            return try await coordinator.prepareMessagesForRequest(
+                uploadMessages: overThreshold, conversationId: KotlinUuid.companion.random(), settings: settings,
+                params: params, fallbackProvider: fallback
+            )
+        }
+        defer { task.cancel() }
+        for _ in 0..<500 where !provider.started && !returned {
+            try await Task.sleep(nanoseconds: 1_000_000)
+        }
+        XCTAssertTrue(provider.started)
+        XCTAssertFalse(returned, "An 85% compaction must finish before the agent gets its next request")
+        task.cancel()
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {} catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertTrue(provider.cancelled)
+    }
+
+    func testAutomaticThresholdUsesCompactedHistoryAndNewRequestOverhead() {
+        let history = (0..<10).map { _ in
+            UIMessage.companion.user(prompt: String(repeating: "x", count: 4_000))
+        }
+        let tail = (0..<8).map { _ in UIMessage.companion.user(prompt: "continue") }
+        let messages = history + tail
+        let covered = history.map { String(describing: $0.id) }
+        XCTAssertTrue(ContextCompactionEditTestSupport.automaticPlan(messages: messages, coveredIds: []).shouldCompact)
+        let compacted = ContextCompactionEditTestSupport.automaticPlan(messages: messages, coveredIds: covered)
+        XCTAssertFalse(compacted.shouldCompact)
+        XCTAssertLessThan(compacted.estimatedTokens, 1_000)
+        XCTAssertTrue(ContextCompactionEditTestSupport.automaticPlan(
+            messages: messages, coveredIds: covered, overheadTokens: 9_000
+        ).shouldCompact)
+        // A deleted/replaced source message invalidates its compact; do not undercount the remaining history.
+        XCTAssertTrue(ContextCompactionEditTestSupport.automaticPlan(
+            messages: Array(messages.dropFirst()), coveredIds: covered
+        ).shouldCompact)
+    }
+
 
     private func makeMessage(parts: [UIMessagePart]) -> UIMessage {
         let now = Kotlinx_datetimeLocalDateTime(
@@ -244,5 +397,35 @@ final class IOSContextCompactionCoordinatorTests: XCTestCase {
             .flatMap { $0.compactMap { ($0 as? UIMessagePart.Text)?.text } }
             .joined(separator: "\n")
         XCTAssertTrue(texts.contains("…[truncated"))
+    }
+}
+
+@MainActor
+private final class BlockingCompactProvider: @preconcurrency IOSAgentTextProvider {
+    var started = false
+    var cancelled = false
+
+    func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+        started = true
+        do {
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+        } catch {
+            cancelled = true
+            throw error
+        }
+        throw CancellationError()
+    }
+}
+
+@MainActor
+private final class SuccessfulCompactProvider: @preconcurrency IOSAgentTextProvider {
+    var calls = 0
+    func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+        calls += 1
+        return MessageChunk(id: "compact", model: "test", choices: [
+            UIMessageChoice(index: 0, delta: nil,
+                message: UIMessage.companion.assistant(prompt: "The user is testing context compaction. Preserve the conversation history. Continue the current task. No external actions were performed."),
+                finishReason: "stop")
+        ], usage: nil)
     }
 }

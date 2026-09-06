@@ -298,6 +298,36 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertTrue(payload.contains("theme_pack_import"), payload)
     }
 
+    func testThemeGenerationHandsStyleAndToolWorkflowToChat() throws {
+        XCTAssertNil(IOSThemePackToolCatalog.generationPrompt(style: "  \n"))
+        XCTAssertNil(IOSThemePackToolCatalog.generationPrompt(style: String(repeating: "色", count: 2_001)))
+        let prompt = try XCTUnwrap(IOSThemePackToolCatalog.generationPrompt(style: "  雨天书店，墨绿色  "))
+        XCTAssertTrue(prompt.hasSuffix("雨天书店，墨绿色"))
+        XCTAssertTrue(prompt.contains("theme_pack_status"))
+        XCTAssertTrue(prompt.contains("theme_pack_import"))
+        let inbox = IOSDeepLinkInbox()
+        let destination = try XCTUnwrap(inbox.preparePromptHandoff(prompt))
+        let url = try XCTUnwrap(IOSAppDeepLink.url(for: destination))
+        var delivered: IOSAppDeepLink.Destination?
+        inbox.installHandler { delivered = IOSAppDeepLink.parse($0) }
+        inbox.submit(url)
+        XCTAssertEqual(delivered, destination)
+        guard case .agentPrompt(let id) = try XCTUnwrap(delivered) else {
+            return XCTFail("Generation must enter the existing agent chat flow")
+        }
+        XCTAssertEqual(inbox.consumePromptHandoff(id: id), prompt)
+        XCTAssertNil(inbox.consumePromptHandoff(id: id))
+        let appearance = try source("iosApp/AppearanceSettingsView.swift")
+        XCTAssertTrue(appearance.contains("生成并试穿"))
+        XCTAssertTrue(appearance.contains("IOSThemePackToolCatalog.generationPrompt(style: themeDescription)"))
+        XCTAssertTrue(appearance.contains("IOSDeepLinkInbox.shared.submit(url)"))
+        let preflight = try XCTUnwrap(appearance.range(of: "if let error = prepareGeneration()"))
+        let handoff = try XCTUnwrap(appearance.range(of: "IOSDeepLinkInbox.shared.preparePromptHandoff(prompt)"))
+        XCTAssertLessThan(preflight.lowerBound, handoff.lowerBound)
+        let shell = try source("iosApp/AppShell.swift")
+        XCTAssertTrue(shell.contains("AppearanceSettingsView(prepareGeneration: chatViewModel.prepareForThemeGeneration)"))
+    }
+
     func testBackgroundRegistersStatusOnlyDeniesImport() async {
         let chatRuntime = makeRuntime()
         let params = makeParams(toolNames: Array(IOSThemePackToolCatalog.toolNames).sorted())
@@ -339,11 +369,11 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertTrue(card.contains("套用"))
         XCTAssertTrue(card.contains("还原"))
         XCTAssertTrue(card.contains("struct AmberThemeTryOnBar"))
-        XCTAssertTrue(card.contains("swatchpalette"))
         XCTAssertTrue(card.contains("arrow.uturn.backward"))
         XCTAssertTrue(card.contains(".chatApprovalHitTarget()"))
         XCTAssertTrue(card.contains(".frame(width: 180, height: 120)"))
         let support = try source("iosApp/ChatToolSupport.swift")
+        XCTAssertTrue(support.contains("swatchpalette"))
         XCTAssertTrue(support.contains("试穿主题"))
         let shell = try source("iosApp/AppShell.swift")
         XCTAssertTrue(shell.contains("AmberThemeTryOnBar"))

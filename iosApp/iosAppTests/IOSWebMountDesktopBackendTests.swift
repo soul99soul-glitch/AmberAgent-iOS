@@ -131,6 +131,104 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
         XCTAssertNil(client.calls.last?.arguments["ref"])
     }
 
+    func testRemoteDoubleClickMapsClickCountWhenGatewayAdvertisesClickCount() async throws {
+        let clickTool = IOSMcpTool(
+            name: "browser_click",
+            description: nil,
+            inputSchema: #"{"type":"object","properties":{"target":{"type":"string"},"click_count":{"type":"integer"}}}"#
+        )
+        let client = DesktopMcpClientFake(
+            tools: stockPlaywrightTools.filter { $0.name != "browser_click" } + [clickTool],
+            callResultsByTool: [
+                "browser_navigate": stockPlaywrightPageState(url: "https://example.com/docs"),
+                "browser_snapshot": stockPlaywrightPageState(url: "https://example.com/docs"),
+                "browser_click": #"{"ok":true}"#
+            ]
+        )
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "desktop-double-click-count")
+        let opened = try jsonObject(await adapter.execute(
+            toolName: "wm_open",
+            arguments: ["url": "https://example.com/docs"],
+            logicalSessionId: "desktop-double-click-count"
+        ))
+        let snapshot = try XCTUnwrap(opened["snapshot_id"] as? String)
+
+        let clicked = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: ["target": "e7", "snapshot_id": snapshot, "click_count": 2],
+            logicalSessionId: "desktop-double-click-count"
+        ))
+
+        XCTAssertEqual(clicked["ok"] as? Bool, true)
+        XCTAssertEqual(client.calls.last?.name, "browser_click")
+        XCTAssertEqual(client.calls.last?.arguments["target"] as? String, "e7")
+        XCTAssertEqual(client.calls.last?.arguments["click_count"] as? Int, 2)
+    }
+
+    func testRemoteDoubleClickMapsDoubleClickWhenGatewayAdvertisesDoubleClick() async throws {
+        let clickTool = IOSMcpTool(
+            name: "browser_click",
+            description: nil,
+            inputSchema: #"{"type":"object","properties":{"target":{"type":"string"},"doubleClick":{"type":"boolean"}}}"#
+        )
+        let client = DesktopMcpClientFake(
+            tools: stockPlaywrightTools.filter { $0.name != "browser_click" } + [clickTool],
+            callResultsByTool: [
+                "browser_navigate": stockPlaywrightPageState(url: "https://example.com/docs"),
+                "browser_snapshot": stockPlaywrightPageState(url: "https://example.com/docs"),
+                "browser_click": #"{"ok":true}"#
+            ]
+        )
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "desktop-double-click-flag")
+        let opened = try jsonObject(await adapter.execute(
+            toolName: "wm_open",
+            arguments: ["url": "https://example.com/docs"],
+            logicalSessionId: "desktop-double-click-flag"
+        ))
+        let snapshot = try XCTUnwrap(opened["snapshot_id"] as? String)
+
+        let clicked = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: ["target": "e7", "snapshot_id": snapshot, "click_count": 2],
+            logicalSessionId: "desktop-double-click-flag"
+        ))
+
+        XCTAssertEqual(clicked["ok"] as? Bool, true)
+        XCTAssertEqual(client.calls.last?.name, "browser_click")
+        XCTAssertEqual(client.calls.last?.arguments["target"] as? String, "e7")
+        XCTAssertEqual(client.calls.last?.arguments["doubleClick"] as? Bool, true)
+    }
+
+    func testRemoteDoubleClickIsRejectedWithoutGatewaySupport() async throws {
+        let client = DesktopMcpClientFake(
+            tools: stockPlaywrightTools,
+            callResultsByTool: [
+                "browser_navigate": stockPlaywrightPageState(url: "https://example.com/docs"),
+                "browser_snapshot": stockPlaywrightPageState(url: "https://example.com/docs")
+            ]
+        )
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "desktop-double-click-unsupported")
+        let opened = try jsonObject(await adapter.execute(
+            toolName: "wm_open",
+            arguments: ["url": "https://example.com/docs"],
+            logicalSessionId: "desktop-double-click-unsupported"
+        ))
+        let snapshot = try XCTUnwrap(opened["snapshot_id"] as? String)
+
+        let clicked = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: ["target": "e7", "snapshot_id": snapshot, "click_count": 2],
+            logicalSessionId: "desktop-double-click-unsupported"
+        ))
+
+        XCTAssertEqual(clicked["ok"] as? Bool, false)
+        XCTAssertEqual(clicked["error_code"] as? String, "mapping_unsupported")
+        XCTAssertFalse(client.calls.contains { $0.name == "browser_click" })
+    }
+
     func testVersionedStructuredObserveNormalizesSemanticContract() async throws {
         let response = #"{"contract_version":"webmount.semantic.v2","document_id":"doc-1","page":{"url":"https://example.com/docs?token=secret","title":"Docs","ready_state":"complete"},"visible_text":"Welcome","interactive_elements":[{"ref":"button-1","role":"button","name":"Continue","tag":"button","visible":true}],"links":[{"href":"https://example.com/help?token=secret","text":"Help"}],"visual_candidates":[{"ref":"hero","tag":"img","alt":"Hero"}]}"#
         let client = DesktopMcpClientFake(tools: desktopTools, callResult: response)
@@ -293,6 +391,32 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
         XCTAssertEqual(waited["matched"] as? Bool, false)
         XCTAssertEqual(waited["match_explicit"] as? Bool, true)
         XCTAssertEqual(client.calls.last?.arguments["timeout_ms"] as? Int, 900)
+    }
+
+    func testRemoteWaitDefaultsToDomStableAndMapsExplicitFlag() async throws {
+        let waitTool = IOSMcpTool(
+            name: "browser_wait_for",
+            description: nil,
+            inputSchema: #"{"type":"object","properties":{"dom_stable":{"type":"boolean"},"timeout_ms":{"type":"integer"}}}"#
+        )
+        let tools = desktopTools.filter { $0.name != "browser_wait_for" } + [waitTool]
+        let client = DesktopMcpClientFake(
+            tools: tools,
+            callResult: #"{"ok":true,"matched":true}"#
+        )
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "default-dom-stable-wait")
+
+        let waited = try jsonObject(await adapter.execute(
+            toolName: "wm_wait",
+            arguments: [:],
+            logicalSessionId: "default-dom-stable-wait"
+        ))
+
+        XCTAssertEqual(waited["matched"] as? Bool, true)
+        XCTAssertEqual(waited["match_explicit"] as? Bool, true)
+        XCTAssertEqual(client.calls.last?.name, "browser_wait_for")
+        XCTAssertEqual(client.calls.last?.arguments["dom_stable"] as? Bool, true)
     }
 
     func testPlaywrightMappingsBlockRawBrowserCoordinateAndSensitiveDispatch() async throws {
@@ -1142,6 +1266,7 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
 
     func testRemoteOpenRechecksAgentOwnershipAfterHostResolution() async throws {
         let resolverGate = DesktopHostResolverGate()
+        defer { resolverGate.resume() }
         let client = DesktopMcpClientFake(
             tools: stockPlaywrightTools,
             callResultsByTool: [
@@ -1162,14 +1287,15 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
                 toolName: "wm_open",
                 input: IOSWebMountController.json([
                     "session_id": sessionId,
-                    "url": "https://news.ycombinator.com/newest"
+                    "url": "https://unlisted.example/newest"
                 ]),
                 isUserInitiated: false,
                 context: context,
                 allowUnlistedHosts: true
             )
         }
-        while !resolverGate.hasStarted { await Task.yield() }
+        for _ in 0..<1_000 where !resolverGate.hasStarted { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertTrue(resolverGate.hasStarted)
         _ = try controller.sessionStore.acquireUserControl(sessionId: sessionId)
         resolverGate.resume()
 
@@ -1184,13 +1310,14 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
     }
 
     func testRemoteMutationRechecksOwnershipAfterURLValidation() async throws {
-        let resolverGate = DesktopHostResolverGate(blockOnCall: 2)
+        let resolverGate = DesktopHostResolverGate()
+        defer { resolverGate.resume() }
         let client = DesktopMcpClientFake(
             tools: stockPlaywrightTools,
             callResultsByTool: [
                 "browser_navigate": stockPlaywrightPageState(url: "https://news.ycombinator.com/"),
                 "browser_snapshot": stockPlaywrightPageState(url: "https://news.ycombinator.com/"),
-                "browser_click": #"{"ok":true,"current_url":"https://news.ycombinator.com/"}"#
+                "browser_click": #"{"ok":true,"current_url":"https://unlisted.example/"}"#
             ]
         )
         let (controller, sessionId) = try await connectedRemoteController(
@@ -1220,7 +1347,8 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
                 allowUnlistedHosts: true
             )
         }
-        while !resolverGate.hasBlocked { await Task.yield() }
+        for _ in 0..<1_000 where !resolverGate.hasBlocked { try await Task.sleep(nanoseconds: 1_000_000) }
+        XCTAssertTrue(resolverGate.hasBlocked)
         _ = try controller.sessionStore.acquireUserControl(sessionId: sessionId)
         resolverGate.resume()
 

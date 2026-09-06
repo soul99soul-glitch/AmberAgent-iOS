@@ -234,16 +234,19 @@ struct ContextCompactTimelineMarker: View {
                     Text(title)
                         .font(.footnote.weight(.semibold))
                         .foregroundStyle(tint)
+                        .lineLimit(1)
                     if state.isActive {
                         TypingDots()
                     }
                 }
+                .fixedSize(horizontal: true, vertical: false)
                 Rectangle()
                     .fill(AmberTheme.border.opacity(0.55))
                     .frame(height: 0.5)
             }
 
-            if !preview.isEmpty {
+            // 完成态已经由固定分隔线表达；摘要留给失败态诊断，避免完成后再占一块多行区域。
+            if state.status != .completed, !preview.isEmpty {
                 Text(preview)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.foreground2)

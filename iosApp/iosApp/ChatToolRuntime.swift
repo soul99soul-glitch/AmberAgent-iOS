@@ -4929,7 +4929,8 @@ final class ChatToolRuntime {
                   toolName: toolName,
                   input: argsJSON,
                   runId: context.runId,
-                  conversationId: context.conversationId?.toHexDashString() ?? ""
+                  conversationId: context.conversationId?.toHexDashString() ?? "",
+                  executionPolicy: IOSExecutionPolicyContext.snapshot
               ) else {
             return nil
         }
@@ -5336,7 +5337,13 @@ final class ChatToolRuntime {
             runId: runId,
             conversationId: conversationId?.toHexDashString() ?? "",
             executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
-        ))
+        ), visualRead: { [sharedSettings] capture, question in
+            try await IOSWebMountVisionReader().read(
+                capture: capture,
+                question: question,
+                settings: sharedSettings.snapshot
+            )
+        })
     }
 
     private func dispatchMemoryToolCall(

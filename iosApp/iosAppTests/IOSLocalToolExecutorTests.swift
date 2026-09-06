@@ -573,7 +573,97 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             "https://internal.example/",
             resolveHost: { _ in ["10.0.0.8"] }
         )
-        XCTAssertEqual(privateResolution.failure, .privateHostNotAllowed("internal.example"))
+        XCTAssertEqual(privateResolution.failure, .resolvedHostNotPublic("internal.example"))
+    }
+
+    func testWebMountFragmentNavigationFinishesWithoutReloadingDocument() async throws {
+        let runtime = IOSWebMountWKRuntime()
+        let webView = try XCTUnwrap(runtime.webView)
+        webView.loadHTMLString(
+            "<html><body><p>local fixture</p><script>window.fixtureMarker='original';</script></body></html>",
+            baseURL: URL(string: "https://webmount.invalid/")
+        )
+        for _ in 0..<100 {
+            if runtime.snapshot.status == .ready { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(runtime.snapshot.status, .ready)
+        let settings = IOSWebMountSettings(userDefaults: isolatedDefaults())
+        runtime.setNavigationPolicy(
+            IOSWebMountURLPolicy(settings: settings, allowUnlistedHosts: true),
+            site: nil,
+            resolveHost: { _ in ["93.184.216.34"] }
+        )
+        let result = await runtime.open(URL(string: "https://webmount.invalid/#/login")!, timeoutMillis: 1_000)
+        XCTAssertEqual(result.status, .ready, result.error ?? "")
+        XCTAssertNil(result.error)
+        let hash = try await webView.evaluateJavaScript("location.hash") as? String
+        XCTAssertEqual(hash, "#/login")
+        let marker = try await webView.evaluateJavaScript("window.fixtureMarker") as? String
+        XCTAssertEqual(marker, "original")
+        let repeated = await runtime.open(URL(string: "https://webmount.invalid/#/login")!, timeoutMillis: 1_000)
+        XCTAssertEqual(repeated.status, .ready, repeated.error ?? "")
+
+        runtime.setNavigationPolicy(
+            IOSWebMountURLPolicy(settings: settings, allowUnlistedHosts: true),
+            site: nil,
+            resolveHost: { _ in ["10.0.0.8"] }
+        )
+        let rejected = await runtime.open(URL(string: "https://webmount.invalid/#/blocked")!, timeoutMillis: 1_000)
+        XCTAssertEqual(rejected.status, .failed)
+        XCTAssertTrue(rejected.error?.contains("DNS returned a non-public") == true)
+        let retainedHash = try await webView.evaluateJavaScript("location.hash") as? String
+        XCTAssertEqual(retainedHash, "#/login")
+    }
+
+    func testWebMountDNSFailuresAreDistinctFromPrivateHostLiterals() async throws {
+        let policy = IOSWebMountURLPolicy(
+            settings: IOSWebMountSettings(userDefaults: isolatedDefaults()),
+            allowUnlistedHosts: true
+        )
+        for addresses in [["198.18.0.34"], ["93.184.216.34", "10.0.0.8"]] {
+            let result = await policy.validateResolvedPublicHost(
+                "https://unlisted.amber.invalid/", resolveHost: { _ in addresses }
+            )
+            XCTAssertEqual(result.failure, .resolvedHostNotPublic("unlisted.amber.invalid"))
+            XCTAssertEqual(result.failure?.errorCode, "dns_non_public_address")
+        }
+        let empty = await policy.validateResolvedPublicHost("https://unlisted.amber.invalid/", resolveHost: { _ in [] })
+        XCTAssertEqual(empty.failure, .hostResolutionFailed("unlisted.amber.invalid"))
+        let failed = await policy.validateResolvedPublicHost("https://unlisted.amber.invalid/", resolveHost: { _ in
+            throw URLError(.cannotFindHost)
+        })
+        XCTAssertEqual(failed.failure, .hostResolutionFailed("unlisted.amber.invalid"))
+        XCTAssertEqual(failed.failure?.errorCode, "dns_resolution_failed")
+        for host in ["github.com", "www.icloud.com", "account.apple.com", "idmsa.apple.com", "example.com"] {
+            let result = await policy.validateResolvedPublicHost(
+                "https://\(host)/", resolveHost: { _ in ["93.184.216.34"] }
+            )
+            XCTAssertNotNil(try? result.get(), host)
+        }
+    }
+
+    func testWebMountHighRiskApprovalPreservesRegisteredHostPolicyWithProxyDNS() async throws {
+        let settings = IOSWebMountSettings(userDefaults: isolatedDefaults())
+        let addedHosts = ["www.icloud.com", "idmsa.apple.com"]
+        for autoApprove in [false, true] {
+            let policy = IOSWebMountURLPolicy(
+                settings: settings,
+                extraAllowedHosts: addedHosts,
+                allowUnlistedHosts: autoApprove
+            )
+            for host in ["github.com"] + addedHosts {
+                let result = await policy.validateResolvedPublicHost(
+                    "https://\(host)/#/login", resolveHost: { _ in ["198.18.0.34"] }
+                )
+                XCTAssertNotNil(try? result.get(), "\(host), autoApprove=\(autoApprove)")
+            }
+        }
+        let policy = IOSWebMountURLPolicy(settings: settings, allowUnlistedHosts: true)
+        XCTAssertEqual(
+            policy.validate("https://198.18.0.34/").failure,
+            .privateHostNotAllowed("198.18.0.34")
+        )
     }
 
     func testWebMountRedactionRemovesSensitiveValuesAndURLQuery() throws {
@@ -666,7 +756,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
     }
 
     func testWebMountToolCatalogAndUnsupportedResult() {
-        XCTAssertEqual(IOSWebMountToolCatalog.supportedToolNames.count, 24)
+        XCTAssertEqual(IOSWebMountToolCatalog.supportedToolNames.count, 25)
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_open"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_tab_list"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_tab_new"))
@@ -681,7 +771,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_type"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_keys"))
         XCTAssertTrue(IOSWebMountToolCatalog.unsupportedToolNames.contains("wm_eval"))
-        XCTAssertTrue(IOSWebMountToolCatalog.unsupportedToolNames.contains("wm_visual_read"))
+        XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_visual_read"))
         XCTAssertTrue(IOSWebMountToolCatalog.unsupportedToolNames.contains("wm_signed_fetch"))
         XCTAssertTrue(IOSWebMountController.unsupportedToolResult(toolName: "wm_eval").contains("unsupported"))
     }
@@ -795,6 +885,245 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(output["verified"] as? Bool, false)
         let receipt = try XCTUnwrap(output["action_receipt"] as? [String: Any])
         XCTAssertEqual((receipt["precondition"] as? [String: Any])?["matched"] as? Bool, true)
+    }
+
+    func testWebMountWKRuntimeReportsDeniedSubframeDiagnosticsAndResets() async throws {
+        let runtime = IOSWebMountWKRuntime(sessionId: "iframe-diagnostics")
+        let webView = try XCTUnwrap(runtime.webView)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        webView.loadHTMLString(
+            """
+            <!doctype html><html><body><main id="ready">parent ready</main></body></html>
+            """,
+            baseURL: URL(string: "https://github.com/")
+        )
+
+        var ready = false
+        for _ in 0..<60 {
+            if let state = try? await runtime.state(),
+               state["ready_state"] as? String == "complete",
+               (state["text_length"] as? Int ?? 0) > 0 {
+                ready = true
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(ready)
+
+        let settings = IOSWebMountSettings(userDefaults: isolatedDefaults())
+        let site = try XCTUnwrap(IOSWebMountSite.seeds().first { $0.id == "github" })
+        let resolver: IOSWebMountHostResolver = { _ in ["10.0.0.8"] }
+        let rejectingPolicy = IOSWebMountURLPolicy(
+            settings: settings,
+            allowUnlistedHosts: true
+        )
+        runtime.setNavigationPolicy(rejectingPolicy, site: site, resolveHost: resolver)
+
+        _ = try await webView.evaluateJavaScript(
+            """
+            var frame = document.createElement('iframe');
+            frame.id = 'blocked-frame';
+            frame.src = 'https://blocked.example/login?token=secret';
+            void document.body.appendChild(frame);
+            """
+        )
+
+        var state: [String: Any] = [:]
+        for _ in 0..<60 {
+            if let candidate = try? await runtime.state(),
+               let diagnostics = candidate["navigation_diagnostics"] as? [String: Any],
+               (diagnostics["subframe_navigation_denied_count"] as? Int ?? 0) > 0 {
+                state = candidate
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        let stateDiagnostics = try XCTUnwrap(
+            state["navigation_diagnostics"] as? [String: Any]
+        )
+        XCTAssertEqual(stateDiagnostics["subframe_navigation_denied_count"] as? Int, 1)
+        let stateDenial = try XCTUnwrap(
+            stateDiagnostics["last_subframe_navigation_denial"] as? [String: Any]
+        )
+        XCTAssertEqual(stateDenial["frame"] as? String, "subframe")
+        XCTAssertEqual(stateDenial["decision"] as? String, "cancel")
+        XCTAssertEqual(stateDenial["host"] as? String, "blocked.example")
+        XCTAssertEqual(stateDenial["error_code"] as? String, "dns_non_public_address")
+        XCTAssertTrue((stateDenial["reason"] as? String)?.contains("blocked.example") == true)
+        XCTAssertFalse((stateDenial["url"] as? String)?.contains("token=secret") == true)
+        XCTAssertNotEqual(runtime.snapshot.status, .failed)
+
+        let observation = try await runtime.observe(maxChars: 2_000, maxLinks: 20)
+        let observationDiagnostics = try XCTUnwrap(
+            observation["navigation_diagnostics"] as? [String: Any]
+        )
+        XCTAssertEqual(observationDiagnostics["subframe_navigation_denied_count"] as? Int, 1)
+        let observedPage = try XCTUnwrap(observation["page"] as? [String: Any])
+        let pageDiagnostics = try XCTUnwrap(
+            observedPage["navigation_diagnostics"] as? [String: Any]
+        )
+        XCTAssertEqual(pageDiagnostics["subframe_navigation_denied_count"] as? Int, 1)
+
+        let allowlistedPolicy = IOSWebMountURLPolicy(settings: settings)
+        runtime.setNavigationPolicy(allowlistedPolicy, site: site)
+        let resetState = try await runtime.state()
+        let resetDiagnostics = try XCTUnwrap(
+            resetState["navigation_diagnostics"] as? [String: Any]
+        )
+        XCTAssertEqual(resetDiagnostics["subframe_navigation_denied_count"] as? Int, 0)
+        XCTAssertNil(resetDiagnostics["last_subframe_navigation_denial"])
+    }
+
+    func testWebMountWKRuntimeStartsWithScreenViewportForDetachedAgentSession() async throws {
+        let runtime = IOSWebMountWKRuntime(sessionId: "detached-viewport")
+        let webView = try XCTUnwrap(runtime.webView)
+
+        XCTAssertGreaterThan(webView.bounds.width, 0)
+        XCTAssertGreaterThan(webView.bounds.height, 0)
+        XCTAssertEqual(webView.bounds.size, UIScreen.main.bounds.size)
+
+        webView.loadHTMLString(
+            """
+            <!doctype html>
+            <html><head>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+            </head><body>viewport ready</body></html>
+            """,
+            baseURL: URL(string: "https://webmount.invalid/")
+        )
+
+        var readyState: [String: Any]?
+        for _ in 0..<60 {
+            if let state = try? await runtime.state(),
+               state["ready_state"] as? String == "complete" {
+                readyState = state
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        let state = try XCTUnwrap(readyState)
+        let viewport = try XCTUnwrap(state["viewport"] as? [String: Any])
+        XCTAssertGreaterThan((viewport["width"] as? NSNumber)?.doubleValue ?? 0, 0)
+        XCTAssertGreaterThan((viewport["height"] as? NSNumber)?.doubleValue ?? 0, 0)
+
+        let customFrame = CGRect(x: 0, y: 0, width: 320, height: 480)
+        webView.frame = customFrame
+        webView.layoutIfNeeded()
+        XCTAssertEqual(webView.frame.size, customFrame.size)
+    }
+
+    func testWebMountSameOriginFrameReadActAndReload() async throws {
+        let runtime = IOSWebMountWKRuntime()
+        let webView = try XCTUnwrap(runtime.webView)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        webView.loadHTMLString("""
+            <html><body style="margin:0">
+            <iframe id="drive" style="width:360px;height:600px;border:0" srcdoc="
+                <label for='name'>File name</label><input id='name' value='old'>
+                <button id='modules' onclick=&quot;document.getElementById('status').textContent='Modules opened'&quot; ondblclick=&quot;document.getElementById('status').textContent='Folder entered'&quot;>Modules</button>
+                <div id='status'>Shadowrocket</div>
+                <div style='height:1500px'></div><button id='bottom'>Script</button>
+            "></iframe></body></html>
+            """, baseURL: URL(string: "https://example.com/"))
+        for _ in 0..<60 {
+            if (try? await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.readyState")) as? String == "complete" { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let observation = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        XCTAssertTrue((observation["visible_text"] as? String ?? "").contains("Shadowrocket"))
+        let nodes = try XCTUnwrap(observation["interactive_elements"] as? [[String: Any]])
+        let buttonRef = try XCTUnwrap(nodes.first { $0["name"] as? String == "Modules" }?["ref"] as? String)
+        let inputRef = try XCTUnwrap(nodes.first { $0["name"] as? String == "File name" }?["ref"] as? String)
+        let find = try await runtime.interact(method: "find", selector: nil, text: "Modules", options: [:])
+        XCTAssertEqual(find["found"] as? Bool, true)
+        let click = try await runtime.interact(method: "click", selector: buttonRef, text: nil,
+            options: ["snapshot_id": try XCTUnwrap(observation["snapshot_id"] as? String)])
+        XCTAssertEqual(click["dispatched"] as? Bool, true)
+        let status = try await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('status').textContent") as? String
+        XCTAssertEqual(status, "Modules opened")
+        let updated = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let type = try await runtime.interact(method: "type", selector: inputRef, text: "edited", options: [
+            "snapshot_id": try XCTUnwrap(updated["snapshot_id"] as? String)])
+        XCTAssertEqual(type["verified"] as? Bool, true)
+        let value = try await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('name').value") as? String
+        XCTAssertEqual(value, "edited")
+        _ = try await webView.evaluateJavaScript("window.clickDetails=[]; document.getElementById('drive').contentDocument.getElementById('modules').addEventListener('click', function(event){parent.clickDetails.push(event.detail)}); true")
+        let beforeDoubleClick = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        _ = try await runtime.interact(method: "click", selector: buttonRef, text: nil, options: [
+            "snapshot_id": try XCTUnwrap(beforeDoubleClick["snapshot_id"] as? String), "click_count": 2])
+        let entered = try await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('status').textContent") as? String
+        XCTAssertEqual(entered, "Folder entered")
+        let clickDetails = try await webView.evaluateJavaScript("window.clickDetails") as? [Int]
+        XCTAssertEqual(clickDetails, [1, 2], "Double-click consumers can use click.detail, not just dblclick")
+        let beforeScroll = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let candidates = try XCTUnwrap(beforeScroll["visual_candidates"] as? [[String: Any]])
+        let frameRef = try XCTUnwrap(candidates.first { $0["tag"] as? String == "iframe" }?["ref"] as? String)
+        _ = try await runtime.interact(method: "scroll", selector: frameRef, text: nil, options: [
+            "snapshot_id": try XCTUnwrap(beforeScroll["snapshot_id"] as? String), "dy": 400])
+        let scrolled = try await webView.evaluateJavaScript("document.getElementById('drive').contentWindow.scrollY") as? NSNumber
+        XCTAssertGreaterThan(scrolled?.intValue ?? 0, 0)
+        _ = try await webView.evaluateJavaScript("document.getElementById('drive').contentWindow.scrollTo(0,0); true")
+        let beforeMutation = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        _ = try await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('status').textContent='changed'; true")
+        let stale = try await runtime.interact(method: "click", selector: buttonRef, text: nil, options: [
+            "snapshot_id": try XCTUnwrap(beforeMutation["snapshot_id"] as? String)])
+        XCTAssertEqual(stale["error_code"] as? String, "stale_snapshot")
+        _ = try await webView.evaluateJavaScript("document.getElementById('drive').srcdoc='<button>Replacement</button>'; true")
+        for _ in 0..<60 {
+            if (try? await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.body.innerText")) as? String == "Replacement" { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let reloaded = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let oldRef = try await runtime.interact(method: "click", selector: buttonRef, text: nil, options: [
+            "snapshot_id": try XCTUnwrap(reloaded["snapshot_id"] as? String)])
+        XCTAssertEqual(oldRef["error_code"] as? String, "stale_ref")
+    }
+
+    func testWebMountFrameIsolationAndParentOcclusion() async throws {
+        let runtime = IOSWebMountWKRuntime()
+        let webView = try XCTUnwrap(runtime.webView)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        webView.loadHTMLString("""
+            <html><body style="margin:0">
+            <iframe id="accessible" style="width:350px;height:250px" srcdoc="<button id='go'>Accessible</button><input id='editor' aria-label='Filename'>"></iframe>
+            <iframe id="opaque" sandbox="allow-scripts" srcdoc="<button>Opaque secret</button>"></iframe>
+            <iframe style="display:none" srcdoc="<button>Hidden frame text</button>"></iframe>
+            <div id="overlay" style="position:fixed;inset:0;background:white;z-index:99"></div>
+            </body></html>
+            """, baseURL: URL(string: "https://example.com/"))
+        for _ in 0..<60 {
+            if (try? await webView.evaluateJavaScript("document.readyState===\"complete\" && document.getElementById(\"accessible\").contentDocument.body.innerText===\"Accessible\"")) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let observation = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let nodes = try XCTUnwrap(observation["interactive_elements"] as? [[String: Any]])
+        XCTAssertFalse(nodes.contains { ($0["name"] as? String ?? "").contains("Opaque secret") })
+        XCTAssertFalse(nodes.contains { ($0["name"] as? String ?? "").contains("Hidden frame text") })
+        XCTAssertFalse((observation["visible_text"] as? String ?? "").contains("Hidden frame text"))
+        let diagnostics = try XCTUnwrap(observation["frame_diagnostics"] as? [[String: Any]])
+        XCTAssertTrue(diagnostics.contains { $0["error_code"] as? String == "cross_origin_frame" }, "\(observation)")
+        let ref = try XCTUnwrap(nodes.first { $0["name"] as? String == "Accessible" }?["ref"] as? String)
+        let click = try await runtime.interact(method: "click", selector: ref, text: nil, options: [
+            "snapshot_id": try XCTUnwrap(observation["snapshot_id"] as? String)])
+        XCTAssertEqual(click["error_code"] as? String, "target_occluded")
+        let hiddenWait = try await runtime.interact(method: "wait", selector: nil, text: nil,
+            options: ["condition": "text", "text": "Hidden frame text", "wait_ms": 100])
+        XCTAssertEqual(hiddenWait["matched"] as? Bool, false, "Hidden iframe text must not verify an action")
+        let opaqueRef = try XCTUnwrap(diagnostics.first { $0["error_code"] as? String == "cross_origin_frame" }?["frame_ref"] as? String)
+        let fresh = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let opaqueScroll = try await runtime.interact(method: "scroll", selector: opaqueRef, text: nil,
+            options: ["snapshot_id": try XCTUnwrap(fresh["snapshot_id"] as? String), "dy": 100])
+        XCTAssertEqual(opaqueScroll["error_code"] as? String, "cross_origin_frame")
+        _ = try await webView.evaluateJavaScript("document.getElementById('overlay').remove(); document.getElementById('accessible').inert=true; true")
+        let inert = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let inertNodes = try XCTUnwrap(inert["interactive_elements"] as? [[String: Any]])
+        let editor = try XCTUnwrap(inertNodes.first { $0["name"] as? String == "Filename" })
+        XCTAssertEqual(editor["actionable"] as? Bool, false)
+        let inertType = try await runtime.interact(method: "type", selector: try XCTUnwrap(editor["ref"] as? String), text: "must not write",
+            options: ["snapshot_id": try XCTUnwrap(inert["snapshot_id"] as? String)])
+        XCTAssertEqual(inertType["error_code"] as? String, "target_not_actionable")
     }
 
     func testWebMountWKRuntimeStableRefsKeysFindWaitAndStaleSnapshot() async throws {
@@ -1828,8 +2157,86 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertFalse(IOSWebMountController.json(screenshot).contains("base64"))
     }
 
-    func testWebMountSiteAddRemoveSyncsAllowlistAndDoesNotClearCookies() async throws {
+    func testWebMountVisualReadRequiresApprovalAndUsesRealCapture() async throws {
         let controller = makeWebMountController(globalEnabled: true)
+        let executor = makeExecutor(webMountController: controller)
+        var calls = 0
+        let reader: IOSWebMountVisualReadHandler = { capture, question in
+            calls += 1
+            XCTAssertEqual(capture.width, 390)
+            XCTAssertEqual(capture.height, 844)
+            XCTAssertFalse(capture.data.isEmpty)
+            XCTAssertEqual(question, "Is the login form visible?")
+            return "The login form is visible."
+        }
+        let input = #"{"question":"Is the login form visible?"}"#
+        let blocked = await executor.execute(
+            executor.executionRequest(toolName: "wm_visual_read", operation: input, isUserInitiated: false),
+            visualRead: reader
+        )
+        guard case .needsUserAction = blocked else { return XCTFail("Visual reading must request screenshot upload approval") }
+        XCTAssertEqual(calls, 0)
+        let approved = await executor.execute(
+            executor.executionRequest(toolName: "wm_visual_read", operation: input, isUserInitiated: true),
+            visualRead: reader
+        )
+        guard case .webMountResult(let text) = approved else { return XCTFail("Expected visual result") }
+        let result = try jsonObject(text)
+        XCTAssertEqual(calls, 1)
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertEqual(result["analysis"] as? String, "The login form is visible.")
+        XCTAssertEqual(result["verification_source"] as? String, "screenshot")
+        XCTAssertEqual(result["observation_only"] as? Bool, true)
+        XCTAssertEqual(result["snapshot_id"] as? String, "mock-document:0")
+        XCTAssertFalse(text.contains("base64"))
+        XCTAssertNil(result["artifact"])
+        let preview = try XCTUnwrap(executor.webMountApprovalPreview(toolName: "wm_visual_read", input: input))
+        XCTAssertTrue(preview.consequence.contains("发送"))
+        XCTAssertTrue(preview.consequence.contains("视觉模型"))
+    }
+
+    func testWebMountVisualReadReturnsSafeRequestDiagnostics() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let text = await controller.execute(
+            toolName: "wm_visual_read", input: "{}", isUserInitiated: true,
+            visualRead: { _, _ in
+                throw IOSWebMountVisionReader.RequestFailure(
+                    error: IOSGeminiError.httpStatus(429, "apiKey=secret private response"),
+                    model: "vision-model", provider: "Vision"
+                )
+            }
+        )
+        let result = try jsonObject(text)
+        XCTAssertEqual(result["ok"] as? Bool, false)
+        XCTAssertEqual(result["error_code"] as? String, "vision_request_failed")
+        let diagnostics = try XCTUnwrap(result["diagnostics"] as? [String: Any])
+        XCTAssertEqual(diagnostics["http_status"] as? Int, 429)
+        XCTAssertEqual(diagnostics["category"] as? String, "rate_limit")
+        XCTAssertEqual(diagnostics["model"] as? String, "vision-model")
+        XCTAssertFalse(text.contains("secret"))
+        XCTAssertFalse(text.contains("private"))
+    }
+
+    func testWebMountVisualReadMarksResultsStaleAndReportsMissingReader() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let runtime = try XCTUnwrap(controller.runtime as? MockWebMountRuntime)
+        let missing = try jsonObject(await controller.execute(toolName: "wm_visual_read", input: "{}", isUserInitiated: true))
+        XCTAssertEqual(missing["error_code"] as? String, "vision_unavailable")
+        let stale = try jsonObject(await controller.execute(
+            toolName: "wm_visual_read", input: "{}", isUserInitiated: true,
+            visualRead: { _, _ in
+                runtime.pageRevision += 1
+                return "Analysis of the earlier page."
+            }
+        ))
+        XCTAssertEqual(stale["ok"] as? Bool, false)
+        XCTAssertEqual(stale["error_code"] as? String, "stale_visual_read")
+        XCTAssertEqual(stale["requires_reobserve"] as? Bool, true)
+        XCTAssertEqual(stale["snapshot_id"] as? String, "mock-document:0")
+    }
+
+    func testWebMountSiteAddRemoveSyncsAllowlistAndDoesNotClearCookies() async throws {
+        let controller = makeWebMountController(globalEnabled: true, resolveHost: { _ in ["198.18.0.34"] })
         let cookieStore = try XCTUnwrap(controller.cookieStore as? MockWebMountCookieStore)
 
         let blockedAdd = try jsonObject(await controller.execute(
@@ -1849,6 +2256,30 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(added["enabled"] as? Bool, true)
         XCTAssertTrue(controller.settings.allowedHosts.contains("docs.example.com"))
         XCTAssertFalse(IOSWebMountController.json(added).contains("token=secret"))
+
+        let sessionId = try XCTUnwrap(controller.sessionStore.records.first?.id)
+        let executor = makeExecutor(webMountController: controller)
+        let opened = await executor.execute(IOSLocalToolExecutionRequest(
+            toolName: "wm_open",
+            operation: IOSWebMountController.json(["session_id": sessionId, "site_id": siteId]),
+            scopeDigest: "",
+            payloadDigest: "",
+            isUserInitiated: false,
+            runId: "new-site-run",
+            conversationId: "new-site-conversation",
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:],
+                globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: true,
+                execJavaScriptEnabled: false,
+                webSearchEnabled: false
+            )
+        ))
+        guard case .webMountResult(let openedText) = opened else {
+            return XCTFail("Expected newly added station to open immediately, got \(opened)")
+        }
+        XCTAssertEqual(try jsonObject(openedText)["ok"] as? Bool, true)
+        controller.releaseAgentOwnership(runId: "new-site-run")
 
         let removed = try jsonObject(await controller.execute(
             toolName: "wm_site_remove",
@@ -1952,6 +2383,70 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         }
         let object = try jsonObject(text)
         XCTAssertEqual(object["ok"] as? Bool, true)
+    }
+
+    func testWebMountHighRiskAutoApprovalCoversExplicitApprovalActions() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let executor = makeExecutor(webMountController: controller)
+        let policy = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [:], globalAutoApproveEnabled: false,
+            highRiskAutoApproveEnabled: true, execJavaScriptEnabled: false, webSearchEnabled: false
+        )
+        var reads = 0
+        let reader: IOSWebMountVisualReadHandler = { _, _ in
+            reads += 1
+            return "Visible page"
+        }
+        func execute(_ name: String, _ input: String) async throws -> [String: Any] {
+            let output = await executor.execute(
+                executor.executionRequest(
+                    toolName: name, operation: input, isUserInitiated: false,
+                    executionPolicy: policy
+                ), visualRead: reader
+            )
+            guard case .webMountResult(let text) = output else {
+                XCTFail("\(name) unexpectedly requested approval: \(output)")
+                return [:]
+            }
+            return try jsonObject(text)
+        }
+        let added = try await execute("wm_site_add", #"{"display_name":"Auto approved","homepage_url":"https://example.com/"}"#)
+        let siteId = try XCTUnwrap(added["site_id"] as? String)
+        for name in ["wm_screenshot", "wm_visual_read"] {
+            let result = try await execute(name, "{}")
+            XCTAssertEqual(result["ok"] as? Bool, true, name)
+        }
+        XCTAssertEqual(reads, 1)
+        let sessionId = try XCTUnwrap(controller.sessionStore.records.first?.id)
+        let runtime = try XCTUnwrap(controller.sessionStore.runtimeIfPresent(sessionId: sessionId) as? MockWebMountRuntime)
+        _ = try await execute("wm_click", #"{"selector":"button"}"#)
+        XCTAssertEqual(runtime.lastInteraction?.options["_amber_allow_high_consequence"] as? Bool, true)
+        let preflight = await executor.webMountActionPreflight(
+            toolName: "wm_click", input: #"{"selector":"button"}"#,
+            runId: "", conversationId: "", executionPolicy: policy
+        )
+        XCTAssertNil(preflight)
+        let persistent = try await execute("wm_tab_new", #"{"persistent":true}"#)
+        XCTAssertNotEqual(persistent["needs_user_action"] as? Bool, true)
+        let clear = try await execute("wm_clear_session", IOSWebMountController.json(["site_id": siteId]))
+        XCTAssertNotEqual(clear["needs_user_action"] as? Bool, true)
+        XCTAssertEqual((controller.cookieStore as? MockWebMountCookieStore)?.clearedSiteIds, [siteId])
+        let removed = try await execute("wm_site_remove", IOSWebMountController.json(["site_id": siteId]))
+        XCTAssertEqual(removed["removed"] as? Bool, true)
+
+        let off = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [:], globalAutoApproveEnabled: true,
+            highRiskAutoApproveEnabled: false, execJavaScriptEnabled: false, webSearchEnabled: false
+        )
+        for name in ["wm_screenshot", "wm_visual_read", "wm_site_add", "wm_site_remove", "wm_clear_session"] {
+            let output = await executor.execute(executor.executionRequest(
+                toolName: name, operation: "{}", isUserInitiated: false, executionPolicy: off
+            ))
+            guard case .needsUserAction = output else {
+                XCTFail("\(name) must restore manual approval when high-risk approval is off")
+                continue
+            }
+        }
     }
 
     func testWebMountExecutorRespectsDisabledPermissionPolicy() async throws {
@@ -2579,7 +3074,10 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         )
     }
 
-    private func makeWebMountController(globalEnabled: Bool) -> IOSWebMountController {
+    private func makeWebMountController(
+        globalEnabled: Bool,
+        resolveHost: @escaping IOSWebMountHostResolver = { _ in ["93.184.216.34"] }
+    ) -> IOSWebMountController {
         let defaults = isolatedDefaults()
         let registry = IOSWebMountRegistry(userDefaults: defaults)
         let settings = IOSWebMountSettings(userDefaults: defaults)
@@ -2590,7 +3088,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             cookieStore: MockWebMountCookieStore(),
             runtime: MockWebMountRuntime(),
             runtimeFactory: { MockWebMountRuntime() },
-            resolveHost: { _ in ["93.184.216.34"] }
+            resolveHost: resolveHost
         )
     }
 

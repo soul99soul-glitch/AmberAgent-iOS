@@ -881,7 +881,19 @@ final class IOSWebMountDesktopBackendAdapter {
             if arguments["x"] != nil || arguments["y"] != nil {
                 throw IOSWebMountDesktopBackendError.mappingUnsupported("coordinate tap")
             }
-            return try mappedTarget(arguments, remoteTool: remoteTool, toolName: toolName)
+            var mapped = try mappedTarget(arguments, remoteTool: remoteTool, toolName: toolName)
+            if toolName == "wm_click",
+               let clickCount = (arguments["click_count"] as? NSNumber)?.intValue,
+               clickCount == 2 {
+                if remoteTool.explicitlySupports("click_count") {
+                    mapped["click_count"] = 2
+                } else if remoteTool.explicitlySupports("doubleClick") {
+                    mapped["doubleClick"] = true
+                } else {
+                    throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_click/click_count")
+                }
+            }
+            return mapped
         case "wm_type":
             let target = try requireSafeTarget(arguments, toolName: toolName, sessionId: sessionId)
             guard let text = string(arguments, "text") ?? string(arguments, "value") else {
@@ -936,7 +948,7 @@ final class IOSWebMountDesktopBackendAdapter {
             mapped["values"] = values
             return mapped
         case "wm_wait":
-            let condition = (string(arguments, "condition") ?? "").lowercased()
+            let condition = (string(arguments, "condition") ?? "dom_stable").lowercased()
             if condition == "text", let text = string(arguments, "text") {
                 guard remoteTool.explicitlySupports("text") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/text")
@@ -977,7 +989,11 @@ final class IOSWebMountDesktopBackendAdapter {
                 guard remoteTool.explicitlySupports("dom_stable") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/dom_stable")
                 }
-                return applyingRemoteTimeout(from: arguments, remoteTool: remoteTool, to: [:])
+                return applyingRemoteTimeout(
+                    from: arguments,
+                    remoteTool: remoteTool,
+                    to: ["dom_stable": true]
+                )
             }
             throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_wait/\(condition.nilIfBlank ?? "condition")")
         default:

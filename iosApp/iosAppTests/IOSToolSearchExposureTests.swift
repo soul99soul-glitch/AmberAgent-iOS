@@ -29,7 +29,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
     private let deferredToolNames: Set<String> = [
         "wm_stations", "wm_tab_list", "wm_tab_new", "wm_tab_close", "wm_open",
         "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot",
-        "wm_screenshot", "wm_back", "wm_forward", "wm_clear_session", "wm_site_add",
+        "wm_screenshot", "wm_visual_read", "wm_back", "wm_forward", "wm_clear_session", "wm_site_add",
         "wm_site_remove", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
         "wm_select", "wm_find", "wm_wait",
         "terminal_execute", "ios_shell_execute", "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
@@ -105,6 +105,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
         // bridge, so the hit is declared on the very next round.
         let nextRoundParams = viewModel.textGenerationParamsForTesting().replacingTools(bridge.visibleTools())
         XCTAssertTrue(nextRoundParams.tools.map(\.name).contains("wm_type"))
+        XCTAssertTrue(nextRoundParams.tools.map(\.name).contains("wm_visual_read"))
         XCTAssertFalse(nextRoundParams.tools.map(\.name).contains("wm_screenshot"))
     }
 
