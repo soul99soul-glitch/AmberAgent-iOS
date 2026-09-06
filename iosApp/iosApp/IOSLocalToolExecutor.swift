@@ -2376,6 +2376,14 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         fail(error)
     }
 
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        fail(NSError(
+            domain: WKErrorDomain,
+            code: WKError.Code.webContentProcessTerminated.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Web content process terminated. Reopen the page before continuing."]
+        ))
+    }
+
     private func fail(_ error: Error) {
         snapshot.status = .failed
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView?.url?.absoluteString)
@@ -2499,6 +2507,7 @@ enum IOSWebMountRuntimeError: Error {
 
 enum IOSWebMountBridgeScripts {
     private static let semanticPrelude = """
+      var amberInteractiveQuery="a,button,input,textarea,select,[contenteditable='true'],[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='checkbox'],[role='radio'],[role='combobox'],[role='textbox'],[role='switch'],[role='row'],[role='treeitem'],[role='gridcell'],[role='option'],[tabindex]:not([tabindex='-1'])";
       function amberSafeURL(raw,base){
         try{var u=new URL(raw,(base&&base.location&&base.location.href)||location.href);return u.origin+u.pathname;}
         catch(e){return "";}
@@ -2528,12 +2537,16 @@ enum IOSWebMountBridgeScripts {
             for(var i=0;i<bridge.frames.length;i++) if(bridge.frames[i].document===doc) return bridge.frames[i];
             return null;
           };
-          bridge.queryAll=function(selector,maxResults){
+          bridge.queryAll=function(selector,maxResults,visibleOnly,frameId){
             var matches=[], limit=maxResults||600;
+            if(frameId && !bridge.frames.some(function(frame){return frame.id===frameId;})) return {errorCode:"stale_frame",matches:[]};
             for(var i=0;i<bridge.frames.length && matches.length<limit;i++){
+              if(frameId && bridge.frames[i].id!==frameId) continue;
               try{
                 var found=bridge.frames[i].document.querySelectorAll(selector);
-                for(var j=0;j<found.length && matches.length<limit;j++) matches.push(found[j]);
+                for(var j=0;j<found.length && matches.length<limit;j++){
+                  if(!visibleOnly || amberVisible(found[j])) matches.push(found[j]);
+                }
               }catch(e){return {errorCode:"invalid_selector",matches:[]};}
             }
             return {errorCode:"",matches:matches};
@@ -2676,6 +2689,7 @@ enum IOSWebMountBridgeScripts {
         if(tag==="a") return "link"; if(tag==="button") return "button";
         if(tag==="input"){
           var type=(el.getAttribute("type")||"text").toLowerCase();
+          if(type==="file"||type==="color"||type==="hidden") return type;
           if(type==="checkbox"||type==="radio"||type==="button"||type==="submit"||type==="reset"||type==="range") return type==="submit"||type==="reset"?"button":type;
           return "textbox";
         }
@@ -2721,6 +2735,17 @@ enum IOSWebMountBridgeScripts {
         var frame=amberFrameForDocument(el.ownerDocument);
         if(frame&&frame.frameElement&&!amberActionable(frame.frameElement)) return false;
         return !(el.disabled || (el.getAttribute&&el.getAttribute("aria-disabled")==="true"));
+      }
+      function amberTypeable(el){
+        if(!el || amberSensitiveField(el)) return false;
+        if(el.tagName==="TEXTAREA" || el.isContentEditable) return true;
+        return el.tagName==="INPUT" && /^(text|email|search|tel|url|number|date|datetime-local|month|week|time)$/.test((el.getAttribute("type")||"text").toLowerCase());
+      }
+      function amberInteractiveTarget(el){
+        for(var node=el;node;node=node.parentElement){
+          if(node.matches(amberInteractiveQuery) && typeof node.click==="function" && amberActionable(node)) return node;
+        }
+        return null;
       }
       function amberActionIdentity(el){
         if(!el) return "";
@@ -2806,10 +2831,9 @@ enum IOSWebMountBridgeScripts {
           var mode=\(mode);
           var body=document.body;
           if(mode==="interactive" || mode==="snapshot"){
-            var interactiveQuery="a,button,input,textarea,select,[contenteditable='true'],[role='button'],[role='link'],[role='tab'],[role='menuitem'],[role='checkbox'],[role='radio'],[role='combobox'],[role='textbox'],[role='switch'],[role='row'],[role='treeitem'],[role='gridcell'],[role='option']";
-            var queriedNodes=bridge.queryAll(interactiveQuery,200);
+            var queriedNodes=bridge.queryAll(amberInteractiveQuery,200,true);
             if(queriedNodes.errorCode) return JSON.stringify({ok:false,error_code:queriedNodes.errorCode,snapshot_id:bridge.snapshotId()});
-            var nodes=queriedNodes.matches.filter(amberVisible).slice(0,100).map(function(el,idx){
+            var nodes=queriedNodes.matches.sort(function(a,b){return Number(amberTypeable(b))-Number(amberTypeable(a));}).slice(0,100).map(function(el,idx){
                 var rect=amberTopRect(el);
               return {
                 ref:bridge.refFor(el),
@@ -2821,6 +2845,7 @@ enum IOSWebMountBridgeScripts {
                 href: el.href ? cleanUrl(el.href) : "",
                 visible: amberVisible(el),
                 actionable: amberActionable(el),
+                typeable: amberTypeable(el) && !el.readOnly && amberActionable(el),
                 disabled: !!el.disabled,
                 checked: typeof el.checked==="boolean" ? el.checked : null,
                 focused: el.ownerDocument.activeElement===el,
@@ -2844,7 +2869,7 @@ enum IOSWebMountBridgeScripts {
             var queriedCandidates=bridge.queryAll("img,iframe,canvas,video,svg,picture,h1,h2,h3,p,blockquote,article,section",120);
             if(queriedCandidates.errorCode) return JSON.stringify({ok:false,error_code:queriedCandidates.errorCode,snapshot_id:bridge.snapshotId()});
             var candidates=queriedCandidates.matches.map(function(el){
-              var rect=amberTopRect(el);
+              var rect=amberTopRect(el), interactiveTarget=amberInteractiveTarget(el);
               return {
                 ref:bridge.refFor(el),
                 selector:amberSelectorForElement(el,cssPath(el)),
@@ -2855,6 +2880,8 @@ enum IOSWebMountBridgeScripts {
                 title: el.getAttribute ? (el.getAttribute("title") || "") : "",
                 nearby_text: nearbyText(el),
                 visible: amberVisible(el),
+                single_click_supported: typeof el.click==="function" && amberActionable(el),
+                interactive_target_ref: interactiveTarget?bridge.refFor(interactiveTarget):"",
                 rect: {
                   x: Math.round(rect.left || 0),
                   y: Math.round(rect.top || 0),
@@ -3118,6 +3145,11 @@ enum IOSWebMountBridgeScripts {
               el=resolved.element;
             }
             if(!el) return fail("target_not_found");
+            if(clickCount===1 && typeof el.click!=="function") return fail("target_not_clickable",{
+              target_ref:bridge.refFor(el),
+              interactive_target_ref:bridge.refFor(amberInteractiveTarget(el)),
+              reason:"This visual target does not support a direct single click. Choose an interactive element or use wm_find to locate the control."
+            });
             if(!preflightOnly && method==="click") scrollElement(el,"center",0);
             if(!amberVisible(el)) return fail("target_not_visible",{target_ref:bridge.refFor(el)});
             if(!amberActionable(el)) return fail("target_not_actionable",{target_ref:bridge.refFor(el)});
@@ -3126,6 +3158,7 @@ enum IOSWebMountBridgeScripts {
             var blocked=dispositionFailure(el,method==="tap" && x!==null && y!==null);
             if(blocked) return blocked;
             if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
+            if(typeof el.focus==="function" && (amberTypeable(el) || el.tabIndex>=0)) el.focus();
             var doubleClickEvent=null;
             if(clickCount===2){
               try{
@@ -3137,7 +3170,7 @@ enum IOSWebMountBridgeScripts {
               el.dispatchEvent(doubleClickEvent);
             }else el.click();
             bridge.bump();
-            return finish({found:true,target_ref:bridge.refFor(el),dispatched:true,click_count:clickCount,dblclick_dispatched:clickCount===2,verified:false});
+            return finish({found:true,target_ref:bridge.refFor(el),dispatched:true,click_count:clickCount,dblclick_dispatched:clickCount===2,focused:el.ownerDocument.activeElement===el,verified:false});
           }
 
           if(method==="type" || method==="keys"){
@@ -3243,22 +3276,26 @@ enum IOSWebMountBridgeScripts {
                 var resolved=bridge.resolve(target);
                 if(resolved.errorCode) return fail(resolved.errorCode);
                 if(resolved.element) matches=[resolved.element];
-              } else if(target.indexOf("frame:")===0){
-                var resolved=bridge.resolve(target);
-                if(resolved.errorCode) return fail(resolved.errorCode);
-                if(resolved.element) matches=[resolved.element];
               } else {
-                var css=target.indexOf("css:")===0?target.slice(4):target;
-                var queried=bridge.queryAll(css,maxResults);
+                var css=target.indexOf("css:")===0?target.slice(4):target, frameId="";
+                if(target.indexOf("frame:")===0){
+                  var marker=target.indexOf(":css:");
+                  if(marker<0) return fail("invalid_selector");
+                  frameId=target.slice(6,marker);css=target.slice(marker+5);
+                }
+                var queried=bridge.queryAll(css,maxResults,true,frameId);
                 if(queried.errorCode) return fail(queried.errorCode);
                 matches=queried.matches;
               }
             } else if(query){
-              var queried=bridge.queryAll("a,button,input,textarea,select,[contenteditable='true'],label,p,span,div,main,li,h1,h2,h3,h4,h5,h6,td,th,article,section,[role]",600);
+              var queried=bridge.queryAll(amberInteractiveQuery+",label,p,span,div,main,li,h1,h2,h3,h4,h5,h6,td,th,article,section,[role]",600,true);
               if(queried.errorCode) return fail(queried.errorCode);
-              matches=queried.matches.filter(function(item){return amberVisible(item) && amberName(item).toLowerCase().indexOf(query)>=0;}).slice(0,maxResults);
+              matches=queried.matches.map(function(item){return {element:item,name:amberName(item).toLowerCase(),interactive:item.matches(amberInteractiveQuery)};})
+                .filter(function(item){return item.name.indexOf(query)>=0;})
+                .sort(function(a,b){return Number(b.name===query)-Number(a.name===query) || Number(b.interactive)-Number(a.interactive);})
+                .slice(0,maxResults).map(function(item){return item.element;});
             }
-            var output=matches.filter(amberVisible).slice(0,maxResults).map(function(item){return {ref:bridge.refFor(item),tag:(item.tagName||"").toLowerCase(),role:amberRole(item),name:amberName(item),visible:true};});
+            var output=matches.filter(amberVisible).slice(0,maxResults).map(function(item){return {ref:bridge.refFor(item),tag:(item.tagName||"").toLowerCase(),role:amberRole(item),name:amberName(item),visible:true,actionable:amberActionable(item),typeable:amberTypeable(item)&&!item.readOnly&&amberActionable(item),focused:item.ownerDocument.activeElement===item};});
             return finish({found:output.length>0,count:output.length,matches:output,verified:output.length>0});
           }
           return fail("unsupported_interaction");

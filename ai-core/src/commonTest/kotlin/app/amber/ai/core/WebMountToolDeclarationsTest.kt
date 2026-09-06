@@ -1,5 +1,7 @@
 package app.amber.ai.core
 
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -34,6 +36,20 @@ class WebMountToolDeclarationsTest {
         assertTrue("click_count" in click.properties)
         assertEquals(false, "click_count" in tap.properties)
         assertTrue(createWebMountClickToolDeclaration().description.contains("click_count=2"))
+    }
+
+    @Test
+    fun webMountQueriesAndPostconditionsDeclareNonEmptyStrings() {
+        val click = assertIs<InputSchema.Obj>(createWebMountClickToolDeclaration().parameters())
+        val postcondition = click.properties["postcondition"]!!.jsonObject
+        val postconditionValue = postcondition["properties"]!!.jsonObject["value"]!!.jsonObject
+        assertEquals("1", postconditionValue["minLength"]?.jsonPrimitive?.content)
+
+        val find = assertIs<InputSchema.Obj>(createWebMountFindToolDeclaration().parameters())
+        listOf("selector", "text").forEach { name ->
+            val schema = find.properties[name]!!.jsonObject
+            assertEquals("1", schema["minLength"]?.jsonPrimitive?.content, name)
+        }
     }
 
     @Test

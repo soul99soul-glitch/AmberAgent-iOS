@@ -475,7 +475,7 @@ fun createWebMountStateToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountObserveToolDeclaration(): Tool = webMountTool(
     name = "wm_observe",
-    description = "Observe the current iOS WebMount page: state, visible text, link summary, interactive elements, and DOM visual candidates. Does not expose cookies, tokens, or headers. After a key browser action, use wm_visual_read for visual confirmation when a vision-capable model and manual approval or high-risk auto-approval are available.",
+    description = "Observe the current iOS WebMount page: state, visible text, links, interactive elements and DOM visual candidates. Prefer interactive_elements for actions and typeable=true for text entry. A visual candidate may provide interactive_target_ref for its nearest control; single_click_supported=false means it cannot be single-clicked directly. For a collapsed search control, click its control ref, re-observe, then wm_type into the revealed input. Does not expose cookies, tokens or headers. After key actions, use wm_visual_read for visual confirmation when a vision model and the required approval are available.",
     parameters = webMountSessionParameters()
 )
 
@@ -493,7 +493,7 @@ fun createWebMountGetToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountVisualSnapshotToolDeclaration(): Tool = webMountTool(
     name = "wm_visual_snapshot",
-    description = "Return visible DOM visual candidates such as image, iframe, canvas, video, SVG, and text block rectangles. No external vision model is called.",
+    description = "Return visible DOM visual candidates such as image, iframe, canvas, video, SVG, and text block rectangles. Prefer interactive_target_ref when a candidate provides one, because it identifies the real interactive control. Do not directly single-click a candidate whose single_click_supported is false. No external vision model is called.",
     parameters = webMountSessionParameters()
 )
 
@@ -549,7 +549,7 @@ fun createWebMountSiteRemoveToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountClickToolDeclaration(): Tool = webMountTool(
     name = "wm_click",
-    description = "Click a visible element on the current iOS WebMount page, including accessible same-origin frames. Use click_count=2 for a double-click, such as opening a folder, then verify the resulting page. Agent calls must use a target ref from the latest observation; CSS selectors remain available for direct user actions.",
+    description = "Click a visible element on the current iOS WebMount page, including accessible same-origin frames. Prefer an actionable interactive_elements ref or a visual candidate's interactive_target_ref. Use click_count=2 for a double-click, such as opening a folder, then verify the resulting page. Agent calls must use a target ref from the latest observation; CSS selectors remain available for direct user actions.",
     parameters = webMountTargetParameters(requireSessionSnapshot = true, includeClickCount = true)
 )
 
@@ -561,7 +561,7 @@ fun createWebMountTapToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountTypeToolDeclaration(): Tool = webMountTool(
     name = "wm_type",
-    description = "Type text into an input element on the current iOS WebMount page. Agent calls must use a target ref from the latest observation.",
+    description = "Type text into an input or contenteditable element on the current iOS WebMount page. Use a typeable=true target ref from the latest observation. If a search input is not yet visible, focus its control and re-observe first.",
     parameters = webMountTextInteractionParameters(requireSessionSnapshot = true)
 )
 
@@ -585,7 +585,7 @@ fun createWebMountSelectToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountFindToolDeclaration(): Tool = webMountTool(
     name = "wm_find",
-    description = "Find whether a selector or text appears on the current iOS WebMount page.",
+    description = "Find matches on the current iOS WebMount page. Provide exactly one non-empty selector or text query. For a custom search control, after clicking to focus, use wm_find to locate the actual input and then call wm_type with that input ref.",
     parameters = webMountFindParameters()
 )
 
@@ -3690,7 +3690,8 @@ private fun JsonObjectBuilder.putWebMountPostcondition() {
             })
             put("value", buildJsonObject {
                 put("type", "string")
-                put("description", "Expected selector, text, URL fragment, or ready state. Omit only for dom_stable.")
+                put("minLength", 1)
+                put("description", "Non-empty expected selector, text, URL fragment, or ready state. Required for selector, text, url_contains, and ready_state; omit this field for dom_stable.")
             })
             put("timeout_ms", buildJsonObject {
                 put("type", "integer")
@@ -3973,11 +3974,13 @@ private fun webMountFindParameters(): InputSchema = InputSchema.Obj(
         putWebMountSnapshotId()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "CSS selector to find")
+            put("minLength", 1)
+            put("description", "Non-empty CSS selector to find. Provide exactly one of selector or text.")
         })
         put("text", buildJsonObject {
             put("type", "string")
-            put("description", "Text to find on the page")
+            put("minLength", 1)
+            put("description", "Non-empty text to find on the page. Provide exactly one of selector or text.")
         })
         put("max_results", buildJsonObject {
             put("type", "integer")

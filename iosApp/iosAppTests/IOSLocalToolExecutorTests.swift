@@ -1014,6 +1014,102 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(webView.frame.size, customFrame.size)
     }
 
+    func testWebMountDecorativeSVGClickIsRejectedWithoutInterruptingInput() async throws {
+        let runtime = IOSWebMountWKRuntime()
+        let webView = try XCTUnwrap(runtime.webView)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        webView.loadHTMLString("""
+            <iframe id="drive" style="width:360px;height:300px" srcdoc="
+                <input type='file' aria-label='上传'>
+                <input type='search' hidden>
+                <div><span>搜索云盘说明</span>
+                <ui-autocomplete-token-field tabindex='0' aria-label='搜索云盘' onfocus=&quot;this.querySelector('input').hidden=false&quot;>
+                    <svg width='24' height='24'><circle cx='12' cy='12' r='10'/></svg>
+                    <input id='search' type='search' aria-label='搜索云盘' hidden>
+                </ui-autocomplete-token-field>
+                </div>
+            "></iframe>
+            """, baseURL: URL(string: "https://github.com/"))
+        for _ in 0..<60 {
+            if (try? await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('search') !== null")) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let controller = IOSWebMountController(
+            registry: IOSWebMountRegistry(userDefaults: isolatedDefaults()),
+            settings: IOSWebMountSettings(userDefaults: isolatedDefaults()),
+            runtime: runtime
+        )
+        let observation = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let candidates = try XCTUnwrap(observation["visual_candidates"] as? [[String: Any]])
+        let icon = try XCTUnwrap(candidates.first { $0["tag"] as? String == "svg" })
+        let result = try jsonObject(await controller.execute(
+            toolName: "wm_click",
+            input: IOSWebMountController.json([
+                "target": try XCTUnwrap(icon["ref"] as? String),
+                "snapshot_id": try XCTUnwrap(observation["snapshot_id"] as? String)
+            ]),
+            isUserInitiated: false
+        ))
+        XCTAssertEqual(result["status"] as? String, "rejected", "Unexpected click result: \(result)")
+        XCTAssertEqual(result["error_code"] as? String, "target_not_clickable")
+        XCTAssertEqual(result["may_have_applied"] as? Bool, false)
+        XCTAssertEqual(icon["single_click_supported"] as? Bool, false)
+
+        let initialNodes = try XCTUnwrap(observation["interactive_elements"] as? [[String: Any]])
+        let widgetRef = try XCTUnwrap(initialNodes.first { $0["tag"] as? String == "ui-autocomplete-token-field" }?["ref"] as? String)
+        XCTAssertEqual(icon["interactive_target_ref"] as? String, widgetRef)
+        XCTAssertEqual((result["action"] as? [String: Any])?["interactive_target_ref"] as? String, widgetRef)
+        let upload = try XCTUnwrap(initialNodes.first { $0["name"] as? String == "上传" })
+        XCTAssertEqual(upload["role"] as? String, "file")
+        XCTAssertEqual(upload["typeable"] as? Bool, false)
+        let foundWidget = try await runtime.interact(method: "find", selector: nil, text: "搜索云盘", options: ["max_results": 1])
+        let widgetMatches = try XCTUnwrap(foundWidget["matches"] as? [[String: Any]])
+        XCTAssertEqual(widgetMatches.first?["ref"] as? String, widgetRef)
+        let focused = try await runtime.interact(method: "click", selector: widgetRef, text: nil,
+            options: ["snapshot_id": try XCTUnwrap(foundWidget["snapshot_id"] as? String)])
+        XCTAssertEqual(focused["focused"] as? Bool, true)
+
+        let refreshed = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        let nodes = try XCTUnwrap(refreshed["interactive_elements"] as? [[String: Any]])
+        let inputRef = try XCTUnwrap(nodes.first { $0["typeable"] as? Bool == true }?["ref"] as? String)
+        XCTAssertEqual(nodes.first?["ref"] as? String, inputRef)
+        let foundInput = try await runtime.interact(method: "find", selector: "input[type='search']", text: nil, options: ["max_results": 1])
+        let inputMatches = try XCTUnwrap(foundInput["matches"] as? [[String: Any]])
+        XCTAssertEqual(inputMatches.first?["ref"] as? String, inputRef)
+        let frames = try XCTUnwrap(refreshed["frames"] as? [[String: Any]])
+        let frameId = try XCTUnwrap(frames.first { $0["parent_frame_id"] as? String == "root" }?["frame_id"] as? String)
+        let scopedInput = try await runtime.interact(method: "find", selector: "frame:\(frameId):css:input[type='search']", text: nil, options: ["max_results": 1])
+        XCTAssertEqual((scopedInput["matches"] as? [[String: Any]])?.first?["ref"] as? String, inputRef)
+        let typed = try jsonObject(await controller.execute(
+            toolName: "wm_type",
+            input: IOSWebMountController.json([
+                "target": inputRef,
+                "snapshot_id": try XCTUnwrap(refreshed["snapshot_id"] as? String),
+                "text": "Shadowrocket"
+            ]),
+            isUserInitiated: false
+        ))
+        XCTAssertEqual(typed["status"] as? String, "verified")
+        let value = try await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('search').value") as? String
+        XCTAssertEqual(value, "Shadowrocket")
+    }
+
+    func testWebMountWebContentTerminationFinishesPendingLoad() async throws {
+        let runtime = IOSWebMountWKRuntime()
+        let webView = try XCTUnwrap(runtime.webView)
+        // Deliver the termination callback directly, without a real navigation
+        // racing to complete the load first.
+        webView.navigationDelegate = nil
+        let url = try XCTUnwrap(URL(string: "about:blank"))
+        let load = Task { await runtime.open(url, timeoutMillis: 1_000) }
+        while runtime.snapshot.status != .loading { await Task.yield() }
+        runtime.webViewWebContentProcessDidTerminate(webView)
+        let result = await load.value
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(result.error, "Web content process terminated. Reopen the page before continuing.")
+        XCTAssertEqual(runtime.snapshot.status, .failed)
+    }
+
     func testWebMountSameOriginFrameReadActAndReload() async throws {
         let runtime = IOSWebMountWKRuntime()
         let webView = try XCTUnwrap(runtime.webView)

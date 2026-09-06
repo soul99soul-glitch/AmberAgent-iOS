@@ -387,6 +387,17 @@ final class IOSSharedSettingsStore {
         )
     }
 
+    func setMemoryExtractionSettings(enabled: Bool? = nil, runOnlyOnCharging: Bool? = nil) {
+        let worker = snapshot.agentRuntime.memoryWorker
+        restoreSnapshot(
+            IosSettingsMutations.shared.setMemoryExtractionSettings(
+                settings: snapshot,
+                enabled: enabled.map { KotlinBoolean(value: $0) },
+                runOnlyOnCharging: runOnlyOnCharging ?? worker.runOnlyOnCharging
+            )
+        )
+    }
+
     func setAgentSoulMarkdown(_ markdown: String) {
         restoreSnapshot(
             IosSettingsMutations.shared.setAgentSoulMarkdown(settings: snapshot, markdown: markdown)

@@ -1510,6 +1510,9 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard runState.finalizeTerminal() else { return }
         if didSave {
             notifyRunTerminal(job: job, runId: job.runId, finalMessages: stamped)
+            IOSMemoryExtractionCoordinator.shared.enqueue(
+                conversationId: job.conversationId, baseline: job.displayMessages, completed: stamped
+            )
             WatchTaskCoordinator.shared.publishCompleted(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
@@ -2159,6 +2162,9 @@ final class IOSChatBackgroundGenerationCoordinator {
         let succeeded = runStatus == .completed
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         if succeeded {
+            IOSMemoryExtractionCoordinator.shared.enqueue(
+                conversationId: job.conversationId, baseline: job.displayMessages, completed: finalMessages
+            )
             WatchTaskCoordinator.shared.publishCompleted(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
@@ -3744,6 +3750,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         for job in terminatedJobs {
             publishTerminalEvent(for: job)
         }
+        IOSMemoryExtractionCoordinator.shared.resume()
     }
 
     private func publishTerminalEvent(for job: IOSChatBackgroundRuntimeJob) {

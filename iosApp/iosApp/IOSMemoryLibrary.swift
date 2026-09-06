@@ -133,6 +133,7 @@ enum IOSMemoryLibrary {
         case "create", "add", "write": "新增"
         case "edit", "update": "修改"
         case "delete", "remove": "删除"
+        case "extract": "自动提炼"
         default: raw
         }
     }

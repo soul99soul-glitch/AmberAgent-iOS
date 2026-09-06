@@ -1206,8 +1206,7 @@ enum ChatToolOutputFormatter {
         var iterations = 0
         while string.count > maxChars, iterations < 128 {
             iterations += 1
-            // 地板 12：短于此的字符串值不再减半——判定键值（如 "timed_out"，9 字符）
-            // 被截断会让失败被误读为成功（checker 整体复核低级项）。
+            // 描述文本保留至少 12 字符；定位字段和状态值由下方遍历排除。
             guard let longest = longestStringValue(in: working, minimumLength: 12),
                   longest.value.count > 12 else { break }
             let shorter = String(longest.value.prefix(max(longest.value.count / 2, 12)))
@@ -1215,7 +1214,8 @@ enum ChatToolOutputFormatter {
             truncated = true
             string = jsonString(working)
         }
-        guard truncated else { return nil }
+        // 只剩不可裁短的字段时保留 JSON，避免转为纯文本截断而破坏操作引用。
+        guard truncated else { return raw }
         working["truncated"] = true
         working["truncation_note"] = IOSToolOutputLimits.truncationMarker(
             droppedChars: max(raw.count - string.count, 0)
@@ -1270,6 +1270,12 @@ enum ChatToolOutputFormatter {
         if let dict = value as? [String: Any] {
             var best: (path: [Any], value: String)?
             for (key, child) in dict {
+                // 这些值会被后续工具用来定位目标或判断结果，不能裁短。
+                if child is String,
+                   key == "id" || key == "ref" || key.hasSuffix("_id") || key.hasSuffix("_ref")
+                    || ["selector", "status", "error_code", "tool", "method"].contains(key) {
+                    continue
+                }
                 if let candidate = longestStringValue(in: child, minimumLength: minimumLength, path: path + [key]),
                    candidate.value.count > (best?.value.count ?? 0) {
                     best = candidate

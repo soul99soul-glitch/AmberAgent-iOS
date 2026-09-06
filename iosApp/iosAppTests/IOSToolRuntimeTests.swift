@@ -446,6 +446,42 @@ final class IOSToolRuntimeTests: XCTestCase {
         XCTAssertTrue((payload["text"] as? String)?.count ?? 0 < giant.count)
     }
 
+    func testWebMountOutputTruncationPreservesActionReferences() throws {
+        let snapshot = "document-1234567890:revision-1234567890"
+        let nodes: [[String: Any]] = (0..<24).map { index in
+            [
+                "ref": "document-1234567890:frame-f1:element-\(index)",
+                "interactive_target_ref": "document-1234567890:frame-f1:parent-\(index)",
+                "name": String(repeating: "Search field description ", count: 4)
+            ]
+        }
+        let raw = String(data: try JSONSerialization.data(withJSONObject: [
+            "ok": true,
+            "status": "dispatched_unverified",
+            "snapshot_id": snapshot,
+            "elements": nodes
+        ]), encoding: .utf8)!
+
+        let parts = ChatToolOutputFormatter.cappedToolOutputParts(
+            [UIMessagePart.Text(text: raw, metadata: nil)], maxChars: 3_600
+        )
+        let text = try XCTUnwrap(parts.first as? UIMessagePart.Text).text
+        let payload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+        )
+        let cappedNodes = try XCTUnwrap(payload["elements"] as? [[String: Any]])
+
+        XCTAssertEqual(payload["snapshot_id"] as? String, snapshot)
+        XCTAssertEqual(payload["status"] as? String, "dispatched_unverified")
+        XCTAssertEqual(payload["truncated"] as? Bool, true)
+        XCTAssertLessThanOrEqual(text.count, 3_600 + 64)
+        XCTAssertEqual(cappedNodes.count, nodes.count)
+        for (original, capped) in zip(nodes, cappedNodes) {
+            XCTAssertEqual(capped["ref"] as? String, original["ref"] as? String)
+            XCTAssertEqual(capped["interactive_target_ref"] as? String, original["interactive_target_ref"] as? String)
+        }
+    }
+
     func testFunnelDoesNotDoubleTruncateCompactedOutputs() throws {
         let runtime = makeRuntime()
         let toolCall = makePendingToolCall()

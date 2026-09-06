@@ -2170,6 +2170,9 @@ final class ChatKernelRunHost {
             runId: runId,
             presentation: didPersist && !miniAppFailed ? .completed() : .failed()
         )
+        if didPersist, !miniAppFailed, let conversationId {
+            bindings.scheduleMemoryExtraction(conversationId, displayBaseline, finalSnapshot)
+        }
         teardownRun(
             runId: runId,
             terminalEvent: didPersist && !miniAppFailed ? .generationCompleted : .generationFailed

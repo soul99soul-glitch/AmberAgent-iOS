@@ -128,6 +128,14 @@ struct AppShell: View {
         // AppShell is MainActor-isolated, so this synchronous file read cannot
         // race the first view render or an early memory mutation.
         IOSMemoryPersistence.shared.load()
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        IOSMemoryExtractionCoordinator.shared.configure(
+            settings: sharedSettingsStore, conversations: conversationStore,
+            writesEnabled: {
+                guard let policy = localToolExecutor.permissionPolicy(capabilityId: "ios.agent.memory_write") else { return false }
+                return policy != .disabled
+            }
+        )
     }
 
     var body: some View {
@@ -186,8 +194,12 @@ struct AppShell: View {
         .onChange(of: AmberThemeRuntime.shared.isTryOnActive) { _, active in
             if !active { isResolvingThemeTryOn = false }
         }
-        .task { await storeCoordinator.start() }
+        .task {
+            await storeCoordinator.start()
+            IOSMemoryExtractionCoordinator.shared.resume()
+        }
         .onChange(of: chatViewModel.isLoading) { _, isLoading in
+            if !isLoading { IOSMemoryExtractionCoordinator.shared.resume() }
             guard !isLoading, pendingAppDeepLinkDestination != nil else { return }
             Task { await openPendingAppDeepLinkIfReady() }
         }
@@ -209,7 +221,11 @@ struct AppShell: View {
             handleScenePhaseChange(phase)
             if phase == .active {
                 Task { await storeCoordinator.refresh() }
+                IOSMemoryExtractionCoordinator.shared.resume()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
+            IOSMemoryExtractionCoordinator.shared.resume()
         }
         .onReceive(NotificationCenter.default.publisher(for: .amberWatchOpenTask)) { note in
             guard let runId = note.userInfo?["runId"] as? String,

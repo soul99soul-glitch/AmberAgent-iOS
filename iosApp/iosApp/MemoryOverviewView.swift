@@ -18,6 +18,7 @@ struct MemoryOverviewView: View {
     @State private var showSoulRollbackConfirmation = false
     @State private var soulPreviousStore = IOSSoulPreviousStore()
     @State private var auditStore = IOSMemoryWriteAuditStore.shared
+    @State private var extraction = IOSMemoryExtractionCoordinator.shared
     @State private var pendingDeleteRecord: MemoryRecord?
     @State private var operationError: String?
     @State private var showClearAuditConfirmation = false
@@ -42,6 +43,7 @@ struct MemoryOverviewView: View {
                         intro
                         loadStatusSection
                         runtimeSection
+                        extractionSection
                         pollutionSection
                         recordsSection
                         auditSection
@@ -308,13 +310,53 @@ struct MemoryOverviewView: View {
     }
 
     private var intro: some View {
-        Text("管理 Amber 会在聊天中参考的本地记忆。记录可以搜索、按范围过滤、查看来源，并在模型尝试写入时留下审批痕迹。")
+        Text("管理 Amber 会在聊天中参考的本地记忆。自动提炼只保存用户明确表达的偏好与项目事实，记录可以搜索、查看来源或删除。")
             .font(.callout)
             .foregroundStyle(AmberTheme.foreground2)
             .lineSpacing(3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
+    }
+
+    private var extractionSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "自动积累")
+            AmberFormGroup {
+                MemoryPresetRow(
+                    title: "聊天后提炼记忆",
+                    subtitle: "默认使用压缩模型提炼用户发言，会产生额外模型调用。",
+                    isOn: Binding(
+                        get: { sharedSettings.agentRuntime.memoryWorker.enabled && sharedSettings.agentRuntime.memoryWorker.extractionEnabled },
+                        set: { sharedSettings.setMemoryExtractionSettings(enabled: $0); extraction.retry() }
+                    )
+                )
+                MemoryDivider()
+                MemoryPresetRow(
+                    title: "仅充电时提炼",
+                    subtitle: "未充电时保留待处理记录，回到 App 后继续。",
+                    isOn: Binding(
+                        get: { sharedSettings.agentRuntime.memoryWorker.runOnlyOnCharging },
+                        set: { sharedSettings.setMemoryExtractionSettings(runOnlyOnCharging: $0); extraction.retry() }
+                    )
+                )
+                MemoryDivider()
+                HStack(spacing: 12) {
+                    Text(extraction.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if extraction.pendingCount > 0, !extraction.isRunning {
+                        Button("重试") { extraction.retry() }
+                            .font(.subheadline.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+        }
     }
 
     private var runtimeSection: some View {
@@ -695,6 +737,7 @@ private struct MemoryAuditRow: View {
         switch record.status {
         case "approved": "已批准"
         case "user_saved": "用户保存"
+        case "auto_saved": "自动保存"
         case "needs_user_action": "等待确认"
         case "denied", "denied_by_user": "已拒绝"
         case "user_deleted": "用户删除"
@@ -704,7 +747,7 @@ private struct MemoryAuditRow: View {
 
     private var statusIcon: String {
         switch record.status {
-        case "approved", "user_saved": "checkmark.circle.fill"
+        case "approved", "user_saved", "auto_saved": "checkmark.circle.fill"
         case "needs_user_action": "hand.raised.fill"
         case "denied", "denied_by_user": "xmark.circle.fill"
         case "user_deleted": "trash.fill"
@@ -714,7 +757,7 @@ private struct MemoryAuditRow: View {
 
     private var statusColor: Color {
         switch record.status {
-        case "approved", "user_saved": AmberTheme.accentGreen
+        case "approved", "user_saved", "auto_saved": AmberTheme.accentGreen
         case "needs_user_action": AmberTheme.accentAmber
         case "denied", "denied_by_user", "user_deleted": AmberTheme.accentRed
         default: AmberTheme.accentAmber

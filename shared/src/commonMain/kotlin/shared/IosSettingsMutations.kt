@@ -1309,6 +1309,23 @@ object IosSettingsMutations {
         )
     }
 
+    fun setMemoryExtractionSettings(
+        settings: Settings,
+        enabled: Boolean?,
+        runOnlyOnCharging: Boolean,
+    ): Settings {
+        val worker = settings.agentRuntime.memoryWorker
+        return settings.copy(
+            agentRuntime = settings.agentRuntime.copy(
+                memoryWorker = worker.copy(
+                    enabled = enabled ?: worker.enabled,
+                    extractionEnabled = enabled ?: worker.extractionEnabled,
+                    runOnlyOnCharging = runOnlyOnCharging,
+                )
+            )
+        )
+    }
+
     fun setAgentSoulMarkdown(settings: Settings, markdown: String): Settings {
         return settings.copy(
             agentRuntime = settings.agentRuntime.copy(

@@ -18,7 +18,7 @@ struct ToolOutcomeUnknownCard: View {
                     Text("确认操作结果")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
-                    Text("App 在工具执行期间中断，无法判断操作是否已经生效。请选择实际结果；系统不会自动重试。")
+                    Text("工具执行未能正常完成，无法确认操作是否已生效。请选择实际结果；系统不会自动重试。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)

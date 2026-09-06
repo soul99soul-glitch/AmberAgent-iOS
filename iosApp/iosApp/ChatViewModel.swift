@@ -1227,6 +1227,11 @@ final class ChatViewModel {
                 generationSucceeded: { [weak self] in
                     self?.onGenerationCompleted()
                 },
+                scheduleMemoryExtraction: { conversationId, baseline, completed in
+                    IOSMemoryExtractionCoordinator.shared.enqueue(
+                        conversationId: conversationId, baseline: baseline, completed: completed
+                    )
+                },
                 drainSteerQueue: { [weak self] conversationId in
                     self?.drainSteerQueue(conversationId: conversationId) ?? []
                 },

@@ -348,6 +348,7 @@ struct ChatGenerationBindings {
     /// 传 true 绕过 P2-b 同集去抖；召回标记传 false。
     var recordMemoryUsage: @MainActor ([Int32], Bool) -> Void = { _, _ in }
     var generationSucceeded: @MainActor () -> Void = {}
+    var scheduleMemoryExtraction: @MainActor (KotlinUuid, [UIMessage], [UIMessage]) -> Void = { _, _, _ in }
     /// P1-a: 工具循环边界消费 steer 队列——出队全部排队消息（owner 内部负责
     /// 上屏 + 持久化），返回生成的 user 消息供下一轮 upload 折入。空队列零操作。
     var drainSteerQueue: (KotlinUuid?) -> [UIMessage] = { _ in [] }

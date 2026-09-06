@@ -196,6 +196,13 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         var succeededCount = 0
         var restoreLeftoverCount = 0
         var terminalReports: [(runId: String, messageCount: Int)] = []
+        var memoryExtractionRequests = 0
+        harness.bindings.scheduleMemoryExtraction = { id, baseline, completed in
+            memoryExtractionRequests += 1
+            XCTAssertEqual(id, harness.conversationId)
+            XCTAssertTrue(baseline.contains { $0.role == .user })
+            XCTAssertEqual(completed.last?.toText(), "你好，世界")
+        }
         harness.bindings.generationSucceeded = { succeededCount += 1 }
         harness.bindings.restoreSteerQueueLeftover = { _ in restoreLeftoverCount += 1 }
         harness.bindings.onRunTerminal = { _, runId, finalMessages in
@@ -213,6 +220,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertFalse(harness.isLoading)
         XCTAssertEqual(harness.terminalSteerAutoContinue, [true], "成功收尾自动续发队列")
         XCTAssertEqual(succeededCount, 1)
+        XCTAssertEqual(memoryExtractionRequests, 1)
         XCTAssertEqual(restoreLeftoverCount, 0, "completed 不做 composer 回填(那是 cancel 语义)")
         let terminalReported = await waitForCondition { !terminalReports.isEmpty }
         XCTAssertTrue(terminalReported, "onRunTerminal 必须回传")
