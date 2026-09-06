@@ -10,6 +10,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
+import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -153,6 +154,29 @@ class JsonConversationStorageTest {
         assertEquals("list test", s.title)
         assertTrue(s.isPinned)
         assertEquals(1, s.messageCount)
+    }
+
+    @Test
+    fun summaryListingOnlyDecodesFilesWhoseVersionChanged() = runTest {
+        val idA = Uuid.parse("00000000-0000-0000-0000-000000000014")
+        val idB = Uuid.parse("00000000-0000-0000-0000-000000000015")
+        storage.saveConversation(sampleConversation(id = idA, title = "A"))
+        storage.saveConversation(sampleConversation(id = idB, title = "B"))
+
+        var decodeCount = 0
+        storage.beforeSummaryDecodeForTesting = { decodeCount += 1 }
+        storage.listSummaries()
+        assertEquals(2, decodeCount)
+        assertEquals(2, storage.listSummaries().size)
+        assertEquals(2, decodeCount, "未变化的会话文件不应再次解码")
+
+        tempDir.child("${idA}.json").writeText(
+            JsonInstant.encodeToString(sampleConversation(id = idA, title = "A changed"))
+        )
+
+        val summaries = storage.listSummaries()
+        assertEquals(3, decodeCount, "只修改一个会话时只应重新解码一个文件")
+        assertEquals("A changed", summaries.single { it.id == idA }.title)
     }
 
     @Test
@@ -346,18 +370,26 @@ class JsonConversationStorageTest {
     @Test
     fun validIndexRefreshesStaleSummaryForTheSameConversationId() = runTest {
         val id = Uuid.parse("00000000-0000-0000-0000-000000000055")
-        storage.saveConversation(sampleConversation(id = id, title = "cached title"))
-        tempDir.child("${id}.json").writeText(
-            JsonInstant.encodeToString(sampleConversation(id = id, title = "disk title"))
+        val conversation = sampleConversation(id = id, title = "cached title")
+        storage.saveConversation(conversation)
+        assertEquals("cached title", storage.listSummaries().single().title)
+        val file = File(tempDir.child("${id}.json").path)
+        val modified = Files.getLastModifiedTime(file.toPath())
+        val size = file.length()
+        // 原地等长改写并恢复 mtime，仍必须识别外部内容变化。
+        file.writeText(
+            JsonInstant.encodeToString(conversation.copy(title = "edited title"))
         )
+        Files.setLastModifiedTime(file.toPath(), modified)
+        assertEquals(size, file.length())
 
         val summaries = storage.listSummaries()
         val persistedIndex = JsonInstant.decodeFromString<List<ConversationSummary>>(
             tempDir.child("index.json").readText()!!
         )
 
-        assertEquals("disk title", summaries.single().title)
-        assertEquals("disk title", persistedIndex.single().title)
+        assertEquals("edited title", summaries.single().title)
+        assertEquals("edited title", persistedIndex.single().title)
     }
 
     @Test
@@ -367,6 +399,7 @@ class JsonConversationStorageTest {
         val orphanId = Uuid.parse("00000000-0000-0000-0000-000000000058")
         storage.saveConversation(sampleConversation(id = retainedId, title = "retained"))
         storage.saveConversation(sampleConversation(id = staleId, title = "stale"))
+        storage.listSummaries()
         assertTrue(tempDir.child("${staleId}.json").delete())
         tempDir.child("${orphanId}.json").writeText(
             JsonInstant.encodeToString(sampleConversation(id = orphanId, title = "orphan"))

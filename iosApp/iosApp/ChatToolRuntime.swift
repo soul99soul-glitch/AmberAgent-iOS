@@ -224,6 +224,7 @@ struct IOSRecipeExecutionState {
     var stepOutputs: [String: String]
     var completedSteps: [String]
     var nextStepIndex: Int
+    var candidateTest: IOSPluginTestContext? = nil
 
     func checkpoint() -> IOSRecipeExecutionCheckpoint {
         IOSRecipeExecutionCheckpoint(
@@ -246,6 +247,8 @@ struct IOSRecipeExecutionState {
 /// descriptor keeps execution on the exact package revision the model saw.
 struct IOSPreparedPluginInvocation: Equatable, Sendable {
     let descriptor: IOSDynamicRecipeToolDescriptor
+    var argumentsJSON: String? = nil
+    var candidateTest: IOSPluginTestContext? = nil
 }
 
 enum ChatToolApprovalPrompt {
@@ -2744,7 +2747,7 @@ final class ChatToolRuntime {
                     snapshot: recipeCatalogSnapshot,
                     bridge: toolExposureBridge
                 )
-            case .javascript, .remote:
+            case .javascript, .remote, .command:
                 return await executePluginToolCall(
                     pending,
                     descriptor: descriptor,
@@ -2992,6 +2995,31 @@ final class ChatToolRuntime {
             }
         }
 
+        if toolName == "plugin_test" {
+            do {
+                let test = try pluginToolService.preparePluginTest(arguments: pending.toolCall.input)
+                if case .recipe = test.descriptor.implementation {
+                    return await executeRecipeToolCall(
+                        pending, snapshot: nil, bridge: toolExposureBridge,
+                        candidate: test.descriptor, argumentsJSON: test.argumentsJSON,
+                        candidateTest: test.context
+                    )
+                }
+                return await executePluginToolCall(
+                    pending, descriptor: test.descriptor, bridge: toolExposureBridge,
+                    argumentsJSON: test.argumentsJSON, candidateTest: test.context
+                )
+            } catch {
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolName, reason: error.localizedDescription, status: "failed"
+                    ),
+                    in: pending.baseMessages
+                ))
+            }
+        }
+
         if toolName == "plugin_import" {
             preparedPluginImportsForApproval.removeValue(forKey: pending.toolCall.toolCallId)
             do {
@@ -3117,8 +3145,11 @@ final class ChatToolRuntime {
     private func executePluginToolCall(
         _ pending: ChatPendingToolApproval,
         descriptor: IOSDynamicRecipeToolDescriptor,
-        bridge: IosToolExposureBridge?
+        bridge: IosToolExposureBridge?,
+        argumentsJSON: String? = nil,
+        candidateTest: IOSPluginTestContext? = nil
     ) async -> ChatToolRuntimeResult {
+        let invocationArguments = argumentsJSON ?? pending.toolCall.input
         guard descriptor.pluginId != nil else {
             return .completed(messagesByFinishingToolCall(
                 pending.toolCall,
@@ -3130,31 +3161,60 @@ final class ChatToolRuntime {
                 in: pending.baseMessages
             ))
         }
-        guard pluginInputObject(pending.toolCall.input, matches: descriptor) != nil else {
+        if let issue = pluginInputIssue(invocationArguments, matches: descriptor) {
             return .completed(messagesByFinishingToolCall(
                 pending.toolCall,
                 outputText: ChatToolOutputFormatter.toolFailureJSON(
                     toolName: pending.toolCall.toolName,
-                    reason: "插件参数不是符合声明的 JSON 对象。",
+                    reason: issue,
                     status: "failed"
                 ),
                 in: pending.baseMessages
             ))
         }
 
-        let requiresHighRiskApproval = pluginRequiresHighRiskApproval(descriptor)
-        let autoApproved = requiresHighRiskApproval
-            ? effectiveHighRiskAutoApproveEnabled
-            : (effectiveGlobalAutoApproveEnabled || effectiveHighRiskAutoApproveEnabled)
+        let autoApproved: Bool
+        var argumentsPreview = recipeArgumentsPreview(invocationArguments)
+        if case .command(let source) = descriptor.implementation {
+            do {
+                if let reason = pluginCommandAvailabilityIssue(source) {
+                    throw IOSPluginCommandError.unavailable(reason)
+                }
+                let invocation = try IOSPluginCommandBuilder.build(
+                    source: source.source, manifest: source.manifest,
+                    inputObject: ChatToolCallParsing.jsonObject(invocationArguments) ?? [:],
+                    timeoutMs: descriptor.timeoutMs
+                )
+                autoApproved = isIshToolAutoApproved(
+                    toolName: invocation.toolName, input: invocation.argumentsJSON,
+                    runId: pending.runId, conversationId: pending.conversationId
+                )
+                argumentsPreview = recipeArgumentsPreview(invocation.argumentsJSON)
+            } catch {
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: pending.toolCall.toolName, reason: error.localizedDescription, status: "failed"
+                    ),
+                    in: pending.baseMessages
+                ))
+            }
+        } else {
+            autoApproved = pluginRequiresHighRiskApproval(descriptor)
+                ? effectiveHighRiskAutoApproveEnabled
+                : (effectiveGlobalAutoApproveEnabled || effectiveHighRiskAutoApproveEnabled)
+        }
         if descriptor.effectClassRawValue != IOSToolEffectClass.pure.rawValue, !autoApproved {
             let capabilities = pluginInvocationCapabilities(descriptor)
             preparedPluginInvocationsForApproval[pending.toolCall.toolCallId] = IOSPreparedPluginInvocation(
-                descriptor: descriptor
+                descriptor: descriptor,
+                argumentsJSON: invocationArguments,
+                candidateTest: candidateTest
             )
             let payload = PluginInvocationApprovalPayload(
                 toolId: descriptor.toolId,
-                handler: pluginHandlerTitle(descriptor.implementation),
-                argumentsPreview: recipeArgumentsPreview(pending.toolCall.input),
+                handler: (candidateTest == nil ? "" : "试运行 · ") + pluginHandlerTitle(descriptor.implementation),
+                argumentsPreview: argumentsPreview,
                 effectClass: IOSToolEffectClass(rawValue: descriptor.effectClassRawValue) ?? .sideEffect,
                 capabilities: capabilities
             )
@@ -3170,10 +3230,11 @@ final class ChatToolRuntime {
 
         let output = await executePinnedPlugin(
             descriptor: descriptor,
-            argumentsJSON: pending.toolCall.input,
+            argumentsJSON: invocationArguments,
             context: pending,
             bridge: bridge,
-            isUserInitiated: autoApproved
+            isUserInitiated: autoApproved,
+            candidateTest: candidateTest
         )
         let messages = messagesByFinishingToolCall(
             pending.toolCall,
@@ -3198,10 +3259,10 @@ final class ChatToolRuntime {
         guard descriptor.isBackgroundEligible else {
             return .denied("该插件处理器未获后台只读执行许可。")
         }
-        guard pluginInputObject(argumentsJSON, matches: descriptor) != nil else {
+        if let issue = pluginInputIssue(argumentsJSON, matches: descriptor) {
             return .filled(ChatToolOutputFormatter.toolFailureJSON(
                 toolName: descriptor.toolId,
-                reason: "插件参数不是符合声明的 JSON 对象。",
+                reason: issue,
                 status: "failed"
             ))
         }
@@ -3226,8 +3287,8 @@ final class ChatToolRuntime {
             executionPolicy: executionPolicy
         )
         switch descriptor.implementation {
-        case .javascript:
-            return .denied("受限 JavaScript 插件不在后台白名单中。")
+        case .javascript, .command:
+            return .denied("脚本和本地命令插件不在后台白名单中。")
         case .remote:
             let output = await executePinnedPlugin(
                 descriptor: descriptor,
@@ -3343,13 +3404,14 @@ final class ChatToolRuntime {
                 denied: true
             )
         } else if let prepared,
-                  pluginInputObject(pending.toolCall.input, matches: prepared.descriptor) != nil {
+                  pluginInputIssue(prepared.argumentsJSON ?? pending.toolCall.input, matches: prepared.descriptor) == nil {
             output = await executePinnedPlugin(
                 descriptor: prepared.descriptor,
-                argumentsJSON: pending.toolCall.input,
+                argumentsJSON: prepared.argumentsJSON ?? pending.toolCall.input,
                 context: pending,
                 bridge: toolExposureBridge,
-                isUserInitiated: true
+                isUserInitiated: true,
+                candidateTest: prepared.candidateTest
             )
         } else {
             output = ChatToolOutputFormatter.toolFailureJSON(
@@ -3370,7 +3432,8 @@ final class ChatToolRuntime {
         argumentsJSON: String,
         context: ChatPendingToolApproval,
         bridge: IosToolExposureBridge?,
-        isUserInitiated: Bool
+        isUserInitiated: Bool,
+        candidateTest: IOSPluginTestContext? = nil
     ) async -> String {
         let output = await executePinnedPluginBody(
             descriptor: descriptor,
@@ -3379,6 +3442,7 @@ final class ChatToolRuntime {
             bridge: bridge,
             isUserInitiated: isUserInitiated
         )
+        if let candidateTest { return candidateTest.resultJSON(output) }
         await recordPluginHealth(output: output, descriptor: descriptor)
         return output
     }
@@ -3502,6 +3566,34 @@ final class ChatToolRuntime {
                     status: "timeout"
                 )
             }
+        case .command(let source):
+            do {
+                if let reason = pluginCommandAvailabilityIssue(source) {
+                    throw IOSPluginCommandError.unavailable(reason)
+                }
+                let invocation = try IOSPluginCommandBuilder.build(
+                    source: source.source, manifest: source.manifest,
+                    inputObject: ChatToolCallParsing.jsonObject(argumentsJSON) ?? [:],
+                    timeoutMs: descriptor.timeoutMs
+                )
+                let call = UIMessagePart.Tool(
+                    toolCallId: "plugin-command-\(UUID().uuidString)",
+                    toolName: invocation.toolName, input: invocation.argumentsJSON,
+                    output: [], approvalState: ToolApprovalState.Auto.shared,
+                    streamIndex: nil, metadata: nil
+                )
+                let output = await ishToolExecutionOutput(call, isUserInitiated: isUserInitiated)
+                let text = ChatToolOutputFormatter.ishHandoffResultText(for: call, output: output)
+                // Preserve stderr, exit status and unknown-after-action markers
+                // so the author can diagnose failures without unsafe retries.
+                if ChatToolCallParsing.jsonObject(text)?["ok"] as? Bool == false { return text }
+                let raw = try IOSPluginCommandBuilder.parseOutput(text, outputType: descriptor.outputType)
+                return pluginOutputPayload(rawJSON: raw, logs: [], descriptor: descriptor)
+            } catch {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: descriptor.toolId, reason: error.localizedDescription, status: "failed"
+                )
+            }
         case .remote(let remote):
             return await executePluginRemote(
                 remote,
@@ -3525,7 +3617,7 @@ final class ChatToolRuntime {
         let errorCode = object["error_code"] as? String ?? ""
         let reason = (object["reason"] as? String) ?? (object["error"] as? String) ?? "插件运行失败。"
         let kind: IOSPluginDiagnosticKind?
-        if status == "timeout" || errorCode == "step_timeout" || reason.localizedCaseInsensitiveContains("超时") {
+        if status == "timeout" || status == "timed_out" || errorCode == "step_timeout" || reason.localizedCaseInsensitiveContains("超时") {
             kind = .timeout
         } else if errorCode == "output_resolution" || reason.contains("输出不符合") || reason.contains("输出超过") {
             kind = .schema
@@ -3533,6 +3625,10 @@ final class ChatToolRuntime {
             kind = .exception
         } else if reason.contains("远端插件") {
             kind = .remote
+        } else if case .command = descriptor.implementation,
+                  status == "failed",
+                  object["runtime"] as? String != nil {
+            kind = .exception
         } else {
             kind = nil
         }
@@ -3556,6 +3652,8 @@ final class ChatToolRuntime {
         switch descriptor.implementation {
         case .recipe:
             return false
+        case .command:
+            return true
         case .remote:
             return descriptor.effectClassRawValue == IOSToolEffectClass.sideEffect.rawValue
         case .javascript(_, let hostTools):
@@ -3698,7 +3796,8 @@ final class ChatToolRuntime {
 
     private static func isPluginOutcomeUnknown(_ output: String) -> Bool {
         guard let object = ChatToolCallParsing.jsonObject(output) else { return false }
-        return object["status"] as? String == "outcome_unknown"
+        return (object["status"] as? String == "outcome_unknown"
+            || object["status"] as? String == "unknown_after_action")
             && object["may_have_applied"] as? Bool == true
     }
 
@@ -3722,10 +3821,19 @@ final class ChatToolRuntime {
     ) -> String {
         guard let data = rawJSON.data(using: .utf8),
               let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
-              Self.pluginValue(value, matches: descriptor.outputType) else {
+              let typedValue = try? JSONDecoder().decode(IOSRecipeJSONValue.self, from: data) else {
             return ChatToolOutputFormatter.toolFailureJSON(
                 toolName: descriptor.toolId,
-                reason: "插件输出不符合声明的 \(descriptor.outputType.rawValue) 类型。",
+                reason: "插件输出不是合法 JSON。",
+                status: "failed"
+            )
+        }
+        let outputIssues = IOSPluginJSONSchema.legacyOutputSchema(from: descriptor.outputType).validateValue(typedValue)
+            + (descriptor.outputSchema?.validateValue(typedValue) ?? [])
+        if let issue = outputIssues.first {
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: descriptor.toolId,
+                reason: "插件输出不符合声明：\(issue)",
                 status: "failed"
             )
         }
@@ -3742,28 +3850,21 @@ final class ChatToolRuntime {
         return text
     }
 
-    private func pluginInputObject(
+    private func pluginInputIssue(
         _ raw: String,
         matches descriptor: IOSDynamicRecipeToolDescriptor
-    ) -> [String: Any]? {
-        guard let object = ChatToolCallParsing.jsonObject(raw),
-              Set(object.keys) == Set(descriptorInputTypes(descriptor).keys) else { return nil }
-        for (name, type) in descriptorInputTypes(descriptor) {
-            guard let value = object[name] else { return nil }
-            switch type {
-            case .string where !(value is String): return nil
-            case .number where !(value is NSNumber) || value is Bool: return nil
-            case .boolean where !(value is Bool): return nil
-            default: break
-            }
-        }
-        return object
+    ) -> String? {
+        guard let value = try? JSONDecoder().decode(IOSRecipeJSONValue.self, from: Data(raw.utf8)),
+              case .object = value else { return "插件参数必须是合法的 JSON 对象。" }
+        let schema = descriptor.inputSchema
+            ?? IOSPluginJSONSchema.legacyInputSchema(from: descriptorInputTypes(descriptor))
+        return schema.validateValue(value).first.map { "插件参数不符合声明：\($0)" }
     }
 
     private func descriptorInputTypes(_ descriptor: IOSDynamicRecipeToolDescriptor) -> [String: IOSRecipeInputType] {
         switch descriptor.implementation {
         case .recipe(let manifest): manifest.inputs
-        case .javascript, .remote:
+        case .javascript, .remote, .command:
             (try? JSONDecoder().decode(
                 [String: IOSRecipeInputType].self,
                 from: Data(descriptor.inputsJSON.utf8)
@@ -3775,6 +3876,7 @@ final class ChatToolRuntime {
         switch descriptor.implementation {
         case .recipe: []
         case .javascript(_, let hostTools): hostTools.sorted()
+        case .command(let source): [source.manifest.runtime.permissionSummary, "入口：\(source.manifest.entry)"]
         case .remote(let remote):
             switch remote.kind {
             case .mcp: ["MCP \(remote.server ?? "?")/\(remote.tool ?? "?")"]
@@ -3787,6 +3889,7 @@ final class ChatToolRuntime {
         switch implementation {
         case .recipe: "Recipe"
         case .javascript: "受限 JavaScript"
+        case .command(let source): source.manifest.runtime.title
         case .remote(let remote): remote.kind == .mcp ? "MCP 适配" : "OpenAPI 适配"
         }
     }
@@ -3798,23 +3901,25 @@ final class ChatToolRuntime {
         return String(data: data, encoding: .utf8)
     }
 
+    private func pluginCommandAvailabilityIssue(_ source: IOSPluginCommandSource) -> String? {
+        if source.manifest.runtime == .amberShell, source.manifest.entry.hasSuffix(".py"),
+           !IOSAmberShellEngine.supportedCommands.contains("python") {
+            return "当前构建未包含 AmberShell Python，无法执行该 .py 插件入口。"
+        }
+        #if !ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
+        if source.manifest.runtime == .ish {
+            return "当前构建未包含嵌入 iSH；该插件需要 ExperimentalGPL 运行环境。"
+        }
+        #endif
+        return nil
+    }
+
     private static func queryValue(_ value: Any?) throws -> String {
         guard let value else { return "" }
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed])
         return String(data: data, encoding: .utf8) ?? ""
-    }
-
-    private static func pluginValue(_ value: Any, matches type: IOSPluginOutputType) -> Bool {
-        switch type {
-        case .json: true
-        case .object: value is [String: Any]
-        case .array: value is [Any]
-        case .string: value is String
-        case .number: value is NSNumber && !(value is Bool)
-        case .boolean: value is Bool
-        }
     }
 
     /// One `recipe__<name>` call, resolved against the ROUND's pinned catalog
@@ -3826,7 +3931,10 @@ final class ChatToolRuntime {
     private func executeRecipeToolCall(
         _ pending: ChatPendingToolApproval,
         snapshot: IOSDynamicToolCatalogSnapshot?,
-        bridge: IosToolExposureBridge?
+        bridge: IosToolExposureBridge?,
+        candidate: IOSDynamicRecipeToolDescriptor? = nil,
+        argumentsJSON: String? = nil,
+        candidateTest: IOSPluginTestContext? = nil
     ) async -> ChatToolRuntimeResult {
         let toolName = pending.toolCall.toolName
         let recipeCallFailure = { (reason: String) -> ChatToolRuntimeResult in
@@ -3850,7 +3958,7 @@ final class ChatToolRuntime {
         // Fail closed: the round's snapshot does not declare this recipe
         // (rolled back, or the model used a stale name). Never execute from
         // the live store — a call the model saw must match what it saw.
-        guard let descriptor = snapshot?.recipeTools.first(where: { $0.toolId == toolName }) else {
+        guard let descriptor = candidate ?? snapshot?.recipeTools.first(where: { $0.toolId == toolName }) else {
             return recipeCallFailure("此 Recipe 不在当前工具目录中（可能已被回退或版本已更新）。请先调用 tool_search 获取最新工具。")
         }
         guard case .recipe(let recipeManifest) = descriptor.implementation else {
@@ -3864,7 +3972,7 @@ final class ChatToolRuntime {
 
         let inputs: [String: IOSRecipeJSONValue]
         do {
-            let value = try JSONDecoder().decode(IOSRecipeJSONValue.self, from: Data(pending.toolCall.input.utf8))
+            let value = try JSONDecoder().decode(IOSRecipeJSONValue.self, from: Data((argumentsJSON ?? pending.toolCall.input).utf8))
             guard case .object(let object) = value else {
                 return recipeCallFailure("Recipe 调用参数必须是 JSON 对象。")
             }
@@ -3917,6 +4025,7 @@ final class ChatToolRuntime {
             completedSteps: [],
             nextStepIndex: 0
         )
+        state.candidateTest = candidateTest
         switch await advanceRecipeExecution(state: &state, context: pending, bridge: bridge) {
         case .completed(let messages):
             return .completed(messages)
@@ -4905,10 +5014,10 @@ final class ChatToolRuntime {
     ) -> [UIMessage] {
         preparedRecipeExecutions.removeValue(forKey: state.toolCallId)
         recipeExecutionCheckpointStore.remove(toolCallId: state.toolCallId)
-        recordRecipePluginHealth(output: outputText, state: state)
+        if state.candidateTest == nil { recordRecipePluginHealth(output: outputText, state: state) }
         return messagesByFinishingToolCall(
             context.toolCall,
-            outputText: outputText,
+            outputText: state.candidateTest?.resultJSON(outputText) ?? outputText,
             in: context.baseMessages
         )
     }
@@ -4928,7 +5037,7 @@ final class ChatToolRuntime {
         let errorCode = object["error_code"] as? String ?? ""
         let reason = (object["reason"] as? String) ?? (object["error"] as? String) ?? "插件运行失败。"
         let kind: IOSPluginDiagnosticKind?
-        if status == "timeout" || errorCode == "step_timeout" || reason.localizedCaseInsensitiveContains("超时") {
+        if status == "timeout" || status == "timed_out" || errorCode == "step_timeout" || reason.localizedCaseInsensitiveContains("超时") {
             kind = .timeout
         } else if errorCode == "output_resolution" || reason.contains("输出解析") {
             kind = .schema

@@ -2514,6 +2514,39 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
 
     // MARK: - 5. 会话切换重置并重新锚定
 
+    func testCapsuleSpacingDoesNotChangeAcrossToolRounds() throws {
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        let parts: [UIMessagePart] = [
+            UIMessagePart.Reasoning(reasoning: "核对资料", createdAt: instant, finishedAt: instant, metadata: nil),
+            UIMessagePart.Tool(toolCallId: "first", toolName: "search_web", input: "{}",
+                               output: [UIMessagePart.Text(text: "完成", metadata: nil)],
+                               approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil),
+            UIMessagePart.Tool(toolCallId: "next", toolName: "scrape_web", input: "{}",
+                               output: [UIMessagePart.Text(text: "完成", metadata: nil)],
+                               approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        ]
+        func assistant(_ parts: [UIMessagePart]) -> UIMessage {
+            UIMessage(id: KotlinUuid.companion.random(), role: MessageRole.assistant, parts: parts,
+                      annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: chatNowLocalDateTime(),
+                      modelId: nil, usage: nil, translation: nil)
+        }
+        let user = makeUserMessage("查询资料")
+        fixture.model.messages = [user, assistant(parts)]
+        fixture.model.send(.initialLoad)
+        pump(seconds: 0.8)
+        let scrollView = try XCTUnwrap(fixture.scrollView)
+        let singleMessageHeight = scrollView.contentSize.height
+        XCTAssertGreaterThan(singleMessageHeight, 132)
+
+        fixture.model.messages = [user] + parts.map { assistant([$0]) }
+        fixture.model.send(.branchChange)
+        pump(seconds: 0.8)
+        XCTAssertEqual(scrollView.contentSize.height, singleMessageHeight, accuracy: 1,
+                       "同一回合的思考和工具胶囊不能因内部消息分段而增加间距")
+    }
+
     func testAssistantContinuationHasNoRepeatedHeaderGap() throws {
         let fixture = makeFixture()
         defer { fixture.tearDown() }
@@ -2533,7 +2566,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             in: fixture.host.view, withPrefix: "下一轮工具后的结论"
         ))
         let continuedHeight = scrollView.contentSize.height
-        XCTAssertEqual(continuedHeight - firstHeight, nextParagraph.bounds.height + 14, accuracy: 1,
+        XCTAssertEqual(continuedHeight - firstHeight, nextParagraph.bounds.height + 8, accuracy: 1,
                        "续答只增加正文与列表间距，不应重复标题或预留标题空白")
         fixture.model.isGenerationActive = false
         fixture.model.messages[2] = makeAssistantMessage(id: next.id, text: "下一轮工具后的结论", finished: true)

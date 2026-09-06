@@ -605,7 +605,6 @@ private struct RecipeDetailRow: View {
                 .foregroundStyle(AmberTheme.foreground)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(2)
-                .layoutPriority(1)
 
             Text(value)
                 .font(monospace ? .system(.subheadline, design: .monospaced) : .subheadline)
@@ -615,7 +614,6 @@ private struct RecipeDetailRow: View {
                 .multilineTextAlignment(.trailing)
                 .minimumScaleFactor(0.85)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .layoutPriority(0)
         }
         .frame(minHeight: 52)
         .padding(.horizontal, 14)
@@ -1330,7 +1328,7 @@ struct PluginDetailView: View {
                   tool.effectClass == .pure || tool.effectClass == .networkRead else { return false }
             switch tool.implementation {
             case .recipe, .remote: return true
-            case .javascript: return false
+            case .javascript, .command: return false
             }
         }
         return eligible.isEmpty ? "无" : "\(eligible.count) 个只读工具"
@@ -1474,6 +1472,7 @@ private func pluginHandlerText(_ implementation: IOSPluginToolImplementation) ->
     switch implementation {
     case .recipe: return "Recipe"
     case .javascript: return "受限 JS"
+    case .command(let source): return source.manifest.runtime.title
     case .remote(let remote): return remote.kind == .mcp ? "MCP" : "OpenAPI"
     }
 }
@@ -1484,5 +1483,6 @@ private func pluginScopeRows(_ capabilities: IOSPluginCapabilities) -> [String] 
     rows += capabilities.workspaceWritePrefixes.map { "Workspace 写入：\($0)" }
     rows += capabilities.networkDomains.map { "网络：\($0)" }
     rows += capabilities.webMountActions.map { "WebMount：\($0)" }
+    rows += capabilities.localRuntimes.map(\.permissionSummary)
     return rows
 }

@@ -10,6 +10,24 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
     private let screenWidth: CGFloat = 393
     private let columnWidth: CGFloat = 393 - ChatLayout.contentHorizontalInset * 2
 
+    func testCollapsedReasoningAndTappableToolsUseSameRowHeight() {
+        let proposal = CGSize(width: columnWidth, height: UIView.layoutFittingExpandedSize.height)
+        let reasoning = UIHostingController(rootView: ChatReasoningCard(bodyText: "已完成思考"))
+        let reasoningHeight = reasoning.sizeThatFits(in: proposal).height
+        XCTAssertEqual(reasoningHeight, 44, accuracy: 0.5)
+        let outputs: [[UIMessagePart]] = [[], [UIMessagePart.Text(text: "完成", metadata: nil)]]
+        for output in outputs {
+            let tool = UIMessagePart.Tool(
+                toolCallId: "capsule-height", toolName: "search_web", input: "{}", output: output,
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )
+            let host = UIHostingController(rootView: ChatToolTimeline(
+                steps: [ChatToolStepModel(tool: tool)], onTapStep: { _ in }
+            ))
+            XCTAssertEqual(host.sizeThatFits(in: proposal).height, reasoningHeight, accuracy: 0.5)
+        }
+    }
+
     func testWebMountCapsuleUsesStableActionTitleInsteadOfRawJSON() {
         let input = """
         {"display_name":"GitHub","homepage_url":"https://github.com/openai/codex","site_id":"user_github"}

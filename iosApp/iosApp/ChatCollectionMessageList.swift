@@ -270,7 +270,7 @@ struct NativeChatTimelineView: View {
                 : contentHashCache.contentHash(for: row)
         }
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 0) {
                 // One eager height model prevents historical estimates and the live tail
                 // from publishing conflicting content sizes into the same scroll view.
                 ForEach(projection.entries) { entry in
@@ -279,6 +279,9 @@ struct NativeChatTimelineView: View {
                         displaySettingSignature: displaySettingSignature,
                         generativeUiSettingSignature: generativeUiSettingSignature
                     )
+                    .padding(.top, entry.id == projection.entries.first?.id ? 0 : (
+                        entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
+                    ))
                 }
             }
             .padding(.horizontal, 16)

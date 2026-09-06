@@ -462,6 +462,7 @@ internal fun Tool.category(): String = when {
 
 private fun Tool.mutatesState(): Boolean {
     if (name == "memory_tool") return true
+    if (name == "plugin_test") return true // Candidate execution can perform the declared side effects.
     if (name == "deep_read_open") return true
     if (name == "run_plan_update") return false
     if (name == "ios_shell_execute") return true

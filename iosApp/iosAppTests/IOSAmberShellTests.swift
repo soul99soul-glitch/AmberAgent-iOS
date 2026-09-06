@@ -103,6 +103,7 @@ final class IOSAmberShellTests: XCTestCase {
         for command in [
             "echo a || echo b", "echo a && echo b", "echo a; echo b", "echo a >> notes/out.txt",
             "cat << notes/source.txt", "echo a 2>&1", "echo `pwd`", "echo $(pwd)", "echo *.txt",
+            "echo a\necho b", "echo a\\\necho b",
             "UNKNOWN=value echo ok", "echo \"unterminated",
         ] {
             let rejected = await IOSAmberShellEngine.execute(command: command, workspaceStore: store)

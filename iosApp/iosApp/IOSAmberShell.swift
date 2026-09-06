@@ -824,11 +824,11 @@ private enum IOSAmberShellParser {
     }
 
     private static func tokenize(_ command: String) throws -> [IOSAmberShellToken] {
-        guard !command.contains(where: { $0 == "\0" || $0 == "\n" || $0 == "\r" }) else {
+        guard !command.contains("\0") else {
             throw IOSAmberShellCommandError.syntax("AmberShell 单条命令不能包含换行或 NUL。")
         }
         guard !command.unicodeScalars.contains(where: {
-            CharacterSet.controlCharacters.contains($0) && $0.value != 9
+            CharacterSet.controlCharacters.contains($0) && ![9, 10, 13].contains($0.value)
         }) else {
             throw IOSAmberShellCommandError.syntax("AmberShell 命令不能包含控制字符。")
         }
@@ -851,6 +851,9 @@ private enum IOSAmberShellParser {
 
         while index < characters.count {
             let character = characters[index]
+            if quote == nil, character == "\n" || character == "\r" {
+                throw IOSAmberShellCommandError.syntax("AmberShell 单条命令不能包含未加引号的换行。")
+            }
             if let activeQuote = quote {
                 if character == activeQuote {
                     quote = nil
@@ -887,6 +890,9 @@ private enum IOSAmberShellParser {
                 index += 1
                 guard index < characters.count else {
                     throw IOSAmberShellCommandError.syntax("命令中的转义未闭合。")
+                }
+                guard characters[index] != "\n", characters[index] != "\r" else {
+                    throw IOSAmberShellCommandError.syntax("AmberShell 不支持反斜线续行。")
                 }
                 current.append(characters[index])
                 tokenStarted = true

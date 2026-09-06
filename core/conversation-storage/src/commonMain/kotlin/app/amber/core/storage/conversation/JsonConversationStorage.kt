@@ -38,8 +38,10 @@ class JsonConversationStorage(
 
     private val operationMutex = Mutex()
     private val indexFile: ConversationFile get() = baseDir.child(INDEX_FILENAME)
+    private val summaryCache = mutableMapOf<String, SummaryCacheEntry>()
 
     internal var beforeUpdateMetadataSaveForTesting: (suspend () -> Unit)? = null
+    internal var beforeSummaryDecodeForTesting: (() -> Unit)? = null
 
     init {
         // 确保目录存在；不存在则静默创建（首次启动/全新安装场景）。
@@ -258,13 +260,37 @@ class JsonConversationStorage(
     private fun readConversationFileSummaries(): List<ConversationSummary> {
         val files = baseDir.listFilesByExtension("json")
             .filterNot { it.path.endsWith(INDEX_FILENAME) }
+        val currentPaths = files.mapTo(mutableSetOf()) { it.path }
+        summaryCache.entries.removeAll { it.key !in currentPaths }
         return files.mapNotNull { file ->
-            val text = file.readText() ?: return@mapNotNull null
-            runCatching {
-                JsonInstant.decodeFromString<Conversation>(text)
-            }.getOrNull()?.toSummary()
+            val before = file.fileVersion()
+            if (before != null) {
+                summaryCache[file.path]?.takeIf { it.version == before }?.let {
+                    return@mapNotNull it.summary
+                }
+            }
+
+            val text = file.readText()
+            val summary = text?.let {
+                beforeSummaryDecodeForTesting?.invoke()
+                runCatching {
+                    JsonInstant.decodeFromString<Conversation>(it)
+                }.getOrNull()?.toSummary()
+            }
+            val after = file.fileVersion()
+            if (summary != null && before != null && before == after) {
+                summaryCache[file.path] = SummaryCacheEntry(before, summary)
+            } else {
+                summaryCache.remove(file.path)
+            }
+            summary
         }
     }
+
+    private data class SummaryCacheEntry(
+        val version: ConversationFileVersion,
+        val summary: ConversationSummary,
+    )
 
     // ---- 排序：置顶优先，再按 updateAt 倒序 ----
 

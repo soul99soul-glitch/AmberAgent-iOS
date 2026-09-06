@@ -42,12 +42,16 @@ internal fun toolSearchDiscoveryGuidance(
         val metadata = registry.metadataFor(tool.name)
         ToolExposureState.isResidentTool(tool.name, metadata?.category)
     }
+    val pluginGuidance = if (registry.tools().any { it.name == "plugin_sdk" }) {
+        "- To develop and save a reusable tool on this device, discover plugin_sdk first. It describes the available runtimes and the write → validate → test → approved import/enable → discover/call workflow. Do not claim installation or testing until those tools succeed."
+    } else ""
     return """
         Tool discovery:
         - This run has ${registry.metadata.size} generated tools across categories: $categories.
         - If the needed tool is not currently visible, call `$TOOL_SEARCH_TOOL_NAME` with a concrete query. It exposes the best matching schemas for the next generation step.
         - Before telling the user you cannot do something, call `$TOOL_SEARCH_TOOL_NAME` with a concrete intent first (e.g. "读取其它会话", "并行子任务", "网页操作", "配置提供商", "API Key", "默认模型", "生成主题", "换肤"). Many capabilities — sub-agent threads, cross-session reading, web mount, MCP tools, script execution, provider/model settings tools, theme packs — stay hidden until searched; never claim inability based only on the currently visible tools. Writing API keys requires user approval; never claim you can change providers without calling the provider_config tools first. Generating or applying a theme requires theme_pack_status then theme_pack_import; never claim you changed the theme until the user confirms 套用.
         - `tools_list` is only a debug/catalog view. A hidden tool listed by `tools_list` is not callable until `$TOOL_SEARCH_TOOL_NAME` exposes it.
+        $pluginGuidance
         - If you used `tools_list` to identify a tool name, call `$TOOL_SEARCH_TOOL_NAME` again with that exact tool name, then execute a name from `expanded_tools` on the next step.
         - Resident tools currently stay visible without search: $residentCount core tools plus discovered tools.
         """.trimIndent()
@@ -245,6 +249,10 @@ class ToolSearchIndex(
         }
         // P1-c: 线程编排六工具的增量中文词条（纯增量，不改既有别名）。
         when (name) {
+            "plugin_sdk" -> addAll(listOf("开发工具", "创建工具", "插件开发", "动态注册", "热加载", "扩展能力"))
+            "plugin_test" -> addAll(listOf("测试插件", "试运行插件", "验证工具行为"))
+            "plugin_validate" -> addAll(listOf("校验插件", "检查插件格式"))
+            "plugin_import" -> addAll(listOf("安装插件", "更新插件", "注册工具"))
             "spawn_agent" -> addAll(listOf("子代理", "开子代理", "并行任务", "子线程", "多线程", "编排"))
             "list_agents" -> addAll(listOf("线程列表", "子代理列表", "并行列表", "编排"))
             "interrupt_agent" -> addAll(listOf("中断子代理", "停止子线程", "打断", "取消子代理"))
@@ -449,7 +457,7 @@ class ToolExposureState private constructor(
     }
 }
 
-private fun UIMessagePart.Tool.expandedToolNames(): List<String> =
+internal fun UIMessagePart.Tool.expandedToolNames(): List<String> =
     output.filterIsInstance<UIMessagePart.Text>().flatMap { part ->
         runCatching {
             val payload = toolSearchJson.parseToJsonElement(part.text) as? JsonObject

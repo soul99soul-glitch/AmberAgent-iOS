@@ -376,9 +376,7 @@ struct IOSRecipeFileStore {
     }
 
     private func makePackage(recipeJSON: Data) throws -> IOSRecipePackage {
-        guard let manifest = try? IOSRecipeManifest.decode(recipeJSON) else {
-            throw IOSRecipeFileStoreError.invalidRecipeJSON
-        }
+        let manifest = try IOSRecipeManifest.decode(recipeJSON)
         let name = Self.normalizedRecipeName(manifest.name)
         guard IOSRecipeNames.isValidRecipeName(name) else {
             throw IOSRecipeFileStoreError.invalidRecipeName
@@ -679,7 +677,6 @@ struct IOSRecipeFileStore {
 }
 
 enum IOSRecipeFileStoreError: LocalizedError, Equatable {
-    case invalidRecipeJSON
     case invalidRecipeName
     case recipeNameMismatch(expected: String, actual: String)
     case recipeMissing(String)
@@ -689,8 +686,6 @@ enum IOSRecipeFileStoreError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidRecipeJSON:
-            "recipe.json 不是合法的 amber.recipe.v1 JSON。"
         case .invalidRecipeName:
             "Recipe 名称必须匹配 ^[a-z][a-z0-9_]{1,31}$。"
         case .recipeNameMismatch(let expected, let actual):
@@ -1540,7 +1535,27 @@ struct IOSPluginFileStore {
         }
         let manifest: IOSPluginManifest
         do { manifest = try IOSPluginManifest.decode(manifestData) }
-        catch { throw IOSPluginFileStoreError.invalidManifest }
+        catch let error as DecodingError {
+            let keys: [CodingKey]
+            let message: String
+            switch error {
+            case .keyNotFound(let key, let context):
+                keys = context.codingPath + [key]
+                message = "缺少必填字段。"
+            case .typeMismatch(_, let context), .valueNotFound(_, let context), .dataCorrupted(let context):
+                keys = context.codingPath
+                message = context.debugDescription
+            @unknown default:
+                keys = []
+                message = error.localizedDescription
+            }
+            let path = keys.reduce("plugin.json") { path, key in
+                key.intValue.map { "\(path)[\($0)]" } ?? "\(path).\(key.stringValue)"
+            }
+            throw IOSPluginFileStoreError.invalidManifest("\(path)：\(message)")
+        } catch {
+            throw IOSPluginFileStoreError.invalidManifest(error.localizedDescription)
+        }
         guard IOSRecipeNames.isValidRecipeName(manifest.id) else {
             throw IOSPluginFileStoreError.invalidPluginId
         }
@@ -1704,7 +1719,7 @@ struct IOSPluginFileStore {
     private func isAllowedPackagePath(_ path: String) -> Bool {
         path == "plugin.json" || path == "README.md"
             || (path.hasPrefix("recipes/") && path.hasSuffix(".json"))
-            || (path.hasPrefix("scripts/") && path.hasSuffix(".js"))
+            || (path.hasPrefix("scripts/") && ["js", "sh", "py"].contains(URL(fileURLWithPath: path).pathExtension))
             || path.hasPrefix("assets/")
     }
 
@@ -1716,6 +1731,7 @@ struct IOSPluginFileStore {
             || !Set(newCaps.workspaceWritePrefixes).isSubset(of: Set(oldCaps.workspaceWritePrefixes))
             || !Set(newCaps.networkDomains).isSubset(of: Set(oldCaps.networkDomains))
             || !Set(newCaps.webMountActions).isSubset(of: Set(oldCaps.webMountActions))
+            || !Set(newCaps.localRuntimes).isSubset(of: Set(oldCaps.localRuntimes))
     }
 
     private static func trustChangeRequiresDisable(
@@ -1737,7 +1753,7 @@ struct IOSPluginFileStore {
 }
 
 enum IOSPluginFileStoreError: LocalizedError, Equatable {
-    case invalidManifest
+    case invalidManifest(String)
     case invalidPluginId
     case invalidRecipe(String)
     case invalidScript(String)
@@ -1753,7 +1769,7 @@ enum IOSPluginFileStoreError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .invalidManifest: "plugin.json 不是合法的 amber.plugin.v1。"
+        case .invalidManifest(let details): "plugin.json 不符合 amber.plugin.v1：\(details)"
         case .invalidPluginId: "插件 id 无效。"
         case .invalidRecipe(let path): "\(path) 不是合法的 amber.recipe.v1。"
         case .invalidScript(let path): "\(path) 不是合法的 UTF-8 JavaScript。"

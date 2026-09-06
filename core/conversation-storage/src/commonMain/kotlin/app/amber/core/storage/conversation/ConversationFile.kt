@@ -35,6 +35,25 @@ expect class ConversationFile(path: String) {
     fun listFilesByExtension(ext: String): List<ConversationFile>
 }
 
+/**
+ * 文件内容的廉价版本指纹。读不到完整元数据时返回 null，调用方必须放弃缓存。
+ *
+ * 版本同时包含文件身份、大小、修改时间和 metadata change time，避免外部替换后
+ * 恰好恢复原大小/mtime 时继续复用旧摘要。
+ */
+internal data class ConversationFileVersion(
+    val device: Long,
+    val inode: Long,
+    val size: Long,
+    val modifiedSeconds: Long,
+    val modifiedNanoseconds: Long,
+    val changedSeconds: Long,
+    val changedNanoseconds: Long,
+)
+
+/** 返回文件版本；平台无法取得完整指纹时返回 null，不缓存该文件。 */
+internal expect fun ConversationFile.fileVersion(): ConversationFileVersion?
+
 /** 拼接子文件路径。 */
 fun ConversationFile.child(name: String): ConversationFile =
     ConversationFile(this.path + separatorChar() + name)

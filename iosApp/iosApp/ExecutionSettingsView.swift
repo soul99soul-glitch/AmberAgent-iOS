@@ -9,6 +9,9 @@ struct ExecutionSettingsView: View {
     @Environment(RouterPath.self) private var router
 
     @AppStorage(IOSExecutionPreferenceKeys.liveActivity) private var liveActivity = true
+#if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
+    @AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive) private var audioKeepAlive = true
+#endif
     @AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)
     private var chatMaxToolResumeCount = SettingsStore.defaultChatMaxToolResumeCount
     @AppStorage(IOSExecutionPreferenceKeys.execJavaScriptEnabled)
@@ -36,6 +39,9 @@ struct ExecutionSettingsView: View {
                             recentTasksSection
                         }
                         liveActivitySection
+#if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
+                        audioKeepAliveSection
+#endif
                     }
                     .padding(.bottom, 36)
                 }
@@ -205,6 +211,31 @@ struct ExecutionSettingsView: View {
             }
         }
     }
+
+#if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
+    private var audioKeepAliveSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "后台续跑")
+            AmberFormGroup {
+                ExecutionToggleRow(
+                    systemImage: "waveform",
+                    title: IOSAppLocalization.string(
+                        "音频保活",
+                        defaultValue: "音频保活"
+                    ),
+                    subtitle: IOSAppLocalization.string(
+                        "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。",
+                        defaultValue: "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。"
+                    ),
+                    isOn: audioKeepAlive
+                ) {
+                    audioKeepAlive.toggle()
+                    BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()
+                }
+            }
+        }
+    }
+#endif
 
     private var recentTasksSection: some View {
         VStack(spacing: 0) {

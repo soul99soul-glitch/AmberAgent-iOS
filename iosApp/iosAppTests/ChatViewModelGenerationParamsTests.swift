@@ -26,6 +26,85 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         )
     }
 
+    private func exposureViewModel(permissionStore: IOSPermissionStore? = nil) -> ChatViewModel {
+        ChatViewModel(
+            settingsStore: SettingsStore(),
+            sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
+            localToolExecutor: localToolExecutor(permissionStore: permissionStore),
+            autoGenerateResponses: false
+        )
+    }
+
+    private func executedToolMessage(_ name: String, output: String) -> UIMessage {
+        let base = UIMessage.companion.assistant(prompt: "")
+        return UIMessage(
+            id: base.id, role: .assistant,
+            parts: [UIMessagePart.Tool(
+                toolCallId: UUID().uuidString, toolName: name, input: "{}",
+                output: [UIMessagePart.Text(text: output, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )],
+            annotations: [], createdAt: base.createdAt, finishedAt: nil,
+            modelId: nil, usage: nil, translation: nil
+        )
+    }
+
+    func testDiscoveredToolSurvivesFiveUserTurnsAndExpiresOnSixth() throws {
+        let viewModel = exposureViewModel()
+        viewModel.messages = [.companion.user(prompt: "浏览网页")]
+        _ = viewModel.textGenerationParamsForTesting()
+        let bridge = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
+        let search = bridge.executeToolSearch(argumentsJson: #"{"query":"wm_click","limit":1}"#)
+        viewModel.messages.append(executedToolMessage("tool_search", output: search))
+
+        for turn in 1...5 {
+            viewModel.messages.append(.companion.user(prompt: "第 \(turn) 轮"))
+            XCTAssertTrue(viewModel.currentToolDeclarationNames().contains("wm_click"), "turn \(turn)")
+            viewModel.messages.append(.companion.assistant(prompt: "完成"))
+        }
+        XCTAssertTrue(viewModel.currentToolDeclarationNames().contains("wm_click"), "rebuilding the same turn must not age tools")
+        viewModel.messages.append(.companion.user(prompt: "第 6 轮"))
+        XCTAssertFalse(viewModel.currentToolDeclarationNames().contains("wm_click"))
+    }
+
+    func testActualToolUseRenewsFiveTurnsAndBrowserCore() {
+        let viewModel = exposureViewModel()
+        viewModel.messages = [.companion.user(prompt: "点击网页")]
+        viewModel.messages.append(executedToolMessage("wm_click", output: #"{"ok":true}"#))
+        for _ in 1...5 {
+            viewModel.messages.append(.companion.user(prompt: "继续"))
+        }
+        XCTAssertTrue(viewModel.currentToolDeclarationNames().contains("wm_click"))
+        viewModel.messages.append(executedToolMessage("wm_click", output: #"{"ok":true}"#))
+        for _ in 1...5 {
+            viewModel.messages.append(.companion.user(prompt: "继续"))
+        }
+        let renewed = Set(viewModel.currentToolDeclarationNames())
+        XCTAssertTrue(renewed.isSuperset(of: ["wm_click", "wm_tab_list", "wm_open", "wm_observe", "wm_wait"]))
+        viewModel.messages.append(.companion.user(prompt: "换话题"))
+        XCTAssertFalse(viewModel.currentToolDeclarationNames().contains("wm_click"))
+    }
+
+    func testRestoredToolsStayInCurrentConversationAndRespectDisabledCapability() throws {
+        let permissions = IOSPermissionStore(userDefaults: isolatedDefaults())
+        let viewModel = exposureViewModel(permissionStore: permissions)
+        let history = [
+            UIMessage.companion.user(prompt: "运行命令"),
+            executedToolMessage("ish_handoff", output: #"{"ok":true}"#),
+            UIMessage.companion.user(prompt: "继续")
+        ]
+        viewModel.messages = history
+        XCTAssertTrue(viewModel.currentToolDeclarationNames().contains("ish_handoff"))
+        viewModel.messages = [.companion.user(prompt: "新会话")]
+        XCTAssertFalse(viewModel.currentToolDeclarationNames().contains("ish_handoff"))
+        viewModel.messages = history
+        let capability = try XCTUnwrap(IOSCapabilityRegistry.capabilities.first {
+            $0.id == "ios.external.ish_handoff"
+        })
+        permissions.setPolicy(.disabled, for: capability)
+        XCTAssertFalse(viewModel.currentToolDeclarationNames().contains("ish_handoff"))
+    }
+
     /// The default seeded Amber Assistant carries a non-empty systemPrompt.
     /// The upload context must include it as a leading system message so the
     /// model receives the assistant's persona/instructions (Android parity).

@@ -133,6 +133,7 @@ final class LaTexPreProcessorImpl: LaTexPreProcessor {
   init() {}
 
   func process(input: String, matchingRules: [MarkdownParseOption.LatexMatching]) -> String {
+    guard input.utf8.contains(0x24) || input.utf8.contains(0x5c) else { return input }
     let rules = Set(matchingRules)
     let result = processBlockMath(input: input, rules: rules)
     return processInlineMath(input: result, rules: rules)

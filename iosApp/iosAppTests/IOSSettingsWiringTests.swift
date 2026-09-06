@@ -29,13 +29,10 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 
-    func testReleaseBuildDoesNotExposeOrDeclareAudioKeepAlive() throws {
-        let view = try source("iosApp/ExecutionSettingsView.swift")
+    func testStableBuildDoesNotDeclareAudioKeepAlive() throws {
         let keepAlive = try source("iosApp/BackgroundGenerationKeepAlive.swift")
         let info = try source("iosApp/Info.plist")
 
-        XCTAssertFalse(view.contains("@AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive)"))
-        XCTAssertFalse(view.contains("音频保活"))
         XCTAssertTrue(keepAlive.contains("isAudioKeepAlivePreferenceEnabled"))
         XCTAssertTrue(keepAlive.contains("backgroundModes.contains(\"audio\")"))
         XCTAssertFalse(info.contains("<string>audio</string>"))

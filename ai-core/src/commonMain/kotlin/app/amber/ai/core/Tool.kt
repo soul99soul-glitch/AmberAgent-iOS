@@ -651,8 +651,8 @@ fun createIosShellExecuteToolDeclaration(): Tool = Tool(
         The command runs in the foreground after explicit approval and returns separate stdout, stderr, exit_code,
         and status fields. It supports pwd, ls, echo, cat, mkdir, touch, cp, mv, rm, head, tail, wc, printf,
         grep, sort, uniq, cut, tr, basename, dirname, env, date, and uname in the app-owned /workspace directory.
-        The stable app target also embeds CPython 3.14 and accepts restricted `python -c <code>` snippets; the
-        ExperimentalGPL target deliberately excludes CPython. Python has no pip, network, PTY, or host file access.
+        Builds with bundled CPython 3.14 also accept restricted `python -c <code>` snippets; plugin_sdk reports
+        the current build's Python availability. Python has no pip, network, PTY, or host file access.
         It allows at most three pipeline stages and only <, >, and 2> redirection. It does not invoke a system shell,
         allocate a PTY, install packages, or create a durable background job; control flow, globbing, and command
         substitution are unavailable. Optional stdin is UTF-8 text capped at 64 KiB. `timeout_seconds` is a
@@ -1689,6 +1689,8 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "recipe_disable" to ::createRecipeDisableToolDeclaration,
     "recipe_delete" to ::createRecipeDeleteToolDeclaration,
     "plugins_list" to ::createPluginsListToolDeclaration,
+    "plugin_sdk" to ::createPluginSdkToolDeclaration,
+    "plugin_test" to ::createPluginTestToolDeclaration,
     "plugin_validate" to ::createPluginValidateToolDeclaration,
     "plugin_import" to ::createPluginImportToolDeclaration,
     "plugin_enable" to ::createPluginEnableToolDeclaration,
@@ -2419,6 +2421,25 @@ fun createSkillEnableToolDeclaration(): Tool = Tool(
  * `tool_search` as `recipe__<name>` from the next model round). Not in
  * `IOS_RESIDENT_TOOL_NAMES` → default-deferred (discovered via `tool_search`).
  */
+private val recipeManifestContract = """
+        Recipe file contract: write one standalone JSON object matching `amber.recipe.v1`.
+        Required top-level fields are `schema`, `name`, `version`, `description`, `inputs`, `steps`, and `outputs`.
+        `inputs` maps each input name to the literal string `string`, `number`, or `boolean` (do not use `{"type":...}`).
+        Each step requires `id`, an exact published primitive `tool` name, and an `arguments` object; `timeoutSeconds` is optional.
+        A binding must be a complete string such as `${'$'}{input.query}` or `${'$'}{step.list.output.total}`; outputs must bind a step output.
+        This is a Recipe manifest, not `plugin.json`: do not wrap it in `manifest` or add top-level `type`, `id`, or `tools` fields.
+        Minimal valid example:
+        {
+          "schema": "amber.recipe.v1",
+          "name": "catalog_probe",
+          "version": "1.0.0",
+          "description": "列出当前工具目录并返回总数。",
+          "inputs": {},
+          "steps": [{"id": "list", "tool": "tools_list", "arguments": {}}],
+          "outputs": {"tool_count": "${'$'}{step.list.output.total}"}
+        }
+    """.trimIndent()
+
 fun createRecipeImportToolDeclaration(): Tool = Tool(
     name = "recipe_import",
     description = """
@@ -2426,7 +2447,8 @@ fun createRecipeImportToolDeclaration(): Tool = Tool(
         The host asks once unless high-risk auto-approve is on, then rechecks the previewed base and
         candidate hashes (CAS) before atomically applying the recipe package. The promoted recipe
         becomes searchable via tool_search (recipe__<name>) from the next model round.
-    """.trimIndent().replace("\n", " "),
+        ${recipeManifestContract}
+    """.trimIndent(),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -2451,7 +2473,11 @@ fun createRecipesListToolDeclaration(): Tool = Tool(
 
 fun createRecipeValidateToolDeclaration(): Tool = Tool(
     name = "recipe_validate",
-    description = "Validate an installed Recipe by name or a recipe.json under /workspace without changing state.",
+    description = """
+        Validate an installed Recipe by name or a recipe.json under /workspace without changing state.
+        ${recipeManifestContract}
+        Use either `name` or `workspace_path` to identify the file; these are locator arguments, not manifest fields.
+    """.trimIndent(),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
@@ -2514,15 +2540,48 @@ fun createPluginsListToolDeclaration(): Tool = Tool(
     execute = { emptyList() }
 )
 
+fun createPluginSdkToolDeclaration(): Tool = Tool(
+    name = "plugin_sdk",
+    description = "Read the on-device plugin development contract, available runtimes and working examples. Use when the user wants Amber to develop, save or dynamically register a reusable tool: write a Workspace package, plugin_validate, plugin_test, then plugin_import with enable=true after user approval. No desktop build is needed for supported script tools.",
+    parameters = { InputSchema.Obj(properties = buildJsonObject {}) },
+    execute = { emptyList() }
+)
+
+fun createPluginTestToolDeclaration(): Tool = Tool(
+    name = "plugin_test",
+    description = "Execute one tool from a candidate plugin directory in Workspace through the real plugin runtime, before installation or registration. This is a real execution, not a dry run: side effects keep normal approval. Returns candidate_hash and the result; optionally compares expected_result. Read plugin_sdk first. Test on sample data and pass the returned candidate_hash as expected_candidate_hash when importing.",
+    parameters = {
+        InputSchema.Obj(
+            properties = buildJsonObject {
+                put("workspace_directory", buildJsonObject { put("type", "string") })
+                put("tool", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Tool member name declared in plugin.json, e.g. summarize.")
+                })
+                put("inputs", buildJsonObject {
+                    put("type", "object")
+                    put("description", "Arguments matching the candidate tool's input contract.")
+                })
+                put("expected_result", buildJsonObject {
+                    put("description", "Optional exact JSON result to assert. For Recipe handlers, compare the outputs object.")
+                })
+            },
+            required = listOf("workspace_directory", "tool", "inputs")
+        )
+    },
+    needsApproval = true,
+    execute = { emptyList() }
+)
+
 fun createPluginValidateToolDeclaration(): Tool = Tool(
     name = "plugin_validate",
-    description = "Validate an installed amber.plugin.v1 package by id or a package directory under /workspace without changing state.",
+    description = "Validate an installed amber.plugin.v1 package by id or a package directory under /workspace without changing state. Read plugin_sdk for the exact authoring contract; use plugin_test to check actual behavior before importing.",
     parameters = {
         InputSchema.Obj(properties = buildJsonObject {
             put("id", buildJsonObject { put("type", "string") })
             put("workspace_directory", buildJsonObject {
                 put("type", "string")
-                put("description", "Directory containing plugin.json plus recipes/*.json or scripts/*.js.")
+                put("description", "Directory containing plugin.json and its recipes/scripts/resources, as described by plugin_sdk.")
             })
             put("workspace_path", buildJsonObject {
                 put("type", "string")
@@ -2535,17 +2594,25 @@ fun createPluginValidateToolDeclaration(): Tool = Tool(
 
 fun createPluginImportToolDeclaration(): Tool = Tool(
     name = "plugin_import",
-    description = "Preview an amber.plugin.v1 directory under /workspace for explicit user approval. New or permission-expanding packages install disabled.",
+    description = "Preview an amber.plugin.v1 package for explicit user approval. Set enable=true to approve installation and activation together so its tools are available from the next model round. Otherwise new or permission-expanding packages install disabled. Read plugin_sdk, validate and test the candidate first.",
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
                 put("workspace_directory", buildJsonObject {
                     put("type", "string")
-                    put("description", "Directory containing plugin.json plus recipes/*.json or scripts/*.js.")
+                    put("description", "Directory containing plugin.json and its declared resources.")
                 })
                 put("workspace_path", buildJsonObject {
                     put("type", "string")
                     put("description", "Path to a .amberplugin archive under /workspace.")
+                })
+                put("enable", buildJsonObject {
+                    put("type", "boolean")
+                    put("description", "Request installation and activation in the same user approval. Defaults to false.")
+                })
+                put("expected_candidate_hash", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Candidate hash returned by plugin_test or plugin_validate; rejects changes since that check.")
                 })
             }
         )
@@ -3977,5 +4044,8 @@ sealed class InputSchema {
     data class Obj(
         val properties: JsonObject,
         val required: List<String>? = null,
+        val description: String? = null,
+        val additionalProperties: Boolean? = null,
+        @SerialName("enum") val enumValues: JsonArray? = null,
     ) : InputSchema()
 }

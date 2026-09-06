@@ -2,6 +2,7 @@ import SwiftUI
 import Shared
 
 enum ChatLayout {
+    static let assistantPartSpacing: CGFloat = 8
     static let contentHorizontalInset: CGFloat = 22
     static let userMaxWidth: CGFloat = 300
     static let userMessageRowVerticalPadding: CGFloat = 10
@@ -36,7 +37,7 @@ struct ChatAssistantStack<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)

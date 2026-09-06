@@ -18,6 +18,8 @@ import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /**
@@ -406,6 +408,77 @@ class IosToolExposureBridgeTest {
             "mcp__alpha__tool_3" in withMcp.visibleTools().map { it.name },
             "the hit must be callable on the next model step",
         )
+    }
+
+    @Test
+    fun dynamicWorkflowDeclarationPreservesStructuredSchemaProperties() {
+        val declaration = createDynamicWorkflowToolDeclaration(
+            toolId = "plugin__kit__search",
+            version = "1.0.0",
+            description = "Structured search",
+            inputsJson = """
+                {
+                  "type":"object",
+                  "properties": {
+                    "query":{"type":"string","enum":["swift","kotlin"]},
+                    "options":{"type":"object","properties":{"limit":{"type":"integer"}}},
+                    "tags":{"type":"array","items":{"type":"string"}}
+                  },
+                  "required":["query"],
+                  "description":"Structured search arguments",
+                  "additionalProperties":false,
+                  "enum":[{"query":"swift"}]
+                }
+            """.trimIndent(),
+            effectClass = "pure",
+        )
+
+        val parameters = assertIs<InputSchema.Obj>(declaration.parameters())
+        assertEquals(listOf("query"), parameters.required)
+        assertEquals("Structured search arguments", parameters.description)
+        assertEquals(false, parameters.additionalProperties)
+        assertEquals(1, parameters.enumValues?.size)
+        val query = assertIs<JsonObject>(parameters.properties["query"])
+        assertEquals("string", query["type"]?.jsonPrimitive?.content)
+        assertNotNull(query["enum"])
+        val options = assertIs<JsonObject>(parameters.properties["options"])
+        assertEquals("object", options["type"]?.jsonPrimitive?.content)
+        assertTrue(options["properties"] is JsonObject)
+        val tags = assertIs<JsonObject>(parameters.properties["tags"])
+        assertEquals("array", tags["type"]?.jsonPrimitive?.content)
+        assertTrue(tags["items"] is JsonObject)
+    }
+
+    @Test
+    fun dynamicWorkflowDeclarationKeepsLegacyFlatInputFallback() {
+        val declaration = createDynamicWorkflowToolDeclaration(
+            toolId = "recipe__legacy",
+            version = "1.0.0",
+            description = "Legacy recipe",
+            inputsJson = """{"query":"string","limit":"number"}""",
+            effectClass = "pure",
+        )
+
+        val parameters = assertIs<InputSchema.Obj>(declaration.parameters())
+        assertEquals(setOf("query", "limit"), parameters.properties.keys)
+        assertEquals(setOf("query", "limit"), parameters.required!!.toSet())
+        assertEquals("string", parameters.properties["query"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun pluginDevelopmentAliasFindsSdkAndMarksCandidateTestAsMutating() {
+        val declarations = iosToolDeclarations(listOf("plugin_sdk", "plugin_test"))
+        val index = ToolSearchIndex(ToolRegistry.from(declarations), null)
+
+        val sdk = index.searchPayload("开发工具", null, 5)
+        assertTrue(sdk["expanded_tools"]!!.jsonArray.any { it.jsonPrimitive.content == "plugin_sdk" })
+
+        val test = index.searchPayload("测试插件", null, 5)
+            .getValue("tools").jsonArray.single().jsonObject
+        assertEquals("plugin_test", test["name"]?.jsonPrimitive?.content)
+        assertEquals("true", test["mutates"]?.jsonPrimitive?.content)
+        assertEquals("true", test["needs_approval"]?.jsonPrimitive?.content)
+        assertEquals("false", test["allows_auto_approval"]?.jsonPrimitive?.content)
     }
 
     private fun tool(

@@ -2,10 +2,10 @@
 
 ## 产品边界
 
-- 正式版主路径：声明式工作流、受限 JavaScript、远端 MCP/OpenAPI。
-- Agent 可以生成候选包和测试，但不能批准、启用或静默更新自己的插件。
-- 插件不能直接访问 Swift/Objective-C 对象、Cookie、系统权限或任意文件；宿主能力统一经过权限代理。
-- Python、pip、iSH 与下载的原生代码不进入公开插件生态，只保留开发者模式。
+- 支持声明式工作流、受限 JavaScript、远端 MCP/OpenAPI，以及用户显式授权的本地 command 工具。
+- Agent 可在端内创建、校验和试运行候选包；`plugin_import(enable=true)` 经用户一次审批后安装并启用，不能自行批准或静默更新。
+- JS/Recipe 宿主调用继续经过能力代理；command 授权明确覆盖整个指定运行环境，不用路径/域名范围假称限制任意命令。
+- AmberShell 的 `.sh` 为受限命令管道，`.py` 使用已打包 CPython；iSH `.sh` 仅在 ExperimentalGPL guest 内执行。本机开发与导入不等于公开插件市场或下载原生 iOS 代码能力。
 - 保持 `amber.recipe.v1`、`recipe_import`、`recipe__<name>` 向后兼容。
 
 ## Phase 1：本机生命周期（已完成）
@@ -55,6 +55,16 @@
 - 公开索引所需的元数据、链接、举报/屏蔽与年龄限制接口；没有服务端时不伪造市场。
 
 验收：冷启动 fail-closed、审批恢复、前后台切换、在途更新/删除、自动隔离、动态字体与真机尺寸布局检查均已通过自动化、独立审查或模拟器实测。物理 iPhone 覆盖安装仍是发布门禁：当前设备在 CoreDevice 中离线，且本机没有与实验版 profile 团队匹配的有效开发签名；arm64 无签名完整包已构建通过。
+
+## 端内工具开发闭环
+
+- `plugin_sdk` 返回当前构建的运行环境、精确 manifest 契约，以及可直接写入 Workspace 的 JS/AmberShell 示例。
+- `input_schema` / `output_schema` 支持结构化对象、数组、可选输入及有限 JSON Schema 校验；旧 `inputs` 格式、包哈希与签名保持兼容。
+- `plugin_test` 通过正常运行时执行未安装候选工具，可用 `expected_result` 比较实际结果；副作用保留审批。审批固定候选代码和输入，试运行不注册插件，也不影响已安装版本的健康状态。
+- 导入可携带试运行返回的 `expected_candidate_hash`，阻止测试后文件变化；`enable=true` 将安装与启用合并为一次明确审批。重新加载目录后，下一模型轮通过 `tool_search` 发现并调用工具。
+- `command` 声明 runtime、固定 `scripts/` 入口和可选 `stdin_input`；权限需显式声明 `capabilities.localRuntimes`。AmberShell 以 stdin 传数据，iSH 用 `$1`，参数不拼入脚本源码。
+- command 使用现有前台执行、权限、取消和超时路径（1–180 秒）；非零退出、超时、取消或截断不会作为成功结果。AmberShell 展开后命令限 4096 字符，stdin 限 64 KiB；iSH 命令含输入限 32000 字符，guest 文件与 Amber Workspace 隔离。
+- 验证范围：定点测试覆盖候选创建、校验、试运行、审批安装启用、目录重新加载与实际调用；真实 provider 自主编写、物理 iPhone 和 guest 中第三方依赖仍需独立验收。
 
 ## 每阶段完成门槛
 

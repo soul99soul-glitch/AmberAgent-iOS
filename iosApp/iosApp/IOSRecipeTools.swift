@@ -270,6 +270,13 @@ struct IOSRecipeToolService {
             default:
                 return Self.json(["ok": false, "error": "Unknown tool: \(toolName)"])
             }
+        } catch let issue as IOSRecipeValidationIssue {
+            return Self.json([
+                "ok": false,
+                "error": issue.localizedDescription,
+                "code": issue.code.rawValue,
+                "path": issue.path as Any? ?? NSNull(),
+            ])
         } catch {
             return Self.json([
                 "ok": false,
@@ -699,13 +706,16 @@ enum RecipeToolApprovalRequestBuilder {
                 effectClassRawValue: preview.effectClassRawValue,
                 inputsSummary: "",
                 stepsSummary: preview.toolsSummary,
-                outputsSummary: preview.mutationKind == .new
+                outputsSummary: prepared.enableAfterImport ? "安装并启用"
+                    : preview.mutationKind == .new
                     ? "新插件默认停用"
                     : (preview.permissionExpanded ? "权限范围扩大" : "权限范围未扩大"),
                 trustSummary: IOSPluginToolService.trustSummary(preview.trust),
                 capabilityScopes: preview.capabilityScopes,
                 fileHashes: preview.fileHashes,
-                activationNotice: preview.willRemainDisabled
+                activationNotice: prepared.enableAfterImport
+                    ? "本次批准同时安装并启用；从下一模型轮可搜索和调用。"
+                    : preview.willRemainDisabled
                     ? "仅安装并保持停用；手动启用后从下一模型轮生效。"
                     : "安装后保持当前启用状态；目录变更从下一模型轮生效。"
             )),
@@ -742,11 +752,12 @@ enum IOSPluginImportSource: Equatable {
 struct IOSPreparedPluginImport: Equatable {
     let source: IOSPluginImportSource
     let preview: IOSPluginImportPreview
+    var enableAfterImport = false
 }
 
 enum IOSPluginToolCatalog {
     static let toolNames: Set<String> = [
-        "plugins_list", "plugin_validate", "plugin_import",
+        "plugins_list", "plugin_sdk", "plugin_test", "plugin_validate", "plugin_import",
         "plugin_enable", "plugin_disable", "plugin_delete", "plugin_rollback", "plugin_restore", "plugin_export",
     ]
     static let mutatingToolNames: Set<String> = [
@@ -767,6 +778,13 @@ struct IOSPluginToolService {
             switch toolName {
             case "plugins_list":
                 return listJSON()
+            case "plugin_sdk":
+                return IOSPluginDevelopmentSDK.response()
+            case "plugin_test":
+                return IOSWorkspaceStore.json([
+                    "ok": false, "status": "failed",
+                    "error": "插件试运行需要当前前台聊天的执行与审批上下文。",
+                ])
             case "plugin_validate":
                 return try validateJSON(args)
             case "plugin_enable", "plugin_disable":
@@ -795,14 +813,52 @@ struct IOSPluginToolService {
         guard let args = ChatToolCallParsing.jsonObject(arguments) else {
             throw IOSPluginToolError.missingArgument("workspace_directory or workspace_path")
         }
+        var result: IOSPreparedPluginImport
         if let raw = args["workspace_path"] as? String {
-            return try prepared(source: .archive(try normalizeWorkspaceArchivePath(raw)))
-        }
-        guard let raw = args["workspace_directory"] as? String else {
+            result = try prepared(source: .archive(try normalizeWorkspaceArchivePath(raw)))
+        } else if let raw = args["workspace_directory"] as? String {
+            result = try prepared(source: .directory(try normalizeWorkspaceDirectory(raw)))
+        } else {
             throw IOSPluginToolError.missingArgument("workspace_directory or workspace_path")
         }
-        let directory = try normalizeWorkspaceDirectory(raw)
-        return try prepared(source: .directory(directory))
+        if let expected = args["expected_candidate_hash"] as? String,
+           expected != result.preview.candidateHash {
+            throw IOSPluginFileStoreError.candidateChanged
+        }
+        result.enableAfterImport = args["enable"] as? Bool == true
+        return result
+    }
+
+    func preparePluginTest(arguments: String) throws -> IOSPreparedPluginTest {
+        guard let args = ChatToolCallParsing.jsonObject(arguments),
+              let directory = args["workspace_directory"] as? String,
+              let name = args["tool"] as? String,
+              let inputs = args["inputs"] as? [String: Any] else {
+            throw IOSPluginToolError.missingArgument("workspace_directory, tool and inputs")
+        }
+        let candidate = try candidate(from: .directory(normalizeWorkspaceDirectory(directory)))
+        let package = candidate.preparation.candidate
+        guard let tool = package.tools.first(where: { $0.name == name }),
+              let descriptor = IOSDynamicToolRegistry.pluginDescriptor(
+                  tool: tool, package: package, trust: candidate.preparation.candidateTrust
+              ) else {
+            throw IOSPluginToolError.unknownTool(name)
+        }
+        let inputData = try JSONSerialization.data(withJSONObject: inputs, options: [.sortedKeys])
+        let expected: IOSRecipeJSONValue?
+        if let value = args["expected_result"] {
+            expected = try JSONDecoder().decode(
+                IOSRecipeJSONValue.self,
+                from: JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed])
+            )
+        } else {
+            expected = nil
+        }
+        return IOSPreparedPluginTest(
+            descriptor: descriptor,
+            argumentsJSON: String(decoding: inputData, as: UTF8.self),
+            context: IOSPluginTestContext(candidateHash: package.hash, expectedResult: expected)
+        )
     }
 
     func applyPreparedPluginImport(_ prepared: IOSPreparedPluginImport) async throws -> String {
@@ -820,13 +876,28 @@ struct IOSPluginToolService {
             expectedCandidateHash: prepared.preview.candidateHash,
             trust: candidate.preparation.candidateTrust
         )
+        var activationError: String?
+        if prepared.enableAfterImport {
+            do {
+                _ = try pluginStore.setPluginEnabled(id: receipt.id, enabled: true, expectedHash: receipt.hash)
+            } catch {
+                activationError = error.localizedDescription
+            }
+        }
         let snapshot = await refreshRegistry()
+        let enabled = pluginStore.listInstalledPlugins().first { $0.package.manifest.id == receipt.id }?.isEnabled == true
+        if prepared.enableAfterImport, !enabled, activationError == nil {
+            activationError = "插件已安装，但仍处于隔离状态；请检查诊断并恢复后再启用。"
+        }
         return IOSWorkspaceStore.json([
-            "ok": true,
-            "status": receipt.changed ? "applied" : "unchanged",
+            "ok": activationError == nil,
+            "status": activationError == nil ? (receipt.changed ? "applied" : "unchanged") : "installed_disabled",
+            "installed": true,
             "id": receipt.id,
             "hash": receipt.hash,
-            "enabled": receipt.enabled,
+            "enabled": enabled,
+            "activation_error": activationError as Any? ?? NSNull(),
+            "tools": candidate.preparation.candidate.tools.map(\.toolId),
             "permission_expanded": receipt.permissionExpanded,
             "trust": receipt.trust.tier.rawValue,
             "signer": receipt.trust.keyId as Any? ?? NSNull(),
@@ -846,7 +917,8 @@ struct IOSPluginToolService {
             "candidate_hash": preview.candidateHash,
             "permission_summary": preview.permissionSummary,
             "permission_expanded": preview.permissionExpanded,
-            "will_remain_disabled": preview.willRemainDisabled,
+            "will_remain_disabled": !prepared.enableAfterImport && preview.willRemainDisabled,
+            "enable_after_import": prepared.enableAfterImport,
             "tools": preview.toolsSummary,
             "files": preview.fileHashes,
             "trust": preview.trust.tier.rawValue,
@@ -889,6 +961,7 @@ struct IOSPluginToolService {
         rows += capabilities.workspaceWritePrefixes.map { "Workspace 写入：\($0)" }
         rows += capabilities.networkDomains.map { "网络域名：\($0)" }
         rows += capabilities.webMountActions.map { "WebMount：\($0)" }
+        rows += capabilities.localRuntimes.map(\.permissionSummary)
         return rows.isEmpty ? ["无额外能力范围"] : rows
     }
 
@@ -905,6 +978,7 @@ struct IOSPluginToolService {
         case .recipe: "Recipe"
         case .javascript(_, let hostTools):
             hostTools.isEmpty ? "受限 JS" : "受限 JS（\(hostTools.sorted().joined(separator: "、"))）"
+        case .command(let source): source.manifest.runtime.title
         case .remote(let remote):
             switch remote.kind {
             case .mcp: "MCP \(remote.server ?? "?")/\(remote.tool ?? "?")"
@@ -941,7 +1015,7 @@ struct IOSPluginToolService {
                               tool.effectClass == .pure || tool.effectClass == .networkRead else { return false }
                         switch tool.implementation {
                         case .recipe, .remote: return true
-                        case .javascript: return false
+                        case .javascript, .command: return false
                         }
                     }.map(\.toolId),
                     "publisher": item.package.manifest.directory?.publisher as Any? ?? NSNull(),
@@ -970,6 +1044,7 @@ struct IOSPluginToolService {
             "id": package.manifest.id,
             "version": package.manifest.version,
             "hash": package.hash,
+            "candidate_hash": package.hash,
             "tools": package.tools.map(\.toolId),
             "file_hashes": package.fileHashes,
         ])
@@ -1144,6 +1219,7 @@ private enum IOSPluginToolError: LocalizedError {
     case invalidWorkspaceArchive
     case packageMissing
     case exportFailed(String)
+    case unknownTool(String)
 
     var errorDescription: String? {
         switch self {
@@ -1152,6 +1228,7 @@ private enum IOSPluginToolError: LocalizedError {
         case .invalidWorkspaceArchive: "workspace_path 必须是 /workspace 下的规范 .amberplugin 文件。"
         case .packageMissing: "Workspace 中找不到插件包或 plugin.json。"
         case .exportFailed(let reason): "插件导出失败：\(reason)"
+        case .unknownTool(let name): "候选插件未声明工具 \(name)。"
         }
     }
 }

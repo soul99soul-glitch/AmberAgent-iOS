@@ -304,6 +304,7 @@ struct ChatReasoningCard: View {
                             .rotationEffect(.degrees(bodyPresent ? 180 : 0))
                     }
                 }
+                .frame(minHeight: 18)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
@@ -342,6 +343,8 @@ struct ChatReasoningCard: View {
         }
         // Clip to the capsule so the collapsing content can never render outside / through it.
         .clipShape(RoundedRectangle(cornerRadius: bodyPresent ? AmberTheme.radiusLarge : 17, style: .continuous))
+        // 与工具行保持相同占位，透明留白不撑大胶囊外壳。
+        .frame(minHeight: 44, alignment: .leading)
         // 统一驱动所有依赖 showsBody/isExpanded 的视觉变化(圆角、chevron、高度增删),
         // 覆盖自动展开/收回路径(它们不经过 withAnimation)和用户 toggle 路径。
         .animation(

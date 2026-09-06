@@ -92,6 +92,7 @@ final class RejectedEmphasisRepairRewriter: MarkupRewriter {
   /// Splits `text` into plain/strong segments when it contains a rejected
   /// strong span; returns nil when nothing needs repair.
   static func splitRejectedStrong(_ text: String) -> [Segment]? {
+    guard text.utf8.contains(0x2a) || text.utf8.contains(0x5f) else { return nil }
     guard let starStrong, let underscoreStrong else { return nil }
 
     var ranges: [Range<String.Index>] = []

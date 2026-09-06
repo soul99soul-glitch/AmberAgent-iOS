@@ -15,6 +15,7 @@ import platform.Foundation.create
 import platform.Foundation.stringByDeletingLastPathComponent
 import platform.Foundation.stringWithContentsOfFile
 import platform.Foundation.writeToFile
+import platform.posix.stat
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 actual class ConversationFile actual constructor(actual val path: String) {
@@ -83,6 +84,21 @@ actual class ConversationFile actual constructor(actual val path: String) {
             dotIndex >= 0 && name.substring(dotIndex + 1) == ext
         }.map { name -> ConversationFile(path + "/" + name) }
     }
+}
+
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+internal actual fun ConversationFile.fileVersion(): ConversationFileVersion? = memScoped {
+    val fileStat = alloc<stat>()
+    if (stat(path, fileStat.ptr) != 0) return@memScoped null
+    ConversationFileVersion(
+        device = fileStat.st_dev.toLong(),
+        inode = fileStat.st_ino.toLong(),
+        size = fileStat.st_size,
+        modifiedSeconds = fileStat.st_mtimespec.tv_sec,
+        modifiedNanoseconds = fileStat.st_mtimespec.tv_nsec,
+        changedSeconds = fileStat.st_ctimespec.tv_sec,
+        changedNanoseconds = fileStat.st_ctimespec.tv_nsec,
+    )
 }
 
 actual fun separatorChar(): Char = '/'

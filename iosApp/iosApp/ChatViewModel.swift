@@ -892,8 +892,8 @@ final class ChatViewModel {
     /// P0-a: the bridge built by the latest makeTextGenerationParams() assembly;
     /// generateResponse hands it to the run coordinator, which owns it for the
     /// whole run (run-level reuse is what makes tool_search hits callable on
-    /// the next round). Rebuilt on every message send — a new run gets a new
-    /// bridge with reset exposure.
+    /// the next round). A new user turn gets a new bridge seeded from the
+    /// current conversation's recent tool activity.
     @ObservationIgnored private var lastAssembledToolExposureBridge: IosToolExposureBridge?
     /// The exact dynamic snapshot used to build the bridge above. They travel
     /// together into the Host so async preamble work cannot swap execution to
@@ -3753,6 +3753,22 @@ final class ChatViewModel {
         return provider
     }
 
+    /// Keep discoveries and calls through the next five user turns. Rebuilding
+    /// params or retrying the same message does not consume another turn.
+    private func recentToolsForExposure() -> [UIMessagePart.Tool] {
+        var userTurns = 0
+        var tools: [UIMessagePart.Tool] = []
+        for message in messages.reversed() {
+            if message.role == MessageRole.user {
+                userTurns += 1
+                if userTurns > 5 { break }
+            } else if message.role == MessageRole.assistant {
+                tools.append(contentsOf: message.getTools())
+            }
+        }
+        return tools
+    }
+
     private func makeTextGenerationParams() -> TextGenerationParams {
         let modelId = currentModelId
         let modelAbilities = currentModelAbilities
@@ -3955,6 +3971,7 @@ final class ChatViewModel {
         // bridge instance is handed to the run coordinator, which owns it for
         // the whole run so hits become callable on the NEXT round.
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
+        exposureBridge.restoreExecutedTools(tools: recentToolsForExposure())
         lastAssembledToolExposureBridge = exposureBridge
         // Real params: temperature/topP from Assistant, maxTokens from
         // resolveSessionDefaults (Assistant → group default), reasoningLevel

@@ -554,6 +554,8 @@ struct ChatToolStepModel: Identifiable {
             "recipe_disable": Self.localized("停用 Recipe"),
             "recipe_delete": Self.localized("删除 Recipe"),
             "plugins_list": Self.localized("列出插件"),
+            "plugin_sdk": Self.localized("查看工具开发说明"),
+            "plugin_test": Self.localized("试运行插件"),
             "plugin_validate": Self.localized("校验插件"),
             "plugin_import": Self.localized("导入插件"),
             "plugin_enable": Self.localized("启用插件"),
@@ -1119,7 +1121,7 @@ struct ChatToolTimeline: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
             ForEach(steps) { step in
                 let tappable = onTapStep != nil
                 if tappable {
@@ -1140,7 +1142,6 @@ struct ChatToolTimeline: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 2)
     }
 
     // Cream capsule: colored tool icon (no backing square) + title (+ optional detail) + trailing

@@ -281,7 +281,38 @@ struct IOSRecipeManifest: Codable, Equatable, Sendable {
     /// errors. Semantic errors (unknown tools, dangling references, budget
     /// violations) are reported by `IOSRecipeValidator`, which needs a catalog.
     static func decode(_ data: Data) throws -> IOSRecipeManifest {
-        try JSONDecoder().decode(IOSRecipeManifest.self, from: data)
+        do {
+            return try JSONDecoder().decode(IOSRecipeManifest.self, from: data)
+        } catch let error as DecodingError {
+            let keys: [CodingKey]
+            let message: String
+            switch error {
+            case .keyNotFound(let key, let context):
+                keys = context.codingPath + [key]
+                message = "缺少必填字段。"
+            case .typeMismatch(let type, let context):
+                keys = context.codingPath
+                message = "字段类型错误，需要 \(type)。\(context.debugDescription)"
+            case .valueNotFound(_, let context):
+                keys = context.codingPath
+                message = "必填字段不能为 null。"
+            case .dataCorrupted(let context):
+                keys = context.codingPath
+                message = context.debugDescription
+            @unknown default:
+                keys = []
+                message = error.localizedDescription
+            }
+            let path = keys.reduce("") { path, key in
+                if let index = key.intValue { return "\(path)[\(index)]" }
+                return path.isEmpty ? key.stringValue : "\(path).\(key.stringValue)"
+            }
+            throw IOSRecipeValidationIssue(
+                code: .invalidManifestJSON,
+                path: path.isEmpty ? nil : path,
+                message: message
+            )
+        }
     }
 
     /// Canonical bytes: every dictionary key sorted at every level
@@ -338,11 +369,15 @@ enum IOSRecipeValidationCode: String, Equatable, Sendable {
     case unresolvedOutputStep
 }
 
-struct IOSRecipeValidationIssue: Equatable, Sendable {
+struct IOSRecipeValidationIssue: LocalizedError, Equatable, Sendable {
     let code: IOSRecipeValidationCode
     /// Human-readable dotted path to the offending field, e.g. `steps[1].tool`.
     let path: String?
     let message: String
+
+    var errorDescription: String? {
+        "recipe.json\(path.map { "：\($0)" } ?? "")：\(message)"
+    }
 }
 
 struct IOSRecipeValidationResult: Equatable, Sendable {
@@ -493,13 +528,16 @@ enum IOSRecipeValidator {
         data: Data,
         catalog: @escaping IOSRecipeCatalogLookup
     ) -> IOSRecipeValidationResult {
-        guard let manifest = try? IOSRecipeManifest.decode(data) else {
+        do {
+            return validate(manifest: try IOSRecipeManifest.decode(data), catalog: catalog)
+        } catch let issue as IOSRecipeValidationIssue {
+            return IOSRecipeValidationResult(issues: [issue], permissionEnvelope: nil)
+        } catch {
             return IOSRecipeValidationResult(
-                issues: [issue(.invalidManifestJSON, path: nil, "recipe.json 不是合法的 amber.recipe.v1 JSON。")],
+                issues: [issue(.invalidManifestJSON, path: nil, error.localizedDescription)],
                 permissionEnvelope: nil
             )
         }
-        return validate(manifest: manifest, catalog: catalog)
     }
 
     // MARK: Argument binding resolution rules (used by validate)
@@ -611,15 +649,21 @@ struct IOSPluginToolManifest: Codable, Equatable, Sendable {
     /// Stable member name used in `plugin__<plugin id>__<name>`.
     let name: String
     let description: String?
-    /// Exactly one handler must be present: Recipe, restricted JS or remote.
+    /// Exactly one handler: Recipe, restricted JS, remote or a local command.
     let recipe: String?
     let script: String?
     let remote: IOSPluginRemoteManifest?
+    let command: IOSPluginCommandManifest?
     /// Host primitives made visible inside a restricted JS handler.
     let hostTools: [String]
     /// Script/remote declaration inputs. Recipe inputs come from recipe.json.
     let inputs: [String: IOSRecipeInputType]
     let output: IOSPluginOutputType
+    /// Optional structured JSON Schema contract. `input_schema` replaces the
+    /// legacy inputs map; `output_schema` further constrains the legacy coarse
+    /// output type when one is present.
+    let inputSchema: IOSPluginJSONSchema?
+    let outputSchema: IOSPluginJSONSchema?
     let timeoutMs: Int
     let maxOutputChars: Int
 
@@ -647,23 +691,30 @@ struct IOSPluginToolManifest: Codable, Equatable, Sendable {
         inputs: [String: IOSRecipeInputType] = [:],
         output: IOSPluginOutputType = .json,
         timeoutMs: Int = 10_000,
-        maxOutputChars: Int = 10_000
+        maxOutputChars: Int = 10_000,
+        inputSchema: IOSPluginJSONSchema? = nil,
+        outputSchema: IOSPluginJSONSchema? = nil,
+        command: IOSPluginCommandManifest? = nil
     ) {
         self.name = name
         self.description = description
         self.recipe = recipe
         self.script = script
         self.remote = remote
+        self.command = command
         self.hostTools = hostTools
         self.inputs = inputs
         self.output = output
+        self.inputSchema = inputSchema
+        self.outputSchema = outputSchema
         self.timeoutMs = timeoutMs
         self.maxOutputChars = maxOutputChars
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, description, recipe, script, remote, hostTools = "host_tools"
-        case inputs, output, timeoutMs = "timeout_ms", maxOutputChars = "max_output_chars"
+        case name, description, recipe, script, remote, command, hostTools = "host_tools"
+        case inputs, output, inputSchema = "input_schema", outputSchema = "output_schema"
+        case timeoutMs = "timeout_ms", maxOutputChars = "max_output_chars"
     }
 
     init(from decoder: Decoder) throws {
@@ -678,7 +729,10 @@ struct IOSPluginToolManifest: Codable, Equatable, Sendable {
             inputs: try container.decodeIfPresent([String: IOSRecipeInputType].self, forKey: .inputs) ?? [:],
             output: try container.decodeIfPresent(IOSPluginOutputType.self, forKey: .output) ?? .json,
             timeoutMs: try container.decodeIfPresent(Int.self, forKey: .timeoutMs) ?? 10_000,
-            maxOutputChars: try container.decodeIfPresent(Int.self, forKey: .maxOutputChars) ?? 10_000
+            maxOutputChars: try container.decodeIfPresent(Int.self, forKey: .maxOutputChars) ?? 10_000,
+            inputSchema: try container.decodeIfPresent(IOSPluginJSONSchema.self, forKey: .inputSchema),
+            outputSchema: try container.decodeIfPresent(IOSPluginJSONSchema.self, forKey: .outputSchema),
+            command: try container.decodeIfPresent(IOSPluginCommandManifest.self, forKey: .command)
         )
     }
 }
@@ -688,17 +742,46 @@ struct IOSPluginCapabilities: Codable, Equatable, Sendable {
     let workspaceWritePrefixes: [String]
     let networkDomains: [String]
     let webMountActions: [String]
+    /// Whole local runtime grants; path/domain scopes do not sandbox commands.
+    let localRuntimes: [IOSPluginCommandRuntime]
 
     init(
         workspaceReadPrefixes: [String] = [],
         workspaceWritePrefixes: [String] = [],
         networkDomains: [String] = [],
-        webMountActions: [String] = []
+        webMountActions: [String] = [],
+        localRuntimes: [IOSPluginCommandRuntime] = []
     ) {
         self.workspaceReadPrefixes = workspaceReadPrefixes
         self.workspaceWritePrefixes = workspaceWritePrefixes
         self.networkDomains = networkDomains
         self.webMountActions = webMountActions
+        self.localRuntimes = localRuntimes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case workspaceReadPrefixes, workspaceWritePrefixes, networkDomains, webMountActions, localRuntimes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            workspaceReadPrefixes: try container.decode([String].self, forKey: .workspaceReadPrefixes),
+            workspaceWritePrefixes: try container.decode([String].self, forKey: .workspaceWritePrefixes),
+            networkDomains: try container.decode([String].self, forKey: .networkDomains),
+            webMountActions: try container.decode([String].self, forKey: .webMountActions),
+            localRuntimes: try container.decodeIfPresent([IOSPluginCommandRuntime].self, forKey: .localRuntimes) ?? []
+        )
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(workspaceReadPrefixes, forKey: .workspaceReadPrefixes)
+        try container.encode(workspaceWritePrefixes, forKey: .workspaceWritePrefixes)
+        try container.encode(networkDomains, forKey: .networkDomains)
+        try container.encode(webMountActions, forKey: .webMountActions)
+        // Old packages keep their canonical bytes and signature hashes.
+        if !localRuntimes.isEmpty { try container.encode(localRuntimes, forKey: .localRuntimes) }
     }
 }
 
@@ -784,6 +867,7 @@ enum IOSPluginToolImplementation: Equatable, Sendable {
     case recipe(IOSRecipeManifest)
     case javascript(source: String, hostTools: Set<String>)
     case remote(IOSPluginRemoteManifest)
+    case command(IOSPluginCommandSource)
 }
 
 struct IOSPluginResolvedTool: Equatable, Sendable {
@@ -792,11 +876,21 @@ struct IOSPluginResolvedTool: Equatable, Sendable {
     let description: String
     let inputs: [String: IOSRecipeInputType]
     let output: IOSPluginOutputType
+    let inputSchema: IOSPluginJSONSchema?
+    let outputSchema: IOSPluginJSONSchema?
     let timeoutMs: Int
     let maxOutputChars: Int
     let implementation: IOSPluginToolImplementation
     let primitiveTools: Set<String>
     let effectClass: IOSToolEffectClass
+
+    var effectiveInputSchema: IOSPluginJSONSchema {
+        inputSchema ?? IOSPluginJSONSchema.legacyInputSchema(from: inputs)
+    }
+
+    var effectiveOutputSchema: IOSPluginJSONSchema {
+        outputSchema ?? IOSPluginJSONSchema.legacyOutputSchema(from: output)
+    }
 }
 
 struct IOSPluginValidationResult: Equatable, Sendable {
@@ -854,8 +948,22 @@ enum IOSPluginValidator {
             for input in tool.inputs.keys where !IOSRecipeNames.isValidMemberName(input) {
                 issues.append("插件工具「\(tool.name)」的输入名「\(input)」无效。")
             }
-            guard (1_000...30_000).contains(tool.timeoutMs) else {
-                issues.append("插件工具「\(tool.name)」的 timeout_ms 必须在 1000...30000。")
+            if let inputSchema = tool.inputSchema {
+                for issue in inputSchema.inputSchemaIssues {
+                    issues.append("插件工具「\(tool.name)」的 input_schema 无效：\(issue)。")
+                }
+                if !tool.inputs.isEmpty {
+                    issues.append("插件工具「\(tool.name)」不能同时声明 inputs 和 input_schema。")
+                }
+            }
+            if let outputSchema = tool.outputSchema {
+                if !outputSchema.allowsLegacyOutputType(tool.output) {
+                    issues.append("插件工具「\(tool.name)」的 output_schema 根类型与 output「\(tool.output.rawValue)」冲突。")
+                }
+            }
+            let maximumTimeout = tool.command == nil ? 30_000 : IOSPluginCommandBuilder.maxTimeoutMs
+            guard (1_000...maximumTimeout).contains(tool.timeoutMs) else {
+                issues.append("插件工具「\(tool.name)」的 timeout_ms 必须在 1000...\(maximumTimeout)。")
                 continue
             }
             guard (1_000...32_000).contains(tool.maxOutputChars) else {
@@ -863,9 +971,9 @@ enum IOSPluginValidator {
                 continue
             }
 
-            let handlerCount = [tool.recipe != nil, tool.script != nil, tool.remote != nil].filter { $0 }.count
+            let handlerCount = [tool.recipe != nil, tool.script != nil, tool.remote != nil, tool.command != nil].filter { $0 }.count
             guard handlerCount == 1 else {
-                issues.append("插件工具「\(tool.name)」必须且只能声明 recipe、script、remote 之一。")
+                issues.append("插件工具「\(tool.name)」必须且只能声明 recipe、script、remote、command 之一。")
                 continue
             }
 
@@ -874,8 +982,9 @@ enum IOSPluginValidator {
             let effect: IOSToolEffectClass
             let memberPrimitives: Set<String>
             if let recipePath = tool.recipe {
-                guard tool.hostTools.isEmpty, tool.inputs.isEmpty else {
-                    issues.append("Recipe 工具「\(tool.name)」的输入和能力必须由 recipe.json 定义。")
+                guard tool.hostTools.isEmpty, tool.inputs.isEmpty,
+                      tool.inputSchema == nil, tool.outputSchema == nil else {
+                    issues.append("Recipe 工具「\(tool.name)」的输入、输出和能力必须由 recipe.json 定义。")
                     continue
                 }
                 guard isCanonicalRecipePath(recipePath) else {
@@ -932,6 +1041,32 @@ enum IOSPluginValidator {
                 inputs = tool.inputs
                 effect = IOSToolEffectClass.conservativeUpperBound(of: effects) ?? .pure
                 implementation = .javascript(source: source, hostTools: declared)
+            } else if let command = tool.command {
+                guard tool.hostTools.isEmpty else {
+                    issues.append("命令工具「\(tool.name)」不能同时声明 host_tools。")
+                    continue
+                }
+                guard manifest.capabilities.localRuntimes.contains(command.runtime) else {
+                    issues.append("命令工具「\(tool.name)」需要显式声明 capabilities.localRuntimes 中的 \(command.runtime.rawValue)。")
+                    continue
+                }
+                guard let source = scripts[command.entry] else {
+                    issues.append("找不到命令工具「\(tool.name)」的入口 \(command.entry)。")
+                    continue
+                }
+                if let reason = IOSPluginCommandBuilder.validationReason(source: source, manifest: command, timeoutMs: tool.timeoutMs) {
+                    issues.append("命令工具「\(tool.name)」无效：\(reason)")
+                    continue
+                }
+                if let field = command.stdinInput,
+                   !(tool.inputSchema ?? .legacyInputSchema(from: tool.inputs)).hasStringProperty(named: field) {
+                    issues.append("命令工具「\(tool.name)」的 stdin_input 必须引用已声明的字符串输入。")
+                    continue
+                }
+                memberPrimitives = [command.runtime.toolName]
+                inputs = tool.inputs
+                effect = .sideEffect
+                implementation = .command(IOSPluginCommandSource(manifest: command, source: source))
             } else if let remote = tool.remote {
                 guard tool.hostTools.isEmpty else {
                     issues.append("远端工具「\(tool.name)」不能同时声明 host_tools。")
@@ -960,6 +1095,8 @@ enum IOSPluginValidator {
                     ?? manifest.description,
                 inputs: inputs,
                 output: tool.output,
+                inputSchema: tool.inputSchema,
+                outputSchema: tool.outputSchema,
                 timeoutMs: tool.timeoutMs,
                 maxOutputChars: tool.maxOutputChars,
                 implementation: implementation,

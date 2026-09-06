@@ -132,8 +132,7 @@ struct IOSDynamicRecipeToolDescriptor: Sendable, Equatable {
     /// maps it to approval flags (a mutation envelope is never advertised as
     /// auto-approvable).
     let effectClassRawValue: String
-    /// `{"<input>":"string|number|boolean", ...}` — the declaration's JSON
-    /// schema source, generated from `manifest.inputs`.
+    /// Legacy input map or an explicit object schema forwarded to KMP.
     let inputsJSON: String
     /// Manifest `description`, verbatim (declaration description).
     let description: String
@@ -148,6 +147,8 @@ struct IOSDynamicRecipeToolDescriptor: Sendable, Equatable {
     /// `{"version":...,"permission_summary":...,"source":"custom.recipe"}`
     /// merged into `tool_search` results (§16.3: no manifest body is carried).
     let searchInfoJSON: String
+    var inputSchema: IOSPluginJSONSchema? = nil
+    var outputSchema: IOSPluginJSONSchema? = nil
 }
 
 /// Immutable catalog snapshot for one revision. Value type: callers (rounds,
@@ -197,7 +198,7 @@ extension IOSDynamicRecipeToolDescriptor {
         switch implementation {
         case .recipe, .remote:
             return true
-        case .javascript:
+        case .javascript, .command:
             return false
         }
     }
@@ -420,44 +421,54 @@ actor IOSDynamicToolRegistry {
                         NSLog("[IOSDynamicToolRegistry] duplicate dynamic tool \(tool.toolId); plugin skipped.")
                         continue
                     }
-                    let permissionSummary = Self.permissionSummary(for: tool.effectClass)
-                    guard let inputsJSON = Self.inputsJSON(from: tool.inputs),
-                          let searchInfoJSON = Self.pluginSearchInfoJSON(
-                              pluginId: package.manifest.id,
-                            version: package.manifest.version,
-                            permissionSummary: permissionSummary,
-                            trust: installed.trust,
-                            backgroundAllowed: package.manifest.backgroundAllowed
-                          ) else { continue }
-                    descriptors.append(IOSDynamicRecipeToolDescriptor(
-                        toolId: tool.toolId,
-                        // Runtime attribution/UI use this field as the dynamic
-                        // artifact id for plugins; the executable manifest is
-                        // carried separately below.
-                        recipeName: tool.toolId,
-                        pluginId: package.manifest.id,
-                        capabilityBroker: IOSPluginCapabilityBroker(
-                            pluginId: package.manifest.id,
-                            primitiveTools: tool.primitiveTools,
-                            capabilities: package.manifest.capabilities
-                        ),
-                        version: package.manifest.version,
-                        manifestHash: package.hash,
-                        permissionSummary: permissionSummary,
-                        effectClassRawValue: tool.effectClass.rawValue,
-                        inputsJSON: inputsJSON,
-                        description: tool.description,
-                        implementation: tool.implementation,
-                        outputType: tool.output,
-                        timeoutMs: tool.timeoutMs,
-                        maxOutputChars: tool.maxOutputChars,
-                        backgroundAllowed: package.manifest.backgroundAllowed,
-                        searchInfoJSON: searchInfoJSON
-                    ))
+                    if let descriptor = pluginDescriptor(tool: tool, package: package, trust: installed.trust) {
+                        descriptors.append(descriptor)
+                    }
                 }
             }
         }
         return CatalogContent(recipeTools: descriptors, contentHash: Self.contentHash(of: descriptors))
+    }
+
+    /// Candidate tests and installed tools use the same validated, pinned implementation.
+    static func pluginDescriptor(
+        tool: IOSPluginResolvedTool,
+        package: IOSPluginPackage,
+        trust: IOSPluginTrustRecord
+    ) -> IOSDynamicRecipeToolDescriptor? {
+        let permissionSummary = permissionSummary(for: tool.effectClass)
+        guard let inputsJSON = tool.inputSchema?.canonicalJSONString ?? inputsJSON(from: tool.inputs),
+              let searchInfoJSON = pluginSearchInfoJSON(
+                  pluginId: package.manifest.id,
+                  version: package.manifest.version,
+                  permissionSummary: permissionSummary,
+                  trust: trust,
+                  backgroundAllowed: package.manifest.backgroundAllowed
+              ) else { return nil }
+        return IOSDynamicRecipeToolDescriptor(
+            toolId: tool.toolId,
+            recipeName: tool.toolId,
+            pluginId: package.manifest.id,
+            capabilityBroker: IOSPluginCapabilityBroker(
+                pluginId: package.manifest.id,
+                primitiveTools: tool.primitiveTools,
+                capabilities: package.manifest.capabilities
+            ),
+            version: package.manifest.version,
+            manifestHash: package.hash,
+            permissionSummary: permissionSummary,
+            effectClassRawValue: tool.effectClass.rawValue,
+            inputsJSON: inputsJSON,
+            description: tool.description,
+            implementation: tool.implementation,
+            outputType: tool.output,
+            timeoutMs: tool.timeoutMs,
+            maxOutputChars: tool.maxOutputChars,
+            backgroundAllowed: package.manifest.backgroundAllowed,
+            searchInfoJSON: searchInfoJSON,
+            inputSchema: tool.inputSchema,
+            outputSchema: tool.outputSchema
+        )
     }
 
     /// Existence + effect-class oracle for recipe validation. This is the same

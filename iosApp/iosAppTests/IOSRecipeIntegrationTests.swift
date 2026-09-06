@@ -55,6 +55,47 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         }
     }
 
+    func testMalformedRecipeReportsFieldInValidationAndImportWithoutWrites() async throws {
+        let root = tempRoot()
+        let store = makeStore(root: root)
+        let workspace = makeWorkspaceStore(root: root)
+        let service = IOSRecipeToolService(
+            workspaceStore: workspace,
+            recipeStore: store,
+            catalog: IOSDynamicToolRegistry.primitiveCatalogEntry,
+            refreshRegistry: { nil }
+        )
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: listingRecipeJSON(version: "1.0.0")
+        ) as? [String: Any])
+        object["steps"] = [["id": "list", "tool": "tools_list"]]
+        let missingArguments = try JSONSerialization.data(withJSONObject: object)
+        object["steps"] = [["id": "list", "tool": "tools_list", "arguments": [:]]]
+        object["inputs"] = ["query": ["type": "string"]]
+        let wrongInputType = try JSONSerialization.data(withJSONObject: object)
+        let before = directorySnapshot(store.recipesDirectory)
+        for (data, path) in [(missingArguments, "steps[0].arguments"), (wrongInputType, "inputs.query")] {
+            try await seedWorkspaceRecipe(
+                workspace: workspace, json: data,
+                workspacePath: "/workspace/recipes/invalid/recipe.json"
+            )
+            let args = #"{"workspace_path":"/workspace/recipes/invalid/recipe.json"}"#
+            let result = await service.execute(toolName: "recipe_validate", arguments: args)
+            let parsed = try XCTUnwrap(parse(result))
+            XCTAssertEqual(parsed["ok"] as? Bool, false, result)
+            XCTAssertEqual(parsed["path"] as? String, path, result)
+            XCTAssertEqual(parsed["code"] as? String, "invalidManifestJSON", result)
+            XCTAssertThrowsError(try service.prepareRecipeImport(arguments: args)) { error in
+                XCTAssertEqual((error as? IOSRecipeValidationIssue)?.path, path)
+                XCTAssertTrue(error.localizedDescription.contains(path))
+            }
+            XCTAssertEqual(IOSRecipeValidator.validate(
+                data: data, catalog: IOSDynamicToolRegistry.primitiveCatalogEntry
+            ).issues.first?.path, path)
+        }
+        XCTAssertEqual(directorySnapshot(store.recipesDirectory), before)
+    }
+
     func testRecipeLifecycleSeparatesInstalledPackagesFromEnabledCatalog() async throws {
         let root = tempRoot()
         let store = makeStore(root: root)
@@ -286,6 +327,177 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         XCTAssertFalse(ToolKt.iosToolDeclaration(name: "plugin_import")?.allowsAutoApproval ?? true)
         XCTAssertFalse(ToolKt.iosToolDeclaration(name: "plugin_export")?.allowsAutoApproval ?? true)
         XCTAssertFalse(ToolKt.iosToolDeclaration(name: "plugin_restore")?.allowsAutoApproval ?? true)
+    }
+
+    func testAgentAuthoredPluginCanTestApproveActivateAndCallAfterReload() async throws {
+        let root = tempRoot()
+        let workspace = makeWorkspaceStore(root: root)
+        let registry = IOSDynamicToolRegistry(baseDirectory: root)
+        let store = IOSPluginFileStore(baseDirectory: root)
+        let (_, dao) = makeDatabase(root: root)
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "plugin-authoring-\(UUID().uuidString)"
+        try await seedDurableRun(runId, dao: dao)
+        let runtime = makeRuntime(root: root, ledger: ledger, workspaceStore: workspace, recipeRegistry: registry)
+        let example = IOSPluginDevelopmentSDK.javascriptExample()
+        let directory = try XCTUnwrap(example["workspace_directory"] as? String)
+        let files = try XCTUnwrap(example["files"] as? [String: Any])
+        for (path, value) in files {
+            let data = try (value as? String).map { Data($0.utf8) }
+                ?? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            try await seedWorkspaceRecipe(workspace: workspace, json: data, workspacePath: "\(directory)/\(path)")
+        }
+        let service = IOSPluginToolService(workspaceStore: workspace, pluginStore: store, refreshRegistry: { await registry.refresh() })
+        let validation = await service.execute(toolName: "plugin_validate", arguments: IOSWorkspaceStore.json(["workspace_directory": directory]))
+        XCTAssertEqual(try parse(validation)?["valid"] as? Bool, true, validation)
+
+        var testArguments = try XCTUnwrap(example["test"] as? [String: Any])
+        testArguments["workspace_directory"] = directory
+        let testCall = makeRecipeToolCall(name: "plugin_test", input: IOSWorkspaceStore.json(testArguments))
+        let tested = await executeRecipeCall(runtime: runtime, toolCall: testCall, snapshot: nil, bridge: nil, runId: runId)
+        guard case .completed(let testMessages) = tested else { return XCTFail("试运行未完成：\(tested)") }
+        let testOutput = try XCTUnwrap(toolOutputText(in: testMessages, toolCallId: testCall.toolCallId))
+        let testPayload = try XCTUnwrap(parse(testOutput))
+        XCTAssertEqual(testPayload["ok"] as? Bool, true, testOutput)
+        XCTAssertEqual(testPayload["expected_match"] as? Bool, true, testOutput)
+        XCTAssertEqual(testPayload["registered"] as? Bool, false)
+        let hash = try XCTUnwrap(testPayload["candidate_hash"] as? String)
+        XCTAssertTrue(store.listInstalledPlugins().isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.pluginsDirectory.path))
+
+        let importCall = makeRecipeToolCall(name: "plugin_import", input: IOSWorkspaceStore.json([
+            "workspace_directory": directory, "expected_candidate_hash": hash, "enable": true,
+        ]))
+        let imported = await executeRecipeCall(runtime: runtime, toolCall: importCall, snapshot: nil, bridge: nil, runId: runId)
+        guard case .waitingForApproval(.recipe(let request)) = imported,
+              case .recipeImport(let preview) = request.payload else { return XCTFail("安装应等待一次明确审批。") }
+        XCTAssertTrue(preview.activationNotice.contains("安装并启用"))
+        XCTAssertTrue(store.listInstalledPlugins().isEmpty)
+        let approved = await resolveRecipeApproval(
+            runtime: runtime, ledger: ledger, request: request, decision: .approve, toolCall: importCall, runId: runId
+        )
+        guard case .resumed(let importMessages) = approved else { return XCTFail("安装审批未恢复：\(approved)") }
+        let importOutput = try XCTUnwrap(toolOutputText(in: importMessages, toolCallId: importCall.toolCallId))
+        XCTAssertEqual(try parse(importOutput)?["enabled"] as? Bool, true, importOutput)
+
+        // A new registry reconstructs tools from disk, as on a later App launch.
+        let reloaded = try unwrapSnapshot(await IOSDynamicToolRegistry(baseDirectory: root).refresh())
+        let bridge = IOSDynamicToolBridgeRebuilder.rebuiltBridge(from: IosToolExposureBridge(tools: fullIosDeclarations()), snapshot: reloaded)
+        let search = bridge.executeToolSearch(argumentsJson: #"{"query":"plugin__text_metrics__summarize"}"#)
+        XCTAssertTrue((try parse(search)?["expanded_tools"] as? [String] ?? []).contains("plugin__text_metrics__summarize"), search)
+        let call = makeRecipeToolCall(name: "plugin__text_metrics__summarize", input: #"{"texts":[" a ","a","b"]}"#)
+        let execution = await executeRecipeCall(runtime: runtime, toolCall: call, snapshot: reloaded, bridge: bridge, runId: runId)
+        guard case .completed(let messages) = execution else { return XCTFail("注册工具未执行：\(execution)") }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
+        let result = try XCTUnwrap(try parse(output)?["result"] as? [String: Any])
+        XCTAssertEqual(result["count"] as? Int, 3)
+        XCTAssertEqual(result["unique"] as? [String], ["a", "b"])
+
+        testArguments["expected_result"] = ["count": 0, "unique": []] as [String: Any]
+        let mismatch = makeRecipeToolCall(name: "plugin_test", input: IOSWorkspaceStore.json(testArguments))
+        let mismatchResult = await executeRecipeCall(runtime: runtime, toolCall: mismatch, snapshot: reloaded, bridge: bridge, runId: runId)
+        guard case .completed(let mismatchMessages) = mismatchResult else { return XCTFail("预期不匹配应返回测试失败。") }
+        let mismatchOutput = try XCTUnwrap(toolOutputText(in: mismatchMessages, toolCallId: mismatch.toolCallId))
+        XCTAssertEqual(try parse(mismatchOutput)?["ok"] as? Bool, false, mismatchOutput)
+        XCTAssertEqual(store.listInstalledPlugins().first?.health.consecutiveFailures, 0)
+        XCTAssertTrue(store.isPluginEnabled(id: "text_metrics"))
+
+        try await seedWorkspaceRecipe(workspace: workspace, json: Data("return {};".utf8), workspacePath: "\(directory)/scripts/summarize.js")
+        XCTAssertThrowsError(try service.preparePluginImport(arguments: importCall.input)) { error in
+            XCTAssertEqual(error as? IOSPluginFileStoreError, .candidateChanged)
+        }
+        XCTAssertEqual(try store.readLivePlugin(id: "text_metrics").hash, hash)
+    }
+
+    func testCandidateCommandApprovalExecutesPinnedScriptAndInputWithoutInstalling() async throws {
+        let root = tempRoot()
+        let (executor, workspace, _) = makeWorkspaceExecutor(root: root)
+        let (_, dao) = makeDatabase(root: root)
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "plugin-command-\(UUID().uuidString)"
+        try await seedDurableRun(runId, dao: dao)
+        let runtime = makeRuntime(root: root, ledger: ledger, localToolExecutor: executor, workspaceStore: workspace)
+        let example = IOSPluginDevelopmentSDK.commandExample()
+        let directory = try XCTUnwrap(example["workspace_directory"] as? String)
+        for (path, value) in try XCTUnwrap(example["files"] as? [String: Any]) {
+            let data = try (value as? String).map { Data($0.utf8) }
+                ?? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+            try await seedWorkspaceRecipe(workspace: workspace, json: data, workspacePath: "\(directory)/\(path)")
+        }
+        var args = try XCTUnwrap(example["test"] as? [String: Any])
+        args["workspace_directory"] = directory
+        let call = makeRecipeToolCall(name: "plugin_test", input: IOSWorkspaceStore.json(args))
+        let trial = await executeRecipeCall(runtime: runtime, toolCall: call, snapshot: nil, bridge: nil, runId: runId)
+        guard case .waitingForApproval(.recipe(let request)) = trial,
+              case .pluginInvocation(let payload) = request.payload else { return XCTFail("本地命令试跑必须经过执行审批。") }
+        XCTAssertEqual(payload.effectClass, .sideEffect)
+        // The approval owns the candidate bytes, not the mutable Workspace entry.
+        try await seedWorkspaceRecipe(workspace: workspace, json: Data("echo changed".utf8), workspacePath: "\(directory)/scripts/unique.sh")
+        let approved = await resolveRecipeApproval(runtime: runtime, ledger: ledger, request: request, decision: .approve, toolCall: call, runId: runId)
+        guard case .resumed(let messages) = approved else { return XCTFail("命令审批未恢复：\(approved)") }
+        let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
+        let parsed = try XCTUnwrap(parse(output))
+        XCTAssertEqual(parsed["ok"] as? Bool, true, output)
+        XCTAssertEqual(parsed["expected_match"] as? Bool, true, output)
+        XCTAssertEqual(parsed["result"] as? String, "a\nb\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: IOSPluginFileStore(baseDirectory: root).pluginsDirectory.path))
+    }
+
+    func testPluginRecognizesAmberShellUnknownOutcomeInFinishedMessages() {
+        let runtime = makeRuntime(root: tempRoot(), ledger: IOSRunEventLogLedger(log: IOSRunEventLog()))
+        let call = UIMessagePart.Tool(
+            toolCallId: "command-unknown", toolName: "plugin__unique_lines__deduplicate", input: "{}",
+            output: [UIMessagePart.Text(
+                text: #"{"ok":false,"status":"unknown_after_action","may_have_applied":true}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+        )
+        XCTAssertTrue(runtime.isPluginOutcomeUnknown(
+            in: [makeAssistantMessage(parts: [call])], toolCallId: call.toolCallId
+        ))
+    }
+
+    func testCommandNonZeroExitsAutomaticallyQuarantinePlugin() async throws {
+        let root = tempRoot()
+        let store = IOSPluginFileStore(baseDirectory: root)
+        let example = IOSPluginDevelopmentSDK.commandExample()
+        var files: [String: Data] = [:]
+        for (path, value) in try XCTUnwrap(example["files"] as? [String: Any]) {
+            files[path] = try (value as? String).map { Data($0.utf8) }
+                ?? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        }
+        files["scripts/unique.sh"] = Data("command-that-does-not-exist".utf8)
+        let prepared = try store.preparePlugin(files: files)
+        let receipt = try store.applyPlugin(files: files, expectedBaseHash: nil, expectedCandidateHash: prepared.candidate.hash)
+        _ = try store.setPluginEnabled(id: "unique_lines", enabled: true, expectedHash: receipt.hash)
+        let registry = IOSDynamicToolRegistry(baseDirectory: root)
+        let snapshot = try unwrapSnapshot(await registry.refresh())
+        let (executor, workspace, _) = makeWorkspaceExecutor(root: root)
+        let (_, dao) = makeDatabase(root: root)
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runtime = makeRuntime(root: root, ledger: ledger, localToolExecutor: executor, workspaceStore: workspace, recipeRegistry: registry)
+
+        for attempt in 0..<IOSPluginHealthSnapshot.quarantineThreshold {
+            let runId = "command-failure-\(attempt)"
+            try await seedDurableRun(runId, dao: dao)
+            let call = makeRecipeToolCall(name: "plugin__unique_lines__deduplicate", input: #"{"text":"a"}"#)
+            let result = await executeRecipeCall(runtime: runtime, toolCall: call, snapshot: snapshot, bridge: nil, runId: runId)
+            guard case .waitingForApproval(.recipe(let request)) = result else {
+                return XCTFail("命令调用应等待审批。")
+            }
+            let resolution = await resolveRecipeApproval(runtime: runtime, ledger: ledger, request: request, decision: .approve, toolCall: call, runId: runId)
+            guard case .resumed(let messages) = resolution else { return XCTFail("命令审批未恢复。") }
+            let output = try XCTUnwrap(toolOutputText(in: messages, toolCallId: call.toolCallId))
+            XCTAssertEqual(try parse(output)?["status"] as? String, "failed", output)
+            XCTAssertEqual(try parse(output)?["exit_code"] as? Int, 127, output)
+        }
+
+        let installed = try XCTUnwrap(store.listInstalledPlugins().first)
+        XCTAssertEqual(installed.health.consecutiveFailures, IOSPluginHealthSnapshot.quarantineThreshold)
+        XCTAssertTrue(installed.health.isQuarantined)
+        let refreshed = try unwrapSnapshot(await registry.refresh())
+        XCTAssertFalse(refreshed.recipeTools.contains { $0.pluginId == "unique_lines" })
     }
 
     func testPluginHealthQuarantinesAfterThreeFailuresAndKeepsBoundedDiagnostics() throws {
@@ -2201,9 +2413,12 @@ final class IOSRecipeIntegrationTests: XCTestCase {
         var directRuntimeApprovalEffect: IOSToolEffectClass?
         switch request.payload {
         case .recipeImport:
-            candidates.recipeImport = runtime.takePreparedRecipeImportForApproval(
-                toolCallId: toolCall.toolCallId
-            )
+            if request.isPluginImport {
+                candidates.pluginImport = runtime.takePreparedPluginImportForApproval(toolCallId: toolCall.toolCallId)
+                directRuntimeApprovalEffect = .sideEffect
+            } else {
+                candidates.recipeImport = runtime.takePreparedRecipeImportForApproval(toolCallId: toolCall.toolCallId)
+            }
         case .pluginInvocation(let payload):
             candidates.pluginInvocation = runtime.takePreparedPluginInvocationForApproval(
                 toolCallId: toolCall.toolCallId
