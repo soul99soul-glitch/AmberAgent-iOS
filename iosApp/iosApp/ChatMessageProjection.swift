@@ -354,7 +354,8 @@ enum NativeTimelineProjector {
         renderStateStore: ChatRenderStateStore? = nil,
         includePendingAssistant: Bool? = nil,
         variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo? = { _ in nil },
-        contentHashProvider: (ChatMessageRowModel, Bool) -> Int = { _, _ in 0 }
+        contentHashProvider: (ChatMessageRowModel, Bool) -> Int = { _, _ in 0 },
+        startIndex: Int = 0
     ) -> NativeTimelineProjection {
         // Standard Chat already owns waiting/thinking/search status in the top island.
         // Keep the timeline for real message content so completion never removes a
@@ -364,7 +365,8 @@ enum NativeTimelineProjector {
             messages: messages,
             event: event,
             streamedMessageIDs: streamedMessageIDs,
-            includePendingAssistant: shouldIncludePendingAssistant
+            includePendingAssistant: shouldIncludePendingAssistant,
+            startIndex: startIndex
         )
 
         var entries: [NativeTimelineEntry] = []
@@ -749,12 +751,14 @@ enum ChatTimelinePlanner {
         event: ChatEvent,
         streamedMessageIDs: Set<String> = [],
         includePendingAssistant: Bool = false,
-        includeRenderTokens: Bool = true
+        includeRenderTokens: Bool = true,
+        startIndex: Int = 0
     ) -> ChatTimelinePlan {
         let rows = ChatMessageProjector.rows(
             messages: messages,
             event: event,
-            streamedMessageIDs: streamedMessageIDs
+            streamedMessageIDs: streamedMessageIDs,
+            startIndex: startIndex
         )
         var entries = rows.map { row in
             ChatTimelineEntry.message(
@@ -850,9 +854,11 @@ enum ChatMessageProjector {
     static func rows(
         messages: [UIMessage],
         event: ChatEvent,
-        streamedMessageIDs: Set<String> = []
+        streamedMessageIDs: Set<String> = [],
+        startIndex: Int = 0
     ) -> [ChatMessageRowModel] {
-        messages.enumerated().map { index, message in
+        messages.indices.dropFirst(max(0, startIndex)).map { index in
+            let message = messages[index]
             let messageId = messageId(for: message)
             let isLast = index == messages.count - 1
             let isLastAssistant = isLast && message.role == MessageRole.assistant

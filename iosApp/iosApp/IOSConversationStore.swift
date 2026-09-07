@@ -93,9 +93,8 @@ struct IOSConversationWriteBaseline: Equatable {
 /// iOS 端会话生命周期管理器。把 [JsonConversationStorage]（KMP 文件 JSON 存储）包成
 /// SwiftUI 可观察的状态：持有当前会话 + 会话摘要列表。
 ///
-/// 并发契约（与 `JsonConversationStorage` 的 @MainActor 单写者假设一致）：
-/// 本类标注 `@MainActor`，所有 storage 调用串行发生在主线程。后台 Task.detached 不可
-/// 调用本类方法——会破坏 index.json 的 read-modify-write。
+/// 本类的可观察状态由 MainActor 持有；存储内部用 operationMutex 串行化文件与
+/// index 的读改写。完整会话读取与解码在 KMP 后台 dispatcher 完成，再回主线程提交状态。
 ///
 /// 设计参照 PLAN_CONVERSATION_PERSISTENCE.md Phase 2。
 @MainActor
@@ -299,7 +298,8 @@ final class IOSConversationStore {
     // MARK: - CRUD
 
     /// 新建空会话：生成新 Conversation（assistantId = DEFAULT_ASSISTANT_ID），落盘，设为 current。
-    func newConversation() async {
+    @discardableResult
+    func newConversation(commitIf: () -> Bool = { true }) async -> Bool {
         let conversation = Conversation.companion.ofId(
             id: KotlinUuid.companion.random(),
             assistantId: AssistantKt.DEFAULT_ASSISTANT_ID,
@@ -307,15 +307,18 @@ final class IOSConversationStore {
             newConversation: true
         )
         let persisted = await persist(conversation) ?? conversation
+        guard commitIf() else { return false }
         setCurrentAsSwitch(persisted)
         await refreshSummaries()
+        return true
     }
 
     /// 用户入口的“新建对话”：优先复用当前或最近的空会话，避免连续点击新建制造垃圾空文件。
     /// 底层 `newConversation()` 保持强制新建语义，供测试、删除回退等内部场景使用。
-    func startNewConversationReusingEmpty() async {
+    @discardableResult
+    func startNewConversationReusingEmpty(commitIf: () -> Bool = { true }) async -> Bool {
         if let currentConversation, Self.isReusableEmptyConversation(currentConversation) {
-            return
+            return true
         }
 
         let sourceSummaries: [ConversationSummary]
@@ -330,11 +333,12 @@ final class IOSConversationStore {
            !isDeletedConversation(mostRecent.id),
            let conversation = try? await storage.loadConversation(id: mostRecent.id),
            Self.isReusableEmptyConversation(conversation) {
+            guard commitIf() else { return false }
             setCurrentAsSwitch(conversation)
-            return
+            return true
         }
 
-        await newConversation()
+        return await newConversation(commitIf: commitIf)
     }
 
     /// Read-only projection for App Entity queries. It deliberately avoids

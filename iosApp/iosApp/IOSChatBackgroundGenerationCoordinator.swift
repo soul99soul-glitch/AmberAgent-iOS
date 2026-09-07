@@ -984,12 +984,12 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         guard !registeredRequestIds.contains(requestId) else { return true }
 
-        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: requestId, using: nil) { @MainActor [weak self] task in
+        let registered = BGTaskScheduler.shared.register(forTaskWithIdentifier: requestId, using: .main) { @MainActor [weak self] task in
             guard let task = task as? BGContinuedProcessingTask else {
                 task.setTaskCompleted(success: false)
                 return
             }
-            // queue=nil 走主队列；在把工作排进 async handler 前先登记，冷启动
+            // 显式使用主队列以匹配 MainActor；在把工作排进 async handler 前先登记，冷启动
             // sweep 才不会把刚被系统唤起的 request 当成 stale。
             self?.activeBackgroundTasks[task.identifier] = task
             Task { @MainActor in

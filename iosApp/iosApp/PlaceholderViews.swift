@@ -2886,7 +2886,9 @@ struct ConversationsView: View {
         conversationNavigationTask?.cancel()
         conversationNavigationTask = Task { @MainActor in
             guard chatViewModel.prepareForConversationChange() else { return }
-            await conversationStore.startNewConversationReusingEmpty()
+            guard await conversationStore.startNewConversationReusingEmpty(
+                commitIf: { !Task.isCancelled }
+            ) else { return }
             guard !Task.isCancelled else { return }
             router.navigate(to: .chat)
         }

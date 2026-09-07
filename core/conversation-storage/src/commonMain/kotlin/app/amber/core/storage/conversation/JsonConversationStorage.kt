@@ -3,8 +3,10 @@ package app.amber.core.storage.conversation
 import app.amber.core.agent.utils.JsonInstant
 import app.amber.core.model.Conversation
 import app.amber.core.model.ConversationMemoryMode
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlin.uuid.Uuid
 
@@ -39,9 +41,16 @@ class JsonConversationStorage(
     private val operationMutex = Mutex()
     private val indexFile: ConversationFile get() = baseDir.child(INDEX_FILENAME)
     private val summaryCache = mutableMapOf<String, SummaryCacheEntry>()
+    /**
+     * Recent complete snapshots avoid decoding the same conversation again when the user
+     * switches away and back. Keep this intentionally small: the current conversation is
+     * already owned by IOSConversationStore, so this is only a short recency window.
+     */
+    private val conversationCache = LinkedHashMap<String, ConversationCacheEntry>()
 
     internal var beforeUpdateMetadataSaveForTesting: (suspend () -> Unit)? = null
     internal var beforeSummaryDecodeForTesting: (() -> Unit)? = null
+    internal var beforeConversationDecodeForTesting: (() -> Unit)? = null
 
     init {
         // 确保目录存在；不存在则静默创建（首次启动/全新安装场景）。
@@ -71,20 +80,53 @@ class JsonConversationStorage(
 
     @Throws(Throwable::class)
     override suspend fun loadConversation(id: Uuid): Conversation? = operationMutex.withLock {
-        loadConversationUnlocked(id)
+        // File IO and JSON decoding are synchronous in ConversationFile/serialization.
+        // Keep the mutex across the dispatcher hop so reads cannot overlap writes or
+        // observe a partially replaced conversation file.
+        withContext(Dispatchers.Default) {
+            loadConversationUnlocked(id)
+        }
     }
 
     private fun loadConversationUnlocked(id: Uuid): Conversation? {
         ensureBaseDir()
         val file = conversationFile(id)
-        val text = file.readText() ?: return null
-        return runCatching {
+        val before = file.fileVersion()
+        if (before != null) {
+            conversationCache[file.path]?.takeIf { it.version == before }?.let {
+                // LinkedHashMap insertion order is the recency order for this tiny LRU.
+                conversationCache.remove(file.path)
+                conversationCache[file.path] = it
+                return it.conversation
+            }
+        } else {
+            // If the platform cannot provide a safe fingerprint, never reuse a snapshot.
+            conversationCache.remove(file.path)
+        }
+        val text = file.readText() ?: run {
+            conversationCache.remove(file.path)
+            return null
+        }
+        val conversation = runCatching {
+            beforeConversationDecodeForTesting?.invoke()
             JsonInstant.decodeFromString<Conversation>(text)
         }.getOrElse {
             // 单条会话损坏不应让整个列表崩；返回 null 让上层视为「不存在」。
             // 损坏文件可由用户在 Phase 3 UI 上删除恢复。
             null
         }
+        if (conversation != null && before != null && before == file.fileVersion()) {
+            conversationCache.remove(file.path)
+            conversationCache[file.path] = ConversationCacheEntry(before, conversation)
+            while (conversationCache.size > MAX_CONVERSATION_CACHE_ENTRIES) {
+                conversationCache.entries.iterator().next().let { eldest ->
+                    conversationCache.remove(eldest.key)
+                }
+            }
+        } else {
+            conversationCache.remove(file.path)
+        }
+        return conversation
     }
 
     @Throws(Throwable::class)
@@ -102,6 +144,8 @@ class JsonConversationStorage(
     private fun saveConversationReplacingAllFieldsLocked(conversationToSave: Conversation) {
         val text = encodeConversation(conversationToSave)
         conversationFile(conversationToSave.id).writeText(text)
+        // The file is now the source of truth; do not let a pre-write snapshot survive it.
+        conversationCache.remove(conversationFile(conversationToSave.id).path)
         // The conversation file is canonical; index.json is a derived cache and
         // must not turn an already-committed message write into a false failure.
         runCatching { upsertIndex(conversationToSave.toSummary()) }
@@ -119,6 +163,9 @@ class JsonConversationStorage(
             conversation to encodeConversation(conversation)
         }
 
+        // Clear before writing so a partial write failure cannot leave a stale decoded
+        // snapshot for any document that was already replaced in this batch.
+        conversationCache.clear()
         validated.forEach { (conversation, text) ->
             conversationFile(conversation.id).writeText(text)
         }
@@ -165,6 +212,7 @@ class JsonConversationStorage(
     override suspend fun deleteConversation(id: Uuid) = operationMutex.withLock {
         ensureBaseDir()
         conversationFile(id).delete()
+        conversationCache.remove(conversationFile(id).path)
         removeFromIndex(id)
     }
 
@@ -292,6 +340,11 @@ class JsonConversationStorage(
         val summary: ConversationSummary,
     )
 
+    private data class ConversationCacheEntry(
+        val version: ConversationFileVersion,
+        val conversation: Conversation,
+    )
+
     // ---- 排序：置顶优先，再按 updateAt 倒序 ----
 
     private fun orderSummaries(summaries: List<ConversationSummary>): List<ConversationSummary> =
@@ -313,5 +366,6 @@ class JsonConversationStorage(
 
     private companion object {
         const val INDEX_FILENAME = "index.json"
+        const val MAX_CONVERSATION_CACHE_ENTRIES = 2
     }
 }

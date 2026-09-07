@@ -1,6 +1,47 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "加载更早的消息": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Load earlier messages"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前のメッセージを読み込む"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 메시지 불러오기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Загрузить более ранние сообщения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加载更早的消息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "載入更早的訊息"
+          }
+        }
+      }
+    },
     "新建浏览任务": {
       "extractionState": "manual",
       "localizations": {

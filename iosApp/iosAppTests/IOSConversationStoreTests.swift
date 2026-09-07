@@ -200,6 +200,37 @@ final class IOSConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.currentConversation?.id, currentId)
     }
 
+    func testConditionalNewConversationDoesNotCommitAfterItsOwnerBecomesStale() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreConditionalNew-")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+
+        let store = IOSConversationStore(baseDirectory: baseDirectory)
+        await store.bootstrap()
+        let originalId = try XCTUnwrap(store.currentConversation?.id)
+        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "original")])
+
+        var canCommit = true
+        store.beforePersistForTesting = { _ in canCommit = false }
+        let didCreate = await store.newConversation(commitIf: { canCommit })
+        store.beforePersistForTesting = nil
+
+        XCTAssertFalse(didCreate)
+        XCTAssertEqual(store.currentConversation?.id, originalId)
+
+        await store.newConversation()
+        let emptyId = try XCTUnwrap(store.currentConversation?.id)
+        await store.selectConversation(id: originalId)
+
+        let didReuse = await store.startNewConversationReusingEmpty(commitIf: { false })
+
+        XCTAssertFalse(didReuse)
+        XCTAssertEqual(store.currentConversation?.id, originalId)
+        XCTAssertNotEqual(store.currentConversation?.id, emptyId)
+    }
+
     func testImageGenerationResumeScanUsesPersistedCrossConversationOwner() async throws {
         let baseDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("IOSConversationStoreImageResume-")

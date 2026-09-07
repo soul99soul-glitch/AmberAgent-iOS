@@ -7,6 +7,47 @@ import Shared
 
 @MainActor
 final class ChatMessageProjectionTests: XCTestCase {
+    func testHistoryWindowPreservesAbsoluteIndicesCompactionAndStreamingTail() throws {
+        let messages = (0..<451).map { UIMessage.companion.assistant(prompt: "历史消息 \($0)") }
+        let boundary = ChatContextCompactBoundary(
+            id: "window-compact",
+            afterMessageId: ChatMessageProjector.messageId(for: messages[420]),
+            coveredMessageIds: [ChatMessageProjector.messageId(for: messages[0])],
+            state: ChatContextCompactState(status: .completed, summary: "历史摘要", updatedAt: Date())
+        )
+        var projectedIndices: [Int] = []
+        let initial = NativeTimelineProjector.build(
+            messages: messages,
+            event: .assistantStreamDelta,
+            contextCompactBoundaries: [boundary],
+            variantInfoProvider: { index in
+                projectedIndices.append(index)
+                return nil
+            },
+            startIndex: 391
+        )
+        XCTAssertEqual(projectedIndices, Array(391..<451), "首屏只为窗口内消息生成行模型，仍使用原始索引")
+        let first = try XCTUnwrap(initial.entries.first { $0.kind == .message })
+        XCTAssertEqual(first.index, 391)
+        XCTAssertTrue(first.isAssistantContinuation)
+        XCTAssertTrue(first.isCompactedHistory, "压缩范围必须包含窗口外的已覆盖消息")
+        XCTAssertTrue(initial.entries.contains { $0.id == "context-compact-window-compact" })
+        let tail = try XCTUnwrap(initial.entries.last { $0.kind == .message })
+        XCTAssertEqual(tail.index, 450)
+        XCTAssertTrue(tail.isLastMessage)
+        XCTAssertTrue(tail.isStreaming)
+        XCTAssertFalse(tail.isCompactedHistory)
+        XCTAssertEqual(initial.entries.last?.id, ChatLayout.bottomAnchorID)
+
+        let expanded = NativeTimelineProjector.build(
+            messages: messages, event: .assistantStreamDelta,
+            contextCompactBoundaries: [boundary], startIndex: 331
+        )
+        XCTAssertEqual(expanded.entries.filter { $0.kind == .message }.count, 120)
+        XCTAssertEqual(Array(expanded.entries.suffix(initial.entries.count)), initial.entries,
+                       "加载更早消息不改变已显示消息的身份、索引和尾部锚点")
+    }
+
     func testNativeCompactTimelineVisualLayout() async throws {
         let old = UIMessage.companion.user(prompt: "这部分历史已压缩")
         let recent = UIMessage.companion.assistant(prompt: "继续对话，新的内容显示在分界线下方。")

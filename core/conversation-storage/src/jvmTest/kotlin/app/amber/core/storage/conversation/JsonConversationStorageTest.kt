@@ -17,7 +17,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -72,6 +74,43 @@ class JsonConversationStorageTest {
     }
 
     @Test
+    fun loadUsesDefaultDispatcherAndReusesUnchangedDecodedSnapshot() = runTest {
+        val id = Uuid.parse("00000000-0000-0000-0000-000000000008")
+        val conversation = sampleConversation(id = id, title = "cached")
+        storage.saveConversation(conversation)
+
+        var decodeCount = 0
+        var decodeThread: Thread? = null
+        storage.beforeConversationDecodeForTesting = {
+            decodeCount += 1
+            decodeThread = Thread.currentThread()
+        }
+        val callerThread = Thread.currentThread()
+
+        val first = storage.loadConversation(id)
+        assertNotNull(first)
+        assertNotNull(decodeThread)
+        assertNotEquals(
+            callerThread.id,
+            decodeThread!!.id,
+            "会话文件读取和 JSON 解码必须离开调用方线程",
+        )
+
+        val second = storage.loadConversation(id)
+        assertSame(first, second, "文件指纹未变化时应复用已解码的完整会话")
+        assertEquals(1, decodeCount, "稳定文件不应重复 JSON 解码")
+
+        tempDir.child("${id}.json").writeText(
+            JsonInstant.encodeToString(conversation.copy(title = "changed externally"))
+        )
+
+        val changed = storage.loadConversation(id)
+        assertNotNull(changed)
+        assertEquals("changed externally", changed.title)
+        assertEquals(2, decodeCount, "外部文件指纹变化后必须重新解码")
+    }
+
+    @Test
     fun derivedIndexWriteFailureDoesNotFailCanonicalConversationSave() = runTest {
         tempDir.child("index.json").mkdirs()
         val conversation = sampleConversation(
@@ -113,6 +152,7 @@ class JsonConversationStorageTest {
         storage.saveConversation(
             sampleConversation(id = overwrittenId, title = "local title", userText = "local message")
         )
+        assertNotNull(storage.loadConversation(overwrittenId))
         storage.saveConversation(
             sampleConversation(id = preservedId, title = "preserved", userText = "preserved message")
         )
@@ -210,6 +250,7 @@ class JsonConversationStorageTest {
         val id = Uuid.parse("00000000-0000-0000-0000-000000000030")
         storage.saveConversation(sampleConversation(id = id, title = "to delete"))
         assertEquals(1, storage.listSummaries().size)
+        assertNotNull(storage.loadConversation(id))
 
         storage.deleteConversation(id)
         assertNull(storage.loadConversation(id))
@@ -222,6 +263,7 @@ class JsonConversationStorageTest {
         storage.saveConversation(
             sampleConversation(id = id, title = "orig", userText = "kept", isPinned = false)
         )
+        assertNotNull(storage.loadConversation(id))
 
         storage.updateMetadata(id, title = "renamed", isPinned = true)
 
@@ -271,6 +313,7 @@ class JsonConversationStorageTest {
             )
         )
         storage.updateMetadata(id, title = "renamed", isPinned = true)
+        assertNotNull(storage.loadConversation(id))
 
         val persisted = storage.saveConversation(
             sampleConversation(

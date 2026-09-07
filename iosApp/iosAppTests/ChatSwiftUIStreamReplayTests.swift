@@ -759,7 +759,9 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             toolCallID: toolCallID
         )
         let targetMessageID = ChatMessageProjector.messageId(for: targetMessage)
-        let messages = longConversation(turns: 3) + [targetMessage] + longConversation(turns: 8)
+        // Keep the image outside the initial 60-message window so consumption also
+        // proves that revealing history completes before the exact anchor scroll.
+        let messages = longConversation(turns: 3) + [targetMessage] + longConversation(turns: 35)
 
         let imageFixture = makeFixture { model in
             model.followGeneration = false

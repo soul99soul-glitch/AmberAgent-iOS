@@ -77,10 +77,15 @@ private final class NativeTimelineProjectionCache {
     private var structuralKey = ""
     private var messageCount = 0
     private var lastMessageID: String?
+    private var sourceRevision: Int?
+    private var renderRevision: UInt64 = 0
+    private var startIndex = 0
 
     func projection(
         messages: [UIMessage],
         event: ChatEvent,
+        sourceRevision: Int,
+        startIndex: Int,
         configurationIssue: ChatConfigurationIssue?,
         isGenerationActive: Bool,
         isLoading: Bool,
@@ -110,9 +115,22 @@ private final class NativeTimelineProjectionCache {
             reasoningLevelLabel: reasoningLevelLabel
         )
 
-        if key == structuralKey,
-           messageCount == messages.count,
-           lastMessageID == lastID,
+        let canReuseStructure = key == structuralKey &&
+            messageCount == messages.count && lastMessageID == lastID &&
+            self.startIndex == startIndex
+        defer {
+            self.sourceRevision = sourceRevision
+            self.renderRevision = renderStateRevision
+            self.startIndex = startIndex
+        }
+        if canReuseStructure,
+           self.sourceRevision == sourceRevision,
+           renderRevision == renderStateRevision,
+           let cachedProjection {
+            return cachedProjection
+        }
+
+        if canReuseStructure,
            let cachedProjection,
            let increment = NativeTimelineProjector.replacingStreamingTail(
             in: cachedProjection,
@@ -150,7 +168,8 @@ private final class NativeTimelineProjectionCache {
             streamedMessageIDs: streamedMessageIDs,
             renderStateStore: renderStateStore,
             variantInfoProvider: variantInfoProvider,
-            contentHashProvider: contentHashProvider
+            contentHashProvider: contentHashProvider,
+            startIndex: startIndex
         )
         cachedProjection = projection
         structuralKey = key
@@ -164,6 +183,7 @@ private final class NativeTimelineProjectionCache {
         structuralKey = ""
         messageCount = 0
         lastMessageID = nil
+        sourceRevision = nil
     }
 
     private static func structuralKey(
@@ -194,6 +214,7 @@ private final class NativeTimelineProjectionCache {
 /// Production Chat timeline. The native scroll driver owns normal bottom-follow;
 /// SwiftUI takes over only after an explicit driver fallback.
 struct NativeChatTimelineView: View {
+    static let historyPageSize = 60
     var signal: ChatMessageUpdateSignal
     var configurationIssue: ChatConfigurationIssue?
     var isGenerationActive: Bool
@@ -237,9 +258,13 @@ struct NativeChatTimelineView: View {
     @State private var consumedMessageAnchor: ChatMessageAnchor?
     @State private var scheduledMessageAnchor: ChatMessageAnchor?
     @State private var imageAccessibilityFocusToolCallID: String?
+    @State private var historyStartIndex: Int?
+    @State private var historyRevealAnchor: String?
+    @State private var laidOutHistoryFirstMessageID: String?
 
     var body: some View {
         let messages = messagesProvider()
+        let startIndex = resolvedHistoryStartIndex(messages: messages)
         let nativeScrollDriverDesired = isNativeScrollDriverDesired
         let displaySettingSignature = String(describing: displaySetting)
         let generativeUiSettingSignature = String(describing: generativeUiSetting)
@@ -257,6 +282,8 @@ struct NativeChatTimelineView: View {
         let projection = projectionCache.projection(
             messages: messages,
             event: signal.event,
+            sourceRevision: signal.revision,
+            startIndex: startIndex,
             configurationIssue: configurationIssue,
             isGenerationActive: isGenerationActive,
             isLoading: isLoading,
@@ -278,8 +305,17 @@ struct NativeChatTimelineView: View {
         }
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // One eager height model prevents historical estimates and the live tail
-                // from publishing conflicting content sizes into the same scroll view.
+                if startIndex > 0 {
+                    Button("加载更早的消息") {
+                        loadEarlierMessages()
+                    }
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .disabled(historyRevealAnchor != nil)
+                    .accessibilityIdentifier("chat-load-earlier")
+                }
+                // Only materialize the loaded history window. Its eager height model
+                // keeps the existing live-tail and bottom-follow geometry stable.
                 ForEach(projection.entries) { entry in
                     entryView(
                         entry,
@@ -295,6 +331,14 @@ struct NativeChatTimelineView: View {
             .padding(.top, 12)
             .padding(.bottom, 28)
             .scrollTargetLayout()
+            .onGeometryChange(for: String?.self) { _ in
+                messages.indices.contains(startIndex)
+                    ? ChatMessageProjector.messageId(for: messages[startIndex]) : nil
+            } action: { firstMessageID in
+                laidOutHistoryFirstMessageID = firstMessageID
+                restoreHistoryRevealAnchorIfReady()
+                scrollToMessageAnchorIfAvailable()
+            }
             .background {
                 if nativeScrollDriverDesired {
                     NativeTimelineScrollViewResolver(
@@ -422,6 +466,7 @@ struct NativeChatTimelineView: View {
         }
         .onAppear {
             isNativeScrollSurfaceVisible = true
+            historyStartIndex = startIndex
             // 重新进入页面时清除上一次的 fallback 粘连，给原生滚动 driver 一次重试机会。
             nativeScrollFallbackReason = nil
             updateRendererMemory(event: signal.event, messages: messages)
@@ -430,6 +475,7 @@ struct NativeChatTimelineView: View {
         }
         .onDisappear {
             isNativeScrollSurfaceVisible = false
+            historyRevealAnchor = nil
             nativeUserScrollActive = false
             scrollDriver.invalidate()
         }
@@ -437,6 +483,11 @@ struct NativeChatTimelineView: View {
             scrollDriver.setAutomaticFollowEnabled(enabled)
         }
         .onChange(of: signal) { _, newSignal in
+            if newSignal.event == .conversationLoaded || newSignal.event == .conversationSwitched ||
+                newSignal.event == .branchChanged {
+                historyRevealAnchor = nil
+                historyStartIndex = max(0, messagesProvider().count - Self.historyPageSize)
+            }
             updateRendererMemory(event: newSignal.event, messages: messagesProvider())
             submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance)
             scrollToMessageAnchorIfAvailable()
@@ -473,6 +524,46 @@ struct NativeChatTimelineView: View {
 
     private var isNativeScrollDriverActive: Bool {
         isNativeScrollDriverDesired && scrollDriver.isAttached
+    }
+
+    private func resolvedHistoryStartIndex(messages: [UIMessage]) -> Int {
+        let tailStart = max(0, messages.count - Self.historyPageSize)
+        return min(historyStartIndex ?? tailStart, tailStart)
+    }
+
+    private func loadEarlierMessages() {
+        let messages = messagesProvider()
+        let startIndex = resolvedHistoryStartIndex(messages: messages)
+        guard startIndex > 0, historyRevealAnchor == nil else { return }
+        let anchorID = "message-\(ChatMessageProjector.messageId(for: messages[startIndex]))"
+        historyRevealAnchor = anchorID
+        scrollDriver.submit(.userDragBegan)
+        nativeScrollFallbackReplayToken &+= 1
+        nativeScrollFallbackShouldReplayBottom = false
+        var paused = viewportState
+        paused.isAtBottom = false
+        paused.followPaused = true
+        paused.showScrollToBottom = true
+        publishViewportState(paused)
+        historyStartIndex = max(0, startIndex - Self.historyPageSize)
+    }
+
+    private var isHistoryWindowLaidOut: Bool {
+        let messages = messagesProvider()
+        let startIndex = resolvedHistoryStartIndex(messages: messages)
+        return messages.indices.contains(startIndex) &&
+            laidOutHistoryFirstMessageID == ChatMessageProjector.messageId(for: messages[startIndex])
+    }
+
+    private func restoreHistoryRevealAnchorIfReady() {
+        guard isNativeScrollSurfaceVisible, isHistoryWindowLaidOut,
+              let anchorID = historyRevealAnchor else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            scrollPosition.scrollTo(id: anchorID, anchor: .top)
+        }
+        historyRevealAnchor = nil
     }
 
     static func shouldBeginNativeUserDrag(
@@ -550,7 +641,12 @@ struct NativeChatTimelineView: View {
             return false
         }
 
-        scheduledMessageAnchor = request
+        historyRevealAnchor = nil
+        if let index = messages.firstIndex(where: {
+            ChatMessageProjector.messageId(for: $0) == request.messageID
+        }) {
+            historyStartIndex = min(resolvedHistoryStartIndex(messages: messages), index)
+        }
         if isNativeScrollDriverActive {
             scrollDriver.submit(.userDragBegan)
         } else {
@@ -561,6 +657,10 @@ struct NativeChatTimelineView: View {
             paused.showScrollToBottom = true
             publishViewportState(paused)
         }
+        // The target must belong to the window that has actually completed layout.
+        // A task yield alone does not establish that after revealing older messages.
+        guard isHistoryWindowLaidOut else { return true }
+        scheduledMessageAnchor = request
         Task { @MainActor in
             await Task.yield()
             let currentMessages = messagesProvider()
@@ -731,7 +831,7 @@ struct NativeChatTimelineView: View {
                 .transition(userMessageInsertionTransition(for: entry))
                 .zIndex(entry.canAnimateInsertion ? 1 : 0)
                 .onAppear {
-                    markRenderVisible(messageId)
+                    if entry.hasEverStreamed { markRenderVisible(messageId) }
                 }
                 .onDisappear {
                     guard entry.hasEverStreamed, !entry.isLastMessage else { return }
