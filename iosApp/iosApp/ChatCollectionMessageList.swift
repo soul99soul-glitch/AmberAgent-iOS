@@ -259,7 +259,9 @@ struct NativeChatTimelineView: View {
     @State private var scheduledMessageAnchor: ChatMessageAnchor?
     @State private var imageAccessibilityFocusToolCallID: String?
     @State private var historyStartIndex: Int?
-    @State private var historyRevealAnchor: String?
+    @State private var historyResetRevision: Int?
+    @State private var historyRevealAnchor: HistoryRevealAnchor?
+    @State private var historyBoundaryIDs: Set<String> = []
     @State private var laidOutHistoryFirstMessageID: String?
 
     var body: some View {
@@ -303,6 +305,7 @@ struct NativeChatTimelineView: View {
                 ? contentHashCache.streamingTailLayoutToken(for: row)
                 : contentHashCache.contentHash(for: row)
         }
+        let firstHistoryEntryID = projection.entries.first(where: { $0.kind == .message })?.id
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if startIndex > 0 {
@@ -317,14 +320,39 @@ struct NativeChatTimelineView: View {
                 // Only materialize the loaded history window. Its eager height model
                 // keeps the existing live-tail and bottom-follow geometry stable.
                 ForEach(projection.entries) { entry in
+                    let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
+                    let topSpacing: CGFloat = entry.id == projection.entries.first?.id ? 0 : (
+                        entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
+                    )
+                    if isHistoryBoundary {
+                        Color.clear
+                            .frame(height: 0)
+                            .id("history-boundary-" + entry.id)
+                            .accessibilityHidden(true)
+                            .onGeometryChange(for: CGFloat?.self) { proxy in
+                                guard let viewport = proxy.bounds(of: .scrollView),
+                                      viewport.height > 0 else { return nil }
+                                return -viewport.minY / viewport.height
+                            } action: { previous, current in
+                                guard entry.id == firstHistoryEntryID else { return }
+                                // Only an upward crossing into the viewport reveals a page.
+                                // Initial layout, bottom entry and the prepend itself don't.
+                                guard let previous, let current,
+                                      previous < 0, current >= 0,
+                                      !(historyResetRevision != signal.revision &&
+                                        (signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
+                                         signal.event == .branchChanged)),
+                                      messageAnchor == nil || messageAnchor == consumedMessageAnchor else { return }
+                                loadEarlierMessages(position: UnitPoint(x: 0.5, y: current))
+                            }
+                            .padding(.top, topSpacing)
+                    }
                     entryView(
                         entry,
                         displaySettingSignature: displaySettingSignature,
                         generativeUiSettingSignature: generativeUiSettingSignature
                     )
-                    .padding(.top, entry.id == projection.entries.first?.id ? 0 : (
-                        entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
-                    ))
+                    .padding(.top, isHistoryBoundary ? 0 : topSpacing)
                 }
             }
             .padding(.horizontal, 16)
@@ -467,6 +495,7 @@ struct NativeChatTimelineView: View {
         .onAppear {
             isNativeScrollSurfaceVisible = true
             historyStartIndex = startIndex
+            historyResetRevision = signal.revision
             // 重新进入页面时清除上一次的 fallback 粘连，给原生滚动 driver 一次重试机会。
             nativeScrollFallbackReason = nil
             updateRendererMemory(event: signal.event, messages: messages)
@@ -486,7 +515,9 @@ struct NativeChatTimelineView: View {
             if newSignal.event == .conversationLoaded || newSignal.event == .conversationSwitched ||
                 newSignal.event == .branchChanged {
                 historyRevealAnchor = nil
+                historyBoundaryIDs.removeAll()
                 historyStartIndex = max(0, messagesProvider().count - Self.historyPageSize)
+                historyResetRevision = newSignal.revision
             }
             updateRendererMemory(event: newSignal.event, messages: messagesProvider())
             submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance)
@@ -528,15 +559,26 @@ struct NativeChatTimelineView: View {
 
     private func resolvedHistoryStartIndex(messages: [UIMessage]) -> Int {
         let tailStart = max(0, messages.count - Self.historyPageSize)
+        // body evaluates the new messages before onChange commits the reset. Never
+        // render the previous window (often 0 from the empty page) for that first frame.
+        if historyResetRevision != signal.revision,
+           signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
+            signal.event == .branchChanged {
+            return tailStart
+        }
         return min(historyStartIndex ?? tailStart, tailStart)
     }
 
-    private func loadEarlierMessages() {
+    private func loadEarlierMessages(position: UnitPoint = .top) {
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         guard startIndex > 0, historyRevealAnchor == nil else { return }
         let anchorID = "message-\(ChatMessageProjector.messageId(for: messages[startIndex]))"
-        historyRevealAnchor = anchorID
+        historyBoundaryIDs.insert(anchorID)
+        historyRevealAnchor = HistoryRevealAnchor(
+            id: "history-boundary-" + anchorID,
+            position: position
+        )
         scrollDriver.submit(.userDragBegan)
         nativeScrollFallbackReplayToken &+= 1
         nativeScrollFallbackShouldReplayBottom = false
@@ -557,11 +599,11 @@ struct NativeChatTimelineView: View {
 
     private func restoreHistoryRevealAnchorIfReady() {
         guard isNativeScrollSurfaceVisible, isHistoryWindowLaidOut,
-              let anchorID = historyRevealAnchor else { return }
+              let anchor = historyRevealAnchor else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            scrollPosition.scrollTo(id: anchorID, anchor: .top)
+            scrollPosition.scrollTo(id: anchor.id, anchor: anchor.position)
         }
         historyRevealAnchor = nil
     }
@@ -1507,6 +1549,11 @@ enum ChatSwiftUICleanListRenderPolicy {
             frozenMarkdownSnapshot: nil
         )
     }
+}
+
+private struct HistoryRevealAnchor {
+    let id: String
+    let position: UnitPoint
 }
 
 private struct ChatSwiftUIScrollGeometry: Equatable {

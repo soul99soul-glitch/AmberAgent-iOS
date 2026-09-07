@@ -31,6 +31,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         @Published var messageAnchor: ChatMessageAnchor?
         @Published var currentConversationID: String?
         var messages: [UIMessage] = []
+        var requestedVariantIndices: Set<Int> = []
         private(set) var viewportHistory: [ChatViewportState] = []
 
         var latestViewport: ChatViewportState {
@@ -74,7 +75,10 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
                 messageAnchor: model.messageAnchor,
                 currentConversationID: model.currentConversationID,
                 messagesProvider: { [weak model] in model?.messages ?? [] },
-                variantInfoProvider: { _ in nil },
+                variantInfoProvider: { [weak model] index in
+                    model?.requestedVariantIndices.insert(index)
+                    return nil
+                },
                 onAction: { _ in },
                 onViewportStateChange: { [weak model] state in model?.recordViewport(state) },
                 onDismissKeyboard: {}
@@ -716,7 +720,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         let fixture = makeFixture()
         defer { fixture.tearDown() }
 
-        fixture.model.messages = longConversation(turns: 20)
+        fixture.model.messages = longConversation(turns: 225)
         fixture.model.send(.initialLoad)
 
         // Native timeline 首帧解析后泵到入场锚定完成。
@@ -733,10 +737,56 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
                 "history=\(fixture.model.viewportHistory.count)"
             )
         }
-        XCTAssertTrue(viewport.isContentScrollable, "20 轮对话必须可滚动")
+        XCTAssertTrue(viewport.isContentScrollable, "225 轮对话必须可滚动")
+        XCTAssertEqual(fixture.model.requestedVariantIndices, Set(390..<450),
+                       "从空页加载长会话的第一帧也只能构建最后60条，并保留绝对索引")
         XCTAssertTrue(viewport.isAtBottom, "进入长会话必须锚定到底部(入场重试梯)")
         XCTAssertFalse(viewport.followPaused)
         XCTAssertFalse(viewport.showScrollToBottom)
+    }
+
+    func testConversationAndBranchSwitchDoNotRenderPreviousHistoryWindow() {
+        for reason in [ChatMessageUpdateReason.conversationSwitch, .branchChange] {
+            let fixture = makeFixture { $0.messages = longConversation(turns: 2) }
+            defer { fixture.tearDown() }
+            pump(seconds: 0.1)
+            fixture.model.requestedVariantIndices.removeAll()
+            fixture.model.messages = longConversation(turns: 225)
+            fixture.model.send(reason)
+            XCTAssertTrue(pumpUntil(timeout: 4) {
+                fixture.model.requestedVariantIndices.contains(449)
+            })
+            XCTAssertEqual(fixture.model.requestedVariantIndices, Set(390..<450),
+                           "切换或分支变更的第一帧不能沿用上一段短会话的窗口")
+        }
+    }
+
+    func testScrollingToHistoryTopAutomaticallyPrependsOnePageAndPreservesPosition() throws {
+        let fixture = makeFixture { $0.messages = longConversation(turns: 90) }
+        defer { fixture.tearDown() }
+        XCTAssertTrue(pumpUntil(timeout: 4) {
+            fixture.model.latestViewport.isAtBottom && fixture.model.latestViewport.isContentScrollable
+        })
+        pump(seconds: 0.5)
+        XCTAssertEqual(fixture.model.requestedVariantIndices, Set(120..<180),
+                       "入场不得自动展开全部历史")
+        let scrollView = try XCTUnwrap(fixture.scrollView)
+        for firstIndex in [60, 0] {
+            let previousHeight = scrollView.contentSize.height
+            let topOffset = -scrollView.adjustedContentInset.top
+            scrollView.setContentOffset(CGPoint(x: 0, y: topOffset), animated: false)
+            XCTAssertTrue(pumpUntil(timeout: 4) {
+                fixture.model.requestedVariantIndices.contains(firstIndex) &&
+                    scrollView.contentSize.height > previousHeight && scrollView.contentOffset.y > topOffset + 100
+            }, "滚到顶部应自动加载下一页，无需点按钮")
+            pump(seconds: 0.25)
+            XCTAssertEqual(fixture.model.requestedVariantIndices, Set(firstIndex..<180),
+                           "一次触顶只加载一页，不连锁展开")
+            XCTAssertEqual(scrollView.contentSize.height - scrollView.contentOffset.y,
+                           previousHeight - topOffset, accuracy: 2,
+                           "前插消息后原内容应停留在同一屏幕位置")
+            XCTAssertFalse(fixture.model.latestViewport.isAtBottom)
+        }
     }
 
     func testCompletedImageAnchorTargetsToolPartInsideTallMessageBeforeConsumption() throws {
@@ -759,7 +809,7 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             toolCallID: toolCallID
         )
         let targetMessageID = ChatMessageProjector.messageId(for: targetMessage)
-        // Keep the image outside the initial 60-message window so consumption also
+        // Keep the image outside the initial message window so consumption also
         // proves that revealing history completes before the exact anchor scroll.
         let messages = longConversation(turns: 3) + [targetMessage] + longConversation(turns: 35)
 
