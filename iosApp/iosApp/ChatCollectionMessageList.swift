@@ -50,6 +50,17 @@ enum NativeStaticTimelineViewportPolicy {
     }
 }
 
+enum NativeTimelineStreamingTailUpdatePolicy {
+    static func shouldUpdate(
+        messageID: String,
+        isFarFromBottom: Bool,
+        visibility: ChatSwiftUIStreamingTailVisibilityState
+    ) -> Bool {
+        !isFarFromBottom ||
+            (visibility.messageID == messageID && visibility.isVisible == true)
+    }
+}
+
 enum NativeStaticTimelineRendererMemory {
     static func nextStreamedMessageIDs(
         previous: Set<String>,
@@ -255,6 +266,7 @@ struct NativeChatTimelineView: View {
     @State private var nativeScrollFallbackShouldReplayBottom = false
     @State private var nativeScrollFallbackReplayToken: UInt64 = 0
     @State private var isNativeScrollSurfaceVisible = false
+    @State private var nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
     @State private var consumedMessageAnchor: ChatMessageAnchor?
     @State private var scheduledMessageAnchor: ChatMessageAnchor?
     @State private var imageAccessibilityFocusToolCallID: String?
@@ -306,248 +318,250 @@ struct NativeChatTimelineView: View {
                 : contentHashCache.contentHash(for: row)
         }
         let firstHistoryEntryID = projection.entries.first(where: { $0.kind == .message })?.id
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if startIndex > 0 {
-                    Button("加载更早的消息") {
-                        loadEarlierMessages()
+        ScrollViewReader { historyScrollProxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if startIndex > 0 {
+                        Button("加载更早的消息") {
+                            loadEarlierMessages()
+                        }
+                        .font(.footnote)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .disabled(historyRevealAnchor != nil)
+                        .accessibilityIdentifier("chat-load-earlier")
                     }
-                    .font(.footnote)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .disabled(historyRevealAnchor != nil)
-                    .accessibilityIdentifier("chat-load-earlier")
+                    // Only materialize the loaded history window. Its eager height model
+                    // keeps the existing live-tail and bottom-follow geometry stable.
+                    ForEach(projection.entries) { entry in
+                        let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
+                        let topSpacing: CGFloat = entry.id == projection.entries.first?.id ? 0 : (
+                            entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
+                        )
+                        if isHistoryBoundary {
+                            Color.clear
+                                .frame(height: 0)
+                                .id("history-boundary-" + entry.id)
+                                .accessibilityHidden(true)
+                                .onGeometryChange(for: CGFloat?.self) { proxy in
+                                    guard let viewport = proxy.bounds(of: .scrollView),
+                                          viewport.height > 0 else { return nil }
+                                    return -viewport.minY / viewport.height
+                                } action: { previous, current in
+                                    guard entry.id == firstHistoryEntryID else { return }
+                                    // Only an upward crossing into the viewport reveals a page.
+                                    // Initial layout, bottom entry and the prepend itself don't.
+                                    guard let previous, let current,
+                                          previous < 0, current >= 0,
+                                          !(historyResetRevision != signal.revision &&
+                                            (signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
+                                             signal.event == .branchChanged)),
+                                          messageAnchor == nil || messageAnchor == consumedMessageAnchor else { return }
+                                    loadEarlierMessages(position: UnitPoint(x: 0.5, y: current))
+                                }
+                                .padding(.top, topSpacing)
+                        }
+                        entryView(
+                            entry,
+                            displaySettingSignature: displaySettingSignature,
+                            generativeUiSettingSignature: generativeUiSettingSignature
+                        )
+                        .padding(.top, isHistoryBoundary ? 0 : topSpacing)
+                    }
                 }
-                // Only materialize the loaded history window. Its eager height model
-                // keeps the existing live-tail and bottom-follow geometry stable.
-                ForEach(projection.entries) { entry in
-                    let isHistoryBoundary = entry.id == firstHistoryEntryID || historyBoundaryIDs.contains(entry.id)
-                    let topSpacing: CGFloat = entry.id == projection.entries.first?.id ? 0 : (
-                        entry.isAssistantContinuation ? ChatLayout.assistantPartSpacing : 14
-                    )
-                    if isHistoryBoundary {
-                        Color.clear
-                            .frame(height: 0)
-                            .id("history-boundary-" + entry.id)
-                            .accessibilityHidden(true)
-                            .onGeometryChange(for: CGFloat?.self) { proxy in
-                                guard let viewport = proxy.bounds(of: .scrollView),
-                                      viewport.height > 0 else { return nil }
-                                return -viewport.minY / viewport.height
-                            } action: { previous, current in
-                                guard entry.id == firstHistoryEntryID else { return }
-                                // Only an upward crossing into the viewport reveals a page.
-                                // Initial layout, bottom entry and the prepend itself don't.
-                                guard let previous, let current,
-                                      previous < 0, current >= 0,
-                                      !(historyResetRevision != signal.revision &&
-                                        (signal.event == .conversationLoaded || signal.event == .conversationSwitched ||
-                                         signal.event == .branchChanged)),
-                                      messageAnchor == nil || messageAnchor == consumedMessageAnchor else { return }
-                                loadEarlierMessages(position: UnitPoint(x: 0.5, y: current))
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
+                .scrollTargetLayout()
+                .onGeometryChange(for: String?.self) { _ in
+                    messages.indices.contains(startIndex)
+                        ? ChatMessageProjector.messageId(for: messages[startIndex]) : nil
+                } action: { firstMessageID in
+                    laidOutHistoryFirstMessageID = firstMessageID
+                    restoreHistoryRevealAnchorIfReady(using: historyScrollProxy)
+                    scrollToMessageAnchorIfAvailable()
+                }
+                .background {
+                    if nativeScrollDriverDesired {
+                        NativeTimelineScrollViewResolver(
+                            onResolve: { scrollView in
+                                handleNativeScrollViewResolved(scrollView)
+                            },
+                            onMetricsChanged: {
+                                guard isNativeScrollDriverActive else { return }
+                                scrollDriver.handleLayoutMetricsChanged()
                             }
-                            .padding(.top, topSpacing)
+                        )
                     }
-                    entryView(
-                        entry,
-                        displaySettingSignature: displaySettingSignature,
-                        generativeUiSettingSignature: generativeUiSettingSignature
-                    )
-                    .padding(.top, isHistoryBoundary ? 0 : topSpacing)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 28)
-            .scrollTargetLayout()
-            .onGeometryChange(for: String?.self) { _ in
-                messages.indices.contains(startIndex)
-                    ? ChatMessageProjector.messageId(for: messages[startIndex]) : nil
-            } action: { firstMessageID in
-                laidOutHistoryFirstMessageID = firstMessageID
-                restoreHistoryRevealAnchorIfReady()
+            .modifier(ChatSizeChangesPinModifier(
+                enabled: followGeneration && !isNativeScrollDriverDesired
+            ))
+            .nativeTimelineScrollPosition($scrollPosition)
+            .scrollEdgeEffectStyle(.soft, for: .top)
+            .scrollIndicators(.hidden)
+            .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    onDismissKeyboard()
+                }
+            )
+            .onScrollPhaseChange { _, phase in
+                guard isNativeScrollDriverActive else {
+                    handleNativeFallbackScrollPhase(phase)
+                    return
+                }
+                switch phase {
+                case .tracking, .interacting:
+                    guard Self.shouldBeginNativeUserDrag(
+                        phase: phase,
+                        isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting
+                    ) else { return }
+                    if !nativeUserScrollActive {
+                        // 新触摸开始：重置「本次触摸内是否出现过拖拽」。只在此处
+                        // 重置（interacting 会在一次拖拽中反复触发，不能在分支里
+                        // 无条件清零），否则首次真实拖拽后轻点恢复永久失效。
+                        nativeDragPhaseOccurredDuringTouch = false
+                    }
+                    if phase == .interacting {
+                        // SwiftUI 把「移动已开始的主动拖拽」归入 interacting；
+                        // tracking 只是手指落下。轻点（tracking→idle）与拖拽
+                        // （tracking→interacting→…→idle）由此区分。
+                        nativeDragPhaseOccurredDuringTouch = true
+                    }
+                    nativeUserScrollActive = true
+                    nativeTouchStartedWhileFollowing = scrollDriver.isFollowingBottomOrKeyboardFocus
+                    onDismissKeyboard()
+                    scrollDriver.submit(.userDragBegan)
+                case .idle:
+                    let endedUserScroll = nativeUserScrollActive
+                    nativeUserScrollActive = false
+                    // 轻点（从未进入拖拽相位）不该终止跟随：按下期间快速增长可能把
+                    // 距底推过恢复阈值，但用户从未表达离开意图——恢复原跟随语义。
+                    let accidentalTapRestore = endedUserScroll && followGeneration && Self
+                        .shouldRestoreFollowAfterAccidentalTap(
+                            wasFollowingAtTouchDown: nativeTouchStartedWhileFollowing,
+                            dragPhaseOccurred: nativeDragPhaseOccurredDuringTouch,
+                            generationActive: isGenerationActive || isLoading
+                        )
+                    if accidentalTapRestore {
+                        scrollDriver.submit(.userDragEnded(isAtBottom: true))
+                        resumeNativeBottomFollowAfterUserReturn()
+                    } else if endedUserScroll {
+                        let returnedToBottom = NativeTimelineScrollReturnPolicy.returnedToBottom(
+                            liveDistanceToBottom: scrollDriver.distanceToBottomNow(),
+                            cachedNearBottom: viewportState.isAtBottom,
+                            threshold: ChatLayout.nearBottomResumeThreshold
+                        )
+                        scrollDriver.submit(.userDragEnded(isAtBottom: returnedToBottom))
+                        if returnedToBottom {
+                            resumeNativeBottomFollowAfterUserReturn()
+                        }
+                    }
+                case .animating:
+                    break
+                case .decelerating:
+                    // 甩向底部的惯性不等静止再判定：快速生成时底部在跑，静止时
+                    // 往往已移出恢复窗口（用户被迫甩第二次）。释放瞬间用 pan 速度
+                    // 预测落点，命中容差即磁吸接管。Reduce Motion 下不插入程序
+                    // 缓动：让自然减速走完，由 .idle 相位的 returnedToBottom 判定
+                    // 收口（该路径无动画）。
+                    if !reduceMotion {
+                        scrollDriver.attemptMagneticBottomSnapAfterDragRelease()
+                    }
+                @unknown default:
+                    break
+                }
+            }
+            .onScrollGeometryChange(for: ChatSwiftUIScrollGeometry.self) { geo in
+                ChatSwiftUIScrollGeometry(
+                    distanceToBottom: max(0, geo.contentSize.height - geo.visibleRect.maxY),
+                    visibleHeight: max(1, geo.visibleRect.height),
+                    contentHeight: geo.contentSize.height
+                )
+            } action: { previousGeometry, geometry in
+                let wasAtBottom = viewportState.isAtBottom
+                let messages = messagesProvider()
+                let rawViewportState = NativeStaticTimelineViewportPolicy.state(
+                    distanceToBottom: geometry.distanceToBottom,
+                    visibleHeight: geometry.visibleHeight,
+                    contentHeight: geometry.contentHeight,
+                    hasMessages: !messages.isEmpty,
+                    userInteracting: nativeUserScrollActive,
+                    driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
+                )
+                let nextViewportState = rawViewportState
+                publishViewportState(nextViewportState)
+                unfreezeVisibleLiveTailIfNeeded(messages: messages, viewportState: nextViewportState)
+                resumeNativeBottomFollowFromGeometryIfNeeded(
+                    geometry: geometry,
+                    viewportState: nextViewportState,
+                    messages: messages
+                )
+                reanchorAfterViewportShrinkIfNeeded(
+                    previous: previousGeometry,
+                    current: geometry,
+                    wasAtBottom: wasAtBottom
+                )
+            }
+            .onAppear {
+                isNativeScrollSurfaceVisible = true
+                historyStartIndex = startIndex
+                historyResetRevision = signal.revision
+                // 重新进入页面时清除上一次的 fallback 粘连，给原生滚动 driver 一次重试机会。
+                nativeScrollFallbackReason = nil
+                updateRendererMemory(event: signal.event, messages: messages)
+                consumeExternalScrollToBottomTriggerIfNeeded()
                 scrollToMessageAnchorIfAvailable()
             }
-            .background {
-                if nativeScrollDriverDesired {
-                    NativeTimelineScrollViewResolver(
-                        onResolve: { scrollView in
-                            handleNativeScrollViewResolved(scrollView)
-                        },
-                        onMetricsChanged: {
-                            guard isNativeScrollDriverActive else { return }
-                            scrollDriver.handleLayoutMetricsChanged()
-                        }
-                    )
-                }
-            }
-        }
-        .modifier(ChatSizeChangesPinModifier(
-            enabled: followGeneration && !isNativeScrollDriverDesired
-        ))
-        .nativeTimelineScrollPosition($scrollPosition)
-        .scrollEdgeEffectStyle(.soft, for: .top)
-        .scrollIndicators(.hidden)
-        .scrollDismissesKeyboard(.interactively)
-        .contentShape(Rectangle())
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                onDismissKeyboard()
-            }
-        )
-        .onScrollPhaseChange { _, phase in
-            guard isNativeScrollDriverActive else {
-                handleNativeFallbackScrollPhase(phase)
-                return
-            }
-            switch phase {
-            case .tracking, .interacting:
-                guard Self.shouldBeginNativeUserDrag(
-                    phase: phase,
-                    isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting
-                ) else { return }
-                if !nativeUserScrollActive {
-                    // 新触摸开始：重置「本次触摸内是否出现过拖拽」。只在此处
-                    // 重置（interacting 会在一次拖拽中反复触发，不能在分支里
-                    // 无条件清零），否则首次真实拖拽后轻点恢复永久失效。
-                    nativeDragPhaseOccurredDuringTouch = false
-                }
-                if phase == .interacting {
-                    // SwiftUI 把「移动已开始的主动拖拽」归入 interacting；
-                    // tracking 只是手指落下。轻点（tracking→idle）与拖拽
-                    // （tracking→interacting→…→idle）由此区分。
-                    nativeDragPhaseOccurredDuringTouch = true
-                }
-                nativeUserScrollActive = true
-                nativeTouchStartedWhileFollowing = scrollDriver.isFollowingBottomOrKeyboardFocus
-                onDismissKeyboard()
-                scrollDriver.submit(.userDragBegan)
-            case .idle:
-                let endedUserScroll = nativeUserScrollActive
-                nativeUserScrollActive = false
-                // 轻点（从未进入拖拽相位）不该终止跟随：按下期间快速增长可能把
-                // 距底推过恢复阈值，但用户从未表达离开意图——恢复原跟随语义。
-                let accidentalTapRestore = endedUserScroll && followGeneration && Self
-                    .shouldRestoreFollowAfterAccidentalTap(
-                        wasFollowingAtTouchDown: nativeTouchStartedWhileFollowing,
-                        dragPhaseOccurred: nativeDragPhaseOccurredDuringTouch,
-                        generationActive: isGenerationActive || isLoading
-                    )
-                if accidentalTapRestore {
-                    scrollDriver.submit(.userDragEnded(isAtBottom: true))
-                    resumeNativeBottomFollowAfterUserReturn()
-                } else if endedUserScroll {
-                    let returnedToBottom = NativeTimelineScrollReturnPolicy.returnedToBottom(
-                        liveDistanceToBottom: scrollDriver.distanceToBottomNow(),
-                        cachedNearBottom: viewportState.isAtBottom,
-                        threshold: ChatLayout.nearBottomResumeThreshold
-                    )
-                    scrollDriver.submit(.userDragEnded(isAtBottom: returnedToBottom))
-                    if returnedToBottom {
-                        resumeNativeBottomFollowAfterUserReturn()
-                    }
-                }
-            case .animating:
-                break
-            case .decelerating:
-                // 甩向底部的惯性不等静止再判定：快速生成时底部在跑，静止时
-                // 往往已移出恢复窗口（用户被迫甩第二次）。释放瞬间用 pan 速度
-                // 预测落点，命中容差即磁吸接管。Reduce Motion 下不插入程序
-                // 缓动：让自然减速走完，由 .idle 相位的 returnedToBottom 判定
-                // 收口（该路径无动画）。
-                if !reduceMotion {
-                    scrollDriver.attemptMagneticBottomSnapAfterDragRelease()
-                }
-            @unknown default:
-                break
-            }
-        }
-        .onScrollGeometryChange(for: ChatSwiftUIScrollGeometry.self) { geo in
-            ChatSwiftUIScrollGeometry(
-                distanceToBottom: max(0, geo.contentSize.height - geo.visibleRect.maxY),
-                visibleHeight: max(1, geo.visibleRect.height),
-                contentHeight: geo.contentSize.height
-            )
-        } action: { previousGeometry, geometry in
-            let wasAtBottom = viewportState.isAtBottom
-            let messages = messagesProvider()
-            let rawViewportState = NativeStaticTimelineViewportPolicy.state(
-                distanceToBottom: geometry.distanceToBottom,
-                visibleHeight: geometry.visibleHeight,
-                contentHeight: geometry.contentHeight,
-                hasMessages: !messages.isEmpty,
-                userInteracting: nativeUserScrollActive,
-                driverPausedForUser: isNativeScrollDriverActive && scrollDriver.isPausedForUser
-            )
-            let nextViewportState = rawViewportState
-            publishViewportState(nextViewportState)
-            unfreezeVisibleLiveTailIfNeeded(messages: messages, viewportState: nextViewportState)
-            resumeNativeBottomFollowFromGeometryIfNeeded(
-                geometry: geometry,
-                viewportState: nextViewportState,
-                messages: messages
-            )
-            reanchorAfterViewportShrinkIfNeeded(
-                previous: previousGeometry,
-                current: geometry,
-                wasAtBottom: wasAtBottom
-            )
-        }
-        .onAppear {
-            isNativeScrollSurfaceVisible = true
-            historyStartIndex = startIndex
-            historyResetRevision = signal.revision
-            // 重新进入页面时清除上一次的 fallback 粘连，给原生滚动 driver 一次重试机会。
-            nativeScrollFallbackReason = nil
-            updateRendererMemory(event: signal.event, messages: messages)
-            consumeExternalScrollToBottomTriggerIfNeeded()
-            scrollToMessageAnchorIfAvailable()
-        }
-        .onDisappear {
-            isNativeScrollSurfaceVisible = false
-            historyRevealAnchor = nil
-            nativeUserScrollActive = false
-            scrollDriver.invalidate()
-        }
-        .onChange(of: followGeneration) { _, enabled in
-            scrollDriver.setAutomaticFollowEnabled(enabled)
-        }
-        .onChange(of: signal) { _, newSignal in
-            if newSignal.event == .conversationLoaded || newSignal.event == .conversationSwitched ||
-                newSignal.event == .branchChanged {
+            .onDisappear {
+                isNativeScrollSurfaceVisible = false
                 historyRevealAnchor = nil
-                historyBoundaryIDs.removeAll()
-                historyStartIndex = max(0, messagesProvider().count - Self.historyPageSize)
-                historyResetRevision = newSignal.revision
+                nativeUserScrollActive = false
+                scrollDriver.invalidate()
             }
-            updateRendererMemory(event: newSignal.event, messages: messagesProvider())
-            submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance)
-            scrollToMessageAnchorIfAvailable()
-        }
-        .onChange(of: messageAnchor) { _, _ in
-            scrollToMessageAnchorIfAvailable()
-        }
-        .onChange(of: scrollToBottomTrigger) { _, trigger in
-            consumeExternalScrollToBottomTriggerIfNeeded(trigger)
-        }
-        .onChange(of: nativeScrollFallbackReason) { _, reason in
-            guard reason != nil else { return }
-            if scheduledMessageAnchor != nil {
+            .onChange(of: followGeneration) { _, enabled in
+                scrollDriver.setAutomaticFollowEnabled(enabled)
+            }
+            .onChange(of: signal) { _, newSignal in
+                if newSignal.event == .conversationLoaded || newSignal.event == .conversationSwitched ||
+                    newSignal.event == .branchChanged {
+                    historyRevealAnchor = nil
+                    historyBoundaryIDs.removeAll()
+                    historyStartIndex = max(0, messagesProvider().count - Self.historyPageSize)
+                    historyResetRevision = newSignal.revision
+                }
+                updateRendererMemory(event: newSignal.event, messages: messagesProvider())
+                submitNativeScrollIntent(for: newSignal.event, lagAllowance: newSignal.lagAllowance)
+                scrollToMessageAnchorIfAvailable()
+            }
+            .onChange(of: messageAnchor) { _, _ in
+                scrollToMessageAnchorIfAvailable()
+            }
+            .onChange(of: scrollToBottomTrigger) { _, trigger in
+                consumeExternalScrollToBottomTriggerIfNeeded(trigger)
+            }
+            .onChange(of: nativeScrollFallbackReason) { _, reason in
+                guard reason != nil else { return }
+                if scheduledMessageAnchor != nil {
+                    nativeScrollFallbackShouldReplayBottom = false
+                    return
+                }
+                if scrollToMessageAnchorIfAvailable() {
+                    nativeScrollFallbackShouldReplayBottom = false
+                    return
+                }
+                guard nativeScrollFallbackShouldReplayBottom else { return }
+                let replayToken = nativeScrollFallbackReplayToken
                 nativeScrollFallbackShouldReplayBottom = false
-                return
-            }
-            if scrollToMessageAnchorIfAvailable() {
-                nativeScrollFallbackShouldReplayBottom = false
-                return
-            }
-            guard nativeScrollFallbackShouldReplayBottom else { return }
-            let replayToken = nativeScrollFallbackReplayToken
-            nativeScrollFallbackShouldReplayBottom = false
-            Task { @MainActor in
-                await Task.yield()
-                guard replayToken == nativeScrollFallbackReplayToken,
-                      !nativeUserScrollActive else { return }
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                    scrollPosition.scrollTo(id: ChatLayout.bottomAnchorID, anchor: .bottom)
+                Task { @MainActor in
+                    await Task.yield()
+                    guard replayToken == nativeScrollFallbackReplayToken,
+                          !nativeUserScrollActive else { return }
+                    withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                        scrollPosition.scrollTo(id: ChatLayout.bottomAnchorID, anchor: .bottom)
+                    }
                 }
             }
         }
@@ -597,13 +611,13 @@ struct NativeChatTimelineView: View {
             laidOutHistoryFirstMessageID == ChatMessageProjector.messageId(for: messages[startIndex])
     }
 
-    private func restoreHistoryRevealAnchorIfReady() {
+    private func restoreHistoryRevealAnchorIfReady(using proxy: ScrollViewProxy) {
         guard isNativeScrollSurfaceVisible, isHistoryWindowLaidOut,
               let anchor = historyRevealAnchor else { return }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
-            scrollPosition.scrollTo(id: anchor.id, anchor: anchor.position)
+            proxy.scrollTo(anchor.id, anchor: anchor.position)
         }
         historyRevealAnchor = nil
     }
@@ -872,6 +886,20 @@ struct NativeChatTimelineView: View {
                 .id(entry.id)
                 .transition(userMessageInsertionTransition(for: entry))
                 .zIndex(entry.canAnimateInsertion ? 1 : 0)
+                .modifier(
+                    ChatSwiftUIStreamingTailVisibilityModifier(
+                        active: entry.isLastMessage &&
+                            entry.role == MessageRole.assistant &&
+                            entry.hasEverStreamed,
+                        assumeVisible: !viewportState.liveRenderingFarFromBottom,
+                        onVisibilityChanged: { isVisible in
+                            updateNativeStreamingTailVisibility(
+                                messageID: messageId,
+                                isVisible: isVisible
+                            )
+                        }
+                    )
+                )
                 .onAppear {
                     if entry.hasEverStreamed { markRenderVisible(messageId) }
                 }
@@ -957,6 +985,7 @@ struct NativeChatTimelineView: View {
             renderStateStore.removeAll()
             contentHashCache.removeAll()
             projectionCache.reset()
+            nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
         }
         if event == .assistantStreamDelta,
            let last = messages.last,
@@ -995,10 +1024,34 @@ struct NativeChatTimelineView: View {
     }
 
     private func unfreezeVisibleLiveTailIfNeeded(messages: [UIMessage], viewportState: ChatViewportState) {
-        guard !viewportState.liveRenderingFarFromBottom,
-              let lastAssistantID = latestAssistantMessageID(messages: messages) else { return }
+        guard let lastAssistantID = latestAssistantMessageID(messages: messages) else { return }
+        guard NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
+            messageID: lastAssistantID,
+            isFarFromBottom: viewportState.liveRenderingFarFromBottom,
+            visibility: nativeStreamingTailVisibility
+        ) else { return }
         markRenderVisible(lastAssistantID)
-        updateNativeLiveTailModelIfNeeded(messages: messages, viewportState: viewportState)
+        var liveViewportState = viewportState
+        // A tail row can intersect the viewport even when its bottom is far away
+        // (for example, the user is reading the top of a very long response).
+        // Keep LOD for off-screen rows, but let this visible row consume deltas.
+        liveViewportState.liveRenderingFarFromBottom = false
+        updateNativeLiveTailModelIfNeeded(messages: messages, viewportState: liveViewportState)
+    }
+
+    private func updateNativeStreamingTailVisibility(messageID: String, isVisible: Bool) {
+        if isVisible {
+            let next = ChatSwiftUIStreamingTailVisibilityState(messageID: messageID, isVisible: true)
+            guard next != nativeStreamingTailVisibility else { return }
+            nativeStreamingTailVisibility = next
+            unfreezeVisibleLiveTailIfNeeded(
+                messages: messagesProvider(),
+                viewportState: viewportState
+            )
+        } else if nativeStreamingTailVisibility.messageID == messageID {
+            guard nativeStreamingTailVisibility.isVisible != false else { return }
+            nativeStreamingTailVisibility.isVisible = false
+        }
     }
 
     private func markRenderVisible(_ messageID: String) {
@@ -1615,6 +1668,7 @@ private struct ChatUserMessageInsertionModifier: ViewModifier {
 
 private struct ChatSwiftUIStreamingTailVisibilityModifier: ViewModifier {
     let active: Bool
+    var assumeVisible: Bool = false
     let onVisibilityChanged: (Bool) -> Void
 
     @ViewBuilder
@@ -1622,6 +1676,7 @@ private struct ChatSwiftUIStreamingTailVisibilityModifier: ViewModifier {
         if active {
             content
                 .onGeometryChange(for: Bool?.self) { proxy in
+                    if assumeVisible { return true }
                     guard let viewportBounds = proxy.bounds(of: .scrollView) else { return nil }
                     return proxy.frame(in: .local).intersects(viewportBounds)
                 } action: { isVisible in

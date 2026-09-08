@@ -132,11 +132,69 @@ final class IOSSharedSettingsStoreProvidersWriteBackTests: XCTestCase {
         store.setCurrentAssistantChatModelId(model.id.description())
         XCTAssertEqual(store.snapshot.getCurrentChatModel()?.id, model.id)
 
+        IOSCodexAuthStore.save(
+            providerId: providerId,
+            tokens: IOSCodexAuthTokens(
+                accessToken: "codex-access",
+                refreshToken: "codex-refresh",
+                expiresAtMillis: 1,
+                accountId: nil,
+                email: nil,
+                planType: nil,
+                idToken: nil
+            )
+        )
+        XCTAssertTrue(
+            IOSGrokOAuthAuthStore.save(
+                providerId: providerId,
+                tokens: IOSGrokOAuthTokens(
+                    accessToken: "grok-access",
+                    refreshToken: "grok-refresh",
+                    expiresAtMillis: 1,
+                    idToken: nil,
+                    email: nil
+                )
+            )
+        )
+        XCTAssertTrue(
+            IOSGrokOAuthAuthStore.saveBackup(
+                providerId: providerId,
+                backup: IOSGrokWebProviderBackup(
+                    baseUrl: "https://example.com/v1",
+                    chatCompletionsPath: "/chat/completions",
+                    useResponseApi: false
+                )
+            )
+        )
+        XCTAssertTrue(
+            IOSGrokWebAuthStore.save(providerId: providerId, cookieHeader: "sso=grok-cookie")
+        )
+        IOSProviderRequestHeaderStore.save(
+            providerId: providerId,
+            userAgent: "test-agent",
+            extra: [IOSProviderRequestHeaderStore.Item(name: "X-Test", value: "header-secret")]
+        )
+        defer {
+            IOSCodexAuthStore.clear(providerId: providerId)
+            IOSGrokOAuthAuthStore.clear(providerId: providerId)
+            IOSGrokOAuthAuthStore.clearBackup(providerId: providerId)
+            IOSGrokWebAuthStore.clear(providerId: providerId)
+            IOSProviderRequestHeaderStore.save(providerId: providerId, userAgent: nil, extra: [])
+        }
+
         XCTAssertTrue(store.removeProvider(providerId: providerId))
         XCTAssertFalse(store.snapshot.providers.contains { $0.id.description() == providerId })
         XCTAssertNotEqual(store.snapshot.getCurrentChatModel()?.id, model.id)
         XCTAssertNil(
             IOSCredentialSideTable.load(key: IOSCredentialSideTable.providerApiKey(providerId: providerId))
+        )
+        XCTAssertNil(IOSCodexAuthStore.load(providerId: providerId))
+        XCTAssertNil(IOSGrokOAuthAuthStore.load(providerId: providerId))
+        XCTAssertNil(IOSGrokOAuthAuthStore.loadBackup(providerId: providerId))
+        XCTAssertNil(IOSGrokWebAuthStore.load(providerId: providerId))
+        XCTAssertEqual(
+            IOSProviderRequestHeaderStore.record(for: providerId),
+            IOSProviderRequestHeaderStore.Record(userAgent: nil, extra: [])
         )
 
         let restarted = makeIsolatedStore(suiteName: suiteName)

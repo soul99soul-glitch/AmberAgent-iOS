@@ -149,6 +149,7 @@ enum IOSGrokWebProviderResolver {
     }
 
     static func isSignedIn(_ provider: ProviderSetting) -> Bool {
+        guard isGrokWebProvider(provider) else { return false }
         guard let openAI = provider as? ProviderSetting.OpenAI else { return false }
         let providerId = providerKey(openAI)
         if let tokens = IOSGrokOAuthAuthStore.load(providerId: providerId),
@@ -200,6 +201,7 @@ enum IOSGrokWebProviderResolver {
     /// grok.com sessions pass through unchanged.
     static func resolved(_ provider: ProviderSetting) async throws -> ProviderSetting {
         guard let openAI = provider as? ProviderSetting.OpenAI else { return provider }
+        guard isGrokWebProvider(provider) else { return provider }
         let key = providerKey(openAI)
         guard IOSGrokOAuthAuthStore.load(providerId: key) != nil else { return provider }
         let token = try await IOSGrokOAuthClients.shared(providerId: key).getValidAccessToken()
@@ -226,6 +228,7 @@ enum IOSGrokWebProviderResolver {
         provider: ProviderSetting
     ) -> TextGenerationParams {
         guard let openAI = provider as? ProviderSetting.OpenAI else { return params }
+        guard isGrokWebProvider(provider) else { return params }
         let hasOAuth = IOSGrokOAuthAuthStore.load(providerId: providerKey(openAI)) != nil
         guard isGrokCliProxyConfiguration(openAI) || hasOAuth else { return params }
         var headers = params.customHeaders

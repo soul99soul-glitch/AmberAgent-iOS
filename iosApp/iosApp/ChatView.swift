@@ -136,6 +136,7 @@ struct ChatView: View {
     @State private var personalContextPhotoItems: [PhotosPickerItem] = []
     @State private var personalContextPhotoLoadID: UUID?
     @State private var fileImporterConversationId: String?
+    @State private var isProcessingSelectedFile = false
     @State private var photoPickerConversationId: String?
     @State private var isInputFocused = false
     @Environment(RouterPath.self) private var router
@@ -508,9 +509,7 @@ struct ChatView: View {
         // 绑定 store（@Environment 在 init 里不可用，故在 onAppear 注入）。
         viewModel.conversationStore = conversationStore
         viewportState = ChatViewportState()
-        if !viewModel.isForegroundGenerationActiveForCurrentConversation {
-            viewModel.reloadFromStore(reason: .initialLoad)
-        }
+        viewModel.reloadFromStore(reason: .initialLoad)
         refreshChatListSummary(resetTitleSeed: true)
         repairCurrentChatModelIfNeeded()
         if let handoff = IOSWebMountContentHandoffStore.shared.consumeChatHandoff() {
@@ -520,10 +519,6 @@ struct ChatView: View {
     }
 
     private func handleConversationSwitch() {
-        if viewModel.isForegroundGenerationActiveForCurrentConversation {
-            refreshChatListSummary(resetTitleSeed: true)
-            return
-        }
         viewModel.reloadFromStore(reason: .conversationSwitch)
         refreshChatListSummary(resetTitleSeed: true)
     }
@@ -611,8 +606,14 @@ struct ChatView: View {
                 viewModel.selectedFileContextError = message
                 return
             }
-            documentStore.registerPickedFile(url)
-            Task {
+            // A selected-file grant is singleton state. Keep this whole path
+            // (grant -> Workspace copy -> preview attach) exclusive so a
+            // second picker result cannot replace the grant mid-import.
+            guard !isProcessingSelectedFile else { return }
+            isProcessingSelectedFile = true
+            let selectedGrant = documentStore.registerPickedFile(url)
+            Task { @MainActor in
+                defer { isProcessingSelectedFile = false }
                 var workspaceImportError: String?
                 do {
                     _ = try await workspaceStore.importFile(url: url, source: "chat_picker")
@@ -621,7 +622,8 @@ struct ChatView: View {
                 }
                 guard selectionConversationId == currentConversationIdString else { return }
                 await viewModel.attachSelectedFilePreviewToNextMessage(
-                    expectedConversationId: selectionConversationId
+                    expectedConversationId: selectionConversationId,
+                    expectedFileScopeDigest: selectedGrant.scopeDigest
                 )
                 if let workspaceImportError, viewModel.selectedFileContextError == nil {
                     viewModel.selectedFileContextError = IOSAppLocalization.formatted(
@@ -645,6 +647,10 @@ struct ChatView: View {
     // MARK: - Attachment panel actions
 
     private func presentFileImporter() {
+        guard !isProcessingSelectedFile else {
+            viewModel.selectedFileContextError = "正在读取已选文件，请完成后再选择。"
+            return
+        }
         let selectionConversationId = currentConversationIdString
         if documentStore != nil {
             fileImporterConversationId = selectionConversationId
@@ -1059,13 +1065,10 @@ struct ChatView: View {
             size: ChatTopBarLayout.toolbarButtonDiameter,
             symbolSize: 16
         ) {
-            guard viewModel.prepareForConversationChange() else { return }
-            Task { @MainActor in
-                // newConversation 会 bump conversationSwitchedRevision,onChange 观察者会
-                // 自动触发 reloadFromStore(.conversationSwitch) + 重新落位,无需手动调。
-                // (与 PlaceholderViews 的其它切换入口一致。)
-                await conversationStore.startNewConversationReusingEmpty()
-            }
+            // The VM knows whether a just-appended first bubble has not reached
+            // the Store yet; it preserves the existing empty-reuse behavior for
+            // every other New Chat tap.
+            Task { await viewModel.startNewConversation() }
         }
     }
 

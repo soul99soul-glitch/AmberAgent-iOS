@@ -339,6 +339,109 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
         XCTAssertFalse(client.calls.contains { $0.name == "browser_click" })
     }
 
+    func testTargetWinsWhenSelectorIsEmptyOrEquivalentAndConflictsAreRejected() async throws {
+        let targetClick = IOSMcpTool(
+            name: "browser_click",
+            description: nil,
+            inputSchema: #"{"type":"object","properties":{"target":{"type":"string"}}}"#
+        )
+        let client = DesktopMcpClientFake(
+            tools: stockPlaywrightTools.filter { $0.name != "browser_click" } + [targetClick],
+            callResult: stockPlaywrightPageState(url: "https://example.com/docs")
+        )
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "target-selector-precedence")
+
+        let observed = try jsonObject(await adapter.execute(
+            toolName: "wm_observe",
+            arguments: [:],
+            logicalSessionId: "target-selector-precedence"
+        ))
+        let firstSnapshot = try XCTUnwrap(observed["snapshot_id"] as? String)
+        let equivalent = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: [
+                "target": "e7",
+                "selector": "e7",
+                "snapshot_id": firstSnapshot
+            ],
+            logicalSessionId: "target-selector-precedence"
+        ))
+        XCTAssertEqual(equivalent["ok"] as? Bool, true)
+        XCTAssertEqual(client.calls.last?.arguments["target"] as? String, "e7")
+        XCTAssertNil(client.calls.last?.arguments["selector"])
+
+        let afterEquivalent = try jsonObject(await adapter.execute(
+            toolName: "wm_observe",
+            arguments: [:],
+            logicalSessionId: "target-selector-precedence"
+        ))
+        let secondSnapshot = try XCTUnwrap(afterEquivalent["snapshot_id"] as? String)
+        let emptySelector = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: [
+                "target": "e7",
+                "selector": "   ",
+                "snapshot_id": secondSnapshot
+            ],
+            logicalSessionId: "target-selector-precedence"
+        ))
+        XCTAssertEqual(emptySelector["ok"] as? Bool, true)
+        XCTAssertEqual(client.calls.last?.arguments["target"] as? String, "e7")
+        XCTAssertNil(client.calls.last?.arguments["selector"])
+
+        let afterEmpty = try jsonObject(await adapter.execute(
+            toolName: "wm_observe",
+            arguments: [:],
+            logicalSessionId: "target-selector-precedence"
+        ))
+        let thirdSnapshot = try XCTUnwrap(afterEmpty["snapshot_id"] as? String)
+        let callCountBeforeConflict = client.calls.count
+        let conflict = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: [
+                "target": "e7",
+                "selector": "#other",
+                "snapshot_id": thirdSnapshot
+            ],
+            logicalSessionId: "target-selector-precedence"
+        ))
+        XCTAssertEqual(conflict["error_code"] as? String, "invalid_arguments")
+        XCTAssertEqual(client.calls.count, callCountBeforeConflict)
+    }
+
+    func testSelectorOnlyGatewayIsUnavailableForAgentTargetMapping() async throws {
+        let selectorClick = IOSMcpTool(
+            name: "browser_click",
+            description: nil,
+            inputSchema: #"{"type":"object","properties":{"selector":{"type":"string"}}}"#
+        )
+        let client = DesktopMcpClientFake(
+            tools: stockPlaywrightTools.filter { $0.name != "browser_click" } + [selectorClick],
+            callResult: stockPlaywrightPageState(url: "https://example.com/docs")
+        )
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "selector-only-gateway")
+
+        let capability = adapter.capabilities(logicalSessionId: "selector-only-gateway")
+            .first(where: { $0.amberToolName == "wm_click" })
+        XCTAssertEqual(capability?.available, false)
+
+        let observed = try jsonObject(await adapter.execute(
+            toolName: "wm_observe",
+            arguments: [:],
+            logicalSessionId: "selector-only-gateway"
+        ))
+        let snapshot = try XCTUnwrap(observed["snapshot_id"] as? String)
+        let clicked = try jsonObject(await adapter.execute(
+            toolName: "wm_click",
+            arguments: ["target": "e7", "snapshot_id": snapshot],
+            logicalSessionId: "selector-only-gateway"
+        ))
+        XCTAssertEqual(clicked["error_code"] as? String, "mapping_unsupported")
+        XCTAssertFalse(client.calls.contains { $0.name == "browser_click" })
+    }
+
     func testRemoteMutationRejectsSameRefOnDifferentDocument() async throws {
         let pageA = #"{"contract_version":"webmount.semantic.v2","document_id":"doc-a","interactive_elements":[{"ref":"e7","role":"button","name":"Continue","tag":"button","visible":true,"actionable":true}]}"#
         let pageB = #"{"contract_version":"webmount.semantic.v2","document_id":"doc-b","interactive_elements":[{"ref":"e7","role":"button","name":"Continue","tag":"button","visible":true,"actionable":true}]}"#

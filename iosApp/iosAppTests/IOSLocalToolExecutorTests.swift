@@ -590,9 +590,9 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(runtime.snapshot.status, .ready)
         let settings = IOSWebMountSettings(userDefaults: isolatedDefaults())
         runtime.setNavigationPolicy(
-            IOSWebMountURLPolicy(settings: settings, allowUnlistedHosts: true),
+            IOSWebMountURLPolicy(settings: settings, allowUnlistedHosts: true, allowFakeIPFallback: true, resolvePublicHost: { _ in ["93.184.216.34"] }),
             site: nil,
-            resolveHost: { _ in ["93.184.216.34"] }
+            resolveHost: { _ in ["198.18.0.34"] }
         )
         let result = await runtime.open(URL(string: "https://webmount.invalid/#/login")!, timeoutMillis: 1_000)
         XCTAssertEqual(result.status, .ready, result.error ?? "")
@@ -621,7 +621,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             settings: IOSWebMountSettings(userDefaults: isolatedDefaults()),
             allowUnlistedHosts: true
         )
-        for addresses in [["198.18.0.34"], ["93.184.216.34", "10.0.0.8"]] {
+        for addresses in [["10.0.0.34"], ["93.184.216.34", "10.0.0.8"]] {
             let result = await policy.validateResolvedPublicHost(
                 "https://unlisted.amber.invalid/", resolveHost: { _ in addresses }
             )
@@ -1662,6 +1662,35 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         let feishu = try XCTUnwrap(stations.first { ($0["id"] as? String) == "feishu_docs" })
         XCTAssertEqual(feishu["login_status"] as? String, "unknown")
         XCTAssertEqual(feishu["oauth_token_present"] as? Bool, false)
+        let anonymous = try XCTUnwrap(stations.first { $0["auth_kind"] as? String == "anonymous" })
+        XCTAssertEqual(anonymous["login_status"] as? String, "not_required")
+        XCTAssertEqual(anonymous["authentication_required"] as? Bool, false)
+        XCTAssertTrue(stations.allSatisfy { $0["login_verified"] as? Bool == false })
+        let github = try XCTUnwrap(stations.first { $0["id"] as? String == "github" })
+        XCTAssertEqual(github["login_status"] as? String, "unknown")
+        XCTAssertEqual(github["authentication_evidence"] as? String, "cookie_present_unverified")
+    }
+
+    func testWebMountSiteIDAndDirectURLUseSameRegisteredHostPolicy() async throws {
+        let controller = makeWebMountController(globalEnabled: true, resolveHost: { host in
+            host == "github.com" ? ["198.18.0.34"] : ["10.0.0.34"]
+        })
+        controller.registry.setEnabled(id: "github", enabled: true)
+        let site = try XCTUnwrap(controller.registry.site(id: "github"))
+        for args in [["site_id": site.id], ["url": site.homepageURL]] {
+            let output = try jsonObject(await controller.execute(
+                toolName: "wm_open", input: IOSWebMountController.json(args),
+                isUserInitiated: false, allowUnlistedHosts: true
+            ))
+            XCTAssertEqual(output["ok"] as? Bool, true, IOSWebMountController.json(output))
+        }
+        let denied = try jsonObject(await controller.execute(
+            toolName: "wm_open", input: #"{"url":"https://unlisted.amber.invalid/"}"#,
+            isUserInitiated: false, allowUnlistedHosts: true
+        ))
+        XCTAssertEqual(denied["error_code"] as? String, "dns_non_public_address")
+        let runtime = try XCTUnwrap(controller.runtime as? MockWebMountRuntime)
+        XCTAssertEqual(runtime.openedURLs.map(\.absoluteString), [site.homepageURL, site.homepageURL])
     }
 
     func testWebMountOpenAndExtractUseMockRuntimeAndRedactURLs() async throws {
@@ -2297,7 +2326,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             toolName: "wm_visual_read", input: "{}", isUserInitiated: true,
             visualRead: { _, _ in
                 throw IOSWebMountVisionReader.RequestFailure(
-                    error: IOSGeminiError.httpStatus(429, "apiKey=secret private response"),
+                    error: IOSGeminiError.httpStatus(400, "apiKey=secret private response"),
                     model: "vision-model", provider: "Vision"
                 )
             }
@@ -2306,8 +2335,11 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(result["ok"] as? Bool, false)
         XCTAssertEqual(result["error_code"] as? String, "vision_request_failed")
         let diagnostics = try XCTUnwrap(result["diagnostics"] as? [String: Any])
-        XCTAssertEqual(diagnostics["http_status"] as? Int, 429)
-        XCTAssertEqual(diagnostics["category"] as? String, "rate_limit")
+        XCTAssertEqual(diagnostics["http_status"] as? Int, 400)
+        XCTAssertEqual(diagnostics["category"] as? String, "request_rejected")
+        XCTAssertEqual(result["visual_verified"] as? Bool, false)
+        XCTAssertEqual(result["dom_only"] as? Bool, true)
+        XCTAssertEqual(result["automatic_retry_allowed"] as? Bool, false)
         XCTAssertEqual(diagnostics["model"] as? String, "vision-model")
         XCTAssertFalse(text.contains("secret"))
         XCTAssertFalse(text.contains("private"))
@@ -2318,6 +2350,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         let runtime = try XCTUnwrap(controller.runtime as? MockWebMountRuntime)
         let missing = try jsonObject(await controller.execute(toolName: "wm_visual_read", input: "{}", isUserInitiated: true))
         XCTAssertEqual(missing["error_code"] as? String, "vision_unavailable")
+        XCTAssertEqual(missing["dom_only"] as? Bool, true)
         let stale = try jsonObject(await controller.execute(
             toolName: "wm_visual_read", input: "{}", isUserInitiated: true,
             visualRead: { _, _ in

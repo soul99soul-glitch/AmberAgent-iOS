@@ -1,6 +1,926 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "WebMount 请求": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebMount request"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "站点请求"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "站點請求"
+          }
+        }
+      }
+    },
+    "当前附件仅支持图片；视频和音频仅记录模型能力。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attachments currently support images only; video and audio are recorded as model capabilities."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前附件仅支持图片；视频和音频仅记录模型能力。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前附件僅支援圖片；影片和音訊僅記錄模型能力。"
+          }
+        }
+      }
+    },
+    "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deep reading failed: select an available model in Deep Reading settings and check the provider sign-in status."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "深度閱讀生成失敗：請在深度閱讀設定中選擇可用模型，並檢查服務商登入狀態。"
+          }
+        }
+      }
+    },
+    "没有可用的聊天模型，请先在服务商设置中配置并选择模型。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No chat model is available. Configure and select a model in Providers first."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有可用的聊天模型，请先在服务商设置中配置并选择模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "沒有可用的聊天模型，請先在服務商設定中配置並選擇模型。"
+          }
+        }
+      }
+    },
+    "输入能力": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Input capabilities"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "输入能力"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "輸入能力"
+          }
+        }
+      }
+    },
+    "留空使用 %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leave blank to use %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空使用 %lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空時使用 %lld"
+          }
+        }
+      }
+    },
+    "文本": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Text"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文本"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "文字"
+          }
+        }
+      }
+    },
+    "图片": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Image"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "图片"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "圖片"
+          }
+        }
+      }
+    },
+    "视频": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Video"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "视频"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "影片"
+          }
+        }
+      }
+    },
+    "音频": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Audio"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音频"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音訊"
+          }
+        }
+      }
+    },
+    "请前往本机 WebMount 完成登录、验证码/CAPTCHA 或支付等敏感步骤，然后将控制权交还给 Agent。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Complete sign-in, CAPTCHA, payment, or other sensitive steps in local WebMount, then return control to the agent."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请前往本机站点完成登录、验证码/CAPTCHA 或支付等敏感步骤，然后将控制权交还给 Agent。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請前往本機站點完成登入、驗證碼/CAPTCHA 或付款等敏感步驟，然後將控制權交還給 Agent。"
+          }
+        }
+      }
+    },
+    "完成并继续": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Complete and continue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完成并继续"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完成並繼續"
+          }
+        }
+      }
+    },
+    "观看页面": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View page"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "观看页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看頁面"
+          }
+        }
+      }
+    },
+    "查看状态": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View status"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看状态"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看狀態"
+          }
+        }
+      }
+    },
+    "需要你完成登录、验证码或支付等敏感步骤；Agent 不会代为输入凭据。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Complete sensitive steps such as sign-in, CAPTCHA, or payment yourself. The agent will not enter credentials for you."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要你完成登录、验证码或支付等敏感步骤；Agent 不会代为输入凭据。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要你完成登入、驗證碼或付款等敏感步驟；Agent 不會代為輸入憑證。"
+          }
+        }
+      }
+    },
+    "仅批准这一次前台动作，不扩大站点权限。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approve this foreground action only, without expanding site permissions."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅批准这一次前台动作，不扩大站点权限。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅批准這一次前景動作，不擴大站點權限。"
+          }
+        }
+      }
+    },
+    "意图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Intent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "意图"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "意圖"
+          }
+        }
+      }
+    },
+    "目标页面": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Target page"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目標頁面"
+          }
+        }
+      }
+    },
+    "本次范围": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scope"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次范围"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次範圍"
+          }
+        }
+      }
+    },
+    "动作": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Action"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "动作"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "動作"
+          }
+        }
+      }
+    },
+    "影响": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Effect"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "影响"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "影響"
+          }
+        }
+      }
+    },
+    "环境": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Environment"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "环境"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "環境"
+          }
+        }
+      }
+    },
+    "目标": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Target"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目标"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目標"
+          }
+        }
+      }
+    },
+    "点击页面元素": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click a page element"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击页面元素"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點擊頁面元素"
+          }
+        }
+      }
+    },
+    "点击页面坐标或元素": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Click page coordinates or an element"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "点击页面坐标或元素"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "點擊頁面座標或元素"
+          }
+        }
+      }
+    },
+    "向页面字段输入文本": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enter text in a page field"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "向页面字段输入文本"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "向頁面欄位輸入文字"
+          }
+        }
+      }
+    },
+    "向页面发送按键": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send a keystroke to the page"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "向页面发送按键"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "向頁面傳送按鍵"
+          }
+        }
+      }
+    },
+    "选择页面选项": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Select a page option"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择页面选项"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇頁面選項"
+          }
+        }
+      }
+    },
+    "保存当前完整视口截图": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save a screenshot of the current viewport"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存当前完整视口截图"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存目前完整視口截圖"
+          }
+        }
+      }
+    },
+    "截图并调用视觉模型验证页面": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Capture and verify the page with a vision model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "截图并调用视觉模型验证页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "截圖並呼叫視覺模型驗證頁面"
+          }
+        }
+      }
+    },
+    "清除站点登录状态": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clear site sign-in state"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除站点登录状态"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除站點登入狀態"
+          }
+        }
+      }
+    },
+    "新增 WebMount 站点": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a WebMount site"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增站点"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增站點"
+          }
+        }
+      }
+    },
+    "会在本机创建一个限时截图文件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Creates a temporary screenshot file on this device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会在本机创建一个限时截图文件。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會在本機建立一個限時截圖檔案。"
+          }
+        }
+      }
+    },
+    "会将当前页面截图发送给已配置的视觉模型服务商进行分析，截图可能包含页面中的敏感信息。不会自动点击或提交表单。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sends a screenshot of the current page to the configured vision provider for analysis. The screenshot may contain sensitive information. It will not click or submit forms automatically."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会将当前页面截图发送给已配置的视觉模型服务商进行分析，截图可能包含页面中的敏感信息。不会自动点击或提交表单。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會將目前頁面截圖傳送給已設定的視覺模型服務商進行分析，截圖可能包含頁面中的敏感資訊。不會自動點擊或提交表單。"
+          }
+        }
+      }
+    },
+    "会删除该站点的 Cookie 与网站数据。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deletes cookies and website data for this site."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会删除该站点的 Cookie 与网站数据。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會刪除該站點的 Cookie 與網站資料。"
+          }
+        }
+      }
+    },
+    "会更改 WebMount 站点与 URL allowlist。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Changes WebMount sites and the URL allowlist."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会更改站点与 URL 允许列表。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "會更改站點與 URL 允許清單。"
+          }
+        }
+      }
+    },
+    "可能提交当前表单；执行前会再次核对页面快照。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May submit the current form. The page snapshot will be checked again before execution."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能提交当前表单；执行前会再次核对页面快照。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能提交目前表單；執行前會再次核對頁面快照。"
+          }
+        }
+      }
+    },
+    "可能提交、授权或改变远端状态；批准只绑定当前页面快照与目标。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May submit, authorize, or change remote state. Approval applies only to the current page snapshot and target."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能提交、授权或改变远端状态；批准只绑定当前页面快照与目标。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能提交、授權或改變遠端狀態；批准只綁定目前頁面快照與目標。"
+          }
+        }
+      }
+    },
+    "批准只适用于当前会话中的这一项操作。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Approval applies only to this operation in the current session."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "批准只适用于当前会话中的这一项操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "批准僅適用於目前工作階段中的這一項操作。"
+          }
+        }
+      }
+    },
+    "完整视口截图会仅保存在本机，最长保留 24 小时，可能包含页面中的敏感信息。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The full-viewport screenshot is stored only on this device for up to 24 hours and may contain sensitive page information."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完整视口截图会仅保存在本机，最长保留 24 小时，可能包含页面中的敏感信息。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完整視口截圖僅儲存在本機，最長保留 24 小時，可能包含頁面中的敏感資訊。"
+          }
+        }
+      }
+    },
     "加载更早的消息": {
       "extractionState": "manual",
       "localizations": {
@@ -9174,13 +10094,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "WebMount"
+            "value": "站点"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "WebMount"
+            "value": "站點"
           }
         }
       }
@@ -9215,13 +10135,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "WebMount tool output cannot be attached to a chat message."
+            "value": "站点工具输出无法附加到聊天消息。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "WebMount 工具輸出無法附加至聊天訊息。"
+            "value": "站點工具輸出無法附加至聊天訊息。"
           }
         }
       }
@@ -12331,13 +13251,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "为每个 WebMount session 显式选择运行后端。"
+            "value": "为每个站点会话显式选择运行后端。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "為每個 WebMount session 明確選擇執行後端。"
+            "value": "為每個站點工作階段明確選擇執行後端。"
           }
         }
       }
@@ -12987,13 +13907,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "交还 WebMount 页面给 Agent"
+            "value": "交还站点页面给 Agent"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "將 WebMount 頁面交還給 Agent"
+            "value": "將站點頁面交還給 Agent"
           }
         }
       }
@@ -13561,13 +14481,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "从当前 WebMount 页面创建深度阅读"
+            "value": "从当前站点页面创建深度阅读"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "從目前 WebMount 頁面建立深度閱讀"
+            "value": "從目前站點頁面建立深度閱讀"
           }
         }
       }
@@ -16729,43 +17649,43 @@
         }
       }
     },
-    "使用受限 WKWebView；高风险自动批准可访问任意公网网站": {
+    "高风险模式可访问公网；HTTPS Fake-IP 会通过加密连接向 Google Public DNS 查询域名，请仅使用可信 VPN": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Uses a restricted WKWebView; high-risk auto-approval can access any public website"
+            "value": "High-risk mode allows public sites. HTTPS Fake-IP sends hostnames to Google Public DNS over an encrypted connection; use a trusted VPN."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "制限付きWKWebViewを使用します。高リスクの自動承認では任意の公開Webサイトにアクセスできます"
+            "value": "高リスクモードでは公開サイトにアクセスできます。HTTPS Fake-IP は暗号化接続で Google Public DNS にホスト名を送信するため、信頼できる VPN を使用してください。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "제한된 WKWebView 사용. 고위험 자동 승인을 사용하면 모든 공개 웹사이트에 액세스할 수 있습니다."
+            "value": "고위험 모드에서는 공개 사이트에 접근할 수 있습니다. HTTPS Fake-IP는 암호화된 연결로 호스트 이름을 Google Public DNS에 전송하므로 신뢰할 수 있는 VPN을 사용하세요."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ограниченный WKWebView; автоматическое одобрение высокого риска может открыть доступ к любому публичному сайту"
+            "value": "Режим высокого риска разрешает публичные сайты. Для HTTPS Fake-IP имена хостов отправляются в Google Public DNS по зашифрованному соединению; используйте доверенный VPN."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "使用受限 WKWebView；高风险自动批准可访问任意公网网站"
+            "value": "高风险模式可访问公网；HTTPS Fake-IP 会通过加密连接向 Google Public DNS 查询域名，请仅使用可信 VPN"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "使用受限 WKWebView；高風險自動核准可存取任意公開網路網站"
+            "value": "高風險模式可存取公開網站；HTTPS Fake-IP 會透過加密連線向 Google Public DNS 查詢網域，請僅使用可信任的 VPN"
           }
         }
       }
@@ -32339,13 +33259,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "在本地 WebMount 完成后继续"
+            "value": "在本地站点完成后继续"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "在本機 WebMount 完成後繼續"
+            "value": "在本機站點完成後繼續"
           }
         }
       }
@@ -45746,13 +46666,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "执行 WebMount 前台动作"
+            "value": "执行站点前台动作"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "執行 WebMount 前景動作"
+            "value": "執行站點前景動作"
           }
         }
       }
@@ -47017,13 +47937,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "拒绝 WebMount 前台动作"
+            "value": "拒绝站点前台动作"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "拒絕 WebMount 前景動作"
+            "value": "拒絕站點前景動作"
           }
         }
       }
@@ -47960,13 +48880,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "接管 WebMount 页面"
+            "value": "接管站点页面"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "接管 WebMount 頁面"
+            "value": "接管站點頁面"
           }
         }
       }
@@ -51937,13 +52857,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "文件只读取你前台选择的 txt、md、json、csv、pdf、docx 文本预览；WebMount 只读取当前已加载页面正文。"
+            "value": "文件只读取你前台选择的 txt、md、json、csv、pdf、docx 文本预览；站点只读取当前已加载页面正文。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "檔案僅讀取你在前景選取的 txt、md、json、csv、pdf、docx 文字預覽；WebMount 僅讀取目前已載入頁面的內文。"
+            "value": "檔案僅讀取你在前景選取的 txt、md、json、csv、pdf、docx 文字預覽；站點僅讀取目前已載入頁面的內文。"
           }
         }
       }
@@ -66820,13 +67740,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "添加 WebMount 站点"
+            "value": "添加站点"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "新增 WebMount 站點"
+            "value": "新增站點"
           }
         }
       }
@@ -67271,13 +68191,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除 WebMount Session"
+            "value": "清除站点会话"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "清除 WebMount Session"
+            "value": "清除站點工作階段"
           }
         }
       }
@@ -83835,13 +84755,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "还没有 WebMount 站点。添加一个 http(s) 网站，或恢复内置站点。"
+            "value": "还没有站点。添加一个 http(s) 网站，或恢复内置站点。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "目前還沒有 WebMount 站點。新增一個 http(s) 網站，或還原內建站點。"
+            "value": "目前還沒有站點。新增一個 http(s) 網站，或還原內建站點。"
           }
         }
       }
@@ -85311,13 +86231,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "这里显示 MCP 通用连接状态与当前后端工具配置；创建 session 后，实际能力由 WebMount 独立连接并验证。"
+            "value": "这里显示 MCP 通用连接状态与当前后端工具配置；创建 session 后，实际能力由站点功能独立连接并验证。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "這裡顯示 MCP 通用連線狀態與目前後端工具設定；建立 session 後，實際能力由 WebMount 獨立連線並驗證。"
+            "value": "這裡顯示 MCP 通用連線狀態與目前後端工具設定；建立 session 後，實際能力由站點功能獨立連線並驗證。"
           }
         }
       }
@@ -87279,13 +88199,13 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "释放 WebMount 页面控制权"
+            "value": "释放站点页面控制权"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "釋放 WebMount 頁面控制權"
+            "value": "釋放站點頁面控制權"
           }
         }
       }
@@ -92799,34 +93719,124 @@
       "清理 WebMount Session": {
         "extractionState": "manual",
         "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Clear WebMount session" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "WebMountセッションを消去" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "WebMount 세션 지우기" } },
-          "ru": { "stringUnit": { "state": "translated", "value": "Очистить сеанс WebMount" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "清理 WebMount Session" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "清理 WebMount 工作階段" } }
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Clear WebMount session"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "WebMountセッションを消去"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "WebMount 세션 지우기"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Очистить сеанс WebMount"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "清理站点 Session"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "清理站點工作階段"
+            }
+          }
         }
       },
       "移除 WebMount 站点": {
         "extractionState": "manual",
         "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Remove WebMount site" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "WebMountサイトを削除" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "WebMount 사이트 제거" } },
-          "ru": { "stringUnit": { "state": "translated", "value": "Удалить сайт WebMount" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除 WebMount 站点" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除 WebMount 站點" } }
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Remove WebMount site"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "WebMountサイトを削除"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "WebMount 사이트 제거"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Удалить сайт WebMount"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "移除站点"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "移除站點"
+            }
+          }
         }
       },
       "读取 WebMount 站点": {
         "extractionState": "manual",
         "localizations": {
-          "en": { "stringUnit": { "state": "translated", "value": "Read WebMount sites" } },
-          "ja": { "stringUnit": { "state": "translated", "value": "WebMountサイトを読み取る" } },
-          "ko": { "stringUnit": { "state": "translated", "value": "WebMount 사이트 읽기" } },
-          "ru": { "stringUnit": { "state": "translated", "value": "Прочитать сайты WebMount" } },
-          "zh-Hans": { "stringUnit": { "state": "translated", "value": "读取 WebMount 站点" } },
-          "zh-Hant": { "stringUnit": { "state": "translated", "value": "讀取 WebMount 站點" } }
+          "en": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Read WebMount sites"
+            }
+          },
+          "ja": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "WebMountサイトを読み取る"
+            }
+          },
+          "ko": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "WebMount 사이트 읽기"
+            }
+          },
+          "ru": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "Прочитать сайты WebMount"
+            }
+          },
+          "zh-Hans": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "读取站点"
+            }
+          },
+          "zh-Hant": {
+            "stringUnit": {
+              "state": "translated",
+              "value": "讀取站點"
+            }
+          }
         }
       },
       "点击网页元素": {

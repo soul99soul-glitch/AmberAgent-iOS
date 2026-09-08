@@ -11,6 +11,7 @@ import Observation
 @Observable
 final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
+    @ObservationIgnored private var currentUtterance: AVSpeechUtterance?
     var isSpeaking = false
     var lastError: String?
 
@@ -65,6 +66,7 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
             utterance.voice = voice
         }
         utterance.rate = rate
+        currentUtterance = utterance
         isSpeaking = true
         lastError = nil
         synthesizer.speak(utterance)
@@ -73,17 +75,30 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
     /// Stop any current speech.
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
+        currentUtterance = nil
         isSpeaking = false
     }
 
     // MARK: - AVSpeechSynthesizerDelegate
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard let currentUtterance = self.currentUtterance,
+                  ObjectIdentifier(currentUtterance) == utteranceID else { return }
+            self.currentUtterance = nil
+            self.isSpeaking = false
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        let utteranceID = ObjectIdentifier(utterance)
+        Task { @MainActor in
+            guard let currentUtterance = self.currentUtterance,
+                  ObjectIdentifier(currentUtterance) == utteranceID else { return }
+            self.currentUtterance = nil
+            self.isSpeaking = false
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {

@@ -308,6 +308,16 @@ enum IOSMemoryToolExecutor {
             IOSMemoryWriteAuditStore.shared.record(action: "create", status: "failed", reason: "supersedesIds contains an out-of-range integer")
             return integerOutOfRangeResult(action: "create", field: "supersedesIds")
         }
+        let confidence: Float
+        if args.keys.contains("confidence") {
+            guard let parsedConfidence = confidenceValue(args["confidence"]) else {
+                IOSMemoryWriteAuditStore.shared.record(action: "create", status: "failed", reason: "confidence must be a finite number from 0 to 1")
+                return json(["ok": false, "tool": "memory_tool", "action": "create", "error": "confidence must be a finite number from 0 to 1"])
+            }
+            confidence = parsedConfidence
+        } else {
+            confidence = 1
+        }
         let previousRecords = IosMemoryFactory.shared.snapshotRecords()
         let record = IosMemoryFactory.shared.addDetailedMemory(
             scope: scope,
@@ -318,7 +328,7 @@ enum IOSMemoryToolExecutor {
             sourceMessageIds: stringArray(args["sourceMessageIds"]),
             supersedesIds: supersedesIds,
             expiresAt: int64(args["expiresAt"]).map { KotlinLong(value: $0) },
-            confidence: float(args["confidence"]) ?? 1,
+            confidence: confidence,
             pinned: bool(args["pinned"]) ?? false,
             archived: false
         )
@@ -419,6 +429,16 @@ enum IOSMemoryToolExecutor {
         } else {
             supersedesIds = existing.supersedesIds
         }
+        let confidence: Float
+        if args.keys.contains("confidence") {
+            guard let parsedConfidence = confidenceValue(args["confidence"]) else {
+                IOSMemoryWriteAuditStore.shared.record(action: "edit", status: "failed", reason: "confidence must be a finite number from 0 to 1", memoryId: id)
+                return json(["ok": false, "tool": "memory_tool", "action": "edit", "error": "confidence must be a finite number from 0 to 1", "id": id])
+            }
+            confidence = parsedConfidence
+        } else {
+            confidence = existing.confidence
+        }
         let updatedAt = nowMillis()
         let updated = MemoryRecord(
             id: existing.id,
@@ -434,7 +454,7 @@ enum IOSMemoryToolExecutor {
             expiresAt: args.keys.contains("expiresAt")
                 ? int64(args["expiresAt"]).map { KotlinLong(value: $0) }
                 : existing.expiresAt,
-            confidence: float(args["confidence"]) ?? existing.confidence,
+            confidence: confidence,
             pinned: bool(args["pinned"]) ?? existing.pinned,
             archived: existing.archived,
             createdAt: existing.createdAt,
@@ -754,11 +774,20 @@ enum IOSMemoryToolExecutor {
         return nil
     }
 
-    private static func float(_ value: Any?) -> Float? {
-        if let float = value as? Float { return float }
-        if let number = value as? NSNumber { return number.floatValue }
-        if let string = value as? String { return Float(string) }
-        return nil
+    private static func confidenceValue(_ value: Any?) -> Float? {
+        let parsed: Float?
+        if let number = value as? NSNumber {
+            guard CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+            parsed = number.floatValue
+        } else if let float = value as? Float {
+            parsed = float
+        } else if let string = value as? String {
+            parsed = Float(string)
+        } else {
+            parsed = nil
+        }
+        guard let parsed, parsed.isFinite, (0...1).contains(parsed) else { return nil }
+        return parsed
     }
 
     private static func bool(_ value: Any?) -> Bool? {

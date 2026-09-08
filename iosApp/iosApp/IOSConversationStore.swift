@@ -50,6 +50,12 @@ struct IOSConversationIOError: Identifiable, Equatable {
     }
 }
 
+private struct IOSConversationImportInProgressError: LocalizedError {
+    var errorDescription: String? {
+        "会话恢复正在进行，请等待完成后再试。"
+    }
+}
+
 // MARK: - IOSConversationStore
 
 struct IOSConversationSearchResult: Identifiable {
@@ -88,6 +94,10 @@ struct IOSSessionSearchHit {
 struct IOSConversationWriteBaseline: Equatable {
     fileprivate let key: String
     fileprivate let sequence: UInt64
+    /// A restore replaces persisted documents as a coherent user-visible snapshot.
+    /// A run that captured its baseline before that replacement must not write
+    /// its old transcript back after the import finishes.
+    fileprivate let importEpoch: UInt64
 }
 
 /// iOS 端会话生命周期管理器。把 [JsonConversationStorage]（KMP 文件 JSON 存储）包成
@@ -180,6 +190,13 @@ final class IOSConversationStore {
     private let listIconsFileURL: URL
     private var deletedConversationIds: Set<String> = []
     private var writeSequences: [String: UInt64] = [:]
+    private var importEpoch: UInt64 = 0
+    /// A restore must first drain snapshot writers that have already crossed
+    /// into the Store, then keep newly-started writers out until the restored
+    /// document is selected into `currentConversation`.
+    private(set) var isImportingConversationDocuments = false
+    private var inFlightConversationWrites = 0
+    private var conversationWriteDrainContinuations: [CheckedContinuation<Void, Never>] = []
 
 #if DEBUG
     var beforePersistForTesting: ((Conversation) async -> Void)?
@@ -222,7 +239,7 @@ final class IOSConversationStore {
     // MARK: - Bootstrap
 
     /// App 启动时调用：加载摘要列表，选最近一条作为 current；无历史则新建空会话。
-    func bootstrap() async {
+    func bootstrap(allowNewConversationDuringImport: Bool = false) async {
         listPreviewsByConversationId = Self.loadListPreviews(from: listPreviewsFileURL)
         listIconsByConversationId = Self.loadListPreviews(from: listIconsFileURL)
         do {
@@ -236,9 +253,12 @@ final class IOSConversationStore {
 
         if let mostRecent = summaries.first {
             // summaries 已按 updateAt 倒序，第一条即最近。
-            await selectConversation(id: mostRecent.id)
+            _ = await selectConversationIfAvailable(
+                id: mostRecent.id,
+                allowDuringImport: allowNewConversationDuringImport
+            )
         } else {
-            await newConversation()
+            await newConversation(allowDuringImport: allowNewConversationDuringImport)
         }
     }
 
@@ -288,10 +308,33 @@ final class IOSConversationStore {
     @discardableResult
     func importConversationDocuments(_ documents: [String]) async throws -> Int {
         guard !documents.isEmpty else { return 0 }
+        guard !isImportingConversationDocuments else {
+            throw IOSConversationImportInProgressError()
+        }
+        isImportingConversationDocuments = true
+        defer { isImportingConversationDocuments = false }
+
+        await waitForConversationWritesToDrain()
         try await storage.importConversations(serializedConversations: documents)
         deletedConversationIds.removeAll()
         writeSequences.removeAll()
-        await bootstrap()
+        importEpoch &+= 1
+        let restoredIds = Set(documents.compactMap { document -> String? in
+            guard let data = document.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = object["id"] as? String else { return nil }
+            return id.lowercased()
+        })
+        for id in restoredIds {
+            listPreviewsByConversationId.removeValue(forKey: id)
+            listIconsByConversationId.removeValue(forKey: id)
+        }
+        persistListPreviews()
+        persistListIcons()
+        // Keep the gate up through the reload. Otherwise a new run could
+        // observe the new epoch while `currentConversation` still holds the
+        // pre-restore document and write that old snapshot back.
+        await bootstrap(allowNewConversationDuringImport: true)
         return documents.count
     }
 
@@ -299,16 +342,40 @@ final class IOSConversationStore {
 
     /// 新建空会话：生成新 Conversation（assistantId = DEFAULT_ASSISTANT_ID），落盘，设为 current。
     @discardableResult
-    func newConversation(commitIf: () -> Bool = { true }) async -> Bool {
+    func newConversation(
+        commitIf: () -> Bool = { true },
+        allowDuringImport: Bool = false,
+        expectedImportEpoch: UInt64? = nil
+    ) async -> Bool {
+        let operationImportEpoch = expectedImportEpoch ?? importEpoch
+        guard acceptsImportEpoch(operationImportEpoch, allowDuringImport: allowDuringImport) else {
+            return false
+        }
         let conversation = Conversation.companion.ofId(
             id: KotlinUuid.companion.random(),
             assistantId: AssistantKt.DEFAULT_ASSISTANT_ID,
             messages: [],
             newConversation: true
         )
-        let persisted = await persist(conversation) ?? conversation
+        let persisted = await persist(
+            conversation,
+            expectedImportEpoch: operationImportEpoch,
+            allowDuringImport: allowDuringImport
+        )
+        guard let persisted else {
+            // Preserve the established in-memory fallback for a genuine disk
+            // error, but never commit a document that was rejected by restore.
+            guard acceptsImportEpoch(operationImportEpoch, allowDuringImport: allowDuringImport) else {
+                return false
+            }
+            return await commitNewConversation(conversation, commitIf: commitIf)
+        }
+        return await commitNewConversation(persisted, commitIf: commitIf)
+    }
+
+    private func commitNewConversation(_ conversation: Conversation, commitIf: () -> Bool) async -> Bool {
         guard commitIf() else { return false }
-        setCurrentAsSwitch(persisted)
+        setCurrentAsSwitch(conversation)
         await refreshSummaries()
         return true
     }
@@ -317,6 +384,8 @@ final class IOSConversationStore {
     /// 底层 `newConversation()` 保持强制新建语义，供测试、删除回退等内部场景使用。
     @discardableResult
     func startNewConversationReusingEmpty(commitIf: () -> Bool = { true }) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard acceptsImportEpoch(operationImportEpoch) else { return false }
         if let currentConversation, Self.isReusableEmptyConversation(currentConversation) {
             return true
         }
@@ -327,18 +396,23 @@ final class IOSConversationStore {
         } else {
             sourceSummaries = summaries
         }
+        guard acceptsImportEpoch(operationImportEpoch) else { return false }
 
         if let mostRecent = sourceSummaries.first,
            currentConversation?.id != mostRecent.id,
            !isDeletedConversation(mostRecent.id),
            let conversation = try? await storage.loadConversation(id: mostRecent.id),
+           acceptsImportEpoch(operationImportEpoch),
            Self.isReusableEmptyConversation(conversation) {
             guard commitIf() else { return false }
             setCurrentAsSwitch(conversation)
             return true
         }
 
-        return await newConversation(commitIf: commitIf)
+        return await newConversation(
+            commitIf: commitIf,
+            expectedImportEpoch: operationImportEpoch
+        )
     }
 
     /// Read-only projection for App Entity queries. It deliberately avoids
@@ -358,8 +432,13 @@ final class IOSConversationStore {
     @discardableResult
     func selectConversationIfAvailable(
         id: KotlinUuid,
-        commitIf: () -> Bool = { true }
+        commitIf: () -> Bool = { true },
+        allowDuringImport: Bool = false
     ) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard acceptsImportEpoch(operationImportEpoch, allowDuringImport: allowDuringImport) else {
+            return false
+        }
         guard !isDeletedConversation(id) else { return false }
         let loaded: Conversation?
         do {
@@ -368,7 +447,10 @@ final class IOSConversationStore {
             publishIOError(operation: "加载会话", detail: "\(id): \(error)")
             loaded = nil
         }
-        guard !isDeletedConversation(id) else { return false }
+        guard !isDeletedConversation(id),
+              acceptsImportEpoch(operationImportEpoch, allowDuringImport: allowDuringImport) else {
+            return false
+        }
         if let loaded, commitIf() {
             setCurrentAsSwitch(loaded)
             return true
@@ -386,7 +468,15 @@ final class IOSConversationStore {
 
     func writeBaseline(for id: KotlinUuid) -> IOSConversationWriteBaseline {
         let key = sequenceKey(for: id)
-        return IOSConversationWriteBaseline(key: key, sequence: writeSequences[key, default: 0])
+        return IOSConversationWriteBaseline(
+            key: key,
+            sequence: writeSequences[key, default: 0],
+            importEpoch: importEpoch
+        )
+    }
+
+    func canApplyAuxiliaryResult(since baseline: IOSConversationWriteBaseline) -> Bool {
+        acceptsImportEpoch(baseline.importEpoch) && !deletedConversationIds.contains(baseline.key)
     }
 
     /// 把 [messages] 保存到指定会话 id。用于生成回调按 run 发起时的 conversation 归属落盘，
@@ -395,10 +485,16 @@ final class IOSConversationStore {
     func save(
         messages: [UIMessage],
         to id: KotlinUuid,
-        ifUnchangedSince baseline: IOSConversationWriteBaseline? = nil
+        ifUnchangedSince baseline: IOSConversationWriteBaseline? = nil,
+        expectedImportEpoch: UInt64? = nil
     ) async -> Bool {
+        let operationImportEpoch = expectedImportEpoch ?? importEpoch
         guard !isDeletedConversation(id) else { return false }
-        guard acceptsWrite(to: id, baseline: baseline) else { return false }
+        guard acceptsWrite(
+            to: id,
+            baseline: baseline,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
         let conversation: Conversation?
         if currentConversation?.id == id {
             conversation = currentConversation
@@ -411,7 +507,11 @@ final class IOSConversationStore {
             }
         }
         guard let conversation, !isDeletedConversation(id) else { return false }
-        guard acceptsWrite(to: id, baseline: baseline) else { return false }
+        guard acceptsWrite(
+            to: id,
+            baseline: baseline,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
 
         // updateCurrentMessages 已做 identity 短路：消息没变时返回同一引用，节省落盘。
         var updated = conversation.updateCurrentMessages(messages: messages)
@@ -430,12 +530,16 @@ final class IOSConversationStore {
             }
         }
 
-        guard let persisted = await persist(updated, ifUnchangedSince: baseline) else { return false }
+        guard let persisted = await persist(
+            updated,
+            ifUnchangedSince: baseline,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
         if currentConversation?.id == id {
             setCurrent(persisted)
         }
         await refreshSummaries()
-        return true
+        return acceptsImportEpoch(operationImportEpoch)
     }
 
     @discardableResult
@@ -444,8 +548,10 @@ final class IOSConversationStore {
         completedMessages: [UIMessage],
         to id: KotlinUuid
     ) async -> Bool {
+        let operationImportEpoch = importEpoch
         for _ in 0..<3 {
-            guard !isDeletedConversation(id) else { return false }
+            guard !isDeletedConversation(id),
+                  acceptsImportEpoch(operationImportEpoch) else { return false }
             let baseline = writeBaseline(for: id)
             let conversation: Conversation?
             if currentConversation?.id == id {
@@ -458,7 +564,9 @@ final class IOSConversationStore {
                     conversation = nil
                 }
             }
-            guard let conversation, !isDeletedConversation(id) else { return false }
+            guard let conversation,
+                  !isDeletedConversation(id),
+                  acceptsImportEpoch(operationImportEpoch) else { return false }
 
             let current = conversation.currentMessages
             let nextMessages: [UIMessage]
@@ -492,7 +600,15 @@ final class IOSConversationStore {
                     nextMessages = current + [notice] + freshSuffix
                 }
             }
-            guard await save(messages: nextMessages, to: id, ifUnchangedSince: baseline) else { continue }
+            guard await save(
+                messages: nextMessages,
+                to: id,
+                ifUnchangedSince: baseline,
+                expectedImportEpoch: operationImportEpoch
+            ) else {
+                guard acceptsImportEpoch(operationImportEpoch) else { return false }
+                continue
+            }
             pendingBackgroundContentConversationIds.insert(String(describing: id))
             backgroundContentRevision &+= 1
             return true
@@ -507,8 +623,10 @@ final class IOSConversationStore {
     @discardableResult
     func replaceBackgroundMessage(_ replacement: UIMessage, in id: KotlinUuid) async -> Bool {
         let replacementId = String(describing: replacement.id)
+        let operationImportEpoch = importEpoch
         for _ in 0..<3 {
-            guard !isDeletedConversation(id) else { return false }
+            guard !isDeletedConversation(id),
+                  acceptsImportEpoch(operationImportEpoch) else { return false }
             let baseline = writeBaseline(for: id)
             let conversation: Conversation?
             if currentConversation?.id == id {
@@ -521,7 +639,9 @@ final class IOSConversationStore {
                     conversation = nil
                 }
             }
-            guard let conversation, !isDeletedConversation(id) else { return false }
+            guard let conversation,
+                  !isDeletedConversation(id),
+                  acceptsImportEpoch(operationImportEpoch) else { return false }
             var messages = conversation.currentMessages
             guard let index = messages.firstIndex(where: {
                 String(describing: $0.id) == replacementId
@@ -529,7 +649,15 @@ final class IOSConversationStore {
                 return false
             }
             messages[index] = replacement
-            guard await save(messages: messages, to: id, ifUnchangedSince: baseline) else { continue }
+            guard await save(
+                messages: messages,
+                to: id,
+                ifUnchangedSince: baseline,
+                expectedImportEpoch: operationImportEpoch
+            ) else {
+                guard acceptsImportEpoch(operationImportEpoch) else { return false }
+                continue
+            }
             pendingBackgroundContentConversationIds.insert(String(describing: id))
             backgroundContentRevision &+= 1
             return true
@@ -544,8 +672,10 @@ final class IOSConversationStore {
         completedMessages: [UIMessage],
         to id: KotlinUuid
     ) async -> Bool {
+        let operationImportEpoch = importEpoch
         for _ in 0..<3 {
-            guard !isDeletedConversation(id) else { return false }
+            guard !isDeletedConversation(id),
+                  acceptsImportEpoch(operationImportEpoch) else { return false }
             let baseline = writeBaseline(for: id)
             let conversation: Conversation?
             if currentConversation?.id == id {
@@ -558,7 +688,9 @@ final class IOSConversationStore {
                     conversation = nil
                 }
             }
-            guard let conversation, !isDeletedConversation(id) else { return false }
+            guard let conversation,
+                  !isDeletedConversation(id),
+                  acceptsImportEpoch(operationImportEpoch) else { return false }
 
             let current = conversation.currentMessages
             let nextMessages: [UIMessage]
@@ -578,7 +710,15 @@ final class IOSConversationStore {
                     nextMessages = current + [notice] + toolMessages
                 }
             }
-            guard await save(messages: nextMessages, to: id, ifUnchangedSince: baseline) else { continue }
+            guard await save(
+                messages: nextMessages,
+                to: id,
+                ifUnchangedSince: baseline,
+                expectedImportEpoch: operationImportEpoch
+            ) else {
+                guard acceptsImportEpoch(operationImportEpoch) else { return false }
+                continue
+            }
             pendingBackgroundContentConversationIds.insert(String(describing: id))
             backgroundContentRevision &+= 1
             return true
@@ -594,24 +734,27 @@ final class IOSConversationStore {
     /// 并刷新索引。仅当目标是当前会话时才切换 current（fork 目标是新会话，不会）。
     @discardableResult
     func saveForkedConversation(_ conversation: Conversation) async -> Bool {
+        let operationImportEpoch = importEpoch
         guard !isDeletedConversation(conversation.id) else { return false }
-        do {
-            _ = try await storage.saveConversation(conversation: conversation)
-        } catch {
-            publishIOError(operation: "保存 fork 会话", detail: "目标 \(conversation.id): \(error)")
-            return false
-        }
+        guard let persisted = await persist(
+            conversation,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
         if currentConversation?.id == conversation.id {
-            setCurrent(conversation)
+            setCurrent(persisted)
         }
         await refreshSummaries()
-        return true
+        return acceptsImportEpoch(operationImportEpoch)
     }
 
     /// 按 id 读取完整 Conversation（P1-c fork 源读取；当前会话优先走内存）。
     func loadConversationForOrchestration(_ id: KotlinUuid) async throws -> Conversation? {
+        let operationImportEpoch = importEpoch
+        guard acceptsImportEpoch(operationImportEpoch) else { return nil }
         guard !isDeletedConversation(id) else { return nil }
-        return try await storage.loadConversation(id: id)
+        let conversation = try await storage.loadConversation(id: id)
+        guard acceptsImportEpoch(operationImportEpoch) else { return nil }
+        return conversation
     }
 
     // MARK: - P2-a 会话记忆污染（memoryMode）
@@ -620,6 +763,11 @@ final class IOSConversationStore {
     /// 并发消息写回滚）。失败记日志不抛——置位不得阻塞工具结果。
     @discardableResult
     func markConversationMemoryPolluted(_ id: KotlinUuid) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard beginConversationWrite(expectedImportEpoch: operationImportEpoch, allowDuringImport: false) else {
+            return false
+        }
+        defer { finishConversationWrite() }
         do {
             return try await storage.updateMemoryMode(id: id, memoryMode: .polluted).boolValue
         } catch {
@@ -631,6 +779,11 @@ final class IOSConversationStore {
     /// 用户手动复位：POLLUTED→ENABLED（KMP 层唯一允许的降级路径）。
     @discardableResult
     func resetConversationMemoryPollution(_ id: KotlinUuid) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard beginConversationWrite(expectedImportEpoch: operationImportEpoch, allowDuringImport: false) else {
+            return false
+        }
+        defer { finishConversationWrite() }
         do {
             let updated = try await storage.updateMemoryMode(id: id, memoryMode: .enabled).boolValue
             if updated {
@@ -682,6 +835,11 @@ final class IOSConversationStore {
         id: KotlinUuid,
         onDeletionCommitted: () -> Void = {}
     ) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard beginConversationWrite(expectedImportEpoch: operationImportEpoch, allowDuringImport: false) else {
+            return false
+        }
+        defer { finishConversationWrite() }
         markDeletedConversation(id)
         do {
 #if DEBUG
@@ -749,6 +907,11 @@ final class IOSConversationStore {
         title: String,
         expectedCurrentTitle: String?
     ) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard beginConversationWrite(expectedImportEpoch: operationImportEpoch, allowDuringImport: false) else {
+            return false
+        }
+        defer { finishConversationWrite() }
         do {
             if let expectedCurrentTitle {
                 let didUpdate = try await storage.updateTitleIfCurrentTitleMatches(
@@ -774,6 +937,11 @@ final class IOSConversationStore {
 
     /// 置顶/取消置顶切换。
     func togglePin(id: KotlinUuid) async {
+        let operationImportEpoch = importEpoch
+        guard beginConversationWrite(expectedImportEpoch: operationImportEpoch, allowDuringImport: false) else {
+            return
+        }
+        defer { finishConversationWrite() }
         let currentPinned = summaries.first(where: { $0.id == id })?.isPinned ?? false
         let newPinned = KotlinBoolean(value: !currentPinned)
         do {
@@ -859,6 +1027,7 @@ final class IOSConversationStore {
 
         var results: [IOSConversationSearchResult] = []
         for summary in sourceSummaries {
+            guard !Task.isCancelled else { return [] }
             let title = summary.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "新对话" : summary.title
             let updateAt = summary.updateAt.toEpochMilliseconds()
 
@@ -876,8 +1045,10 @@ final class IOSConversationStore {
             }
 
             guard let conversation = try? await storage.loadConversation(id: summary.id) else { continue }
+            guard !Task.isCancelled else { return [] }
             let messages = Self.searchableMessages(in: conversation)
             for (messageIndex, message) in messages.enumerated() {
+                guard !Task.isCancelled else { return [] }
                 let text = message.toText().trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty, text.localizedCaseInsensitiveContains(query) else { continue }
                 results.append(IOSConversationSearchResult(
@@ -893,7 +1064,7 @@ final class IOSConversationStore {
             }
             if results.count >= limit { break }
         }
-        return results
+        return Task.isCancelled ? [] : results
     }
 
     /// session_search 工具用：把 [searchConversations] 的逐条命中聚合为每会话一条。
@@ -1148,17 +1319,48 @@ final class IOSConversationStore {
         return VariantInfo(variantCount: node.messages.count, selectedIndex: Int(node.selectIndex))
     }
 
+    /// Loads the conversation that a branch action was started for. The caller
+    /// may switch conversations while file I/O is suspended, so branch actions
+    /// must never re-read the mutable current selection after their first await.
+    private func conversationForMessageMutation(
+        id: KotlinUuid,
+        operation: String
+    ) async -> Conversation? {
+        guard !isDeletedConversation(id) else { return nil }
+        if currentConversation?.id == id {
+            return currentConversation
+        }
+        do {
+            return try await storage.loadConversation(id: id)
+        } catch {
+            publishIOError(operation: operation, detail: "\(id): \(error)")
+            return nil
+        }
+    }
+
     /// Switch the selected variant of a node (cheap, no generation). Mirrors
     /// `ChatService.selectMessageNode`.
-    func selectVariant(messageIndex: Int, variantIndex: Int) async {
-        guard let conversation = currentConversation,
+    @discardableResult
+    func selectVariant(
+        messageIndex: Int,
+        variantIndex: Int,
+        conversationId: KotlinUuid? = nil
+    ) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard let targetConversationId = conversationId ?? currentConversation?.id,
+              acceptsImportEpoch(operationImportEpoch),
+              let conversation = await conversationForMessageMutation(
+                  id: targetConversationId,
+                  operation: "切换消息分支"
+              ),
+              acceptsImportEpoch(operationImportEpoch),
               messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return
+            return false
         }
         var nodes = conversation.messageNodes
         let node = nodes[messageIndex]
         guard variantIndex >= 0, variantIndex < node.messages.count, variantIndex != node.selectIndex else {
-            return
+            return false
         }
         nodes[messageIndex] = MessageNode(
             id: node.id,
@@ -1167,8 +1369,14 @@ final class IOSConversationStore {
             isFavorite: node.isFavorite
         )
         let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(updated) else { return }
-        setCurrent(persisted)
+        guard let persisted = await persist(
+            updated,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
+        if currentConversation?.id == targetConversationId {
+            setCurrent(persisted)
+        }
+        return true
     }
 
     /// Append a new variant to a node and select it. This is the shared
@@ -1177,8 +1385,19 @@ final class IOSConversationStore {
     /// Returns the node index so the caller (e.g. ChatViewModel) can target
     /// generation at it.
     @discardableResult
-    func appendVariant(messageIndex: Int, message: UIMessage) async -> Int? {
-        guard let conversation = currentConversation,
+    func appendVariant(
+        messageIndex: Int,
+        message: UIMessage,
+        conversationId: KotlinUuid? = nil
+    ) async -> Int? {
+        let operationImportEpoch = importEpoch
+        guard let targetConversationId = conversationId ?? currentConversation?.id,
+              acceptsImportEpoch(operationImportEpoch),
+              let conversation = await conversationForMessageMutation(
+                  id: targetConversationId,
+                  operation: "保存消息分支"
+              ),
+              acceptsImportEpoch(operationImportEpoch),
               messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
             return nil
         }
@@ -1195,8 +1414,13 @@ final class IOSConversationStore {
             isFavorite: node.isFavorite
         )
         let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(updated) else { return nil }
-        setCurrent(persisted)
+        guard let persisted = await persist(
+            updated,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return nil }
+        if currentConversation?.id == targetConversationId {
+            setCurrent(persisted)
+        }
         return messageIndex
     }
 
@@ -1209,18 +1433,12 @@ final class IOSConversationStore {
         trailingMessages: [UIMessage] = [],
         conversationId: KotlinUuid
     ) async -> Bool {
-        let conversation: Conversation?
-        if currentConversation?.id == conversationId {
-            conversation = currentConversation
-        } else {
-            do {
-                conversation = try await storage.loadConversation(id: conversationId)
-            } catch {
-                publishIOError(operation: "保存重新生成分支", detail: "\(conversationId): \(error)")
-                conversation = nil
-            }
-        }
-        guard let conversation,
+        let operationImportEpoch = importEpoch
+        guard let conversation = await conversationForMessageMutation(
+            id: conversationId,
+            operation: "保存重新生成分支"
+        ),
+              acceptsImportEpoch(operationImportEpoch),
               messageIndex >= 0,
               messageIndex < conversation.messageNodes.count else {
             return false
@@ -1244,20 +1462,34 @@ final class IOSConversationStore {
             )
         })
         let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(updated) else { return false }
+        guard let persisted = await persist(
+            updated,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
         if currentConversation?.id == conversationId {
             setCurrent(persisted)
         }
         await refreshSummaries()
-        return true
+        return acceptsImportEpoch(operationImportEpoch)
     }
 
     /// Remove a message from its node. If the node becomes empty it is removed
     /// (and selectIndex clamped). Mirrors `ChatService.deleteMessage`.
-    func deleteMessage(messageIndex: Int) async {
-        guard let conversation = currentConversation,
+    @discardableResult
+    func deleteMessage(
+        messageIndex: Int,
+        conversationId: KotlinUuid? = nil
+    ) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard let targetConversationId = conversationId ?? currentConversation?.id,
+              acceptsImportEpoch(operationImportEpoch),
+              let conversation = await conversationForMessageMutation(
+                  id: targetConversationId,
+                  operation: "删除消息"
+              ),
+              acceptsImportEpoch(operationImportEpoch),
               messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return
+            return false
         }
         var nodes = conversation.messageNodes
         // A node only ever holds the currently-selected variant for deletion
@@ -1266,25 +1498,48 @@ final class IOSConversationStore {
         // `node.messages.remove(at:)` + clamp logic would go.
         nodes.remove(at: messageIndex)
         let updated = conversationWithNodes(conversation, nodes: nodes)
-        guard let persisted = await persist(updated) else { return }
-        setCurrent(persisted)
+        guard let persisted = await persist(
+            updated,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
+        if currentConversation?.id == targetConversationId {
+            setCurrent(persisted)
+        }
         await refreshSummaries()
+        return acceptsImportEpoch(operationImportEpoch)
     }
 
     /// Truncate the conversation to end at (and include) the given node index.
     /// Used by regenerate-from-USER-message: Android drops everything after the
     /// user turn, then re-runs generation. Mirrors `ChatService.regenerateAtMessage`
     /// (role == USER branch).
-    func truncateAfter(messageIndex: Int) async {
-        guard let conversation = currentConversation,
+    @discardableResult
+    func truncateAfter(
+        messageIndex: Int,
+        conversationId: KotlinUuid? = nil
+    ) async -> Bool {
+        let operationImportEpoch = importEpoch
+        guard let targetConversationId = conversationId ?? currentConversation?.id,
+              acceptsImportEpoch(operationImportEpoch),
+              let conversation = await conversationForMessageMutation(
+                  id: targetConversationId,
+                  operation: "截断消息分支"
+              ),
+              acceptsImportEpoch(operationImportEpoch),
               messageIndex >= 0, messageIndex < conversation.messageNodes.count else {
-            return
+            return false
         }
         let kept = Array(conversation.messageNodes.prefix(messageIndex + 1))
-        guard kept.count != conversation.messageNodes.count else { return }
+        guard kept.count != conversation.messageNodes.count else { return false }
         let updated = conversationWithNodes(conversation, nodes: kept)
-        guard let persisted = await persist(updated) else { return }
-        setCurrent(persisted)
+        guard let persisted = await persist(
+            updated,
+            expectedImportEpoch: operationImportEpoch
+        ) else { return false }
+        if currentConversation?.id == targetConversationId {
+            setCurrent(persisted)
+        }
+        return true
     }
 
     /// Rebuild a Conversation with a different `messageNodes` list (full-field
@@ -1308,18 +1563,36 @@ final class IOSConversationStore {
     @discardableResult
     private func persist(
         _ conversation: Conversation,
-        ifUnchangedSince baseline: IOSConversationWriteBaseline? = nil
+        ifUnchangedSince baseline: IOSConversationWriteBaseline? = nil,
+        expectedImportEpoch: UInt64,
+        allowDuringImport: Bool = false
     ) async -> Conversation? {
+        guard beginConversationWrite(
+            expectedImportEpoch: expectedImportEpoch,
+            allowDuringImport: allowDuringImport
+        ) else { return nil }
+        defer { finishConversationWrite() }
+
         do {
             guard !isDeletedConversation(conversation.id) else { return nil }
-            guard acceptsWrite(to: conversation.id, baseline: baseline) else { return nil }
+            guard acceptsWrite(
+                to: conversation.id,
+                baseline: baseline,
+                expectedImportEpoch: expectedImportEpoch,
+                allowDuringImport: allowDuringImport
+            ) else { return nil }
 #if DEBUG
             if let beforePersistForTesting {
                 await beforePersistForTesting(conversation)
             }
 #endif
             guard !isDeletedConversation(conversation.id) else { return nil }
-            guard acceptsWrite(to: conversation.id, baseline: baseline) else { return nil }
+            guard acceptsWrite(
+                to: conversation.id,
+                baseline: baseline,
+                expectedImportEpoch: expectedImportEpoch,
+                allowDuringImport: allowDuringImport
+            ) else { return nil }
             let sequenceBeforeSave = writeSequences[sequenceKey(for: conversation.id), default: 0]
             let persisted = try await storage.saveConversation(conversation: conversation)
             let changedDuringSave = writeSequences[sequenceKey(for: conversation.id), default: 0] != sequenceBeforeSave
@@ -1338,15 +1611,68 @@ final class IOSConversationStore {
         }
     }
 
-    private func acceptsWrite(to id: KotlinUuid, baseline: IOSConversationWriteBaseline?) -> Bool {
+    private func acceptsWrite(
+        to id: KotlinUuid,
+        baseline: IOSConversationWriteBaseline?,
+        expectedImportEpoch: UInt64,
+        allowDuringImport: Bool = false
+    ) -> Bool {
+        guard acceptsImportEpoch(expectedImportEpoch, allowDuringImport: allowDuringImport) else {
+            return false
+        }
         guard let baseline else { return true }
         let key = sequenceKey(for: id)
         guard key == baseline.key else { return false }
+        guard baseline.importEpoch == importEpoch else {
+            print("[AA-STORE] skip pre-import snapshot write id=\(key) baselineEpoch=\(baseline.importEpoch) currentEpoch=\(importEpoch)")
+            return false
+        }
         guard writeSequences[key, default: 0] == baseline.sequence else {
             print("[AA-STORE] skip stale snapshot write id=\(key) baseline=\(baseline.sequence) current=\(writeSequences[key, default: 0])")
             return false
         }
         return true
+    }
+
+    private func acceptsImportEpoch(
+        _ expectedImportEpoch: UInt64,
+        allowDuringImport: Bool = false
+    ) -> Bool {
+        guard expectedImportEpoch == importEpoch else {
+            print("[AA-STORE] skip pre-import operation expectedEpoch=\(expectedImportEpoch) currentEpoch=\(importEpoch)")
+            return false
+        }
+        guard allowDuringImport || !isImportingConversationDocuments else {
+            print("[AA-STORE] skip conversation write while restore is applying")
+            return false
+        }
+        return true
+    }
+
+    private func beginConversationWrite(
+        expectedImportEpoch: UInt64,
+        allowDuringImport: Bool
+    ) -> Bool {
+        guard acceptsImportEpoch(expectedImportEpoch, allowDuringImport: allowDuringImport) else {
+            return false
+        }
+        inFlightConversationWrites &+= 1
+        return true
+    }
+
+    private func finishConversationWrite() {
+        inFlightConversationWrites = max(0, inFlightConversationWrites - 1)
+        guard inFlightConversationWrites == 0 else { return }
+        let continuations = conversationWriteDrainContinuations
+        conversationWriteDrainContinuations.removeAll()
+        continuations.forEach { $0.resume() }
+    }
+
+    private func waitForConversationWritesToDrain() async {
+        guard inFlightConversationWrites > 0 else { return }
+        await withCheckedContinuation { continuation in
+            conversationWriteDrainContinuations.append(continuation)
+        }
     }
 
     private func advanceWriteSequence(for id: KotlinUuid) {

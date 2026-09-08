@@ -24,7 +24,7 @@ enum IOSCodexOAuthConstants {
     static let deviceVerificationUrl = issuer + "/codex/device"
     static let chatGptBackendBaseUrl = "https://chatgpt.com/backend-api"
     static let codexBackendBaseUrl = "https://chatgpt.com/backend-api/codex"
-    static let clientVersion = "0.128.0"
+    static let clientVersion = "0.153.4"
     static let originator = "amberagent_android"
     /// Synthetic model id for the codex image model (matches Android
     /// `CODEX_OAUTH_IMAGE_MODEL_ID`); generation runs via the Responses
@@ -275,6 +275,11 @@ actor IOSCodexOAuthClient {
     /// Bundled fallback codex chat models, used when the live `/models` fetch
     /// fails so the user always has something to pick.
     static let fallbackModels: [(modelId: String, displayName: String)] = [
+        (modelId: "gpt-6-astra", displayName: "GPT-6-Astra"),
+        (modelId: "gpt-5.6-sol", displayName: "GPT-5.6-Sol"),
+        (modelId: "gpt-5.6-terra", displayName: "GPT-5.6-Terra"),
+        (modelId: "gpt-5.6-luna", displayName: "GPT-5.6-Luna"),
+        (modelId: "gpt-5.5", displayName: "gpt-5.5"),
         (modelId: "gpt-5.4", displayName: "gpt-5.4"),
         (modelId: "gpt-5.3-codex", displayName: "gpt-5.3-codex"),
         (modelId: "gpt-5.3-codex-spark", displayName: "gpt-5.3-codex-spark"),
@@ -302,12 +307,12 @@ actor IOSCodexOAuthClient {
         guard attempt.status.isHTTPSuccess else {
             throw IOSCodexOAuthError(message: "Codex 模型请求失败：HTTP \(attempt.status)")
         }
-        let ids = Self.parseModelIds(attempt.data)
-            .filter { !$0.localizedCaseInsensitiveContains("review") }
-        guard !ids.isEmpty else {
+        let models = Self.parseModels(attempt.data)
+            .filter { !$0.modelId.localizedCaseInsensitiveContains("review") }
+        guard !models.isEmpty else {
             throw IOSCodexOAuthError(message: "Codex 模型响应为空或格式无效。")
         }
-        return ids.map { (modelId: $0, displayName: $0) }
+        return models
     }
 
     private func modelsRequest(bearer: String) async throws -> (data: Data, status: Int) {
@@ -326,7 +331,7 @@ actor IOSCodexOAuthClient {
         return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
-    private static func parseModelIds(_ data: Data) -> [String] {
+    static func parseModels(_ data: Data) -> [(modelId: String, displayName: String)] {
         guard let root = try? JSONSerialization.jsonObject(with: data) else { return [] }
         let array: [Any]
         if let obj = root as? [String: Any] {
@@ -342,8 +347,14 @@ actor IOSCodexOAuthClient {
         } else {
             return []
         }
-        return array.compactMap { ($0 as? [String: Any])?["id"] as? String }
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return array.compactMap { item in
+            guard let model = item as? [String: Any],
+                  let rawId = (model["slug"] ?? model["id"]) as? String else { return nil }
+            let id = rawId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else { return nil }
+            let name = (model["display_name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (modelId: id, displayName: name.flatMap { $0.isEmpty ? nil : $0 } ?? id)
+        }
     }
 
     // MARK: - HTTP helper

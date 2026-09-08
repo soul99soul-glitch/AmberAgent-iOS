@@ -1227,6 +1227,30 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         )
     }
 
+    func testSearchResearcherStopsAfterCancellationInsteadOfContinuingQueries() async throws {
+        let secondRequestStarted = expectation(description: "second search request started")
+        let transport = CancellingCouncilSearchTransport(secondRequestStarted: secondRequestStarted)
+        let researcher = IOSCouncilSearchResearcher(transport: transport)
+        let researchTask = Task { @MainActor in
+            await researcher.research(
+                objective: "取消时停止后续搜索",
+                settings: nil,
+                maxSearches: 4,
+                maxScrapes: 0
+            )
+        }
+
+        await fulfillment(of: [secondRequestStarted], timeout: 1)
+        researchTask.cancel()
+        _ = await researchTask.value
+
+        XCTAssertEqual(
+            transport.requestCount,
+            2,
+            "Cancellation must stop the serial search loop after the in-flight request."
+        )
+    }
+
     func testDynamicSeatsProbeAssignedModelsAndReplaceUnreachableOnes() async throws {
         let defaults = isolatedDefaults()
         let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
@@ -1927,6 +1951,28 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
             "The cancelled run's late terminal event must not enter the replacement room."
         )
         XCTAssertEqual(viewModel.messages.last(where: { $0.kind == .host })?.body, "主持总结")
+    }
+
+    func testViewModelCancelArchivesFailedSeatStatus() async throws {
+        let hostStarted = expectation(description: "final host stream started")
+        let harness = try makeViewModelHarness(
+            streamer: FailedSeatThenBlockingCouncilStreamer(hostStarted: hostStarted)
+        )
+
+        harness.viewModel.inputText = "停止后保留失败席位"
+        harness.viewModel.send()
+        await fulfillment(of: [hostStarted], timeout: 1)
+        let taskID = try XCTUnwrap(
+            harness.taskStore.recent(kind: .modelCouncil, limit: 1).first?.id
+        )
+
+        harness.viewModel.cancelDiscussion()
+
+        let archive = try XCTUnwrap(harness.archiveStore.load(taskId: taskID))
+        XCTAssertTrue(
+            archive.failedSpeakerIds.contains("risk"),
+            "Cancelling a run must preserve failed seat evidence in the archive."
+        )
     }
 
     func testDetachedCouncilRuntimeFinishesWithoutCancellingTheOwner() async throws {
@@ -2930,6 +2976,31 @@ private final class CouncilTestAPIKeyStore: SettingsAPIKeyStore {
 }
 
 @MainActor
+private final class CancellingCouncilSearchTransport: IOSSearchHTTPTransport {
+    private let secondRequestStarted: XCTestExpectation
+    private(set) var requestCount = 0
+
+    init(secondRequestStarted: XCTestExpectation) {
+        self.secondRequestStarted = secondRequestStarted
+    }
+
+    func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        requestCount += 1
+        if requestCount == 2 {
+            secondRequestStarted.fulfill()
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+        }
+        let response = HTTPURLResponse(
+            url: request.url ?? URL(string: "https://example.com")!,
+            statusCode: 500,
+            httpVersion: "HTTP/1.1",
+            headerFields: nil
+        )!
+        return (response, Data())
+    }
+}
+
+@MainActor
 private final class ProgressingFinalCouncilStreamer: IOSCouncilTextStreaming {
     private var immediateOutputs = ["最终议题", "工程发言", "风险发言"]
 
@@ -2995,6 +3066,49 @@ private final class DelayedPartialCouncilStreamer: IOSCouncilTextStreaming {
     }
 
     func cancel() {}
+}
+
+@MainActor
+private final class FailedSeatThenBlockingCouncilStreamer: IOSCouncilTextStreaming {
+    private let hostStarted: XCTestExpectation
+    private var callCount = 0
+    private var continuation: CheckedContinuation<String, Error>?
+
+    init(hostStarted: XCTestExpectation) {
+        self.hostStarted = hostStarted
+    }
+
+    func streamText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams,
+        onUpdate: @escaping @MainActor (String, CGFloat) -> Void
+    ) async throws -> String {
+        callCount += 1
+        switch callCount {
+        case 1:
+            onUpdate("最终议题", 1)
+            return "最终议题"
+        case 2:
+            onUpdate("工程发言", 1)
+            return "工程发言"
+        case 3:
+            throw CouncilTestError.scriptedFailure
+        case 4:
+            hostStarted.fulfill()
+            return try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+            }
+        default:
+            throw CouncilTestError.unexpectedCall
+        }
+    }
+
+    func cancel() {
+        let continuation = continuation
+        self.continuation = nil
+        continuation?.resume(throwing: CancellationError())
+    }
 }
 
 @MainActor

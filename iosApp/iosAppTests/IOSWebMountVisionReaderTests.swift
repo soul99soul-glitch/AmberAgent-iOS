@@ -20,7 +20,7 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
         let userParts = messages[1].parts
         XCTAssertTrue(userParts.contains { ($0 as? UIMessagePart.Text)?.text == "截图里是否显示登录按钮？" })
         let image = try XCTUnwrap(userParts.compactMap { $0 as? UIMessagePart.Image }.first)
-        XCTAssertEqual(image.url, "data:image/png;base64,AAEC")
+        XCTAssertEqual(image.url, "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
         XCTAssertEqual(provider.params?.tools.count, 0)
     }
 
@@ -95,6 +95,64 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
             XCTFail("Expected no visual model error")
         } catch let error as IOSWebMountVisionReader.Error {
             XCTAssertEqual(error, .noVisionModel)
+        }
+    }
+
+    func testReadRejectsExplicitTextOnlyOCRModel() async throws {
+        let provider = RecordingProvider(result: "must not be called")
+        let reader = IOSWebMountVisionReader(textProvider: provider)
+
+        do {
+            _ = try await reader.read(
+                capture: capture(),
+                question: "看一下页面",
+                settings: makeSettings(modelId: "text-only-model", configureOCR: true)
+            )
+            XCTFail("Expected explicit text-only OCR model to be rejected")
+        } catch let error as IOSWebMountVisionReader.Error {
+            XCTAssertEqual(error, .noVisionModel)
+            XCTAssertNil(provider.params)
+        }
+    }
+
+    func testReadAllowsExplicitlySelectedOCRModelWhenCapabilityMetadataIsUnknown() async throws {
+        let provider = RecordingProvider(result: "使用用户选择的模型完成读取。")
+        let reader = IOSWebMountVisionReader(textProvider: provider)
+
+        _ = try await reader.read(
+            capture: capture(),
+            question: "检查页面",
+            settings: makeSettingsWithNativeVisionAndConfiguredOCR(
+                nativeModelId: "text-native",
+                nativeSupportsImageInput: false,
+                ocrModelId: "custom-vision-unknown",
+                ocrInputModalities: []
+            )
+        )
+
+        XCTAssertEqual(provider.params?.model.modelId, "custom-vision-unknown")
+    }
+
+    func testReadRejectsNonPNGOrMismatchedPNGCapture() async throws {
+        let reader = IOSWebMountVisionReader(textProvider: RecordingProvider(result: "must not be called"))
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
+        let cases = [
+            IOSWebMountScreenshotCapture(data: png, width: 1, height: 1, format: "jpeg"),
+            IOSWebMountScreenshotCapture(data: Data([0, 1, 2]), width: 1, height: 1, format: "png"),
+            IOSWebMountScreenshotCapture(data: png, width: 2, height: 1, format: "png")
+        ]
+
+        for capture in cases {
+            do {
+                _ = try await reader.read(
+                    capture: capture,
+                    question: "检查页面",
+                    settings: makeSettings(modelId: "gpt-4o", configureOCR: true, supportsImageInput: true)
+                )
+                XCTFail("Expected invalid PNG capture to be rejected")
+            } catch let error as IOSWebMountVisionReader.Error {
+                XCTAssertEqual(error, .screenshotUnavailable)
+            }
         }
     }
 
@@ -184,7 +242,12 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
     }
 
     private func capture() -> IOSWebMountScreenshotCapture {
-        IOSWebMountScreenshotCapture(data: Data([0, 1, 2]), width: 2, height: 2, format: "png")
+        IOSWebMountScreenshotCapture(
+            data: Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!,
+            width: 1,
+            height: 1,
+            format: "png"
+        )
     }
 
     private func makeSettings(
@@ -214,7 +277,9 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
     private func makeSettingsWithNativeVisionAndConfiguredOCR(
         nativeModelId: String = "gpt-4o",
         nativeAPIKey: String = "sk-native",
-        nativeSupportsImageInput: Bool = true
+        nativeSupportsImageInput: Bool = true,
+        ocrModelId: String = "text-ocr",
+        ocrInputModalities: [Modality] = [Modality.text, Modality.image]
     ) -> Settings {
         let suite = "WebMountVision-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -233,8 +298,9 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
             apiKey: "sk-ocr",
             baseUrl: "https://ocr.example/v1",
             modelName: "OCR Model",
-            modelId: "text-ocr",
-            supportsImageInput: true
+            modelId: ocrModelId,
+            supportsImageInput: true,
+            inputModalities: ocrInputModalities
         )
         let native = store.addProvider(nativeProvider).models[0]
         let ocr = store.addProvider(ocrProvider).models[0]
@@ -249,7 +315,8 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
         baseUrl: String,
         modelName: String,
         modelId: String,
-        supportsImageInput: Bool
+        supportsImageInput: Bool,
+        inputModalities: [Modality]? = nil
     ) -> ProviderSetting.OpenAI {
         let model = Model(
             modelId: modelId,
@@ -258,7 +325,7 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
             type: ModelType.chat,
             customHeaders: [],
             customBodies: [],
-            inputModalities: supportsImageInput ? [Modality.text, Modality.image] : [Modality.text],
+            inputModalities: inputModalities ?? (supportsImageInput ? [Modality.text, Modality.image] : [Modality.text]),
             outputModalities: [Modality.text],
             abilities: [],
             tools: Set<BuiltInTools>(),

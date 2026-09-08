@@ -244,6 +244,9 @@ final class ChatContextSnapshotTests: XCTestCase {
             ChatContextSnapshot.resolvedContextWindowTokens(modelWindow: 32_000, modelId: "claude-sonnet-4-5"),
             32_000
         )
+        for modelId in ["gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            XCTAssertEqual(ChatContextSnapshot.resolvedContextWindowTokens(modelWindow: nil, modelId: modelId), 272_000)
+        }
         XCTAssertNil(
             ChatContextSnapshot.resolvedContextWindowTokens(modelWindow: nil, modelId: "totally-unknown-model-xyz")
         )

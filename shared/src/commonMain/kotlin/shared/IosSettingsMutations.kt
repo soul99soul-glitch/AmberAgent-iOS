@@ -5,6 +5,7 @@ import app.amber.ai.core.ReasoningLevel
 import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
+import app.amber.ai.provider.Modality
 import app.amber.ai.provider.ModelType
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.OpenAIAuthMode
@@ -16,6 +17,7 @@ import app.amber.ai.provider.fixedBaseUrl
 import app.amber.ai.provider.coerceToReasoningOptions
 import app.amber.ai.provider.defaultReasoningLevel
 import app.amber.ai.provider.reasoningOptions
+import app.amber.ai.registry.ModelRegistry
 import app.amber.core.model.reasoningLevelForModel
 import app.amber.core.model.withChatModelReasoningMemory
 import app.amber.core.model.withReasoningLevelForModel
@@ -479,6 +481,8 @@ object IosSettingsMutations {
                 displayName = displayName,
                 id = kotlin.uuid.Uuid.random(),
                 type = ModelType.CHAT,
+                inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(modelId),
+                abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
             )
         }
         val providers = settings.providers.map { provider ->
@@ -594,6 +598,8 @@ object IosSettingsMutations {
                             displayName = displayName.ifBlank { modelId },
                             id = kotlin.uuid.Uuid.random(),
                             type = ModelType.CHAT,
+                            inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(modelId),
+                            abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
                         )
                     }
                 provider.copyProvider(models = updatedExisting + appended)
@@ -641,6 +647,7 @@ object IosSettingsMutations {
         displayName: String,
         contextWindowTokens: Int?,
         modelType: ModelType,
+        inputModalities: List<Modality> = listOf(Modality.TEXT),
         headerPairs: List<Pair<String, String>>,
     ): Settings {
         val parsedProvider = runCatching { kotlin.uuid.Uuid.parse(providerId) }.getOrNull() ?: return settings
@@ -659,11 +666,20 @@ object IosSettingsMutations {
                         (parsedModel != null && model.id == parsedModel) ||
                             (parsedModel == null && model.modelId == modelId && model.type == modelType)
                     }
+                    val inferredAbilities = ModelRegistry.MODEL_ABILITIES.getData(modelId)
+                    val abilities = when {
+                        existing == null -> inferredAbilities
+                        existing.modelId != modelId -> inferredAbilities
+                        existing.abilities.isEmpty() -> inferredAbilities
+                        else -> existing.abilities
+                    }
                     val updated = if (existing != null) {
                         existing.copy(
                             modelId = modelId,
                             displayName = displayName.ifBlank { modelId },
                             type = modelType,
+                            inputModalities = inputModalities,
+                            abilities = abilities,
                             contextWindowTokens = contextWindowTokens,
                             customHeaders = headers,
                         )
@@ -673,6 +689,8 @@ object IosSettingsMutations {
                             displayName = displayName.ifBlank { modelId },
                             id = kotlin.uuid.Uuid.random(),
                             type = modelType,
+                            inputModalities = inputModalities,
+                            abilities = abilities,
                             customHeaders = headers,
                             contextWindowTokens = contextWindowTokens,
                         )

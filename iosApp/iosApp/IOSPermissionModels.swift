@@ -1469,7 +1469,7 @@ struct IOSCapabilityRegistry {
         ),
         capability(
             id: "ios.webmount.browser",
-            title: "WebMount 浏览器",
+            title: "站点浏览器",
             summary: "Use a local WKWebView session for allowlisted stations. High-risk auto-approve can open unlisted public websites; cookie values, tokens, Authorization headers, arbitrary JavaScript, OAuth, and signed fetch are not exposed.",
             domain: .networkAndConnectivity,
             status: .supported,

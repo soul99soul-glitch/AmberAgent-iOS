@@ -45,6 +45,7 @@ enum ConversationListPreviewGenerator {
         let key = String(describing: conversationId)
         let token = UUID()
         requestTokens[key] = token
+        let baseline = store.writeBaseline(for: conversationId)
 
         let locale = Locale.current.localizedString(forIdentifier: Locale.current.identifier)
             ?? Locale.current.identifier
@@ -80,7 +81,8 @@ enum ConversationListPreviewGenerator {
             let preview = sanitize(raw)
             guard !preview.isEmpty else { return }
             await MainActor.run {
-                guard requestTokens[key] == token else { return }
+                guard requestTokens[key] == token,
+                      store.canApplyAuxiliaryResult(since: baseline) else { return }
                 store.setListPreview(id: conversationId, preview: preview)
             }
         }

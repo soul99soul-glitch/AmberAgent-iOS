@@ -225,6 +225,23 @@ final class IOSSessionReadToolTests: XCTestCase {
 
     // MARK: - session_search
 
+    func testCancelledConversationSearchDoesNotReturnStaleMatches() async throws {
+        let base = makeTempDirectory("CancelledConversationSearch")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        _ = try await seedTwoConversations(in: store)
+
+        let search = Task { @MainActor in
+            await store.searchConversations(query: "红酒")
+        }
+        search.cancel()
+        let results = await search.value
+
+        XCTAssertTrue(results.isEmpty)
+        let freshResults = await store.searchConversations(query: "红酒")
+        XCTAssertFalse(freshResults.isEmpty)
+    }
+
     func testSessionSearchReturnsMatchingConversationWithSnippetAndCount() async throws {
         let base = makeTempDirectory("SessionSearch")
         defer { try? FileManager.default.removeItem(at: base) }

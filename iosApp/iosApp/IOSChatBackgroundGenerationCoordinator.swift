@@ -811,6 +811,12 @@ final class IOSChatBackgroundGenerationCoordinator {
         activeJobs.count
     }
 
+    /// A released runtime owner can still have a durable result waiting to be
+    /// reconciled. Backup restore must wait for that write as well as live jobs.
+    var hasPendingConversationWrites: Bool {
+        !activeJobs.isEmpty || !activeDetachedResponseTasks.isEmpty || !taskMap().isEmpty
+    }
+
     func activeRunId(conversationId: KotlinUuid) -> String? {
         jobs(conversationId: conversationId).values.max { lhs, rhs in
             if lhs.startedAt == rhs.startedAt {

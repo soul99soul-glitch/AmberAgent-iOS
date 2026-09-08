@@ -1819,6 +1819,9 @@ final class IOSHotListDashboardStore {
     static let shared = IOSHotListDashboardStore()
 
     private(set) var dashboard: IOSHotListDashboard
+    /// Unfiltered provider data used as the cache source. The dashboard above
+    /// is the current presentation projection and may remove rows for focus_only.
+    private var rawDashboard: IOSHotListDashboard
     private(set) var isRefreshing = false
     private(set) var lastError: String?
 
@@ -1835,7 +1838,9 @@ final class IOSHotListDashboardStore {
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         directory = root.appendingPathComponent("deep_read", isDirectory: true)
         fileURL = directory.appendingPathComponent("hotlist_dashboard.json", isDirectory: false)
-        dashboard = Self.load(from: fileURL, decoder: decoder, fileManager: fileManager) ?? .empty
+        let cachedDashboard = Self.load(from: fileURL, decoder: decoder, fileManager: fileManager) ?? .empty
+        rawDashboard = cachedDashboard
+        dashboard = cachedDashboard
     }
 
     func refresh(
@@ -1845,9 +1850,12 @@ final class IOSHotListDashboardStore {
         translate: IOSHotListTitleTranslate? = nil
     ) async {
         guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         let enabledIds = IOSHotlistProviders.effectiveEnabledProviderIds(setting: setting)
         guard !enabledIds.isEmpty else {
-            dashboard = IOSHotListDashboard(topics: [], providers: [], lastUpdatedAt: 0, enabledSourceCount: 0)
+            rawDashboard = .empty
+            dashboard = rawDashboard
             lastError = nil
             persist()
             return
@@ -1855,30 +1863,27 @@ final class IOSHotListDashboardStore {
         if !force, !shouldRefresh(setting: setting) {
             // Fresh enough to skip a re-fetch, but still fill in any untranslated titles
             // (the model may have become available after the last fetch, or a prior
-            // translation was skipped — opening the page should translate, not only a pull).
+            // translation was skipped — an enabled translator also runs on cached refresh).
             // applyTitleTranslations no-ops when nothing pends, so this spends an LLM call
             // only the first time new non-Chinese titles appear.
-            let cached = dashboard.providers
+            let cached = rawDashboard.providers
             let prev = Dictionary(uniqueKeysWithValues: cached.map { ($0.providerId, $0) })
             let translated = await Self.applyTitleTranslations(to: cached, previous: prev, translate: translate)
             let topics = IOSHotListAggregator.aggregate(providerSnapshots: translated, limit: limit)
-            dashboard = filteredDashboard(
-                IOSHotListDashboard(
-                    topics: topics, providers: translated,
-                    lastUpdatedAt: dashboard.lastUpdatedAt,
-                    enabledSourceCount: dashboard.enabledSourceCount
-                ),
-                setting: setting
+            rawDashboard = IOSHotListDashboard(
+                topics: topics,
+                providers: translated,
+                lastUpdatedAt: rawDashboard.lastUpdatedAt,
+                enabledSourceCount: rawDashboard.enabledSourceCount
             )
+            dashboard = filteredDashboard(rawDashboard, setting: setting, limit: limit)
             persist()
             return
         }
 
-        isRefreshing = true
         lastError = nil
-        defer { isRefreshing = false }
 
-        let previous = Dictionary(uniqueKeysWithValues: dashboard.providers.map { ($0.providerId, $0) })
+        let previous = Dictionary(uniqueKeysWithValues: rawDashboard.providers.map { ($0.providerId, $0) })
         let now = IOSBoardSignalRepository.currentEpochMs()
         let enabledProviders = IOSHotlistProviders.all.filter { enabledIds.contains($0.providerId) }
 
@@ -1921,25 +1926,29 @@ final class IOSHotListDashboardStore {
         // 整批已被取消(用户离开页面)→ 不用部分数据覆盖既有 dashboard。
         if Task.isCancelled { return }
 
-        // Always re-check for untranslated non-Chinese titles on every refresh and
-        // fill them in. Cached translations from the prior dashboard are reused so a
-        // refresh only spends an LLM call on genuinely new titles. This no longer
-        // reads the (snapshot-stale-prone) toggle: applyTitleTranslations no-ops when
-        // the translator is nil (no model) or nothing is pending, so it's safe always.
+        // The caller supplies a translator only when translation is enabled.
+        // Reuse cached translations so only new titles need a model request.
         snapshots = await Self.applyTitleTranslations(to: snapshots, previous: previous, translate: translate)
 
         let topics = IOSHotListAggregator.aggregate(providerSnapshots: snapshots, limit: limit)
-        let rawDashboard = IOSHotListDashboard(
+        self.rawDashboard = IOSHotListDashboard(
             topics: topics,
             providers: snapshots,
             lastUpdatedAt: snapshots.map(\.fetchedAt).max() ?? now,
             enabledSourceCount: enabledIds.count
         )
-        dashboard = filteredDashboard(rawDashboard, setting: setting)
+        dashboard = filteredDashboard(self.rawDashboard, setting: setting, limit: limit)
         if dashboard.hasErrors {
             lastError = dashboard.providers.compactMap(\.error).first
         }
         persist()
+    }
+
+    /// Re-applies local source and interest filters without starting a network
+    /// fetch or title translation. Used when Wi-Fi-only mode keeps the cache
+    /// visible while the current network is unavailable.
+    func applyCached(setting: TodayBoardSetting, limit: Int = 20) {
+        dashboard = filteredDashboard(rawDashboard, setting: setting, limit: limit)
     }
 
     /// Fills `displayTitle` with a Chinese translation for non-Chinese titles.
@@ -2029,20 +2038,43 @@ final class IOSHotListDashboardStore {
     }
 
     private func shouldRefresh(setting: TodayBoardSetting) -> Bool {
-        guard dashboard.hasContent, dashboard.lastUpdatedAt > 0 else { return true }
+        guard rawDashboard.hasContent, rawDashboard.lastUpdatedAt > 0 else { return true }
         // 启用来源集合变了(新开/关了源,比如刚加的 NewsNow)→ 立刻刷新,否则缓存里没有
         // 这些源,首页就一直不显示它们,直到刷新间隔过去。
         let enabledIds = IOSHotlistProviders.effectiveEnabledProviderIds(setting: setting)
-        let fetchedIds = Set(dashboard.providers.map(\.providerId))
+        let fetchedIds = Set(rawDashboard.providers.map(\.providerId))
         if enabledIds != fetchedIds { return true }
         let minutes = max(Int(setting.hotListRefreshIntervalMinutes), 30)
         let gapMs = Int64(minutes) * 60_000
-        return IOSBoardSignalRepository.currentEpochMs() - dashboard.lastUpdatedAt >= gapMs
+        return IOSBoardSignalRepository.currentEpochMs() - rawDashboard.lastUpdatedAt >= gapMs
     }
 
-    private func filteredDashboard(_ rawDashboard: IOSHotListDashboard, setting: TodayBoardSetting) -> IOSHotListDashboard {
-        IOSHotListAggregator.applyInterestFilter(
-            dashboard: rawDashboard,
+    private func filteredDashboard(
+        _ rawDashboard: IOSHotListDashboard,
+        setting: TodayBoardSetting,
+        limit: Int = 20
+    ) -> IOSHotListDashboard {
+        let enabledIds = IOSHotlistProviders.effectiveEnabledProviderIds(setting: setting)
+        let providers = rawDashboard.providers
+            .filter { enabledIds.contains($0.providerId) }
+            .map { provider in
+                guard !setting.hotListTranslateToChinese else { return provider }
+                var projected = provider
+                projected.items = projected.items.map { item in
+                    var item = item
+                    item.displayTitle = nil
+                    return item
+                }
+                return projected
+            }
+        let visible = IOSHotListDashboard(
+            topics: IOSHotListAggregator.aggregate(providerSnapshots: providers, limit: limit),
+            providers: providers,
+            lastUpdatedAt: rawDashboard.lastUpdatedAt,
+            enabledSourceCount: enabledIds.count
+        )
+        return IOSHotListAggregator.applyInterestFilter(
+            dashboard: visible,
             keywords: setting.hotListFocusKeywords,
             modeWireName: setting.hotListFilterMode.wireName
         )
@@ -2051,7 +2083,7 @@ final class IOSHotListDashboardStore {
     private func persist() {
         do {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try encoder.encode(dashboard)
+            let data = try encoder.encode(rawDashboard)
             try data.write(to: fileURL, options: [.atomic])
         } catch {
             print("[IOSHotListDashboardStore] persist failed: \(error.localizedDescription)")
@@ -2154,7 +2186,7 @@ enum IOSDeepReadSourceKind: String, Codable, CaseIterable, Identifiable, Sendabl
         case .searchResult: "搜索结果"
         case .conversation: "会话内容"
         case .file: "文件"
-        case .webMount: "WebMount"
+        case .webMount: IOSAppLocalization.string("WebMount", defaultValue: "WebMount")
         case .hotTopic: "热榜主题"
         }
     }
@@ -2174,6 +2206,14 @@ struct IOSDeepReadSource: Codable, Equatable, Identifiable, Sendable {
     var url: String?
     var metadata: [String: String]
     var createdAt: Int64
+
+    var hasUsableGenerationContent: Bool {
+        guard metadata["scrape_status"] != "failed", !content.isEmpty else { return false }
+        // Hot-list records contain only titles/ranks until their page has been read.
+        if kind == .hotTopic { return metadata["scrape_status"] == "ok" }
+        if kind == .searchResult { return content != url }
+        return true
+    }
 
     init(
         id: String = UUID().uuidString,
@@ -2548,7 +2588,7 @@ enum IOSDeepReadUserFacingText {
              "文件不存在或无法读取。",
              "Workspace 保存失败，请稍后重试。",
              "文件中没有可读取文本。",
-             "当前 WebMount 页面没有可读取正文；请先打开站点并确认页面已加载。",
+             "当前站点页面没有可读取正文；请先打开站点并确认页面已加载。",
              "深度阅读生成未在单轮内完成。",
              "上次深度阅读生成被中断，可重试。",
              "模型调用全部失败，请检查网络、API Key 或模型配置后重试。",
@@ -2717,11 +2757,11 @@ enum IOSDeepReadSourceNormalizer {
     static func webMountSource(title: String, url: String?, text: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) throws -> IOSDeepReadSource {
         let content = cleanMultiline(text)
         guard !content.isEmpty else {
-            throw IOSDeepReadSourceNormalizationError.unsupported("当前 WebMount 页面没有可读取正文；请先打开站点并确认页面已加载。")
+            throw IOSDeepReadSourceNormalizationError.unsupported("当前站点页面没有可读取正文；请先打开站点并确认页面已加载。")
         }
         return IOSDeepReadSource(
             kind: .webMount,
-            title: clean(title).ifEmpty("WebMount 页面"),
+            title: clean(title).ifEmpty("站点页面"),
             content: content,
             url: url,
             createdAt: now
@@ -3501,7 +3541,7 @@ enum IOSDeepReadDraftGenerator {
             points.append("- 文件来源来自本机显式选择；不可读或扫描图片不会被假装 OCR。")
         }
         if sourceKinds.contains(.webMount) {
-            points.append("- WebMount 来源只读取当前前台页面正文，不自动登录或跨站抓取。")
+            points.append("- 站点来源只读取当前前台页面正文，不自动登录或跨站抓取。")
         }
         if sourceKinds.contains(.hotTopic) {
             points.append("- 热榜来源来自公开榜单；网页正文抓取失败时只保留榜单标题、排名、热度和链接，不补写未读取内容。")
@@ -3524,25 +3564,23 @@ enum IOSDeepReadDraftGenerator {
     // The deterministic `generate(task:)` above is an offline fallback. This
     // async variant runs real LLM synthesis per section (overview → narrative →
     // analysis → extended reading), mirroring Android's DeepReadAgentRunManager
-    // stage pipeline. When the provider/key is unavailable it falls back to the
-    // deterministic draft so the feature degrades honestly instead of failing.
-    // Real generation quality is validated via manual smoke; the stage loop +
-    // fallback are unit-tested with a scripted provider.
+    // stage pipeline. The launcher requires a usable configured model before
+    // starting. Real generation quality still needs a live-provider check.
 
     /// Generates a deep-read draft via real LLM synthesis. Each section is one
     /// model call seeded with the sources + prior-section output (sequential,
-    /// like Android). Returns the deterministic fallback when generation fails.
+    /// like Android). Generation failures are reported by generateViaLLMResult.
     static func generateViaLLM(
         task: IOSDeepReadTask,
         providerSetting: ProviderSetting,
-        modelId: String,
+        model: Model,
         provider: IOSAgentTextProvider = OpenAIKmpProviderAdapter(),
         now: Date = Date()
     ) async -> String {
         await generateViaLLMResult(
             task: task,
             providerSetting: providerSetting,
-            modelId: modelId,
+            model: model,
             provider: provider,
             now: now
         ).markdown
@@ -3598,7 +3636,7 @@ enum IOSDeepReadDraftGenerator {
     static func generateViaLLMResult(
         task: IOSDeepReadTask,
         providerSetting: ProviderSetting,
-        modelId: String,
+        model: Model,
         provider: IOSAgentTextProvider = OpenAIKmpProviderAdapter(),
         now: Date = Date(),
         onStageProgress: (@MainActor (_ label: String, _ index: Int, _ total: Int) -> Void)? = nil,
@@ -3608,10 +3646,7 @@ enum IOSDeepReadDraftGenerator {
     ) async -> GenerationResult {
         // Build a source block incl. any captured image URLs (so the model can obey
         // the "images only from sources" rule). Exclude failed-search sources.
-        let usableSources = task.sources.filter {
-            $0.metadata["scrape_status"] != "failed"
-                && !IOSDeepReadSourceNormalizer.cleanMultiline($0.content).isEmpty
-        }
+        let usableSources = task.sources.filter(\.hasUsableGenerationContent)
         guard !usableSources.isEmpty else {
             return GenerationResult(
                 markdown: "",
@@ -3632,7 +3667,7 @@ enum IOSDeepReadDraftGenerator {
             topicTitle: task.title,
             usableSources: usable,
             providerSetting: providerSetting,
-            modelId: modelId,
+            model: model,
             provider: provider,
             timeoutSeconds: stageTimeouts?["结构规划"] ?? planTimeoutSeconds
         )
@@ -3680,6 +3715,7 @@ enum IOSDeepReadDraftGenerator {
 
         var merged = initialOutput ?? IOSDeepReadOutput()
         var threwCount = 0
+        var lastProviderError: String?
         var missingSections: [String] = []
         let stagesToRun = stages.filter { targetStages?.contains($0.label) ?? true }
         for (stageIndex, stage) in stagesToRun.enumerated() {
@@ -3705,13 +3741,14 @@ enum IOSDeepReadDraftGenerator {
                     plan: plan, retryNote: retryNote
                 )
                 let (text, error) = await synthesizeJSON(
-                    prompt: prompt, providerSetting: providerSetting, modelId: modelId, provider: provider,
+                    prompt: prompt, providerSetting: providerSetting, model: model, provider: provider,
                     timeoutSeconds: stageTimeouts?[stage.label] ?? stage.timeoutSeconds
                 )
                 stageError = error
                 parseFailed = false
                 if let error {
                     threwCount += 1
+                    lastProviderError = error
 #if DEBUG
                     NSLog("[AmberDeepRead] stage=\(stage.label) attempt=\(attempt) threw: \(error.prefix(300))")
 #endif
@@ -3769,7 +3806,8 @@ enum IOSDeepReadDraftGenerator {
         let didFail = !merged.hasStructuredBody
         let reason: String
         if didFail && threwCount == stagesToRun.count * 2 {
-            reason = "模型调用全部失败，请检查网络、API Key 或模型配置后重试。"
+            reason = lastProviderError.map(IOSDeepReadUserFacingText.sanitize)
+                ?? "模型调用全部失败，请检查网络、API Key 或模型配置后重试。"
         } else if didFail {
             reason = "未能生成可用的深度阅读内容，请换个来源或模型后重试。"
         } else {
@@ -3826,21 +3864,21 @@ enum IOSDeepReadDraftGenerator {
         return b
     }
 
-    private static func synthesizeJSON(prompt: String, providerSetting: ProviderSetting, modelId: String, provider: IOSAgentTextProvider, timeoutSeconds: Double = 150) async -> (text: String, error: String?) {
+    private static func synthesizeJSON(prompt: String, providerSetting: ProviderSetting, model: Model, provider: IOSAgentTextProvider, timeoutSeconds: Double = 150) async -> (text: String, error: String?) {
         let system = "你是 AmberAgent 的深度阅读结构化写作助手。只基于提供的来源写作，不编造，只输出合法 JSON 对象。"
         let messages = [
             UIMessage.companion.system(prompt: system),
             UIMessage.companion.user(prompt: prompt)
         ]
         let params = TextGenerationParams(
-            model: Model(modelId: modelId, displayName: modelId, id: KotlinUuid.companion.random(), type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [], abilities: [], tools: Set<BuiltInTools>(), contextWindowTokens: nil, providerOverwrite: nil),
+            model: model,
             temperature: KotlinFloat(value: 0.3),
             topP: nil,
-            maxTokens: KotlinInt(value: 3_500),
+            maxTokens: nil,
             tools: [],
             reasoningLevel: .off,
-            customHeaders: [],
-            customBody: []
+            customHeaders: ChatProviderConfiguration.requestHeaders(for: providerSetting, model: model.customHeaders),
+            customBody: model.customBodies
         )
         let request = DeepReadSynthesisRequest(
             providerSetting: providerSetting,
@@ -3860,7 +3898,7 @@ enum IOSDeepReadDraftGenerator {
                     params: request.params
                 )
             }
-            if let failure = result.providerFailureMessage {
+            if let failure = result.providerFailureMessage, !result.hitOutputLimit {
                 return ("", failure)
             }
             if result.hitStepLimit || result.pendingApproval != nil {
@@ -3889,14 +3927,14 @@ enum IOSDeepReadDraftGenerator {
         topicTitle: String,
         usableSources: [IOSDeepReadSource],
         providerSetting: ProviderSetting,
-        modelId: String,
+        model: Model,
         provider: IOSAgentTextProvider,
         timeoutSeconds: Double
     ) async -> IOSDeepReadArticlePlan {
         let fallback = fallbackPlan(topicTitle: topicTitle, usableSources: usableSources)
         let prompt = buildPlanningPrompt(topicTitle: topicTitle, usableSources: usableSources)
         let (text, error) = await synthesizeJSON(
-            prompt: prompt, providerSetting: providerSetting, modelId: modelId,
+            prompt: prompt, providerSetting: providerSetting, model: model,
             provider: provider, timeoutSeconds: timeoutSeconds
         )
         if error != nil {
@@ -4148,7 +4186,7 @@ enum IOSDeepReadDraftGenerator {
     /// the deepread retry-path dual leak: provider_real + honest_fail).
     static func retryOutcome(
         resolvedProvider: ProviderSetting,
-        modelId: String,
+        model: Model,
         task: IOSDeepReadTask,
         provider: IOSAgentTextProvider = OpenAIKmpProviderAdapter(),
         now: Date = Date()
@@ -4156,7 +4194,7 @@ enum IOSDeepReadDraftGenerator {
         let result = await generateViaLLMResult(
             task: task,
             providerSetting: resolvedProvider,
-            modelId: modelId,
+            model: model,
             provider: provider,
             now: now
         )

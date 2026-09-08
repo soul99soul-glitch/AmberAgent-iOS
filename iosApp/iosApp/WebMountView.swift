@@ -74,7 +74,7 @@ enum IOSDeepReadWebMountAdapter {
         let snapshot = controller.runtime.snapshot
         guard snapshot.status == .ready else {
             let reason = snapshot.error.map(IOSWebMountRedactor.redactedText)?.nilIfBlank
-                ?? "WebMount 当前没有已加载完成的页面；请先打开站点并停留在要深读的页面。"
+                ?? "站点当前没有已加载完成的页面；请先打开站点并停留在要深读的页面。"
             return .failure(.unsupported(reason))
         }
         do {
@@ -86,7 +86,7 @@ enum IOSDeepReadWebMountAdapter {
             let rawTitle = extracted["title"] as? String
                 ?? (extracted["result"] as? [String: Any])?["title"] as? String
                 ?? snapshot.title
-                ?? "WebMount 页面"
+                ?? "站点页面"
             let title = IOSWebMountRedactor.redactedText(rawTitle)
             let rawURL = extracted["url"] as? String
                 ?? (extracted["result"] as? [String: Any])?["url"] as? String
@@ -97,7 +97,7 @@ enum IOSDeepReadWebMountAdapter {
         } catch let error as IOSDeepReadSourceNormalizationError {
             return .failure(error)
         } catch {
-            return .failure(.unsupported("WebMount 页面正文读取失败：\(IOSDeepReadUserFacingText.fromError(error))"))
+            return .failure(.unsupported("站点页面正文读取失败：\(IOSDeepReadUserFacingText.fromError(error))"))
         }
     }
 }
@@ -114,7 +114,7 @@ struct IOSWebMountContentHandoff: Equatable, Identifiable {
 
     var chatPrompt: String {
         """
-        请基于以下 WebMount 网页内容继续帮我处理。
+        请基于以下站点网页内容继续帮我处理。
 
         来源：\(siteName)
         标题：\(title.nilIfBlank ?? siteName)
@@ -646,7 +646,7 @@ struct WebMountView: View {
             Spacer()
 
             VStack(spacing: 2) {
-                Text("WebMount")
+                Text(IOSAppLocalization.string("WebMount", defaultValue: "WebMount"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
@@ -800,12 +800,12 @@ struct WebMountView: View {
 
     private func openAgentBrowserSession(_ sessionId: String) {
         guard let record = controller.sessionStore.record(sessionId: sessionId) else {
-            banner = "此 WebMount 会话不存在或已过期。"
+            banner = "此站点会话不存在或已过期。"
             return
         }
         if record.backend == .local {
             guard let route = WebMountSiteRoute(watching: record, registry: registry) else {
-                banner = "此 WebMount 会话未绑定可用站点，无法观看。"
+                banner = "此站点会话未绑定可用站点，无法观看。"
                 return
             }
             router.navigate(to: .webMountSite(site: route))
@@ -999,13 +999,13 @@ struct WebMountSiteView: View {
     private var displayedBanner: String? {
         if isWatchMode {
             guard hasBoundSession, let sessionRecord else {
-                return "此 WebMount 会话不存在或已过期，请返回任务列表。"
+                return "此站点会话不存在或已过期，请返回任务列表。"
             }
             if let banner {
                 return banner
             }
             if sessionRecord.needsReopen {
-                return "此 WebMount 会话需要重新打开；Amber 不会自动恢复旧页面或动作。"
+                return "此站点会话需要重新打开；Amber 不会自动恢复旧页面或动作。"
             }
             if runtime.snapshot.status == .idle {
                 return "此 session 尚未打开页面；观看不会自动导航。"
@@ -1082,7 +1082,7 @@ struct WebMountSiteView: View {
             .padding(.horizontal, 88)
 
             HStack(spacing: 0) {
-                AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回 WebMount", size: 44, symbolSize: 20) {
+                AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回站点", size: 44, symbolSize: 20) {
                     dismiss()
                 }
 
@@ -1222,7 +1222,7 @@ struct WebMountSiteView: View {
         .opacity(sessionRecord == nil ? 0.45 : 1)
         .layoutPriority(2)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(workspaceControlAccessibilityLabel)
+        .accessibilityLabel(IOSAppLocalization.string(workspaceControlAccessibilityLabel))
         .accessibilityValue(controlOwnerBadgeText)
         .accessibilityHint("切换页面控制权")
     }
@@ -1976,7 +1976,7 @@ struct WebMountSiteView: View {
     private func takeUserControl() {
         do {
             _ = try controller.sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
-            banner = "已接管此 WebMount 页面。"
+            banner = "已接管此站点页面。"
         } catch {
             banner = "接管失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"
         }
@@ -1986,7 +1986,7 @@ struct WebMountSiteView: View {
         let resumesAutomation = sessionRecord?.ownerRunId?.nilIfBlank != nil
         do {
             _ = try controller.sessionStore.handBackToAgent(sessionId: runtime.snapshot.sessionId)
-            banner = resumesAutomation ? "已恢复 Agent 自动浏览。" : "已释放此 WebMount 页面控制权。"
+            banner = resumesAutomation ? "已恢复 Agent 自动浏览。" : "已释放此站点页面控制权。"
         } catch {
             let action = resumesAutomation ? "恢复自动" : "释放"
             banner = "\(action)失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"

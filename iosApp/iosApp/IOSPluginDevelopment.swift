@@ -63,7 +63,7 @@ enum IOSPluginDevelopmentSDK {
                 "input_contract": "旧 inputs 映射 string/number/boolean，全部必填。新 input_schema 使用 object 根，支持 properties、required、additionalProperties、array/items、string/number/integer/boolean/null、enum、description；不得与非空 inputs 混用。",
                 "output_contract": "output 为 json/object/array/string/number/boolean；可用 output_schema 进一步约束结果。脚本返回结果值，宿主包装为 {ok,result,logs}。",
                 "javascript": "脚本是接收 input 对象的同步函数体，使用 return 返回 JSON 可编码值。tools.<name>(args) 同步调用声明的 host_tools；无需 await，不支持 Promise。没有 fetch、require、import、eval、Function、DOM、Swift 或直接文件访问。",
-                "host_tools": "JS/Recipe 仅支持按路径授权的 Workspace 工具、scrape_web、WebMount 及工具搜索。先用 tool_search 读取具体工具参数，再声明 host_tools 和 capabilities。",
+                "host_tools": "JS/Recipe 仅支持按路径授权的 Workspace 工具、scrape_web、站点及工具搜索。先用 tool_search 读取具体工具参数，再声明 host_tools 和 capabilities。",
                 "local_commands": "command 必须在 capabilities.localRuntimes 声明 ambershell 或 ish。此授权覆盖该运行环境，不能用插件路径/域名范围声称限制任意命令。执行保留前台授权、超时与取消；timeout_ms 为 1000...180000，不提供持久后台任务。",
                 "command_inputs": "默认将整个 inputs 对象编码为 JSON；stdin_input 可指定一个字符串字段。AmberShell 通过 stdin 接收，iSH 脚本通过 $1 接收。调用参数不会拼入脚本代码。",
                 "command_outputs": "output=string 返回完整 stdout；其他类型要求 stdout 是完整 JSON。stderr 用于诊断；非零退出、超时、取消或输出截断不会视为成功。",

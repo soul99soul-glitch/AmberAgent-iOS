@@ -348,6 +348,32 @@ final class IOSContextCompactionCoordinatorTests: XCTestCase {
         XCTAssertLessThan(text.count, 2_000_000)
     }
 
+    func testFinalRequestBudgetUsesRegistryAndSameUnknownModelDefaultAsUI() throws {
+        let suite = "Compaction-Window-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = IOSSharedSettingsStore(userDefaults: defaults).snapshot
+        // Fits 200K/272K budgets, but was truncated by the old 128K fallback.
+        let message = UIMessage.companion.user(prompt: String(repeating: "x", count: 600_000))
+        for modelId in ["gpt-6-astra", "unknown-window-model"] {
+            let model = Model(
+                modelId: modelId, displayName: modelId, id: KotlinUuid.companion.random(),
+                type: .chat, customHeaders: [], customBodies: [], inputModalities: [],
+                outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+                contextWindowTokens: nil, providerOverwrite: nil
+            )
+            let params = TextGenerationParams(
+                model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [],
+                reasoningLevel: .off, customHeaders: [], customBody: []
+            )
+            let finalized = try IOSContextCompactionCoordinator().finalizedMessagesForRequest(
+                [message], settings: settings, params: params
+            )
+            XCTAssertEqual((finalized.first?.parts.first as? UIMessagePart.Text)?.text,
+                           (message.parts.first as? UIMessagePart.Text)?.text)
+        }
+    }
+
     func testFinalizedMessagesForRequestRecoversGiantOutputSession() throws {
         // 真机复现形态：已持久化的巨量 search_web 输出在请求时被 fit 就地截断，
         // finalizedMessagesForRequest 不再抛错，估算回到预算内。

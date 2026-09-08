@@ -786,8 +786,10 @@ final class IOSWebMountDesktopBackendAdapter {
     }
 
     private static func supportsTarget(_ remoteTool: IOSWebMountDesktopToolDescriptor) -> Bool {
-        remoteTool.explicitlySupports("selector")
-            || remoteTool.explicitlySupports("target")
+        // Agent calls carry document-scoped semantic refs. A selector-only
+        // gateway can still serve direct user actions, but it cannot satisfy
+        // the Agent target contract and must not be advertised as available.
+        remoteTool.explicitlySupports("target")
             || remoteTool.explicitlySupports("ref")
             || remoteTool.explicitlySupports("element")
     }
@@ -1009,13 +1011,16 @@ final class IOSWebMountDesktopBackendAdapter {
         if let knownTarget { return knownTarget }
         let target = string(arguments, "target")
         let selector = string(arguments, "selector")
-        guard target == nil || selector == nil else {
-            throw IOSWebMountDesktopBackendError.invalidArguments("\(toolName) accepts one of target or selector.")
+        if let target {
+            if let selector, selector != target {
+                throw IOSWebMountDesktopBackendError.invalidArguments("\(toolName) received conflicting target and selector values.")
+            }
+            return target
         }
-        guard let value = target ?? selector else {
+        guard let selector else {
             throw IOSWebMountDesktopBackendError.invalidArguments("\(toolName) requires a semantic target from the latest snapshot.")
         }
-        return value
+        return selector
     }
 
     private func mappedTarget(
@@ -1025,7 +1030,10 @@ final class IOSWebMountDesktopBackendAdapter {
         knownTarget: String? = nil
     ) throws -> [String: Any] {
         let target = try semanticTarget(arguments, toolName: toolName, knownTarget: knownTarget)
-        if string(arguments, "selector") != nil {
+        // target is the canonical Agent input. A matching selector may be
+        // accepted for compatibility, but must not force selector mapping on a
+        // gateway that only exposes target/ref/element.
+        if string(arguments, "target") == nil, string(arguments, "selector") != nil {
             guard remoteTool.explicitlySupports("selector") else {
                 throw IOSWebMountDesktopBackendError.mappingUnsupported("\(toolName)/selector")
             }
@@ -1048,7 +1056,7 @@ final class IOSWebMountDesktopBackendAdapter {
         arguments: [String: Any],
         elements: [IOSWebMountDesktopSemanticElement]
     ) -> IOSWebMountDesktopSemanticElement? {
-        if string(arguments, "selector") != nil {
+        if string(arguments, "target") == nil, string(arguments, "selector") != nil {
             return elements.first(where: { $0.matchesSelector(target) })
         }
         return elements.first(where: { $0.matchesReference(target) })
@@ -1088,12 +1096,23 @@ final class IOSWebMountDesktopBackendAdapter {
             }
             disposition = Self.actionDisposition(element: element, toolName: toolName, arguments: arguments)
         case "wm_click", "wm_tap", "wm_type", "wm_select":
-            guard let target = try? semanticTarget(arguments, toolName: toolName),
-                  let element = semanticElement(
-                      matching: target,
-                      arguments: arguments,
-                      elements: snapshotElements[sessionId] ?? []
-                  ) else {
+            let target: String
+            do {
+                target = try semanticTarget(arguments, toolName: toolName)
+            } catch {
+                return failureOutput(
+                    toolName: toolName,
+                    sessionId: sessionId,
+                    connection: connection,
+                    error: error,
+                    mayHaveApplied: false
+                )
+            }
+            guard let element = semanticElement(
+                matching: target,
+                arguments: arguments,
+                elements: snapshotElements[sessionId] ?? []
+            ) else {
                 return failureOutput(
                     toolName: toolName,
                     sessionId: sessionId,
@@ -1104,12 +1123,23 @@ final class IOSWebMountDesktopBackendAdapter {
             }
             disposition = Self.actionDisposition(element: element, toolName: toolName, arguments: arguments)
         case "wm_get":
-            guard let target = try? semanticTarget(arguments, toolName: toolName),
-                  let element = semanticElement(
-                      matching: target,
-                      arguments: arguments,
-                      elements: snapshotElements[sessionId] ?? []
-                  ) else {
+            let target: String
+            do {
+                target = try semanticTarget(arguments, toolName: toolName)
+            } catch {
+                return failureOutput(
+                    toolName: toolName,
+                    sessionId: sessionId,
+                    connection: connection,
+                    error: error,
+                    mayHaveApplied: false
+                )
+            }
+            guard let element = semanticElement(
+                matching: target,
+                arguments: arguments,
+                elements: snapshotElements[sessionId] ?? []
+            ) else {
                 return failureOutput(
                     toolName: toolName,
                     sessionId: sessionId,

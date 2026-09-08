@@ -52,6 +52,46 @@ final class IOSImageGenerationRepositoryTests: XCTestCase {
         XCTAssertEqual(history.records.first?.id, record.id)
     }
 
+    func testGenerateRemovesEarlierFilesWhenALaterImageFails() async throws {
+        let history = isolatedHistory()
+        let repository = IOSImageGenerationRepository(historyStore: history)
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("image-generation", isDirectory: true)
+        let before = Set((try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )) ?? [])
+        let transport = MockImageTransport(responses: [
+            .json(#"{"data":[{"b64_json":"aGVsbG8taW1hZ2U="},{"b64_json":"%%%bad%%%"}]}"#)
+        ])
+
+        do {
+            _ = try await repository.generate(
+                request: IOSImageGenerationRequest(
+                    prompt: "Two images",
+                    model: "gpt-image-test",
+                    aspectRatio: .square,
+                    count: 2,
+                    style: "",
+                    source: "test"
+                ),
+                apiKey: "image-key",
+                baseURL: "https://api.example.com/v1",
+                transport: transport
+            )
+            XCTFail("Expected invalid image data")
+        } catch {
+            XCTAssertEqual(error as? IOSImageGenerationError, .invalidImageData)
+        }
+
+        let after = Set((try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        )) ?? [])
+        XCTAssertEqual(after, before, "A failed multi-image generation must not orphan earlier files.")
+        XCTAssertTrue(history.records.isEmpty)
+    }
+
     func testMissingAPIKeyFailsBeforeNetwork() async {
         let repository = IOSImageGenerationRepository(historyStore: isolatedHistory())
         let transport = MockImageTransport(responses: [])

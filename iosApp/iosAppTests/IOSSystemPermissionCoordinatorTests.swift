@@ -44,6 +44,17 @@ final class IOSSystemPermissionCoordinatorTests: XCTestCase {
         XCTAssertNotEqual(result.status, .missingUsageDescription)
     }
 
+    func testNotificationRefreshReadsSettingsWithoutRequestingAuthorization() async throws {
+        let coordinator = IOSSystemPermissionCoordinator()
+        let notifications = try capability("ios.notifications.alerts")
+
+        let result = await coordinator.refreshStatus(for: notifications)
+
+        XCTAssertEqual(result.capabilityId, notifications.id)
+        XCTAssertNotEqual(result.status, .unknown)
+        XCTAssertEqual(coordinator.cachedStatus(for: notifications), result)
+    }
+
     func testWorkoutSchedulerReportsUnavailableWithoutSupportedWatch() async throws {
         #if canImport(WorkoutKit)
         guard #available(iOS 17.0, *), !WorkoutScheduler.isSupported else { return }

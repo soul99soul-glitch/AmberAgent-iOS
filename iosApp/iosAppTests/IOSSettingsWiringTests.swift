@@ -548,6 +548,82 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertEqual(IOSGrokWebConstants.fallbackModels.first?.modelId, "grok-4.6")
     }
 
+    func testGrokOAuthDoesNotRewriteUnrelatedOpenAIProvider() async throws {
+        let id = KotlinUuid.companion.random()
+        let providerId = id.description()
+        defer {
+            IOSGrokOAuthAuthStore.clear(providerId: providerId)
+            IOSGrokWebAuthStore.clear(providerId: providerId)
+        }
+
+        XCTAssertTrue(
+            IOSGrokOAuthAuthStore.save(
+                providerId: providerId,
+                tokens: IOSGrokOAuthTokens(
+                    accessToken: "stale-grok-access",
+                    refreshToken: "stale-grok-refresh",
+                    expiresAtMillis: 3_000_000_000_000,
+                    idToken: nil,
+                    email: nil,
+                    providerBackup: nil
+                )
+            )
+        )
+
+        let provider = ProviderSetting.OpenAI(
+            id: id,
+            enabled: true,
+            name: "Custom OpenAI",
+            models: [],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false,
+            descriptionText: nil,
+            shortDescriptionText: nil,
+            apiKey: "ordinary-api-key",
+            baseUrl: "https://api.example.com/v1",
+            chatCompletionsPath: "/chat/completions",
+            useResponseApi: false,
+            authMode: OpenAIAuthMode.apiKey,
+            brand: OpenAIBrand.generic
+        )
+        XCTAssertFalse(IOSGrokWebProviderResolver.isGrokWebProvider(provider))
+        XCTAssertFalse(IOSGrokWebProviderResolver.isSignedIn(provider))
+
+        let resolved = try await IOSGrokWebProviderResolver.resolved(provider)
+        let resolvedOpenAI = try XCTUnwrap(resolved as? ProviderSetting.OpenAI)
+        XCTAssertEqual(resolvedOpenAI.baseUrl, provider.baseUrl)
+        XCTAssertEqual(resolvedOpenAI.apiKey, provider.apiKey)
+
+        let model = Model(
+            modelId: "ordinary-model",
+            displayName: "Ordinary model",
+            id: KotlinUuid.companion.random(),
+            type: ModelType.chat,
+            customHeaders: [],
+            customBodies: [],
+            inputModalities: [],
+            outputModalities: [],
+            abilities: [],
+            tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil,
+            providerOverwrite: nil
+        )
+        let params = IOSGrokWebProviderResolver.augmentParamsForGrok(
+            TextGenerationParams(
+                model: model,
+                temperature: nil,
+                topP: nil,
+                maxTokens: nil,
+                tools: [],
+                reasoningLevel: ReasoningLevel.off,
+                customHeaders: [],
+                customBody: []
+            ),
+            provider: provider
+        )
+        XCTAssertTrue(params.customHeaders.isEmpty)
+    }
+
     func testGrokCliProxyModelListParserReadsOpenAIShape() {
         let json = """
         {"data":[{"id":"grok-4.6","name":"Grok 4.6"},{"id":"grok-build"}]}

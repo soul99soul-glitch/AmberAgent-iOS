@@ -9,6 +9,7 @@ struct ToolPermissionsView: View {
     let localToolExecutor: IOSLocalToolExecutor
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isImportingFile = false
     @State private var requestingCapabilityId: String?
 
@@ -154,8 +155,8 @@ struct ToolPermissionsView: View {
                         id: "ios.webmount.browser",
                         title: IOSAppLocalization.string("WebMount", defaultValue: "WebMount"),
                         subtitle: IOSAppLocalization.string(
-                            "使用受限 WKWebView；高风险自动批准可访问任意公网网站",
-                            defaultValue: "使用受限 WKWebView；高风险自动批准可访问任意公网网站"
+                            "高风险模式可访问公网；HTTPS Fake-IP 会通过加密连接向 Google Public DNS 查询域名，请仅使用可信 VPN",
+                            defaultValue: "高风险模式可访问公网；HTTPS Fake-IP 会通过加密连接向 Google Public DNS 查询域名，请仅使用可信 VPN"
                         ),
                         systemImage: "globe.badge.chevron.backward",
                         color: AmberTheme.accentIndigo
@@ -210,6 +211,13 @@ struct ToolPermissionsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            refreshSystemPermissions()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            refreshSystemPermissions()
+        }
         .fileImporter(
             isPresented: $isImportingFile,
             allowedContentTypes: [.item],
@@ -427,12 +435,33 @@ struct ToolPermissionsView: View {
 
         case .capability(let capability):
             let result = systemPermissionCoordinator.cachedStatus(for: capability)
-            if IOSSystemPermissionCoordinator.canRequestInApp(for: capability, systemStatus: result.status) {
-                requestSystemPermission(capability)
-            } else if capability.canOpenSettings && (result.status == .denied || result.status == .requiresSystemSettings) {
+            if capability.canOpenSettings,
+               (result.status == .requiresSystemSettings ||
+                (capability.requestKind == .directSystemPrompt && result.status == .denied)) {
                 systemPermissionCoordinator.openAppSettings()
+            } else if IOSSystemPermissionCoordinator.canRequestInApp(for: capability, systemStatus: result.status) {
+                requestSystemPermission(capability)
             } else {
                 refreshSystemPermission(capability)
+            }
+        }
+    }
+
+    private func refreshSystemPermissions() {
+        guard requestingCapabilityId == nil else { return }
+        let capabilitiesToRefresh = permissionSections
+            .flatMap(\.items)
+            .compactMap { item -> IOSPlatformCapability? in
+                guard case .capability(let capability) = item.target,
+                      capability.requestKind == .directSystemPrompt else {
+                    return nil
+                }
+                return capability
+            }
+
+        Task {
+            for capability in capabilitiesToRefresh {
+                _ = await systemPermissionCoordinator.refreshStatus(for: capability)
             }
         }
     }

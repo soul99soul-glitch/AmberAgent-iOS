@@ -137,7 +137,12 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         return data.mapNotNull { modelJson ->
             val modelObj = modelJson.obj() ?: return@mapNotNull null
             val id = modelObj.str("id") ?: return@mapNotNull null
-            Model(modelId = id, displayName = id)
+            Model(
+                modelId = id,
+                displayName = id,
+                inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(id),
+                abilities = ModelRegistry.MODEL_ABILITIES.getData(id),
+            )
         }
     }
 
@@ -800,6 +805,8 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
                         params.model.modelId,
                         params.reasoningLevel,
                     ).reasoningEffort
+                } else if (isAstraModel(params.model.modelId) && params.reasoningLevel == ReasoningLevel.OFF) {
+                    "low"
                 } else {
                     openAIResponsesReasoningEffort(params.reasoningLevel)
                 }
@@ -1344,11 +1351,15 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
 
     private fun responsesIsModelAllowTemperature(model: Model): Boolean {
         val modelId = model.modelId.lowercase()
-        return !ModelRegistry.OPENAI_O_MODELS.match(model.modelId) &&
+        return !isAstraModel(model.modelId) &&
+            !ModelRegistry.OPENAI_O_MODELS.match(model.modelId) &&
             !ModelRegistry.GPT_5.match(model.modelId) &&
             !modelId.startsWith("gpt-5") &&
             !modelId.contains("codex")
     }
+
+    private fun isAstraModel(modelId: String): Boolean =
+        modelId.substringAfterLast('/').lowercase().startsWith("gpt-6-astra")
 
     private fun isMiMoProvider(
         providerSetting: ProviderSetting.OpenAI,

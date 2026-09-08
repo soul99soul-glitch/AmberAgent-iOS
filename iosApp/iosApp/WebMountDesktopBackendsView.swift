@@ -122,7 +122,7 @@ struct WebMountDesktopBackendsView: View {
         HStack {
             AmberGlassCircleButton(
                 systemImage: "chevron.left",
-                accessibilityLabel: "返回 WebMount",
+                accessibilityLabel: "返回站点",
                 size: 44,
                 symbolSize: 20
             ) {

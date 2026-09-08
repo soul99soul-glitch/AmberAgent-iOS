@@ -122,7 +122,7 @@ final class IOSThreadOrchestrationToolService {
     private let cancelForegroundRun: (String) -> Bool
     /// P1-e: 全局前台活跃 run 判定（0/1）。生产 = `generationCoordinator.isRunning`
     /// （P1-c `activeForegroundRunId` 的同一来源，任意会话都算 1 个活跃槽）。
-    private let foregroundRunActive: () -> Bool
+    private let foregroundRunCount: () -> Int
     private let maxConcurrentRuns: Int
     /// P1-e: spawn bootstrap 在途计数（服务内跟踪）。限额检查与占槽之间无
     /// await（全部 MainActor 同步读），两个并发 spawn 不会同时通过检查。
@@ -148,7 +148,7 @@ final class IOSThreadOrchestrationToolService {
         currentConversationId: @escaping () -> KotlinUuid?,
         foregroundActiveRunId: @escaping (String) -> String?,
         cancelForegroundRun: @escaping (String) -> Bool,
-        foregroundRunActive: @escaping () -> Bool = { false },
+        foregroundRunCount: @escaping () -> Int = { 0 },
         maxConcurrentRuns: Int = IOSThreadOrchestrationToolService.defaultMaxConcurrentRuns,
         activityCenter: IOSMailboxActivityCenter = .shared,
         waitTimeoutMinMs: Int64 = 5_000,
@@ -166,7 +166,7 @@ final class IOSThreadOrchestrationToolService {
         self.currentConversationId = currentConversationId
         self.foregroundActiveRunId = foregroundActiveRunId
         self.cancelForegroundRun = cancelForegroundRun
-        self.foregroundRunActive = foregroundRunActive
+        self.foregroundRunCount = foregroundRunCount
         self.maxConcurrentRuns = maxConcurrentRuns
         self.activityCenter = activityCenter
         self.waitTimeoutMinMs = waitTimeoutMinMs
@@ -229,7 +229,7 @@ final class IOSThreadOrchestrationToolService {
     /// 并发槽（恢复扫描前的窗口期不误伤 spawn）。
     private var occupiedRunSlotCount: Int {
         inFlightBootstrapCount
-            + (foregroundRunActive() ? 1 : 0)
+            + foregroundRunCount()
             + backgroundCoordinator.activeJobCount
     }
 

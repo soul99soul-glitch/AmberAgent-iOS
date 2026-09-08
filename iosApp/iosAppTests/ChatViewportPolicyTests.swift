@@ -52,6 +52,40 @@ final class ChatViewportPolicyTests: XCTestCase {
         )
     }
 
+    func testNativeStreamingTailUpdatesVisibleLongTailAwayFromBottomOnly() {
+        let messageID = "tail"
+
+        XCTAssertTrue(
+            NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
+                messageID: messageID,
+                isFarFromBottom: true,
+                visibility: .init(messageID: messageID, isVisible: true)
+            )
+        )
+        XCTAssertFalse(
+            NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
+                messageID: messageID,
+                isFarFromBottom: true,
+                visibility: .init(messageID: messageID, isVisible: false)
+            )
+        )
+        XCTAssertFalse(
+            NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
+                messageID: messageID,
+                isFarFromBottom: true,
+                visibility: .init(messageID: "other", isVisible: true)
+            )
+        )
+        XCTAssertTrue(
+            NativeTimelineStreamingTailUpdatePolicy.shouldUpdate(
+                messageID: messageID,
+                isFarFromBottom: false,
+                visibility: .init(messageID: messageID, isVisible: false)
+            ),
+            "回到底部附近沿用原有 live-tail 更新路径。"
+        )
+    }
+
     func testLegacyStreamFinishMapsToStreamClosedEvent() {
         XCTAssertEqual(ChatMessageUpdateReason.streamFinish.event, .assistantStreamClosed)
     }

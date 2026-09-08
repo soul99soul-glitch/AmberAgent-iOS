@@ -150,7 +150,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         currentConversationId: @escaping () -> KotlinUuid?,
         foregroundActiveRunId: @escaping (String) -> String? = { _ in nil },
         cancelForegroundRun: @escaping (String) -> Bool = { _ in false },
-        foregroundRunActive: @escaping () -> Bool = { false },
+        foregroundRunCount: @escaping () -> Int = { 0 },
         maxConcurrentRuns: Int = IOSThreadOrchestrationToolService.defaultMaxConcurrentRuns,
         roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true }
     ) -> IOSThreadOrchestrationToolService {
@@ -170,7 +170,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
             currentConversationId: currentConversationId,
             foregroundActiveRunId: foregroundActiveRunId,
             cancelForegroundRun: cancelForegroundRun,
-            foregroundRunActive: foregroundRunActive,
+            foregroundRunCount: foregroundRunCount,
             maxConcurrentRuns: maxConcurrentRuns,
             roleAssistantExists: roleAssistantExists
         )
@@ -636,7 +636,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         scheduler.activeJobCount = 3
         let service = makeService(
             store: store, db: db, scheduler: scheduler, currentConversationId: { parentId },
-            foregroundRunActive: { true }
+            foregroundRunCount: { 1 }
         )
         let result = parseJSON(await service.execute(
             toolName: "spawn_agent",

@@ -470,8 +470,8 @@ struct BoardSettingsView: View {
     private var modelSubtitle: String {
         if modelOptions.isEmpty {
             return IOSAppLocalization.string(
-                "没有可读取的聊天模型，生成时会回退当前聊天模型或本地草稿。",
-                defaultValue: "没有可读取的聊天模型，生成时会回退当前聊天模型或本地草稿。"
+                "没有可用的聊天模型，请先在服务商设置中配置并选择模型。",
+                defaultValue: "没有可用的聊天模型，请先在服务商设置中配置并选择模型。"
             )
         }
         return IOSAppLocalization.string(
@@ -804,7 +804,7 @@ private struct BoardTemplateWorkbenchSheet: View {
                 name: name,
                 brief: brief,
                 providerSetting: resolved.provider,
-                modelId: resolved.modelId
+                modelId: resolved.model.modelId
             )
             name = draft.name
             description = draft.description

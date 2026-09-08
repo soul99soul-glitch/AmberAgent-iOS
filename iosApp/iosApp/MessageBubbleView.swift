@@ -1070,7 +1070,8 @@ private struct ChatStreamingMarkdownBlockListView: View {
                     ChatStableStreamingMarkdownView(
                         text: table.markdown,
                         config: config,
-                        cacheIdentity: renderCacheNamespace.map { "\($0):\(block.id)" }
+                        cacheIdentity: renderCacheNamespace.map { "\($0):\(block.id)" },
+                        preservesRenderedTable: true
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -1822,13 +1823,15 @@ private struct ChatStableStreamingMarkdownView: View {
     let text: String
     let config: SwiftStreamingMarkdown.MarkdownRenderConfig
     var cacheIdentity: String? = nil
+    var preservesRenderedTable = false
     @StateObject private var controller = ChatStableStreamingMarkdownController()
 
     var body: some View {
         let resolution = controller.resolution(
             for: text,
             config: config,
-            cacheIdentity: cacheIdentity
+            cacheIdentity: cacheIdentity,
+            preservesRenderedTable: preservesRenderedTable
         )
         // 占位按空行拆段：空行不再按整行文本高度渲染，段间距由 BlockView 的
         // blockSpacing 提供，使冷行首帧高度贴近异步解析后的真实高度，
@@ -1927,7 +1930,8 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     func resolution(
         for text: String,
         config: SwiftStreamingMarkdown.MarkdownRenderConfig,
-        cacheIdentity: String?
+        cacheIdentity: String?,
+        preservesRenderedTable: Bool = false
     ) -> (renderable: SwiftStreamingMarkdown.RenderableDocument?, suppressesInitialFade: Bool) {
         let signature = Self.renderSignature(for: config)
         // 完全匹配:返回最新解析结果。utf16.count 先行短路,避免流式期每次
@@ -1963,15 +1967,18 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
            renderedSignature.visualConfigHash == signature.visualConfigHash,
            let renderedText,
            !renderedText.isEmpty,
-           text.utf16.count >= renderedText.utf16.count,
-           text.hasPrefix(renderedText) {
+           // Partial table rows contain synthetic closing pipes/empty cells. The
+           // next delta rewrites that suffix, so it is not an append-only prefix.
+           // Keep this table visible until its replacement has finished parsing.
+           preservesRenderedTable || (text.utf16.count >= renderedText.utf16.count && text.hasPrefix(renderedText)) {
             return (renderableDocument, false)
         }
         if let cacheIdentity,
            let cached = Self.cachedIdentityRenderable(
             for: cacheIdentity,
             text: text,
-            signature: signature
+            signature: signature,
+            preservesRenderedTable: preservesRenderedTable
            ) {
             return (cached, true)
         }
@@ -2217,11 +2224,12 @@ private final class ChatStableStreamingMarkdownController: ObservableObject {
     private static func cachedIdentityRenderable(
         for identity: String,
         text: String,
-        signature: RenderSignature
+        signature: RenderSignature,
+        preservesRenderedTable: Bool = false
     ) -> SwiftStreamingMarkdown.RenderableDocument? {
         let key = IdentityCacheKey(identity: identity, visualConfigHash: signature.visualConfigHash)
         guard let entry = identityCache[key] else { return nil }
-        if entry.text.utf16.count == text.utf16.count, entry.text == text {
+        if preservesRenderedTable || (entry.text.utf16.count == text.utf16.count && entry.text == text) {
             return entry.renderable
         }
         // 与 cachedRenderable 同理由:前缀命中不设 speculative 门槛,保证完成
@@ -2514,14 +2522,20 @@ enum ChatStableStreamingMarkdownControllerTestSupport {
 
     static func hasStaleRenderable(
         renderedText: String,
-        requestedText: String
+        requestedText: String,
+        preservesRenderedTable: Bool = false
     ) -> Bool {
         ChatStableStreamingMarkdownController.resetRenderableCacheForTesting()
         let controller = ChatStableStreamingMarkdownController()
         let config = SwiftStreamingMarkdown.MarkdownRenderConfig.default
             .withShouldAnimateText(value: true)
         controller.seedRenderableForTesting(text: renderedText, config: config)
-        return controller.renderable(for: requestedText, config: config) != nil
+        return controller.resolution(
+            for: requestedText,
+            config: config,
+            cacheIdentity: nil,
+            preservesRenderedTable: preservesRenderedTable
+        ).renderable != nil
     }
 
     static func instanceResolutionAfterSpeculativeModeChange() -> (

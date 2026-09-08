@@ -4,6 +4,7 @@ import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.GoogleAuthMode
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
+import app.amber.ai.provider.Modality
 import app.amber.ai.provider.ModelType
 import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.OpenAIBrand
@@ -206,6 +207,8 @@ class IosSettingsMutationsProviderTest {
                     modelId = "gpt-5.3-codex",
                     displayName = "Old display",
                     customHeaders = listOf(CustomHeader("X-Custom", "kept")),
+                    inputModalities = listOf(Modality.TEXT),
+                    abilities = listOf(ModelAbility.REASONING),
                     contextWindowTokens = 123_456,
                 ),
                 Model(modelId = "private-model", displayName = "Private model"),
@@ -226,8 +229,69 @@ class IosSettingsMutationsProviderTest {
         val refreshed = updated.models.single { it.modelId == "gpt-5.3-codex" }
         assertEquals(existingId, refreshed.id)
         assertEquals("GPT 5.3 Codex", refreshed.displayName)
+        assertEquals(listOf(Modality.TEXT), refreshed.inputModalities)
+        assertEquals(listOf(ModelAbility.REASONING), refreshed.abilities)
         assertEquals(123_456, refreshed.contextWindowTokens)
         assertEquals("kept", refreshed.customHeaders.single().value)
+        val appended = updated.models.single { it.modelId == "gpt-5.4" }
+        assertEquals(listOf(Modality.TEXT, Modality.IMAGE), appended.inputModalities)
+        assertEquals(listOf(ModelAbility.TOOL, ModelAbility.REASONING), appended.abilities)
+        assertNull(appended.contextWindowTokens)
+    }
+
+    @Test
+    fun codexModelReplaceUsesRegistryMetadataForNewModels() {
+        val provider = ProviderSetting.OpenAI()
+        val updated = IosSettingsMutations.updateProviderChatModels(
+            settings = Settings(providers = listOf(provider)),
+            providerId = provider.id.toString(),
+            modelIds = listOf("gpt-5.4" to "GPT 5.4"),
+        ).providers.single()
+
+        val model = updated.models.single()
+        assertEquals(listOf(Modality.TEXT, Modality.IMAGE), model.inputModalities)
+        assertEquals(listOf(ModelAbility.TOOL, ModelAbility.REASONING), model.abilities)
+        assertNull(model.contextWindowTokens)
+    }
+
+    @Test
+    fun upsertNewModelPersistsInputModalitiesAndKnownAbilities() {
+        val provider = ProviderSetting.OpenAI()
+        val updated = IosSettingsMutations.upsertProviderChatModel(
+            settings = Settings(providers = listOf(provider)),
+            providerId = provider.id.toString(),
+            modelUuid = null,
+            modelId = "gpt-5",
+            displayName = "GPT 5",
+            contextWindowTokens = null,
+            modelType = ModelType.CHAT,
+            inputModalities = listOf(Modality.TEXT, Modality.IMAGE, Modality.VIDEO),
+            headerPairs = emptyList(),
+        ).providers.single().models.single()
+
+        assertEquals(listOf(Modality.TEXT, Modality.IMAGE, Modality.VIDEO), updated.inputModalities)
+        assertEquals(listOf(ModelAbility.TOOL, ModelAbility.REASONING), updated.abilities)
+
+        val legacyId = Uuid.random()
+        val legacyProvider = ProviderSetting.OpenAI(
+            models = listOf(Model(id = legacyId, modelId = "legacy-model"))
+        )
+        val edited = IosSettingsMutations.upsertProviderChatModel(
+            settings = Settings(providers = listOf(legacyProvider)),
+            providerId = legacyProvider.id.toString(),
+            modelUuid = legacyId.toString(),
+            modelId = "gpt-5",
+            displayName = "GPT 5",
+            contextWindowTokens = null,
+            modelType = ModelType.CHAT,
+            inputModalities = listOf(Modality.TEXT),
+            headerPairs = emptyList(),
+        )
+
+        assertEquals(
+            listOf(ModelAbility.TOOL, ModelAbility.REASONING),
+            edited.providers.single().models.single().abilities
+        )
     }
 
     @Test

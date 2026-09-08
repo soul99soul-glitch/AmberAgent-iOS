@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct SyncBackupView: View {
     let sharedSettings: IOSSharedSettingsStore
     let conversationStore: IOSConversationStore
+    let hasActiveChatGeneration: () -> Bool
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -23,6 +24,7 @@ struct SyncBackupView: View {
     @State private var pendingRestore: IOSPendingSyncRestore?
     @State private var pendingConflict: IOSSyncConflict?
     @State private var isRemoteBusy = false
+    @State private var isApplyingRestore = false
     @State private var remoteMessage = ""
     @State private var webDAVBaseURL = ""
     @State private var webDAVPath = "AmberAgent"
@@ -33,10 +35,12 @@ struct SyncBackupView: View {
     init(
         sharedSettings: IOSSharedSettingsStore,
         conversationStore: IOSConversationStore,
+        hasActiveChatGeneration: @escaping () -> Bool,
         store: IOSStoreCoordinator? = nil
     ) {
         self.sharedSettings = sharedSettings
         self.conversationStore = conversationStore
+        self.hasActiveChatGeneration = hasActiveChatGeneration
         self._remoteStatus = State(initialValue: sharedSettings.remoteSyncStatus)
         self._store = State(initialValue: store ?? IOSStoreCoordinator())
     }
@@ -116,14 +120,15 @@ struct SyncBackupView: View {
                             remoteStatusSection
                             remoteProviderSection
                             remoteSnapshotSection
-                            restorePreviewSection
                         }
+                        restorePreviewSection
                     }
                     .padding(.bottom, 36)
                 }
                 .scrollIndicators(.hidden)
             }
         }
+        .disabled(isApplyingRestore)
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .fileExporter(
@@ -592,6 +597,7 @@ struct SyncBackupView: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.borderedProminent)
+                            .disabled(isRemoteBusy)
 
                             Button {
                                 self.pendingRestore = nil
@@ -686,7 +692,7 @@ struct SyncBackupView: View {
                 remoteRevision: scopedStatus.remoteRevision,
                 conversationsZip: conversationsZip
             )
-            let preview = try IOSSyncBackup.restorePreview(data: data, passphrase: passphrase)
+            let preview = try IOSSyncBackup.inspectManifest(data: data)
             let fileName = IOSRemoteSnapshot.fileName(for: preview.manifest)
             let snapshot = try await provider.uploadSnapshot(data: data, fileName: fileName, manifest: preview.manifest)
             sharedSettings.recordRemoteUpload(snapshot: snapshot, preview: preview)
@@ -727,7 +733,13 @@ struct SyncBackupView: View {
 
     @MainActor
     private func applyPendingRestore() async {
-        guard let pendingRestore else { return }
+        guard !isApplyingRestore, !isRemoteBusy, let pendingRestore else { return }
+        guard !hasActiveChatGeneration() else {
+            alert = .error("有对话生成或后台结果待处理，请完成或取消后再恢复备份。")
+            return
+        }
+        isApplyingRestore = true
+        defer { isApplyingRestore = false }
         do {
             let result = try IOSSyncBackup.import(data: pendingRestore.data, passphrase: passphrase)
             var restoredConversationCount = 0
@@ -759,6 +771,7 @@ struct SyncBackupView: View {
         successMessage: String,
         operation: @MainActor (any IOSRemoteSyncProvider) async throws -> Void
     ) async {
+        guard !isApplyingRestore, !isRemoteBusy else { return }
         isRemoteBusy = true
         remoteMessage = ""
         defer { isRemoteBusy = false }

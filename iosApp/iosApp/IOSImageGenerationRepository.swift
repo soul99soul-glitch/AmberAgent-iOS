@@ -275,6 +275,15 @@ final class IOSImageGenerationRepository {
         guard !payload.isEmpty else { throw IOSImageGenerationError.noImages(nil) }
 
         let recordId = UUID().uuidString
+        var writtenFileURLs: [URL] = []
+        var didInsertHistory = false
+        defer {
+            if !didInsertHistory {
+                for fileURL in writtenFileURLs {
+                    try? fileManager.removeItem(at: fileURL)
+                }
+            }
+        }
         let directory = try imageDirectory()
         var files: [IOSGeneratedImageFile] = []
         for (index, item) in payload.enumerated() {
@@ -282,6 +291,7 @@ final class IOSImageGenerationRepository {
             let ext = fileExtension(for: item.mimeType)
             let fileURL = directory.appendingPathComponent("\(recordId)_\(index).\(ext)", isDirectory: false)
             try data.write(to: fileURL, options: [.atomic])
+            writtenFileURLs.append(fileURL)
             files.append(IOSGeneratedImageFile(id: UUID().uuidString, path: fileURL.path, mimeType: item.mimeType))
         }
 
@@ -297,6 +307,7 @@ final class IOSImageGenerationRepository {
             createdAt: Self.nowMillis()
         )
         historyStore.insert(record)
+        didInsertHistory = true
         return record
     }
 
@@ -446,12 +457,22 @@ final class IOSImageGenerationRepository {
         }
 
         let recordId = UUID().uuidString
+        var writtenFileURLs: [URL] = []
+        var didInsertHistory = false
+        defer {
+            if !didInsertHistory {
+                for fileURL in writtenFileURLs {
+                    try? fileManager.removeItem(at: fileURL)
+                }
+            }
+        }
         let directory = try imageDirectory()
         var files: [IOSGeneratedImageFile] = []
         for (index, base64) in base64Images.enumerated() {
             guard let imageData = Data(base64Encoded: Self.normalizedBase64(base64)) else { continue }
             let fileURL = directory.appendingPathComponent("\(recordId)_\(index).png", isDirectory: false)
             try imageData.write(to: fileURL, options: [.atomic])
+            writtenFileURLs.append(fileURL)
             files.append(IOSGeneratedImageFile(id: UUID().uuidString, path: fileURL.path, mimeType: "image/png"))
         }
         guard !files.isEmpty else { throw IOSImageGenerationError.invalidImageData }
@@ -468,6 +489,7 @@ final class IOSImageGenerationRepository {
             createdAt: Self.nowMillis()
         )
         historyStore.insert(record)
+        didInsertHistory = true
         writeCodexImageDiagnostic(id: diagnosticId, "completed record=\(diagnosticTokenSummary(recordId)) files=\(files.count)")
         return record
     }

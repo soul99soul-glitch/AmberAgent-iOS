@@ -91,6 +91,7 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             autoGenerateResponses: false
         )
         viewModel.inputText = "draft from previous conversation"
+        viewModel.configurationError = "previous conversation configuration error"
         viewModel.pendingImages = [
             ChatViewModel.PendingChatImage(
                 dataUrl: "data:image/png;base64,QUJD",
@@ -102,6 +103,7 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
 
         XCTAssertTrue(viewModel.inputText.isEmpty)
         XCTAssertTrue(viewModel.pendingImages.isEmpty)
+        XCTAssertNil(viewModel.configurationError)
     }
 
     func testStopCancelsRealVisionRecognitionAndRejectsLateResult() async throws {
@@ -570,6 +572,35 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertTrue(content.contains("状态：完整读取"))
         XCTAssertTrue(content.contains("Selected file body"))
         XCTAssertNil(viewModel.pendingSelectedFilePreview)
+    }
+
+    func testSelectedFileAttachmentRejectsAReplacedGrant() async throws {
+        let documentStore = DocumentAccessStore()
+        let firstFile = try makeTempFile(text: "First selected file")
+        let secondFile = try makeTempFile(text: "Second selected file")
+        defer {
+            try? FileManager.default.removeItem(at: firstFile)
+            try? FileManager.default.removeItem(at: secondFile)
+        }
+        let firstGrant = documentStore.registerPickedFile(firstFile)
+        let secondGrant = documentStore.registerPickedFile(secondFile)
+        let executor = IOSLocalToolExecutor(
+            permissionStore: IOSPermissionStore(userDefaults: isolatedDefaults()),
+            documentStore: documentStore
+        )
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            localToolExecutor: executor,
+            autoGenerateResponses: false
+        )
+
+        await viewModel.attachSelectedFilePreviewToNextMessage(expectedFileScopeDigest: firstGrant.scopeDigest)
+
+        XCTAssertNil(viewModel.pendingSelectedFilePreview)
+        XCTAssertNotNil(viewModel.selectedFileContextError)
+        XCTAssertFalse(viewModel.isAttachingSelectedFile)
+        XCTAssertEqual(documentStore.grantSummary?.id, secondGrant.id)
+        XCTAssertEqual(documentStore.grantSummary?.usedCount, 0)
     }
 
     func testSelectedFileResultCannotAttachToAConversationOpenedAfterPickerPresentation() async throws {
@@ -1166,6 +1197,7 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
     func testMemoryToolStatusReturnsSummaryNotDump() throws {
         let originalRecords = IosMemoryFactory.shared.getAllRecords()
         defer { IosMemoryFactory.shared.replaceAll(records: originalRecords) }
+        IosMemoryFactory.shared.replaceAll(records: [])
 
         let runtime = memorySettings(core: true, shortTerm: true, longTerm: true).agentRuntime
         _ = IosMemoryFactory.shared.addMemory(
@@ -1595,7 +1627,9 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertEqual(handoffRequest?.requiresHumanHandoff, true)
         let step = ChatToolStepModel(tool: toolCall)
         XCTAssertFalse(step.title.contains("token=secret"))
-        XCTAssertTrue(step.title.contains("https://github.com/login"))
+        let detail = try XCTUnwrap(step.detail)
+        XCTAssertFalse(detail.contains("token=secret"))
+        XCTAssertTrue(detail.contains("https://github.com/login"))
     }
 
     func testWebMountDirectToolExecutionHelperIsAvailableAfterUserAction() async throws {

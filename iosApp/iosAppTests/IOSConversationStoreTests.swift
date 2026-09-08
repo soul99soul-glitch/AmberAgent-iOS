@@ -115,6 +115,115 @@ final class IOSConversationStoreTests: XCTestCase {
         XCTAssertEqual(destination.currentMessages.map { $0.toText() }, ["restored message"])
     }
 
+    func testImportInvalidatesPreImportBaselineEvenWhenSequenceIsZero() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreImportEpoch-\(UUID().uuidString)")
+        let sourceDirectory = root.appendingPathComponent("source")
+        let destinationDirectory = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = IOSConversationStore(baseDirectory: sourceDirectory)
+        await source.bootstrap()
+        let conversationId = try XCTUnwrap(source.currentConversation?.id)
+        await source.saveCurrent(messages: [UIMessage.companion.user(prompt: "first restored state")])
+        let documentURL = sourceDirectory.appendingPathComponent("\(conversationId).json")
+        let firstDocument = try String(contentsOf: documentURL, encoding: .utf8)
+
+        let destination = IOSConversationStore(baseDirectory: destinationDirectory)
+        await destination.bootstrap()
+        let unrelatedId = try XCTUnwrap(destination.currentConversation?.id)
+        destination.setListPreview(id: unrelatedId, preview: "keep unrelated preview")
+        _ = try await destination.importConversationDocuments([firstDocument])
+        await destination.selectConversation(id: conversationId)
+        let staleBaseline = destination.writeBaseline(for: conversationId)
+        destination.setListPreview(id: conversationId, preview: "old preview")
+        destination.setListIconKey(id: conversationId, key: "book")
+        XCTAssertTrue(destination.canApplyAuxiliaryResult(since: staleBaseline))
+
+        await source.saveCurrent(messages: [UIMessage.companion.user(prompt: "new restored state")])
+        let replacementDocument = try String(contentsOf: documentURL, encoding: .utf8)
+        _ = try await destination.importConversationDocuments([replacementDocument])
+        XCTAssertFalse(destination.canApplyAuxiliaryResult(since: staleBaseline))
+        XCTAssertEqual(destination.listPreview(for: conversationId), "")
+        XCTAssertNil(destination.listIconKey(for: conversationId))
+        XCTAssertEqual(destination.listPreview(for: unrelatedId), "keep unrelated preview")
+
+        let didLateWrite = await destination.save(
+            messages: [UIMessage.companion.user(prompt: "old run wrote after restore")],
+            to: conversationId,
+            ifUnchangedSince: staleBaseline
+        )
+
+        XCTAssertFalse(didLateWrite)
+        XCTAssertEqual(destination.currentMessages.map { $0.toText() }, ["new restored state"])
+    }
+
+    func testImportDrainsInFlightSnapshotWriteBeforeReloadingCurrentConversation() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreImportGate-\(UUID().uuidString)")
+        let sourceDirectory = root.appendingPathComponent("source")
+        let destinationDirectory = root.appendingPathComponent("destination")
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = IOSConversationStore(baseDirectory: sourceDirectory)
+        await source.bootstrap()
+        let conversationId = try XCTUnwrap(source.currentConversation?.id)
+        await source.saveCurrent(messages: [UIMessage.companion.user(prompt: "first restored state")])
+        let documentURL = sourceDirectory.appendingPathComponent("\(conversationId).json")
+        let firstDocument = try String(contentsOf: documentURL, encoding: .utf8)
+
+        let destination = IOSConversationStore(baseDirectory: destinationDirectory)
+        await destination.bootstrap()
+        _ = try await destination.importConversationDocuments([firstDocument])
+        await destination.selectConversation(id: conversationId)
+
+        await source.saveCurrent(messages: [UIMessage.companion.user(prompt: "restored after in-flight write")])
+        let replacementDocument = try String(contentsOf: documentURL, encoding: .utf8)
+
+        let reachedPersist = expectation(description: "old snapshot reached store persist")
+        var allowPersist: CheckedContinuation<Void, Never>?
+        destination.beforePersistForTesting = { conversation in
+            guard conversation.id == conversationId else { return }
+            reachedPersist.fulfill()
+            await withCheckedContinuation { continuation in
+                allowPersist = continuation
+            }
+        }
+
+        let staleSave = Task { @MainActor in
+            await destination.save(
+                messages: [UIMessage.companion.user(prompt: "old snapshot must not survive restore")],
+                to: conversationId
+            )
+        }
+        await fulfillment(of: [reachedPersist], timeout: 2)
+
+        let restore = Task { @MainActor in
+            try await destination.importConversationDocuments([replacementDocument])
+        }
+        let didEnterImport = await waitFor {
+            destination.isImportingConversationDocuments
+        }
+        XCTAssertTrue(didEnterImport)
+
+        destination.beforePersistForTesting = nil
+        allowPersist?.resume()
+
+        let didWriteStaleSnapshot = await staleSave.value
+        let restoredCount = try await restore.value
+        XCTAssertFalse(didWriteStaleSnapshot)
+        XCTAssertEqual(restoredCount, 1)
+        XCTAssertFalse(destination.isImportingConversationDocuments)
+        XCTAssertEqual(
+            destination.currentMessages.map { $0.toText() },
+            ["restored after in-flight write"]
+        )
+    }
+
     func testStartNewConversationReusesCurrentEmptyConversation() async throws {
         let baseDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("IOSConversationStoreReuseCurrentEmpty-")

@@ -99,6 +99,21 @@ object ModelRegistry {
         contextWindow(400_000)
     }
 
+    // Default working budgets match Codex; users can opt into a larger window.
+    private val GPT_5_6 = defineModel {
+        tokens("gpt", "5", "6")
+        visionInput()
+        toolReasoningAbility()
+        contextWindow(272_000)
+    }
+
+    private val GPT_6_ASTRA = defineModel {
+        tokens("gpt", "6", "astra")
+        visionInput()
+        toolReasoningAbility()
+        contextWindow(272_000)
+    }
+
     private val GEMINI_20_FLASH = defineModel {
         tokens("gemini", "2", "0", "flash")
         visionInput()
@@ -581,6 +596,8 @@ object ModelRegistry {
             GPT_5_4_MINI,
             GPT_5_4_NANO,
             GPT_5_5,
+            GPT_5_6,
+            GPT_6_ASTRA,
         )
     }
 
@@ -636,6 +653,8 @@ object ModelRegistry {
         GPT_5_4_MINI,
         GPT_5_4_NANO,
         GPT_5_5,
+        GPT_5_6,
+        GPT_6_ASTRA,
         GEMINI_20_FLASH,
         GEMINI_2_5_FLASH,
         GEMINI_2_5_PRO,

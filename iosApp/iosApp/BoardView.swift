@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(UIKit)
@@ -6,9 +7,24 @@ import UIKit
 #if canImport(WebKit)
 @preconcurrency import WebKit
 #endif
+@preconcurrency import Network
 @preconcurrency import Shared
 
 extension BoardSignal: @retroactive @unchecked Sendable {}
+
+private enum IOSHotListWiFiGate {
+    static func isSatisfied() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+            monitor.pathUpdateHandler = { path in
+                monitor.cancel()
+                monitor.pathUpdateHandler = nil
+                continuation.resume(returning: path.status == .satisfied)
+            }
+            monitor.start(queue: DispatchQueue(label: "app.amber.ios.hotlist-wifi-gate"))
+        }
+    }
+}
 
 struct BoardView: View {
     let settingsStore: SettingsStore
@@ -30,9 +46,8 @@ struct BoardView: View {
     @State private var showCustomSourceSheet = false
     @State private var showHistorySheet = false
     @State private var topicActionTarget: IOSHotTopic?
-    // Guards initial foreground refresh so returning to this page does not
-    // restart the hotlist fetch loop.
-    @State private var hasRestoredPersistedBoard = false
+    @State private var appliedBoardSettings: BoardSettingsSignature?
+    @State private var hotListMessage: String?
 
     @Environment(RouterPath.self) private var router
     @Environment(IOSConversationStore.self) private var conversationStore
@@ -40,7 +55,28 @@ struct BoardView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
+    private struct BoardSettingsSignature: Equatable {
+        let boardModelId: String?
+        let hotListRefreshIntervalMinutes: Int
+        let hotListWifiOnly: Bool
+        let hotListEnabledSources: [String]
+        let hotListFocusKeywords: [String]
+        let hotListFilterMode: String
+        let hotListTranslateToChinese: Bool
+
+        init(_ setting: TodayBoardSetting) {
+            boardModelId = setting.boardModelId
+            hotListRefreshIntervalMinutes = Int(setting.hotListRefreshIntervalMinutes)
+            hotListWifiOnly = setting.hotListWifiOnly
+            hotListEnabledSources = Array(setting.hotListEnabledSources).sorted()
+            hotListFocusKeywords = setting.hotListFocusKeywords
+            hotListFilterMode = setting.hotListFilterMode.wireName
+            hotListTranslateToChinese = setting.hotListTranslateToChinese
+        }
+    }
+
     var body: some View {
+        let _ = sharedSettings.revision
         ZStack {
             AmberThemePageBackground(surface: .app)
 
@@ -140,12 +176,11 @@ struct BoardView: View {
         ) { result in
             handleDeepReadFileImport(result)
         }
-        .task {
-            guard !hasRestoredPersistedBoard else { return }
-            hasRestoredPersistedBoard = true
-            selectedTemplateId = IOSDeepReadTemplate.normalizedTemplateId(sharedSettings.todayBoard.deepReadTemplateId)
-            consumeWebMountHandoffIfNeeded()
-            await refreshHotList(force: false)
+        .onChange(of: sharedSettings.todayBoard.deepReadTemplateId, initial: true) { _, templateId in
+            selectedTemplateId = IOSDeepReadTemplate.normalizedTemplateId(templateId)
+        }
+        .task(id: BoardSettingsSignature(sharedSettings.todayBoard)) {
+            await synchronizeBoardSettings()
         }
     }
 
@@ -222,6 +257,15 @@ struct BoardView: View {
                         }
                     }
                 }
+            }
+            if let hotListMessage {
+                Text(verbatim: hotListMessage)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
             }
             if let message = deepReadMessage {
                 Text(message)
@@ -527,21 +571,56 @@ struct BoardView: View {
 
     private func refreshHotList(force: Bool) async {
         let board = sharedSettings.todayBoard
-        // Always translate non-Chinese titles to Chinese. Every refresh re-checks
-        // for untranslated titles and fills them in; a configured provider/model is
-        // the only requirement. No model → pass nil → raw titles (honest degradation).
+        hotListMessage = nil
+        if board.hotListWifiOnly {
+            let wifiSatisfied = await IOSHotListWiFiGate.isSatisfied()
+            guard !Task.isCancelled else { return }
+            guard wifiSatisfied else {
+                hotListStore.applyCached(setting: board)
+                hotListMessage = IOSAppLocalization.string(
+                    "仅 Wi‑Fi 刷新：当前网络不是 Wi‑Fi，已保留缓存。",
+                    defaultValue: "仅 Wi‑Fi 刷新：当前网络不是 Wi‑Fi，已保留缓存。"
+                )
+                return
+            }
+        }
+        // Translation is opt-in. When enabled, every refresh re-checks for
+        // untranslated titles and fills them in if a provider/model is available.
         var translate: IOSHotListTitleTranslate? = nil
-        if let resolved = sharedSettings.resolveBoardDeepReadModel(boardModelId: board.boardModelId) {
+        if board.hotListTranslateToChinese,
+           let resolved = sharedSettings.resolveBoardDeepReadModel(boardModelId: board.boardModelId) {
             translate = { titles in
                 await IOSHotListTitleTranslator.translate(
                     titles: titles,
                     providerSetting: resolved.provider,
-                    modelId: resolved.modelId
+                    modelId: resolved.model.modelId
                 )
             }
         }
-        NSLog("[AmberTranslate] refresh force=\(force) modelResolved=\(translate != nil) modelId=\(sharedSettings.resolveBoardDeepReadModel(boardModelId: board.boardModelId)?.modelId ?? "nil")")
+        NSLog("[AmberTranslate] refresh force=\(force) enabled=\(board.hotListTranslateToChinese) modelResolved=\(translate != nil) modelId=\(sharedSettings.resolveBoardDeepReadModel(boardModelId: board.boardModelId)?.model.modelId ?? "nil")")
         await hotListStore.refresh(setting: board, force: force, translate: translate)
+    }
+
+    private func synchronizeBoardSettings() async {
+        let board = sharedSettings.todayBoard
+        let signature = BoardSettingsSignature(board)
+        guard appliedBoardSettings != signature else { return }
+        if appliedBoardSettings == nil {
+            consumeWebMountHandoffIfNeeded()
+        }
+
+        // A prior foreground refresh can still be finishing after this view
+        // returns from settings. Wait for it instead of letting the store's
+        // in-flight guard swallow the settings update.
+        while hotListStore.isRefreshing {
+            guard !Task.isCancelled else { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard !Task.isCancelled else { return }
+        await refreshHotList(force: false)
+        if !Task.isCancelled {
+            appliedBoardSettings = signature
+        }
     }
 
     private func createFromWebMount() async {

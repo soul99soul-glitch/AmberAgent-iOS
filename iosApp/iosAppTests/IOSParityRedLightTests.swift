@@ -81,6 +81,15 @@ final class IOSParityRedLightTests: XCTestCase {
         )
     }
 
+    private func makeDeepReadModel(_ modelId: String = "test-model") -> Model {
+        Model(
+            modelId: modelId, displayName: modelId, id: KotlinUuid.companion.random(),
+            type: .chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil, providerOverwrite: nil
+        )
+    }
+
     private func makeOpenAIProvider(apiKey: String = "sk-test-SECRET") -> ProviderSetting.OpenAI {
         ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),
@@ -156,7 +165,7 @@ final class IOSParityRedLightTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: store.task(id: running.id) ?? running,
             providerSetting: makeOpenAIProvider(),
-            modelId: "any-model",
+            model: makeDeepReadModel("any-model"),
             provider: failingProvider
         )
         // Apply the result via the SAME production decision function the create
@@ -202,7 +211,7 @@ final class IOSParityRedLightTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: store.task(id: running.id) ?? running,
             providerSetting: makeOpenAIProvider(),
-            modelId: "any-model",
+            model: makeDeepReadModel("any-model"),
             provider: emptyProvider
         )
         // Empty-output run must surface as honest failure, not succeeded/ready —
@@ -235,7 +244,7 @@ final class IOSParityRedLightTests: XCTestCase {
     func test_deepread_retry_allStagesThrow_returnsFailed() async {
         let outcome = await IOSDeepReadDraftGenerator.retryOutcome(
             resolvedProvider: makeOpenAIProvider(),
-            modelId: "any-model",
+            model: makeDeepReadModel("any-model"),
             task: makeDeepReadTask(),
             provider: FailingTextProvider()
         )
@@ -248,7 +257,7 @@ final class IOSParityRedLightTests: XCTestCase {
     func test_deepread_retry_success_returnsCompleted() async {
         let outcome = await IOSDeepReadDraftGenerator.retryOutcome(
             resolvedProvider: makeOpenAIProvider(),
-            modelId: "any-model",
+            model: makeDeepReadModel("any-model"),
             task: makeDeepReadTask(),
             provider: IOSDeepReadPipelineTests.StageProvider([#"{"summary":"这个 overview 摘要长度足够，可以正常通过深度阅读的门闩。"}"#])
         )
@@ -295,7 +304,7 @@ final class IOSParityRedLightTests: XCTestCase {
         let draft = await IOSDeepReadDraftGenerator.generateViaLLM(
             task: store.task(id: running.id) ?? running,
             providerSetting: makeOpenAIProvider(),
-            modelId: "any-model",
+            model: makeDeepReadModel("any-model"),
             provider: provider
         )
         store.complete(id: running.id, markdown: draft)
@@ -1868,7 +1877,7 @@ final class IOSParityRedLightTests: XCTestCase {
             "Background completion must not infer provider failure from localized transcript text"
         )
 
-        guard let truncatedStart = source.range(of: "private func publishTruncatedTerminal("),
+        guard let truncatedStart = source.range(of: "private func completeTruncatedAfterTerminalReservation("),
               let truncatedEnd = source.range(
                 of: "private func fail(",
                 range: truncatedStart.upperBound..<source.endIndex

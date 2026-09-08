@@ -558,6 +558,13 @@ struct IOSCouncilSearchResearcher: IOSCouncilResearching {
         var scrapeCandidates: [String] = []
 
         for query in queries {
+            if Task.isCancelled {
+                return IOSCouncilResearchBundle(
+                    searches: executions,
+                    scrapedPages: scraped,
+                    failures: failures
+                )
+            }
             do {
                 let input = Self.json(["query": query, "max_results": 5])
                 let execution = try await IOSSearchExecutor.searchResults(
@@ -569,12 +576,26 @@ struct IOSCouncilSearchResearcher: IOSCouncilResearching {
                 executions.append(execution)
                 scrapeCandidates.append(contentsOf: execution.results.map(\.url))
             } catch {
+                if Task.isCancelled {
+                    return IOSCouncilResearchBundle(
+                        searches: executions,
+                        scrapedPages: scraped,
+                        failures: failures
+                    )
+                }
                 failures.append("search_web \(query): \(error.localizedDescription)")
             }
         }
 
         var seen = Set<String>()
         for url in scrapeCandidates where scraped.count < maxScrapes {
+            if Task.isCancelled {
+                return IOSCouncilResearchBundle(
+                    searches: executions,
+                    scrapedPages: scraped,
+                    failures: failures
+                )
+            }
             guard seen.insert(url).inserted else { continue }
             do {
                 let input = Self.json(["url": url, "max_chars": 4_000])
@@ -587,6 +608,13 @@ struct IOSCouncilSearchResearcher: IOSCouncilResearching {
                 )
                 scraped.append(IOSCouncilScrapedPage(url: url, content: content))
             } catch {
+                if Task.isCancelled {
+                    return IOSCouncilResearchBundle(
+                        searches: executions,
+                        scrapedPages: scraped,
+                        failures: failures
+                    )
+                }
                 failures.append("scrape_web \(url): \(error.localizedDescription)")
             }
         }

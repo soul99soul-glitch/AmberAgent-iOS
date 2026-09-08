@@ -182,6 +182,37 @@ final class IOSMemoryRecallPolicyTests: XCTestCase {
         XCTAssertEqual(IosMemoryFactory.shared.getAllRecords().map(\.content), ["unchanged"])
     }
 
+    @MainActor
+    func testCreateAndEditRejectInvalidConfidenceWithoutMutation() {
+        let previousRecords = IosMemoryFactory.shared.snapshotRecords()
+        defer { IosMemoryFactory.shared.replaceAll(records: previousRecords) }
+        let existing = record(id: 10, content: "unchanged", scope: .core, kind: .note, updatedAt: 10)
+        IosMemoryFactory.shared.replaceAll(records: [existing])
+        let runtime = runtime()
+
+        let createOutput = IOSMemoryToolExecutor.execute(
+            input: #"{"action":"create","scope":"core","kind":"note","content":"new","confidence":2}"#,
+            runtime: runtime,
+            writePolicy: .allow
+        )
+        let editOutput = IOSMemoryToolExecutor.execute(
+            input: #"{"action":"edit","id":10,"content":"changed","confidence":-0.1}"#,
+            runtime: runtime,
+            writePolicy: .allow
+        )
+        let boolOutput = IOSMemoryToolExecutor.execute(
+            input: #"{"action":"edit","id":10,"content":"changed","confidence":true}"#,
+            runtime: runtime,
+            writePolicy: .allow
+        )
+
+        XCTAssertTrue(createOutput.contains(#""error":"confidence must be a finite number from 0 to 1""#), createOutput)
+        XCTAssertTrue(editOutput.contains(#""error":"confidence must be a finite number from 0 to 1""#), editOutput)
+        XCTAssertTrue(boolOutput.contains(#""error":"confidence must be a finite number from 0 to 1""#), boolOutput)
+        XCTAssertEqual(IosMemoryFactory.shared.getAllRecords().map(\.content), ["unchanged"])
+        XCTAssertEqual(IosMemoryFactory.shared.getAllRecords().first?.confidence, 1)
+    }
+
     private func runtime(
         maxItems: Int32 = 12,
         maxPromptChars: Int32 = 2_000

@@ -59,23 +59,28 @@ class JsonConversationStorage(
 
     @Throws(Throwable::class)
     override suspend fun listSummaries(): List<ConversationSummary> = operationMutex.withLock {
-        ensureBaseDir()
-        val cached = readIndex()
-        if (cached != null) {
-            // index.json is a derived cache. A delete can remove the conversation
-            // file before an index write fails, so never surface entries without
-            // a backing file and repair that stale cache opportunistically.
-            val repaired = readConversationFileSummaries()
-            if (repaired.size != cached.size ||
-                repaired.associateBy { it.id } != cached.associateBy { it.id }
-            ) {
-                runCatching { writeIndex(repaired) }
+        // File IO and JSON decoding are synchronous in ConversationFile/serialization.
+        // Keep the mutex across the dispatcher hop so summary reads cannot overlap
+        // writes or observe a partially replaced conversation file.
+        withContext(Dispatchers.Default) {
+            ensureBaseDir()
+            val cached = readIndex()
+            if (cached != null) {
+                // index.json is a derived cache. A delete can remove the conversation
+                // file before an index write fails, so never surface entries without
+                // a backing file and repair that stale cache opportunistically.
+                val repaired = readConversationFileSummaries()
+                if (repaired.size != cached.size ||
+                    repaired.associateBy { it.id } != cached.associateBy { it.id }
+                ) {
+                    runCatching { writeIndex(repaired) }
+                }
+                return@withContext orderSummaries(repaired)
             }
-            return@withLock orderSummaries(repaired)
+            // index 损坏或缺失：从 {id}.json 扫描重建。
+            val rebuilt = rebuildIndex()
+            orderSummaries(rebuilt)
         }
-        // index 损坏或缺失：从 {id}.json 扫描重建。
-        val rebuilt = rebuildIndex()
-        return@withLock orderSummaries(rebuilt)
     }
 
     @Throws(Throwable::class)

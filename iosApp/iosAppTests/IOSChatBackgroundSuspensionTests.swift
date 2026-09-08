@@ -34,6 +34,7 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
         )
 
         let coordinator = IOSChatBackgroundGenerationCoordinator.shared
+        XCTAssertTrue(coordinator.hasPendingConversationWrites, "后台 owner 尚待收口时必须阻止备份覆盖")
         coordinator.finalizeStalePersistedJobsIfNeeded()
         coordinator.finalizeStalePersistedJobsIfNeeded()
 

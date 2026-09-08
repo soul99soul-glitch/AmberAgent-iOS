@@ -111,6 +111,57 @@ final class IOSConversationStoreBranchingTests: XCTestCase {
         XCTAssertEqual(store.currentMessages[1].toText(), before)
     }
 
+    func testTargetedBranchOperationsDoNotReplaceAnotherCurrentConversation() async throws {
+        let (store, dir) = try makeStore()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        await store.newConversation()
+        await store.saveCurrent(messages: [
+            UIMessage.companion.user(prompt: "A first"),
+            UIMessage.companion.assistant(prompt: "A original"),
+            UIMessage.companion.user(prompt: "A stale follow-up"),
+            UIMessage.companion.assistant(prompt: "A stale answer"),
+        ])
+        let conversationA = try XCTUnwrap(store.currentConversation?.id)
+        _ = await store.appendVariant(
+            messageIndex: 1,
+            message: UIMessage.companion.assistant(prompt: "A alternate")
+        )
+
+        await store.newConversation()
+        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "B stays visible")])
+        let conversationB = try XCTUnwrap(store.currentConversation?.id)
+
+        let didSelect = await store.selectVariant(
+            messageIndex: 1,
+            variantIndex: 0,
+            conversationId: conversationA
+        )
+        let didDelete = await store.deleteMessage(messageIndex: 3, conversationId: conversationA)
+        let didTruncate = await store.truncateAfter(messageIndex: 1, conversationId: conversationA)
+        let appendedIndex = await store.appendVariant(
+            messageIndex: 1,
+            message: UIMessage.companion.assistant(prompt: "A edited"),
+            conversationId: conversationA
+        )
+        let didRegenerate = await store.appendVariantAndTruncateAfter(
+            messageIndex: 1,
+            message: UIMessage.companion.assistant(prompt: "A regenerated"),
+            conversationId: conversationA
+        )
+
+        XCTAssertTrue(didSelect)
+        XCTAssertTrue(didDelete)
+        XCTAssertTrue(didTruncate)
+        XCTAssertEqual(appendedIndex, 1)
+        XCTAssertTrue(didRegenerate)
+
+        XCTAssertEqual(store.currentConversation?.id, conversationB)
+        XCTAssertEqual(store.currentMessages.map { $0.toText() }, ["B stays visible"])
+        let storedMessagesA = await store.messages(for: conversationA)
+        let messagesA = try XCTUnwrap(storedMessagesA)
+        XCTAssertEqual(messagesA.map { $0.toText() }, ["A first", "A regenerated"])
+    }
+
     // MARK: - truncateAfter (regenerate-from-USER primitive)
 
     func testTruncateAfterDropsNodesBeyondTheIndex() async throws {

@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import CryptoKit
 import Combine
 import Observation
@@ -1461,6 +1462,7 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
     case privateHostNotAllowed(String)
     case hostResolutionFailed(String)
     case resolvedHostNotPublic(String)
+    case fakeIPPublicDNSFailed(String)
     case navigationTargetNotVerified(String)
     case hostNotAllowed(String)
 
@@ -1479,7 +1481,9 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
         case .hostResolutionFailed(let host):
             "DNS resolution failed or returned no addresses for: \(host). Check DNS and VPN/proxy settings. Navigation to this host was blocked."
         case .resolvedHostNotPublic(let host):
-            "DNS returned a non-public or reserved address for: \(host). VPN/proxy Fake-IP mode (such as 198.18.0.0/15) may cause this. Configure real DNS resolution for this host and retry."
+            "DNS returned a non-public or reserved address for: \(host). Fake-IP compatibility requires HTTPS, standard 198.18.0.0/15 answers without other private addresses, and successful public DNS verification."
+        case .fakeIPPublicDNSFailed(let host):
+            "VPN Fake-IP was detected, but encrypted public DNS verification failed for: \(host). Navigation was blocked; check network access to the public DNS resolver."
         case .navigationTargetNotVerified(let host):
             "Navigation target was not verified before commit: \(host)"
         case .hostNotAllowed(let host):
@@ -1496,6 +1500,7 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
         case .privateHostNotAllowed: "private_host_not_allowed"
         case .hostResolutionFailed: "dns_resolution_failed"
         case .resolvedHostNotPublic: "dns_non_public_address"
+        case .fakeIPPublicDNSFailed: "fake_ip_public_dns_failed"
         case .navigationTargetNotVerified: "navigation_target_not_verified"
         case .hostNotAllowed: "host_not_allowed"
         }
@@ -1503,22 +1508,29 @@ enum IOSWebMountURLPolicyError: Error, Equatable, LocalizedError {
 }
 
 typealias IOSWebMountHostResolver = @Sendable (String) throws -> [String]
+typealias IOSWebMountPublicHostResolver = @Sendable (String) async throws -> [String]
 
 struct IOSWebMountURLPolicy {
     let allowedSchemes: Set<String>
     let allowedHosts: Set<String>
     let allowUnlistedHosts: Bool
+    let allowFakeIPFallback: Bool
+    private let resolvePublicHost: IOSWebMountPublicHostResolver
 
     @MainActor
     init(
         settings: IOSWebMountSettings,
         extraAllowedHosts: [String] = [],
-        allowUnlistedHosts: Bool = false
+        allowUnlistedHosts: Bool = false,
+        allowFakeIPFallback: Bool = false,
+        resolvePublicHost: @escaping IOSWebMountPublicHostResolver = IOSWebMountPublicDNS.resolve
     ) {
         self.allowedSchemes = Set(settings.allowedSchemes.map { $0.lowercased() })
         self.allowedHosts = Set(settings.allowedHosts.map { $0.lowercased() })
             .union(extraAllowedHosts.compactMap(Self.normalizedHost))
         self.allowUnlistedHosts = allowUnlistedHosts
+        self.allowFakeIPFallback = allowFakeIPFallback
+        self.resolvePublicHost = resolvePublicHost
     }
 
     func validate(_ rawURL: String, site: IOSWebMountSite? = nil) -> Result<URL, IOSWebMountURLPolicyError> {
@@ -1575,14 +1587,44 @@ struct IOSWebMountURLPolicy {
                 guard !addresses.isEmpty else {
                     return .failure(.hostResolutionFailed(host))
                 }
-                guard addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
+                if addresses.allSatisfy(Self.isPublicAddress) {
+                    return .success(url)
+                }
+                // Fake-IP is a VPN routing token, not evidence of a public destination.
+                // In the existing high-risk preflight model, validate HTTPS hostnames
+                // independently and continue trusting the user's VPN hostname routing.
+                // This is not socket/IP pinning; never use it for plaintext HTTP.
+                guard allowFakeIPFallback, url.scheme?.lowercased() == "https",
+                      addresses.contains(where: Self.isStandardFakeIPAddress),
+                      addresses.allSatisfy({ Self.isStandardFakeIPAddress($0) || Self.isPublicAddress($0) }) else {
                     return .failure(.resolvedHostNotPublic(host))
                 }
-                return .success(url)
+                do {
+                    let publicAddresses = try await resolvePublicHost(host)
+                    guard !publicAddresses.isEmpty, publicAddresses.allSatisfy(Self.isPublicAddress) else {
+                        return .failure(.fakeIPPublicDNSFailed(host))
+                    }
+                    return .success(url)
+                } catch {
+                    return .failure(.fakeIPPublicDNSFailed(host))
+                }
             } catch {
                 return .failure(.hostResolutionFailed(host))
             }
         }
+    }
+
+    private static func isPublicAddress(_ value: String) -> Bool {
+        var ipv4 = in_addr()
+        var ipv6 = in6_addr()
+        return (inet_pton(AF_INET, value, &ipv4) == 1 || inet_pton(AF_INET6, value, &ipv6) == 1)
+            && IOSSearchExecutor.publicHostAllowed(value)
+    }
+
+    private static func isStandardFakeIPAddress(_ value: String) -> Bool {
+        var ipv4 = in_addr()
+        guard inet_pton(AF_INET, value, &ipv4) == 1 else { return false }
+        return UInt32(bigEndian: ipv4.s_addr) & 0xfffe0000 == 0xc6120000
     }
 
     static func normalizedHost(_ raw: String?) -> String? {
@@ -1770,6 +1812,8 @@ extension IOSWebMountRuntimeServicing {
             "observation_consistency": "legacy_multi_read",
             "document_id": interactive["document_id"] ?? page["document_id"] ?? "",
             "page_revision": interactive["page_revision"] ?? page["page_revision"] ?? 0,
+            "dom_revision": interactive["dom_revision"] ?? page["dom_revision"] ?? 0,
+            "url_revision": interactive["url_revision"] ?? page["url_revision"] ?? 0,
             "snapshot_id": interactive["snapshot_id"] ?? page["snapshot_id"] ?? "",
             "page": page,
             "visible_text": readable["text"] ?? "",
@@ -1781,7 +1825,7 @@ extension IOSWebMountRuntimeServicing {
 }
 
 @MainActor
-final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntimeServicing, WKNavigationDelegate {
+final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntimeServicing, WKNavigationDelegate, WKUIDelegate {
     static let automationContentWorld = WKContentWorld.world(name: "app.amber.webmount.automation")
 
     let webView: WKWebView?
@@ -1799,6 +1843,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     private var urlObservation: NSKeyValueObservation?
     private var subframeNavigationDenialCount = 0
     private var lastSubframeNavigationDenial: [String: Any]?
+    private static let maxNavigationEvents = 8
+    private var navigationEvents: [[String: Any]] = []
 
     override convenience init() {
         self.init(sessionId: nil)
@@ -1819,6 +1865,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         self.snapshot = .idle(sessionId: resolvedSessionId)
         super.init()
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
@@ -1842,6 +1889,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         let policyChanged = navigationPolicy?.allowedSchemes != policy.allowedSchemes
             || navigationPolicy?.allowedHosts != policy.allowedHosts
             || navigationPolicy?.allowUnlistedHosts != policy.allowUnlistedHosts
+            || navigationPolicy?.allowFakeIPFallback != policy.allowFakeIPFallback
             || navigationSite != site
         navigationPolicy = policy
         navigationSite = site
@@ -1998,15 +2046,31 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     func interact(method: String, selector: String?, text: String?, options: [String: Any]) async throws -> [String: Any] {
         if method.lowercased() == "wait" {
             var waitOptions = options
-            if waitOptions["selector"] == nil, let selector {
-                waitOptions["selector"] = selector
+            let selectorTarget = selector?.nilIfBlank
+            let optionSelector = (waitOptions["selector"] as? String)?.nilIfBlank
+            let optionTarget = (options["target"] as? String)?.nilIfBlank
+            let providedTargets = [selectorTarget, optionSelector, optionTarget].compactMap { $0 }
+            if Set(providedTargets).count > 1 {
+                return [
+                    "ok": false,
+                    "method": "wait",
+                    "error_code": "conflicting_target_arguments",
+                    "matched": false,
+                    "dispatched": false,
+                    "navigation_diagnostics": navigationDiagnostics
+                ]
             }
-            if waitOptions["selector"] == nil, let target = options["target"] {
-                waitOptions["selector"] = target
+            if optionSelector == nil, let selectorTarget {
+                waitOptions["selector"] = selectorTarget
             }
-            return await waitForCondition(options: waitOptions)
+            if (waitOptions["selector"] as? String)?.nilIfBlank == nil, let optionTarget {
+                waitOptions["selector"] = optionTarget
+            }
+            var result = await waitForCondition(options: waitOptions)
+            result["navigation_diagnostics"] = navigationDiagnostics
+            return result
         }
-        return try await evaluateJSON(
+        var result = try await evaluateJSON(
             IOSWebMountBridgeScripts.interact(
                 method: method,
                 selector: selector,
@@ -2014,11 +2078,16 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 options: options
             )
         )
+        result["navigation_diagnostics"] = navigationDiagnostics
+        return result
     }
 
     private func waitForCondition(options: [String: Any]) async -> [String: Any] {
         let condition = ((options["condition"] as? String)?.nilIfBlank ?? "dom_stable").lowercased()
-        let supported = Set(["dom_stable", "selector", "text", "url_contains", "ready_state", "delay"])
+        let supported = Set([
+            "dom_stable", "selector", "text", "url_contains", "ready_state", "delay",
+            "document_changed", "url_changed"
+        ])
         guard supported.contains(condition) else {
             return [
                 "ok": false,
@@ -2027,12 +2096,23 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 "condition": condition
             ]
         }
+        let beforeDocumentId = (options["before_document_id"] as? String)?.nilIfBlank
+        let beforeURL = (options["before_url"] as? String)?.nilIfBlank
+        let beforeURLRevision = (options["before_url_revision"] as? Int)
+            ?? (options["before_url_revision"] as? NSNumber)?.intValue
+            ?? (options["before_url_revision"] as? Double).map(Int.init)
+        let beforeDOMRevision = (options["before_dom_revision"] as? Int)
+            ?? (options["before_dom_revision"] as? NSNumber)?.intValue
+            ?? (options["before_dom_revision"] as? Double).map(Int.init)
+        let requirePageChange = options["require_page_change"] as? Bool ?? false
         let requiredArgument: String?
         switch condition {
         case "selector": requiredArgument = (options["selector"] as? String)?.nilIfBlank
         case "text": requiredArgument = (options["text"] as? String)?.nilIfBlank
         case "url_contains": requiredArgument = (options["url_contains"] as? String)?.nilIfBlank
         case "ready_state": requiredArgument = (options["ready_state"] as? String)?.nilIfBlank
+        case "document_changed": requiredArgument = beforeDocumentId
+        case "url_changed": requiredArgument = beforeURL != nil || (beforeURLRevision != nil && beforeDocumentId != nil) ? "baseline" : nil
         default: requiredArgument = "not-required"
         }
         guard requiredArgument != nil else {
@@ -2040,8 +2120,20 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 "ok": false,
                 "method": "wait",
                 "condition": condition,
-                "error_code": "missing_wait_argument",
+                "error_code": ["document_changed", "url_changed"].contains(condition)
+                    ? "missing_wait_baseline"
+                    : "missing_wait_argument",
                 "matched": false
+            ]
+        }
+        if requirePageChange && beforeDocumentId == nil && beforeURL == nil && beforeURLRevision == nil && beforeDOMRevision == nil {
+            return [
+                "ok": false,
+                "method": "wait",
+                "condition": condition,
+                "error_code": "missing_wait_baseline",
+                "matched": false,
+                "require_page_change": true
             ]
         }
         if condition == "ready_state",
@@ -2108,7 +2200,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 lastProbe = probe
                 lastError = nil
                 if let errorCode = (probe["error_code"] as? String)?.nilIfBlank {
-                    var result = probe
+                    var result = boundedWaitProbe(probe)
                     result["ok"] = false
                     result["method"] = "wait"
                     result["condition"] = condition
@@ -2120,11 +2212,14 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 if condition == "dom_stable" {
                     let snapshotId = probe["snapshot_id"] as? String
                     let readyState = probe["ready_state"] as? String
-                    if snapshotId == lastSnapshotId, readyState != "loading" {
+                    let pageChanged = probe["page_changed"] as? Bool ?? false
+                    if snapshotId == lastSnapshotId,
+                       readyState != "loading",
+                       !requirePageChange || pageChanged {
                         stableSince = stableSince ?? Date()
                         if let stableSince,
                            Date().timeIntervalSince(stableSince) * 1_000 >= Double(stableMillis) {
-                            var result = probe
+                            var result = boundedWaitProbe(probe)
                             result["ok"] = true
                             result["method"] = "wait"
                             result["condition"] = condition
@@ -2137,7 +2232,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                         stableSince = nil
                     }
                 } else if probe["matched"] as? Bool == true {
-                    var result = probe
+                    var result = boundedWaitProbe(probe)
                     result["ok"] = true
                     result["method"] = "wait"
                     result["condition"] = condition
@@ -2160,7 +2255,9 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                     "matched": false,
                     "elapsed_ms": elapsedMillis,
                     "last_snapshot_id": lastProbe["snapshot_id"] as? String ?? "",
-                    "last_error": lastError ?? ""
+                    "last_error": IOSWebMountRedactor.redactedText(lastError ?? ""),
+                    "last_probe": boundedWaitProbe(lastProbe),
+                    "require_page_change": requirePageChange
                 ]
             }
 
@@ -2176,6 +2273,24 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 ]
             }
         }
+    }
+
+    private func boundedWaitProbe(_ probe: [String: Any]) -> [String: Any] {
+        let allowedKeys: Set<String> = [
+            "ok", "matched", "error_code", "ready_state", "url", "document_id",
+            "page_revision", "dom_revision", "snapshot_id", "document_changed",
+            "url_revision", "url_changed", "dom_changed", "page_changed", "condition_matched", "require_page_change",
+            "before_document_id", "before_url", "before_url_revision", "before_dom_revision"
+        ]
+        var result: [String: Any] = [:]
+        for (key, value) in probe where allowedKeys.contains(key) {
+            if key == "url" || key == "before_url", let rawURL = value as? String {
+                result[key] = IOSWebMountRedactor.redactedURL(rawURL) ?? ""
+            } else {
+                result[key] = value
+            }
+        }
+        return result
     }
 
     func screenshot() async throws -> IOSWebMountScreenshotCapture {
@@ -2241,6 +2356,17 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
+        if navigationAction.targetFrame == nil {
+            recordNavigationEvent(
+                kind: "new_window_request",
+                decision: "cancel",
+                url: navigationAction.request.url,
+                errorCode: "new_window_unsupported",
+                reason: "New WebMount windows are not opened or routed to another session."
+            )
+            decisionHandler(.cancel)
+            return
+        }
         guard let policy = navigationPolicy,
               let url = navigationAction.request.url else {
             decisionHandler(.allow)
@@ -2248,7 +2374,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         }
         let site = navigationSite
         let resolver = navigationHostResolver
-        let isMainFrame = navigationAction.targetFrame?.isMainFrame != false
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame == true
         if isMainFrame {
             navigationDecisionSequence += 1
         }
@@ -2276,6 +2402,14 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                 if isMainFrame, decisionSequence == self.navigationDecisionSequence {
                     self.rejectNavigation(error, url: url, webView: webView)
                 } else if !isMainFrame, decisionSequence == self.navigationDecisionSequence {
+                    self.recordNavigationEvent(
+                        kind: "navigation_policy_denied",
+                        decision: "cancel",
+                        url: url,
+                        errorCode: error.errorCode,
+                        reason: error.localizedDescription,
+                        frame: "subframe"
+                    )
                     self.recordSubframeNavigationDenial(error, url: url)
                 }
                 decisionHandler(.cancel)
@@ -2285,9 +2419,36 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
 
     func webView(
         _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        recordNavigationEvent(
+            kind: "new_window_request",
+            decision: "cancel",
+            url: navigationAction.request.url,
+            errorCode: "new_window_unsupported",
+            reason: "New WebMount windows are not opened or routed to another session."
+        )
+        return nil
+    }
+
+    func webView(
+        _ webView: WKWebView,
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
+        if !navigationResponse.canShowMIMEType {
+            recordNavigationEvent(
+                kind: "download",
+                decision: "cancel",
+                url: navigationResponse.response.url,
+                errorCode: "download_unsupported",
+                reason: "WebMount does not automatically download navigation responses."
+            )
+            decisionHandler(.cancel)
+            return
+        }
         guard navigationResponse.isForMainFrame else {
             decisionHandler(.allow)
             return
@@ -2385,6 +2546,13 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     private func fail(_ error: Error) {
+        recordNavigationEvent(
+            kind: "navigation_failure",
+            decision: "failed",
+            url: webView?.url,
+            errorCode: nil,
+            reason: error.localizedDescription
+        )
         snapshot.status = .failed
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView?.url?.absoluteString)
         snapshot.title = webView?.title
@@ -2398,7 +2566,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
 
     private var navigationDiagnostics: [String: Any] {
         var diagnostics: [String: Any] = [
-            "subframe_navigation_denied_count": subframeNavigationDenialCount
+            "subframe_navigation_denied_count": subframeNavigationDenialCount,
+            "recent_events": navigationEvents
         ]
         if let lastSubframeNavigationDenial {
             diagnostics["last_subframe_navigation_denial"] = lastSubframeNavigationDenial
@@ -2422,9 +2591,42 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         ]
     }
 
+    private func recordNavigationEvent(
+        kind: String,
+        decision: String,
+        url: URL?,
+        errorCode: String? = nil,
+        reason: String? = nil,
+        frame: String? = nil
+    ) {
+        var event: [String: Any] = [
+            "kind": kind,
+            "decision": decision,
+            "at_ms": IOSWebMountClock.nowMillis()
+        ]
+        if let url {
+            event["url"] = IOSWebMountRedactor.redactedURL(url.absoluteString) ?? ""
+            event["host"] = IOSWebMountURLPolicy.normalizedHost(url.host) ?? ""
+        }
+        if let errorCode = errorCode?.nilIfBlank {
+            event["error_code"] = errorCode
+        }
+        if let reason = reason?.nilIfBlank {
+            event["reason"] = IOSWebMountRedactor.redactedText(reason)
+        }
+        if let frame = frame?.nilIfBlank {
+            event["frame"] = frame
+        }
+        navigationEvents.append(event)
+        if navigationEvents.count > Self.maxNavigationEvents {
+            navigationEvents.removeFirst(navigationEvents.count - Self.maxNavigationEvents)
+        }
+    }
+
     private func resetNavigationDiagnostics() {
         subframeNavigationDenialCount = 0
         lastSubframeNavigationDenial = nil
+        navigationEvents.removeAll(keepingCapacity: true)
     }
 
     private func committedNavigationIsAllowed(_ webView: WKWebView) -> Bool {
@@ -2460,6 +2662,14 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         url: URL,
         webView: WKWebView
     ) {
+        recordNavigationEvent(
+            kind: "navigation_policy_denied",
+            decision: "cancel",
+            url: url,
+            errorCode: error.errorCode,
+            reason: error.localizedDescription,
+            frame: "main"
+        )
         snapshot.status = .failed
         snapshot.requestedURL = IOSWebMountRedactor.redactedURL(url.absoluteString)
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
@@ -2516,9 +2726,19 @@ enum IOSWebMountBridgeScripts {
         var bridge=window.__amberWebMountBridgeV1;
         if(!bridge || bridge.document!==document || !bridge.frames){
           var documentId=(Date.now().toString(36)+Math.random().toString(36).slice(2,10));
-          bridge={document:document,window:window,documentId:documentId,revision:0,nextRef:1,nextFrame:1,refs:{},elementRefs:new WeakMap(),frames:[],frameDiagnostics:[]};
+          bridge={document:document,window:window,documentId:documentId,revision:0,domRevision:0,urlRevision:0,lastURL:String(location.href||""),nextRef:1,nextFrame:1,refs:{},elementRefs:new WeakMap(),frames:[],frameDiagnostics:[]};
           bridge.snapshotId=function(){return bridge.documentId+":"+bridge.revision;};
           bridge.bump=function(){bridge.revision+=1;return bridge.snapshotId();};
+          bridge.noteDomMutation=function(){bridge.domRevision+=1;bridge.revision+=1;bridge.pruneRefs();return bridge.domRevision;};
+          bridge.flushMutations=function(){
+            var changed=false;
+            (bridge.frames||[]).forEach(function(frame){
+              if(!frame.observer||!frame.observer.takeRecords) return;
+              try{if(frame.observer.takeRecords().length) changed=true;}catch(e){}
+            });
+            if(changed) bridge.noteDomMutation();
+            return changed;
+          };
           bridge.pruneRefs=function(){
             Object.keys(bridge.refs).forEach(function(key){
               var item=bridge.refs[key];
@@ -2629,7 +2849,7 @@ enum IOSWebMountBridgeScripts {
             next.forEach(function(state){
               if(state.observedDocument===state.document) return;
               try{
-                state.observer=new MutationObserver(function(){bridge.revision+=1;bridge.pruneRefs();});
+                state.observer=new MutationObserver(function(records){if(records&&records.length) bridge.noteDomMutation();});
                 state.observer.observe(state.document,{subtree:true,childList:true,attributes:true,characterData:true});
                 state.observedDocument=state.document;
               }catch(e){}
@@ -2645,7 +2865,10 @@ enum IOSWebMountBridgeScripts {
           };
           window.__amberWebMountBridgeV1=bridge;
         }
+        var currentURL=String(location.href||"");
+        if(bridge.lastURL!==currentURL){bridge.lastURL=currentURL;bridge.urlRevision+=1;bridge.revision+=1;}
         bridge.refreshFrames();
+        bridge.flushMutations();
         return bridge;
       }
       function amberFrameForDocument(doc){
@@ -2792,6 +3015,8 @@ enum IOSWebMountBridgeScripts {
         ready_state: document.readyState || "unknown",
         document_id: bridge.documentId,
         page_revision: bridge.revision,
+        dom_revision: bridge.domRevision,
+        url_revision: bridge.urlRevision,
         snapshot_id: bridge.snapshotId(),
         text_length: textLength,
         links_count: linksCount,
@@ -2830,11 +3055,19 @@ enum IOSWebMountBridgeScripts {
           var bridge=amberBridge();
           var mode=\(mode);
           var body=document.body;
+          function currentValueMeta(el){
+            var tag=(el&&el.tagName||"").toLowerCase();
+            if(tag!=="input"&&tag!=="textarea"&&!el.isContentEditable) return {current_value:"",value_length:0,truncated:false,value_redacted:false};
+            if(amberSensitiveField(el)) return {current_value:"",value_length:null,truncated:false,value_redacted:true};
+            var raw=el.isContentEditable?String(el.textContent||""):String(el.value||"");
+            return {current_value:raw.slice(0,120),value_length:raw.length,truncated:raw.length>120,value_redacted:false};
+          }
           if(mode==="interactive" || mode==="snapshot"){
             var queriedNodes=bridge.queryAll(amberInteractiveQuery,200,true);
             if(queriedNodes.errorCode) return JSON.stringify({ok:false,error_code:queriedNodes.errorCode,snapshot_id:bridge.snapshotId()});
             var nodes=queriedNodes.matches.sort(function(a,b){return Number(amberTypeable(b))-Number(amberTypeable(a));}).slice(0,100).map(function(el,idx){
                 var rect=amberTopRect(el);
+              var valueMeta=currentValueMeta(el);
               return {
                 ref:bridge.refFor(el),
                 selector:amberSelectorForElement(el,cssPath(el)),
@@ -2849,6 +3082,10 @@ enum IOSWebMountBridgeScripts {
                 disabled: !!el.disabled,
                 checked: typeof el.checked==="boolean" ? el.checked : null,
                 focused: el.ownerDocument.activeElement===el,
+                current_value:valueMeta.current_value,
+                value_length:valueMeta.value_length,
+                truncated:valueMeta.truncated,
+                value_redacted:valueMeta.value_redacted,
                 rect: {
                   x: Math.round(rect.left || 0),
                   y: Math.round(rect.top || 0),
@@ -2858,7 +3095,7 @@ enum IOSWebMountBridgeScripts {
               };
             });
             if(mode==="interactive"){
-              return JSON.stringify({ mode: mode, url: cleanUrl(location.href), document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), nodes: nodes, frame_count:bridge.frames.length, frames:amberFrameSummary(), frame_diagnostics:bridge.frameDiagnostics });
+              return JSON.stringify({ mode: mode, url: cleanUrl(location.href), document_id:bridge.documentId, page_revision:bridge.revision, dom_revision:bridge.domRevision, url_revision:bridge.urlRevision, snapshot_id:bridge.snapshotId(), nodes: nodes, frame_count:bridge.frames.length, frames:amberFrameSummary(), frame_diagnostics:bridge.frameDiagnostics, truncated_fields:queriedNodes.matches.length>100?["nodes"]:[] });
             }
             function nearbyText(el){
               var text="";
@@ -2890,9 +3127,11 @@ enum IOSWebMountBridgeScripts {
                 }
               };
             }).filter(function(item){ return item.visible && (item.rect.width || item.rect.height); });
-            var visibleText=bridge.frames.filter(function(frame){return frame.id==="root"||amberVisible(frame.frameElement);}).map(function(frame){return frame.document.body&&frame.document.body.innerText?frame.document.body.innerText:"";}).join(" ").replace(/\\s+/g," ").trim().slice(0,\(maxChars));
+            var visibleTextRaw=bridge.frames.filter(function(frame){return frame.id==="root"||amberVisible(frame.frameElement);}).map(function(frame){return frame.document.body&&frame.document.body.innerText?frame.document.body.innerText:"";}).join(" ").replace(/\\s+/g," ").trim();
+            var visibleText=visibleTextRaw.slice(0,\(maxChars));
             var queriedLinks=bridge.queryAll("a[href]",500);
-            var links=(queriedLinks.matches||[]).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
+            var visibleLinks=(queriedLinks.matches||[]).filter(amberVisible);
+            var links=visibleLinks.slice(0,\(maxLinks)).map(function(a){
               return { text:(a.innerText||a.getAttribute("aria-label")||"").trim().slice(0,200), href: cleanUrl(a.href) };
             });
             var totalTextLength=0,totalLinksCount=0;
@@ -2908,6 +3147,8 @@ enum IOSWebMountBridgeScripts {
               ready_state:document.readyState||"unknown",
               document_id:bridge.documentId,
               page_revision:bridge.revision,
+              dom_revision:bridge.domRevision,
+              url_revision:bridge.urlRevision,
               snapshot_id:bridge.snapshotId(),
               text_length:totalTextLength,
               links_count:totalLinksCount,
@@ -2922,10 +3163,18 @@ enum IOSWebMountBridgeScripts {
               url: cleanUrl(location.href),
               document_id: bridge.documentId,
               page_revision: bridge.revision,
+              dom_revision: bridge.domRevision,
+              url_revision: bridge.urlRevision,
               snapshot_id: bridge.snapshotId(),
               page: page,
               visible_text: visibleText,
+              visible_text_length: visibleTextRaw.length,
+              visible_text_returned_length: visibleText.length,
+              visible_text_truncated: visibleText.length < visibleTextRaw.length,
               links: links,
+              links_count: visibleLinks.length,
+              links_returned_count: links.length,
+              links_truncated: links.length < visibleLinks.length,
               interactive_elements: nodes,
               viewport: { width: window.innerWidth || 0, height: window.innerHeight || 0 },
               interactive_nodes: nodes,
@@ -2933,21 +3182,29 @@ enum IOSWebMountBridgeScripts {
               frame_count:bridge.frames.length,
               frames:amberFrameSummary(),
               frame_diagnostics:bridge.frameDiagnostics,
-              redacted: true
+              redacted: true,
+              truncated_fields: (visibleText.length < visibleTextRaw.length ? ["visible_text"] : [])
+                .concat(links.length < visibleLinks.length ? ["links"] : [])
+                .concat(queriedNodes.matches.length > 100 ? ["interactive_elements"] : [])
             });
           }
-          var text=bridge.frames.filter(function(frame){return frame.id==="root"||amberVisible(frame.frameElement);}).map(function(frame){return frame.document.body&&frame.document.body.innerText?frame.document.body.innerText:"";}).join(" ").slice(0,\(maxChars));
+          var textRaw=bridge.frames.filter(function(frame){return frame.id==="root"||amberVisible(frame.frameElement);}).map(function(frame){return frame.document.body&&frame.document.body.innerText?frame.document.body.innerText:"";}).join(" ");
+          var text=textRaw.slice(0,\(maxChars));
           var queriedReadableLinks=bridge.queryAll("a[href]",500);
-          var links=(queriedReadableLinks.matches||[]).filter(amberVisible).slice(0,\(maxLinks)).map(function(a){
+          var readableLinks=(queriedReadableLinks.matches||[]).filter(amberVisible);
+          var links=readableLinks.slice(0,\(maxLinks)).map(function(a){
             return { text:(a.innerText||a.getAttribute("aria-label")||"").trim().slice(0,200), href: cleanUrl(a.href) };
           });
-          return JSON.stringify({ mode:"readable", url: cleanUrl(location.href), title: document.title || "", document_id:bridge.documentId, page_revision:bridge.revision, snapshot_id:bridge.snapshotId(), text: text, links: links, frame_count:bridge.frames.length, frames:amberFrameSummary(), frame_diagnostics:bridge.frameDiagnostics });
+          return JSON.stringify({ mode:"readable", url: cleanUrl(location.href), title: document.title || "", document_id:bridge.documentId, page_revision:bridge.revision, dom_revision:bridge.domRevision, url_revision:bridge.urlRevision, snapshot_id:bridge.snapshotId(), text: text, text_length:textRaw.length, returned_text_length:text.length, text_truncated:text.length<textRaw.length, links: links, links_count:readableLinks.length, links_returned_count:links.length, links_truncated:links.length<readableLinks.length, frame_count:bridge.frames.length, frames:amberFrameSummary(), frame_diagnostics:bridge.frameDiagnostics, truncated_fields:(text.length<textRaw.length?["text"]:[]).concat(links.length<readableLinks.length?["links"]:[]) });
         })();
         """
     }
 
     static func get(selector: String?, target: String?, kind: String, attrName: String?, maxChars: Int) -> String {
-        let targetLiteral = jsString(selector ?? target ?? "css:body")
+        let selectorTarget = selector?.nilIfBlank
+        let optionTarget = target?.nilIfBlank
+        let targetConflict = selectorTarget != nil && optionTarget != nil && selectorTarget != optionTarget
+        let targetLiteral = jsString(selectorTarget ?? optionTarget ?? "css:body")
         let kindLiteral = jsString(kind)
         let attrLiteral = jsString(attrName ?? "")
         let maxChars = max(0, min(maxChars, 100_000))
@@ -2956,26 +3213,28 @@ enum IOSWebMountBridgeScripts {
           \(semanticPrelude)
           function cleanUrl(raw){try{var u=new URL(raw, location.href);return u.origin+u.pathname;}catch(e){return "";}}
           var bridge=amberBridge(), target=\(targetLiteral), kind=\(kindLiteral), attr=\(attrLiteral);
+          if(\(targetConflict ? "true" : "false")){ return JSON.stringify({ok:false,error_code:"conflicting_target_arguments",document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId()}); }
           var resolved=bridge.resolve(target), el=resolved.element;
           if(resolved.errorCode){ return JSON.stringify({ok:false,error_code:resolved.errorCode,snapshot_id:bridge.snapshotId()}); }
           if(!el){ return JSON.stringify({ok:false,error_code:"target_not_found",snapshot_id:bridge.snapshotId()}); }
           if(!amberVisible(el)){ return JSON.stringify({ok:false,error_code:"target_not_visible",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()}); }
           var sensitive=amberSensitiveField(el) || /csrf|xsrf|auth/i.test((el.id||"")+" "+(el.name||""));
           if(kind==="value" && sensitive){
-            return JSON.stringify({ok:false,error_code:"sensitive_value_denied",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()});
+            return JSON.stringify({ok:false,error_code:"sensitive_value_denied",value_redacted:true,truncated:false,target_ref:bridge.refFor(el),document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId()});
           }
           if(kind==="attr" && /password|passwd|token|csrf|xsrf|secret|cookie|authorization|auth/i.test(attr)){
-            return JSON.stringify({ok:false,error_code:"sensitive_attribute_denied",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()});
+            return JSON.stringify({ok:false,error_code:"sensitive_attribute_denied",value_redacted:true,truncated:false,target_ref:bridge.refFor(el),document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId()});
           }
           if(kind==="attr" && attr.toLowerCase()==="value" && (el.tagName==="INPUT" || el.tagName==="TEXTAREA")){
-            return JSON.stringify({ok:false,error_code:"sensitive_attribute_denied",target_ref:bridge.refFor(el),snapshot_id:bridge.snapshotId()});
+            return JSON.stringify({ok:false,error_code:"sensitive_attribute_denied",value_redacted:true,truncated:false,target_ref:bridge.refFor(el),document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId()});
           }
           var value="";
           if(kind==="value"){ value=el.value || ""; }
           else if(kind==="attr"){ value=attr ? (el.getAttribute(attr) || "") : ""; if(attr==="href" || attr==="src") value=amberSafeURL(value,el.ownerDocument.defaultView); }
           else if(kind==="html"){ value=el.outerHTML || ""; }
           else { value=el.innerText || ""; }
-          return JSON.stringify({ok:true,target_ref:bridge.refFor(el),kind:kind,value:String(value).slice(0,\(maxChars)),document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()});
+          var rawValue=String(value), returnedValue=rawValue.slice(0,\(maxChars));
+          return JSON.stringify({ok:true,target_ref:bridge.refFor(el),kind:kind,value:returnedValue,original_length:rawValue.length,returned_length:returnedValue.length,truncated:returnedValue.length<rawValue.length,value_redacted:false,document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId()});
         })();
         """
     }
@@ -2993,7 +3252,12 @@ enum IOSWebMountBridgeScripts {
         }
 
         let method = method.lowercased()
-        let target = selector ?? options["target"] as? String ?? ""
+        let selectorTarget = selector?.nilIfBlank
+        let optionSelector = (options["selector"] as? String)?.nilIfBlank
+        let optionTarget = (options["target"] as? String)?.nilIfBlank
+        let providedTargets = [selectorTarget, optionSelector, optionTarget].compactMap { $0 }
+        let targetConflict = Set(providedTargets).count > 1
+        let target = selectorTarget ?? optionTarget ?? optionSelector ?? ""
         let snapshotId = options["snapshot_id"] as? String ?? ""
         let xLiteral = intOption(["x"]).map(String.init) ?? "null"
         let yLiteral = intOption(["y"]).map(String.init) ?? "null"
@@ -3014,12 +3278,13 @@ enum IOSWebMountBridgeScripts {
           var allowHighConsequence=\(allowHighConsequence ? "true" : "false");
           var preflightOnly=\(preflightOnly ? "true" : "false");
           function base(extra){
-            var value={method:method,document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()};
+            var value={method:method,document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId()};
             Object.keys(extra||{}).forEach(function(key){value[key]=extra[key];});
             return value;
           }
           function fail(code,extra){return JSON.stringify(base(Object.assign({ok:false,error_code:code},extra||{})));}
           function finish(extra){return JSON.stringify(base(Object.assign({ok:true},extra||{})));}
+          var targetConflict=\(targetConflict ? "true" : "false");
           function dispositionFailure(el,coordinate){
             var disposition=amberActionDisposition(el,method,text,coordinate);
             if(disposition.kind==="human"){
@@ -3048,6 +3313,7 @@ enum IOSWebMountBridgeScripts {
             if(!target) return required ? {errorCode:"missing_target",element:null} : {errorCode:"",element:null};
             return bridge.resolve(target);
           }
+          if(targetConflict) return fail("conflicting_target_arguments",{dispatched:false,verified:false});
           function isDisabled(el){return !!(el && (el.disabled || (el.getAttribute&&el.getAttribute("aria-disabled")==="true")));}
           function topmost(el){
             var ownerDocument=el.ownerDocument, rect=el.getBoundingClientRect(), x=rect.left+rect.width/2, y=rect.top+rect.height/2;
@@ -3091,6 +3357,11 @@ enum IOSWebMountBridgeScripts {
             var active=document.activeElement, guard=0;
             while(active&&active.tagName&&active.tagName.toLowerCase()==="iframe"&&active.contentDocument&&guard++<8){active=active.contentDocument.activeElement;}
             return active;
+          }
+          function currentValueMeta(el){
+            if(amberSensitiveField(el)) return {current_value:"",truncated:false,value_redacted:true};
+            var raw=el&&el.isContentEditable?String(el.textContent||""):String(el&&el.value||"");
+            return {current_value:raw.slice(0,120),truncated:raw.length>120,value_redacted:false};
           }
           function elementAtViewportPoint(x,y){
             var currentDocument=bridge.document, hit=currentDocument.elementFromPoint(x,y), guard=0;
@@ -3208,7 +3479,8 @@ enum IOSWebMountBridgeScripts {
               bridge.bump();
               var resolvedValue=contentEditable?String(el.textContent||""):String(el.value||"");
               var typeVerified=resolvedValue===text;
-              return finish({found:true,target_ref:bridge.refFor(el),value_length:resolvedValue.length,focused:el.ownerDocument.activeElement===el,verified:typeVerified});
+              var valueMeta=currentValueMeta(el);
+              return finish({found:true,target_ref:bridge.refFor(el),value_length:resolvedValue.length,current_value:valueMeta.current_value,truncated:valueMeta.truncated,value_redacted:valueMeta.value_redacted,focused:el.ownerDocument.activeElement===el,verified:typeVerified});
             }
             var special={enter:"Enter",tab:"Tab",escape:"Escape",backspace:"Backspace",arrowup:"ArrowUp",arrowdown:"ArrowDown",arrowleft:"ArrowLeft",arrowright:"ArrowRight"};
             var key=special[text.toLowerCase()]||"", defaultApplied=false;
@@ -3223,7 +3495,8 @@ enum IOSWebMountBridgeScripts {
                 el.dispatchEvent(new EventConstructor("input",{bubbles:true})); defaultApplied=true;
               }
               keyEvent(el,"keyup",key); bridge.bump();
-              return finish({found:true,target_ref:bridge.refFor(el),key:key,event_dispatched:true,default_applied:defaultApplied,trusted:false,value_length:String(el.value||"").length,verified:defaultApplied});
+              var specialValue=String(el.value||""), specialMeta=currentValueMeta(el);
+              return finish({found:true,target_ref:bridge.refFor(el),key:key,event_dispatched:true,default_applied:defaultApplied,trusted:false,value_length:specialValue.length,current_value:specialMeta.current_value,truncated:specialMeta.truncated,value_redacted:specialMeta.value_redacted,verified:defaultApplied});
             }
             var beforeLength=String(el.value||"").length, inserted=0;
             for(var i=0;i<text.length;i++){
@@ -3233,7 +3506,8 @@ enum IOSWebMountBridgeScripts {
             }
             bridge.bump();
             var afterLength=String(el.value||"").length;
-            return finish({found:true,target_ref:bridge.refFor(el),event_count:text.length,inserted_count:inserted,trusted:false,value_length:afterLength,verified:inserted===text.length&&afterLength>=beforeLength});
+            var typedMeta=currentValueMeta(el);
+            return finish({found:true,target_ref:bridge.refFor(el),event_count:text.length,inserted_count:inserted,trusted:false,value_length:afterLength,current_value:typedMeta.current_value,truncated:typedMeta.truncated,value_redacted:typedMeta.value_redacted,verified:inserted===text.length&&afterLength>=beforeLength});
           }
 
           if(method==="scroll"){
@@ -3304,27 +3578,47 @@ enum IOSWebMountBridgeScripts {
     }
 
     static func waitProbe(condition: String, options: [String: Any]) -> String {
-        let selector = options["selector"] as? String ?? ""
+        let selector = (options["selector"] as? String)?.nilIfBlank ?? ""
         let text = options["text"] as? String ?? ""
         let urlFragment = options["url_contains"] as? String ?? ""
         let readyState = (options["ready_state"] as? String)?.lowercased() ?? "complete"
+        let beforeDocumentId = (options["before_document_id"] as? String)?.nilIfBlank ?? ""
+        let beforeURL = (options["before_url"] as? String)?.nilIfBlank ?? ""
+        let beforeURLRevision = (options["before_url_revision"] as? Int)
+            ?? (options["before_url_revision"] as? NSNumber)?.intValue
+            ?? (options["before_url_revision"] as? Double).map(Int.init)
+        let beforeDOMRevision = (options["before_dom_revision"] as? Int)
+            ?? (options["before_dom_revision"] as? NSNumber)?.intValue
+            ?? (options["before_dom_revision"] as? Double).map(Int.init)
+        let requirePageChange = options["require_page_change"] as? Bool ?? false
+        let beforeURLRevisionLiteral = beforeURLRevision.map(String.init) ?? "null"
+        let beforeDOMRevisionLiteral = beforeDOMRevision.map(String.init) ?? "null"
         return """
         (function(){
           \(semanticPrelude)
           function cleanUrl(raw){try{var u=new URL(raw);return u.origin+u.pathname;}catch(e){return "";}}
-          var bridge=amberBridge(), condition=\(jsString(condition)), matched=false, errorCode="";
+          var bridge=amberBridge(), condition=\(jsString(condition)), conditionMatched=false, matched=false, errorCode="";
+          var beforeDocumentId=\(jsString(beforeDocumentId)), beforeURL=\(jsString(beforeURL)), beforeURLRevision=\(beforeURLRevisionLiteral), beforeDOMRevision=\(beforeDOMRevisionLiteral), requirePageChange=\(requirePageChange ? "true" : "false");
+          var currentURL=cleanUrl(location.href), sameDocument=!!beforeDocumentId && bridge.documentId===beforeDocumentId, urlRevisionChanged=sameDocument && beforeURLRevision!==null && bridge.urlRevision!==beforeURLRevision, documentChanged=!!beforeDocumentId && !sameDocument, urlChanged=urlRevisionChanged || (!!beforeURL && currentURL!==cleanUrl(beforeURL)), domChanged=beforeDOMRevision!==null && bridge.domRevision!==beforeDOMRevision, pageChanged=documentChanged||urlChanged||domChanged;
           if(condition==="selector"){
             var resolved=bridge.resolve(\(jsString(selector)));
-            errorCode=resolved.errorCode||""; matched=!!resolved.element && amberVisible(resolved.element);
+            errorCode=resolved.errorCode||""; conditionMatched=!!resolved.element && amberVisible(resolved.element);
           } else if(condition==="text"){
-            matched=bridge.frames.some(function(frame){return (frame.id==="root"||amberVisible(frame.frameElement)) && String(frame.document.body&&frame.document.body.innerText||"").indexOf(\(jsString(text)))>=0;});
+            conditionMatched=bridge.frames.some(function(frame){return (frame.id==="root"||amberVisible(frame.frameElement)) && String(frame.document.body&&frame.document.body.innerText||"").indexOf(\(jsString(text)))>=0;});
           } else if(condition==="url_contains"){
-            matched=String(location.href||"").indexOf(\(jsString(urlFragment)))>=0;
+            conditionMatched=String(location.href||"").indexOf(\(jsString(urlFragment)))>=0;
           } else if(condition==="ready_state"){
             var expected=\(jsString(readyState));
-            matched=expected==="interactive"?(document.readyState==="interactive"||document.readyState==="complete"):document.readyState===expected;
+            conditionMatched=expected==="interactive"?(document.readyState==="interactive"||document.readyState==="complete"):document.readyState===expected;
+          } else if(condition==="document_changed"){
+            conditionMatched=documentChanged;
+          } else if(condition==="url_changed"){
+            conditionMatched=urlChanged;
+          } else if(condition==="dom_stable"){
+            conditionMatched=true;
           }
-          return JSON.stringify({ok:!errorCode,matched:matched,error_code:errorCode,ready_state:document.readyState||"unknown",url:cleanUrl(location.href),document_id:bridge.documentId,page_revision:bridge.revision,snapshot_id:bridge.snapshotId()});
+          matched=conditionMatched && (!requirePageChange || pageChanged);
+          return JSON.stringify({ok:!errorCode,matched:matched,condition_matched:conditionMatched,error_code:errorCode,ready_state:document.readyState||"unknown",url:currentURL,document_id:bridge.documentId,page_revision:bridge.revision,dom_revision:bridge.domRevision,url_revision:bridge.urlRevision,snapshot_id:bridge.snapshotId(),document_changed:documentChanged,url_changed:urlChanged,dom_changed:domChanged,page_changed:pageChanged,require_page_change:requirePageChange,before_document_id:beforeDocumentId,before_url:beforeURL?cleanUrl(beforeURL):"",before_url_revision:beforeURLRevision,before_dom_revision:beforeDOMRevision});
         })();
         """
     }
@@ -4229,14 +4523,14 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_clear_session", description: "Clear cookies and website data for one station after explicit user action.", requiresUserAction: true),
         .init(name: "wm_site_add", description: "Add an iOS WebMount station and sync the URL allowlist after foreground approval.", requiresUserAction: true),
         .init(name: "wm_site_remove", description: "Remove an iOS WebMount station and sync the URL allowlist after foreground approval. Cookies are not cleared.", requiresUserAction: true),
-        .init(name: "wm_click", description: "Click an element by CSS selector on the current WebMount page.", requiresUserAction: false),
-        .init(name: "wm_tap", description: "Tap a coordinate or target on the current WebMount page.", requiresUserAction: false),
-        .init(name: "wm_type", description: "Type text into an input element by CSS selector.", requiresUserAction: false),
+        .init(name: "wm_click", description: "Click an observed semantic target bound to the current session and snapshot.", requiresUserAction: false),
+        .init(name: "wm_tap", description: "Tap an observed semantic target; coordinates require direct user action.", requiresUserAction: false),
+        .init(name: "wm_type", description: "Type text into an observed input target and verify its current value.", requiresUserAction: false),
         .init(name: "wm_keys", description: "Send a short key sequence to the current WebMount page or focused field.", requiresUserAction: false),
         .init(name: "wm_scroll", description: "Scroll the page or an element into view.", requiresUserAction: false),
-        .init(name: "wm_select", description: "Select an option value in a <select> element by CSS selector.", requiresUserAction: false),
+        .init(name: "wm_select", description: "Select an option value using an observed semantic target.", requiresUserAction: false),
         .init(name: "wm_find", description: "Read-only selector or visible-text search that returns stable element refs without input values.", requiresUserAction: false),
-        .init(name: "wm_wait", description: "Wait up to 30 seconds for DOM stability, selector, visible text, URL fragment, ready state, or an explicit delay.", requiresUserAction: false)
+        .init(name: "wm_wait", description: "Wait up to 30 seconds for a target, text, URL, document change, DOM stability, readiness, or delay; readiness alone does not verify the task goal.", requiresUserAction: false)
     ]
 
     static let supportedToolNames = Set(descriptors.map(\.name))
@@ -4380,6 +4674,37 @@ final class IOSWebMountController {
         allowUnlistedHosts: Bool = false,
         visualRead: IOSWebMountVisualReadHandler? = nil
     ) async -> String {
+        let output = await executeResult(
+            toolName: toolName, input: input, isUserInitiated: isUserInitiated,
+            context: context, allowUnlistedHosts: allowUnlistedHosts, visualRead: visualRead
+        )
+        var payload = Self.parseObject(output)
+        payload["tool"] = toolName
+        payload["tool_available"] = IOSWebMountToolCatalog.supportedToolNames.contains(toolName)
+        if Self.desktopMutatingToolNames.contains(toolName) {
+            // A missing receipt from an interrupted backend is unknown, never success.
+            if payload["dispatched"] == nil {
+                let rejectedBeforeDispatch = payload["ok"] as? Bool == false
+                    && payload["may_have_applied"] as? Bool != true
+                payload["dispatched"] = rejectedBeforeDispatch ? false as Any : NSNull()
+            }
+            if payload["page_changed"] == nil { payload["page_changed"] = NSNull() }
+            if payload["goal_verified"] == nil { payload["goal_verified"] = false }
+            if payload["retry"] == nil {
+                payload["retry"] = Self.webMountRetryAdvice(dispatched: payload["dispatched"] as? Bool != false)
+            }
+        }
+        return Self.json(payload)
+    }
+
+    private func executeResult(
+        toolName: String,
+        input: String,
+        isUserInitiated: Bool,
+        context: IOSWebMountExecutionContext?,
+        allowUnlistedHosts: Bool,
+        visualRead: IOSWebMountVisualReadHandler?
+    ) async -> String {
         guard IOSWebMountToolCatalog.supportedToolNames.contains(toolName) else {
             return Self.unsupportedToolResult(toolName: toolName)
         }
@@ -4393,7 +4718,14 @@ final class IOSWebMountController {
             ])
         }
         sessionStore.expireInactiveSessions()
-        let args = Self.parseObject(input)
+        var args = Self.parseObject(input)
+        if let conflict = Self.webMountTargetConflict(toolName: toolName, args: args) {
+            return conflict
+        }
+        if (args["selector"] as? String)?.nilIfBlank == nil
+            || (args["selector"] as? String)?.nilIfBlank == (args["target"] as? String)?.nilIfBlank {
+            args.removeValue(forKey: "selector")
+        }
         if let limitFailure = Self.webMountInputLimitFailure(toolName: toolName, args: args) {
             return limitFailure
         }
@@ -4539,14 +4871,14 @@ final class IOSWebMountController {
                 default: method = "click"
                 }
                 let mutating = method != "find" && method != "wait"
-                let postcondition = mutating ? Self.webMountPostconditionOptions(from: args) : nil
+                var postcondition = mutating ? Self.webMountPostconditionOptions(from: args) : nil
                 if mutating, args["postcondition"] != nil, postcondition == nil {
                     return Self.json([
                         "ok": false,
                         "tool": toolName,
                         "denied": true,
                         "error_code": "invalid_postcondition",
-                        "reason": "postcondition requires a supported condition and a value unless condition is dom_stable."
+                        "reason": "postcondition requires a supported condition and a value except for dom_stable, document_changed, or url_changed."
                     ])
                 }
                 if mutating,
@@ -4580,7 +4912,8 @@ final class IOSWebMountController {
                     context: context,
                     requiresControl: mutating
                 )
-                let selector = args["selector"] as? String ?? args["target"] as? String
+                let selector = (args["target"] as? String)?.nilIfBlank
+                    ?? (args["selector"] as? String)?.nilIfBlank
                 let text = args["text"] as? String ?? args["value"] as? String
                 var options = args
                 if options["dy"] == nil, let byY = args["by_y"] {
@@ -4592,8 +4925,15 @@ final class IOSWebMountController {
                 options["_amber_allow_high_consequence"] = isUserInitiated
                 options.removeValue(forKey: "_amber_preflight_only")
                 var actionStarted = false
+                var dispatchEvidence: Bool?
                 do {
                     let before = try await runtime.state()
+                    if postcondition != nil {
+                        postcondition?["before_document_id"] = before["document_id"]
+                        postcondition?["before_url"] = before["url"]
+                        postcondition?["before_dom_revision"] = before["dom_revision"]
+                        postcondition?["before_url_revision"] = before["url_revision"]
+                    }
                     var preconditionResult: [String: Any]?
                     if mutating, let postcondition {
                         var probeOptions = postcondition
@@ -4625,6 +4965,8 @@ final class IOSWebMountController {
                     }
                     actionStarted = true
                     let result = try await runtime.interact(method: method, selector: selector, text: text, options: options)
+                    dispatchEvidence = mutating && (result["dispatched"] as? Bool
+                        ?? (result["ok"] as? Bool == true && result["preflight_only"] as? Bool != true))
                     if mutating, let context, context.isAgentInvocation {
                         let record = sessionStore.record(sessionId: runtime.snapshot.sessionId)
                         guard record?.controlOwner == .agent,
@@ -4692,7 +5034,9 @@ final class IOSWebMountController {
                     let actionVerified = result["verified"] as? Bool == true
                     let preconditionMatched = preconditionResult?["matched"] as? Bool == true
                     let postconditionMatched = postconditionResult?["matched"] as? Bool == true
-                    let dispatched = mutating && succeeded && (result["preflight_only"] as? Bool != true)
+                    let dispatched = dispatchEvidence == true
+                    let readinessOnly = ["ready_state", "dom_stable", "document_changed", "url_changed", "delay"]
+                        .contains(postcondition?["condition"] as? String ?? (method == "wait" ? args["condition"] as? String ?? "dom_stable" : ""))
                     let verified: Bool
                     let verificationSource: String
                     if !mutating {
@@ -4701,15 +5045,16 @@ final class IOSWebMountController {
                                 || (method == "wait" && result["matched"] as? Bool == true))
                         verificationSource = verified ? method : ""
                     } else if postcondition != nil {
-                        verified = dispatched && postconditionMatched && !preconditionMatched
+                        verified = dispatched && postconditionMatched && !preconditionMatched && !readinessOnly
                         verificationSource = verified ? "postcondition" : ""
-                    } else if actionVerified {
+                    } else if dispatched && actionVerified {
                         verified = true
                         verificationSource = "action"
                     } else {
                         verified = false
                         verificationSource = ""
                     }
+                    let goalVerified = verified && !readinessOnly && (mutating || method == "wait")
                     let postconditionPreexisting = dispatched && postcondition != nil && preconditionMatched
                     let postconditionFailed = dispatched
                         && postcondition != nil
@@ -4730,6 +5075,8 @@ final class IOSWebMountController {
                         status = "ambiguous"
                     } else if succeeded {
                         status = verified ? "verified" : (method == "find" ? "not_found" : "dispatched_unverified")
+                    } else if dispatched {
+                        status = "ambiguous"
                     } else {
                         status = errorCode == "wait_timeout" ? "timed_out" : "rejected"
                     }
@@ -4738,7 +5085,7 @@ final class IOSWebMountController {
                         outcome = "verified"
                     } else if errorCode == "wait_timeout" {
                         outcome = "timed_out"
-                    } else if succeeded {
+                    } else if succeeded || dispatched {
                         outcome = method == "find" ? "not_found" : "ambiguous"
                     } else {
                         outcome = "rejected"
@@ -4746,6 +5093,9 @@ final class IOSWebMountController {
                     let receipt: [String: Any] = [
                         "outcome": outcome,
                         "dispatched": dispatched,
+                        "page_changed": diff["changed"] ?? false,
+                        "goal_verified": goalVerified,
+                        "retry": Self.webMountRetryAdvice(dispatched: dispatched),
                         "verified": verified,
                         "verification_source": verificationSource,
                         "before_snapshot_id": before["snapshot_id"] as? String ?? "",
@@ -4754,7 +5104,7 @@ final class IOSWebMountController {
                         "precondition": IOSWebMountRedactor.redactedJSONObject(preconditionResult ?? [:]),
                         "postcondition": IOSWebMountRedactor.redactedJSONObject(postconditionResult ?? [:])
                     ]
-                    return Self.json([
+                    var response: [String: Any] = [
                         "ok": responseSucceeded,
                         "tool": toolName,
                         "session_id": runtime.snapshot.sessionId,
@@ -4766,6 +5116,12 @@ final class IOSWebMountController {
                                 ? "The action was dispatched, but its postcondition was not observed before timeout. Re-observe before retrying."
                                 : ""),
                         "may_have_applied": mayHaveApplied,
+                        "dispatched": dispatched,
+                        "page_changed": diff["changed"] ?? false,
+                        "goal_verified": goalVerified,
+                        "readiness_met": readinessOnly && (method == "wait"
+                            ? result["matched"] as? Bool == true : postconditionMatched),
+                        "retry": Self.webMountRetryAdvice(dispatched: dispatched),
                         "verified": verified,
                         "before_snapshot_id": before["snapshot_id"] as? String ?? "",
                         "snapshot_id": after["snapshot_id"] as? String ?? result["snapshot_id"] as? String ?? "",
@@ -4774,20 +5130,32 @@ final class IOSWebMountController {
                         "diff": diff,
                         "action_receipt": receipt,
                         "action": IOSWebMountRedactor.redactedJSONObject(result)
-                    ])
+                    ]
+                    if (dispatched && !verified) || (method == "wait" && !verified) {
+                        response["final_observation"] = await boundedFinalObservation(runtime: runtime)
+                    }
+                    return Self.json(response)
                 } catch {
                     touch(sessionId: runtime.snapshot.sessionId, context: context)
-                    let mayHaveApplied = mutating && actionStarted
-                    return Self.json([
+                    let mayHaveApplied = mutating && actionStarted && dispatchEvidence != false
+                    var response: [String: Any] = [
                         "ok": false,
                         "tool": toolName,
                         "session_id": runtime.snapshot.sessionId,
                         "status": mayHaveApplied ? "unknown_after_action" : "failed",
                         "error_code": mayHaveApplied ? "unknown_after_action" : "runtime_error",
                         "may_have_applied": mayHaveApplied,
+                        "dispatched": dispatchEvidence.map { $0 as Any } ?? (mayHaveApplied ? NSNull() : false as Any),
+                        "page_changed": NSNull(),
+                        "goal_verified": false,
+                        "retry": Self.webMountRetryAdvice(dispatched: mayHaveApplied),
                         "verified": false,
                         "error": IOSWebMountRedactor.redactedText(error.localizedDescription)
-                    ])
+                    ]
+                    if mayHaveApplied && !Task.isCancelled {
+                        response["final_observation"] = await boundedFinalObservation(runtime: runtime)
+                    }
+                    return Self.json(response)
                 }
             default:
                 return Self.unsupportedToolResult(toolName: toolName)
@@ -4797,8 +5165,18 @@ final class IOSWebMountController {
                 "ok": false,
                 "tool": toolName,
                 "error_code": "vision_request_failed",
+                "visual_verified": false,
+                "dom_only": true,
+                "automatic_retry_allowed": false,
                 "error": error.localizedDescription,
                 "diagnostics": error.diagnostics
+            ])
+        } catch let error as IOSWebMountVisionReader.Error {
+            return Self.json([
+                "ok": false, "tool": toolName, "error_code": "vision_unavailable",
+                "visual_verified": false, "dom_only": true, "automatic_retry_allowed": false,
+                "error": error.localizedDescription,
+                "diagnostics": ["stage": "vision_preflight"]
             ])
         } catch let error as IOSWebMountSessionError {
             return Self.json([
@@ -4824,7 +5202,12 @@ final class IOSWebMountController {
         context: IOSWebMountExecutionContext?
     ) async -> String? {
         guard Self.interactionMutatingToolNames.contains(toolName) else { return nil }
-        let args = Self.parseObject(input)
+        var args = Self.parseObject(input)
+        if let conflict = Self.webMountTargetConflict(toolName: toolName, args: args) { return conflict }
+        if (args["selector"] as? String)?.nilIfBlank == nil
+            || (args["selector"] as? String)?.nilIfBlank == (args["target"] as? String)?.nilIfBlank {
+            args.removeValue(forKey: "selector")
+        }
         if context?.isAgentInvocation == true,
            (args["snapshot_id"] as? String)?.nilIfBlank == nil {
             return nil
@@ -4854,7 +5237,8 @@ final class IOSWebMountController {
                 requiresControl: true
             )
             let method = toolName.removingPrefix("wm_")
-            let selector = args["selector"] as? String ?? args["target"] as? String
+            let selector = (args["target"] as? String)?.nilIfBlank
+                ?? (args["selector"] as? String)?.nilIfBlank
             let text = args["text"] as? String ?? args["value"] as? String
             var options = args
             if options["dy"] == nil, let byY = args["by_y"] { options["dy"] = byY }
@@ -5424,7 +5808,8 @@ final class IOSWebMountController {
             ])
         }
         if let postcondition,
-           !desktopBackend.supportsVerifiedWait(
+           postcondition["require_page_change"] as? Bool == true
+            || !desktopBackend.supportsVerifiedWait(
                 arguments: postcondition,
                 logicalSessionId: record.id
            ) {
@@ -5617,9 +6002,11 @@ final class IOSWebMountController {
             let preconditionMatched = preconditionObject?["matched"] as? Bool == true
             let postconditionMatched = postconditionObject?["ok"] as? Bool == true
                 && postconditionObject?["matched"] as? Bool == true
-            let verified = postcondition != nil && postconditionMatched && !preconditionMatched
+            let readinessOnly = ["ready_state", "dom_stable", "document_changed", "url_changed"]
+                .contains(postcondition?["condition"] as? String ?? "")
+            let verified = postcondition != nil && postconditionMatched && !preconditionMatched && !readinessOnly
             let postconditionPreexisting = postcondition != nil && preconditionMatched
-            let postconditionFailed = postcondition != nil && !verified
+            let postconditionFailed = postcondition != nil && (!postconditionMatched || preconditionMatched)
             let status: String
             let errorCode: String
             let reason: String
@@ -5647,10 +6034,18 @@ final class IOSWebMountController {
                 "error_code": errorCode,
                 "reason": reason,
                 "may_have_applied": !verified,
+                "dispatched": true,
+                "page_changed": NSNull(),
+                "goal_verified": verified,
+                "readiness_met": readinessOnly && postconditionMatched,
+                "retry": Self.webMountRetryAdvice(dispatched: true),
                 "verified": verified,
                 "action_receipt": [
                     "outcome": verified ? "verified" : "ambiguous",
                     "dispatched": true,
+                    "page_changed": NSNull(),
+                    "goal_verified": verified,
+                    "retry": Self.webMountRetryAdvice(dispatched: true),
                     "verified": verified,
                     "verification_source": verified ? "postcondition" : "",
                     "before_snapshot_id": args["snapshot_id"] as? String ?? "",
@@ -5751,7 +6146,8 @@ final class IOSWebMountController {
         let policy = IOSWebMountURLPolicy(
             settings: settings,
             extraAllowedHosts: registry.sites.flatMap(\.allowedHosts),
-            allowUnlistedHosts: allowUnlistedHosts
+            allowUnlistedHosts: allowUnlistedHosts,
+            allowFakeIPFallback: true
         )
         (sessionStore.runtimeIfPresent(sessionId: sessionId) as? IOSWebMountWKRuntime)?
             .setNavigationPolicy(policy, site: site, resolveHost: resolveHost)
@@ -5872,11 +6268,9 @@ final class IOSWebMountController {
             let loginStatus: String
             switch site.authKind {
             case .anonymous:
-                loginStatus = "logged_in"
+                loginStatus = "not_required"
             case .cookie:
-                if summary.hasLoginCookie == true {
-                    loginStatus = "logged_in"
-                } else if summary.hasLoginCookie == false {
+                if summary.hasLoginCookie == false {
                     loginStatus = "logged_out"
                 } else {
                     loginStatus = "unknown"
@@ -5892,6 +6286,10 @@ final class IOSWebMountController {
                 "enabled": site.enabled,
                 "user_added": site.nativeAdapterId == nil,
                 "login_status": loginStatus,
+                "login_verified": false,
+                "authentication_required": site.authKind != .anonymous,
+                "authentication_evidence": site.authKind == .anonymous ? "not_required"
+                    : (summary.hasLoginCookie == true ? "cookie_present_unverified" : "none"),
                 "cookie_count": summary.cookieCount,
                 "cookie_names": summary.cookieNames,
                 "native_adapter_id": site.nativeAdapterId ?? "",
@@ -5956,7 +6354,8 @@ final class IOSWebMountController {
         let policy = IOSWebMountURLPolicy(
             settings: settings,
             extraAllowedHosts: registry.sites.flatMap(\.allowedHosts),
-            allowUnlistedHosts: allowUnlistedHosts
+            allowUnlistedHosts: allowUnlistedHosts,
+            allowFakeIPFallback: true
         )
         switch await policy.validateResolvedPublicHost(
             rawURL,
@@ -5980,6 +6379,7 @@ final class IOSWebMountController {
                 resolveHost: resolveHost
             )
             sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
+            let before = try? await runtime.state()
             let snapshot = await runtime.open(url, timeoutMillis: timeout)
             if agentOwnershipLost(sessionId: snapshot.sessionId, context: context) {
                 sessionStore.markNeedsReopen(sessionId: snapshot.sessionId)
@@ -5997,17 +6397,32 @@ final class IOSWebMountController {
                 sessionStore.clearNeedsReopen(sessionId: snapshot.sessionId)
             }
             touch(sessionId: snapshot.sessionId, context: context)
-            return Self.json([
+            let after = try? await runtime.state()
+            let pageChanged: Any
+            if let before, let after {
+                pageChanged = Self.webMountStateDiff(before: before, after: after)["changed"] ?? false
+            } else {
+                pageChanged = NSNull()
+            }
+            var response: [String: Any] = [
                 "ok": snapshot.status != .failed,
                 "session_id": snapshot.sessionId,
                 "status": timedOut ? "unknown_after_action" : snapshot.status.rawValue,
                 "error_code": timedOut ? "unknown_after_action" : "",
                 "may_have_applied": timedOut,
+                "dispatched": snapshot.status == .failed ? NSNull() : true as Any,
+                "page_changed": pageChanged,
+                "goal_verified": false,
+                "navigation_ready": snapshot.status == .ready,
                 "url": snapshot.currentURL ?? snapshot.requestedURL ?? "",
                 "title": IOSWebMountRedactor.redactedText(snapshot.title ?? ""),
                 "error": IOSWebMountRedactor.redactedText(snapshot.error ?? ""),
                 "waited": true
-            ])
+            ]
+            if snapshot.status == .failed {
+                response["final_observation"] = await boundedFinalObservation(runtime: runtime)
+            }
+            return Self.json(response)
         }
     }
 
@@ -6033,7 +6448,9 @@ final class IOSWebMountController {
         context: IOSWebMountExecutionContext?
     ) async throws -> String {
         let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
-        let observation = try await runtime.observe(maxChars: 2_000, maxLinks: 20)
+        let maxChars = ((args["max_chars"] as? Int) ?? 2_000).clamped(to: 0...8_000)
+        let maxLinks = ((args["max_links"] as? Int) ?? 20).clamped(to: 0...40)
+        let observation = try await runtime.observe(maxChars: maxChars, maxLinks: maxLinks)
         let page = observation["page"] as? [String: Any] ?? [:]
         touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
@@ -6049,6 +6466,9 @@ final class IOSWebMountController {
             "interactive_elements": IOSWebMountRedactor.redactedJSONObject(observation["interactive_elements"] ?? []),
             "visual_candidates": IOSWebMountRedactor.redactedJSONObject(observation["visual_candidates"] ?? []),
             "observation_consistency": observation["observation_consistency"] ?? "unknown",
+            "truncated_fields": observation["truncated_fields"] ?? [],
+            "redaction_applied": true,
+            "read_more": "Use wm_find for a local target, then wm_get with session_id, snapshot_id and target. Use wm_extract with max_chars for more page text.",
             "untrusted_page_content": true,
             "redacted": true
         ])
@@ -6110,9 +6530,16 @@ final class IOSWebMountController {
         }
         let maxChars = ((args["max_chars"] as? Int) ?? 20_000).clamped(to: 0...100_000)
         let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
+        if let expectedSnapshot = (args["snapshot_id"] as? String)?.nilIfBlank {
+            let page = try await runtime.state()
+            guard page["snapshot_id"] as? String == expectedSnapshot else {
+                return Self.json(["ok": false, "error_code": "stale_snapshot", "requires_reobserve": true,
+                                  "session_id": runtime.snapshot.sessionId, "snapshot_id": page["snapshot_id"] ?? ""])
+            }
+        }
         let result = try await runtime.get(
-            selector: args["selector"] as? String,
-            target: args["target"] as? String,
+            selector: (args["selector"] as? String)?.nilIfBlank,
+            target: (args["target"] as? String)?.nilIfBlank,
             kind: kind,
             attrName: args["attr_name"] as? String,
             maxChars: maxChars
@@ -6152,7 +6579,9 @@ final class IOSWebMountController {
         reader: IOSWebMountVisualReadHandler?
     ) async throws -> String {
         guard let reader else {
-            return Self.json(["ok": false, "error_code": "vision_unavailable", "reason": "No vision model reader is connected. Visual verification was not performed."])
+            return Self.json(["ok": false, "error_code": "vision_unavailable", "visual_verified": false,
+                              "dom_only": true, "automatic_retry_allowed": false,
+                              "reason": "No vision model reader is connected. Visual verification was not performed."])
         }
         let question = (args["question"] as? String)?.nilIfBlank
             ?? "Describe the visible page, loading errors, dialogs and controls. Verify whether the intended browser action visibly succeeded; state uncertainty."
@@ -6316,11 +6745,11 @@ final class IOSWebMountController {
     private static func webMountPostconditionOptions(from args: [String: Any]) -> [String: Any]? {
         guard let raw = args["postcondition"] as? [String: Any],
               let condition = (raw["condition"] as? String)?.nilIfBlank?.lowercased(),
-              ["selector", "text", "url_contains", "ready_state", "dom_stable"].contains(condition) else {
+              ["selector", "text", "url_contains", "ready_state", "dom_stable", "document_changed", "url_changed"].contains(condition) else {
             return nil
         }
         let value = (raw["value"] as? String)?.nilIfBlank
-        if condition != "dom_stable", value == nil {
+        if !["dom_stable", "document_changed", "url_changed"].contains(condition), value == nil {
             return nil
         }
         if condition == "ready_state",
@@ -6328,6 +6757,9 @@ final class IOSWebMountController {
             return nil
         }
         var options: [String: Any] = ["condition": condition]
+        if let requireChange = raw["require_page_change"] as? Bool {
+            options["require_page_change"] = requireChange
+        }
         switch condition {
         case "selector": options["selector"] = value
         case "text": options["text"] = value
@@ -6353,15 +6785,57 @@ final class IOSWebMountController {
     }
 
     private static func webMountStateDiff(before: [String: Any], after: [String: Any]) -> [String: Any] {
-        let keys = ["url", "title", "ready_state", "text_length", "links_count"]
+        let keys = ["document_id", "url", "url_revision", "dom_revision", "title", "text_length", "links_count", "scroll"]
         let changedFields = keys.filter { key in
-            String(describing: before[key] ?? NSNull()) != String(describing: after[key] ?? NSNull())
+            !NSDictionary(dictionary: ["value": before[key] ?? NSNull()])
+                .isEqual(to: ["value": after[key] ?? NSNull()])
         }
         return [
             "changed": !changedFields.isEmpty,
             "changed_fields": changedFields,
             "revision_changed": String(describing: before["snapshot_id"] ?? NSNull()) != String(describing: after["snapshot_id"] ?? NSNull())
         ]
+    }
+
+    private static func webMountTargetConflict(toolName: String, args: [String: Any]) -> String? {
+        guard interactionMutatingToolNames.contains(toolName) || ["wm_get", "wm_find", "wm_wait"].contains(toolName),
+              let target = (args["target"] as? String)?.nilIfBlank,
+              let selector = (args["selector"] as? String)?.nilIfBlank,
+              target != selector else { return nil }
+        return json([
+            "ok": false, "tool": toolName, "status": "rejected", "error_code": "conflicting_target_arguments",
+            "dispatched": false, "page_changed": false, "goal_verified": false, "may_have_applied": false,
+            "reason": "target and selector identify different targets. Use the observed target ref and omit selector.",
+            "retry": webMountRetryAdvice(dispatched: false)
+        ])
+    }
+
+    private static func webMountRetryAdvice(dispatched: Bool) -> [String: Any] {
+        ["automatic_retry_allowed": false,
+         "risk": dispatched ? "duplicate_side_effect_possible" : "not_dispatched",
+         "next_step": dispatched
+            ? "Inspect final_observation or re-observe. Reconcile the intended effect before repeating an action; a failed wait does not mean the action failed."
+            : "Correct the rejected arguments or permission issue, then observe again before issuing a new action."]
+    }
+
+    private func boundedFinalObservation(runtime: IOSWebMountRuntimeServicing) async -> [String: Any] {
+        do {
+            let observation = try await runtime.observe(maxChars: 1_200, maxLinks: 6)
+            let page = observation["page"] as? [String: Any] ?? [:]
+            return IOSWebMountRedactor.redactedJSONObject([
+                "available": true,
+                "session_id": runtime.snapshot.sessionId,
+                "snapshot_id": observation["snapshot_id"] ?? page["snapshot_id"] ?? "",
+                "page": page,
+                "visible_text": observation["visible_text"] ?? "",
+                "interactive_elements": Array((observation["interactive_elements"] as? [[String: Any]] ?? []).prefix(8)),
+                "links": Array((observation["links"] as? [[String: Any]] ?? []).prefix(6)),
+                "bounded": true, "untrusted_page_content": true, "redaction_applied": true,
+                "read_more": "wm_observe or wm_find, followed by wm_get on a fresh target ref"
+            ]) as? [String: Any] ?? [:]
+        } catch {
+            return ["available": false, "error_code": "final_observation_unavailable", "requires_reobserve": true]
+        }
     }
 
     private static func parseObject(_ input: String) -> [String: Any] {

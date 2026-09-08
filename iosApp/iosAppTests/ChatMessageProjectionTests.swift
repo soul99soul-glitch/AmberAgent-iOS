@@ -799,6 +799,22 @@ final class ChatMessageProjectionTests: XCTestCase {
         )
     }
 
+    func testStreamingTableKeepsRenderedSnapshotWhilePaddedTailCellChanges() throws {
+        let source = "| 方案 | 说明 |\n| --- | --- |\n| A | 简短 |\n| 新"
+        let before = try XCTUnwrap(ChatStreamingMarkdownBlockParserTestSupport.blocks(
+            in: source, includeTrailingPartialTableRow: false
+        ).first { $0.kind == "table" }).markdown
+        let after = try XCTUnwrap(ChatStreamingMarkdownBlockParserTestSupport.blocks(
+            in: source + "方案", includeTrailingPartialTableRow: false
+        ).first { $0.kind == "table" }).markdown
+        XCTAssertFalse(after.hasPrefix(before), "补出的尾行管道符会被下一拍改写")
+        XCTAssertTrue(ChatStableStreamingMarkdownControllerTestSupport.hasStaleRenderable(
+            renderedText: before,
+            requestedText: after,
+            preservesRenderedTable: true
+        ), "同一表格的新解析就绪前必须保留旧表格，不能退回管道原文导致高度跳变")
+    }
+
     func testStableStreamingMarkdownControllerKeepsInstanceRenderableAcrossCompletionParse() {
         let resolution = ChatStableStreamingMarkdownControllerTestSupport
             .instanceResolutionAfterSpeculativeModeChange()

@@ -21,7 +21,7 @@ enum IOSCapabilityGate: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .skills: "技能"
         case .mcp: "MCP"
-        case .webMount: "WebMount"
+        case .webMount: IOSAppLocalization.string("WebMount", defaultValue: "WebMount")
         case .miniApps: "小应用"
         case .subAgents: "子代理"
         case .modelCouncil: "模型议会"
@@ -40,7 +40,7 @@ enum IOSCapabilityGate: String, CaseIterable, Identifiable, Codable {
         case .mcp:
             "需要开启 MCP 后才会连接服务器或向聊天声明 MCP 工具。"
         case .webMount:
-            "WebMount 是正式高级能力，入口默认可用。"
+            "站点是正式高级能力，入口默认可用。"
         case .miniApps:
             "小应用是正式高级能力，入口默认可用。"
         case .subAgents:
@@ -719,6 +719,7 @@ final class IOSSharedSettingsStore {
         displayName: String,
         contextWindowTokens: Int?,
         modelType: ModelType,
+        inputModalities: [Modality] = [.text],
         headers: [(name: String, value: String)]
     ) -> ProviderSetting? {
         let pairs = headers.map {
@@ -732,6 +733,7 @@ final class IOSSharedSettingsStore {
             displayName: displayName,
             contextWindowTokens: contextWindowTokens.map { KotlinInt(value: Int32($0)) },
             modelType: modelType,
+            inputModalities: inputModalities,
             headerPairs: pairs
         )
         restoreSnapshot(merged)
@@ -838,7 +840,16 @@ final class IOSSharedSettingsStore {
         }
 
         IOSCredentialSideTable.delete(key: IOSCredentialSideTable.providerApiKey(providerId: providerId))
+        // Provider-scoped OAuth and request-header credentials are separate from
+        // the Settings JSON. Remove every store keyed by this provider id so a
+        // deleted provider cannot leave usable credentials or header secrets
+        // behind in Keychain/UserDefaults.
+        IOSCodexAuthStore.clear(providerId: providerId)
+        IOSGrokOAuthClients.logout(providerId: providerId)
+        IOSGrokOAuthAuthStore.clearBackup(providerId: providerId)
+        IOSGrokWebAuthStore.clear(providerId: providerId)
         IOSAntigravityOAuthClients.logout(providerId: providerId)
+        IOSProviderRequestHeaderStore.save(providerId: providerId, userAgent: nil, extra: [])
         genericCredentialRefs.forEach { IOSCredentialSideTable.delete(key: $0) }
         savedCustomModels.removeAll { $0["providerId"] == providerId }
         restoreSnapshot(merged)
@@ -864,15 +875,14 @@ final class IOSSharedSettingsStore {
         snapshot.getCurrentChatModel()?.modelId ?? ""
     }
 
-    /// Resolve the (wire modelId, provider) pair for a board Deep Read run.
+    /// Resolve the configured model and provider for a board Deep Read run.
     /// `boardModelId` is the per-board model override (a hex-dash UUID); when it
     /// is empty or not found, falls back to the current chat model. Resolves from
     /// the canonical shared snapshot (mirrors chat), so a provider+model the user
     /// configured in Settings is honored — not the legacy key-LESS
     /// ProviderRegistryStore. Returns nil when no usable model/provider/key is
-    /// configured, so the caller can degrade to the deterministic offline draft
-    /// (honest degradation, never a silent /chat/completions).
-    func resolveBoardDeepReadModel(boardModelId: String?) -> (modelId: String, provider: ProviderSetting)? {
+    /// configured, so the caller can surface the missing configuration.
+    func resolveBoardDeepReadModel(boardModelId: String?) -> (model: Model, provider: ProviderSetting)? {
         let model: Model?
         if let id = boardModelId?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
             model = snapshot.providers
@@ -888,7 +898,7 @@ final class IOSSharedSettingsStore {
               !model.modelId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return nil
         }
-        return (model.modelId, provider)
+        return (model, provider)
     }
 
     /// A chat model offered for selection in pickers, resolved from the shared

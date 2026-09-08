@@ -48,7 +48,7 @@ class TerminalToolDeclarationTest {
         assertTrue("printf" in amberShell.description)
         assertTrue("python -c" in amberShell.description)
         assertTrue("no pip" in amberShell.description)
-        assertTrue("ExperimentalGPL" in amberShell.description)
+        assertTrue("stable local command environment" in amberShell.description)
         assertTrue("three pipeline stages" in amberShell.description)
         assertTrue("2>" in amberShell.description)
         assertTrue("control flow" in amberShell.description)

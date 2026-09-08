@@ -308,8 +308,28 @@ struct AmberMarkdownView: View {
 
     @State private var codeBlockExpanded: Set<String> = []
 
+    func codeBlockText(from node: PackedAstNode, source: String) -> String {
+        // The block span includes its fence and language; text children contain only code.
+        node.children.map { child in
+            sliceSource(source, start: child.startOffset, end: child.endOffset)
+        }.joined()
+    }
+
+    func inlineCodeText(from node: PackedAstNode, source: String) -> String {
+        let raw = sliceSource(source, start: node.startOffset, end: node.endOffset)
+        let fenceLength = raw.prefix { $0 == "`" }.count
+        let code = String(raw.dropFirst(fenceLength).dropLast(fenceLength))
+            .replacingOccurrences(of: "\r\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+        if code.hasPrefix(" "), code.hasSuffix(" "), code.contains(where: { $0 != " " }) {
+            return String(code.dropFirst().dropLast())
+        }
+        return code
+    }
+
     private func renderCodeBlock(_ node: PackedAstNode, source: String) -> some View {
-        let code = sliceSource(source, start: node.startOffset, end: node.endOffset)
+        let code = codeBlockText(from: node, source: source)
         let lang = node.codeLang()
         let autoWrap = displaySetting?.codeBlockAutoWrap ?? true
         let autoCollapse = displaySetting?.codeBlockAutoCollapse ?? false
@@ -318,20 +338,28 @@ struct AmberMarkdownView: View {
         let shouldCollapse = autoCollapse && code.count > 500 && !isExpanded
 
         return VStack(alignment: .leading, spacing: 0) {
-            if let lang, !lang.isEmpty {
-                HStack {
+            HStack {
+                if let lang, !lang.isEmpty {
                     Text(lang)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Spacer()
-                    if ["svg", "html"].contains(lang.lowercased()) {
-                        WidgetCodePreviewButton(code: code)
-                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
+                Spacer()
+                if let lang, ["svg", "html"].contains(lang.lowercased()) {
+                    WidgetCodePreviewButton(code: code)
+                }
+                Button {
+                    UIPasteboard.general.string = code
+                } label: {
+                    Label("复制", systemImage: "doc.on.doc")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
             if shouldCollapse {
                 Text(String(code.prefix(300)))
                     .font(.system(.body, design: .monospaced))
@@ -351,6 +379,7 @@ struct AmberMarkdownView: View {
             } else if autoWrap {
                 Text(code)
                     .font(.system(.body, design: .monospaced))
+                    .textSelection(.enabled)
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -359,6 +388,7 @@ struct AmberMarkdownView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     Text(code)
                         .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: false)
                         .padding(12)
                 }
@@ -637,7 +667,7 @@ struct AmberMarkdownView: View {
             return result
 
         case .inlineCode:
-            let raw = sliceSource(source, start: node.startOffset, end: node.endOffset)
+            let raw = inlineCodeText(from: node, source: source)
             guard !raw.isEmpty else { return nil }
             var result = AttributedString(raw)
             result.font = .system(.body, design: .monospaced)

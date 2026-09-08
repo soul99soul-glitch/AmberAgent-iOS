@@ -6,6 +6,7 @@ import app.amber.ai.core.Tool
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.OpenAIBrand
+import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
 import app.amber.ai.ui.UIMessage
@@ -184,6 +185,32 @@ class OpenAIKmpProviderRequestTest {
             stream = false,
         )
         assertEquals("xhigh", body.getValue("reasoning_effort").jsonPrimitive.content)
+    }
+
+    @Test
+    fun codexAstraResponsesOmitSamplingAndMapOffToLow() {
+        val codex = setting.copy(
+            baseUrl = "https://chatgpt.com/backend-api/codex",
+            authMode = OpenAIAuthMode.CODEX_OAUTH,
+            useResponseApi = true,
+        )
+        val body = provider.buildResponsesRequestBody(
+            providerSetting = codex,
+            messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+            params = TextGenerationParams(
+                model = reasoningModel("gpt-6-astra"),
+                temperature = 0.2f,
+                topP = 0.9f,
+                reasoningLevel = ReasoningLevel.OFF,
+            ),
+            stream = true,
+        )
+
+        assertTrue(usesOpenAIResponsesApi(codex, "gpt-6-astra"))
+        assertTrue(body.getValue("stream").jsonPrimitive.boolean)
+        assertFalse("temperature" in body)
+        assertFalse("top_p" in body)
+        assertEquals("low", body.getValue("reasoning").jsonObject.getValue("effort").jsonPrimitive.content)
     }
 
     @Test

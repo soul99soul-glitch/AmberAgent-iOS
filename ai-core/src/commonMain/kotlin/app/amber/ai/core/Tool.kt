@@ -462,6 +462,7 @@ fun createWebMountOpenToolDeclaration(): Tool = webMountTool(
     description = """
         Open a URL or station in the iOS WebMount session.
         Use `site_id` from wm_stations when possible. Unlisted public hosts are available only while high-risk auto-approve is enabled.
+        For local WK sessions, unlisted HTTPS hosts behind a trusted VPN with standard Fake-IP DNS answers are rechecked with Google Public DNS over HTTPS. The original hostname is still loaded through the VPN; this is DNS preflight, not connection IP pinning. Private IP literals, private DNS answers, and failed public DNS checks remain blocked.
         After navigation settles, use wm_visual_read for visual confirmation when a vision-capable model and manual approval or high-risk auto-approval are available.
     """.trimIndent(),
     parameters = webMountOpenParameters()
@@ -476,7 +477,7 @@ fun createWebMountStateToolDeclaration(): Tool = webMountTool(
 fun createWebMountObserveToolDeclaration(): Tool = webMountTool(
     name = "wm_observe",
     description = "Observe the current iOS WebMount page: state, visible text, links, interactive elements and DOM visual candidates. Prefer interactive_elements for actions and typeable=true for text entry. A visual candidate may provide interactive_target_ref for its nearest control; single_click_supported=false means it cannot be single-clicked directly. For a collapsed search control, click its control ref, re-observe, then wm_type into the revealed input. Does not expose cookies, tokens or headers. After key actions, use wm_visual_read for visual confirmation when a vision model and the required approval are available.",
-    parameters = webMountSessionParameters()
+    parameters = webMountObserveParameters()
 )
 
 fun createWebMountExtractToolDeclaration(): Tool = webMountTool(
@@ -3676,7 +3677,7 @@ private fun JsonObjectBuilder.putWebMountSnapshotId(required: Boolean = false) {
 private fun JsonObjectBuilder.putWebMountPostcondition() {
     put("postcondition", buildJsonObject {
         put("type", "object")
-        put("description", "Optional outcome to wait for after dispatch. If it is not met, the action is reported as ambiguous rather than successful.")
+        put("description", "Optional outcome to wait for after dispatch. Read dispatched, page_changed and goal_verified separately; ok=true alone does not prove the goal. A failed wait does not undo the action: inspect final_observation and retry risk before repeating it. Set require_page_change=true when the outcome must follow a document, URL, or DOM change; ready_state and dom_stable only report readiness and cannot verify the action goal.")
         put("properties", buildJsonObject {
             put("condition", buildJsonObject {
                 put("type", "string")
@@ -3686,12 +3687,18 @@ private fun JsonObjectBuilder.putWebMountPostcondition() {
                     add("url_contains")
                     add("ready_state")
                     add("dom_stable")
+                    add("document_changed")
+                    add("url_changed")
                 })
+            })
+            put("require_page_change", buildJsonObject {
+                put("type", "boolean")
+                put("description", "Require the postcondition to be observed after the page document, URL, or DOM revision changes; the executor captures the before identity and does not blindly retry an ambiguous action.")
             })
             put("value", buildJsonObject {
                 put("type", "string")
                 put("minLength", 1)
-                put("description", "Non-empty expected selector, text, URL fragment, or ready state. Required for selector, text, url_contains, and ready_state; omit this field for dom_stable.")
+                put("description", "Non-empty expected selector, text, URL fragment, or ready state. Required for selector, text, url_contains, and ready_state; omit this field for dom_stable, document_changed, and url_changed.")
             })
             put("timeout_ms", buildJsonObject {
                 put("type", "integer")
@@ -3706,6 +3713,24 @@ private fun JsonObjectBuilder.putWebMountPostcondition() {
 private fun webMountSessionParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         putWebMountSessionId()
+    }
+)
+
+private fun webMountObserveParameters(): InputSchema = InputSchema.Obj(
+    properties = buildJsonObject {
+        putWebMountSessionId()
+        put("max_chars", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 0)
+            put("maximum", 8_000)
+            put("description", "Maximum visible text characters to return; clamped by iOS.")
+        })
+        put("max_links", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 0)
+            put("maximum", 40)
+            put("description", "Maximum links to return; clamped by iOS.")
+        })
     }
 )
 
@@ -3801,11 +3826,11 @@ private fun webMountGetParameters(): InputSchema = InputSchema.Obj(
         putWebMountSnapshotId()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "CSS selector to read")
+            put("description", "Optional CSS selector to read for direct user actions; when target is supplied, omit selector or provide the same value. Agent calls should use target.")
         })
         put("target", buildJsonObject {
             put("type", "string")
-            put("description", "optional target ref such as css:body")
+            put("description", "Preferred target ref from the latest wm_observe/wm_find result; if selector is also supplied, target takes precedence when both values agree and conflicting values are rejected.")
         })
         put("kind", buildJsonObject {
             put("type", "string")
@@ -3891,11 +3916,11 @@ private fun webMountTargetParameters(
         putWebMountPostcondition()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "CSS selector for direct user actions; Agent calls must use target")
+            put("description", "Optional CSS selector for direct user actions; when target is supplied, omit selector or provide the same value. Agent calls should use target.")
         })
         put("target", buildJsonObject {
             put("type", "string")
-            put("description", "Target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations")
+            put("description", "Preferred target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations. If selector is also supplied, target takes precedence when both values agree; conflicting values are rejected.")
         })
         if (includeClickCount) {
             put("click_count", buildJsonObject {
@@ -3925,11 +3950,11 @@ private fun webMountTextInteractionParameters(requireSessionSnapshot: Boolean = 
         putWebMountPostcondition()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "CSS selector for direct user actions; Agent calls must use target")
+            put("description", "Optional CSS selector for direct user actions; when target is supplied, omit selector or provide the same value. Agent calls should use target.")
         })
         put("target", buildJsonObject {
             put("type", "string")
-            put("description", "Target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations")
+            put("description", "Preferred target ref from the latest wm_observe/wm_extract/wm_find result; required for Agent mutations. If selector is also supplied, target takes precedence when both values agree; conflicting values are rejected.")
         })
         put("text", buildJsonObject {
             put("type", "string")
@@ -3950,11 +3975,11 @@ private fun webMountScrollParameters(requireSessionSnapshot: Boolean = false): I
         putWebMountPostcondition()
         put("selector", buildJsonObject {
             put("type", "string")
-            put("description", "Optional CSS selector to scroll")
+            put("description", "Optional CSS selector to scroll for direct user actions; when target is supplied, omit selector or provide the same value. Agent calls should use target.")
         })
         put("target", buildJsonObject {
             put("type", "string")
-            put("description", "Target ref from wm_extract/wm_find")
+            put("description", "Preferred target ref from wm_extract/wm_find; if selector is also supplied, target takes precedence when both values agree and conflicting values are rejected.")
         })
         put("to", buildJsonObject {
             put("type", "string")
@@ -3994,13 +4019,15 @@ private fun webMountWaitParameters(): InputSchema = InputSchema.Obj(
         putWebMountSessionId()
         put("condition", buildJsonObject {
             put("type", "string")
-            put("description", "observable condition; defaults to dom_stable")
+            put("description", "Observable condition; defaults to dom_stable. document_changed and url_changed wait for a new page identity; ready_state and dom_stable report readiness only and cannot verify an action goal.")
             put("enum", buildJsonArray {
                 add("dom_stable")
                 add("selector")
                 add("text")
                 add("url_contains")
                 add("ready_state")
+                add("document_changed")
+                add("url_changed")
                 add("delay")
             })
         })
@@ -4015,6 +4042,26 @@ private fun webMountWaitParameters(): InputSchema = InputSchema.Obj(
         put("url_contains", buildJsonObject {
             put("type", "string")
             put("description", "URL fragment to wait for without returning query values")
+        })
+        put("before_document_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional document identity captured before the action; used with condition=document_changed")
+        })
+        put("before_url", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional redacted URL captured before the action; used with condition=url_changed. Prefer the URL revision from wm_state or wm_observe when same-document query or hash changes matter.")
+        })
+        put("before_url_revision", buildJsonObject {
+            put("type", "integer")
+            put("description", "Optional URL revision captured from wm_state or wm_observe before the action; with before_document_id, detects same-document URL, query, or hash changes without exposing the raw URL")
+        })
+        put("before_dom_revision", buildJsonObject {
+            put("type", "integer")
+            put("description", "Optional DOM revision captured from wm_state or wm_observe before the action; used as page-change evidence with require_page_change")
+        })
+        put("require_page_change", buildJsonObject {
+            put("type", "boolean")
+            put("description", "Require a new document, URL revision, or DOM revision in addition to the condition. A revision change is observation evidence and does not by itself verify the business goal.")
         })
         put("ready_state", buildJsonObject {
             put("type", "string")

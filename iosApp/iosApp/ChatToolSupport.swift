@@ -884,6 +884,8 @@ enum ChatToolApprovalRequestBuilder {
 
 @MainActor
 enum ChatToolOutputFormatter {
+    private typealias WebMountArrayCandidate = (path: [Any], key: String, array: [Any], count: Int)
+
     static func subAgentOutcome(
         for toolName: String,
         output: IOSLocalToolExecutionOutput
@@ -1199,6 +1201,9 @@ enum ChatToolOutputFormatter {
               let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             return nil
         }
+        if isWebMountPayload(object) {
+            return cappedWebMountJSON(object, raw: raw, maxChars: maxChars)
+        }
         var working: [String: Any] = object
         var string = jsonString(working)
         guard string.count > maxChars else { return raw }
@@ -1210,7 +1215,7 @@ enum ChatToolOutputFormatter {
             guard let longest = longestStringValue(in: working, minimumLength: 12),
                   longest.value.count > 12 else { break }
             let shorter = String(longest.value.prefix(max(longest.value.count / 2, 12)))
-            working = replacingStringValue(at: longest.path, in: working, with: shorter) as! [String: Any]
+            working = replacingValue(at: longest.path, in: working, with: shorter) as! [String: Any]
             truncated = true
             string = jsonString(working)
         }
@@ -1226,6 +1231,170 @@ enum ChatToolOutputFormatter {
             string = jsonString(working)
         }
         return string
+    }
+
+    private static func isWebMountPayload(_ value: Any) -> Bool {
+        if let object = value as? [String: Any] {
+            if (object["tool"] as? String)?.hasPrefix("wm_") == true
+                || (object["session_id"] as? String) != nil && (object["snapshot_id"] as? String) != nil
+                || object["interactive_elements"] != nil || object["visual_candidates"] != nil {
+                return true
+            }
+            return object.values.contains { isWebMountPayload($0) }
+        }
+        if let array = value as? [Any] {
+            return array.contains { isWebMountPayload($0) }
+        }
+        return false
+    }
+
+    private static func cappedWebMountJSON(
+        _ original: [String: Any],
+        raw: String,
+        maxChars: Int
+    ) -> String {
+        var working = original
+        var fields: [String: [String: Any]] = [:]
+
+        func rendered(budgetExceeded: Bool) -> String {
+            var payload = working
+            payload["truncated"] = true
+            var truncation: [String: Any] = [
+                "fields": fields,
+                "read_more": "Use wm_find or wm_get with the same session_id and snapshot_id, or observe again to retrieve omitted entries."
+            ]
+            if budgetExceeded {
+                truncation["budget_exceeded"] = true
+                payload["budget_exceeded"] = true
+            }
+            payload["truncation"] = truncation
+            payload["truncation_note"] = IOSToolOutputLimits.truncationMarker(
+                droppedChars: max(raw.count - jsonString(working).count, 0)
+            )
+            return jsonString(payload)
+        }
+
+        while rendered(budgetExceeded: false).count > maxChars,
+              let candidate = webMountArrayPaths(in: working).first(where: {
+                  let minimum = $0.key == "links" ? 3 : 0
+                  return $0.count > minimum && ($0.key == "visual_candidates" || $0.key == "links")
+              }) {
+            guard dropWebMountArray(candidate, from: &working, fields: &fields) else { break }
+        }
+
+        while rendered(budgetExceeded: false).count > maxChars,
+              let candidate = longestStringValue(
+                  in: working,
+                  minimumLength: 96,
+                  protectedKey: webMountProtectedStringKey,
+                  minimumLengthForKey: webMountDescriptionFloor
+              ),
+              let key = candidate.path.last as? String {
+            let floor = webMountDescriptionFloor(for: key)
+            guard candidate.value.count > floor else { break }
+            let replacement = String(candidate.value.prefix(max(floor, candidate.value.count / 2)))
+            guard let next = replacingValue(
+                at: candidate.path,
+                in: working,
+                with: replacement
+            ) as? [String: Any] else { break }
+            working = next
+            let path = webMountPath(candidate.path)
+            let originalChars = fields[path]?["original_chars"] as? Int ?? candidate.value.count
+            fields[path] = [
+                "original_chars": originalChars,
+                "returned_chars": replacement.count
+            ]
+        }
+
+        while rendered(budgetExceeded: false).count > maxChars,
+              let candidate = webMountArrayPaths(in: working).first(where: {
+                  $0.count > 6 && ["interactive_elements", "interactive_nodes", "elements"].contains($0.key)
+              }) {
+            guard dropWebMountArray(candidate, from: &working, fields: &fields) else { break }
+        }
+
+        let result = rendered(budgetExceeded: false)
+        return result.count <= maxChars ? result : rendered(budgetExceeded: true)
+    }
+
+    private static func webMountArrayPaths(
+        in value: Any,
+        path: [Any] = []
+    ) -> [WebMountArrayCandidate] {
+        var result: [WebMountArrayCandidate] = []
+        if let object = value as? [String: Any] {
+            for key in object.keys.sorted() {
+                guard let child = object[key] else { continue }
+                if let array = child as? [Any], webMountArrayPriority(for: key) != nil {
+                    result.append((path + [key], key, array, array.count))
+                }
+                result.append(contentsOf: webMountArrayPaths(in: child, path: path + [key]))
+            }
+        } else if let array = value as? [Any] {
+            for (index, child) in array.enumerated() {
+                result.append(contentsOf: webMountArrayPaths(in: child, path: path + [index]))
+            }
+        }
+        return result.sorted {
+            let left = webMountArrayPriority(for: $0.key) ?? 99
+            let right = webMountArrayPriority(for: $1.key) ?? 99
+            return left == right
+                ? webMountPath($0.path) < webMountPath($1.path)
+                : left < right
+        }
+    }
+
+    private static func dropWebMountArray(
+        _ candidate: WebMountArrayCandidate,
+        from working: inout [String: Any],
+        fields: inout [String: [String: Any]]
+    ) -> Bool {
+        let returnedCount = candidate.count - 1
+        guard let next = replacingValue(
+            at: candidate.path,
+            in: working,
+            with: Array(candidate.array.prefix(returnedCount))
+        ) as? [String: Any] else { return false }
+        working = next
+        let path = webMountPath(candidate.path)
+        let originalCount = fields[path]?["original_count"] as? Int ?? candidate.count
+        fields[path] = ["original_count": originalCount, "returned_count": returnedCount]
+        return true
+    }
+
+    private static func webMountArrayPriority(for key: String) -> Int? {
+        switch key {
+        case "visual_candidates": return 0
+        case "links": return 1
+        case "interactive_elements", "interactive_nodes": return 2
+        case "elements": return 3
+        default: return nil
+        }
+    }
+
+    private static func webMountProtectedStringKey(_ key: String) -> Bool {
+        let key = key.lowercased()
+        return key == "id" || key == "ref" || key.hasSuffix("_id") || key.hasSuffix("_ref")
+            || key == "selector" || key == "target"
+            || key.contains("url")
+            || ["status", "error_code", "tool", "method", "href", "src", "origin"].contains(key)
+    }
+
+    private static func webMountDescriptionFloor(for key: String) -> Int {
+        switch key.lowercased() {
+        case "visible_text": return 1_024
+        case "title": return 160
+        case "text", "name", "label", "description", "nearby_text", "reason", "message", "error", "detail": return 160
+        default: return 96
+        }
+    }
+
+    private static func webMountPath(_ path: [Any]) -> String {
+        path.map { value in
+            if let key = value as? String { return key }
+            return "[\(value as? Int ?? 0)]"
+        }.joined(separator: ".")
     }
 
     private static func cappedPlainTextParts(_ parts: [UIMessagePart], maxChars: Int) -> [UIMessagePart] {
@@ -1262,7 +1431,9 @@ enum ChatToolOutputFormatter {
     private static func longestStringValue(
         in value: Any,
         minimumLength: Int,
-        path: [Any] = []
+        path: [Any] = [],
+        protectedKey: ((String) -> Bool)? = nil,
+        minimumLengthForKey: ((String) -> Int)? = nil
     ) -> (path: [Any], value: String)? {
         if let string = value as? String, string.count > minimumLength {
             return (path, string)
@@ -1273,10 +1444,17 @@ enum ChatToolOutputFormatter {
                 // 这些值会被后续工具用来定位目标或判断结果，不能裁短。
                 if child is String,
                    key == "id" || key == "ref" || key.hasSuffix("_id") || key.hasSuffix("_ref")
-                    || ["selector", "status", "error_code", "tool", "method"].contains(key) {
+                    || ["selector", "status", "error_code", "tool", "method"].contains(key)
+                    || protectedKey?(key) == true {
                     continue
                 }
-                if let candidate = longestStringValue(in: child, minimumLength: minimumLength, path: path + [key]),
+                if let candidate = longestStringValue(
+                    in: child,
+                    minimumLength: minimumLengthForKey?(key) ?? minimumLength,
+                    path: path + [key],
+                    protectedKey: protectedKey,
+                    minimumLengthForKey: minimumLengthForKey
+                ),
                    candidate.value.count > (best?.value.count ?? 0) {
                     best = candidate
                 }
@@ -1286,7 +1464,13 @@ enum ChatToolOutputFormatter {
         if let array = value as? [Any] {
             var best: (path: [Any], value: String)?
             for (index, child) in array.enumerated() {
-                if let candidate = longestStringValue(in: child, minimumLength: minimumLength, path: path + [index]),
+                if let candidate = longestStringValue(
+                    in: child,
+                    minimumLength: minimumLength,
+                    path: path + [index],
+                    protectedKey: protectedKey,
+                    minimumLengthForKey: minimumLengthForKey
+                ),
                    candidate.value.count > (best?.value.count ?? 0) {
                     best = candidate
                 }
@@ -1297,11 +1481,11 @@ enum ChatToolOutputFormatter {
     }
 
     /// 按路径（String 键 / Int 下标）替换树中的字符串值。
-    private static func replacingStringValue(
+    private static func replacingValue(
         at path: [Any],
         index: Int = 0,
         in value: Any,
-        with replacement: String
+        with replacement: Any
     ) -> Any {
         guard index < path.count else { return value }
         let key = path[index]
@@ -1310,7 +1494,7 @@ enum ChatToolOutputFormatter {
             if index == path.count - 1 {
                 next[keyString] = replacement
             } else if let child = next[keyString] {
-                next[keyString] = replacingStringValue(at: path, index: index + 1, in: child, with: replacement)
+                next[keyString] = replacingValue(at: path, index: index + 1, in: child, with: replacement)
             }
             return next
         }
@@ -1319,7 +1503,7 @@ enum ChatToolOutputFormatter {
             if index == path.count - 1 {
                 next[arrayIndex] = replacement
             } else if arrayIndex < next.count {
-                next[arrayIndex] = replacingStringValue(
+                next[arrayIndex] = replacingValue(
                     at: path,
                     index: index + 1,
                     in: next[arrayIndex],

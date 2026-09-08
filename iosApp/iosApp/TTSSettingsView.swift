@@ -48,6 +48,9 @@ struct TTSSettingsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onDisappear {
+            ttsPlayer.stop()
+        }
     }
 
     private var header: some View {

@@ -46,12 +46,21 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         XCTAssertEqual(cancellationCount, 1)
     }
 
-    private func makeProviderSetting() -> ProviderSetting.OpenAI {
+    private func makeDeepReadModel(_ modelId: String = "test-model") -> Model {
+        Model(
+            modelId: modelId, displayName: modelId, id: KotlinUuid.companion.random(),
+            type: .chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil, providerOverwrite: nil
+        )
+    }
+
+    private func makeProviderSetting(model: Model? = nil) -> ProviderSetting.OpenAI {
         ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),
             enabled: true,
             name: "deepread-test",
-            models: [],
+            models: model.map { [$0] } ?? [],
             balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
             builtIn: false,
             descriptionText: nil,
@@ -101,11 +110,14 @@ final class IOSDeepReadPipelineTests: XCTestCase {
     final class StageProvider: IOSAgentTextProvider, @unchecked Sendable {
         private let replies: [String]
         private let throwAtCalls: Set<Int>
+        private let finishReasons: [Int: String]
+        private(set) var receivedParams: [TextGenerationParams] = []
         private(set) var callCount = 0
         private(set) var userPrompts: [String] = []
-        init(_ replies: [String], throwAtCalls: Set<Int> = []) {
+        init(_ replies: [String], throwAtCalls: Set<Int> = [], finishReasons: [Int: String] = [:]) {
             self.replies = replies
             self.throwAtCalls = throwAtCalls
+            self.finishReasons = finishReasons
         }
 
         func generateText(
@@ -114,6 +126,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
             params: TextGenerationParams
         ) async throws -> MessageChunk {
             callCount += 1
+            receivedParams.append(params)
             if throwAtCalls.contains(callCount) {
                 throw NSError(domain: "deepread-test", code: 1, userInfo: [NSLocalizedDescriptionKey: "transient failure"])
             }
@@ -135,7 +148,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
             return MessageChunk(
                 id: "chunk-\(callCount)",
                 model: "test",
-                choices: [UIMessageChoice(index: 0, delta: nil, message: message, finishReason: "stop")],
+                choices: [UIMessageChoice(index: 0, delta: nil, message: message, finishReason: finishReasons[callCount] ?? "stop")],
                 usage: nil
             )
         }
@@ -198,10 +211,17 @@ final class IOSDeepReadPipelineTests: XCTestCase {
             analysisReply,
             extendedReply
         ])
+        let model = Model(
+            modelId: "configured-model", displayName: "Configured", id: KotlinUuid.companion.random(),
+            type: .chat, customHeaders: [CustomHeader(name: "X-Model", value: "deep-read")],
+            customBodies: [CustomBody(key: "reasoning_effort", value: Kotlinx_serialization_jsonJson.companion.parseToJsonElement(string: "\"low\""))],
+            inputModalities: [.text], outputModalities: [.text], abilities: [.reasoning],
+            tools: Set<BuiltInTools>(), contextWindowTokens: KotlinInt(value: 272_000), providerOverwrite: nil
+        )
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: model,
             provider: provider
         )
 
@@ -209,6 +229,14 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         XCTAssertEqual(provider.callCount, 5)
         XCTAssertFalse(result.didFail)
         XCTAssertTrue(result.missingSections.isEmpty, "no stage should be missing: \(result.missingSections)")
+
+        for params in provider.receivedParams {
+            XCTAssertEqual(params.model.id, model.id)
+            XCTAssertEqual(params.model.abilities, model.abilities)
+            XCTAssertEqual(params.customHeaders, model.customHeaders)
+            XCTAssertEqual(params.customBody, model.customBodies)
+            XCTAssertNil(params.maxTokens, "Use the provider/model output budget instead of a hard-coded 3500-token cap")
+        }
 
         // The merged structured output carries every stage's fields.
         let json = try XCTUnwrap(result.structuredJSON)
@@ -243,7 +271,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         _ = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.userPrompts.count, 5)
@@ -270,7 +298,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         _ = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         // Every stage prompt carries the Article Plan section.
@@ -293,7 +321,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.callCount, 5)
@@ -314,7 +342,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertFalse(result.didFail)
@@ -337,7 +365,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         _ = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(sources: sources),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         // Overview (cap 6): required ids 10,9 come first, then 1..4 — 5..8 absent.
@@ -360,7 +388,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         // The sub-24-char summary fails the gate on both attempts, is not merged,
@@ -388,7 +416,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.callCount, 6)
@@ -413,7 +441,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.callCount, 6)
@@ -438,7 +466,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.callCount, 6)
@@ -459,11 +487,11 @@ final class IOSDeepReadPipelineTests: XCTestCase {
             #"{"timeline":[{"date":"今天","event":"事件发生"}"#,
             analysisReply,
             extendedReply
-        ])
+        ], finishReasons: [3: "length"])
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.callCount, 5)
@@ -488,7 +516,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider
         )
         XCTAssertEqual(provider.callCount, 6) // analysis consumed its retry
@@ -509,7 +537,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider,
             stageTimeouts: ["概览": 0.2]
         )
@@ -539,7 +567,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider,
             initialOutput: priorOutput(),
             targetStages: ["深度分析"]
@@ -563,7 +591,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: makeTask(),
             providerSetting: makeProviderSetting(),
-            modelId: "test-model",
+            model: makeDeepReadModel("test-model"),
             provider: provider,
             initialOutput: priorOutput(),
             targetStages: ["深度分析"]
@@ -670,30 +698,72 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: base) }
 
         let store = IOSDeepReadStore(baseDirectory: base)
-        let source = try IOSDeepReadSourceNormalizer.manualText(
-            title: "Manual",
-            text: "A source with enough text for an offline deep-read draft.",
-            now: 100
+        let source = IOSDeepReadSource(
+            kind: .hotTopic,
+            title: "Cached article",
+            content: "Previously fetched article text remains available for generation.",
+            url: "https://example.invalid/article",
+            metadata: ["scrape_status": "ok"],
+            createdAt: 100
         )
         let task = try store.createTask(
-            title: "Workspace sync",
+            title: "W",
             sources: [source],
             templateId: IOSDeepReadTemplate.analysis.id,
             now: 1_000
         )
 
+        let defaults = UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        let model = makeDeepReadModel()
+        let configuredProvider = settings.addProvider(makeProviderSetting(model: model))
+        defer { _ = settings.removeProvider(providerId: configuredProvider.id.description()) }
+        settings.setCurrentChatModelId(model.id.description())
+        let provider = StageProvider([planReply, goodSummaryReply, timelineReply, analysisReply, extendedReply])
+
         store.markRunning(id: task.id)
         let didComplete = await IOSDeepReadLauncher.runExistingTask(
             taskId: task.id,
-            sharedSettings: IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!),
+            sharedSettings: settings,
             store: store,
+            textProvider: provider,
             workspaceArtifactSaver: { _, _, _, _, _ in throw SaveFailure.denied }
         )
 
         XCTAssertTrue(didComplete)
         let reloaded = try XCTUnwrap(IOSDeepReadStore(baseDirectory: base).task(id: task.id))
         XCTAssertEqual(reloaded.status, .succeeded)
-        XCTAssertEqual(reloaded.workspaceSyncFailed, "Workspace 保存失败，请稍后重试。")
+        XCTAssertEqual(reloaded.sources.first?.content, source.content)
+        XCTAssertEqual(reloaded.sources.first?.metadata["scrape_status"], "ok")
+        XCTAssertEqual(reloaded.workspaceSyncFailed, IOSAppLocalization.string("Workspace 保存失败，请稍后重试。", defaultValue: "Workspace 保存失败，请稍后重试。"))
+    }
+
+    func testMissingModelDoesNotCompleteWithOfflineTemplate() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "Missing model", sources: makeTask().sources,
+                                        templateId: IOSDeepReadTemplate.analysis.id)
+        let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!)
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(taskId: task.id, sharedSettings: settings, store: store)
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertFalse(didComplete)
+        XCTAssertEqual(saved.status, .failed)
+        XCTAssertTrue(saved.resultMarkdown.isEmpty)
+        XCTAssertNotNil(saved.failureMessage)
+    }
+
+    func testHotListMetadataWithoutArticleDoesNotReachSummaryModel() async {
+        let provider = StageProvider([planReply])
+        let task = makeTask(sources: [IOSDeepReadSource(
+            kind: .hotTopic, title: "Article", content: "榜单标题：Article\n排名：3\n链接：https://example.com",
+            url: "https://example.com", metadata: ["scrape_status": "scrape_failed_keep_content"]
+        )])
+        let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
+            task: task, providerSetting: makeProviderSetting(), model: makeDeepReadModel(), provider: provider
+        )
+        XCTAssertTrue(result.didFail)
+        XCTAssertEqual(provider.callCount, 0)
     }
 
     func testOfflineFallbackDeterministicDraftStillWorks() {

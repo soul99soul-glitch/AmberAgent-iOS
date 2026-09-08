@@ -2400,7 +2400,6 @@ final class CouncilChatViewModel {
         finishStreamingMessages(as: .failed)
         activeSpeakerId = nil
         invitedSpeakerIds.removeAll()
-        failedSpeakerIds.removeAll()
         isRunning = false
         roomStateOverride = "已取消"
         appendDivider("已停止")

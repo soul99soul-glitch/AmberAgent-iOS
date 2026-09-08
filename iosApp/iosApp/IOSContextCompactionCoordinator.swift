@@ -170,7 +170,9 @@ final class IOSContextCompactionCoordinator {
             messages: editedMessages,
             activeCompacts: compacts,
             policy: policy,
-            modelContextWindowTokens: Self.intValue(params.model.contextWindowTokens),
+            modelContextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
+                modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
+            ),
             extraTokenEstimate: overheadEstimate
         )
 
@@ -209,7 +211,11 @@ final class IOSContextCompactionCoordinator {
             contextMessageSize: contextMessageSize,
             removedToolResults: removedToolResults
         )
-        let contextWindow = Self.estimateContextWindow(Self.intValue(params.model.contextWindowTokens))
+        let contextWindow = Self.estimateContextWindow(
+            ChatContextSnapshot.resolvedContextWindowTokens(
+                modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
+            )
+        )
         let forceBudget = max(Int(Double(contextWindow) * policy.forceRatio), 1)
         let softTotalBudget = max(forceBudget, 4_000)
         let targetMessageBudget = max(softTotalBudget - overheadEstimate, 1_000)
@@ -278,7 +284,11 @@ final class IOSContextCompactionCoordinator {
     ) throws -> [UIMessage] {
         let policy = IOSCompactPolicy(settings.agentRuntime.contextCompaction)
         let toolOverhead = Self.requestOverheadTokens(params: params)
-        let contextWindow = Self.estimateContextWindow(Self.intValue(params.model.contextWindowTokens))
+        let contextWindow = Self.estimateContextWindow(
+            ChatContextSnapshot.resolvedContextWindowTokens(
+                modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
+            )
+        )
         let forceBudget = max(Int(Double(contextWindow) * policy.forceRatio), 1)
         let estimate = Self.estimateTokens(messages) + toolOverhead
         guard estimate > forceBudget else { return messages }
@@ -348,13 +358,17 @@ final class IOSContextCompactionCoordinator {
                 messages: messages,
                 activeCompacts: compacts,
                 policy: policy,
-                modelContextWindowTokens: Self.intValue(model.contextWindowTokens)
+                modelContextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
+                    modelWindow: Self.intValue(model.contextWindowTokens), modelId: model.modelId
+                )
             )
             : Self.planCompaction(
                 messages: messages,
                 activeCompacts: compacts,
                 policy: policy,
-                modelContextWindowTokens: Self.intValue(model.contextWindowTokens),
+                modelContextWindowTokens: ChatContextSnapshot.resolvedContextWindowTokens(
+                    modelWindow: Self.intValue(model.contextWindowTokens), modelId: model.modelId
+                ),
                 extraTokenEstimate: 0
             )
         guard plan.shouldCompact else { return nil }
@@ -546,7 +560,7 @@ private final class IOSConversationCompactStore {
 }
 
 private extension IOSContextCompactionCoordinator {
-    static let defaultContextWindowTokens = 128_000
+    static let defaultContextWindowTokens = Int(ChatContextSnapshot.defaultContextWindowTokens)
     static let maxTimelineSummaryChars = 1_200
     static let maxHandoffChars = 24_000
 

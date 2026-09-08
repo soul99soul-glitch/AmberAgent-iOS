@@ -94,6 +94,7 @@ enum IOSDeepReadLauncher {
         taskId: String,
         sharedSettings: IOSSharedSettingsStore,
         store: IOSDeepReadStore = .shared,
+        textProvider: any IOSAgentTextProvider = OpenAIKmpProviderAdapter(),
         workspaceArtifactSaver: WorkspaceArtifactSaver = IOSDeepReadLauncher.defaultWorkspaceArtifactSaver,
         onStatus: StatusHandler? = nil,
         isCurrentRun: @escaping @MainActor () -> Bool = { !Task.isCancelled },
@@ -109,6 +110,20 @@ enum IOSDeepReadLauncher {
         guard isCurrentRun() else { return false }
         guard var running = store.task(id: taskId) else { return false }
         guard running.status == .queued || running.status == .running else { return false }
+        guard let (model, providerSetting) = sharedSettings.resolveBoardDeepReadModel(
+            boardModelId: sharedSettings.todayBoard.boardModelId
+        ) else {
+            return failRun(
+                taskId: taskId,
+                message: IOSAppLocalization.string(
+                    "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。",
+                    defaultValue: "深度阅读生成失败：请在深度阅读设置中选择可用模型，并检查服务商登录状态。"
+                ),
+                store: store,
+                onStatus: onStatus,
+                priorCompletion: priorCompletion
+            )
+        }
 
         var progressTotal: Int64 = 7
         func updateProgress(_ completed: Int64, _ subtitle: String, total: Int64? = nil) {
@@ -176,67 +191,45 @@ enum IOSDeepReadLauncher {
         let output: String
         var structuredJSON: String? = nil
         var missingSections: [String] = []
-        if let (modelId, providerSetting) = sharedSettings.resolveBoardDeepReadModel(
-            boardModelId: sharedSettings.todayBoard.boardModelId
-        ) {
-            updateProgress(
-                generationBase,
-                IOSAppLocalization.string("正在生成深度阅读", defaultValue: "正在生成深度阅读")
-            )
-            let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
-                task: running,
-                providerSetting: providerSetting,
-                modelId: modelId,
-                onStageProgress: { label, index, _ in
-                    updateProgress(
-                        generationBase + Int64(index),
-                        "\(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))\(label)"
-                    )
-                },
-                initialOutput: initialOutput,
-                targetStages: targetStages
-            )
-            guard isCurrentRun() else { return false }
-            missingSections = result.missingSections
-            switch IOSDeepReadDraftGenerator.outcome(
-                for: result,
-                offlineFallback: IOSDeepReadDraftGenerator.generate(task: running)
-            ) {
-            case .failed(let reason):
-                return failRun(
-                    taskId: taskId,
-                    message: IOSAppLocalization.formatted(
-                        "深度阅读生成失败：%@",
-                        defaultValue: "深度阅读生成失败：%@",
-                        arguments: [IOSDeepReadUserFacingText.sanitize(reason)]
-                    ),
-                    store: store,
-                    onStatus: onStatus,
-                    priorCompletion: priorCompletion
+        updateProgress(
+            generationBase,
+            IOSAppLocalization.string("正在生成深度阅读", defaultValue: "正在生成深度阅读")
+        )
+        let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
+            task: running,
+            providerSetting: providerSetting,
+            model: model,
+            provider: textProvider,
+            onStageProgress: { label, index, _ in
+                updateProgress(
+                    generationBase + Int64(index),
+                    "\(IOSAppLocalization.string("正在生成", defaultValue: "正在生成"))\(label)"
                 )
-            case .completed(let markdown, let json):
-                output = markdown
-                structuredJSON = json
-            }
-        } else if let priorCompletion {
-            // A single-section retry with no usable model must not silently
-            // replace the last good draft with a local offline draft.
+            },
+            initialOutput: initialOutput,
+            targetStages: targetStages
+        )
+        guard isCurrentRun() else { return false }
+        missingSections = result.missingSections
+        switch IOSDeepReadDraftGenerator.outcome(
+            for: result,
+            offlineFallback: IOSDeepReadDraftGenerator.generate(task: running)
+        ) {
+        case .failed(let reason):
             return failRun(
                 taskId: taskId,
-                message: IOSAppLocalization.string(
-                    "深度阅读生成失败：当前未配置可用模型，无法重新生成。",
-                    defaultValue: "深度阅读生成失败：当前未配置可用模型，无法重新生成。"
+                message: IOSAppLocalization.formatted(
+                    "深度阅读生成失败：%@",
+                    defaultValue: "深度阅读生成失败：%@",
+                    arguments: [IOSDeepReadUserFacingText.sanitize(reason)]
                 ),
                 store: store,
                 onStatus: onStatus,
                 priorCompletion: priorCompletion
             )
-        } else {
-            updateProgress(
-                generationBase + 4,
-                IOSAppLocalization.string("正在生成离线草稿", defaultValue: "正在生成离线草稿")
-            )
-            output = IOSDeepReadDraftGenerator.generate(task: running)
+        case .completed(let markdown, let json):
+            output = markdown
+            structuredJSON = json
         }
 
         // KeepAlive expire/system-cancel may have already marked failed; don't resurrect.
@@ -335,8 +328,7 @@ enum IOSDeepReadLauncher {
     }
 
     private static func isUsableSourceForGeneration(_ source: IOSDeepReadSource) -> Bool {
-        source.metadata["scrape_status"] != "failed"
-            && !IOSDeepReadSourceNormalizer.cleanMultiline(source.content).isEmpty
+        source.hasUsableGenerationContent
     }
 
     private static func enrichSourcesWithScrape(
@@ -348,6 +340,12 @@ enum IOSDeepReadLauncher {
         for (index, var source) in sources.enumerated() {
             guard !Task.isCancelled else { break }
             defer { onSourceProgress?(index + 1, sources.count) }
+            // A retry reuses verified article text instead of appending it again or
+            // losing it when the source website is temporarily unavailable.
+            if source.metadata["scrape_status"] == "ok", source.hasUsableGenerationContent {
+                enriched.append(source)
+                continue
+            }
             if source.metadata["scrape_status"] == "failed" {
                 enriched.append(source)
                 continue
@@ -933,9 +931,9 @@ struct DeepReadCreateView: View {
                     ))
                 }
             }
+            try launch(title: deepReadTitle, sources: sources, templateId: selectedTemplateId)
             manualText = ""
             searchQuery = ""
-            try launch(title: deepReadTitle, sources: sources, templateId: selectedTemplateId)
         } catch {
             deepReadMessage = IOSDeepReadUserFacingText.fromError(error)
             deepReadMessageIsError = true

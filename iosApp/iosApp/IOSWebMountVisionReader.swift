@@ -20,7 +20,7 @@ struct IOSWebMountVisionReader {
             case .invalidQuestion:
                 return "视觉读取问题不能为空且长度不能超过 4000 个字符。"
             case .screenshotUnavailable:
-                return "当前 WebMount 没有可供视觉读取的 PNG 截图。"
+                return "当前站点没有可供视觉读取的 PNG 截图。"
             case .noVisionModel:
                 return "没有可用的视觉模型；请配置视觉识别模型，或选择支持图片输入的聊天模型。"
             case .visionProviderUnavailable:
@@ -92,6 +92,7 @@ struct IOSWebMountVisionReader {
     private static let maxQuestionCharacters = 4_000
     private static let maxOutputCharacters = 12_000
     private static let maxOutputTokens = 1_200
+    private static let pngSignature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
 
     private let textProvider: any IOSAgentTextProvider
 
@@ -112,6 +113,9 @@ struct IOSWebMountVisionReader {
         guard !capture.data.isEmpty,
               capture.width > 0,
               capture.height > 0 else {
+            throw Error.screenshotUnavailable
+        }
+        guard Self.isPNG(capture) else {
             throw Error.screenshotUnavailable
         }
 
@@ -166,7 +170,7 @@ struct IOSWebMountVisionReader {
 
     private func resolveVisionModel(settings: Settings) throws -> (Model, ProviderSetting) {
         if let current = settings.getCurrentChatModel(),
-           Self.modelSupportsImageInput(current) {
+           Self.modelImageCapability(current) == .supported {
             guard let provider = ChatProviderConfiguration.provider(
                 for: current,
                 providers: settings.providers
@@ -179,24 +183,53 @@ struct IOSWebMountVisionReader {
         }
 
         if let configured = settings.findModelById(uuid: settings.ocrModelId) {
+            guard Self.modelImageCapability(configured) != .unsupported else {
+                throw Error.noVisionModel
+            }
             guard let provider = ChatProviderConfiguration.provider(
                 for: configured,
                 providers: settings.providers
             ), ChatProviderConfiguration.issue(for: configured, provider: provider) == nil else {
                 throw Error.visionProviderUnavailable
             }
-            // An explicit OCR choice is an intentional capability override. A
-            // user-added model may not yet have a registry modality entry.
+            // An explicitly selected model with unknown metadata is a user
+            // choice, not confirmation that the provider accepts image input.
             return (configured, provider)
         }
         throw Error.noVisionModel
     }
 
-    private static func modelSupportsImageInput(_ model: Model) -> Bool {
-        let modalities = model.inputModalities.isEmpty
-            ? (ModelRegistry.shared.MODEL_INPUT_MODALITIES.getData(modelId: model.modelId) as? [Modality] ?? [])
-            : model.inputModalities
-        return modalities.contains { $0.name == "IMAGE" }
+    private enum ModelImageCapability: Equatable {
+        case supported
+        case unsupported
+        case unknown
+    }
+
+    private static func modelImageCapability(_ model: Model) -> ModelImageCapability {
+        guard model.type == .chat else { return .unsupported }
+        if !model.inputModalities.isEmpty {
+            return model.inputModalities.contains { $0.name == "IMAGE" } ? .supported : .unsupported
+        }
+        let registryModalities = ModelRegistry.shared.MODEL_INPUT_MODALITIES.getData(modelId: model.modelId) as? [Modality] ?? []
+        // The registry returns TEXT for an unknown id, so an empty model
+        // modality list plus a non-image registry result is still unverified
+        // metadata rather than an explicit text-only declaration.
+        return registryModalities.contains { $0.name == "IMAGE" } ? .supported : .unknown
+    }
+
+    private static func isPNG(_ capture: IOSWebMountScreenshotCapture) -> Bool {
+        guard capture.format.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "png" else {
+            return false
+        }
+        let bytes = [UInt8](capture.data)
+        guard bytes.count >= 24,
+              Array(bytes.prefix(pngSignature.count)) == pngSignature,
+              Array(bytes[12..<16]) == Array("IHDR".utf8) else {
+            return false
+        }
+        let width = bytes[16..<20].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        let height = bytes[20..<24].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        return width == UInt32(capture.width) && height == UInt32(capture.height)
     }
 
     private static func userMessage(question: String, dataURL: String) -> UIMessage {

@@ -1195,6 +1195,7 @@ struct ProviderDetailView: View {
             displayName: displayName,
             contextWindowTokens: intValue(model.contextWindowTokens),
             modelType: model.type,
+            inputModalities: model.inputModalities,
             headers: model.customHeaders.map { ($0.name, $0.value) }
         ) else { return }
         guard let savedModel = updatedProvider.models.first(where: { $0.type == .chat && $0.modelId == model.modelId }) else { return }
@@ -1219,6 +1220,7 @@ struct ProviderDetailView: View {
             displayName: displayName,
             contextWindowTokens: draft.contextWindowTokens,
             modelType: draft.type,
+            inputModalities: draft.inputModalities,
             headers: draft.headers.map { ($0.name, $0.value) }
         ) else { return false }
         if shouldSelect,
@@ -1512,6 +1514,7 @@ private struct ProviderModelDraft: Identifiable {
     var displayName: String
     var contextWindowText: String
     var type: ModelType
+    var inputModalities: [Modality]
     var headers: [ProviderHeaderDraft]
 
     init() {
@@ -1520,6 +1523,7 @@ private struct ProviderModelDraft: Identifiable {
         self.displayName = ""
         self.contextWindowText = ""
         self.type = .chat
+        self.inputModalities = [.text]
         self.headers = []
     }
 
@@ -1533,6 +1537,9 @@ private struct ProviderModelDraft: Identifiable {
             self.contextWindowText = ""
         }
         self.type = model.type
+        self.inputModalities = model.inputModalities.isEmpty
+            ? (ModelRegistry.shared.MODEL_INPUT_MODALITIES.getData(modelId: model.modelId) as? [Modality] ?? [.text])
+            : model.inputModalities
         self.headers = model.customHeaders.map { ProviderHeaderDraft(name: $0.name, value: $0.value) }
     }
 
@@ -1624,6 +1631,30 @@ private struct ProviderModelEditorSheet: View {
         .buttonStyle(.plain)
     }
 
+    @ViewBuilder
+    private func inputModalityButton(_ title: String, _ modality: Modality) -> some View {
+        let selected = draft.inputModalities.contains(modality)
+        Button {
+            if selected {
+                guard draft.inputModalities.count > 1 else { return }
+                draft.inputModalities.removeAll { $0 == modality }
+            } else {
+                draft.inputModalities.append(modality)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: selected ? "checkmark.square.fill" : "square")
+                Text(title)
+            }
+            .font(.subheadline.weight(selected ? .semibold : .regular))
+            .foregroundStyle(selected ? AmberTheme.foreground : AmberTheme.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -1664,10 +1695,56 @@ private struct ProviderModelEditorSheet: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 12)
                             ProviderDetailDivider()
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text(IOSAppLocalization.string("输入能力", defaultValue: "输入能力"))
+                                    .font(.subheadline)
+                                    .foregroundStyle(AmberTheme.muted)
+                                VStack(spacing: 8) {
+                                    HStack(spacing: 12) {
+                                        inputModalityButton(
+                                            IOSAppLocalization.string("文本", defaultValue: "文本"),
+                                            .text
+                                        )
+                                        inputModalityButton(
+                                            IOSAppLocalization.string("图片", defaultValue: "图片"),
+                                            .image
+                                        )
+                                    }
+                                    HStack(spacing: 12) {
+                                        inputModalityButton(
+                                            IOSAppLocalization.string("视频", defaultValue: "视频"),
+                                            .video
+                                        )
+                                        inputModalityButton(
+                                            IOSAppLocalization.string("音频", defaultValue: "音频"),
+                                            .audio
+                                        )
+                                    }
+                                }
+                                Text(IOSAppLocalization.string(
+                                    "当前附件仅支持图片；视频和音频仅记录模型能力。",
+                                    defaultValue: "当前附件仅支持图片；视频和音频仅记录模型能力。"
+                                ))
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.muted)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            ProviderDetailDivider()
                             ProviderEditableTextFieldRow(
                                 title: "上下文",
                                 text: $draft.contextWindowText,
-                                placeholder: "例如 128000",
+                                placeholder: IOSAppLocalization.formatted(
+                                    "留空使用 %lld",
+                                    defaultValue: "留空使用 %lld",
+                                    arguments: [Int64(
+                                        ChatContextSnapshot.resolvedContextWindowTokens(
+                                            modelWindow: nil,
+                                            modelId: draft.modelId
+                                        ) ?? Int(ChatContextSnapshot.defaultContextWindowTokens)
+                                    )]
+                                ),
                                 monospace: true
                             )
                         }

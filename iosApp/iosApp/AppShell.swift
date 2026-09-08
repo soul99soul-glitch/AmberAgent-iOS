@@ -465,8 +465,9 @@ struct AppShell: View {
 
         switch destination {
         case .newConversation:
-            guard chatViewModel.prepareForConversationChange(to: nil) else { return }
-            await conversationStore.startNewConversationReusingEmpty()
+            guard await chatViewModel.startNewConversation(
+                commitIf: { pendingAppDeepLinkDestination == destination }
+            ) else { return }
             guard pendingAppDeepLinkDestination == destination else { return }
             rootRouter.path = [.chat]
 
@@ -533,7 +534,10 @@ struct AppShell: View {
             rootRouter.path = [.chat]
 
         case .agentPrompt(let handoffID):
-            guard chatViewModel.prepareForConversationChange(to: nil) else { return }
+            guard await chatViewModel.startNewConversation(
+                commitIf: { pendingAppDeepLinkDestination == destination }
+            ) else { return }
+            guard pendingAppDeepLinkDestination == destination else { return }
             guard let prompt = IOSDeepLinkInbox.shared.consumePromptHandoff(id: handoffID) else {
                 conversationStore.publishUserVisibleError(IOSUserVisibleError(
                     title: "无法运行快捷指令",
@@ -543,13 +547,13 @@ struct AppShell: View {
                 pendingAppDeepLinkDestination = nil
                 return
             }
-            await conversationStore.startNewConversationReusingEmpty()
-            guard pendingAppDeepLinkDestination == destination else { return }
             chatViewModel.reloadFromStore(reason: .conversationSwitch)
             await chatViewModel.refreshCurrentConversationOrchestratedStatus()
             guard pendingAppDeepLinkDestination == destination else { return }
             if chatViewModel.currentConversationIsOrchestratedChild {
-                await conversationStore.newConversation()
+                guard await conversationStore.newConversation(
+                    commitIf: { pendingAppDeepLinkDestination == destination }
+                ) else { return }
                 guard pendingAppDeepLinkDestination == destination else { return }
                 chatViewModel.reloadFromStore(reason: .conversationSwitch)
                 await chatViewModel.refreshCurrentConversationOrchestratedStatus()
@@ -919,6 +923,7 @@ private extension View {
                 SyncBackupView(
                     sharedSettings: sharedSettings,
                     conversationStore: conversationStore,
+                    hasActiveChatGeneration: { chatViewModel.hasActiveChatGeneration },
                     store: storeCoordinator
                 )
             case .healthSummary:

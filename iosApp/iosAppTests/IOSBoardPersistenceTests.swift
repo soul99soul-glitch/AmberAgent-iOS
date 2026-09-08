@@ -421,7 +421,7 @@ final class IOSBoardPersistenceTests: XCTestCase {
             XCTAssertTrue(error.localizedDescription.contains("PDF") || error.localizedDescription.contains("OCR"))
         }
         XCTAssertThrowsError(try IOSDeepReadSourceNormalizer.webMountSource(title: "", url: nil, text: "   ")) { error in
-            XCTAssertTrue(error.localizedDescription.contains("WebMount"))
+            XCTAssertEqual(error as? IOSDeepReadSourceNormalizationError, .unsupported("当前站点页面没有可读取正文；请先打开站点并确认页面已加载。"))
         }
     }
 
@@ -549,6 +549,95 @@ final class IOSBoardPersistenceTests: XCTestCase {
         })
     }
 
+    func testHotListDashboardCacheSurvivesFocusProjectionAndRestart() async throws {
+        let base = makeTempBase()
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let providerId = "hacker_news"
+        let fetchedAt = IOSBoardSignalRepository.currentEpochMs()
+        let items = [
+            IOSHotlistItem(
+                providerId: providerId,
+                title: "OpenAI launches agent framework",
+                url: "https://example.com/openai",
+                rank: 1,
+                score: 100,
+                fetchedAt: fetchedAt,
+                displayTitle: "OpenAI 发布代理框架"
+            ),
+            IOSHotlistItem(
+                providerId: providerId,
+                title: "Gardening notes",
+                url: "https://example.com/gardening",
+                rank: 2,
+                score: 8,
+                fetchedAt: fetchedAt,
+                displayTitle: "园艺笔记"
+            )
+        ]
+        let provider = IOSHotListProviderSnapshot(
+            providerId: providerId,
+            providerName: "Hacker News",
+            items: items,
+            fetchedAt: fetchedAt
+        )
+        let raw = IOSHotListDashboard(
+            topics: IOSHotListAggregator.aggregate(providerSnapshots: [provider]),
+            providers: [provider],
+            lastUpdatedAt: fetchedAt,
+            enabledSourceCount: 1
+        )
+        let cacheURL = base
+            .appendingPathComponent("deep_read", isDirectory: true)
+            .appendingPathComponent("hotlist_dashboard.json")
+        try FileManager.default.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try JSONEncoder().encode(raw).write(to: cacheURL, options: [.atomic])
+
+        let defaults = IosSettingsDefaults.shared.defaultSeededSettings().agentRuntime.todayBoard
+        func boardSetting(filterMode: String, translate: Bool) -> TodayBoardSetting {
+            IosSettingsMutations.shared.setTodayBoardOptions(
+                settings: IosSettingsDefaults.shared.defaultSeededSettings(),
+                boardModelId: defaults.boardModelId,
+                clearBoardModelId: false,
+                hotListRefreshIntervalMinutes: defaults.hotListRefreshIntervalMinutes,
+                hotListWifiOnly: false,
+                hotListEnabledSources: [providerId],
+                hotListFocusKeywords: ["OpenAI"],
+                hotListFilterModeWireName: filterMode,
+                boardReadingFontModeWireName: defaults.boardReadingFontMode.wireName,
+                boardReadingFontPackId: defaults.boardReadingFontPackId,
+                clearBoardReadingFontPackId: false,
+                deepReadFontScale: defaults.deepReadFontScale,
+                deepReadTemplateId: defaults.deepReadTemplateId,
+                hotListTranslateToChinese: translate
+            ).agentRuntime.todayBoard
+        }
+
+        let focusSetting = boardSetting(filterMode: "focus_only", translate: true)
+        let allSetting = boardSetting(filterMode: "all", translate: true)
+        let translationDisabledSetting = boardSetting(filterMode: "all", translate: false)
+        let store = IOSHotListDashboardStore(baseDirectory: base)
+
+        await store.refresh(setting: focusSetting, force: false)
+        XCTAssertEqual(store.dashboard.providers.first?.items.map(\.title), [items[0].title])
+        XCTAssertEqual(store.dashboard.providers.first?.items.first?.displayTitle, "OpenAI 发布代理框架")
+
+        await store.refresh(setting: allSetting, force: false)
+        XCTAssertEqual(store.dashboard.providers.first?.items.map(\.title), items.map(\.title))
+        XCTAssertEqual(store.dashboard.providers.first?.items.last?.displayTitle, "园艺笔记")
+
+        let restarted = IOSHotListDashboardStore(baseDirectory: base)
+        XCTAssertEqual(restarted.dashboard.providers.first?.items.map(\.title), items.map(\.title))
+        XCTAssertEqual(restarted.dashboard.providers.first?.items.last?.displayTitle, "园艺笔记")
+
+        await restarted.refresh(setting: translationDisabledSetting, force: false)
+        XCTAssertNil(restarted.dashboard.providers.first?.items.first?.displayTitle)
+        XCTAssertEqual(restarted.dashboard.topics.first?.title, items[0].title)
+    }
+
     func testHotTopicSourcesNormalizeIntoDeepReadSources() throws {
         let topic = IOSHotTopic(
             id: "topic-1",
@@ -647,7 +736,7 @@ final class IOSBoardPersistenceTests: XCTestCase {
         let markdown = IOSDeepReadDraftGenerator.generate(task: task)
 
         XCTAssertTrue(markdown.contains("## 摘要"))
-        XCTAssertTrue(markdown.contains("WebMount 来源只读取当前前台页面正文"))
+        XCTAssertTrue(markdown.contains("站点来源只读取当前前台页面正文"))
         XCTAssertTrue(markdown.contains("会话来源能保留上下文意图"))
     }
 

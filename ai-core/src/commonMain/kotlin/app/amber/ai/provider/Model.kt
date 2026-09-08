@@ -32,6 +32,7 @@ enum class Modality {
     TEXT,
     IMAGE,
     AUDIO,
+    VIDEO,
 }
 
 @Serializable

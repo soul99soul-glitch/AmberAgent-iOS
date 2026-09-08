@@ -2885,8 +2885,7 @@ struct ConversationsView: View {
         collapseSearchIfNeeded()
         conversationNavigationTask?.cancel()
         conversationNavigationTask = Task { @MainActor in
-            guard chatViewModel.prepareForConversationChange() else { return }
-            guard await conversationStore.startNewConversationReusingEmpty(
+            guard await chatViewModel.startNewConversation(
                 commitIf: { !Task.isCancelled }
             ) else { return }
             guard !Task.isCancelled else { return }
@@ -3315,7 +3314,6 @@ struct SearchView: View {
         .toolbar(.hidden, for: .navigationBar)
         .task {
             searchFocused = true
-            await performSearch()
         }
         .task(id: query) {
             try? await Task.sleep(nanoseconds: 220_000_000)
@@ -3474,14 +3472,15 @@ struct SearchView: View {
 
     @MainActor
     private func performSearch() async {
-        guard !trimmedQuery.isEmpty else {
+        let searchQuery = trimmedQuery
+        guard !searchQuery.isEmpty else {
             results = []
             isSearching = false
             return
         }
         isSearching = true
-        let nextResults = await conversationStore.searchConversations(query: trimmedQuery)
-        if !Task.isCancelled {
+        let nextResults = await conversationStore.searchConversations(query: searchQuery)
+        if !Task.isCancelled, trimmedQuery == searchQuery {
             results = nextResults
             isSearching = false
         }

@@ -193,6 +193,8 @@ final class IOSSystemPermissionCoordinator {
             result = await refreshWorkoutKitSchedulerStatus(for: capability, now: now)
         case "ios.finance.financekit":
             result = await refreshFinanceKitStatus(for: capability, now: now)
+        case "ios.notifications.alerts", "ios.notifications.provisional", "ios.notifications.critical", "ios.notifications.time_sensitive":
+            result = await refreshNotificationStatus(for: capability, now: now)
         case "ios.video_subscriber.account":
             result = await requestVideoSubscriber(capability, now: now)
         default:
@@ -890,6 +892,18 @@ private extension IOSSystemPermissionCoordinator {
 }
 
 private extension IOSSystemPermissionCoordinator {
+    func refreshNotificationStatus(
+        for capability: IOSPlatformCapability,
+        now: Date
+    ) async -> IOSSystemPermissionResult {
+        #if canImport(UserNotifications)
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        return result(capability, mapNotificationStatus(settings.authorizationStatus), "Notification settings refreshed.", Date())
+        #else
+        return result(capability, .unavailableOnDevice, "UserNotifications is unavailable.", now)
+        #endif
+    }
+
     func notificationCachedStatus(for capability: IOSPlatformCapability, now: Date) -> IOSSystemPermissionResult {
         result(capability, .unknown, "Notification settings require async refresh.", now)
     }

@@ -312,7 +312,7 @@ struct WebMountToolApprovalCard: View {
                         .foregroundStyle(AmberTheme.foreground2)
                 }
 
-                Text(request.title)
+                Text(IOSAppLocalization.string(request.title))
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(2)
@@ -347,8 +347,8 @@ struct WebMountToolApprovalCard: View {
                 VStack(alignment: .leading, spacing: 7) {
                     approvalSectionLabel("本次范围")
                     approvalScopeRow(label: "站点", value: "\(request.siteName) · \(request.host)")
-                    approvalScopeRow(label: "动作", value: request.action)
-                    approvalScopeRow(label: "影响", value: request.consequence)
+                    approvalScopeRow(label: "动作", value: IOSAppLocalization.string(request.action))
+                    approvalScopeRow(label: "影响", value: IOSAppLocalization.string(request.consequence))
                     approvalScopeRow(label: "环境", value: backendTitle)
                     if let target = request.target?.nilIfBlank {
                         approvalScopeRow(label: "目标", value: target)
@@ -360,14 +360,14 @@ struct WebMountToolApprovalCard: View {
                         .fill(request.requiresHumanHandoff ? AmberTheme.accentAmber : AmberTheme.accentGreen)
                         .frame(width: 7, height: 7)
                         .padding(.top, 5)
-                    Text(riskSummary)
+                    Text(IOSAppLocalization.string(riskSummary))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.foreground2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let warning = request.screenshotRetentionWarning?.nilIfBlank {
-                    Label(warning, systemImage: "exclamationmark.triangle")
+                    Label(IOSAppLocalization.string(warning), systemImage: "exclamationmark.triangle")
                         .font(.caption2)
                         .foregroundStyle(AmberTheme.accentAmber)
                         .fixedSize(horizontal: false, vertical: true)
@@ -380,7 +380,7 @@ struct WebMountToolApprovalCard: View {
                 Button(action: onOpenSession) {
                     HStack(spacing: 8) {
                         Label(
-                            openSessionLabel,
+                            IOSAppLocalization.string(openSessionLabel),
                             systemImage: request.backend == IOSWebMountBackendKind.local.rawValue ? "eye" : "macwindow"
                         )
                         Spacer(minLength: 0)
@@ -394,7 +394,7 @@ struct WebMountToolApprovalCard: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(openSessionLabel)，不会批准或继续当前动作")
+                .accessibilityLabel(IOSAppLocalization.formatted("%@，不会批准或继续当前动作", arguments: [IOSAppLocalization.string(openSessionLabel)]))
             }
 
             WebMountDivider()
@@ -432,7 +432,7 @@ struct WebMountToolApprovalCard: View {
 
     private var approveButton: some View {
         Button(action: onApprove) {
-            Text(approveLabel)
+            Text(IOSAppLocalization.string(approveLabel))
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -440,11 +440,11 @@ struct WebMountToolApprovalCard: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
-        .accessibilityLabel(approveLabel)
+        .accessibilityLabel(IOSAppLocalization.string(approveLabel))
     }
 
     private func approvalSectionLabel(_ text: String) -> some View {
-        Text(text)
+        Text(IOSAppLocalization.string(text))
             .font(.caption2.weight(.semibold))
             .foregroundStyle(AmberTheme.muted)
     }
@@ -462,14 +462,13 @@ struct WebMountToolApprovalCard: View {
 
     private func approvalScopeRow(label: String, value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Text(label)
+            Text(IOSAppLocalization.string(label))
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(AmberTheme.muted)
-                .frame(width: 30, alignment: .leading)
+                .frame(minWidth: 30, alignment: .leading)
             Text(value)
                 .font(.caption)
                 .foregroundStyle(AmberTheme.foreground2)
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -477,7 +476,7 @@ struct WebMountToolApprovalCard: View {
 
     private var displayReason: String {
         guard request.requiresHumanHandoff else { return request.reason }
-        return "请前往本机 WebMount 完成登录、验证码/CAPTCHA 或支付等敏感步骤，然后将控制权交还给 Agent。"
+        return IOSAppLocalization.string("请前往本机 WebMount 完成登录、验证码/CAPTCHA 或支付等敏感步骤，然后将控制权交还给 Agent。")
     }
 
     private var approveLabel: String {
