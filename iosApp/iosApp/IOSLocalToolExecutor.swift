@@ -391,6 +391,10 @@ final class IOSLocalToolExecutor {
             let webMountGate = resolveWebMount(request: request, capability: capability)
             switch webMountGate {
             case .allow:
+                if !request.isUserInitiated,
+                   ["wm_site_add", "wm_site_remove"].contains(request.toolName) {
+                    return .needsUserAction("修改站点列表需要你确认；高风险浏览可直接访问公共网站，无需添加白名单。")
+                }
                 let output = await webMountController.execute(
                     toolName: request.toolName,
                     input: request.operation,
@@ -1216,7 +1220,11 @@ struct IOSWebMountSite: Codable, Equatable, Hashable, Identifiable {
                 nativeAdapterId: nil,
                 iconKey: "weibo",
                 oauthProviderId: nil,
-                allowedHosts: ["m.weibo.cn", "weibo.cn", "weibo.com", "www.weibo.com"],
+                allowedHosts: [
+                    "m.weibo.cn", "weibo.cn", "weibo.com", "www.weibo.com",
+                    "passport.weibo.cn", "visitor.passport.weibo.cn", "passport.weibo.com",
+                    "security.weibo.com", "login.sina.com.cn", "passport.sinaimg.cn"
+                ],
                 enabled: false,
                 addedAtMillis: nowMillis
             ),
@@ -1286,6 +1294,16 @@ final class IOSWebMountRegistry {
         if let data = userDefaults.data(forKey: storageKey) {
             if let decoded = try? decoder.decode([IOSWebMountSite].self, from: data) {
                 self.sites = decoded
+                let migrationKey = storageKey + ".weiboLoginHosts.v1"
+                if !userDefaults.bool(forKey: migrationKey) {
+                    if let index = sites.firstIndex(where: {
+                        $0.id == "weibo" && ["m.weibo.cn", "weibo.cn", "weibo.com", "www.weibo.com"].contains($0.homepageHost)
+                    }), let seed = IOSWebMountSite.seeds().first(where: { $0.id == "weibo" }) {
+                        sites[index].allowedHosts = (sites[index].allowedHosts + seed.allowedHosts).uniqued()
+                        if let data = try? encoder.encode(sites) { userDefaults.set(data, forKey: storageKey) }
+                    }
+                    userDefaults.set(true, forKey: migrationKey)
+                }
             } else {
                 // 已有用户数据但解码失败（如 schema 演进）：只在内存里回退到
                 // seeds，绝不把 seeds 编码写回磁盘，避免把用户配置冲掉。
@@ -1513,8 +1531,8 @@ typealias IOSWebMountPublicHostResolver = @Sendable (String) async throws -> [St
 struct IOSWebMountURLPolicy {
     let allowedSchemes: Set<String>
     let allowedHosts: Set<String>
-    let allowUnlistedHosts: Bool
-    let allowFakeIPFallback: Bool
+    private(set) var allowUnlistedHosts: Bool
+    private(set) var allowFakeIPFallback: Bool
     private let resolvePublicHost: IOSWebMountPublicHostResolver
 
     @MainActor
@@ -1531,6 +1549,13 @@ struct IOSWebMountURLPolicy {
         self.allowUnlistedHosts = allowUnlistedHosts
         self.allowFakeIPFallback = allowFakeIPFallback
         self.resolvePublicHost = resolvePublicHost
+    }
+
+    func allowingPublicUserNavigation() -> Self {
+        var policy = self
+        policy.allowUnlistedHosts = true
+        policy.allowFakeIPFallback = true
+        return policy
     }
 
     func validate(_ rawURL: String, site: IOSWebMountSite? = nil) -> Result<URL, IOSWebMountURLPolicyError> {
@@ -1825,15 +1850,72 @@ extension IOSWebMountRuntimeServicing {
 }
 
 @MainActor
+struct IOSWebMountBrowserDialog: Identifiable {
+    enum Kind { case alert, confirm, prompt }
+    let id = UUID()
+    let kind: Kind
+    let message: String
+    let host: String
+    let defaultText: String
+}
+
+@MainActor
 final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntimeServicing, WKNavigationDelegate, WKUIDelegate {
     static let automationContentWorld = WKContentWorld.world(name: "app.amber.webmount.automation")
 
     let webView: WKWebView?
     @Published private(set) var snapshot: IOSWebMountRuntimeSnapshot
+    @Published private(set) var popupWebViews: [WKWebView] = []
+    @Published private(set) var popupNavigationRevision = 0
+    @Published private(set) var browserDialog: IOSWebMountBrowserDialog?
+    @Published var browserNotice: String?
+    private var browserDialogCompletion: ((String?) -> Void)?
+    private weak var browserDialogWebView: WKWebView?
+    private var browserPresentationHosts: Set<UUID> = []
+    private var isClosed = false
+    private var popupApprovedDestinations: [ObjectIdentifier: String] = [:]
+    private var popupPolicyRevision = 0
 
     private var loadSequence = 0
     private var pendingLoad: (id: Int, continuation: CheckedContinuation<IOSWebMountRuntimeSnapshot, Never>)?
     private var navigationPolicy: IOSWebMountURLPolicy?
+    private(set) var userBrowsingEnabled = false
+    private var effectiveNavigationPolicy: IOSWebMountURLPolicy? {
+        userBrowsingEnabled ? navigationPolicy?.allowingPublicUserNavigation() : navigationPolicy
+    }
+
+    func setUserBrowsingEnabled(_ enabled: Bool) {
+        guard !isClosed || !enabled else { return }
+        guard userBrowsingEnabled != enabled else { return }
+        userBrowsingEnabled = enabled
+        invalidateNavigationDecisions()
+        if !enabled {
+            cancelBrowserPresentation()
+            for popup in popupWebViews { closePopup(popup) }
+        }
+    }
+
+    func invalidateNavigationDecisions() {
+        navigationDecisionSequence += 1
+        popupPolicyRevision += 1
+        popupApprovedDestinations.removeAll()
+        approvedMainFrameDestination = nil
+    }
+
+    func closeSession() {
+        isClosed = true
+        setUserBrowsingEnabled(false)
+        invalidateNavigationDecisions()
+        browserPresentationHosts.removeAll()
+        cancelBrowserPresentation()
+        for popup in popupWebViews { closePopup(popup) }
+        webView?.stopLoading()
+        webView?.isUserInteractionEnabled = false
+        snapshot.status = .failed
+        snapshot.error = "站点会话已关闭。"
+        completePendingLoad()
+    }
+
     private var navigationSite: IOSWebMountSite?
     private var navigationHostResolver: IOSWebMountHostResolver = IOSSearchExecutor.resolveIPAddresses
     private var navigationDecisionSequence = 0
@@ -1856,7 +1938,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         // Agent-owned sessions can stay detached from SwiftUI's foreground layout.
         // Give those sessions a real viewport; a mounted view will replace this
         // frame through its normal layout pass.
@@ -1869,14 +1951,24 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         webView.allowsBackForwardNavigationGestures = true
         urlObservation = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
             Task { @MainActor [weak self] in
-                guard let self, let webView = self.webView,
-                      let target = self.fragmentNavigationTarget,
-                      let pendingLoad = self.pendingLoad,
-                      self.verifiedFragmentLoadId == pendingLoad.id,
-                      webView.url == target else { return }
-                // Fragment-only navigation changes URL without didFinish.
-                // Use the same verified-destination gate as a full load.
-                self.finishNavigation(webView)
+                guard let self, !self.isClosed, let webView = self.webView else { return }
+                if let target = self.fragmentNavigationTarget,
+                   let pendingLoad = self.pendingLoad,
+                   self.verifiedFragmentLoadId == pendingLoad.id,
+                   webView.url == target {
+                    self.finishNavigation(webView)
+                } else if self.snapshot.status == .ready,
+                          let currentURL = self.snapshot.currentURL.flatMap(URL.init(string:)),
+                          let url = webView.url,
+                          let origin = Self.navigationDestinationKey(currentURL),
+                          origin == Self.navigationDestinationKey(url) {
+                    // History API and hash changes stay within the loaded origin
+                    // and may not trigger didCommit/didFinish.
+                    self.snapshot.currentURL = IOSWebMountRedactor.redactedURL(url.absoluteString)
+                    self.snapshot.canGoBack = webView.canGoBack
+                    self.snapshot.canGoForward = webView.canGoForward
+                    self.snapshot.updatedAtMillis = IOSWebMountClock.nowMillis()
+                }
             }
         }
     }
@@ -1897,16 +1989,21 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         navigationDecisionSequence += 1
         approvedMainFrameDestination = nil
         if policyChanged {
+            invalidateNavigationDecisions()
             resetNavigationDiagnostics()
         }
     }
 
     func open(_ url: URL, timeoutMillis: UInt64 = 30_000) async -> IOSWebMountRuntimeSnapshot {
+        guard !isClosed else { return snapshot }
         guard let webView else {
             snapshot.status = .failed
             snapshot.error = "WKWebView is unavailable"
             return snapshot
         }
+        cancelBrowserPresentation()
+        for popup in popupWebViews { closePopup(popup) }
+        browserNotice = nil
         loadSequence += 1
         let loadId = loadSequence
         pendingLoad?.continuation.resume(returning: snapshot)
@@ -1946,7 +2043,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                     guard let self, self.pendingLoad?.id == loadId else { return }
                     // WebKit may omit navigation delegate callbacks for fragments.
                     // Verify these destinations before loading, including no-op retries.
-                    if self.fragmentNavigationTarget != nil, let policy = self.navigationPolicy {
+                    if self.fragmentNavigationTarget != nil, let policy = self.effectiveNavigationPolicy {
                         let result = await policy.validateResolvedPublicHost(
                             url.absoluteString,
                             site: self.navigationSite,
@@ -2356,18 +2453,23 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
-        if navigationAction.targetFrame == nil {
-            recordNavigationEvent(
-                kind: "new_window_request",
-                decision: "cancel",
-                url: navigationAction.request.url,
-                errorCode: "new_window_unsupported",
-                reason: "New WebMount windows are not opened or routed to another session."
-            )
-            decisionHandler(.cancel)
+        guard !isClosed else { decisionHandler(.cancel); return }
+        if webView !== self.webView {
+            validatePopupNavigation(navigationAction.request.url, in: webView,
+                                    mainFrame: navigationAction.targetFrame?.isMainFrame == true) { allowed in
+                decisionHandler(allowed ? .allow : .cancel)
+            }
             return
         }
-        guard let policy = navigationPolicy,
+        if let target = navigationAction.request.url?.absoluteString,
+           (navigationAction.targetFrame == nil && target == "about:blank") ||
+            (navigationAction.targetFrame?.isMainFrame == false && ["about:blank", "about:srcdoc"].contains(target)) {
+            // Local documents used to bootstrap login windows and embedded forms
+            // have no network host; their subsequent navigations still use policy.
+            decisionHandler(.allow)
+            return
+        }
+        guard let policy = effectiveNavigationPolicy,
               let url = navigationAction.request.url else {
             decisionHandler(.allow)
             return
@@ -2423,14 +2525,156 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        recordNavigationEvent(
-            kind: "new_window_request",
-            decision: "cancel",
-            url: navigationAction.request.url,
-            errorCode: "new_window_unsupported",
-            reason: "New WebMount windows are not opened or routed to another session."
+        guard popupWebViews.count < 4 else {
+            reportPopupFailure("打开的窗口过多，请先关闭不用的窗口。", url: navigationAction.request.url,
+                               errorCode: "popup_limit_reached")
+            return nil
+        }
+        // WebKit's supplied configuration preserves window.opener, POST bodies
+        // and the opener's cookie store; loading this URL in the parent breaks SSO.
+        let popup = WKWebView(frame: webView.bounds, configuration: configuration)
+        popup.navigationDelegate = self
+        popup.uiDelegate = self
+        popup.allowsBackForwardNavigationGestures = true
+        popupWebViews.append(popup)
+        recordNavigationEvent(kind: "new_window_request", decision: "opened", url: navigationAction.request.url)
+        return popup
+    }
+
+    func closePopup(_ popup: WKWebView) {
+        guard popupWebViews.contains(where: { $0 === popup }) else { return }
+        if browserDialogWebView === popup { cancelBrowserPresentation() }
+        popup.stopLoading()
+        popup.navigationDelegate = nil
+        popup.uiDelegate = nil
+        popupApprovedDestinations.removeValue(forKey: ObjectIdentifier(popup))
+        popupWebViews.removeAll { $0 === popup }
+    }
+
+    func cancelBrowserPresentation() {
+        resolveBrowserDialog(nil)
+    }
+
+    func setBrowserPresentationAvailable(_ available: Bool, hostID: UUID) {
+        guard !isClosed else { return }
+        if available {
+            browserPresentationHosts.insert(hostID)
+        } else {
+            browserPresentationHosts.remove(hostID)
+            if browserPresentationHosts.isEmpty { cancelBrowserPresentation() }
+        }
+    }
+
+    func cancelPopupDialogs() {
+        if browserDialogWebView != nil && browserDialogWebView !== webView { resolveBrowserDialog(nil) }
+    }
+
+    func resolveBrowserDialog(_ response: String?, dialogID: UUID? = nil) {
+        if let dialogID, browserDialog?.id != dialogID { return }
+        let completion = browserDialogCompletion
+        browserDialogCompletion = nil
+        browserDialogWebView = nil
+        browserDialog = nil
+        completion?(response)
+    }
+
+    private func presentBrowserDialog(
+        kind: IOSWebMountBrowserDialog.Kind,
+        webView: WKWebView,
+        message: String,
+        frame: WKFrameInfo,
+        defaultText: String = "",
+        completion: @escaping (String?) -> Void
+    ) {
+        guard userBrowsingEnabled, !browserPresentationHosts.isEmpty else {
+            browserNotice = userBrowsingEnabled
+                ? "网页需要你确认或输入，请返回页面后重新操作。"
+                : "网页需要你确认或输入，请接管页面后重新操作。"
+            recordNavigationEvent(kind: "javascript_dialog", decision: "requires_user_control",
+                                  url: frame.request.url, errorCode: "user_control_required")
+            completion(nil)
+            return
+        }
+        guard browserDialog == nil else {
+            completion(nil)
+            return
+        }
+        browserDialogCompletion = completion
+        browserDialogWebView = webView
+        browserDialog = IOSWebMountBrowserDialog(
+            kind: kind, message: message, host: frame.securityOrigin.host, defaultText: defaultText
         )
-        return nil
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping @MainActor @Sendable () -> Void) {
+        presentBrowserDialog(kind: .alert, webView: webView, message: message, frame: frame) { _ in completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping @MainActor @Sendable (Bool) -> Void) {
+        presentBrowserDialog(kind: .confirm, webView: webView, message: message, frame: frame) { completionHandler($0 != nil) }
+    }
+
+    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping @MainActor @Sendable (String?) -> Void) {
+        presentBrowserDialog(kind: .prompt, webView: webView, message: prompt, frame: frame,
+                             defaultText: defaultText ?? "", completion: completionHandler)
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        closePopup(webView)
+    }
+
+    private func validatePopupNavigation(
+        _ url: URL?, in popup: WKWebView, mainFrame: Bool,
+        completion: @escaping @MainActor (Bool) -> Void
+    ) {
+        guard popupWebViews.contains(where: { $0 === popup }), let url else {
+            completion(false)
+            return
+        }
+        // A newly created window needs its inherited, empty document before a
+        // login script can assign its URL. Every network destination is checked.
+        if url.absoluteString == "about:blank" || (!mainFrame && url.absoluteString == "about:srcdoc") {
+            completion(true)
+            return
+        }
+        guard let policy = effectiveNavigationPolicy else {
+            completion(true)
+            return
+        }
+        let site = navigationSite
+        let revision = popupPolicyRevision
+        let resolver = navigationHostResolver
+        Task { @MainActor [weak self, weak popup] in
+            let result = await policy.validateResolvedPublicHost(url.absoluteString, site: site, resolveHost: resolver)
+            guard let self, let popup,
+                  self.popupWebViews.contains(where: { $0 === popup }),
+                  revision == self.popupPolicyRevision else {
+                completion(false)
+                return
+            }
+            switch result {
+            case .success(let verifiedURL):
+                if mainFrame {
+                    self.popupApprovedDestinations[ObjectIdentifier(popup)] = Self.navigationDestinationKey(verifiedURL)
+                }
+                completion(true)
+            case .failure(let error):
+                self.reportPopupFailure(error.localizedDescription, url: url, errorCode: error.errorCode)
+                completion(false)
+            }
+        }
+    }
+
+    private func reportPopupFailure(_ message: String, url: URL?, errorCode: String? = nil) {
+        browserNotice = "登录窗口：" + IOSWebMountRedactor.redactedText(message)
+        recordNavigationEvent(kind: "popup_navigation", decision: "cancel", url: url,
+                              errorCode: errorCode, reason: message, frame: "popup")
     }
 
     func webView(
@@ -2438,6 +2682,19 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         decidePolicyFor navigationResponse: WKNavigationResponse,
         decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void
     ) {
+        guard !isClosed else { decisionHandler(.cancel); return }
+        if webView !== self.webView {
+            guard navigationResponse.canShowMIMEType else {
+                reportPopupFailure("此窗口不支持下载文件。", url: navigationResponse.response.url)
+                decisionHandler(.cancel)
+                return
+            }
+            validatePopupNavigation(navigationResponse.response.url, in: webView,
+                                    mainFrame: navigationResponse.isForMainFrame) { allowed in
+                decisionHandler(allowed ? .allow : .cancel)
+            }
+            return
+        }
         if !navigationResponse.canShowMIMEType {
             recordNavigationEvent(
                 kind: "download",
@@ -2453,7 +2710,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
             decisionHandler(.allow)
             return
         }
-        guard let policy = navigationPolicy else {
+        guard let policy = effectiveNavigationPolicy else {
             decisionHandler(.allow)
             return
         }
@@ -2491,6 +2748,9 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard !isClosed else { return }
+        if browserDialogWebView === webView { cancelBrowserPresentation() }
+        guard webView === self.webView else { return }
         snapshot.status = .loading
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
         snapshot.estimatedProgress = webView.estimatedProgress
@@ -2501,6 +2761,20 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard !isClosed else { return }
+        if webView !== self.webView {
+            objectWillChange.send()
+            guard let policy = effectiveNavigationPolicy, let url = webView.url,
+                  url.absoluteString != "about:blank" else { return }
+            guard case .success = policy.validate(url.absoluteString, site: navigationSite),
+                  let destination = Self.navigationDestinationKey(url),
+                  popupApprovedDestinations[ObjectIdentifier(webView)] == destination else {
+                webView.stopLoading()
+                reportPopupFailure("窗口跳转尚未通过验证。", url: url, errorCode: "navigation_target_not_verified")
+                return
+            }
+            return
+        }
         guard committedNavigationIsAllowed(webView) else { return }
         snapshot.currentURL = IOSWebMountRedactor.redactedURL(webView.url?.absoluteString)
         snapshot.estimatedProgress = webView.estimatedProgress
@@ -2510,6 +2784,11 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard !isClosed else { return }
+        guard webView === self.webView else {
+            popupNavigationRevision += 1
+            return
+        }
         finishNavigation(webView)
     }
 
@@ -2530,14 +2809,32 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if webView !== self.webView {
+            if (error as NSError).code != NSURLErrorCancelled {
+                reportPopupFailure(error.localizedDescription, url: webView.url)
+            }
+            return
+        }
         fail(error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if webView !== self.webView {
+            if (error as NSError).code != NSURLErrorCancelled {
+                reportPopupFailure(error.localizedDescription, url: webView.url)
+            }
+            return
+        }
         fail(error)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        if webView !== self.webView {
+            closePopup(webView)
+            reportPopupFailure("窗口进程已退出，请重新打开登录窗口。", url: webView.url)
+            return
+        }
+        cancelBrowserPresentation()
         fail(NSError(
             domain: WKErrorDomain,
             code: WKError.Code.webContentProcessTerminated.rawValue,
@@ -2566,6 +2863,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
 
     private var navigationDiagnostics: [String: Any] {
         var diagnostics: [String: Any] = [
+            "open_window_count": popupWebViews.count,
+            "dialog_pending": browserDialog != nil,
             "subframe_navigation_denied_count": subframeNavigationDenialCount,
             "recent_events": navigationEvents
         ]
@@ -2580,6 +2879,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         url: URL
     ) {
         subframeNavigationDenialCount += 1
+        browserNotice = "网页内嵌页面被阻止：" + (url.host ?? "") + " · " + error.localizedDescription
         lastSubframeNavigationDenial = [
             "frame": "subframe",
             "decision": "cancel",
@@ -2630,7 +2930,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     private func committedNavigationIsAllowed(_ webView: WKWebView) -> Bool {
-        guard let policy = navigationPolicy, let url = webView.url else { return true }
+        guard let policy = effectiveNavigationPolicy, let url = webView.url else { return true }
         guard case .failure(let error) = policy.validate(url.absoluteString, site: navigationSite) else {
             guard Self.navigationDestinationKey(url) == approvedMainFrameDestination else {
                 webView.stopLoading()
@@ -2689,6 +2989,11 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     private func evaluateJSON(_ script: String) async throws -> [String: Any] {
+        guard !isClosed else { return ["ok": false, "error_code": "session_closed", "reason": "站点会话已关闭。"] }
+        guard browserDialog == nil else {
+            return ["ok": false, "error_code": "user_dialog_pending",
+                    "reason": "网页正在等待用户处理确认或输入框，请在 WebMount 中接管处理。"]
+        }
         guard let webView else { throw IOSWebMountRuntimeError.webViewUnavailable }
         let value = try await webView.evaluateJavaScript(
             script,
@@ -4164,6 +4469,7 @@ final class IOSWebMountSessionStore {
         item.ownerRunId = runId
         if requiresControl || effectiveOwner == .agent {
             item.controlOwner = .agent
+            (runtimes[sessionId] as? IOSWebMountWKRuntime)?.setUserBrowsingEnabled(false)
             item.leaseExpiresAtMillis = now + Self.agentLeaseMillis
         }
         item.lastActivityMillis = now
@@ -4180,6 +4486,7 @@ final class IOSWebMountSessionStore {
         }
         let now = nowMillis()
         item.controlOwner = .user
+        (runtimes[sessionId] as? IOSWebMountWKRuntime)?.setUserBrowsingEnabled(true)
         item.leaseExpiresAtMillis = nil
         item.lastActivityMillis = now
         metadata[sessionId] = item
@@ -4197,6 +4504,7 @@ final class IOSWebMountSessionStore {
         guard runtimes[sessionId] != nil, var item = metadata[sessionId] else {
             throw IOSWebMountSessionError.sessionNotFound(sessionId)
         }
+        (runtimes[sessionId] as? IOSWebMountWKRuntime)?.setUserBrowsingEnabled(false)
         guard item.ownerRunId?.nilIfBlank != nil else {
             item.controlOwner = .none
             item.leaseExpiresAtMillis = nil
@@ -4220,6 +4528,7 @@ final class IOSWebMountSessionStore {
             if item.controlOwner == .agent {
                 item.controlOwner = .none
                 item.leaseExpiresAtMillis = nil
+                (runtimes[sessionId] as? IOSWebMountWKRuntime)?.invalidateNavigationDecisions()
             }
             metadata[sessionId] = item
             changed = true
@@ -4328,7 +4637,10 @@ final class IOSWebMountSessionStore {
     }
 
     private func removeSession(_ sessionId: String, preserveReopenEntry: Bool = false) {
-        guard runtimes.removeValue(forKey: sessionId) != nil else { return }
+        guard let removedRuntime = runtimes.removeValue(forKey: sessionId) else { return }
+        if let browser = removedRuntime as? IOSWebMountWKRuntime {
+            browser.closeSession()
+        }
         if preserveReopenEntry,
            var item = metadata[sessionId],
            item.ownerConversationId?.nilIfBlank != nil {
@@ -4382,6 +4694,7 @@ final class IOSWebMountSessionStore {
               leaseExpiresAtMillis <= nowMillis() else { return }
         item.controlOwner = .none
         item.leaseExpiresAtMillis = nil
+        (runtimes[sessionId] as? IOSWebMountWKRuntime)?.invalidateNavigationDecisions()
         metadata[sessionId] = item
         persistSessions()
     }
@@ -4396,6 +4709,7 @@ final class IOSWebMountSessionStore {
                   leaseExpiresAtMillis <= now else { continue }
             item.controlOwner = .none
             item.leaseExpiresAtMillis = nil
+            (runtimes[sessionId] as? IOSWebMountWKRuntime)?.invalidateNavigationDecisions()
             metadata[sessionId] = item
             changed = true
         }
@@ -4699,7 +5013,8 @@ final class IOSWebMountController {
         self.settings.syncAllowedHosts(self.registry.sites.flatMap(\.allowedHosts))
     }
 
-    func openForUser(site: IOSWebMountSite, sessionId: String? = nil) async -> IOSWebMountRuntimeSnapshot {
+    func openForUser(site: IOSWebMountSite, sessionId: String? = nil, url rawURL: String? = nil) async -> IOSWebMountRuntimeSnapshot {
+        let requestedURL = rawURL ?? site.homepageURL
         if let sessionId = sessionId?.nilIfBlank,
            let record = sessionStore.record(sessionId: sessionId),
            record.backend != .local {
@@ -4708,7 +5023,7 @@ final class IOSWebMountController {
             return IOSWebMountRuntimeSnapshot(
                 sessionId: current.sessionId,
                 status: .failed,
-                requestedURL: IOSWebMountRedactor.redactedURL(site.homepageURL),
+                requestedURL: IOSWebMountRedactor.redactedURL(requestedURL),
                 currentURL: current.currentURL,
                 title: current.title,
                 estimatedProgress: current.estimatedProgress,
@@ -4718,19 +5033,35 @@ final class IOSWebMountController {
                 updatedAtMillis: IOSWebMountClock.nowMillis()
             )
         }
-        let runtime = (try? sessionStore.runtime(sessionId: sessionId, makeCurrent: true))
-            ?? sessionStore.currentRuntime
+        guard let runtime = try? sessionStore.runtime(sessionId: sessionId, makeCurrent: true) else {
+            var failed = IOSWebMountRuntimeSnapshot.idle(sessionId: sessionId ?? "")
+            failed.status = .failed
+            failed.error = "此站点会话不存在或已过期，请重新打开站点。"
+            return failed
+        }
         _ = try? sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
         sessionStore.showCard(sessionId: runtime.snapshot.sessionId)
         let policy = IOSWebMountURLPolicy(settings: settings, extraAllowedHosts: registry.sites.flatMap(\.allowedHosts))
-        switch policy.validate(site.homepageURL, site: site) {
+        let result = await policy.allowingPublicUserNavigation().validateResolvedPublicHost(
+            requestedURL, site: site, resolveHost: resolveHost
+        )
+        guard sessionStore.record(sessionId: runtime.snapshot.sessionId)?.controlOwner == .user,
+              sessionStore.runtimeIfPresent(sessionId: runtime.snapshot.sessionId) === runtime else {
+            var failed = runtime.snapshot
+            failed.status = .failed
+            failed.error = "页面控制权已变化，请接管后重新打开。"
+            return failed
+        }
+        switch result {
         case .success(let url):
             (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(
                 policy,
                 site: site,
                 resolveHost: resolveHost
             )
-            sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
+            if registry.site(id: site.id) != nil {
+                sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
+            }
             let snapshot = await runtime.open(url, timeoutMillis: 30_000)
             if snapshot.status != .failed {
                 sessionStore.clearNeedsReopen(sessionId: snapshot.sessionId)
@@ -4741,7 +5072,7 @@ final class IOSWebMountController {
             return IOSWebMountRuntimeSnapshot(
                 sessionId: runtime.snapshot.sessionId,
                 status: .failed,
-                requestedURL: IOSWebMountRedactor.redactedURL(site.homepageURL),
+                requestedURL: IOSWebMountRedactor.redactedURL(requestedURL),
                 currentURL: runtime.snapshot.currentURL,
                 title: runtime.snapshot.title,
                 estimatedProgress: runtime.snapshot.estimatedProgress,
@@ -6530,12 +6861,20 @@ final class IOSWebMountController {
         }
     }
 
+    private static func runtimeFailure(_ result: [String: Any], sessionId: String) -> String? {
+        guard result["ok"] as? Bool == false else { return nil }
+        var failure = result
+        failure["session_id"] = sessionId
+        return json(IOSWebMountRedactor.redactedJSONObject(failure))
+    }
+
     private func stateResult(
         args: [String: Any],
         context: IOSWebMountExecutionContext?
     ) async throws -> String {
         let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let page = try await runtime.state()
+        if let failure = Self.runtimeFailure(page, sessionId: runtime.snapshot.sessionId) { return failure }
         touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
@@ -6555,6 +6894,7 @@ final class IOSWebMountController {
         let maxChars = ((args["max_chars"] as? Int) ?? 2_000).clamped(to: 0...8_000)
         let maxLinks = ((args["max_links"] as? Int) ?? 20).clamped(to: 0...40)
         let observation = try await runtime.observe(maxChars: maxChars, maxLinks: maxLinks)
+        if let failure = Self.runtimeFailure(observation, sessionId: runtime.snapshot.sessionId) { return failure }
         let page = observation["page"] as? [String: Any] ?? [:]
         touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
@@ -6587,6 +6927,7 @@ final class IOSWebMountController {
         let maxLinks = ((args["max_links"] as? Int) ?? 20).clamped(to: 0...100)
         let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let result = try await runtime.extract(mode: mode, maxChars: maxChars, maxLinks: maxLinks)
+        if let failure = Self.runtimeFailure(result, sessionId: runtime.snapshot.sessionId) { return failure }
         touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,
@@ -6664,6 +7005,7 @@ final class IOSWebMountController {
     ) async throws -> String {
         let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
         let result = try await runtime.extract(mode: "snapshot", maxChars: 0, maxLinks: 80)
+        if let failure = Self.runtimeFailure(result, sessionId: runtime.snapshot.sessionId) { return failure }
         touch(sessionId: runtime.snapshot.sessionId, context: context)
         return Self.json([
             "ok": true,

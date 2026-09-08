@@ -488,7 +488,8 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             registry: registry,
             settings: IOSWebMountSettings(userDefaults: defaults),
             runtime: runtime,
-            runtimeFactory: { MockWebMountRuntime() }
+            runtimeFactory: { MockWebMountRuntime() },
+            resolveHost: { _ in ["93.184.216.34"] }
         )
 
         let snapshot = await controller.openForUser(site: site, sessionId: runtime.snapshot.sessionId)
@@ -499,6 +500,51 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             controller.sessionStore.record(sessionId: runtime.snapshot.sessionId)?.controlOwner,
             .user
         )
+    }
+
+    func testWebMountHumanAddressEntryAllowsPublicLoginWithoutEnablingAgentStation() async throws {
+        let defaults = isolatedDefaults()
+        let registry = IOSWebMountRegistry(userDefaults: defaults)
+        let site = try XCTUnwrap(registry.site(id: "weibo"))
+        let runtime = MockWebMountRuntime(sessionId: "human-login")
+        let settings = IOSWebMountSettings(userDefaults: defaults)
+        let controller = IOSWebMountController(registry: registry, settings: settings, runtime: runtime,
+            resolveHost: { host in host == "private.example" ? ["10.0.0.1"] : ["93.184.216.34"] })
+        let originalHosts = settings.allowedHosts
+        let originalSites = registry.sites
+        let login = "https://unknown-login.example/signin"
+        let opened = await controller.openForUser(site: site, sessionId: runtime.snapshot.sessionId, url: login)
+        XCTAssertEqual(opened.status, .ready)
+        XCTAssertEqual(runtime.openedURLs.last?.absoluteString, login)
+        XCTAssertEqual(registry.sites, originalSites)
+        XCTAssertEqual(settings.allowedHosts, originalHosts)
+        XCTAssertFalse(try XCTUnwrap(registry.site(id: "weibo")).enabled)
+
+        let denied = await controller.openForUser(site: site, sessionId: runtime.snapshot.sessionId,
+                                                   url: "https://private.example/login")
+        XCTAssertEqual(denied.status, .failed)
+        XCTAssertEqual(runtime.openedURLs.count, 1)
+        let missing = await controller.openForUser(site: site, sessionId: "missing-session", url: login)
+        XCTAssertEqual(missing.status, .failed)
+        XCTAssertEqual(runtime.openedURLs.count, 1, "An invalid session must not open the current session instead")
+    }
+
+    func testWebMountUnlistedHumanNavigationDoesNotCreateSyntheticStationBinding() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let sessionID = controller.sessionStore.currentSessionId
+        _ = try controller.sessionStore.acquireAgentControl(sessionId: sessionID, runId: "login-run", conversationId: "login-chat")
+        let site = IOSWebMountSite(id: "unlisted:\(sessionID)", displayName: "Public login",
+            homepageURL: "https://unlisted.amber.invalid/", authKind: .anonymous, loginCookieName: nil,
+            nativeAdapterId: nil, iconKey: nil, oauthProviderId: nil,
+            allowedHosts: ["unlisted.amber.invalid"], enabled: false, addedAtMillis: 0)
+        let opened = await controller.openForUser(site: site, sessionId: sessionID)
+        XCTAssertEqual(opened.status, .ready)
+        XCTAssertNil(controller.sessionStore.record(sessionId: sessionID)?.siteId)
+        _ = try controller.sessionStore.handBackToAgent(sessionId: sessionID)
+        let state = try jsonObject(await controller.execute(toolName: "wm_state",
+            input: IOSWebMountController.json(["session_id": sessionID]), isUserInitiated: false,
+            context: IOSWebMountExecutionContext(runId: "login-run", conversationId: "login-chat"), allowUnlistedHosts: true))
+        XCTAssertEqual(state["ok"] as? Bool, true)
     }
 
     func testWebMountRegistryRestoresSeedsWhenPersistedPayloadIsUnreadable() throws {
@@ -2634,8 +2680,25 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             }
             return try jsonObject(text)
         }
-        let added = try await execute("wm_site_add", #"{"display_name":"Auto approved","homepage_url":"https://example.com/"}"#)
+        let added = try jsonObject(await controller.execute(toolName: "wm_site_add",
+            input: #"{"display_name":"User configured","homepage_url":"https://example.com/"}"#,
+            isUserInitiated: true))
         let siteId = try XCTUnwrap(added["site_id"] as? String)
+        let originalSites = controller.registry.sites
+        let originalHosts = controller.settings.allowedHosts
+        for (name, input) in [
+            ("wm_site_add", #"{"display_name":"Agent addition","homepage_url":"https://unlisted.example/"}"#),
+            ("wm_site_remove", IOSWebMountController.json(["site_id": siteId]))
+        ] {
+            let output = await executor.execute(executor.executionRequest(
+                toolName: name, operation: input, isUserInitiated: false, executionPolicy: policy))
+            guard case .needsUserAction = output else {
+                XCTFail("High-risk browsing must not authorize registry changes: \(output)")
+                continue
+            }
+        }
+        XCTAssertEqual(controller.registry.sites, originalSites)
+        XCTAssertEqual(controller.settings.allowedHosts, originalHosts)
         for name in ["wm_screenshot", "wm_visual_read"] {
             let result = try await execute(name, "{}")
             XCTAssertEqual(result["ok"] as? Bool, true, name)
@@ -2655,7 +2718,8 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         let clear = try await execute("wm_clear_session", IOSWebMountController.json(["site_id": siteId]))
         XCTAssertNotEqual(clear["needs_user_action"] as? Bool, true)
         XCTAssertEqual((controller.cookieStore as? MockWebMountCookieStore)?.clearedSiteIds, [siteId])
-        let removed = try await execute("wm_site_remove", IOSWebMountController.json(["site_id": siteId]))
+        let removed = try jsonObject(await controller.execute(toolName: "wm_site_remove",
+            input: IOSWebMountController.json(["site_id": siteId]), isUserInitiated: true))
         XCTAssertEqual(removed["removed"] as? Bool, true)
 
         let off = IOSExecutionPolicySnapshot(
@@ -2728,6 +2792,8 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         let executor = makeExecutor(webMountController: controller)
         let sessionId = try XCTUnwrap(controller.sessionStore.records.first?.id)
         let url = "https://unlisted.amber.invalid/path"
+        let originalHosts = controller.settings.allowedHosts
+        let originalSites = controller.registry.sites
 
         let disabledOutput = await executor.execute(IOSLocalToolExecutionRequest(
             toolName: "wm_open",
@@ -2776,6 +2842,8 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(try jsonObject(text)["ok"] as? Bool, true)
         let record = try XCTUnwrap(controller.sessionStore.record(sessionId: sessionId))
         XCTAssertNil(record.siteId)
+        XCTAssertEqual(controller.settings.allowedHosts, originalHosts)
+        XCTAssertEqual(controller.registry.sites, originalSites, "High-risk mode must bypass, not rewrite, the allowlist")
         XCTAssertEqual(record.redactedURL, url)
         XCTAssertNotNil(WebMountSiteRoute(watching: record, registry: controller.registry))
 

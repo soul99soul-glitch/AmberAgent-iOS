@@ -236,6 +236,18 @@ private enum WebMountResultTab: String, CaseIterable, Identifiable {
     }
 }
 
+private enum WebMountSiteSheet: String, Identifiable, Equatable {
+    case inspector
+    case popup
+
+    var id: String { rawValue }
+}
+
+private enum WebMountAddressField: Hashable {
+    case browser
+    case inspector
+}
+
 private enum WebMountActionLayout {
     static let minimumButtonSpacing: CGFloat = 12
     static let glassInteractionSpacing: CGFloat = 8
@@ -961,8 +973,14 @@ struct WebMountSiteView: View {
     @State private var banner: String?
     @State private var isLoading = false
     @State private var observationRequestID: UUID?
-    @State private var showInspector = false
-    @AppStorage("app.amber.ios.highRiskAutoApprove") private var highRiskAutoApprove = false
+    @State private var presentedSheet: WebMountSiteSheet?
+    @State private var popupPresentationQueued = false
+    @State private var selectedPopupIdentifier: ObjectIdentifier?
+    @State private var lastPresentedSheet: WebMountSiteSheet?
+    @FocusState private var focusedAddressField: WebMountAddressField?
+    @State private var rootBrowserHostID = UUID()
+    @State private var inspectorBrowserHostID = UUID()
+    @State private var popupBrowserHostID = UUID()
     private let hasBoundSession: Bool
 
     private var registry: IOSWebMountRegistry { controller.registry }
@@ -1033,7 +1051,28 @@ struct WebMountSiteView: View {
         hasViewablePage && runtime.snapshot.status == .ready
     }
 
+    private var latestPopupIdentifier: ObjectIdentifier? {
+        runtime.popupWebViews.last.map { ObjectIdentifier($0) }
+    }
+
+    private var activePopup: WKWebView? {
+        if let selectedPopupIdentifier,
+           let selected = runtime.popupWebViews.first(where: {
+               ObjectIdentifier($0) == selectedPopupIdentifier
+           }) {
+            return selected
+        }
+        return runtime.popupWebViews.last
+    }
+
+    private var isAddressBarFocused: Bool {
+        focusedAddressField != nil
+    }
+
     private var displayedBanner: String? {
+        if let browserNotice = runtime.browserNotice?.nilIfBlank {
+            return browserNotice
+        }
         if isWatchMode {
             guard hasBoundSession, let sessionRecord else {
                 return "此站点会话不存在或已过期，请返回任务列表。"
@@ -1070,6 +1109,11 @@ struct WebMountSiteView: View {
                 webViewSection
             }
         }
+        .overlay {
+            if presentedSheet == nil {
+                browserDialogOverlay
+            }
+        }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .task {
@@ -1098,9 +1142,73 @@ struct WebMountSiteView: View {
                 await openSite()
             }
         }
-        .sheet(isPresented: $showInspector) {
-            inspectorSheet
+        .sheet(item: $presentedSheet, onDismiss: presentedSheetDidDismiss) { sheet in
+            switch sheet {
+            case .inspector:
+                inspectorSheet
+            case .popup:
+                popupSheet
+            }
         }
+        .onChange(of: latestPopupIdentifier) { _, identifier in
+            guard let identifier else {
+                selectedPopupIdentifier = nil
+                popupPresentationQueued = false
+                if presentedSheet == .popup {
+                    presentedSheet = nil
+                }
+                Task { await refreshCookieSummary() }
+                return
+            }
+
+            selectedPopupIdentifier = identifier
+            switch presentedSheet {
+            case nil:
+                if runtime.browserDialog == nil {
+                    presentedSheet = .popup
+                } else {
+                    popupPresentationQueued = true
+                }
+            case .inspector:
+                popupPresentationQueued = true
+            case .popup:
+                break
+            }
+        }
+        .onChange(of: runtime.browserDialog?.id) { _, dialogID in
+            guard dialogID == nil,
+                  popupPresentationQueued,
+                  presentedSheet == nil,
+                  !runtime.popupWebViews.isEmpty else { return }
+            popupPresentationQueued = false
+            presentedSheet = .popup
+        }
+        .onChange(of: runtime.snapshot.status) { _, status in
+            if status == .ready { Task { await refreshCookieSummary() } }
+        }
+        .onChange(of: runtime.popupNavigationRevision) { _, _ in
+            Task { await refreshCookieSummary() }
+        }
+        .onChange(of: runtime.snapshot.currentURL) { _, currentURL in
+            guard !isAddressBarFocused, !isLoading, let currentURL else { return }
+            openURLText = currentURL
+        }
+        .onAppear {
+            if let identifier = latestPopupIdentifier {
+                selectedPopupIdentifier = identifier
+                if presentedSheet == nil, runtime.browserDialog == nil {
+                    presentedSheet = .popup
+                } else if presentedSheet == .inspector {
+                    popupPresentationQueued = true
+                }
+            }
+        }
+        .onChange(of: presentedSheet) { _, sheet in
+            if let sheet {
+                lastPresentedSheet = sheet
+            }
+        }
+        .browserPresentationHost(runtime: runtime, hostID: rootBrowserHostID)
     }
 
     private var header: some View {
@@ -1126,13 +1234,14 @@ struct WebMountSiteView: View {
                 Spacer()
 
                 AmberGlassCircleButton(systemImage: "arrow.clockwise", accessibilityLabel: "重新加载", size: 44, symbolSize: 17) {
+                    dismissAddressBarKeyboard()
                     Task { await openSite() }
                 }
                 .disabled(isLoading || !canUserMutate)
                 .opacity(isLoading || !canUserMutate ? 0.45 : 1)
 
                 Button {
-                    showInspector = true
+                    presentedSheet = .inspector
                 } label: {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 17, weight: .semibold))
@@ -1150,43 +1259,27 @@ struct WebMountSiteView: View {
     }
 
     private var workspaceBrowserBar: some View {
-        HStack(spacing: 4) {
-            workspaceBrowserButton(
-                systemImage: "chevron.left",
-                accessibilityLabel: "网页后退",
-                isEnabled: runtime.snapshot.canGoBack && canUserMutate
-            ) {
-                Task { _ = await runtime.back() }
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 4) {
+                workspaceBackButton
+                workspaceForwardButton
+                addressBar(minWidth: 110)
+                workspaceOpenButton
+                workspaceControlButton
             }
 
-            workspaceBrowserButton(
-                systemImage: "chevron.right",
-                accessibilityLabel: "网页前进",
-                isEnabled: runtime.snapshot.canGoForward && canUserMutate
-            ) {
-                Task { _ = await runtime.forward() }
+            VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 4) {
+                    workspaceBackButton
+                    workspaceForwardButton
+                    addressBar()
+                    workspaceOpenButton
+                }
+                HStack {
+                    Spacer(minLength: 0)
+                    workspaceControlButton
+                }
             }
-
-            TextField("输入网址", text: $openURLText)
-                .font(.footnote)
-                .textFieldStyle(.plain)
-                .lineLimit(1)
-                .padding(.horizontal, 10)
-                .frame(maxWidth: .infinity, minHeight: 38)
-                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .disabled(!canUserMutate)
-
-            workspaceBrowserButton(
-                systemImage: "arrow.right",
-                accessibilityLabel: "打开网址",
-                isEnabled: !isLoading && canUserMutate
-            ) {
-                Task { await openTypedURL() }
-            }
-
-            workspaceControlButton
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -1194,6 +1287,59 @@ struct WebMountSiteView: View {
         .overlay(alignment: .bottom) {
             Divider().overlay(AmberTheme.borderSoft)
         }
+    }
+
+    private var workspaceBackButton: some View {
+        workspaceBrowserButton(
+            systemImage: "chevron.left",
+            accessibilityLabel: "网页后退",
+            isEnabled: runtime.snapshot.canGoBack && canUserMutate
+        ) {
+            dismissAddressBarKeyboard()
+            Task { _ = await runtime.back() }
+        }
+    }
+
+    private var workspaceForwardButton: some View {
+        workspaceBrowserButton(
+            systemImage: "chevron.right",
+            accessibilityLabel: "网页前进",
+            isEnabled: runtime.snapshot.canGoForward && canUserMutate
+        ) {
+            dismissAddressBarKeyboard()
+            Task { _ = await runtime.forward() }
+        }
+    }
+
+    private var workspaceOpenButton: some View {
+        workspaceBrowserButton(
+            systemImage: "arrow.right",
+            accessibilityLabel: "打开网址",
+            isEnabled: !isLoading && canUserMutate
+        ) {
+            dismissAddressBarKeyboard()
+            Task { await openTypedURL() }
+        }
+    }
+
+    private func addressBar(minWidth: CGFloat = 0) -> some View {
+        TextField("输入网址", text: $openURLText)
+            .font(.footnote)
+            .textFieldStyle(.plain)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(minWidth: minWidth)
+            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .submitLabel(.go)
+            .focused($focusedAddressField, equals: .browser)
+            .onSubmit {
+                dismissAddressBarKeyboard()
+                Task { await openTypedURL() }
+            }
+            .disabled(!canUserMutate)
     }
 
     private func workspaceBrowserButton(
@@ -1283,10 +1429,15 @@ struct WebMountSiteView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { showInspector = false }
+                    Button("完成") { presentedSheet = nil }
                 }
             }
         }
+        .overlay {
+            browserDialogOverlay
+        }
+        .interactiveDismissDisabled(runtime.browserDialog != nil)
+        .browserPresentationHost(runtime: runtime, hostID: inspectorBrowserHostID)
         .presentationDetents([.height(320), .height(620)])
         .presentationDragIndicator(.visible)
     }
@@ -1348,12 +1499,21 @@ struct WebMountSiteView: View {
             .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
-            .frame(maxWidth: .infinity)
+            .submitLabel(.go)
+            .focused($focusedAddressField, equals: .inspector)
+            .onSubmit {
+                dismissAddressBarKeyboard()
+                Task { await openTypedURL() }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
             .disabled(!canUserMutate)
     }
 
     private var openURLButton: some View {
-        Button("打开") { Task { await openTypedURL() } }
+        Button("打开") {
+            dismissAddressBarKeyboard()
+            Task { await openTypedURL() }
+        }
             .buttonStyle(.glassProminent)
             .frame(minHeight: 44)
             .disabled(isLoading || !canUserMutate)
@@ -1473,11 +1633,226 @@ struct WebMountSiteView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AmberTheme.surface)
         .layoutPriority(1)
+        .overlay(alignment: .bottom) {
+            if hasViewablePage && !canUserMutate {
+                webViewTakeoverPrompt
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if hasViewablePage,
+               presentedSheet != .popup,
+               !runtime.popupWebViews.isEmpty {
+                popupWindowMenu()
+                    .padding(12)
+            }
+        }
         .overlay(alignment: .top) {
             if isLoading {
                 ProgressView(value: runtime.snapshot.estimatedProgress)
                     .tint(AmberTheme.accent)
             }
+        }
+    }
+
+    private var popupSheet: some View {
+        NavigationStack {
+            ZStack {
+                AmberThemePageBackground(surface: .app)
+
+                if let popup = activePopup {
+                    WebMountRuntimeWebView(webView: popup, isInteractive: canUserMutate)
+                        .id(ObjectIdentifier(popup))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .overlay(alignment: .bottom) {
+                            if !canUserMutate {
+                                webViewTakeoverPrompt
+                            }
+                        }
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "macwindow.on.rectangle")
+                            .font(.system(size: 28, weight: .medium))
+                            .foregroundStyle(AmberTheme.muted2)
+                        Text("登录窗口已关闭")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let browserNotice = runtime.browserNotice?.nilIfBlank {
+                    WebMountBanner(text: browserNotice)
+                        .padding(.top, 4)
+                        .padding(.bottom, 4)
+                        .background(AmberTheme.surface)
+                }
+            }
+            .navigationTitle(popupHost)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") {
+                        closePopupSheet()
+                    }
+                }
+                if runtime.popupWebViews.count > 1 {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        popupWindowMenu(compact: true)
+                    }
+                }
+            }
+        }
+        .overlay {
+            browserDialogOverlay
+        }
+        .interactiveDismissDisabled(runtime.browserDialog != nil)
+        .browserPresentationHost(runtime: runtime, hostID: popupBrowserHostID)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private var popupHost: String {
+        activePopup?.url?.host?.nilIfBlank
+            ?? resolvedSite.homepageHost
+    }
+
+    private func popupWindowMenu(compact: Bool = false) -> some View {
+        let count = runtime.popupWebViews.count
+        return Menu {
+            ForEach(Array(runtime.popupWebViews.enumerated()), id: \.offset) { index, popup in
+                Button {
+                    selectPopup(popup)
+                } label: {
+                    Label {
+                        Text("窗口 \(index + 1)：\(popup.url?.host?.nilIfBlank ?? "登录窗口")")
+                    } icon: {
+                        Image(systemName: activePopup.map { $0 === popup } == true ? "checkmark" : "macwindow")
+                    }
+                }
+            }
+            Divider()
+            Button("关闭当前窗口", role: .destructive) {
+                closePopupSheet()
+            }
+        } label: {
+            if compact {
+                Image(systemName: "macwindow.on.rectangle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            } else {
+                Label("登录窗口 \(count)", systemImage: "macwindow.on.rectangle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .padding(.horizontal, 11)
+                    .frame(minHeight: 44)
+                    .contentShape(Capsule())
+                    .background(.thinMaterial, in: Capsule())
+                    .overlay {
+                        Capsule().stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+                    }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("选择登录窗口，共 \(count) 个")
+    }
+
+    private func selectPopup(_ popup: WKWebView) {
+        guard runtime.popupWebViews.contains(where: { $0 === popup }) else { return }
+        selectedPopupIdentifier = ObjectIdentifier(popup)
+        if presentedSheet == nil {
+            presentedSheet = .popup
+        }
+    }
+
+    private func presentedSheetDidDismiss() {
+        let dismissedSheet = lastPresentedSheet
+        lastPresentedSheet = nil
+        if dismissedSheet == .popup {
+            runtime.cancelPopupDialogs()
+            Task { await refreshCookieSummary() }
+        }
+
+        guard popupPresentationQueued, !runtime.popupWebViews.isEmpty else {
+            popupPresentationQueued = false
+            return
+        }
+        Task { @MainActor in
+            await Task.yield()
+            guard presentedSheet == nil, !runtime.popupWebViews.isEmpty else { return }
+            guard runtime.browserDialog == nil else {
+                popupPresentationQueued = true
+                return
+            }
+            popupPresentationQueued = false
+            presentedSheet = .popup
+        }
+    }
+
+    private func dismissAddressBarKeyboard() {
+        focusedAddressField = nil
+    }
+
+    private var webViewTakeoverPrompt: some View {
+        HStack(spacing: 10) {
+            Image(systemName: isAgentControlActive ? "cursorarrow.click.2" : "hand.tap")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(AmberTheme.accentAmber)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(isAgentControlActive ? "Agent 正在控制此页面" : "接管页面后可操作")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                Text("当前仅可查看，点击、输入和登录需要先接管。")
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                takeUserControl()
+            } label: {
+                Text("接管")
+                    .frame(minHeight: 44)
+            }
+            .buttonStyle(.glassProminent)
+            .accessibilityLabel("接管 WebMount 页面并开始操作")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(AmberTheme.accentAmber.opacity(0.35), lineWidth: 0.8)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 14, y: 6)
+        .padding(12)
+        .accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder
+    private var browserDialogOverlay: some View {
+        if let dialog = runtime.browserDialog, canUserMutate {
+            WebMountBrowserDialogOverlay(dialog: dialog) { response in
+                runtime.resolveBrowserDialog(response, dialogID: dialog.id)
+            }
+            .id(dialog.id)
+        }
+    }
+
+    private func closePopupSheet() {
+        guard canUserMutate else {
+            presentedSheet = nil
+            return
+        }
+        if let popup = activePopup {
+            runtime.closePopup(popup)
+            runtime.browserNotice = nil
+        }
+        if runtime.popupWebViews.isEmpty {
+            presentedSheet = nil
         }
     }
 
@@ -1837,17 +2212,22 @@ struct WebMountSiteView: View {
             }
             return
         }
+        guard !isLoading else { return }
         if isUnlistedWatchSession {
             await openTypedURL()
             return
         }
+        dismissAddressBarKeyboard()
         observationRequestID = nil
+        runtime.browserNotice = nil
         isLoading = true
-        _ = await controller.openForUser(site: resolvedSite, sessionId: runtime.snapshot.sessionId)
-        openURLText = runtime.snapshot.currentURL ?? resolvedSite.homepageURL
+        let snapshot = await controller.openForUser(site: resolvedSite, sessionId: runtime.snapshot.sessionId)
         isLoading = false
-        if let error = runtime.snapshot.error?.nilIfBlank {
+        openURLText = snapshot.currentURL ?? snapshot.requestedURL ?? resolvedSite.homepageURL
+        if let error = snapshot.error?.nilIfBlank {
             banner = IOSWebMountRedactor.redactedText(error)
+        } else {
+            banner = nil
         }
     }
 
@@ -1856,28 +2236,22 @@ struct WebMountSiteView: View {
             banner = "Agent 正在控制此页面，请先接管。"
             return
         }
+        guard !isLoading else { return }
+        dismissAddressBarKeyboard()
         observationRequestID = nil
+        runtime.browserNotice = nil
         isLoading = true
-        var input: [String: Any] = [
-            "url": openURLText,
-            "session_id": runtime.snapshot.sessionId
-        ]
-        if !isUnlistedWatchSession {
-            input["site_id"] = resolvedSite.id
-        }
-        let output = await controller.execute(
-            toolName: "wm_open",
-            input: IOSWebMountController.json(input),
-            isUserInitiated: true,
-            allowUnlistedHosts: isUnlistedWatchSession && highRiskAutoApprove
+        let snapshot = await controller.openForUser(
+            site: resolvedSite,
+            sessionId: runtime.snapshot.sessionId,
+            url: openURLText
         )
         isLoading = false
-        if let object = Self.jsonObject(output),
-           object["ok"] as? Bool == false {
-            banner = object["reason"] as? String ?? object["error"] as? String ?? "打开失败。"
+        if let error = snapshot.error?.nilIfBlank {
+            banner = IOSWebMountRedactor.redactedText(error)
         } else {
+            openURLText = snapshot.currentURL ?? snapshot.requestedURL ?? openURLText
             banner = nil
-            openURLText = runtime.snapshot.currentURL ?? openURLText
         }
     }
 
@@ -2013,6 +2387,7 @@ struct WebMountSiteView: View {
     private func takeUserControl() {
         do {
             _ = try controller.sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
+            runtime.browserNotice = nil
             banner = "已接管此站点页面。"
         } catch {
             banner = "接管失败：\(IOSWebMountRedactor.redactedText(error.localizedDescription))"
@@ -2030,25 +2405,217 @@ struct WebMountSiteView: View {
         }
     }
 
-    private static func jsonObject(_ text: String) -> [String: Any]? {
-        guard let data = text.data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    }
 }
 
 @MainActor
 private struct WebMountRuntimeWebView: UIViewRepresentable {
-    let runtime: IOSWebMountWKRuntime
+    let webView: WKWebView?
     let isInteractive: Bool
 
+    init(runtime: IOSWebMountWKRuntime, isInteractive: Bool) {
+        webView = runtime.webView
+        self.isInteractive = isInteractive
+    }
+
+    init(webView: WKWebView, isInteractive: Bool) {
+        self.webView = webView
+        self.isInteractive = isInteractive
+    }
+
     func makeUIView(context: Context) -> WKWebView {
-        let webView = runtime.webView ?? WKWebView()
-        webView.isUserInteractionEnabled = isInteractive
-        return webView
+        let mountedWebView = webView ?? WKWebView()
+        mountedWebView.isUserInteractionEnabled = isInteractive
+        return mountedWebView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
         uiView.isUserInteractionEnabled = isInteractive
+    }
+}
+
+@MainActor
+private struct WebMountBrowserPresentationHost: ViewModifier {
+    let runtime: IOSWebMountWKRuntime
+    let hostID: UUID
+    @State private var isVisible = false
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                isVisible = true
+                updateAvailability()
+            }
+            .onDisappear {
+                isVisible = false
+                runtime.setBrowserPresentationAvailable(false, hostID: hostID)
+            }
+            .onChange(of: scenePhase) { _, _ in
+                updateAvailability()
+            }
+    }
+
+    private func updateAvailability() {
+        runtime.setBrowserPresentationAvailable(isVisible && scenePhase == .active, hostID: hostID)
+    }
+}
+
+private extension View {
+    func browserPresentationHost(runtime: IOSWebMountWKRuntime, hostID: UUID) -> some View {
+        modifier(WebMountBrowserPresentationHost(runtime: runtime, hostID: hostID))
+    }
+}
+
+@MainActor
+struct WebMountBrowserDialogOverlay: View {
+    let dialog: IOSWebMountBrowserDialog
+    let onResolve: (String?) -> Void
+
+    @State private var promptText: String
+    @FocusState private var promptIsFocused: Bool
+
+    init(dialog: IOSWebMountBrowserDialog, onResolve: @escaping (String?) -> Void) {
+        self.dialog = dialog
+        self.onResolve = onResolve
+        _promptText = State(initialValue: dialog.defaultText)
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let cardMaxHeight = max(1, geometry.size.height - 24)
+
+            ZStack {
+                Color.black.opacity(0.28)
+                    .ignoresSafeArea()
+
+                ViewThatFits(in: .vertical) {
+                    regularDialogCard(availableHeight: cardMaxHeight)
+                    fallbackDialogCard(maxHeight: cardMaxHeight)
+                }
+                .frame(maxWidth: .infinity, maxHeight: cardMaxHeight)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .accessibilityAddTraits(.isModal)
+        .onAppear {
+            if isPrompt {
+                promptIsFocused = true
+            }
+        }
+    }
+
+    private func regularDialogCard(availableHeight: CGFloat) -> some View {
+        dialogCard(
+            messageMaxHeight: min(220, max(44, availableHeight - (isPrompt ? 240 : 180)))
+        )
+        .padding(.horizontal, 20)
+    }
+
+    private func fallbackDialogCard(maxHeight: CGFloat) -> some View {
+        ScrollView(.vertical, showsIndicators: false) {
+            dialogCard(messageMaxHeight: 44)
+                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: maxHeight)
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    @ViewBuilder
+    private func dialogCard(messageMaxHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 9) {
+                Image(systemName: dialogIcon)
+                    .foregroundStyle(AmberTheme.accentAmber)
+                Text("网页提示")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+            }
+
+            Text(dialog.host)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            ScrollView(.vertical, showsIndicators: false) {
+                Text(dialog.message)
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, maxHeight: messageMaxHeight, alignment: .topLeading)
+            .scrollBounceBehavior(.basedOnSize)
+
+            if isPrompt {
+                TextField("输入内容", text: $promptText)
+                    .textFieldStyle(.roundedBorder)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($promptIsFocused)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .accessibilityIdentifier("webmount.dialog.input")
+            }
+
+            HStack(spacing: 10) {
+                if !isAlert {
+                    Button(role: .cancel, action: {
+                        resolve(nil)
+                    }) {
+                        Text("取消")
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .buttonStyle(.glass)
+                    .accessibilityIdentifier("webmount.dialog.cancel")
+                }
+
+                Button(action: {
+                    resolve(isPrompt ? promptText : "")
+                }) {
+                    Text(isAlert ? "好" : "确定")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.glassProminent)
+                .accessibilityIdentifier("webmount.dialog.confirm")
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: 360)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.8)
+        }
+        .shadow(color: .black.opacity(0.20), radius: 22, y: 10)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("webmount.dialog.card")
+    }
+
+    private var isAlert: Bool {
+        switch dialog.kind {
+        case .alert: true
+        case .confirm, .prompt: false
+        }
+    }
+
+    private var isPrompt: Bool {
+        switch dialog.kind {
+        case .alert, .confirm: false
+        case .prompt: true
+        }
+    }
+
+    private var dialogIcon: String {
+        switch dialog.kind {
+        case .alert: "exclamationmark.circle"
+        case .confirm: "questionmark.circle"
+        case .prompt: "character.cursor.ibeam"
+        }
+    }
+
+    private func resolve(_ response: String?) {
+        promptIsFocused = false
+        onResolve(response)
     }
 }
 
