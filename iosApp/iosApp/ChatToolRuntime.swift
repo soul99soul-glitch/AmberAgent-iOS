@@ -5506,27 +5506,123 @@ final class ChatToolRuntime {
             return await IOSWorkoutAgentToolExecutor.execute(toolName: name, input: toolCall.input)
         case "subagent_dispatch":
             let args = ChatToolCallParsing.jsonObject(toolCall.input)
+            let customRolePrompt = args?["custom_role_prompt"] as? String
+            let isCustomRole = customRolePrompt?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty == false
+            if !sharedSettings.allowsDynamicSubAgents, isCustomRole {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName, reason: "动态子代理开关已关闭，请使用已配置的内置角色。"
+                )
+            }
             let objective = args?["objective"] as? String ?? toolCall.input
             let roleId = args?["role_id"] as? String ?? args?["subagent_id"] as? String ?? "explorer"
             let scope = ChatToolCallParsing.stringArray(args?["tool_scope"])
                 ?? ChatToolCallParsing.stringArray(args?["tools"])
                 ?? []
+            let settingsSnapshot = sharedSettings.snapshot
+            let roleOverride = settingsSnapshot.agentRuntime.subAgent.overrides[roleId]
+            let expandedMcpDeclarations = expandedMcpToolDeclarations(mcpManager: mcpManager)
+            let expandedMcpNames = Set(expandedMcpDeclarations.map(\.name))
+            let roleDefaultToolNames = IOSSubAgentRoleCatalog.defaultToolNames(
+                roleId: roleId,
+                availableToolNames: ToolKt.iosToolDeclarationNames() + expandedMcpDeclarations.map(\.name),
+                mcpServers: mcpManager.servers
+            )
+            let requestedMcpNames = Set(scope.filter { expandedMcpNames.contains($0) })
+            let allowedMcpNames: Set<String>
+            if isCustomRole {
+                // A one-off role gets MCP only when this invocation names the
+                // currently enabled/discovered tool explicitly.
+                allowedMcpNames = requestedMcpNames
+            } else if let configuredToolNames = roleOverride?.toolAllowlist {
+                // A saved built-in allowlist is the upper bound for task-level
+                // scope; an explicit task scope cannot grant another MCP tool.
+                allowedMcpNames = Set(configuredToolNames).intersection(expandedMcpNames)
+            } else {
+                allowedMcpNames = Set(roleDefaultToolNames).intersection(expandedMcpNames)
+            }
+            let mcpDeclarations = expandedMcpDeclarations.filter { allowedMcpNames.contains($0.name) }
+            var effectiveToolAllowlistOverride = roleOverride?.toolAllowlist.map { Array($0) }
+            if isCustomRole, !requestedMcpNames.isEmpty {
+                effectiveToolAllowlistOverride = Array(
+                    IOSSubAgentToolPolicy.readOnlyParentToolNames.union(requestedMcpNames)
+                )
+            } else if !isCustomRole, roleOverride?.toolAllowlist == nil, !allowedMcpNames.isEmpty {
+                effectiveToolAllowlistOverride = roleDefaultToolNames
+            }
+            let skillContext: String?
+            if let defaultSkillNames = roleOverride?.defaultSkillNames, !defaultSkillNames.isEmpty {
+                do {
+                    skillContext = try IOSSkillMcpToolService.loadEnabledSkillContext(
+                        skillNames: defaultSkillNames,
+                        enabledSkillNames: sharedSettings.currentAssistantEnabledSkillNames
+                    )
+                } catch {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName,
+                        reason: "子代理默认技能不可用：\(error.localizedDescription)"
+                    )
+                }
+            } else {
+                skillContext = nil
+            }
+            let selectedModel = roleOverride?.modelId.flatMap { settingsSnapshot.findModelById(uuid: $0) }
+            let selectedProvider = selectedModel.flatMap {
+                ChatProviderConfiguration.provider(for: $0, providers: settingsSnapshot.providers)
+            }
+            if roleOverride?.modelId != nil {
+                guard let selectedModel else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName, reason: "子代理配置的模型已不存在，请重新选择模型。"
+                    )
+                }
+                if let issue = ChatProviderConfiguration.issue(for: selectedModel, provider: selectedProvider) {
+                    return ChatToolOutputFormatter.toolFailureJSON(toolName: toolCall.toolName, reason: issue.message)
+                }
+            }
+            let runParams: TextGenerationParams
+            if let selectedModel, let selectedProvider, selectedModel.id != params.model.id {
+                let assistant = settingsSnapshot.getCurrentAssistant()
+                runParams = TextGenerationParams(
+                    model: selectedModel,
+                    temperature: params.temperature,
+                    topP: params.topP,
+                    maxTokens: params.maxTokens,
+                    tools: params.tools,
+                    reasoningLevel: params.reasoningLevel,
+                    customHeaders: IOSProviderRequestHeaderStore.headers(for: selectedProvider.id.description())
+                        + assistant.customHeaders + selectedModel.customHeaders,
+                    customBody: assistant.customBodies + selectedModel.customBodies
+                )
+            } else {
+                runParams = params
+            }
             return await subAgentRunner.runViaEngine(
                 objective: objective,
                 roleId: roleId,
                 requestedToolScope: scope,
                 customRoleName: args?["custom_role_name"] as? String,
                 customRoleLens: args?["custom_role_lens"] as? String,
-                customRolePrompt: args?["custom_role_prompt"] as? String,
-                savedRolePromptOverride: sharedSettings.snapshot.agentRuntime.subAgent.overrides[roleId]?.systemPrompt,
-                maxTurnsOverride: args?["max_turns"] as? Int,
-                outputBudgetCharsOverride: args?["output_budget_chars"] as? Int,
-                providerSetting: providerSetting,
-                modelId: params.model.modelId,
-                baseParams: params,
+                customRolePrompt: customRolePrompt,
+                skillContext: skillContext,
+                savedRolePromptOverride: roleOverride?.systemPrompt,
+                toolAllowlistOverride: effectiveToolAllowlistOverride,
+                maxTurnsOverride: (args?["max_turns"] as? Int)
+                    ?? roleOverride?.maxTurnsOverride.map { Int(truncating: $0) },
+                outputBudgetCharsOverride: (args?["output_budget_chars"] as? Int)
+                    ?? roleOverride?.outputBudgetOverride.map { Int(truncating: $0) },
+                providerSetting: selectedProvider ?? providerSetting,
+                modelId: selectedModel?.modelId ?? params.model.modelId,
+                baseParams: runParams,
+                modelOverride: selectedModel,
+                temperatureOverride: roleOverride?.temperature.map { Float(truncating: $0) },
+                reasoningLevelOverride: roleOverride?.reasoningLevel,
+                additionalToolDeclarations: mcpDeclarations,
                 parentToolExecutors: subAgentParentToolExecutors(
                     runId: runId,
-                    conversationId: conversationId?.description() ?? ""
+                    conversationId: conversationId?.description() ?? "",
+                    additionalToolNames: Set(mcpDeclarations.map(\.name))
                 ),
                 toolCallId: toolCall.toolCallId
             )
@@ -5849,9 +5945,17 @@ final class ChatToolRuntime {
 
     private func subAgentParentToolExecutors(
         runId: String,
-        conversationId: String
+        conversationId: String,
+        additionalToolNames: Set<String> = []
     ) -> [String: any IOSToolExecutor] {
-        Dictionary(uniqueKeysWithValues: IOSSubAgentToolPolicy.readOnlyParentToolNames.map { name in
+        // Browser-capable roles opt into this second set. The LocalToolExecutor
+        // still applies the normal WebMount permission and session-binding
+        // checks; registering the adapter only makes the selected names
+        // executable when that parent gate allows them.
+        let allowedNames = IOSSubAgentToolPolicy.readOnlyParentToolNames
+            .union(IOSSubAgentToolPolicy.browserAutomationToolNames)
+            .union(additionalToolNames)
+        return Dictionary(uniqueKeysWithValues: allowedNames.map { name in
             (name, IOSClosureToolExecutor { [weak self] toolName, arguments, _ in
                 guard let self else {
                     return .failed("Chat runtime is unavailable.")
@@ -5872,8 +5976,10 @@ final class ChatToolRuntime {
         runId: String,
         conversationId: String
     ) async -> IOSAgentToolOutcome {
-        guard IOSSubAgentToolPolicy.readOnlyParentToolNames.contains(name) else {
-            return .denied("SubAgent read-only scope does not allow \(name).")
+        guard IOSSubAgentToolPolicy.readOnlyParentToolNames.contains(name)
+            || IOSSubAgentToolPolicy.browserAutomationToolNames.contains(name)
+            || ToolKt.isExpandedMcpToolName(name: name) else {
+            return .denied("SubAgent parent scope does not allow \(name).")
         }
 
         if IOSSearchExecutor.supportedToolNames.contains(name) {
@@ -5885,6 +5991,49 @@ final class ChatToolRuntime {
                 runId: runId
             )
             return .filled(output)
+        }
+
+        if ToolKt.isExpandedMcpToolName(name: name) {
+            guard let target = resolvedMcpTarget(forExpandedName: name),
+                  let mcpArguments = ChatToolCallParsing.jsonObject(arguments) else {
+                return .failed("MCP tool \(name) is unavailable or its arguments are not a JSON object.")
+            }
+            guard let discovered = mcpManager.tools.first(where: {
+                $0.serverName == target.server
+                    && $0.tool.name == target.tool
+            }) else {
+                return .failed("MCP tool \(name) is no longer in the current discovery directory.")
+            }
+            // Read-only MCP tools can run under the parent network gate. A
+            // tool without a read-only hint is treated as high-risk and can
+            // run only when the same high-risk auto-approval already used by
+            // foreground mcp_call is active.
+            guard discovered.tool.readOnlyHint == true || effectiveHighRiskAutoApproveEnabled else {
+                return .denied("MCP tool \(name) is not marked read-only; enable high-risk auto-approval or run it in the foreground.")
+            }
+            do {
+                let output = try await mcpManager.callTool(
+                    serverName: target.server,
+                    toolName: target.tool,
+                    arguments: mcpArguments,
+                    enabledOverride: isMcpNetworkAllowed()
+                )
+                recordSubAgentParentToolApproval(
+                    toolName: name,
+                    arguments: arguments,
+                    action: .allowed,
+                    runId: runId
+                )
+                return .filled(output)
+            } catch {
+                recordSubAgentParentToolApproval(
+                    toolName: name,
+                    arguments: arguments,
+                    action: .denied,
+                    runId: runId
+                )
+                return .failed("MCP 调用失败（server: \(target.server)，tool: \(target.tool)）：\(error.localizedDescription)")
+            }
         }
 
         guard let localToolExecutor else {
@@ -6082,7 +6231,8 @@ final class ChatToolRuntime {
     /// reversible, so this is the authoritative lookup for execution routing.
     private func resolvedMcpTarget(forExpandedName name: String) -> (server: String, tool: String)? {
         let enabledServerNames = Set(mcpManager.servers.filter(\.enabled).map(\.name))
-        for discovered in mcpManager.tools where enabledServerNames.contains(discovered.serverName) {
+        for discovered in mcpManager.tools
+            where enabledServerNames.contains(discovered.serverName) && discovered.tool.enabled {
             if ToolKt.expandedMcpToolName(server: discovered.serverName, tool: discovered.tool.name) == name {
                 return (discovered.serverName, discovered.tool.name)
             }

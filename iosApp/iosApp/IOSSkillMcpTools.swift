@@ -227,11 +227,11 @@ struct IOSSkillMcpToolService {
             guard FileManager.default.fileExists(atPath: url.path) else {
                 throw IOSSkillToolError.skillFileMissing(path)
             }
-            content = try readSkillText(at: url, pathLabel: path)
+            content = try Self.readSkillText(at: url, pathLabel: path)
             pathLabel = path
         } else {
             let markdownURL = try skillStore.resolveSkillFile(name: dirName, relativePath: "SKILL.md")
-            let markdown = try readSkillText(at: markdownURL, pathLabel: "SKILL.md")
+            let markdown = try Self.readSkillText(at: markdownURL, pathLabel: "SKILL.md")
             content = IOSSkillFileStore.extractBody(from: markdown)
             pathLabel = "SKILL.md"
         }
@@ -451,7 +451,7 @@ struct IOSSkillMcpToolService {
         mcpManager.refreshServers()
         let servers = mcpManager.servers.isEmpty ? mcpConfigStore.servers : mcpManager.servers
         let payload: [[String: Any]] = servers.map { server in
-            let tools = IOSMcpManager.toolsForExposure(server.tools)
+            let tools = server.tools
             var entry: [String: Any] = [
                 "id": server.name,
                 "name": server.name,
@@ -498,8 +498,8 @@ struct IOSSkillMcpToolService {
         await mcpManager.sync(serverName: server.name, enabledOverride: enabledOverride)
         let status = mcpManager.statusByServer[server.name]
         let toolCount = mcpManager.servers.first(where: { $0.name == server.name })
-            .map { IOSMcpManager.toolsForExposure($0.tools).count }
-            ?? IOSMcpManager.toolsForExposure(server.tools).count
+            .map { $0.tools.count }
+            ?? server.tools.count
         return Self.json([
             "server": [
                 "id": server.name,
@@ -529,7 +529,7 @@ struct IOSSkillMcpToolService {
                 "valid_servers": servers.map(\.name).sorted(),
             ])
         }
-        let tools = IOSMcpManager.toolsForExposure(server.tools)
+        let tools = server.tools
         guard let tool = tools.first(where: { $0.name == toolName }) else {
             return Self.json([
                 "ok": false,
@@ -1050,7 +1050,7 @@ struct IOSSkillMcpToolService {
         }
     }
 
-    private func readSkillText(at url: URL, pathLabel: String) throws -> String {
+    private static func readSkillText(at url: URL, pathLabel: String) throws -> String {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         let data = try handle.read(upToCount: Self.maximumSkillReadBytes + 1) ?? Data()
@@ -1137,7 +1137,34 @@ struct IOSSkillMcpToolService {
         return (normalized as NSString).lastPathComponent.lowercased() == "skill.md"
     }
 
-    private static func wrapSkillForMobileRuntime(skillName: String, pathLabel: String, body: String) -> String {
+    static func loadEnabledSkillContext(
+        skillNames: [String],
+        enabledSkillNames: Set<String>,
+        skillStore: IOSSkillFileStore = IOSSkillFileStore()
+    ) throws -> String {
+        let normalizedNames = skillNames.map(IOSSkillFileStore.normalizedSkillName)
+        let installedNames = Set(skillStore.listSkillDirNames())
+        let missingNames = normalizedNames.filter { !installedNames.contains($0) }
+        guard missingNames.isEmpty else {
+            throw IOSSkillToolError.skillFileMissing(missingNames.joined(separator: ", "))
+        }
+        let disabledNames = normalizedNames.filter { !enabledSkillNames.contains($0) }
+        guard disabledNames.isEmpty else {
+            throw IOSSkillToolError.skillNotEnabled(disabledNames.joined(separator: ", "))
+        }
+
+        return try normalizedNames.map { name in
+            let url = try skillStore.resolveSkillFile(name: name, relativePath: "SKILL.md")
+            let markdown = try readSkillText(at: url, pathLabel: "SKILL.md")
+            return wrapSkillForMobileRuntime(
+                skillName: name,
+                pathLabel: "SKILL.md",
+                body: IOSSkillFileStore.extractBody(from: markdown)
+            )
+        }.joined(separator: "\n\n")
+    }
+
+    static func wrapSkillForMobileRuntime(skillName: String, pathLabel: String, body: String) -> String {
         """
         [AmberAgent Mobile Runtime — applies to the skill content below]
         You are running inside AmberAgent on iOS — NOT desktop Claude Code, NOT Codex, NOT a CLI environment.

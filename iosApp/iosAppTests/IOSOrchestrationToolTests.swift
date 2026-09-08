@@ -152,7 +152,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
         cancelForegroundRun: @escaping (String) -> Bool = { _ in false },
         foregroundRunCount: @escaping () -> Int = { 0 },
         maxConcurrentRuns: Int = IOSThreadOrchestrationToolService.defaultMaxConcurrentRuns,
-        roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true }
+        roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true },
+        sharedSettings: IOSSharedSettingsStore? = nil
     ) -> IOSThreadOrchestrationToolService {
         IOSThreadOrchestrationToolService(
             conversationStoreProvider: { store },
@@ -172,7 +173,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
             cancelForegroundRun: cancelForegroundRun,
             foregroundRunCount: foregroundRunCount,
             maxConcurrentRuns: maxConcurrentRuns,
-            roleAssistantExists: roleAssistantExists
+            roleAssistantExists: roleAssistantExists,
+            sharedSettingsProvider: { sharedSettings }
         )
     }
 
@@ -180,11 +182,21 @@ final class IOSOrchestrationToolTests: XCTestCase {
         taskName: String,
         message: String = "初始任务",
         forkTurns: String? = "all",
-        roleAssistantId: String? = nil
+        roleAssistantId: String? = nil,
+        roleId: String? = nil,
+        systemPrompt: String? = nil,
+        context: String? = nil,
+        toolScope: [String]? = nil,
+        skillNames: [String]? = nil
     ) -> String {
         var object: [String: Any] = ["task_name": taskName, "message": message]
         if let forkTurns { object["fork_turns"] = forkTurns }
         if let roleAssistantId { object["role_assistant_id"] = roleAssistantId }
+        if let roleId { object["role_id"] = roleId }
+        if let systemPrompt { object["system_prompt"] = systemPrompt }
+        if let context { object["context"] = context }
+        if let toolScope { object["tool_scope"] = toolScope }
+        if let skillNames { object["skill_names"] = skillNames }
         let data = try! JSONSerialization.data(withJSONObject: object)
         return String(data: data, encoding: .utf8)!
     }
@@ -262,7 +274,10 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertEqual(handoff.conversationId.toHexDashString(), childHex)
         XCTAssertEqual(handoff.executionPolicy, executionPolicy)
         // 场景 C 修复后：upload 首条为子线程向编排语境（system），其后与持久化一致。
-        XCTAssertEqual(handoff.uploadMessages.count, childMessages.count + 1)
+        XCTAssertEqual(
+            handoff.uploadMessages.filter { $0.role != MessageRole.system },
+            childMessages.filter { $0.role != MessageRole.system }
+        )
         XCTAssertEqual(handoff.uploadMessages.first?.role, MessageRole.system)
         XCTAssertEqual(
             handoff.uploadMessages.filter { $0.role == MessageRole.user }.last?.toText(),
@@ -1382,7 +1397,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertEqual(viewModel.composerSendBlockReason(for: "你好"), .orchestratedThread)
         XCTAssertEqual(
             viewModel.composerSendBlockReason(for: "你好")?.userVisibleMessage,
-            "此会话由父线程编排，暂不支持直接输入"
+            IOSAppLocalization.string("此会话由父线程编排，暂不支持直接输入", defaultValue: "此会话由父线程编排，暂不支持直接输入")
         )
         let childIsOrchestrated = await viewModel.isOrchestratedChild(conversationId: childId)
         XCTAssertTrue(childIsOrchestrated)
@@ -1514,6 +1529,154 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertEqual(makeParams(maxTokens: 4_000).withMaxTokenFloor(32_768).maxTokens?.int32Value, 32_768)
         XCTAssertEqual(makeParams(maxTokens: 65_536).withMaxTokenFloor(32_768).maxTokens?.int32Value, 65_536)
         XCTAssertEqual(makeParams(maxTokens: 65_536).withMaxTokenFloor(32_768).reasoningLevel, .off)
+    }
+
+    func testDynamicSpawnScopeIsPersistedAndRestoredForFollowup() async throws {
+        let base = makeTempDirectory("SpawnDynamicScope")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        let settings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        let service = makeService(
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            currentConversationId: { parentId },
+            sharedSettings: settings
+        )
+        let declarations = ToolKt.iosToolDeclarations(names: ["search_web", "tools_list"])
+        let params = makeParams().replacingTools(declarations)
+        let bridge = IosToolExposureBridge(tools: declarations)
+
+        let spawn = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "dynamic_worker",
+                message: "查资料",
+                roleId: "one_off_researcher",
+                systemPrompt: "只做来源核对。",
+                context: "输出每条结论的来源。",
+                toolScope: ["search_web"]
+            ),
+            providerSetting: makeProviderSetting(),
+            params: params,
+            runId: "parent-dynamic",
+            conversationId: parentId,
+            toolExposureBridge: bridge
+        ))
+        XCTAssertEqual(spawn["ok"] as? Bool, true)
+        let childHex = try XCTUnwrap(spawn["child_thread_id"] as? String)
+        let handoff = try XCTUnwrap(scheduler.startedHandoff)
+        XCTAssertEqual(handoff.fullToolNames, ["search_web"])
+        let systemText = handoff.uploadMessages
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .joined(separator: "\n")
+        XCTAssertTrue(systemText.contains("只做来源核对。"))
+        XCTAssertTrue(systemText.contains("输出每条结论的来源。"))
+
+        let emptyScope = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "empty_scope",
+                message: "不使用工具",
+                roleId: "one_off_no_tools",
+                toolScope: []
+            ),
+            providerSetting: makeProviderSetting(),
+            params: params,
+            runId: "parent-empty-scope",
+            conversationId: parentId,
+            toolExposureBridge: bridge
+        ))
+        XCTAssertEqual(emptyScope["ok"] as? Bool, true)
+        XCTAssertEqual(scheduler.startedHandoff?.fullToolNames, [])
+        XCTAssertEqual(scheduler.startedHandoff?.params.tools.count, 0)
+
+        let followup = parseJSON(await service.execute(
+            toolName: "followup_task",
+            arguments: #"{"target":"\#(childHex)","message":"继续核对"}"#,
+            providerSetting: makeProviderSetting(),
+            params: params,
+            runId: "parent-followup",
+            conversationId: parentId,
+            toolExposureBridge: bridge
+        ))
+        XCTAssertEqual(followup["status"] as? String, "started")
+        XCTAssertEqual(scheduler.startedHandoff?.fullToolNames, ["search_web"])
+    }
+
+    func testDynamicDefinitionIsRejectedWhenSwitchIsDisabledButBuiltinRoleWorks() async throws {
+        let base = makeTempDirectory("SpawnDynamicDisabled")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        let settings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        settings.setDynamicSubAgentsAllowed(false)
+        settings.addCustomModel(name: "Worker model", modelId: "worker-model", providerName: "Worker provider")
+        let selectedProvider = try XCTUnwrap(settings.snapshot.providers.last)
+        let selectedModel = try XCTUnwrap(selectedProvider.models.first)
+        _ = settings.updateProviderApiKey(providerId: selectedProvider.id.description(), apiKey: "sk-test")
+        defer { _ = settings.removeProvider(providerId: selectedProvider.id.description()) }
+        let skillStore = IOSSkillFileStore()
+        let skill = try skillStore.createSkill(name: "agent-test-" + UUID().uuidString.lowercased(),
+                                              description: "Check task sources", allowedTools: [])
+        defer { try? skillStore.deleteSkill(dirName: skill) }
+        let markdown = try skillStore.readSkillMarkdown(dirName: skill)
+        try skillStore.saveSkillMarkdown(dirName: skill, expectedName: skill,
+                                         content: markdown + "\nVerify each claim against its source.\n")
+        settings.setSkillEnabled(name: skill, enabled: true)
+        settings.configureSubAgentRole(roleId: "explorer", systemPrompt: "核对来源后回答。",
+                                       modelId: selectedModel.id.description(), reasoningLevel: .high,
+                                       toolAllowlist: [], defaultSkillNames: [skill])
+        let service = makeService(
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            currentConversationId: { parentId },
+            sharedSettings: settings
+        )
+
+        let rejected = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "oneoff",
+                roleId: "custom",
+                systemPrompt: "动态定义"
+            ),
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "parent-disabled",
+            conversationId: parentId
+        ))
+        XCTAssertEqual(rejected["error"] as? String, "invalid_arguments")
+        XCTAssertNil(scheduler.startedHandoff)
+
+        let builtin = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "explorer_worker",
+                roleId: "explorer"
+            ),
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "parent-builtin",
+            conversationId: parentId
+        ))
+        XCTAssertEqual(builtin["ok"] as? Bool, true)
+        let handoff = try XCTUnwrap(scheduler.startedHandoff)
+        XCTAssertEqual(handoff.params.model.id, selectedModel.id)
+        XCTAssertEqual(handoff.params.reasoningLevel, .high)
+        XCTAssertEqual(handoff.fullToolNames, [])
+        let upload = handoff.uploadMessages.map { $0.toText() }.joined(separator: "\n")
+        XCTAssertTrue(upload.contains("核对来源后回答。"))
+        XCTAssertTrue(upload.contains("Verify each claim against its source."))
     }
 
 }

@@ -305,7 +305,10 @@ final class IOSMcpExpandedToolTests: XCTestCase {
                     name: "on",
                     url: "https://example.com/on",
                     enabled: true,
-                    tools: [IOSMcpTool(name: "visible_tool", description: "Visible tool")]
+                    tools: [
+                        IOSMcpTool(name: "visible_tool", description: "Visible tool"),
+                        IOSMcpTool(name: "disabled_tool", description: "Disabled tool", enabled: false),
+                    ]
                 ),
             ]
         })
@@ -322,18 +325,23 @@ final class IOSMcpExpandedToolTests: XCTestCase {
         let fullNames = try XCTUnwrap(viewModel.toolExposureBridgeForTesting())
             .fullToolDeclarations().map(\.name)
         XCTAssertTrue(fullNames.contains("mcp__on__visible_tool"))
+        XCTAssertFalse(fullNames.contains("mcp__on__disabled_tool"), "disabled MCP tools must not contribute declarations")
         XCTAssertFalse(fullNames.contains("mcp__off__hidden"), "disabled servers must not contribute declarations")
     }
 
     // MARK: - Execution routing: prefix → directory lookup → mcpManager.callTool
 
     func testExpandedToolCallRoutesToTheCorrectServerAndTool() async throws {
-        let alphaClient = RecordingMcpClient(tools: [IOSMcpTool(name: "search", description: "Alpha search")])
+        let alphaTools = [
+            IOSMcpTool(name: "browser.click", description: "Disabled alias", enabled: false),
+            IOSMcpTool(name: "browser_click", description: "Alpha browser click")
+        ]
+        let alphaClient = RecordingMcpClient(tools: alphaTools)
         let betaClient = RecordingMcpClient(tools: [IOSMcpTool(name: "list", description: "Beta list")])
         let manager = IOSMcpManager(
             serverProvider: {
                 [
-                    .streamableHTTP(name: "alpha", url: "https://example.com/alpha", tools: [IOSMcpTool(name: "search", description: "Alpha search")]),
+                    .streamableHTTP(name: "alpha", url: "https://example.com/alpha", tools: alphaTools),
                     .streamableHTTP(name: "beta", url: "https://example.com/beta", tools: [IOSMcpTool(name: "list", description: "Beta list")]),
                 ]
             },
@@ -347,7 +355,7 @@ final class IOSMcpExpandedToolTests: XCTestCase {
             searchTransport: CountingSearchTransport(),
             mcpManager: manager
         )
-        let context = makeContext(toolCall: expandedToolCall(name: "mcp__alpha__search", input: #"{"query":"hello"}"#))
+        let context = makeContext(toolCall: expandedToolCall(name: "mcp__alpha__browser_click", input: #"{"target":"hello"}"#))
 
         try await withHighRiskAutoApprove(true) {
             let result = await runtime.execute(
@@ -358,8 +366,8 @@ final class IOSMcpExpandedToolTests: XCTestCase {
                 return XCTFail("expanded MCP call must complete, got \(result)")
             }
             XCTAssertEqual(alphaClient.calls.count, 1, "the call must route to the alpha server")
-            XCTAssertEqual(alphaClient.calls.first?.name, "search")
-            XCTAssertEqual(alphaClient.calls.first?.arguments["query"] as? String, "hello")
+            XCTAssertEqual(alphaClient.calls.first?.name, "browser_click")
+            XCTAssertEqual(alphaClient.calls.first?.arguments["target"] as? String, "hello")
             XCTAssertTrue(betaClient.calls.isEmpty, "beta must not receive the alpha call")
         }
     }

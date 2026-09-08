@@ -1373,9 +1373,9 @@ fun createSubAgentReportToolDeclaration(): Tool = Tool(
 )
 
 /**
- * P1-c: spawn a child agent thread. The child runs asynchronously with the same
- * tools as this thread and can spawn its own subagents (depth is capped by the
- * harness). The child's conversation is forked from this thread's history
+ * P1-c: spawn a child agent thread. The child runs asynchronously within its
+ * assigned tool scope and can delegate again when spawn_agent is allowed
+ * (depth is capped by the harness). Its conversation is forked from this thread's history
  * (optionally truncated by `fork_turns`), receives the initial `message` as a
  * NEW_TASK, and its final answer is delivered back through the mailbox when it
  * finishes. `task_name` must be lowercase letters, digits and underscores; the
@@ -1386,14 +1386,22 @@ fun createSubAgentReportToolDeclaration(): Tool = Tool(
 fun createSpawnAgentToolDeclaration(): Tool = Tool(
     name = "spawn_agent",
     description = """
-        Spawn a child agent thread that runs asynchronously. The spawned agent has
-        the same tools as you and can spawn its own subagents. The child receives a
+        Spawn a child agent thread that runs asynchronously. Access to the parent
+        tool catalog is constrained by the selected role and tool_scope. A child
+        can spawn its own subagents only when spawn_agent is in its allowed scope.
+        The child receives a
         fork of this thread's history (truncated by fork_turns) plus the initial
         `message` as its NEW_TASK, and delivers its FINAL_ANSWER back to this thread
         when it finishes. task_name must be lowercase letters, digits and underscores;
         the canonical agent path is /root/{task_name} (or
         /root/{parent_task}/{task_name} for grandchildren). Inspect threads with
         list_agents; stop a child with interrupt_agent (the thread stays addressable).
+        The child starts in the background so the parent can continue; use
+        wait_agent only when the result is needed. Use role_id for a built-in role
+        (explorer, historian, oracle, designer, writer, fixer, or browser).
+        When dynamic subagents are enabled, system_prompt, context, tool_scope and
+        skill_names define a one-off role. Tool scope is enforced by the child
+        execution and background recovery, not only described in the prompt.
     """.trimIndent(),
     parameters = { spawnAgentParameters() },
     needsApproval = false,
@@ -1571,6 +1579,28 @@ private fun spawnAgentParameters(): InputSchema = InputSchema.Obj(
         put("role_assistant_id", buildJsonObject {
             put("type", "string")
             put("description", "Optional assistant id the child conversation should use.")
+        })
+        put("role_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional built-in role id (for example explorer, historian, oracle, designer, writer, fixer, browser), or a dynamic role id when dynamic subagents are enabled.")
+        })
+        put("system_prompt", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional one-off role instructions. Requires the dynamic subagent setting; with it off, only saved built-in role configuration is allowed.")
+        })
+        put("context", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional task-specific context injected into the child system context. Requires dynamic subagents.")
+        })
+        put("tool_scope", buildJsonObject {
+            put("type", "array")
+            put("items", buildJsonObject { put("type", "string") })
+            put("description", "Optional exact tool names the child may discover and execute. Requires dynamic subagents for one-off scope; with a role, omission uses that role's saved/default scope, otherwise it inherits the parent catalog. An empty array grants no tools.")
+        })
+        put("skill_names", buildJsonObject {
+            put("type", "array")
+            put("items", buildJsonObject { put("type", "string") })
+            put("description", "Optional installed and enabled skill directory names to load into the child role context. Requires dynamic subagents for one-off selection.")
         })
     },
     required = listOf("task_name", "message"),

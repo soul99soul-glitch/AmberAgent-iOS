@@ -21,6 +21,9 @@ struct IOSSubAgentRoleDescriptor: Identifiable, Equatable {
     let maxTurns: Int
     let timeoutSeconds: Int
     let outputBudgetChars: Int
+    /// Browser actions are opt-in per role. The parent WebMount permission
+    /// gate remains the final authority at execution time.
+    let allowsBrowserAutomation: Bool
 }
 
 enum IOSSubAgentRoleCatalog {
@@ -38,7 +41,8 @@ enum IOSSubAgentRoleCatalog {
             ],
             maxTurns: 4,
             timeoutSeconds: 300,
-            outputBudgetChars: 12_000
+            outputBudgetChars: 12_000,
+            allowsBrowserAutomation: false
         ),
         .init(
             id: "historian",
@@ -49,7 +53,8 @@ enum IOSSubAgentRoleCatalog {
             toolAllowlist: ["tools_list", "permissions_status"],
             maxTurns: 4,
             timeoutSeconds: 300,
-            outputBudgetChars: 12_000
+            outputBudgetChars: 12_000,
+            allowsBrowserAutomation: false
         ),
         .init(
             id: "oracle",
@@ -60,7 +65,8 @@ enum IOSSubAgentRoleCatalog {
             toolAllowlist: ["tools_list", "file_read_selected", "permissions_status", "workspace_file_read", "workspace_file_search", "workspace_artifact_read"],
             maxTurns: 4,
             timeoutSeconds: 300,
-            outputBudgetChars: 12_000
+            outputBudgetChars: 12_000,
+            allowsBrowserAutomation: false
         ),
         .init(
             id: "designer",
@@ -71,7 +77,8 @@ enum IOSSubAgentRoleCatalog {
             toolAllowlist: ["tools_list", "file_read_selected", "workspace_file_read", "workspace_artifact_read"],
             maxTurns: 3,
             timeoutSeconds: 240,
-            outputBudgetChars: 8_000
+            outputBudgetChars: 8_000,
+            allowsBrowserAutomation: false
         ),
         .init(
             id: "writer",
@@ -82,7 +89,8 @@ enum IOSSubAgentRoleCatalog {
             toolAllowlist: ["tools_list", "file_read_selected", "workspace_file_read", "workspace_artifact_read"],
             maxTurns: 3,
             timeoutSeconds: 240,
-            outputBudgetChars: 8_000
+            outputBudgetChars: 8_000,
+            allowsBrowserAutomation: false
         ),
         .init(
             id: "fixer",
@@ -93,7 +101,32 @@ enum IOSSubAgentRoleCatalog {
             toolAllowlist: ["tools_list"],
             maxTurns: 2,
             timeoutSeconds: 180,
-            outputBudgetChars: 6_000
+            outputBudgetChars: 6_000,
+            allowsBrowserAutomation: false
+        ),
+        .init(
+            id: "browser",
+            name: "Browser",
+            summary: "使用 WebMount、Moli 或已连接的浏览器 MCP 浏览网页，读取页面并按语义目标完成可验证的交互。",
+            systemPrompt: """
+                你是浏览器自动化子代理。优先使用已连接的 Moli、WebMount 或浏览器 MCP 工具。
+
+                先观察当前页面，再使用稳定的语义目标（target 或 ref）完成导航、点击、输入、滚动或选择。每个动作后重新观察并核对结果。
+
+                只在当前任务明确要求时操作，不读取 cookie、token、原始 HTML 或隐私凭证。遇到权限、人工接管或页面状态不确定时，如实报告并停止。
+                """.trimmingCharacters(in: .whitespacesAndNewlines),
+            routing: "需要在 WebMount、Moli 或浏览器 MCP 中打开网页、观察页面或完成受约束的浏览器操作时调用。",
+            toolAllowlist: [
+                "tools_list", "search_web", "scrape_web",
+                "wm_stations", "wm_tab_list", "wm_open", "wm_state", "wm_observe",
+                "wm_extract", "wm_get", "wm_visual_snapshot", "wm_back", "wm_forward",
+                "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll", "wm_select",
+                "wm_find", "wm_wait"
+            ],
+            maxTurns: 8,
+            timeoutSeconds: 600,
+            outputBudgetChars: 12_000,
+            allowsBrowserAutomation: true
         )
     ]
 
@@ -106,6 +139,26 @@ enum IOSSubAgentRoleCatalog {
     }
 
     static let validRoleIds: [String] = builtIns.map(\.id).sorted()
+
+    static func defaultToolNames(
+        roleId: String,
+        availableToolNames: [String],
+        mcpServers: [IOSMcpServerConfig] = []
+    ) -> [String] {
+        guard let role = resolve(roleId: roleId) else { return [] }
+        let available = Set(availableToolNames)
+        var names = Set(role.toolAllowlist).intersection(available)
+        if role.id == "browser" {
+            for server in mcpServers where server.enabled {
+                for tool in server.tools where tool.enabled
+                    && ["browser_", "cdp_", "devtools_"].contains(where: tool.name.hasPrefix) {
+                    let name = ToolKt.expandedMcpToolName(server: server.name, tool: tool.name)
+                    if available.contains(name) { names.insert(name) }
+                }
+            }
+        }
+        return names.sorted()
+    }
 }
 
 enum IOSSubAgentToolPolicy {
@@ -122,6 +175,16 @@ enum IOSSubAgentToolPolicy {
         "mcp_call", "memory_tool", "generate_image", "subagent_dispatch", "model_council_run"
     ]
 
+    /// WebMount names exposed only to an explicitly selected browser-capable
+    /// role. The executor still applies the normal WebMount policy, so a
+    /// background run receives a denial when foreground approval or high-risk
+    /// auto-approval is required.
+    static let browserAutomationToolNames: Set<String> = [
+        "wm_tab_list", "wm_open", "wm_state", "wm_observe", "wm_extract", "wm_get",
+        "wm_visual_snapshot", "wm_back", "wm_forward", "wm_click", "wm_tap", "wm_type",
+        "wm_keys", "wm_scroll", "wm_select", "wm_find", "wm_wait"
+    ]
+
     static func isDenied(_ name: String) -> Bool {
         deniedToolNames.contains(name)
     }
@@ -132,8 +195,13 @@ enum IOSSubAgentToolPolicy {
 @Observable
 final class SubAgentRunner {
     @ObservationIgnored private let taskStore: IOSAdvancedTaskStore
-    @ObservationIgnored private var currentEngineRunTask: Task<IOSAgentToolEngineResult, Never>?
+    /// Each invocation owns its own provider task. A single optional task made
+    /// concurrent background/foreground dispatches overwrite one another, so
+    /// cancellation and `isRunning` could target the wrong run.
+    @ObservationIgnored private var currentEngineRunTasks: [UUID: Task<IOSAgentToolEngineResult, Never>] = [:]
+    @ObservationIgnored private var currentEngineRunOrder: [UUID] = []
     @ObservationIgnored private var currentEngineExecutionId: UUID?
+    @ObservationIgnored private var activeEngineRunCount = 0
 
     var lastRunResult: String = "(未运行)"
     var isRunning: Bool = false
@@ -149,7 +217,7 @@ final class SubAgentRunner {
 
 #if DEBUG
     var hasActiveEngineRunForTesting: Bool {
-        currentEngineRunTask != nil
+        !currentEngineRunTasks.isEmpty
     }
 #endif
 
@@ -172,12 +240,18 @@ final class SubAgentRunner {
         customRoleName: String? = nil,
         customRoleLens: String? = nil,
         customRolePrompt: String? = nil,
+        skillContext: String? = nil,
         savedRolePromptOverride: String? = nil,
+        toolAllowlistOverride: [String]? = nil,
         maxTurnsOverride: Int? = nil,
         outputBudgetCharsOverride: Int? = nil,
         providerSetting: ProviderSetting,
         modelId: String,
         baseParams: TextGenerationParams? = nil,
+        modelOverride: Model? = nil,
+        temperatureOverride: Float? = nil,
+        reasoningLevelOverride: ReasoningLevel? = nil,
+        additionalToolDeclarations: [Tool] = [],
         parentToolExecutors: [String: any IOSToolExecutor],
         toolCallId: String = "",
         timeoutSeconds: TimeInterval? = nil,
@@ -189,6 +263,7 @@ final class SubAgentRunner {
             customRoleLens: customRoleLens,
             customRolePrompt: customRolePrompt,
             savedRolePromptOverride: savedRolePromptOverride,
+            toolAllowlistOverride: toolAllowlistOverride,
             maxTurnsOverride: maxTurnsOverride,
             outputBudgetCharsOverride: outputBudgetCharsOverride
         )
@@ -203,7 +278,16 @@ final class SubAgentRunner {
         let requested = requestedToolScope
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        let deniedRequested = requested.filter(IOSSubAgentToolPolicy.isDenied)
+        // Browser actions are opt-in per role. A saved allowlist or the
+        // built-in browser role can grant them, while Explorer and custom
+        // read-only roles keep the old fail-before-provider behavior.
+        let browserScopeEnabled = role.allowsBrowserAutomation
+            || (role.id == "custom" && requested.contains(where: IOSSubAgentToolPolicy.browserAutomationToolNames.contains))
+            || (toolAllowlistOverride?.contains(where: IOSSubAgentToolPolicy.browserAutomationToolNames.contains) == true)
+        let deniedRequested = requested.filter { name in
+            IOSSubAgentToolPolicy.isDenied(name)
+                && !(browserScopeEnabled && IOSSubAgentToolPolicy.browserAutomationToolNames.contains(name))
+        }
         if !deniedRequested.isEmpty {
             return Self.json([
                 "ok": false,
@@ -217,8 +301,15 @@ final class SubAgentRunner {
         let scopedTools = requested.isEmpty
             ? role.toolAllowlist
             : requested.filter { role.toolAllowlist.contains($0) }
+        // The parent runtime may inject exact expanded MCP names. A name is
+        // executable only when its adapter is present in this invocation;
+        // role settings alone never manufacture an executor.
+        let hostProvidedToolNames = Set(parentToolExecutors.keys)
         let tools = Self.uniqueTools((["tools_list"] + scopedTools).filter { tool in
-            tool == "tools_list" || IOSSubAgentToolPolicy.readOnlyParentToolNames.contains(tool)
+            tool == "tools_list"
+                || IOSSubAgentToolPolicy.readOnlyParentToolNames.contains(tool)
+                || (browserScopeEnabled && IOSSubAgentToolPolicy.browserAutomationToolNames.contains(tool))
+                || hostProvidedToolNames.contains(tool)
         })
         let removedTools = requested.filter { !tools.contains($0) }
 
@@ -237,8 +328,12 @@ final class SubAgentRunner {
             ]
         )
         lastTask = task
+        activeEngineRunCount += 1
         isRunning = true
-        defer { isRunning = false }
+        defer {
+            activeEngineRunCount = max(0, activeEngineRunCount - 1)
+            isRunning = activeEngineRunCount > 0
+        }
 
         // Build the report-capture executor + merge with parent tools. Only the
         // allowed tools get executors; others fall through to the engine's
@@ -256,13 +351,16 @@ final class SubAgentRunner {
         }
 
         // Build the prompt: role system prompt + objective + tool scope.
-        let systemPrompt = """
-        \(role.systemPrompt)
-
+        var systemPromptSections = [role.systemPrompt]
+        if let skillContext = skillContext?.trimmingCharacters(in: .whitespacesAndNewlines), !skillContext.isEmpty {
+            systemPromptSections.append(skillContext)
+        }
+        systemPromptSections.append("""
         You are subagent \(role.name). Work toward the objective using only the allowed tools.
         When done, call `subagent_report` with a concise summary and findings.
         Do not ask the user follow-up questions.
-        """
+        """)
+        let systemPrompt = systemPromptSections.joined(separator: "\n\n")
         let userPrompt = """
         Objective:
         \(objective)
@@ -275,22 +373,22 @@ final class SubAgentRunner {
         ]
 
         let fallbackModel = Model(
-                modelId: modelId,
-                displayName: modelId,
-                id: KotlinUuid.companion.random(),
-                type: ModelType.chat,
-                customHeaders: [],
-                customBodies: [],
-                inputModalities: [],
-                outputModalities: [],
-                abilities: [],
-                tools: Set<BuiltInTools>(),
-                contextWindowTokens: nil,
-                providerOverwrite: nil
+            modelId: modelId,
+            displayName: modelId,
+            id: KotlinUuid.companion.random(),
+            type: ModelType.chat,
+            customHeaders: [],
+            customBodies: [],
+            inputModalities: [],
+            outputModalities: [],
+            abilities: [],
+            tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil,
+            providerOverwrite: nil
         )
         let params = TextGenerationParams(
-            model: baseParams?.model ?? fallbackModel,
-            temperature: baseParams?.temperature,
+            model: modelOverride ?? baseParams?.model ?? fallbackModel,
+            temperature: temperatureOverride.map { KotlinFloat(value: $0) } ?? baseParams?.temperature,
             topP: baseParams?.topP,
             // `outputBudgetChars` bounds the report returned to the parent; it
             // is not a per-provider-turn token limit. Coupling the two caused
@@ -299,8 +397,11 @@ final class SubAgentRunner {
             // failure more likely. Preserve an explicit parent model limit,
             // otherwise let the provider use its normal output allowance.
             maxTokens: baseParams?.maxTokens,
-            tools: Self.buildSubAgentToolDeclarations(names: [SUBAGENT_REPORT_TOOL_NAME_swift] + tools),
-            reasoningLevel: baseParams?.reasoningLevel ?? .off,
+            tools: Self.buildSubAgentToolDeclarations(
+                names: [SUBAGENT_REPORT_TOOL_NAME_swift] + tools,
+                additionalDeclarations: additionalToolDeclarations
+            ),
+            reasoningLevel: reasoningLevelOverride ?? baseParams?.reasoningLevel ?? .off,
             customHeaders: baseParams?.customHeaders ?? [],
             customBody: baseParams?.customBody ?? []
         )
@@ -449,11 +550,13 @@ final class SubAgentRunner {
         }
         let executionId = UUID()
         currentEngineExecutionId = executionId
-        currentEngineRunTask = runTask
+        currentEngineRunTasks[executionId] = runTask
+        currentEngineRunOrder.append(executionId)
         defer {
+            currentEngineRunTasks.removeValue(forKey: executionId)
+            currentEngineRunOrder.removeAll { $0 == executionId }
             if currentEngineExecutionId == executionId {
-                currentEngineExecutionId = nil
-                currentEngineRunTask = nil
+                currentEngineExecutionId = currentEngineRunOrder.last
             }
         }
         let timeoutTask = Task { @MainActor in
@@ -487,7 +590,10 @@ final class SubAgentRunner {
     /// `iosToolDeclarations` emits an incomplete schema the provider rejects with a
     /// 500). Everything else (workspace / wm_ / file_read / report / tools_list) goes
     /// through the generic declarations.
-    private static func buildSubAgentToolDeclarations(names: [String]) -> [Tool] {
+    private static func buildSubAgentToolDeclarations(
+        names: [String],
+        additionalDeclarations: [Tool] = []
+    ) -> [Tool] {
         var declarations: [Tool] = []
         var genericNames: [String] = []
         for name in names {
@@ -500,6 +606,8 @@ final class SubAgentRunner {
         if !genericNames.isEmpty {
             declarations.append(contentsOf: ToolKt.iosToolDeclarations(names: genericNames))
         }
+        let declaredNames = Set(declarations.map(\.name))
+        declarations.append(contentsOf: additionalDeclarations.filter { !declaredNames.contains($0.name) })
         return declarations
     }
 
@@ -526,6 +634,7 @@ final class SubAgentRunner {
         customRoleLens: String?,
         customRolePrompt: String?,
         savedRolePromptOverride: String?,
+        toolAllowlistOverride: [String]?,
         maxTurnsOverride: Int?,
         outputBudgetCharsOverride: Int?
     ) -> IOSSubAgentRoleDescriptor? {
@@ -543,7 +652,8 @@ final class SubAgentRunner {
                 toolAllowlist: Array(IOSSubAgentToolPolicy.readOnlyParentToolNames).sorted(),
                 maxTurns: 4,
                 timeoutSeconds: 300,
-                outputBudgetChars: 12_000
+                outputBudgetChars: 12_000,
+                allowsBrowserAutomation: false
             )
         } else if let resolved = IOSSubAgentRoleCatalog.resolve(roleId: roleId) {
             let savedPrompt = savedRolePromptOverride?
@@ -557,21 +667,26 @@ final class SubAgentRunner {
                 toolAllowlist: resolved.toolAllowlist,
                 maxTurns: resolved.maxTurns,
                 timeoutSeconds: resolved.timeoutSeconds,
-                outputBudgetChars: resolved.outputBudgetChars
+                outputBudgetChars: resolved.outputBudgetChars,
+                allowsBrowserAutomation: resolved.allowsBrowserAutomation
             )
         } else {
             return nil
         }
+        let effectiveToolAllowlist = toolAllowlistOverride?.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty } ?? base.toolAllowlist
         return IOSSubAgentRoleDescriptor(
             id: base.id,
             name: base.name,
             summary: base.summary,
             systemPrompt: base.systemPrompt,
             routing: base.routing,
-            toolAllowlist: base.toolAllowlist,
+            toolAllowlist: effectiveToolAllowlist,
             maxTurns: Self.clamp(maxTurnsOverride ?? base.maxTurns, lower: 2, upper: 8),
             timeoutSeconds: base.timeoutSeconds,
-            outputBudgetChars: Self.clamp(outputBudgetCharsOverride ?? base.outputBudgetChars, lower: 4_000, upper: 24_000)
+            outputBudgetChars: Self.clamp(outputBudgetCharsOverride ?? base.outputBudgetChars, lower: 4_000, upper: 24_000),
+            allowsBrowserAutomation: base.allowsBrowserAutomation
         )
     }
 
@@ -580,7 +695,8 @@ final class SubAgentRunner {
     }
 
     func cancelCurrentRun() {
-        guard let currentEngineRunTask else {
+        guard let executionId = currentEngineExecutionId,
+              let currentEngineRunTask = currentEngineRunTasks[executionId] else {
             lastRunResult = "没有正在运行的 SubAgent"
             return
         }

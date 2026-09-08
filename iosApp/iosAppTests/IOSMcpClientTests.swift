@@ -95,7 +95,7 @@ final class IOSMcpClientTests: XCTestCase {
         XCTAssertEqual(object["value"] as? String, "ready")
     }
 
-    func testMcpManagerBlocksRawBrowserCdpAndDevtoolsToolsFromExposureAndExecution() async throws {
+    func testMcpManagerExposesAndCallsGenericBrowserCdpAndDevtoolsTools() async throws {
         let config = IOSMcpServerConfig.streamableHTTP(
             name: "docs",
             url: "https://example.com/mcp",
@@ -106,20 +106,22 @@ final class IOSMcpClientTests: XCTestCase {
                 IOSMcpTool(name: "devtools_click", description: "DevTools click"),
             ]
         )
-        let manager = IOSMcpManager(serverProvider: { [config] })
-        manager.refreshFromCurrentSettings()
+        let client = GenericBrowserMcpClient(tools: config.tools, callOutput: "ok")
+        let manager = IOSMcpManager(
+            serverProvider: { [config] },
+            clientFactory: { _ in client }
+        )
+        await manager.syncAll()
 
-        XCTAssertEqual(manager.tools.map(\.tool.name), ["search"])
+        XCTAssertEqual(
+            manager.tools.map(\.tool.name),
+            ["search", "browser_click", "cdp_click", "devtools_click"]
+        )
         for toolName in ["browser_click", "cdp_click", "devtools_click"] {
-            do {
-                _ = try await manager.callTool(serverName: "docs", toolName: toolName, arguments: [:])
-                XCTFail("Expected \(toolName) to be blocked")
-            } catch let error as IOSMcpManagerError {
-                XCTAssertEqual(error, .browserToolBlocked)
-            } catch {
-                XCTFail("Unexpected error for \(toolName): \(error)")
-            }
+            let output = try await manager.callTool(serverName: "docs", toolName: toolName, arguments: [:])
+            XCTAssertEqual(output, "ok")
         }
+        XCTAssertEqual(client.calledTools, ["browser_click", "cdp_click", "devtools_click"])
     }
 
     func testDisconnectClearsStreamableHTTPSessionIDBeforeNextHandshake() async throws {
@@ -779,9 +781,13 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
                     ])
                     return IOSMcpHTTPResponse(status: 200, body: body)
                 }
+                // Bind each queued response to its request before suspending;
+                // concurrent completion order must not make initialize consume a tools/call response.
+                let response = responses.removeFirst()
                 if let delay = delayedMethods[method] {
                     try await Task.sleep(nanoseconds: delay)
                 }
+                return response
             } catch is CancellationError {
                 cancelledMethods.insert(method)
                 onCancellation?(method)
@@ -820,6 +826,28 @@ private final class RecordingMcpClient: IOSMcpClienting {
     func callTool(name: String, arguments: [String: Any]) async throws -> String {
         callCount += 1
         return "unexpected"
+    }
+
+    func disconnect() {}
+}
+
+private final class GenericBrowserMcpClient: IOSMcpClienting {
+    let tools: [IOSMcpTool]
+    let callOutput: String
+    private(set) var calledTools: [String] = []
+
+    init(tools: [IOSMcpTool], callOutput: String) {
+        self.tools = tools
+        self.callOutput = callOutput
+    }
+
+    func connect(config: IOSMcpServerConfig) async throws -> Bool { true }
+
+    func listTools() async throws -> [IOSMcpTool] { tools }
+
+    func callTool(name: String, arguments: [String: Any]) async throws -> String {
+        calledTools.append(name)
+        return callOutput
     }
 
     func disconnect() {}

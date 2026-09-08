@@ -1058,6 +1058,7 @@ final class ChatViewModel {
     /// 懒实例（共享 Room + 当前 VM 依赖）。
     @ObservationIgnored private let injectedOrchestrationToolService: IOSThreadOrchestrationToolService?
     @ObservationIgnored private lazy var defaultOrchestrationToolService: IOSThreadOrchestrationToolService = {
+        let sharedSettings = self.sharedSettings
         let runtimeDao = db.agentRuntimeDao()
         let mailboxDao = db.mailboxDao()
         let threadEdgeDao = db.threadEdgeDao()
@@ -1100,6 +1101,9 @@ final class ChatViewModel {
             },
             soulMarkdown: { [weak self] in
                 self?.sharedSettings.agentRuntime.agentSoulMarkdown ?? ""
+            },
+            sharedSettingsProvider: {
+                sharedSettings
             }
         )
     }()
@@ -4395,9 +4399,6 @@ final class ChatViewModel {
         if settingsStore.execJavaScriptEnabled {
             toolDeclarations.append(ToolKt.createExecToolDeclaration())
             toolDeclarations.append(ToolKt.createWaitToolDeclaration())
-        }
-        if isSlice3ToolEnabled("subagent_dispatch") {
-            toolDeclarations.append(ToolKt.createSubAgentDispatchToolDeclaration())
         }
         if isSlice3ToolEnabled("model_council_run") {
             toolDeclarations.append(ToolKt.createModelCouncilRunToolDeclaration())

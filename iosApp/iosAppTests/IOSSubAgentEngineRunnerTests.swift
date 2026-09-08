@@ -20,6 +20,44 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
         XCTAssertFalse(model.isRunning)
     }
 
+    func testBrowserDefaultToolsIncludeOnlyEnabledBrowserMcpToolsInAvailableSet() {
+        let enabledServer = IOSMcpServerConfig.streamableHTTP(
+            name: "moli",
+            url: "https://moli.example.test/mcp",
+            enabled: true,
+            tools: [
+                IOSMcpTool(name: "browser_snapshot", description: "snapshot", enabled: true),
+                IOSMcpTool(name: "browser_click", description: "click", enabled: false),
+                IOSMcpTool(name: "search", description: "ordinary", enabled: true)
+            ]
+        )
+        let disabledServer = IOSMcpServerConfig.streamableHTTP(
+            name: "off",
+            url: "https://off.example.test/mcp",
+            enabled: false,
+            tools: [IOSMcpTool(name: "browser_snapshot", description: "snapshot", enabled: true)]
+        )
+        let available = [
+            "wm_state",
+            ToolKt.expandedMcpToolName(server: "moli", tool: "browser_snapshot"),
+            ToolKt.expandedMcpToolName(server: "moli", tool: "browser_click"),
+            ToolKt.expandedMcpToolName(server: "off", tool: "browser_snapshot"),
+            ToolKt.expandedMcpToolName(server: "moli", tool: "search")
+        ]
+
+        let names = IOSSubAgentRoleCatalog.defaultToolNames(
+            roleId: "browser",
+            availableToolNames: available,
+            mcpServers: [enabledServer, disabledServer]
+        )
+
+        XCTAssertTrue(names.contains("wm_state"))
+        XCTAssertTrue(names.contains(ToolKt.expandedMcpToolName(server: "moli", tool: "browser_snapshot")))
+        XCTAssertFalse(names.contains(ToolKt.expandedMcpToolName(server: "moli", tool: "browser_click")))
+        XCTAssertFalse(names.contains(ToolKt.expandedMcpToolName(server: "off", tool: "browser_snapshot")))
+        XCTAssertFalse(names.contains(ToolKt.expandedMcpToolName(server: "moli", tool: "search")))
+    }
+
     private func makeProviderSetting() -> ProviderSetting.OpenAI {
         ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),
@@ -412,29 +450,22 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
         XCTAssertEqual(provider.seenMaxTokens, 16_000)
     }
 
-    func testStandaloneEngineUsesSavedRolePromptOverride() async {
+    func testRunViaEngineUsesSavedRolePromptOverride() async {
         let provider = ScriptedProvider([
             makeMessage(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "Done.", metadata: nil)])
         ])
-        let settings = IOSSharedSettingsStore(
-            userDefaults: UserDefaults(suiteName: "subagent-role-override-\(UUID().uuidString)")!
-        )
-        settings.addCustomModel(name: "Override Model", modelId: "override-model", providerName: "Override Provider")
-        if let added = settings.snapshot.providers.last as? ProviderSetting.OpenAI,
-           let model = added.models.first {
-            settings.setCurrentChatModelId(model.id.description())
-        }
-        settings.addSubAgentOverride(roleId: "explorer", systemPrompt: "SAVED_ROLE_OVERRIDE_SENTINEL")
         let runner = SubAgentRunner(taskStore: IOSAdvancedTaskStore(
             userDefaults: UserDefaults(suiteName: "subagent-role-task-\(UUID().uuidString)")!,
             storageKey: "tasks"
         ))
 
-        _ = await SubAgentsView.dispatchStandalone(
+        _ = await runner.runViaEngine(
             objective: "Use the saved role",
             roleId: "explorer",
-            sharedSettings: settings,
-            runner: runner,
+            savedRolePromptOverride: "SAVED_ROLE_OVERRIDE_SENTINEL",
+            providerSetting: makeProviderSetting(),
+            modelId: "override-model",
+            parentToolExecutors: [:],
             provider: provider
         )
 
@@ -443,6 +474,32 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
             .map { $0.toText() }
             .joined(separator: "\n")
         XCTAssertTrue(systemText.contains("SAVED_ROLE_OVERRIDE_SENTINEL"), systemText)
+    }
+
+    func testRunViaEngineIncludesProvidedSkillContextInSystemPrompt() async {
+        let provider = ScriptedProvider([
+            makeMessage(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "Done.", metadata: nil)])
+        ])
+        let runner = SubAgentRunner(taskStore: IOSAdvancedTaskStore(
+            userDefaults: UserDefaults(suiteName: "subagent-skill-task-\(UUID().uuidString)")!,
+            storageKey: "tasks"
+        ))
+
+        _ = await runner.runViaEngine(
+            objective: "Use the configured skill",
+            roleId: "explorer",
+            skillContext: "SKILL_CONTEXT_SENTINEL",
+            providerSetting: makeProviderSetting(),
+            modelId: "skill-model",
+            parentToolExecutors: [:],
+            provider: provider
+        )
+
+        let systemText = provider.seenMessages
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .joined(separator: "\n")
+        XCTAssertTrue(systemText.contains("SKILL_CONTEXT_SENTINEL"), systemText)
     }
 
     func testRunViaEnginePersistsProviderFailureInsteadOfCompletion() async throws {

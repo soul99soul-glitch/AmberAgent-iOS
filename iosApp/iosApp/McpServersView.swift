@@ -6,6 +6,7 @@ struct McpServersView: View {
     let configStore: IOSMcpConfigStore
     @State private var mcpManager: IOSMcpManager
     @State private var editingServer: IOSMcpServerConfig?
+    @State private var editingTab: McpAddTab = .edit
     @State private var pendingDeleteServerName: String?
 
     @Environment(RouterPath.self) private var router
@@ -17,6 +18,13 @@ struct McpServersView: View {
         self._mcpManager = State(initialValue: IOSMcpManager(sharedSettings: sharedSettings, configStore: configStore))
     }
 
+    private var displayedServers: [IOSMcpServerConfig] {
+        let localNames = Set(configStore.servers.map(\.name))
+        let shared = sharedSettings.snapshot.mcpServers.compactMap(IOSMcpServerConfig.init)
+            .filter { !localNames.contains($0.name) }
+        return configStore.servers + shared
+    }
+
     var body: some View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
@@ -26,7 +34,6 @@ struct McpServersView: View {
                     header
                     intro
                     localConfigSection
-                    connectedSection
                     managementSection
                 }
                 .padding(.bottom, 36)
@@ -39,12 +46,21 @@ struct McpServersView: View {
             guard sharedSettings.isCapabilityGateEnabled(.mcp) else { return }
             await mcpManager.syncAll()
         }
-        .onChange(of: configStore.servers) { _, _ in
+        .onChange(of: configStore.servers) { oldServers, newServers in
             guard sharedSettings.isCapabilityGateEnabled(.mcp) else { return }
+            // Discovering or toggling a tool only changes the tools payload. It
+            // must not recursively reconnect every server through this observer.
+            guard connectionSnapshot(for: oldServers) != connectionSnapshot(for: newServers) else { return }
             Task { await mcpManager.syncAll() }
         }
-        .sheet(item: $editingServer) { server in
-            McpAddView(configStore: configStore, editingServer: server)
+        .sheet(item: $editingServer, onDismiss: { editingTab = .edit }) { server in
+            McpAddView(
+                configStore: configStore,
+                editingServer: server,
+                mcpManager: mcpManager,
+                initialTab: editingTab,
+                isReadOnly: !configStore.servers.contains { $0.name == server.name }
+            )
                 .presentationDetents([.fraction(0.82), .large])
                 .presentationDragIndicator(.visible)
         }
@@ -59,7 +75,6 @@ struct McpServersView: View {
             Button("删除", role: .destructive) {
                 if let name = pendingDeleteServerName {
                     configStore.remove(named: name)
-                    Task { await mcpManager.syncAll() }
                 }
                 pendingDeleteServerName = nil
             }
@@ -70,31 +85,47 @@ struct McpServersView: View {
     }
 
     private var header: some View {
-        HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回技能", size: 44, symbolSize: 20) {
-                dismiss()
+        HStack(spacing: 0) {
+            HStack {
+                AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回技能", size: 44, symbolSize: 20) {
+                    dismiss()
+                }
             }
-
-            Spacer()
+            .frame(width: 96, alignment: .leading)
 
             Text("MCP 服务器")
-                .font(.title2.weight(.bold))
+                .font(.headline)
                 .foregroundStyle(AmberTheme.foreground)
-
-            Spacer()
+                .frame(maxWidth: .infinity)
 
             HStack(spacing: 8) {
                 AmberGlassCircleButton(systemImage: "arrow.clockwise", accessibilityLabel: "刷新 MCP 工具", size: 44, symbolSize: 16) {
                     Task { await mcpManager.syncAll() }
                 }
-                AmberGlassCircleButton(systemImage: "square.and.arrow.down", accessibilityLabel: "导入服务器", size: 44, symbolSize: 16) {
-                    router.navigate(to: .mcpImport)
+                Menu {
+                    Button {
+                        router.navigate(to: .mcpImport)
+                    } label: {
+                        Label("导入服务器", systemImage: "square.and.arrow.down")
+                    }
+                    Button {
+                        router.navigate(to: .mcpAdd)
+                    } label: {
+                        Label("手动添加", systemImage: "plus")
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                        .amberGlass(cornerRadius: 22)
                 }
-                AmberGlassCircleButton(systemImage: "plus", accessibilityLabel: "添加服务器", size: 44, symbolSize: 17) {
-                    router.navigate(to: .mcpAdd)
-                }
+                .accessibilityLabel("添加服务器")
             }
+            .frame(width: 96, alignment: .trailing)
         }
+        .frame(maxWidth: .infinity)
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 18)
@@ -114,7 +145,7 @@ struct McpServersView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "服务器")
             AmberFormGroup {
-                if configStore.servers.isEmpty {
+                if displayedServers.isEmpty {
                     HStack(spacing: 10) {
                         Image(systemName: "tray")
                             .font(.system(size: 16))
@@ -127,15 +158,22 @@ struct McpServersView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                 } else {
-                    ForEach(Array(configStore.servers.enumerated()), id: \.element.id) { index, server in
+                    ForEach(Array(displayedServers.enumerated()), id: \.element.id) { index, server in
+                        let isLocal = configStore.servers.contains { $0.name == server.name }
                         McpServerRow(
                             server: server,
-                            status: statusTitle(for: server.name),
+                            status: connectionStatus(for: server),
+                            toolCount: toolCount(for: server),
+                            isEditable: isLocal,
                             onToggle: { enabled in
                                 configStore.setEnabled(named: server.name, enabled: enabled)
-                                Task { await mcpManager.syncAll() }
                             },
                             onEdit: {
+                                editingTab = isLocal ? .edit : .tools
+                                editingServer = server
+                            },
+                            onOpenTools: {
+                                editingTab = .tools
                                 editingServer = server
                             },
                             onDelete: {
@@ -143,64 +181,12 @@ struct McpServersView: View {
                             }
                         )
 
-                        if index < configStore.servers.count - 1 {
+                        if index < displayedServers.count - 1 {
                             McpDivider()
                         }
                     }
                 }
             }
-        }
-    }
-
-    private var connectedSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "连接状态")
-            AmberFormGroup {
-                if mcpManager.servers.isEmpty {
-                    McpStatusRow(
-                        title: "没有 MCP 服务器",
-                        subtitle: "导入或手动添加服务器后，可在这里查看连接状态。",
-                        badge: "空配置"
-                    )
-                } else {
-                    ForEach(Array(mcpManager.servers.enumerated()), id: \.element.id) { index, server in
-                        let status = mcpManager.statusByServer[server.name] ?? .idle
-                        McpStatusRow(
-                            title: server.name.isEmpty ? "未命名" : server.name,
-                            subtitle: statusSubtitle(for: server, status: status),
-                            badge: status.title
-                        )
-
-                        if index < mcpManager.servers.count - 1 {
-                            McpDivider()
-                        }
-                    }
-                }
-            }
-
-            if !mcpManager.tools.isEmpty {
-                AmberSectionLabel(text: "已发现工具")
-                AmberFormGroup {
-                    ForEach(Array(mcpManager.tools.enumerated()), id: \.element.id) { index, discovered in
-                        McpToolToggleRow(
-                            discovered: discovered,
-                            onToggle: { enabled in
-                                configStore.setToolEnabled(
-                                    serverName: discovered.serverName,
-                                    toolName: discovered.tool.name,
-                                    enabled: enabled
-                                )
-                                mcpManager.refreshFromCurrentSettings()
-                            }
-                        )
-                        if index < mcpManager.tools.count - 1 {
-                            McpDivider()
-                        }
-                    }
-                }
-            }
-
-            McpNote("页面进入时会尝试连接已启用的服务器并刷新工具列表。")
         }
     }
 
@@ -232,28 +218,16 @@ struct McpServersView: View {
             McpNote("导入和手动添加会保存到本机配置。")
         }
     }
-    private func statusTitle(for serverName: String) -> String {
-        switch mcpManager.statusByServer[serverName] ?? .idle {
-        case .idle:
-            return "未连接"
-        case .connecting:
-            return "连接中"
-        case .connected:
-            return "已连接"
-        case .reconnecting:
-            return "重连中"
-        case .error:
-            return "连接失败"
-        }
+    private func connectionStatus(for server: IOSMcpServerConfig) -> IOSMcpConnectionStatus {
+        mcpManager.statusByServer[server.name] ?? .idle
     }
 
-    private func statusSubtitle(for server: IOSMcpServerConfig, status: IOSMcpConnectionStatus) -> String {
-        let base = "\(server.transportTitle) · \(server.url)"
-        if case .error(let message) = status {
-            return "\(base)\n\(message)"
-        }
-        let toolCount = server.tools.count
-        return toolCount > 0 ? "\(base)\n发现 \(toolCount) 个工具" : base
+    private func toolCount(for server: IOSMcpServerConfig) -> Int {
+        mcpManager.servers.first(where: { $0.name == server.name })?.tools.count ?? server.tools.count
+    }
+
+    private func connectionSnapshot(for servers: [IOSMcpServerConfig]) -> [McpConnectionSnapshot] {
+        servers.map(McpConnectionSnapshot.init)
     }
 }
 
@@ -439,20 +413,63 @@ struct McpImportView: View {
     }
 }
 
+enum McpAddTab: String, CaseIterable, Identifiable {
+    case edit
+    case tools
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .edit: "编辑"
+        case .tools: "工具"
+        }
+    }
+}
+
+private struct McpConnectionSnapshot: Equatable {
+    let name: String
+    let url: String
+    let transport: String
+    let headers: [String: String]
+    let enabled: Bool
+
+    init(_ server: IOSMcpServerConfig) {
+        name = server.name
+        url = server.url
+        transport = server.transportKey
+        headers = server.headers
+        enabled = server.enabled
+    }
+}
+
 struct McpAddView: View {
     let configStore: IOSMcpConfigStore
     let editingServer: IOSMcpServerConfig?
+    let mcpManager: IOSMcpManager?
+    let isReadOnly: Bool
     @Environment(\.dismiss) private var dismiss
 
+    @State private var selectedTab: McpAddTab
     @State private var name: String
     @State private var transport: McpTransportOption
     @State private var serverURL: String
     @State private var enabled: Bool
     @State private var headers: [McpHeaderDraft]
+    @State private var saveError: String?
 
-    init(configStore: IOSMcpConfigStore, editingServer: IOSMcpServerConfig? = nil) {
+    init(
+        configStore: IOSMcpConfigStore,
+        editingServer: IOSMcpServerConfig? = nil,
+        mcpManager: IOSMcpManager? = nil,
+        initialTab: McpAddTab = .edit,
+        isReadOnly: Bool = false
+    ) {
         self.configStore = configStore
         self.editingServer = editingServer
+        self.mcpManager = mcpManager
+        self.isReadOnly = isReadOnly
+        self._selectedTab = State(initialValue: initialTab)
         self._name = State(initialValue: editingServer?.name ?? "context7")
         self._transport = State(initialValue: editingServer.map(McpTransportOption.init(server:)) ?? .streamableHTTP)
         self._serverURL = State(initialValue: editingServer?.url ?? "https://mcp.context7.com/mcp")
@@ -468,17 +485,43 @@ struct McpAddView: View {
             AmberTheme.background.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                McpDraftHeader(title: editingServer == nil ? "手动添加" : "编辑服务器", doneTitle: "保存") {
-                    if let server = draftServer {
-                        configStore.upsert(server, replacing: editingServer?.name)
+                McpDraftHeader(title: isReadOnly ? (editingServer?.name ?? "服务器工具") : (editingServer == nil ? "手动添加" : "编辑服务器"), doneTitle: isReadOnly ? "完成" : "保存") {
+                    guard !isReadOnly else { dismiss(); return }
+                    guard let server = draftServer else {
+                        saveError = saveValidationMessage
+                        selectedTab = .edit
+                        return
                     }
+                    guard !configStore.servers.contains(where: {
+                        $0.name == server.name && $0.name != editingServer?.name
+                    }) else {
+                        saveError = "已存在同名服务器，请更换名称。"
+                        selectedTab = .edit
+                        return
+                    }
+                    configStore.upsert(server, replacing: editingServer?.name)
                     dismiss()
+                }
+
+                if editingServer != nil && !isReadOnly {
+                    Picker("MCP 编辑内容", selection: $selectedTab) {
+                        ForEach(McpAddTab.allCases) { tab in
+                            Text(tab.title).tag(tab)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
                 }
 
                 ScrollView {
                     VStack(spacing: 0) {
-                        connectionSection
-                        headersSection
+                        if !isReadOnly && (editingServer == nil || selectedTab == .edit) {
+                            connectionSection
+                            headersSection
+                        } else {
+                            toolsSection
+                        }
                     }
                     .padding(.bottom, 36)
                 }
@@ -487,6 +530,8 @@ struct McpAddView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: name) { _, _ in saveError = nil }
+        .onChange(of: serverURL) { _, _ in saveError = nil }
     }
 
     private var connectionSection: some View {
@@ -515,6 +560,10 @@ struct McpAddView: View {
                 }
                 McpDivider()
                 McpDraftTextFieldRow(title: "服务器 URL", text: $serverURL, placeholder: transport.defaultURL, monospace: true)
+            }
+
+            if let saveError {
+                McpValidationNote(text: saveError, isWarning: true)
             }
 
             McpNote("保存后会写入本机配置，并可在服务器列表页同步连接。")
@@ -564,18 +613,127 @@ struct McpAddView: View {
         }
     }
 
+    private var toolsSection: some View {
+        let server = currentServer
+        let status = currentStatus
+
+        return VStack(spacing: 0) {
+            AmberSectionLabel(text: "工具")
+            AmberFormGroup {
+                McpToolsConnectionRow(
+                    enabled: server?.enabled ?? false,
+                    status: status
+                )
+
+                if case .error(let message) = status, server?.enabled == true {
+                    McpDivider()
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                }
+
+                McpDivider()
+
+                if let server, !server.tools.isEmpty {
+                    ForEach(Array(server.tools.enumerated()), id: \.element.id) { index, tool in
+                        McpToolToggleRow(
+                            serverName: server.name,
+                            tool: tool,
+                            onToggle: { enabled in
+                                configStore.setToolEnabled(
+                                    serverName: server.name,
+                                    toolName: tool.name,
+                                    enabled: enabled
+                                )
+                                mcpManager?.refreshFromCurrentSettings()
+                            }
+                        )
+                        .disabled(isReadOnly)
+
+                        if index < server.tools.count - 1 {
+                            McpDivider()
+                        }
+                    }
+                } else {
+                    McpEmptyToolsRow(message: emptyToolsMessage(for: server, status: status))
+                }
+            }
+
+            McpNote(
+                isReadOnly
+                    ? "此服务器来自共享配置，请在配置来源修改。这里显示当前连接发现的工具。"
+                    : (server?.enabled == false
+                        ? "这里是已保存的工具选择，启用服务器后生效。"
+                        : "工具开关会立即保存到当前服务器；重新连接时会保留你的选择。")
+            )
+        }
+    }
+
+    private var currentServer: IOSMcpServerConfig? {
+        guard let editingServer else { return nil }
+        return configStore.servers.first(where: { $0.name == editingServer.name })
+            ?? mcpManager?.servers.first(where: { $0.name == editingServer.name })
+            ?? editingServer
+    }
+
+    private var currentStatus: IOSMcpConnectionStatus {
+        guard let editingServer else { return .idle }
+        return mcpManager?.statusByServer[editingServer.name] ?? .idle
+    }
+
+    private var persistedTools: [IOSMcpTool] {
+        guard let editingServer else { return [] }
+        return configStore.servers.first(where: { $0.name == editingServer.name })?.tools
+            ?? editingServer.tools
+    }
+
+    private func emptyToolsMessage(for server: IOSMcpServerConfig?, status: IOSMcpConnectionStatus) -> String {
+        guard let server else {
+            return "服务器已从配置中移除。"
+        }
+        guard server.enabled else {
+            return "服务器已禁用，启用后才会连接并发现工具。"
+        }
+        switch status {
+        case .connecting, .reconnecting:
+            return "正在连接服务器并获取工具列表。"
+        case .error:
+            return "连接失败，暂时没有可用工具。请检查服务器地址和请求头。"
+        case .idle:
+            return "尚未连接服务器；返回列表页后可刷新连接。"
+        case .connected:
+            return "服务器已连接，但没有发现可用工具。"
+        }
+    }
+
     private var draftServer: IOSMcpServerConfig? {
         let trimmedName = name.trimmed
         let trimmedURL = serverURL.trimmed
         guard !trimmedName.isEmpty, !trimmedURL.isEmpty else { return nil }
         let headerMap = Dictionary(uniqueKeysWithValues: validHeaders.map { ($0.name.trimmed, $0.value.trimmed) })
-        let preservedTools = editingServer?.tools ?? []
+        // Read the current persisted value so saving connection fields after
+        // changing a tool toggle cannot restore the stale sheet snapshot.
+        let preservedTools = persistedTools
         switch transport {
         case .streamableHTTP:
             return .streamableHTTP(name: trimmedName, url: trimmedURL, headers: headerMap, enabled: enabled, tools: preservedTools)
         case .sse:
             return .sse(name: trimmedName, url: trimmedURL, headers: headerMap, enabled: enabled, tools: preservedTools)
         }
+    }
+
+    private var saveValidationMessage: String {
+        if name.trimmed.isEmpty && serverURL.trimmed.isEmpty {
+            return "名称和服务器 URL 不能为空。"
+        }
+        if name.trimmed.isEmpty {
+            return "名称不能为空。"
+        }
+        return "服务器 URL 不能为空。"
     }
 
     private var validHeaders: [McpHeaderDraft] {
@@ -591,44 +749,6 @@ struct McpAddView: View {
             return "空名称或空值不会保存到请求头。"
         }
         return "\(validHeaders.count) 个请求头将随服务器配置保存。"
-    }
-}
-
-private struct McpStatusRow: View {
-    let title: String
-    let subtitle: String
-    let badge: String
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text("{ }")
-                .font(.system(.subheadline, design: .monospaced).weight(.semibold))
-                .foregroundStyle(AmberTheme.accentCyan)
-                .frame(width: 32, height: 32)
-                .background(AmberTheme.accentCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Text(badge)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(AmberTheme.muted)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .frame(minHeight: 72)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
     }
 }
 
@@ -660,11 +780,98 @@ private enum McpPillKind {
     }
 }
 
+private struct McpToolsConnectionRow: View {
+    let enabled: Bool
+    let status: IOSMcpConnectionStatus
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: statusIcon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: 30, height: 30)
+                .background(statusColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(enabled ? status.title : "已禁用")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                Text(statusDetail)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(minHeight: 56)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var statusDetail: String {
+        guard enabled else { return "启用服务器后才会连接并提供工具。" }
+        switch status {
+        case .connected:
+            return "已连接，下面是这个服务器的工具。"
+        case .connecting, .reconnecting:
+            return "正在连接并获取工具列表。"
+        case .error:
+            return "服务器连接失败，工具暂不可用。"
+        case .idle:
+            return "尚未建立连接。"
+        }
+    }
+
+    private var statusIcon: String {
+        guard enabled else { return "pause.circle" }
+        switch status {
+        case .connected: return "checkmark.circle.fill"
+        case .connecting, .reconnecting: return "arrow.triangle.2.circlepath"
+        case .error: return "exclamationmark.triangle.fill"
+        case .idle: return "circle.dashed"
+        }
+    }
+
+    private var statusColor: Color {
+        guard enabled else { return AmberTheme.muted2 }
+        switch status {
+        case .connected: return AmberTheme.accentGreen
+        case .connecting, .reconnecting: return AmberTheme.accentCyan
+        case .error: return AmberTheme.accentRed
+        case .idle: return AmberTheme.muted2
+        }
+    }
+}
+
+private struct McpEmptyToolsRow: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "wrench.and.screwdriver")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(AmberTheme.muted2)
+                .frame(width: 30, height: 30)
+
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 13)
+    }
+}
+
 private struct McpServerRow: View {
     let server: IOSMcpServerConfig
-    let status: String
+    let status: IOSMcpConnectionStatus
+    let toolCount: Int
+    let isEditable: Bool
     let onToggle: (Bool) -> Void
     let onEdit: () -> Void
+    let onOpenTools: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -675,85 +882,132 @@ private struct McpServerRow: View {
                 .frame(width: 32, height: 32)
                 .background(AmberTheme.accentCyan.opacity(0.12), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(server.name.isEmpty ? "未命名" : server.name)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                Text("\(server.transportTitle) · \(server.url)")
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(2)
-                Text(status)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(server.enabled ? AmberTheme.accentGreen : AmberTheme.muted2)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Button(action: onEdit) {
+                        Text(server.name.isEmpty ? "未命名" : server.name)
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+
+                    Spacer(minLength: 0)
+
+                    Button(action: onOpenTools) {
+                        HStack(spacing: 4) {
+                            Text(displayStatus).foregroundStyle(statusColor)
+                            Text("·").foregroundStyle(AmberTheme.muted2)
+                            Text("\(toolCount) 个工具").foregroundStyle(AmberTheme.accent)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(AmberTheme.muted2)
+                        }
+                        .font(.caption2.weight(.medium))
+                        .fixedSize()
+                        .padding(.vertical, 4)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(displayStatus)，查看 \(toolCount) 个工具")
+                }
+
+                Button(action: onEdit) {
+                    Text(server.url)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if case .error(let message) = status, server.enabled {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .lineLimit(2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Toggle("", isOn: Binding(
-                get: { server.enabled },
-                set: { value in
-                    Task { @MainActor in onToggle(value) }
-                }
-            ))
+            if isEditable {
+                Toggle("", isOn: Binding(
+                    get: { server.enabled },
+                    set: { value in
+                        Task { @MainActor in onToggle(value) }
+                    }
+                ))
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .accessibilityLabel(server.name.isEmpty ? "MCP 服务器" : server.name)
                 .accessibilityValue(server.enabled ? "开启" : "关闭")
 
-            Button(action: onEdit) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AmberTheme.muted)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Circle())
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("删除 MCP 服务器")
+            } else {
+                Text("共享配置").font(.caption2).foregroundStyle(AmberTheme.muted2)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("编辑 MCP 服务器")
-
-            Button(role: .destructive, action: onDelete) {
-                Image(systemName: "trash")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AmberTheme.accentRed)
-                    .frame(width: 30, height: 30)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("删除 MCP 服务器")
         }
-        .frame(minHeight: 74)
+        .frame(minHeight: 50)
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
+    }
+
+    private var displayStatus: String {
+        server.enabled ? status.title : "已禁用"
+    }
+
+    private var statusColor: Color {
+        guard server.enabled else { return AmberTheme.muted2 }
+        switch status {
+        case .connected:
+            return AmberTheme.accentGreen
+        case .error:
+            return AmberTheme.accentRed
+        case .connecting, .reconnecting:
+            return AmberTheme.accentCyan
+        case .idle:
+            return AmberTheme.muted2
+        }
     }
 }
 
 private struct McpToolToggleRow: View {
-    let discovered: IOSMcpDiscoveredTool
+    let serverName: String
+    let tool: IOSMcpTool
     let onToggle: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: discovered.tool.enabled ? "wrench.and.screwdriver.fill" : "wrench.and.screwdriver")
+            Image(systemName: tool.enabled ? "wrench.and.screwdriver.fill" : "wrench.and.screwdriver")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(discovered.tool.enabled ? AmberTheme.accentGreen : AmberTheme.muted2)
+                .foregroundStyle(tool.enabled ? AmberTheme.accentGreen : AmberTheme.muted2)
                 .frame(width: 30, height: 30)
                 .background(
-                    (discovered.tool.enabled ? AmberTheme.accentGreen : AmberTheme.surface2).opacity(0.12),
+                    (tool.enabled ? AmberTheme.accentGreen : AmberTheme.surface2).opacity(0.12),
                     in: RoundedRectangle(cornerRadius: 8, style: .continuous)
                 )
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(discovered.tool.name)
+                Text(tool.name)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(AmberTheme.foreground)
                     .lineLimit(1)
-                if let description = discovered.tool.description, !description.isEmpty {
+                if let description = tool.description, !description.isEmpty {
                     Text(description)
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .lineLimit(2)
                 }
-                Text(discovered.serverName)
+                Text(serverName)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(AmberTheme.muted2)
                     .lineLimit(1)
@@ -761,15 +1015,15 @@ private struct McpToolToggleRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             Toggle("", isOn: Binding(
-                get: { discovered.tool.enabled },
+                get: { tool.enabled },
                 set: { value in
                     Task { @MainActor in onToggle(value) }
                 }
             ))
                 .labelsHidden()
                 .toggleStyle(.switch)
-                .accessibilityLabel(discovered.tool.name)
-                .accessibilityValue(discovered.tool.enabled ? "开启" : "关闭")
+                .accessibilityLabel(tool.name)
+                .accessibilityValue(tool.enabled ? "开启" : "关闭")
         }
         .frame(minHeight: 64)
         .padding(.horizontal, 14)

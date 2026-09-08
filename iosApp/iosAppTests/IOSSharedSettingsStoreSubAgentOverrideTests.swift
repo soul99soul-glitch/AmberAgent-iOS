@@ -89,6 +89,33 @@ final class IOSSharedSettingsStoreSubAgentOverrideTests: XCTestCase {
 
     // MARK: - helpers
 
+    func testRoleConfigurationAndDynamicSwitchPersistAndReset() {
+        let suiteName = "SubAgent-Configuration-\(UUID().uuidString)"
+        let store = makeIsolatedStore(suiteName: suiteName)
+        let modelId = UUID().uuidString.lowercased()
+        store.configureSubAgentRole(
+            roleId: "browser", systemPrompt: "检查目标页面", modelId: modelId,
+            reasoningLevel: .high, toolAllowlist: ["wm_open", "wm_state"],
+            defaultSkillNames: ["browser-guide"]
+        )
+        store.setDynamicSubAgentsAllowed(false)
+
+        let restored = makeIsolatedStore(suiteName: suiteName)
+        let role = restored.snapshot.agentRuntime.subAgent.overrides["browser"]
+        XCTAssertFalse(restored.allowsDynamicSubAgents)
+        XCTAssertEqual(role?.systemPrompt, "检查目标页面")
+        XCTAssertEqual(role?.modelId?.toHexDashString(), modelId)
+        XCTAssertEqual(role?.reasoningLevel, .high)
+        XCTAssertEqual(role?.toolAllowlist, Set(["wm_open", "wm_state"]))
+        XCTAssertEqual(role?.defaultSkillNames, ["browser-guide"])
+
+        restored.resetSubAgentRole("browser")
+        let reset = makeIsolatedStore(suiteName: suiteName)
+        XCTAssertNil(reset.snapshot.agentRuntime.subAgent.overrides["browser"])
+        XCTAssertFalse(reset.allowsDynamicSubAgents)
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+    }
+
     private func makeIsolatedStore(suiteName: String = "Slice4-SubAgent-\(UUID().uuidString)") -> IOSSharedSettingsStore {
         IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: suiteName)!)
     }

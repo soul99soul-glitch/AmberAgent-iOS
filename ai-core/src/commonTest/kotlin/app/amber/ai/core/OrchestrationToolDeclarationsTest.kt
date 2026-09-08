@@ -41,9 +41,20 @@ class OrchestrationToolDeclarationsTest {
         assertTrue("Defaults to \"all\"" in forkDescription, "fork_turns 必须写明默认 all")
 
         assertTrue("role_assistant_id" in params.properties)
+        listOf("role_id", "system_prompt", "context", "tool_scope", "skill_names").forEach { name ->
+            assertTrue(name in params.properties, "spawn_agent 缺少动态角色字段: $name")
+        }
+        assertEquals(
+            "array",
+            params.properties["tool_scope"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull
+        )
+        assertEquals(
+            "array",
+            params.properties["skill_names"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull
+        )
 
         val description = tool.description
-        listOf("same tools as you", "can spawn its own subagents", "/root/", "FINAL_ANSWER").forEach { semantic ->
+        listOf("tool catalog", "can spawn its own subagents", "allowed scope", "background", "/root/", "FINAL_ANSWER").forEach { semantic ->
             assertTrue(semantic in description, "spawn_agent 描述缺少关键语义: $semantic")
         }
     }

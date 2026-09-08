@@ -1298,6 +1298,40 @@ object IosSettingsMutations {
         )
     }
 
+    /** Save the editable role fields while preserving its independent execution budgets. */
+    fun configureSubAgentRole(
+        settings: Settings,
+        roleId: String,
+        systemPrompt: String?,
+        modelId: String?,
+        reasoningLevel: ReasoningLevel?,
+        toolAllowlist: Set<String>?,
+        defaultSkillNames: List<String>,
+    ): Settings {
+        val sub = settings.agentRuntime.subAgent
+        val updated = (sub.overrides[roleId] ?: SubAgentOverride()).copy(
+            systemPrompt = systemPrompt?.takeIf { it.isNotBlank() },
+            modelId = modelId?.takeIf { it.isNotBlank() }?.let(kotlin.uuid.Uuid::parse),
+            reasoningLevel = reasoningLevel,
+            toolAllowlist = toolAllowlist,
+            defaultSkillNames = defaultSkillNames.distinct(),
+        )
+        return settings.copy(agentRuntime = settings.agentRuntime.copy(
+            subAgent = sub.copy(overrides = sub.overrides + (roleId to updated))
+        ))
+    }
+
+    fun setDynamicSubAgentsAllowed(settings: Settings, allowed: Boolean): Settings =
+        settings.copy(agentRuntime = settings.agentRuntime.copy(
+            subAgent = settings.agentRuntime.subAgent.copy(allowDynamicSubAgents = allowed)
+        ))
+
+    fun subAgentReasoningLevels(settings: Settings, modelId: String?): List<ReasoningLevel> {
+        val model = modelId?.let { id -> settings.providers.flatMap { it.models }
+            .firstOrNull { it.id.toString() == id } } ?: settings.getCurrentChatModel()
+        return model.reasoningOptions(model?.findProvider(settings.providers)).map { it.level }
+    }
+
     /** Remove a sub-agent override for [roleId]; no-op if not found. */
     fun removeSubAgentOverride(settings: Settings, roleId: String): Settings {
         val sub = settings.agentRuntime.subAgent

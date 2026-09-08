@@ -75,6 +75,9 @@ data class SubAgentOverride(
     val maxTurnsOverride: Int? = null,
     val timeoutMsOverride: Long? = null,
     val outputBudgetOverride: Int? = null,
+    /** null inherits the role tools; an empty set explicitly disables external tools. */
+    val toolAllowlist: Set<String>? = null,
+    val defaultSkillNames: List<String>? = null,
 )
 
 @Serializable
@@ -117,6 +120,7 @@ fun SubAgentDefinition.applyOverride(o: SubAgentOverride?): SubAgentDefinition {
         maxTurns = o.maxTurnsOverride ?: maxTurns,
         timeoutMs = o.timeoutMsOverride ?: timeoutMs,
         outputBudgetChars = o.outputBudgetOverride ?: outputBudgetChars,
+        toolAllowlist = o.toolAllowlist ?: toolAllowlist,
     )
 }
 

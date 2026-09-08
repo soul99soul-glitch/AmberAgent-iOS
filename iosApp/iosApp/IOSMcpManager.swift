@@ -10,13 +10,10 @@ struct IOSMcpDiscoveredTool: Equatable, Identifiable {
 }
 
 enum IOSMcpManagerError: LocalizedError, Equatable {
-    case browserToolBlocked
     case ambiguousServerName(String)
 
     var errorDescription: String? {
         switch self {
-        case .browserToolBlocked:
-            "MCP browser_*, cdp_*, and devtools_* tools are not available through the iOS MCP manager."
         case .ambiguousServerName(let name):
             "MCP server name is ambiguous across configured sources: \(name)"
         }
@@ -33,8 +30,6 @@ final class IOSMcpManager {
         let client: IOSMcpClienting
         let task: Task<Void, Error>
     }
-
-    private static let blockedToolPrefixes = ["browser_", "cdp_", "devtools_"]
 
     private let serverProvider: () -> [IOSMcpServerConfig]
     private let clientFactory: (IOSMcpServerConfig) -> IOSMcpClienting
@@ -86,8 +81,6 @@ final class IOSMcpManager {
         var seenServerNames = Set<String>()
         servers = configuredServers.filter {
             !ambiguousServerNames.contains($0.name) && seenServerNames.insert($0.name).inserted
-        }.map { server in
-            server.withTools(Self.toolsForExposure(server.tools))
         }
         for name in ambiguousServerNames {
             statusByServer[name] = .error(IOSMcpManagerError.ambiguousServerName(name).localizedDescription)
@@ -147,9 +140,6 @@ final class IOSMcpManager {
         arguments: [String: Any],
         enabledOverride: Bool? = nil
     ) async throws -> String {
-        guard !Self.isBlockedRawToolName(toolName) else {
-            throw IOSMcpManagerError.browserToolBlocked
-        }
         guard enabledOverride ?? isEnabled() else {
             throw IOSMcpClientError.invalidResponse
         }
@@ -206,7 +196,7 @@ final class IOSMcpManager {
     func refreshFromCurrentSettings() {
         refreshServers()
         tools = servers.flatMap { server in
-            Self.toolsForExposure(server.tools).map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) }
+            server.tools.map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) }
         }
     }
 
@@ -271,19 +261,18 @@ final class IOSMcpManager {
             do {
                 _ = try await client.connect(config: server)
                 let listedTools = try await client.listTools()
-                let exposedTools = Self.toolsForExposure(listedTools)
-                let merged = Self.toolsForExposure(Self.applyingAuthoritativeSafetyAnnotations(
-                    from: exposedTools,
-                    to: discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
-                        discovered: exposedTools,
+                let merged = Self.applyingAuthoritativeSafetyAnnotations(
+                    from: listedTools,
+                    to: discoveredToolSink(server.name, listedTools) ?? Self.mergeDiscoveredTools(
+                        discovered: listedTools,
                         existing: server.tools
                     )
-                ))
+                )
                 if let index = servers.firstIndex(where: { $0.name == server.name }) {
                     servers[index] = server.withTools(merged)
                 }
                 tools.removeAll { $0.serverName == server.name }
-                tools.append(contentsOf: Self.toolsForExposure(merged).map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) })
+                tools.append(contentsOf: merged.map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) })
                 statusByServer[server.name] = .connected
                 reconnectAttempts[server.name] = nil
                 lastReconnectAttemptByServer[server.name] = nil
@@ -366,20 +355,19 @@ final class IOSMcpManager {
                     server: server,
                     client: client
                 )
-                let exposedTools = Self.toolsForExposure(listedTools)
                 try self.validateSessionRecoveryOwnership(
                     id: recoveryID,
                     generation: generation,
                     server: server,
                     client: client
                 )
-                let mergedTools = Self.toolsForExposure(Self.applyingAuthoritativeSafetyAnnotations(
-                    from: exposedTools,
-                    to: self.discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
-                        discovered: exposedTools,
+                let mergedTools = Self.applyingAuthoritativeSafetyAnnotations(
+                    from: listedTools,
+                    to: self.discoveredToolSink(server.name, listedTools) ?? Self.mergeDiscoveredTools(
+                        discovered: listedTools,
                         existing: server.tools
                     )
-                ))
+                )
                 try self.validateSessionRecoveryOwnership(
                     id: recoveryID,
                     generation: generation,
@@ -523,30 +511,21 @@ final class IOSMcpManager {
         do {
             _ = try await client.connect(config: server)
             let listedTools = try await client.listTools()
-            let exposedTools = Self.toolsForExposure(listedTools)
-            let mergedTools = Self.toolsForExposure(Self.applyingAuthoritativeSafetyAnnotations(
-                from: exposedTools,
-                to: discoveredToolSink(server.name, exposedTools) ?? Self.mergeDiscoveredTools(
-                    discovered: exposedTools,
+            let mergedTools = Self.applyingAuthoritativeSafetyAnnotations(
+                from: listedTools,
+                to: discoveredToolSink(server.name, listedTools) ?? Self.mergeDiscoveredTools(
+                    discovered: listedTools,
                     existing: server.tools
                 )
-            ))
+            )
             if let index = servers.firstIndex(where: { $0.name == server.name }) {
                 servers[index] = server.withTools(mergedTools)
             }
-            tools.append(contentsOf: Self.toolsForExposure(mergedTools).map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) })
+            tools.append(contentsOf: mergedTools.map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) })
             statusByServer[server.name] = .connected
         } catch {
             statusByServer[server.name] = .error(IOSWebMountRedactor.redactedText(error.localizedDescription))
         }
-    }
-
-    static func isBlockedRawToolName(_ name: String) -> Bool {
-        blockedToolPrefixes.contains { name.hasPrefix($0) }
-    }
-
-    static func toolsForExposure(_ tools: [IOSMcpTool]) -> [IOSMcpTool] {
-        tools.filter { !isBlockedRawToolName($0.name) }
     }
 
     #if DEBUG

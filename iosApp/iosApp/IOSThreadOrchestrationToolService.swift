@@ -13,6 +13,41 @@ import Foundation
 ///   后台引擎里同样注册三工具，可 spawn 孙线程）。
 /// - 终态回传：`notifyRunTerminal` 检查本会话是否有 Open 父 edge，有则向父线程
 ///   的 mailbox 投递 FINAL_ANSWER（前台 finishStreaming 与后台 job 终态两个挂钩点）。
+///
+/// This is persisted as a private system-message marker in a child conversation
+/// so followup/background recovery cannot silently fall back to the parent's
+/// default role or tool set. It is only decoded from system messages.
+struct IOSOrchestrationAgentConfiguration: Codable, Equatable, Sendable {
+    let roleId: String?
+    let systemPrompt: String?
+    let context: String?
+    let toolScope: [String]?
+    let skillNames: [String]
+    let skillContext: String?
+    let modelId: String?
+    let reasoningLevel: String?
+
+    init(
+        roleId: String? = nil,
+        systemPrompt: String? = nil,
+        context: String? = nil,
+        toolScope: [String]? = nil,
+        skillNames: [String] = [],
+        skillContext: String? = nil,
+        modelId: String? = nil,
+        reasoningLevel: String? = nil
+    ) {
+        self.roleId = roleId
+        self.systemPrompt = systemPrompt
+        self.context = context
+        self.toolScope = toolScope
+        self.skillNames = skillNames
+        self.skillContext = skillContext
+        self.modelId = modelId
+        self.reasoningLevel = reasoningLevel
+    }
+}
+
 @MainActor
 final class IOSThreadOrchestrationToolService {
 
@@ -104,6 +139,18 @@ final class IOSThreadOrchestrationToolService {
         let reason: String
     }
 
+    private struct ResolvedAgentLaunch {
+        let configuration: IOSOrchestrationAgentConfiguration?
+        let providerSetting: ProviderSetting
+        let params: TextGenerationParams
+    }
+
+    private struct AgentLaunchError: Error {
+        let reason: String
+    }
+
+    private static let configurationMarker = "[amber orchestration configuration v1]"
+
     /// P1-d wait_agent 竞速结果。
     private enum MailboxWaitOutcome: Sendable {
         case activity
@@ -133,6 +180,9 @@ final class IOSThreadOrchestrationToolService {
     /// 默认恒真 = 未注入校验器的调用方/测试不误伤，生产接线必须注入）。
     private let roleAssistantExists: (KotlinUuid) -> Bool
     private let soulMarkdown: () -> String
+    /// Read settings at launch time. The effective values are copied into the
+    /// child marker; followups do not read the parent's current settings again.
+    private let sharedSettingsProvider: () -> IOSSharedSettingsStore?
     /// P1-d: wait_agent 超时 clamp 区间与默认值（测试注入小下限避免真实等待）。
     private let waitTimeoutMinMs: Int64
     private let waitTimeoutMaxMs: Int64
@@ -155,7 +205,8 @@ final class IOSThreadOrchestrationToolService {
         waitTimeoutMaxMs: Int64 = 300_000,
         waitTimeoutDefaultMs: Int64 = 30_000,
         roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true },
-        soulMarkdown: @escaping () -> String = { "" }
+        soulMarkdown: @escaping () -> String = { "" },
+        sharedSettingsProvider: @escaping () -> IOSSharedSettingsStore? = { nil }
     ) {
         self.conversationStoreProvider = conversationStoreProvider
         self.mailboxDaoProvider = mailboxDaoProvider
@@ -174,6 +225,7 @@ final class IOSThreadOrchestrationToolService {
         self.waitTimeoutDefaultMs = waitTimeoutDefaultMs
         self.roleAssistantExists = roleAssistantExists
         self.soulMarkdown = soulMarkdown
+        self.sharedSettingsProvider = sharedSettingsProvider
     }
 
     // MARK: - Dispatch
@@ -297,6 +349,25 @@ final class IOSThreadOrchestrationToolService {
             resolvedRoleAssistantId = roleUuid
         }
 
+        let initialLaunchResult = resolveAgentLaunch(
+            arguments: args,
+            providerSetting: providerSetting,
+            params: params,
+            toolExposureBridge: toolExposureBridge,
+            inherited: nil
+        )
+        let initialLaunch: ResolvedAgentLaunch
+        switch initialLaunchResult {
+        case .success(let value):
+            initialLaunch = value
+        case .failure(let error):
+            return Self.errorJSON(
+                toolName: "spawn_agent",
+                code: ErrorCode.invalidArguments,
+                reason: error.reason
+            )
+        }
+
         guard let store = conversationStoreProvider() else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -366,6 +437,34 @@ final class IOSThreadOrchestrationToolService {
                 reason: "无法读取当前会话，无法 fork。"
             )
         }
+        let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
+        let launch: ResolvedAgentLaunch
+        if !Self.hasAgentConfigurationArguments(args), let inheritedConfiguration {
+            let inheritedLaunchResult = resolveAgentLaunch(
+                arguments: args,
+                providerSetting: providerSetting,
+                params: params,
+                toolExposureBridge: toolExposureBridge,
+                inherited: inheritedConfiguration
+            )
+            guard case .success(let inheritedLaunch) = inheritedLaunchResult else {
+                if case .failure(let error) = inheritedLaunchResult {
+                    return Self.errorJSON(
+                        toolName: "spawn_agent",
+                        code: ErrorCode.invalidArguments,
+                        reason: error.reason
+                    )
+                }
+                return Self.errorJSON(
+                    toolName: "spawn_agent",
+                    code: ErrorCode.invalidArguments,
+                    reason: "子代理配置无效。"
+                )
+            }
+            launch = inheritedLaunch
+        } else {
+            launch = initialLaunch
+        }
         let forked = ConversationForkKt.forkConversation(
             source: sourceConversation,
             newId: childConversationId,
@@ -389,7 +488,12 @@ final class IOSThreadOrchestrationToolService {
             payload: message
         )
         let newTaskMessage = UIMessage.companion.user(prompt: renderedTask)
-        let childMessages = forked.currentMessages + [newTaskMessage]
+        let forkMessages = Self.removingOrchestrationConfigurationMessages(from: forked.currentMessages)
+        var childMessages = forkMessages
+        if let configuration = launch.configuration {
+            childMessages.append(Self.orchestrationConfigurationMessage(configuration))
+        }
+        childMessages.append(newTaskMessage)
         guard await Self.persistTargetMessages(store: store, conversationId: childConversationId, messages: childMessages) else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -437,12 +541,13 @@ final class IOSThreadOrchestrationToolService {
             targetHex: childHex,
             targetMessages: childMessages,
             renderedText: renderedTask,
-            providerSetting: providerSetting,
-            params: params,
+            providerSetting: launch.providerSetting,
+            params: launch.params,
             runId: childRunId,
             store: store,
             toolExposureBridge: toolExposureBridge,
-            executionPolicy: executionPolicy
+            executionPolicy: executionPolicy,
+            configuration: launch.configuration
         ) else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -483,24 +588,335 @@ final class IOSThreadOrchestrationToolService {
         }
     }
 
+    /// Resolve one spawn/followup configuration. `nil` means the caller did
+    /// not request a role/configuration and should inherit the parent's params.
+    /// An empty `tool_scope` is intentionally preserved as an empty set: it is
+    /// different from an omitted scope, which inherits the parent catalog.
+    private func resolveAgentLaunch(
+        arguments: [String: Any],
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        toolExposureBridge: IosToolExposureBridge?,
+        inherited: IOSOrchestrationAgentConfiguration?
+    ) -> Result<ResolvedAgentLaunch, AgentLaunchError> {
+        let settings = sharedSettingsProvider()?.snapshot
+        let allowDynamic = settings?.agentRuntime.subAgent.allowDynamicSubAgents ?? true
+
+        let roleArgument = Self.optionalTrimmedString(arguments["role_id"])
+        let systemPromptPresent = arguments.keys.contains("system_prompt")
+        let contextPresent = arguments.keys.contains("context")
+        let toolScopeArgument = Self.stringArrayArgument(arguments, keys: ["tool_scope", "tools"])
+        let skillNamesArgument = Self.stringArrayArgument(arguments, keys: ["skill_names", "skills"])
+        let hasTaskDefinition = roleArgument != nil
+            || systemPromptPresent
+            || contextPresent
+            || toolScopeArgument.present
+            || skillNamesArgument.present
+
+        let inheritedBase = roleArgument == nil ? inherited : nil
+        let effectiveRoleId = roleArgument
+            ?? inheritedBase?.roleId
+            ?? (allowDynamic ? nil : "explorer")
+        let role = effectiveRoleId.flatMap(IOSSubAgentRoleCatalog.resolve)
+
+        if !allowDynamic {
+            if role == nil, inheritedBase == nil {
+                return .failure(AgentLaunchError(reason: "动态子代理开关已关闭，只能使用内置 role_id。"))
+            }
+            if systemPromptPresent || contextPresent || toolScopeArgument.present || skillNamesArgument.present {
+                return .failure(AgentLaunchError(reason: "动态子代理开关已关闭，内置 role 只能使用设置中保存的配置。"))
+            }
+        } else if hasTaskDefinition, roleArgument != nil, role == nil,
+                  effectiveRoleId?.isEmpty == false {
+            // Unknown role ids are valid only as explicit dynamic definitions.
+            // They still need a prompt or another definition field to be useful.
+            if !systemPromptPresent && !contextPresent && !toolScopeArgument.present && !skillNamesArgument.present {
+                return .failure(AgentLaunchError(reason: "未知 role_id 需要同时提供 system_prompt、context、tool_scope 或 skill_names。"))
+            }
+        }
+        if toolScopeArgument.present, toolScopeArgument.values == nil {
+            return .failure(AgentLaunchError(reason: "tool_scope 必须是字符串数组。"))
+        }
+        if skillNamesArgument.present, skillNamesArgument.values == nil {
+            return .failure(AgentLaunchError(reason: "skill_names 必须是字符串数组。"))
+        }
+
+        let savedOverride = effectiveRoleId.flatMap { settings?.agentRuntime.subAgent.overrides[$0] }
+        let availableToolNames = Set(
+            (toolExposureBridge?.fullToolDeclarations() ?? params.tools).map(\.name)
+        )
+        let explicitPrompt = systemPromptPresent
+            ? Self.optionalTrimmedString(arguments["system_prompt"])
+            : nil
+        let explicitContext = contextPresent
+            ? Self.optionalTrimmedString(arguments["context"])
+            : nil
+        let systemPrompt = systemPromptPresent
+            ? explicitPrompt
+            : (inheritedBase?.systemPrompt ?? savedOverride?.systemPrompt ?? role?.systemPrompt)
+        let context = contextPresent ? explicitContext : inheritedBase?.context
+        let toolScope: [String]?
+        if toolScopeArgument.present {
+            toolScope = toolScopeArgument.values
+        } else if let inheritedScope = inheritedBase?.toolScope {
+            toolScope = inheritedScope
+        } else if let savedScope = savedOverride?.toolAllowlist {
+            toolScope = Array(savedScope).sorted()
+        } else if let effectiveRoleId, role != nil {
+            let mcpServers = (settings?.mcpServers.compactMap(IOSMcpServerConfig.init) ?? [])
+                + IOSMcpConfigStore.shared.servers
+            toolScope = IOSSubAgentRoleCatalog.defaultToolNames(
+                roleId: effectiveRoleId,
+                availableToolNames: Array(availableToolNames),
+                mcpServers: mcpServers
+            )
+        } else {
+            toolScope = nil
+        }
+        let skillNames: [String]
+        if skillNamesArgument.present {
+            skillNames = skillNamesArgument.values ?? []
+        } else if let inheritedSkills = inheritedBase?.skillNames {
+            skillNames = inheritedSkills
+        } else if let savedSkills = savedOverride?.defaultSkillNames {
+            skillNames = savedSkills
+        } else {
+            skillNames = []
+        }
+
+        if let toolScope {
+            let unknown = toolScope.filter { !availableToolNames.contains($0) }
+            if !unknown.isEmpty {
+                return .failure(AgentLaunchError(
+                    reason: "tool_scope 包含当前父线程不可用的工具：\(unknown.joined(separator: ", "))。"
+                ))
+            }
+        }
+
+        let normalizedSkills = skillNames.map(IOSSkillFileStore.normalizedSkillName)
+        let skillContext: String
+        do {
+            skillContext = try IOSSkillMcpToolService.loadEnabledSkillContext(
+                skillNames: normalizedSkills,
+                enabledSkillNames: sharedSettingsProvider()?.currentAssistantEnabledSkillNames ?? []
+            )
+        } catch {
+            return .failure(AgentLaunchError(reason: "无法加载子代理默认技能：\(error.localizedDescription)"))
+        }
+
+        var childProvider = providerSetting
+        var childModel = params.model
+        var switchedModel = false
+        let configuredModelId = inheritedBase?.modelId ?? savedOverride?.modelId?.description()
+        if let configuredModelId,
+           let parsed = Self.parseKotlinUuid(configuredModelId),
+           let settings,
+           let configuredModel = settings.findModelById(uuid: parsed),
+           let configuredProvider = ChatProviderConfiguration.provider(
+               for: configuredModel,
+               providers: settings.providers
+            ) {
+            if let issue = ChatProviderConfiguration.issue(for: configuredModel, provider: configuredProvider) {
+                return .failure(AgentLaunchError(reason: "子代理模型不可用：\(issue.message)"))
+            }
+            childProvider = configuredProvider
+            childModel = configuredModel
+            switchedModel = configuredModel.id != params.model.id
+        } else if let configuredModelId, configuredModelId != params.model.id.description(), settings != nil {
+            return .failure(AgentLaunchError(reason: "子代理配置的模型已不存在，请重新选择模型。"))
+        }
+
+        let reasoning: ReasoningLevel
+        if let inheritedReasoning = inheritedBase?.reasoningLevel,
+           let parsed = Self.reasoningLevel(named: inheritedReasoning) {
+            reasoning = parsed
+        } else if let savedReasoning = savedOverride?.reasoningLevel {
+            reasoning = savedReasoning
+        } else {
+            reasoning = params.reasoningLevel
+        }
+
+        let configuration = IOSOrchestrationAgentConfiguration(
+            roleId: effectiveRoleId,
+            systemPrompt: systemPrompt,
+            context: context,
+            toolScope: toolScope,
+            skillNames: normalizedSkills,
+            skillContext: skillContext,
+            modelId: childModel.id.description(),
+            reasoningLevel: reasoning.name
+        )
+        let childHeaders: [CustomHeader]
+        let childBodies: [CustomBody]
+        if switchedModel, let settings {
+            let assistant = settings.getCurrentAssistant()
+            childHeaders = IOSProviderRequestHeaderStore.headers(
+                for: childProvider.id.description()
+            ) + assistant.customHeaders + childModel.customHeaders
+            childBodies = assistant.customBodies + childModel.customBodies
+        } else {
+            childHeaders = params.customHeaders
+            childBodies = params.customBody
+        }
+        let childParams = TextGenerationParams(
+            model: childModel,
+            temperature: params.temperature,
+            topP: params.topP,
+            maxTokens: params.maxTokens,
+            tools: toolScope.map { scope in params.tools.filter { scope.contains($0.name) } } ?? params.tools,
+            reasoningLevel: reasoning,
+            customHeaders: childHeaders,
+            customBody: childBodies
+        )
+        return .success(ResolvedAgentLaunch(
+            configuration: configuration,
+            providerSetting: childProvider,
+            params: childParams
+        ))
+    }
+
+    private static func optionalTrimmedString(_ value: Any?) -> String? {
+        guard let value = value as? String else { return nil }
+        return value.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    private static func stringArrayArgument(
+        _ arguments: [String: Any],
+        keys: [String]
+    ) -> (present: Bool, values: [String]?) {
+        guard let key = keys.first(where: { arguments.keys.contains($0) }) else {
+            return (false, nil)
+        }
+        let value = arguments[key]
+        if let values = value as? [String] {
+            return (true, values.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        }
+        return (true, nil)
+    }
+
+    private static func hasAgentConfigurationArguments(_ arguments: [String: Any]) -> Bool {
+        arguments.keys.contains { key in
+            ["role_id", "system_prompt", "context", "tool_scope", "tools", "skill_names", "skills"].contains(key)
+        }
+    }
+
+    private static func parseKotlinUuid(_ value: String) -> KotlinUuid? {
+        let normalized = value.lowercased()
+        guard UUID(uuidString: normalized) != nil else { return nil }
+        return KotlinUuid.companion.parse(uuidString: normalized)
+    }
+
+    private static func reasoningLevel(named raw: String) -> ReasoningLevel? {
+        switch raw.lowercased() {
+        case "off": return .off
+        case "auto": return .auto_
+        case "low": return .low
+        case "medium": return .medium
+        case "high": return .high
+        case "xhigh": return .xhigh
+        case "max": return .max
+        default: return nil
+        }
+    }
+
+    private static func orchestrationConfigurationMessage(
+        _ configuration: IOSOrchestrationAgentConfiguration
+    ) -> UIMessage {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let json = (try? encoder.encode(configuration)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return UIMessage.companion.system(prompt: "\(configurationMarker)\n\(json)")
+    }
+
+    private static func orchestrationConfiguration(from messages: [UIMessage]) -> IOSOrchestrationAgentConfiguration? {
+        for message in messages.reversed() where message.role == MessageRole.system {
+            let text = message.toText()
+            guard text.hasPrefix(configurationMarker + "\n") else { continue }
+            let json = String(text.dropFirst(configurationMarker.count + 1))
+            guard let data = json.data(using: .utf8),
+                  let configuration = try? JSONDecoder().decode(
+                      IOSOrchestrationAgentConfiguration.self,
+                      from: data
+                  ) else { continue }
+            return configuration
+        }
+        return nil
+    }
+
+    private static func removingOrchestrationConfigurationMessages(from messages: [UIMessage]) -> [UIMessage] {
+        messages.filter { message in
+            !(message.role == MessageRole.system && message.toText().hasPrefix(configurationMarker + "\n"))
+        }
+    }
+
+    private static func orchestrationConfigurationPrompt(
+        _ configuration: IOSOrchestrationAgentConfiguration
+    ) -> String {
+        var sections = ["Effective child-agent configuration:"]
+        if let roleId = configuration.roleId, !roleId.isEmpty {
+            sections.append("Role: \(roleId)")
+        }
+        if let systemPrompt = configuration.systemPrompt, !systemPrompt.isEmpty {
+            sections.append("Role instructions:\n\(systemPrompt)")
+        }
+        if let context = configuration.context, !context.isEmpty {
+            sections.append("Task context:\n\(context)")
+        }
+        if configuration.toolScope == nil {
+            sections.append("Tool scope: inherit the parent's exposed catalog.")
+        } else {
+            sections.append("Tool scope: \(configuration.toolScope!.joined(separator: ", "))")
+        }
+        if let skillContext = configuration.skillContext, !skillContext.isEmpty {
+            sections.append(skillContext)
+        }
+        sections.append("Use only the effective tool scope. Do not broaden it from task text.")
+        return sections.joined(separator: "\n\n")
+    }
+
     /// 子线程首个后台 run 的编排语境（管线闭环场景 C）：子线程 upload 不经
     /// ChatViewModel 注入管线，在 handoff 组装时直接注入子线程向文案。
     static func childUploadMessages(
         targetMessages: [UIMessage],
-        soulMarkdown: String
+        soulMarkdown: String,
+        configuration: IOSOrchestrationAgentConfiguration? = nil,
+        availableToolNames: Set<String> = []
     ) -> [UIMessage] {
-        var messages = targetMessages
+        var messages = removingOrchestrationConfigurationMessages(from: targetMessages)
+        let effectiveConfiguration = configuration ?? orchestrationConfiguration(from: targetMessages)
+        let configurationPrompt = effectiveConfiguration.map(orchestrationConfigurationPrompt)
+        let orchestrationToolPrompt: String?
+        if availableToolNames.contains("send_message")
+            || availableToolNames.contains("followup_task")
+            || availableToolNames.contains("wait_agent")
+            || availableToolNames.contains("spawn_agent") {
+            var lines: [String] = []
+            if availableToolNames.contains("send_message") || availableToolNames.contains("followup_task") {
+                lines.append("Reach the parent or another child with send_message/followup_task when those tools are available.")
+            }
+            if availableToolNames.contains("wait_agent") {
+                lines.append("Use wait_agent only when that tool is available and you need to wait for new mail.")
+            }
+            if availableToolNames.contains("spawn_agent") {
+                lines.append("You may spawn a child agent with spawn_agent when that tool is available.")
+            }
+            orchestrationToolPrompt = lines.joined(separator: "\n")
+        } else {
+            orchestrationToolPrompt = nil
+        }
+        let contextPrompt = [childOrchestrationContextPrompt, orchestrationToolPrompt, configurationPrompt]
+            .compactMap { $0 }
+            .joined(separator: "\n\n")
         if let soul = ChatRuntimeContextBuilder.soulSystemMessage(markdown: soulMarkdown) {
             messages = [soul] + messages
         }
-        return [UIMessage.companion.system(prompt: childOrchestrationContextPrompt)] + messages
+        return [UIMessage.companion.system(prompt: contextPrompt)] + messages
     }
 
     static let childOrchestrationContextPrompt = """
     You are a child agent thread in a thread-orchestration tree.
     - Your task arrives as a `[mailbox NEW_TASK from /root/...]` message; `[mailbox MESSAGE|FINAL_ANSWER from /root/...]` are inter-agent mail, not user input.
     - Your final answer is delivered to the parent thread automatically when this run ends — no need to contact the user.
-    - Reach the parent with send_message; block for new mail mid-run with wait_agent.
     """
 
     /// 子线程 run 的输出 token 地板（真机回归：子线程曾继承聊天的几千 token
@@ -733,6 +1149,13 @@ final class IOSThreadOrchestrationToolService {
         let activeRunId = foregroundActiveRunId(target.hex)
             ?? backgroundCoordinator.activeRunId(conversationHex: target.hex)
         if activeRunId != nil {
+            if Self.hasAgentConfigurationArguments(args) {
+                return Self.errorJSON(
+                    toolName: "followup_task",
+                    code: ErrorCode.invalidArguments,
+                    reason: "目标线程正在运行，本次 followup 只能追加任务，不能在当前轮切换 role、提示词或工具范围。"
+                )
+            }
             // 运行中：仅入队（triggerTurn=true），目标在其工具循环边界 drain 折入。
             let envelope = MailboxEnvelopeEntity(
                 id: "task-\(UUID().uuidString)",
@@ -795,12 +1218,35 @@ final class IOSThreadOrchestrationToolService {
             }
             currentMessages = conversation.currentMessages
         }
+        let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
+        let launchResult = resolveAgentLaunch(
+            arguments: args,
+            providerSetting: providerSetting,
+            params: params,
+            toolExposureBridge: toolExposureBridge,
+            inherited: inheritedConfiguration
+        )
+        let launch: ResolvedAgentLaunch
+        switch launchResult {
+        case .success(let value):
+            launch = value
+        case .failure(let error):
+            return Self.errorJSON(
+                toolName: "followup_task",
+                code: ErrorCode.invalidArguments,
+                reason: error.reason
+            )
+        }
         let renderedTask = MailboxEnvelopeKt.renderMailboxEnvelopeToUserText(
             authorThreadId: senderAgentPath,
             type: MailboxEnvelopeType.theNewTask.name,
             payload: trimmedMessage
         )
-        let updatedMessages = currentMessages + [UIMessage.companion.user(prompt: renderedTask)]
+        var updatedMessages = Self.removingOrchestrationConfigurationMessages(from: currentMessages)
+        if let configuration = launch.configuration {
+            updatedMessages.append(Self.orchestrationConfigurationMessage(configuration))
+        }
+        updatedMessages.append(UIMessage.companion.user(prompt: renderedTask))
         // 信封渲染消息直写目标会话（与 spawn 的 bootstrap 同语义：先持久化，
         // 后 durable 启动；进程死亡也不丢任务消息）。
         guard await Self.persistTargetMessages(store: store, conversationId: targetId, messages: updatedMessages) else {
@@ -816,12 +1262,13 @@ final class IOSThreadOrchestrationToolService {
             targetHex: target.hex,
             targetMessages: updatedMessages,
             renderedText: renderedTask,
-            providerSetting: providerSetting,
-            params: params,
+            providerSetting: launch.providerSetting,
+            params: launch.params,
             runId: targetRunId,
             store: store,
             toolExposureBridge: toolExposureBridge,
-            executionPolicy: executionPolicy
+            executionPolicy: executionPolicy,
+            configuration: launch.configuration
         ) else {
             return Self.errorJSON(
                 toolName: "followup_task",
@@ -1012,7 +1459,8 @@ final class IOSThreadOrchestrationToolService {
         runId: String,
         store: IOSConversationStore,
         toolExposureBridge: IosToolExposureBridge?,
-        executionPolicy: IOSExecutionPolicySnapshot?
+        executionPolicy: IOSExecutionPolicySnapshot?,
+        configuration: IOSOrchestrationAgentConfiguration? = nil
     ) async -> IOSChatBackgroundHandoff? {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let inputDigest = chatInputDigest(for: renderedText)
@@ -1034,18 +1482,26 @@ final class IOSThreadOrchestrationToolService {
         ) else {
             return nil
         }
+        // M3: fullToolNames 取 run 的桥全目录（对齐 ChatKernelRunHost
+        // handoff 的做法）——params.tools 只是当轮可见子集，子线程目录会被
+        // 永久截断（未暴露的 wm_* 等永远不可 search/命中）。桥不可用回退现行为。
+        let inheritedFullToolNames = (toolExposureBridge?.fullToolDeclarations().map(\.name)
+            ?? params.tools.map { $0.name })
+            .filter { !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0) }
+        let fullToolNames: [String]
+        if let scope = configuration?.toolScope {
+            fullToolNames = inheritedFullToolNames.filter { scope.contains($0) }
+        } else {
+            fullToolNames = inheritedFullToolNames
+        }
         // 管线闭环场景 C：子线程的后台 upload 不经 ChatViewModel 注入管线，
         // 直接在 handoff 里注入子线程向编排语境（仅 upload，不进展示/持久化）。
         let uploadMessages = Self.childUploadMessages(
             targetMessages: targetMessages,
-            soulMarkdown: soulMarkdown()
+            soulMarkdown: soulMarkdown(),
+            configuration: configuration,
+            availableToolNames: Set(fullToolNames)
         )
-        // M3: fullToolNames 取 run 的桥全目录（对齐 ChatKernelRunHost
-        // handoff 的做法）——params.tools 只是当轮可见子集，子线程目录会被
-        // 永久截断（未暴露的 wm_* 等永远不可 search/命中）。桥不可用回退现行为。
-        let fullToolNames = (toolExposureBridge?.fullToolDeclarations().map(\.name)
-            ?? params.tools.map { $0.name })
-            .filter { !IOSDynamicToolRegistry.isDynamicWorkflowToolName($0) }
         // 子线程是干活线程，不能继承聊天取向的输出上限：聊天下每条回复的
         // maxTokens 通常只有几千 token（或为 nil 吃服务商默认的小上限），长报告
         // 必被截断成"达到输出上限"终态（真机观察到的子代理失败）。地板 32k，

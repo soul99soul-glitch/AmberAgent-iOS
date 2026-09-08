@@ -4,300 +4,307 @@ import Shared
 struct SubAgentRoleView: View {
     let sharedSettings: IOSSharedSettingsStore
     @Environment(\.dismiss) private var dismiss
-
-    private let detail: SubAgentRoleDetail
+    private let roleId: String
+    private let name: String
     @State private var promptDraft: String
+    @State private var modelId: String
+    @State private var reasoning: String
+    @State private var useDefaultTools: Bool
+    @State private var selectedTools: Set<String>
+    @State private var selectedSkills: Set<String>
+    @State private var tab = RoleTab.configuration
+    @State private var installedSkills: [String] = []
+    @State private var toolQuery = ""
+
+    private enum RoleTab: String, CaseIterable {
+        case configuration = "配置"
+        case tools = "工具"
+        case skills = "技能"
+    }
 
     init(sharedSettings: IOSSharedSettingsStore, name: String, roleId: String) {
         self.sharedSettings = sharedSettings
-        let resolved = SubAgentRoleDetail.resolve(name: name, roleId: roleId)
-        detail = resolved
-        _promptDraft = State(initialValue: resolved.description)
+        self.name = name
+        self.roleId = roleId
+        let role = IOSSubAgentRoleCatalog.resolve(roleId: roleId)
+        let saved = sharedSettings.snapshot.agentRuntime.subAgent.overrides[roleId]
+        _promptDraft = State(initialValue: saved?.systemPrompt ?? role?.systemPrompt ?? "")
+        _modelId = State(initialValue: saved?.modelId?.toHexDashString() ?? "")
+        _reasoning = State(initialValue: saved?.reasoningLevel.map { ComposerReasoningOption(reasoningLevel: $0).rawValue } ?? "inherit")
+        _useDefaultTools = State(initialValue: saved?.toolAllowlist == nil)
+        _selectedTools = State(initialValue: saved?.toolAllowlist ?? Set(role?.toolAllowlist ?? []))
+        _selectedSkills = State(initialValue: Set(saved?.defaultSkillNames ?? []))
+    }
+
+    private var role: IOSSubAgentRoleDescriptor? { IOSSubAgentRoleCatalog.resolve(roleId: roleId) }
+
+    private var mcpServers: [IOSMcpServerConfig] {
+        let local = IOSMcpConfigStore.shared.servers
+        let names = Set(local.map(\.name))
+        return local + sharedSettings.snapshot.mcpServers.compactMap(IOSMcpServerConfig.init)
+            .filter { !names.contains($0.name) }
     }
 
     var body: some View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
-
             VStack(spacing: 0) {
-                header
+                HStack {
+                    AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回子代理", size: 44, symbolSize: 20) { dismiss() }
+                    Spacer()
+                    Text(name).font(.headline).foregroundStyle(AmberTheme.foreground)
+                    Spacer()
+                    Button("保存") { save(); dismiss() }
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(AmberTheme.accent)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("subagentRole.save")
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+
+                Picker("角色设置", selection: $tab) {
+                    ForEach(RoleTab.allCases, id: \.self) { tab in Text(tab.rawValue).tag(tab) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
 
                 ScrollView {
                     VStack(spacing: 0) {
-                        hero
-                        routingSection
-                        toolsSection
-                        savedOverridesSection
+                        switch tab {
+                        case .configuration: configuration
+                        case .tools: tools
+                        case .skills: skills
+                        }
                     }
-                    .padding(.bottom, 36)
+                    .padding(.bottom, 28)
                 }
                 .scrollIndicators(.hidden)
+                .scrollDismissesKeyboard(.interactively)
             }
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onAppear { installedSkills = IOSSkillFileStore().listSkillDirNames().sorted() }
+        .onChange(of: modelId) { _, _ in reasoning = "inherit" }
     }
 
-    private var header: some View {
-        HStack {
-            AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回 SubAgent", size: 44, symbolSize: 20) {
-                dismiss()
-            }
-
-            Spacer()
-
-            VStack(spacing: 2) {
-                Text(detail.name)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-
-                Text("@\(detail.roleId) · 角色详情")
-                    .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-
-            Spacer()
-
-            Color.clear
-                .frame(width: 44, height: 44)
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
-    }
-
-    private var hero: some View {
-        VStack(spacing: 8) {
-            Text(detail.initials)
-                .font(.system(size: 20, weight: .semibold, design: .monospaced))
-                .foregroundStyle(AmberTheme.foreground2)
-                .frame(width: 52, height: 52)
-                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 15, style: .continuous))
-
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                Text(detail.name)
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                Text("@\(detail.roleId)")
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .foregroundStyle(AmberTheme.muted2)
-            }
-
-            Text(detail.description)
-                .font(.caption)
-                .lineSpacing(3)
-                .foregroundStyle(AmberTheme.muted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
-        .padding(.top, 6)
-        .padding(.bottom, 16)
-    }
-
-    private var toolsSection: some View {
+    private var configuration: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "可用范围")
+            note(role?.summary ?? "配置这个子代理的执行方式。")
+            AmberSectionLabel(text: "模型")
             AmberFormGroup {
-                Text(detail.toolSummary.isEmpty ? "无外部工具。该角色只能返回模型自身结果。" : detail.toolSummary)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .lineSpacing(4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 13)
-            }
-            SubAgentRoleFootnote(text: "工具范围由 iOS 端只读安全 allowlist 限制；敏感动作仍走权限与批准策略。")
-        }
-    }
-
-
-
-    private var savedOverridesSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "角色提示词")
-            AmberFormGroup {
-                TextField("角色提示词", text: $promptDraft, axis: .vertical)
-                    .font(.caption)
-                    .lineLimit(3...8)
-                    .textFieldStyle(.plain)
-                    .foregroundStyle(AmberTheme.foreground)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                Divider().overlay(AmberTheme.borderSoft).padding(.leading, 14)
-
-                let overrides = Array(sharedSettings.savedSubAgentOverrides.enumerated())
-                    .filter { $0.element["roleId"] == detail.roleId }
-                ForEach(Array(overrides.enumerated()), id: \.offset) { index, override in
-                    HStack(spacing: 10) {
-                        Text(override.element["systemPrompt"] ?? "?").font(.caption).foregroundStyle(AmberTheme.muted)
-                            .lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                        Button { sharedSettings.removeSubAgentOverride(at: override.offset) } label: {
-                            Image(systemName: "minus.circle.fill").font(.system(size: 16)).foregroundStyle(AmberTheme.accentRed)
-                        }.buttonStyle(.plain)
-                    }.frame(minHeight: 40).padding(.horizontal, 14).padding(.vertical, 4)
-                    if index < overrides.count - 1 {
-                        SubAgentRoleDivider()
+                HStack {
+                    Text("默认模型").foregroundStyle(AmberTheme.foreground)
+                    Spacer(minLength: 12)
+                    Picker("默认模型", selection: $modelId) {
+                        Text("跟随主代理").tag("")
+                        ForEach(sharedSettings.availableChatModels()) { model in
+                            Text("\(model.displayName) · \(model.providerName)").tag(model.id)
+                        }
+                        if !modelId.isEmpty && !sharedSettings.availableChatModels().contains(where: { $0.id == modelId }) {
+                            Text("已移除的模型，请重新选择").tag(modelId)
+                        }
                     }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .tint(AmberTheme.accent)
                 }
-                Divider().overlay(AmberTheme.borderSoft).padding(.leading, 14)
-                Button {
-                    let prompt = promptDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !prompt.isEmpty else { return }
-                    sharedSettings.addSubAgentOverride(roleId: detail.roleId, systemPrompt: prompt)
-                } label: {
-                    Label("保存角色覆盖", systemImage: "plus.circle.fill").font(.body.weight(.semibold)).foregroundStyle(AmberTheme.accent)
-                }.buttonStyle(.plain).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 14).padding(.vertical, 8)
+                .padding(.horizontal, 14)
+                .frame(minHeight: 52)
+                Divider().padding(.leading, 14)
+                HStack {
+                    Text("推理强度").foregroundStyle(AmberTheme.foreground)
+                    Spacer(minLength: 12)
+                    Picker("推理强度", selection: $reasoning) {
+                        Text("跟随主代理").tag("inherit")
+                        ForEach(reasoningOptions) { option in Text(option.title).tag(option.rawValue) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .tint(AmberTheme.accent)
+                }
+                .padding(.horizontal, 14)
+                .frame(minHeight: 52)
             }
-        }
-    }
-    private var routingSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "何时调用")
+            AmberSectionLabel(text: "提示词")
             AmberFormGroup {
-                Text(detail.routing)
-                    .font(.caption)
-                    .lineSpacing(4)
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 13)
+                TextEditor(text: $promptDraft)
+                    .font(.subheadline)
+                    .lineSpacing(3)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 230)
+                    .padding(10)
+                    .accessibilityLabel("子代理提示词")
+            }
+            note("任务目标和主代理选取的上下文会另行传入。这里定义角色的职责和做事方式。")
+            if let role { note(role.routing) }
+            Button("恢复角色默认配置") {
+                promptDraft = role?.systemPrompt ?? ""
+                modelId = ""
+                reasoning = "inherit"
+                useDefaultTools = true
+                selectedTools = Set(role?.toolAllowlist ?? [])
+                selectedSkills = []
+            }
+            .foregroundStyle(AmberTheme.accent)
+            .frame(minHeight: 48)
+            .padding(.top, 12)
+        }
+    }
+
+    private var reasoningOptions: [ComposerReasoningOption] {
+        sharedSettings.subAgentReasoningLevels(modelId: modelId.isEmpty ? nil : modelId)
+            .map(ComposerReasoningOption.init)
+    }
+
+    private var tools: some View {
+        VStack(spacing: 0) {
+            AmberFormGroup {
+                Toggle("使用角色默认工具", isOn: $useDefaultTools)
+                    .tint(AmberTheme.accent)
+                    .padding(14)
+            }
+            note(useDefaultTools
+                 ? "当前角色默认选择 \(defaultToolNames.count) 个工具。关闭上方开关可自行选择。"
+                 : "已选择 \(selectedTools.count) 个工具。未选择任何工具时，只使用模型完成任务。")
+            AmberFormGroup {
+                TextField("搜索工具", text: $toolQuery)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(14)
+            }
+            AmberSectionLabel(text: "应用工具")
+            toolGroup(matchingTools(appToolNames))
+            ForEach(mcpServers) { server in
+                AmberSectionLabel(text: "MCP · \(server.name)\(server.enabled ? "" : " · 已禁用")")
+                let names = server.tools.map { ToolKt.expandedMcpToolName(server: server.name, tool: $0.name) }
+                toolGroup(matchingTools(names))
+            }
+            if !missingMcpToolNames.isEmpty {
+                AmberSectionLabel(text: "已移除的 MCP 工具")
+                toolGroup(matchingTools(missingMcpToolNames))
+            }
+            note("只能调用主代理当前可用且已授权的工具；选中工具不会开启已关闭的服务器或跳过审批。")
+        }
+        .onChange(of: useDefaultTools) { wasDefault, isDefault in
+            if wasDefault && !isDefault { selectedTools = Set(defaultToolNames) }
+        }
+    }
+
+    private var defaultToolNames: [String] {
+        let mcpNames = mcpServers.filter(\.enabled).flatMap { server in
+            server.tools.filter(\.enabled).map { ToolKt.expandedMcpToolName(server: server.name, tool: $0.name) }
+        }
+        return IOSSubAgentRoleCatalog.defaultToolNames(
+            roleId: roleId, availableToolNames: ToolKt.iosToolDeclarationNames() + mcpNames,
+            mcpServers: mcpServers
+        )
+    }
+
+    private var appToolNames: [String] {
+        if useDefaultTools { return defaultToolNames.filter { !ToolKt.isExpandedMcpToolName(name: $0) } }
+        let builtIn = Set(ToolKt.iosToolDeclarationNames()).subtracting([
+            "subagent_dispatch", "subagent_report", "mcp_call"
+        ])
+        return builtIn.union(selectedTools.filter { !ToolKt.isExpandedMcpToolName(name: $0) }).sorted()
+    }
+
+    private func matchingTools(_ names: [String]) -> [String] {
+        names.filter { toolQuery.isEmpty || $0.localizedCaseInsensitiveContains(toolQuery) }
+    }
+
+    private var missingMcpToolNames: [String] {
+        let configured = Set(mcpServers.flatMap { server in
+            server.tools.map { ToolKt.expandedMcpToolName(server: server.name, tool: $0.name) }
+        })
+        return selectedTools.filter { ToolKt.isExpandedMcpToolName(name: $0) && !configured.contains($0) }.sorted()
+    }
+
+    private func toolGroup(_ names: [String]) -> some View {
+        AmberFormGroup {
+            if names.isEmpty {
+                Text(toolQuery.isEmpty ? "尚无可用工具" : "没有匹配的工具")
+                    .font(.caption).foregroundStyle(AmberTheme.muted).padding(14)
+            }
+            ForEach(Array(names.enumerated()), id: \.element) { index, tool in
+                Toggle(isOn: Binding(
+                    get: { useDefaultTools ? defaultToolNames.contains(tool) : selectedTools.contains(tool) },
+                    set: { enabled in
+                        if enabled { selectedTools.insert(tool) } else { selectedTools.remove(tool) }
+                    }
+                )) {
+                    Text(tool).font(.caption.monospaced()).fixedSize(horizontal: false, vertical: true)
+                }
+                .tint(AmberTheme.accent)
+                .disabled(useDefaultTools)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                if index < names.count - 1 { Divider().padding(.leading, 14) }
             }
         }
     }
-}
 
-private struct SubAgentRoleDetail {
-    let roleId: String
-    let name: String
-    let description: String
-    let toolSummary: String
-    let routing: String
-    let isKnownBuiltIn: Bool
-
-    var initials: String {
-        String(name.prefix(1))
-    }
-
-    static func resolve(name: String, roleId: String) -> SubAgentRoleDetail {
-        if let role = IOSSubAgentRoleCatalog.builtIns.first(where: { $0.id == roleId }) {
-            return SubAgentRoleDetail(
-                roleId: role.id,
-                name: role.name,
-                description: role.summary,
-                toolSummary: role.toolAllowlist.joined(separator: "\n"),
-                routing: role.routing,
-                isKnownBuiltIn: true
-            )
+    private var skills: some View {
+        VStack(spacing: 0) {
+            note("子代理启动时会加载所选技能的完整提示词，用于当前任务。技能中的工具调用仍受上一个标签页的选择约束。")
+            AmberSectionLabel(text: "默认技能")
+            AmberFormGroup {
+                if installedSkills.isEmpty && selectedSkills.isEmpty {
+                    Text("还没有安装技能。请先在设置的「技能」中添加。")
+                        .font(.subheadline).foregroundStyle(AmberTheme.muted).padding(14)
+                }
+                let names = Set(installedSkills).union(selectedSkills).sorted()
+                ForEach(Array(names.enumerated()), id: \.element) { index, skill in
+                    Toggle(isOn: Binding(
+                        get: { selectedSkills.contains(skill) },
+                        set: { enabled in
+                            if enabled { selectedSkills.insert(skill) } else { selectedSkills.remove(skill) }
+                        }
+                    )) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(skill).font(.body)
+                            if !installedSkills.contains(skill) {
+                                Text("技能已移除，启动前需要重新安装或取消选择")
+                                    .font(.caption).foregroundStyle(AmberTheme.accentAmber)
+                            } else if !sharedSettings.isSkillEnabled(skill) {
+                                Text("请先在当前助手的技能设置中启用")
+                                    .font(.caption).foregroundStyle(AmberTheme.muted)
+                            }
+                        }
+                    }
+                    .tint(AmberTheme.accent)
+                    .disabled(!sharedSettings.isSkillEnabled(skill) && !selectedSkills.contains(skill))
+                    .padding(14)
+                    if index < names.count - 1 { Divider().padding(.leading, 14) }
+                }
+            }
         }
-        if let builtIn = builtIns[roleId] {
-            return builtIn
-        }
-        return SubAgentRoleDetail(
-            roleId: roleId,
-            name: name,
-            description: "自定义子代理角色。",
-            toolSummary: "",
-            routing: "自定义角色保存属于高级功能，当前不可用。",
-            isKnownBuiltIn: false
-        )
     }
 
-    private static let builtIns: [String: SubAgentRoleDetail] = [
-        "explorer": .init(
-            roleId: "explorer",
-            name: "Explorer",
-            description: "跨多源快速并行侦察，回答「在哪 / 大概有什么」，速度优先。",
-            toolSummary: "tools_list, search_web, scrape_web\nfile_list, file_read, file_search\nconversation_search, conversation_expand, session_search\nmcp_list, skills_list",
-            routing: """
-            何时调用：需要在多个来源快速并行侦察；范围广或不确定时；决策前要先摸清都有些什么。
-            何时不要：你已经知道具体文件/路径只想读；一次性具体查找；即将立刻执行下一步。
-            """,
-            isKnownBuiltIn: true
-        ),
-        "historian": .init(
-            roleId: "historian",
-            name: "Historian",
-            description: "历史会话搜索、主题挖掘、跨分片综合。",
-            toolSummary: "tools_list, session_search, session_read, session_expand\nconversation_search, conversation_expand",
-            routing: """
-            何时调用：需要回忆过去对话/决策；跨多个会话挖某个主题；合并多个分片的会话摘要。
-            何时不要：当前对话已经有答案；在当前会话里查单条消息。
-            """,
-            isKnownBuiltIn: true
-        ),
-        "oracle": .init(
-            roleId: "oracle",
-            name: "Oracle",
-            description: "深度推理与评审：架构决策、bug 根因、方案 review、风险复议。",
-            toolSummary: "tools_list, file_list, file_read, file_search\nconversation_search, conversation_expand, session_search\npermissions_status, apps_list, apps_installed_list",
-            routing: """
-            何时调用：长期影响大的决定；高风险重构；提交前二次复议；代码/架构 review；破坏性操作前评估风险。
-            何时不要：日常普通选择；时间紧、足够好就行；你已经很有把握。
-            """,
-            isKnownBuiltIn: true
-        ),
-        "designer": .init(
-            roleId: "designer",
-            name: "Designer",
-            description: "视觉产出专家：SVG、HTML PPT、HTML widget、VChart 的版式与视觉质量。",
-            toolSummary: "tools_list, file_read, file_search\nconversation_search, conversation_expand",
-            routing: """
-            何时调用：要生成或评审视觉产物，且在意配色、版式、字体、信息密度。
-            何时不要：随手草图；纯数据图表且不在意美感。
-            """,
-            isKnownBuiltIn: true
-        ),
-        "writer": .init(
-            roleId: "writer",
-            name: "Writer",
-            description: "中文写作专家：公众号、小红书、邮件、短文、文学性改写、文案润色。",
-            toolSummary: "tools_list, file_read, file_search\nconversation_search, conversation_expand",
-            routing: """
-            何时调用：中文写作、文案、故事、邮件、润色，且对质量有要求。
-            何时不要：纯事实总结；通顺翻译；只要英文输出。
-            """,
-            isKnownBuiltIn: true
-        ),
-        "fixer": .init(
-            roleId: "fixer",
-            name: "Fixer",
-            description: "便宜模型做边界清晰的执行：翻译、格式转换、抽取、命名。",
-            toolSummary: "tools_list, file_read, file_search\nconversation_search, conversation_expand",
-            routing: """
-            何时调用：边界清晰的机械变换；批量翻译、格式化、抽取。
-            何时不要：需要研究、决策、审美判断、强写作或中文文笔。
-            """,
-            isKnownBuiltIn: true
-        )
-    ]
-}
-
-private struct SubAgentRoleDivider: View {
-    var body: some View {
-        Divider()
-            .overlay(AmberTheme.borderSoft)
-            .padding(.leading, 14)
-    }
-}
-
-private struct SubAgentRoleFootnote: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.caption)
-            .lineSpacing(3)
-            .foregroundStyle(AmberTheme.muted2)
+    private func note(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(AmberTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 16)
-            .padding(.top, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
+    private func save() {
+        if promptDraft == role?.systemPrompt, modelId.isEmpty, reasoning == "inherit",
+           useDefaultTools, selectedSkills.isEmpty {
+            sharedSettings.resetSubAgentRole(roleId)
+            return
+        }
+        sharedSettings.configureSubAgentRole(
+            roleId: roleId,
+            systemPrompt: promptDraft,
+            modelId: modelId.isEmpty ? nil : modelId,
+            reasoningLevel: ComposerReasoningOption(rawValue: reasoning)?.reasoningLevel,
+            toolAllowlist: useDefaultTools ? nil : selectedTools,
+            defaultSkillNames: selectedSkills.sorted()
+        )
     }
 }
 

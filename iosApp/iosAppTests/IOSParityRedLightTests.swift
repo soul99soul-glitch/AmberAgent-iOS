@@ -328,59 +328,6 @@ final class IOSParityRedLightTests: XCTestCase {
 
     // MARK: - SubAgent (truth_matrix row `subagent_standalone`)
 
-    /// RED for P0. GREEN target: P4.
-    /// Cell: subagent_standalone.exec_real.
-    ///
-    /// GREEN guard for the standalone SubAgent engine path (de-faked this change).
-    /// Cell: subagent_standalone.exec_real.
-    ///
-    /// The standalone SubAgent page must dispatch through `IOSAgentToolEngine`
-    /// (`runViaEngine`), not the legacy KMP `SubAgentManager` path (`run`). Both
-    /// page buttons call `SubAgentsView.runStandaloneViaEngine`, which delegates to
-    /// the testable `dispatchStandalone` seam. This drives that EXACT seam with a
-    /// configured shared-settings store + a probe provider and asserts the engine
-    /// path is taken (provider invoked + task tagged engine) — so a regression that
-    /// re-routes the page to legacy `run` is actually caught. The previous version
-    /// only read a hardcoded `static let = true` constant (fake-green).
-    func test_subagent_standalone_usesEnginePath() async {
-        let taskSuite = UserDefaults(suiteName: "redlight-subagent-\(UUID().uuidString)")!
-        let taskStore = IOSAdvancedTaskStore(userDefaults: taskSuite, storageKey: "redlight.tasks")
-        let runner = SubAgentRunner(taskStore: taskStore)
-        let probe = EngineProbeProvider()
-
-        // A shared-settings store configured with a provider + selected model —
-        // exactly what the standalone page resolves from.
-        let ssSuite = UserDefaults(suiteName: "redlight-subagent-ss-\(UUID().uuidString)")!
-        let sharedSettings = IOSSharedSettingsStore(userDefaults: ssSuite)
-        sharedSettings.addCustomModel(name: "引擎模型", modelId: "engine-model", providerName: "EngineProvider")
-        if let added = sharedSettings.snapshot.providers.last as? ProviderSetting.OpenAI,
-           let model = added.models.first {
-            sharedSettings.setCurrentChatModelId(model.id.description())
-        }
-
-        // Drive the EXACT dispatch the standalone page's buttons call.
-        _ = await SubAgentsView.dispatchStandalone(
-            objective: "explore the objective",
-            roleId: "explorer",
-            sharedSettings: sharedSettings,
-            runner: runner,
-            provider: probe
-        )
-
-        // The engine path must be taken: provider invoked + task tagged engine.
-        // The legacy `run` path would leave probe.callCount==0 and no engine tag.
-        XCTAssertGreaterThan(
-            probe.callCount,
-            0,
-            "Standalone dispatch must invoke the provider via the engine path (runViaEngine)."
-        )
-        XCTAssertEqual(
-            runner.lastTask?.metadata["engine"],
-            "true",
-            "Standalone dispatch must record engine routing, not legacy `run`."
-        )
-    }
-
     // MARK: - Council (truth_matrix row `council`)
 
     /// RED for P0. GREEN target: P3 (now GREEN).

@@ -622,7 +622,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
             "mcp_call", "mcp_list", "mcp_test", "mcp_describe_tool", "mcp_import_from_skill",
             "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",
             "recipes_list", "recipe_validate", "recipe_import", "recipe_enable", "recipe_disable", "recipe_delete",
-            "subagent_dispatch", "model_council_run",
+            "model_council_run",
             // P1-c/P1-d: 线程编排六工具追加进 iOS 声明面（非常驻；轻配置 bypass 模式
             // 下与其余声明一起全量可见——阈值内行为契约随声明面扩展而更新）。
             "spawn_agent", "list_agents", "interrupt_agent",
@@ -634,6 +634,7 @@ final class IOSToolSearchExposureTests: XCTestCase {
             "tools_list",
         ]
         let fullNames = Set(bridge?.fullToolDeclarations().map(\.name) ?? [])
+        XCTAssertFalse(fullNames.contains("subagent_dispatch"))
         XCTAssertTrue(
             staticDeclarations.union(["tool_search"]).isSubset(of: fullNames),
             "lazy exposure must not drop core declarations from the searchable catalog"

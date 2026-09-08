@@ -1155,7 +1155,14 @@ final class IOSChatBackgroundGenerationCoordinator {
             // P0-b: regenerate the dynamic MCP surface from the runtime's own
             // directory so background tool_search can expose (and the engine
             // can execute) `mcp__*` tools like the foreground run could.
-            additionalDeclarations: toolRuntime.mcpExpandedDeclarations() + dynamicDeclarations,
+            additionalDeclarations: {
+                let mcpDeclarations = toolRuntime.mcpExpandedDeclarations()
+                guard !handoff.fullToolNames.isEmpty else {
+                    return mcpDeclarations + dynamicDeclarations
+                }
+                return mcpDeclarations.filter { handoff.fullToolNames.contains($0.name) }
+                    + dynamicDeclarations
+            }(),
             dynamicSearchInfo: Dictionary(uniqueKeysWithValues: dynamicDescriptors.map {
                 ($0.toolId, $0.searchInfoJSON)
             })

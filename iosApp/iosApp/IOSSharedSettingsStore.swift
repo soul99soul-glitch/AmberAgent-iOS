@@ -1175,6 +1175,46 @@ final class IOSSharedSettingsStore {
         set { defaults.set(newValue, forKey: subAgentOverridesKey) }
     }
 
+    var allowsDynamicSubAgents: Bool {
+        snapshot.agentRuntime.subAgent.allowDynamicSubAgents
+    }
+
+    func setDynamicSubAgentsAllowed(_ allowed: Bool) {
+        restoreSnapshot(IosSettingsMutations.shared.setDynamicSubAgentsAllowed(settings: snapshot, allowed: allowed))
+    }
+
+    func configureSubAgentRole(
+        roleId: String,
+        systemPrompt: String?,
+        modelId: String?,
+        reasoningLevel: ReasoningLevel?,
+        toolAllowlist: Set<String>?,
+        defaultSkillNames: [String]
+    ) {
+        precondition(modelId == nil || UUID(uuidString: modelId!) != nil)
+        restoreSnapshot(IosSettingsMutations.shared.configureSubAgentRole(
+            settings: snapshot,
+            roleId: roleId,
+            systemPrompt: systemPrompt,
+            modelId: modelId,
+            reasoningLevel: reasoningLevel,
+            toolAllowlist: toolAllowlist,
+            defaultSkillNames: defaultSkillNames
+        ))
+        var overrides = savedSubAgentOverrides.filter { $0["roleId"] != roleId }
+        overrides.append(["id": UUID().uuidString, "roleId": roleId, "systemPrompt": systemPrompt ?? ""])
+        savedSubAgentOverrides = overrides
+    }
+
+    func resetSubAgentRole(_ roleId: String) {
+        restoreSnapshot(IosSettingsMutations.shared.removeSubAgentOverride(settings: snapshot, roleId: roleId))
+        savedSubAgentOverrides = savedSubAgentOverrides.filter { $0["roleId"] != roleId }
+    }
+
+    func subAgentReasoningLevels(modelId: String?) -> [ReasoningLevel] {
+        IosSettingsMutations.shared.subAgentReasoningLevels(settings: snapshot, modelId: modelId)
+    }
+
     /// [Slice 4] Now merges a real SubAgentOverride into
     /// `snapshot.agentRuntime.subAgent.overrides` via
     /// `IosSettingsMutations.putSubAgentOverride`, then `restoreSnapshot`.

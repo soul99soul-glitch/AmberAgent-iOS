@@ -511,7 +511,8 @@ func expandedMcpToolDeclarations(mcpManager: IOSMcpManager) -> [Tool] {
     let enabledServerNames = Set(mcpManager.servers.filter(\.enabled).map(\.name))
     var declarations: [Tool] = []
     var seenNames = Set<String>()
-    for discovered in mcpManager.tools where enabledServerNames.contains(discovered.serverName) {
+    for discovered in mcpManager.tools
+        where enabledServerNames.contains(discovered.serverName) && discovered.tool.enabled {
         let spec = McpDiscoveredToolSpec(
             name: discovered.tool.name,
             description: discovered.tool.description,
