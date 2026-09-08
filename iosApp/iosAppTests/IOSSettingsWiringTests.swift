@@ -32,14 +32,13 @@ final class IOSSettingsWiringTests: XCTestCase {
         let store = try source("iosApp/SettingsStore.swift")
 
         XCTAssertTrue(view.contains("@AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)"))
-        XCTAssertTrue(view.contains("confirmationDialog("))
         XCTAssertTrue(view.contains("chatMaxToolResumeCountOptions"))
         XCTAssertFalse(view.contains("Stepper("))
         XCTAssertTrue(view.contains("Text(\"\\(clampedCount)\")"))
         XCTAssertFalse(view.contains("Text(\"\\(clampedCount) 次\")"))
         XCTAssertTrue(store.contains("chatMaxToolResumeCount"))
-        XCTAssertTrue(store.contains("chatMaxToolResumeCountOptions = [24, 48, 64, 96, 128]"))
-        XCTAssertTrue(store.contains("chatMaxToolResumeCountRange = 24...128"))
+        XCTAssertEqual(SettingsStore.chatMaxToolResumeCountOptions, [24, 48, 64, 96, 128, 256, 384])
+        XCTAssertEqual(SettingsStore.chatMaxToolResumeCountRange, 24...384)
         XCTAssertTrue(host.contains("dependencies.settingsStore.chatMaxToolResumeCount"))
     }
 

@@ -403,7 +403,7 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(names.contains("ios_ish_execute"))
     }
 
-    /// G7: 前台工具循环上限参数化——默认 24，clamp 24-128，UserDefaults 持久化。
+    /// G7: 前台工具循环上限参数化——默认 24，clamp 24-384，UserDefaults 持久化。
     func testChatMaxToolResumeCountDefaultsToTwentyFourAndClamps() {
         let defaults = isolatedDefaults()
         let store = SettingsStore(userDefaults: defaults)
@@ -413,11 +413,14 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         store.chatMaxToolResumeCount = 23
         XCTAssertEqual(store.chatMaxToolResumeCount, 24)
 
-        store.chatMaxToolResumeCount = 128
-        XCTAssertEqual(store.chatMaxToolResumeCount, 128)
+        store.chatMaxToolResumeCount = 256
+        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 256)
 
-        store.chatMaxToolResumeCount = 129
-        XCTAssertEqual(store.chatMaxToolResumeCount, 128)
+        store.chatMaxToolResumeCount = 384
+        XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 384)
+
+        store.chatMaxToolResumeCount = 385
+        XCTAssertEqual(store.chatMaxToolResumeCount, 384)
 
         store.chatMaxToolResumeCount = 9
         XCTAssertEqual(SettingsStore(userDefaults: defaults).chatMaxToolResumeCount, 24)

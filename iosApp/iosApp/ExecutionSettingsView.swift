@@ -18,6 +18,7 @@ struct ExecutionSettingsView: View {
     private var execJavaScriptEnabled = false
     @State private var taskStore = IOSAdvancedTaskStore.shared
     @State private var isToolLoopPickerPresented = false
+    @Namespace private var toolLoopTransition
     @ScaledMetric(relativeTo: .body) private var toolLoopValueWidth: CGFloat = 44
 
     var body: some View {
@@ -50,24 +51,47 @@ struct ExecutionSettingsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
-        .confirmationDialog(
-            "单轮上限",
-            isPresented: $isToolLoopPickerPresented,
-            titleVisibility: .visible
-        ) {
+        .sheet(isPresented: $isToolLoopPickerPresented) {
+            toolLoopPicker
+                .presentationDetents([.height(480), .large])
+                .presentationDragIndicator(.visible)
+                .navigationTransition(.zoom(sourceID: "toolLoopPicker", in: toolLoopTransition))
+        }
+    }
+
+    private var toolLoopPicker: some View {
+        VStack(spacing: 0) {
+            Text("单轮上限")
+                .font(.headline)
+                .padding(.vertical, 20)
+
             ForEach(SettingsStore.chatMaxToolResumeCountOptions, id: \.self) { option in
                 Button {
                     chatMaxToolResumeCount = option
+                    isToolLoopPickerPresented = false
                 } label: {
-                    if option == SettingsStore.clampChatMaxToolResumeCount(chatMaxToolResumeCount) {
-                        Label("\(option) 次", systemImage: "checkmark")
-                    } else {
+                    HStack {
                         Text("\(option) 次")
+                        Spacer()
+                        if option == SettingsStore.clampChatMaxToolResumeCount(chatMaxToolResumeCount) {
+                            Image(systemName: "checkmark")
+                        }
                     }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(option == SettingsStore.clampChatMaxToolResumeCount(chatMaxToolResumeCount) ? .isSelected : [])
             }
-            Button("取消", role: .cancel) {}
+
+            Button("取消", role: .cancel) {
+                isToolLoopPickerPresented = false
+            }
+            .buttonStyle(.glass)
+            .padding(.top, 12)
         }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 20)
     }
 
     private var header: some View {
@@ -138,7 +162,7 @@ struct ExecutionSettingsView: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // 数字列与箭头宽度固定；24 切到 128 时整行尺寸不变。
+                        // 数字列与箭头宽度固定；24 切到 384 时整行尺寸不变。
                         HStack(spacing: 8) {
                             Text("\(clampedCount)")
                                 .font(.body.monospacedDigit())
@@ -159,6 +183,7 @@ struct ExecutionSettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+                .matchedTransitionSource(id: "toolLoopPicker", in: toolLoopTransition)
                 .accessibilityLabel("单轮工具循环上限")
                 .accessibilityValue("\(clampedCount) 次")
                 .accessibilityHint("打开可选次数面板")
