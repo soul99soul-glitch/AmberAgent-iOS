@@ -37,6 +37,9 @@ struct IOSWebMountVisionReader {
         let category: String
         let httpStatus: Int?
         let networkCode: Int?
+        let providerErrorCode: String?
+        let providerErrorParameter: String?
+        let providerErrorReason: String?
 
         init(error: Swift.Error, model: String, provider: String) {
             self.model = IOSWebMountRedactor.redactedText(model)
@@ -44,8 +47,9 @@ struct IOSWebMountVisionReader {
             let nsError = error as NSError
             let message = (nsError.userInfo["KotlinException"] as? KotlinThrowable)?.message
                 ?? nsError.localizedDescription
-            // Match only the status prefix emitted by our KMP providers; never expose the body.
-            let pattern = #"^(?:OpenAI(?: Responses)?|Claude) request failed: ([45][0-9]{2})(?:\s|$)"#
+            // Match the HTTP prefixes emitted by our KMP JSON and SSE paths.
+            // The body is used only for allowlisted metadata, never displayed.
+            let pattern = #"^(?:(?:OpenAI(?: Responses)?|Claude) request failed: |HTTP )([45][0-9]{2})(?::\s*|\s+|$)"#
             let regex = try? NSRegularExpression(pattern: pattern)
             let match = regex?.firstMatch(in: message, range: NSRange(message.startIndex..., in: message))
             if let gemini = error as? IOSGeminiError, case .httpStatus(let status, _) = gemini {
@@ -58,6 +62,29 @@ struct IOSWebMountVisionReader {
                 httpStatus = nil
             }
             networkCode = nsError.domain == NSURLErrorDomain ? nsError.code : nil
+            var errorObject: [String: Any]?
+            var detail: String?
+            if let match, let range = Range(match.range, in: message),
+               let data = String(message[range.upperBound...]).data(using: .utf8),
+               let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                errorObject = body["error"] as? [String: Any]
+                detail = errorObject?["message"] as? String ?? body["detail"] as? String
+            }
+            providerErrorCode = Self.safeIdentifier(errorObject?["code"])
+            var parameter = Self.safeIdentifier(errorObject?["param"])
+            // Backend messages can echo prompts, screenshots or credentials.
+            // Only known protocol explanations are safe to render verbatim.
+            if detail == "Stream must be set to true" {
+                parameter = "stream"
+                providerErrorReason = "服务端要求使用流式请求。"
+            } else if let detail, detail.hasPrefix("Unsupported parameter: "),
+                      let name = Self.safeIdentifier(String(detail.dropFirst("Unsupported parameter: ".count))) {
+                parameter = name
+                providerErrorReason = "服务端不支持请求参数 \(name)。"
+            } else {
+                providerErrorReason = nil
+            }
+            providerErrorParameter = parameter
             if let httpStatus {
                 switch httpStatus {
                 case 401, 403: category = "authentication"
@@ -78,6 +105,9 @@ struct IOSWebMountVisionReader {
             var detail = "视觉读取请求失败：\(category)；模型：\(model)；服务商：\(provider)"
             if let httpStatus { detail += "；HTTP \(httpStatus)" }
             if let networkCode { detail += "；网络错误码：\(networkCode)" }
+            if let providerErrorCode { detail += "；错误码：\(providerErrorCode)" }
+            if let providerErrorParameter { detail += "；参数：\(providerErrorParameter)" }
+            if let providerErrorReason { detail += "；\(providerErrorReason)" }
             return detail
         }
 
@@ -85,7 +115,17 @@ struct IOSWebMountVisionReader {
             var result: [String: Any] = ["stage": "vision_request", "model": model, "provider": provider, "category": category]
             if let httpStatus { result["http_status"] = httpStatus }
             if let networkCode { result["network_error_code"] = networkCode }
+            if let providerErrorCode { result["provider_error_code"] = providerErrorCode }
+            if let providerErrorParameter { result["provider_error_param"] = providerErrorParameter }
+            if let providerErrorReason { result["provider_error_reason"] = providerErrorReason }
             return result
+        }
+
+        private static func safeIdentifier(_ value: Any?) -> String? {
+            guard let value = value as? String, value.count <= 80,
+                  value.range(of: #"^[a-zA-Z][a-zA-Z0-9_.\[\]]*$"#, options: .regularExpression) != nil,
+                  !value.hasPrefix("eyJ") else { return nil }
+            return value
         }
     }
 

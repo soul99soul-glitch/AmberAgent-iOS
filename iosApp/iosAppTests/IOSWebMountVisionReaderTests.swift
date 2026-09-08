@@ -217,6 +217,32 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
         XCTAssertNil(timeout.httpStatus)
     }
 
+    func testRequestDiagnosticsExplainCodexRejectionsWithoutEchoingResponseContent() {
+        for (detail, parameter) in [
+            ("Stream must be set to true", "stream"),
+            ("Unsupported parameter: max_output_tokens", "max_output_tokens")
+        ] {
+            let failure = IOSWebMountVisionReader.RequestFailure(
+                error: NSError(domain: "Kotlin", code: 0, userInfo: [
+                    "KotlinException": KotlinException(message: "HTTP 400: {\"detail\":\"\(detail)\"}")
+                ]), model: "gpt-6-astra", provider: "Codex"
+            )
+            XCTAssertEqual(failure.httpStatus, 400)
+            XCTAssertEqual(failure.providerErrorParameter, parameter)
+            XCTAssertNotNil(failure.providerErrorReason)
+        }
+        let failure = IOSWebMountVisionReader.RequestFailure(
+            error: NSError(domain: "Kotlin", code: 0, userInfo: [
+                "KotlinException": KotlinException(message: #"OpenAI Responses request failed: 400 {"error":{"code":"invalid_value","param":"input[0].content","message":"apiKey=secret screenshot=private data:image/png;base64,private"}}"#)
+            ]), model: "gpt-6-astra", provider: "Codex"
+        )
+        XCTAssertEqual(failure.diagnostics["provider_error_code"] as? String, "invalid_value")
+        XCTAssertEqual(failure.diagnostics["provider_error_param"] as? String, "input[0].content")
+        XCTAssertNil(failure.providerErrorReason)
+        XCTAssertFalse(failure.localizedDescription.contains("secret"))
+        XCTAssertFalse(String(describing: failure.diagnostics).contains("private"))
+    }
+
     func testReadPropagatesCancellation() async throws {
         let provider = BlockingProvider()
         let reader = IOSWebMountVisionReader(textProvider: provider)

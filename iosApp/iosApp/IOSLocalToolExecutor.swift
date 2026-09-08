@@ -3656,6 +3656,7 @@ struct IOSWebMountSessionRecord: Equatable, Identifiable {
     let leaseExpiresAtMillis: Int64?
     let persistentOptIn: Bool
     let needsReopen: Bool
+    var cardHidden: Bool = false
     let backend: IOSWebMountBackendKind
     let mcpServerName: String?
 
@@ -3742,6 +3743,7 @@ private struct IOSWebMountSessionMetadata: Codable, Equatable {
     var leaseExpiresAtMillis: Int64?
     var persistentOptIn: Bool
     var needsReopen: Bool
+    var cardHidden: Bool
     /// Optional for backward-compatible decoding of the existing v1 payload.
     var backendRawValue: String?
     var mcpServerName: String?
@@ -3758,6 +3760,7 @@ private struct IOSWebMountSessionMetadata: Codable, Equatable {
         case leaseExpiresAtMillis
         case persistentOptIn
         case needsReopen
+        case cardHidden
         case backendRawValue
         case mcpServerName
     }
@@ -3774,6 +3777,7 @@ private struct IOSWebMountSessionMetadata: Codable, Equatable {
         leaseExpiresAtMillis: Int64?,
         persistentOptIn: Bool,
         needsReopen: Bool,
+        cardHidden: Bool = false,
         backendRawValue: String?,
         mcpServerName: String?
     ) {
@@ -3788,6 +3792,7 @@ private struct IOSWebMountSessionMetadata: Codable, Equatable {
         self.leaseExpiresAtMillis = leaseExpiresAtMillis
         self.persistentOptIn = persistentOptIn
         self.needsReopen = needsReopen
+        self.cardHidden = cardHidden
         self.backendRawValue = backendRawValue
         self.mcpServerName = mcpServerName
     }
@@ -3807,6 +3812,7 @@ private struct IOSWebMountSessionMetadata: Codable, Equatable {
         // restore still marks them needs_reopen before exposing a runtime.
         persistentOptIn = try container.decodeIfPresent(Bool.self, forKey: .persistentOptIn) ?? true
         needsReopen = try container.decodeIfPresent(Bool.self, forKey: .needsReopen) ?? true
+        cardHidden = try container.decodeIfPresent(Bool.self, forKey: .cardHidden) ?? false
         backendRawValue = try container.decodeIfPresent(String.self, forKey: .backendRawValue)
         mcpServerName = try container.decodeIfPresent(String.self, forKey: .mcpServerName)
     }
@@ -3925,24 +3931,36 @@ final class IOSWebMountSessionStore {
         expireInactiveSessions()
         normalizeExpiredAgentLeases()
         ensureCurrentSessionIsLocal()
-        return runtimes.keys
+        // A reclaimed Agent session keeps only its bound metadata so the
+        // conversation and management page can offer an honest reopen entry.
+        // The runtime itself is absent until an explicit reopen action.
+        let sessionIds = Set(runtimes.keys).union(
+            metadata.compactMap { sessionId, item in
+                guard runtimes[sessionId] == nil,
+                      item.needsReopen,
+                      item.ownerConversationId?.nilIfBlank != nil else { return nil }
+                return sessionId
+            }
+        )
+        return sessionIds
             .sorted { lhs, rhs in
                 if lhs == currentSessionId { return true }
                 if rhs == currentSessionId { return false }
                 return (metadata[lhs]?.lastActivityMillis ?? 0) > (metadata[rhs]?.lastActivityMillis ?? 0)
             }
             .compactMap { sessionId -> IOSWebMountSessionRecord? in
-                guard let runtime = runtimes[sessionId], let metadata = metadata[sessionId] else { return nil }
-                let snapshot = runtime.snapshot
+                guard let metadata = metadata[sessionId] else { return nil }
+                let snapshot = runtimes[sessionId]?.snapshot
+                guard snapshot != nil || metadata.needsReopen else { return nil }
                 return IOSWebMountSessionRecord(
                     id: sessionId,
                     siteId: metadata.siteId,
                     siteName: metadata.siteName,
-                    title: IOSWebMountRedactor.redactedText(snapshot.title?.nilIfBlank ?? metadata.lastTitle?.nilIfBlank ?? "未命名页面"),
-                    redactedURL: snapshot.currentURL ?? snapshot.requestedURL ?? metadata.redactedURL ?? "",
-                    status: metadata.needsReopen ? "needs_reopen" : snapshot.status.rawValue,
-                    canGoBack: snapshot.canGoBack,
-                    canGoForward: snapshot.canGoForward,
+                    title: IOSWebMountRedactor.redactedText(snapshot?.title?.nilIfBlank ?? metadata.lastTitle?.nilIfBlank ?? "未命名页面"),
+                    redactedURL: snapshot?.currentURL ?? snapshot?.requestedURL ?? metadata.redactedURL ?? "",
+                    status: metadata.needsReopen ? "needs_reopen" : snapshot?.status.rawValue ?? "idle",
+                    canGoBack: snapshot?.canGoBack ?? false,
+                    canGoForward: snapshot?.canGoForward ?? false,
                     lastActivityMillis: metadata.lastActivityMillis,
                     isCurrent: sessionId == currentSessionId,
                     ownerConversationId: metadata.ownerConversationId,
@@ -3951,10 +3969,15 @@ final class IOSWebMountSessionStore {
                     leaseExpiresAtMillis: metadata.leaseExpiresAtMillis,
                     persistentOptIn: metadata.persistentOptIn,
                     needsReopen: metadata.needsReopen,
+                    cardHidden: metadata.cardHidden,
                     backend: metadata.backend,
                     mcpServerName: metadata.mcpServerName
                 )
             }
+    }
+
+    var activeRecords: [IOSWebMountSessionRecord] {
+        records.filter { runtimes[$0.id] != nil }
     }
 
     func runtime(sessionId requestedSessionId: String?, makeCurrent: Bool = true) throws -> IOSWebMountRuntimeServicing {
@@ -3973,6 +3996,37 @@ final class IOSWebMountSessionStore {
         ensureCurrentSessionIsLocal()
         let sessionId = requestedSessionId?.nilIfBlank ?? currentSessionId
         return runtimes[sessionId]
+    }
+
+    /// Rebuild a reclaimed session only for an explicit reopen action. The
+    /// restored runtime starts from an idle page; metadata never restores old
+    /// page state or actions.
+    @discardableResult
+    func reopen(sessionId: String) -> IOSWebMountSessionRecord? {
+        guard let item = metadata[sessionId], item.needsReopen else {
+            return record(sessionId: sessionId)
+        }
+        if runtimes[sessionId] != nil {
+            return record(sessionId: sessionId)
+        }
+        let runtime: IOSWebMountRuntimeServicing?
+        if item.backend == .local {
+            runtime = restoredRuntimeFactory?(sessionId)
+        } else {
+            runtime = remoteRuntimeFactory?(sessionId, item.backend)
+        }
+        guard let runtime, runtime.snapshot.sessionId == sessionId else { return nil }
+        if runtimes.count >= maxSessions,
+           !evictLeastRecentlyUsedSession(allowCurrent: false) {
+            return nil
+        }
+        runtimes[sessionId] = runtime
+        if var reopenedMetadata = metadata[sessionId] {
+            reopenedMetadata.lastActivityMillis = nowMillis()
+            metadata[sessionId] = reopenedMetadata
+        }
+        persistSessions()
+        return record(sessionId: sessionId)
     }
 
     @discardableResult
@@ -4011,16 +4065,21 @@ final class IOSWebMountSessionStore {
     @discardableResult
     func close(sessionId: String) throws -> IOSWebMountSessionRecord? {
         ensureCurrentSessionIsLocal()
-        guard runtimes[sessionId] != nil else {
+        guard runtimes[sessionId] != nil || metadata[sessionId] != nil else {
             throw IOSWebMountSessionError.sessionNotFound(sessionId)
         }
+        guard runtimes[sessionId] != nil else {
+            metadata.removeValue(forKey: sessionId)
+            persistSessions()
+            return record(sessionId: currentSessionId)
+        }
         if runtimes.count == 1 {
-            removeSession(sessionId)
+            removeSession(sessionId, preserveReopenEntry: false)
             expireInactiveSessions()
             persistSessions()
             return record(sessionId: currentSessionId)
         }
-        removeSession(sessionId)
+        removeSession(sessionId, preserveReopenEntry: false)
         if !metadata.values.contains(where: { $0.backend == .local }) {
             _ = try newSession(makeCurrent: true)
         }
@@ -4170,17 +4229,32 @@ final class IOSWebMountSessionStore {
         }
     }
 
+    func hideCard(sessionId: String) {
+        guard var item = metadata[sessionId], !item.cardHidden else { return }
+        item.cardHidden = true
+        metadata[sessionId] = item
+        persistSessions()
+    }
+
+    func showCard(sessionId: String) {
+        guard var item = metadata[sessionId], item.cardHidden else { return }
+        item.cardHidden = false
+        metadata[sessionId] = item
+        persistSessions()
+    }
+
     func expireInactiveSessions(nowMillis explicitNow: Int64? = nil) {
         let now = explicitNow ?? nowMillis()
         normalizeExpiredAgentLeases(now: now)
         let expired = metadata.compactMap { sessionId, item -> String? in
-            guard !item.persistentOptIn,
+            guard runtimes[sessionId] != nil,
+                  !item.persistentOptIn,
                   effectiveControlOwner(item, now: now) != .user,
                   now - item.lastActivityMillis >= Self.ephemeralTTLMillis else { return nil }
             return sessionId
         }
         for sessionId in expired {
-            removeSession(sessionId)
+            removeSession(sessionId, preserveReopenEntry: true)
         }
         if !metadata.values.contains(where: { $0.backend == .local }) {
             let runtime = runtimeFactory()
@@ -4219,7 +4293,7 @@ final class IOSWebMountSessionStore {
                 return (metadata[lhs]?.lastActivityMillis ?? 0) < (metadata[rhs]?.lastActivityMillis ?? 0)
             }
         guard let candidate else { return false }
-        removeSession(candidate)
+        removeSession(candidate, preserveReopenEntry: true)
         if currentSessionId == candidate {
             currentSessionId = runtimes.keys.first(where: { metadata[$0]?.backend == .local }) ?? ""
         }
@@ -4247,14 +4321,25 @@ final class IOSWebMountSessionStore {
             leaseExpiresAtMillis: metadata[sessionId]?.leaseExpiresAtMillis,
             persistentOptIn: metadata[sessionId]?.persistentOptIn ?? false,
             needsReopen: metadata[sessionId]?.needsReopen ?? false,
+            cardHidden: metadata[sessionId]?.cardHidden ?? false,
             backend: metadata[sessionId]?.backend ?? .local,
             mcpServerName: metadata[sessionId]?.mcpServerName
         )
     }
 
-    private func removeSession(_ sessionId: String) {
+    private func removeSession(_ sessionId: String, preserveReopenEntry: Bool = false) {
         guard runtimes.removeValue(forKey: sessionId) != nil else { return }
-        metadata.removeValue(forKey: sessionId)
+        if preserveReopenEntry,
+           var item = metadata[sessionId],
+           item.ownerConversationId?.nilIfBlank != nil {
+            item.ownerRunId = nil
+            item.controlOwner = .none
+            item.leaseExpiresAtMillis = nil
+            item.needsReopen = true
+            metadata[sessionId] = item
+        } else {
+            metadata.removeValue(forKey: sessionId)
+        }
         onSessionRemoved?(sessionId)
     }
 
@@ -4392,6 +4477,7 @@ final class IOSWebMountSessionStore {
             leaseExpiresAtMillis: nil,
             persistentOptIn: false,
             needsReopen: false,
+            cardHidden: false,
             backendRawValue: IOSWebMountBackendKind.local.rawValue,
             mcpServerName: nil
         )
@@ -4635,6 +4721,7 @@ final class IOSWebMountController {
         let runtime = (try? sessionStore.runtime(sessionId: sessionId, makeCurrent: true))
             ?? sessionStore.currentRuntime
         _ = try? sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
+        sessionStore.showCard(sessionId: runtime.snapshot.sessionId)
         let policy = IOSWebMountURLPolicy(settings: settings, extraAllowedHosts: registry.sites.flatMap(\.allowedHosts))
         switch policy.validate(site.homepageURL, site: site) {
         case .success(let url):
@@ -5429,8 +5516,8 @@ final class IOSWebMountController {
             "tool": "wm_tab_list",
             "current_session_id": sessionStore.currentSessionId,
             "max_sessions": sessionStore.maxSessions,
-            "count": sessionStore.records.count,
-            "sessions": sessionStore.records.map(sessionDictionary)
+            "count": sessionStore.activeRecords.count,
+            "sessions": sessionStore.activeRecords.map(sessionDictionary)
         ])
     }
 
@@ -5561,7 +5648,7 @@ final class IOSWebMountController {
             "current_session_id": sessionStore.currentSessionId,
             "max_sessions": sessionStore.maxSessions,
             "session": sessionDictionary(record),
-            "sessions": sessionStore.records.map(sessionDictionary)
+            "sessions": sessionStore.activeRecords.map(sessionDictionary)
         ])
     }
 
@@ -5589,7 +5676,7 @@ final class IOSWebMountController {
             "closed_session_id": sessionId,
             "current_session_id": sessionStore.currentSessionId,
             "current_session": next.map(sessionDictionary) ?? [:],
-            "sessions": sessionStore.records.map(sessionDictionary)
+            "sessions": sessionStore.activeRecords.map(sessionDictionary)
         ])
     }
 
@@ -6372,7 +6459,24 @@ final class IOSWebMountController {
             ])
         case .success(let url):
             let timeout = UInt64((args["timeout_ms"] as? Int) ?? 30_000).clamped(to: 1_000...60_000)
+            if let sessionId = (args["session_id"] as? String)?.nilIfBlank,
+               let record = sessionStore.record(sessionId: sessionId),
+               record.needsReopen {
+                if let context, let owner = record.ownerConversationId, owner != context.conversationId {
+                    throw IOSWebMountSessionError.sessionBindingMismatch(sessionId)
+                }
+                guard sessionStore.reopen(sessionId: sessionId) != nil else {
+                    return Self.json([
+                        "ok": false,
+                        "denied": true,
+                        "session_id": sessionId,
+                        "error_code": "session_reopen_unavailable",
+                        "reason": "WebMount session needs to be reopened, but its runtime is unavailable."
+                    ])
+                }
+            }
             let runtime = try sessionRuntime(from: args, context: context)
+            sessionStore.showCard(sessionId: runtime.snapshot.sessionId)
             (runtime as? IOSWebMountWKRuntime)?.setNavigationPolicy(
                 policy,
                 site: site,

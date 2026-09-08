@@ -25,6 +25,7 @@ import app.amber.ai.registry.ModelRegistry
 import app.amber.ai.util.parseErrorDetail
 import app.amber.ai.ui.ImageGenerationResult
 import app.amber.ai.ui.MessageChunk
+import app.amber.ai.ui.MessageStreamAccumulator
 import app.amber.ai.ui.RESPONSES_ITEM_ID_METADATA_KEY
 import app.amber.ai.ui.STREAM_TOOL_INDEX_METADATA_KEY
 import app.amber.ai.ui.UIMessage
@@ -90,7 +91,7 @@ internal fun usesOpenAIResponsesApi(
     providerSetting: ProviderSetting.OpenAI,
     modelId: String,
 ): Boolean {
-    if (providerSetting.useResponseApi) return true
+    if (providerSetting.useResponseApi || providerSetting.authMode == OpenAIAuthMode.CODEX_OAUTH) return true
     val wireId = modelId.substringAfterLast('/').lowercase()
     return wireId.startsWith("muse-spark")
 }
@@ -657,6 +658,27 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         messages: List<UIMessage>,
         params: TextGenerationParams,
     ): MessageChunk {
+        // The Codex OAuth endpoint accepts streaming responses only, including
+        // one-shot callers such as WebMount vision. Reuse the normal SSE parser
+        // and accumulator so terminal failures and cancellation still propagate.
+        if (providerSetting.authMode == OpenAIAuthMode.CODEX_OAUTH) {
+            val accumulator = MessageStreamAccumulator(
+                listOf(UIMessage(role = MessageRole.ASSISTANT, parts = emptyList())),
+                params.model,
+            )
+            var lastChunk: MessageChunk? = null
+            var finishReason: String? = null
+            responsesStreamText(providerSetting, messages, params).collect { chunk ->
+                accumulator.append(chunk)
+                lastChunk = chunk
+                chunk.choices.firstOrNull()?.finishReason?.let { finishReason = it }
+            }
+            val message = accumulator.snapshot().last()
+            return checkNotNull(lastChunk) { "OpenAI Responses stream returned no output" }.copy(
+                choices = listOf(UIMessageChoice(0, null, message, finishReason)),
+                usage = message.usage,
+            )
+        }
         val requestBody = buildResponsesRequestBody(providerSetting, messages, params, stream = false)
         val url = "${providerSetting.baseUrl}/responses"
         val response = httpClient.post(url) {
@@ -851,7 +873,13 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
                 put("tools", toolDefinitions)
                 put("parallel_tool_calls", false)
             }
-        }.mergeCustomBody(params.customBody)
+        }.mergeCustomBody(params.customBody).let { body ->
+            if (providerSetting.authMode != OpenAIAuthMode.CODEX_OAUTH) body
+            else JsonObject(body.toMutableMap().apply {
+                put("stream", JsonPrimitive(true))
+                remove("max_output_tokens")
+            })
+        }
     }
 
     private fun buildResponsesMessages(messages: List<UIMessage>): JsonArray = buildJsonArray {

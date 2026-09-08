@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import WebKit
+import Shared
 @testable import iosApp
 
 @MainActor
@@ -2141,6 +2142,100 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         )
         XCTAssertTrue(restoredRuntime.openedURLs.isEmpty)
         XCTAssertNil(restoredRuntime.snapshot.currentURL)
+    }
+
+    func testWebMountReclaimedAgentSessionKeepsReopenEntryAndCardState() throws {
+        var now: Int64 = 30_000
+        let store = IOSWebMountSessionStore(
+            initialRuntime: MockWebMountRuntime(sessionId: "reopen-local"),
+            runtimeFactory: { MockWebMountRuntime() },
+            restoredRuntimeFactory: { MockWebMountRuntime(sessionId: $0) },
+            nowMillis: { now }
+        )
+        let session = try store.newSession(persistent: false, makeCurrent: false)
+        _ = try store.bindAgentSession(
+            sessionId: session.id,
+            runId: "reopen-run",
+            conversationId: "reopen-conversation",
+            requiresControl: true
+        )
+        store.hideCard(sessionId: session.id)
+        store.releaseAgentOwnership(runId: "reopen-run")
+
+        now += IOSWebMountSessionStore.ephemeralTTLMillis + 1
+        let reclaimed = try XCTUnwrap(store.record(sessionId: session.id))
+        XCTAssertTrue(reclaimed.needsReopen)
+        XCTAssertTrue(reclaimed.cardHidden)
+        XCTAssertNil(store.runtimeIfPresent(sessionId: session.id))
+        XCTAssertFalse(store.activeRecords.contains { $0.id == session.id })
+        store.showCard(sessionId: session.id)
+        store.hideCard(sessionId: session.id)
+        XCTAssertTrue(try XCTUnwrap(store.record(sessionId: session.id)).cardHidden)
+
+        let reopened = try XCTUnwrap(store.reopen(sessionId: session.id))
+        XCTAssertEqual(reopened.id, session.id)
+        XCTAssertTrue(reopened.needsReopen)
+        XCTAssertNotNil(store.runtimeIfPresent(sessionId: session.id))
+        store.showCard(sessionId: session.id)
+        XCTAssertFalse(try XCTUnwrap(store.record(sessionId: session.id)).cardHidden)
+        now += IOSWebMountSessionStore.ephemeralTTLMillis + 1
+        XCTAssertTrue(try XCTUnwrap(store.record(sessionId: session.id)).needsReopen)
+        _ = try store.close(sessionId: session.id)
+        XCTAssertNil(store.record(sessionId: session.id))
+    }
+
+    func testWebMountCardWindowKeepsFifthNextTurnAndExpiresOnSixthWhileTouchRefreshesActivity() throws {
+        let dates = (0..<7).map { second in
+            Kotlinx_datetimeLocalDateTime(
+                year: 2026,
+                month: 9,
+                day: 8,
+                hour: 0,
+                minute: 0,
+                second: Int32(second),
+                nanosecond: 0
+            )
+        }
+        let messages = dates.map { date in
+            UIMessage(
+                id: KotlinUuid.companion.random(),
+                role: MessageRole.user,
+                parts: [UIMessagePart.Text(text: "turn", metadata: nil)],
+                annotations: [],
+                createdAt: date,
+                finishedAt: nil,
+                modelId: nil,
+                usage: nil,
+                translation: nil
+            )
+        }
+        let afterFifthNextTurn = ChatView.webMountRecentUserTurnStartMillis(
+            from: Array(messages.prefix(6))
+        )
+        let afterSixthNextTurn = ChatView.webMountRecentUserTurnStartMillis(from: messages)
+        XCTAssertEqual(afterFifthNextTurn, ChatContextSnapshot.epochMillis(from: dates[0]))
+        XCTAssertEqual(afterSixthNextTurn, ChatContextSnapshot.epochMillis(from: dates[1]))
+
+        var now = try XCTUnwrap(afterFifthNextTurn) + 1
+        let store = IOSWebMountSessionStore(
+            initialRuntime: MockWebMountRuntime(sessionId: "touch-session"),
+            nowMillis: { now }
+        )
+        _ = try store.bindAgentSession(sessionId: "touch-session", runId: "run", conversationId: "conversation", requiresControl: true)
+        store.releaseAgentOwnership(runId: "run")
+        let original = try XCTUnwrap(store.record(sessionId: "touch-session"))
+        XCTAssertTrue(ChatView.webMountSessionIsRetained(original, conversationId: "conversation", recentUserTurnStartMillis: afterFifthNextTurn))
+        XCTAssertFalse(ChatView.webMountSessionIsRetained(original, conversationId: "conversation", recentUserTurnStartMillis: afterSixthNextTurn))
+
+        now = try XCTUnwrap(afterSixthNextTurn) + 1
+        store.touch(sessionId: original.id, makeCurrent: false)
+        let renewed = try XCTUnwrap(store.record(sessionId: original.id))
+        XCTAssertTrue(ChatView.webMountSessionIsRetained(renewed, conversationId: "conversation", recentUserTurnStartMillis: afterSixthNextTurn))
+        XCTAssertFalse(ChatView.webMountSessionIsRetained(renewed, conversationId: "another-conversation", recentUserTurnStartMillis: afterSixthNextTurn))
+        store.hideCard(sessionId: original.id)
+        store.touch(sessionId: original.id, makeCurrent: false)
+        XCTAssertFalse(ChatView.webMountSessionIsRetained(try XCTUnwrap(store.record(sessionId: original.id)), conversationId: "conversation", recentUserTurnStartMillis: afterSixthNextTurn))
+
     }
 
     func testWebMountWatchRouteRequiresExactLocalRegisteredSession() throws {

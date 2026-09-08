@@ -245,6 +245,7 @@ private enum WebMountActionLayout {
 struct AgentBrowserTaskCard: View {
     let record: IOSWebMountSessionRecord
     let onCollapse: (() -> Void)?
+    let onHide: (() -> Void)?
     let onOpen: () -> Void
 
     @GestureState private var dragTranslation: CGFloat = 0
@@ -253,10 +254,12 @@ struct AgentBrowserTaskCard: View {
     init(
         record: IOSWebMountSessionRecord,
         onCollapse: (() -> Void)? = nil,
+        onHide: (() -> Void)? = nil,
         onOpen: @escaping () -> Void
     ) {
         self.record = record
         self.onCollapse = onCollapse
+        self.onHide = onHide
         self.onOpen = onOpen
     }
 
@@ -310,17 +313,33 @@ struct AgentBrowserTaskCard: View {
 
     @ViewBuilder
     private var collapseButton: some View {
-        if onCollapse != nil {
-            Button(action: collapse) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AmberTheme.muted)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+        if onCollapse != nil || onHide != nil {
+            HStack(spacing: 2) {
+                if onHide != nil {
+                    Button(action: hide) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("隐藏浏览器任务")
+                    .accessibilityHint("保留网页会话，可从 WebMount 管理页找回")
+                }
+                if onCollapse != nil {
+                    Button(action: collapse) {
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(AmberTheme.muted)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("收起浏览器任务")
+                    .accessibilityHint("向下拖动或轻点收起")
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("收起浏览器任务")
-            .accessibilityHint("向下拖动或轻点收起")
         }
     }
 
@@ -341,6 +360,13 @@ struct AgentBrowserTaskCard: View {
         guard let onCollapse else { return }
         withAnimation(collapseAnimation) {
             onCollapse()
+        }
+    }
+
+    private func hide() {
+        guard let onHide else { return }
+        withAnimation(collapseAnimation) {
+            onHide()
         }
     }
 
@@ -415,7 +441,8 @@ struct AgentBrowserTaskCard: View {
     }
 
     private var openLabel: String {
-        record.backend == .local ? "观看页面" : "查看状态"
+        if record.needsReopen { return IOSAppLocalization.string("重新打开", defaultValue: "重新打开") }
+        return record.backend == .local ? "观看页面" : "查看状态"
     }
 
     private var status: (label: String, image: String, tint: Color) {
@@ -567,6 +594,8 @@ private struct AgentBrowserTaskDisplayInfo {
             break
         }
         switch record.status {
+        case IOSWebMountRuntimeStatus.ready.rawValue:
+            return (IOSAppLocalization.string("可接管", defaultValue: "可接管"), "hand.tap", AmberTheme.muted)
         case IOSWebMountRuntimeStatus.loading.rawValue:
             return ("正在加载", "arrow.triangle.2.circlepath", AmberTheme.accentAmber)
         case IOSWebMountRuntimeStatus.failed.rawValue:
@@ -753,10 +782,7 @@ struct WebMountView: View {
     private var agentBrowserSessions: [IOSWebMountSessionRecord] {
         controller.sessionStore.records
             .filter { record in
-                let isActive = record.ownerRunId?.nilIfBlank != nil
-                let isUserHeld = record.controlOwner == .user && record.ownerConversationId?.nilIfBlank != nil
-                let isRecoverable = record.needsReopen && record.ownerConversationId?.nilIfBlank != nil
-                guard isActive || isUserHeld || isRecoverable else { return false }
+                guard record.ownerConversationId?.nilIfBlank != nil else { return false }
                 return record.backend != .local || WebMountSiteRoute(watching: record, registry: registry) != nil
             }
             .sorted { lhs, rhs in
@@ -799,10 +825,21 @@ struct WebMountView: View {
     }
 
     private func openAgentBrowserSession(_ sessionId: String) {
+        guard let existingRecord = controller.sessionStore.record(sessionId: sessionId) else {
+            banner = "此站点会话不存在或已过期。"
+            return
+        }
+        if existingRecord.needsReopen {
+            guard controller.sessionStore.reopen(sessionId: sessionId) != nil else {
+                banner = "此站点会话暂时无法重新打开。"
+                return
+            }
+        }
         guard let record = controller.sessionStore.record(sessionId: sessionId) else {
             banner = "此站点会话不存在或已过期。"
             return
         }
+        controller.sessionStore.showCard(sessionId: sessionId)
         if record.backend == .local {
             guard let route = WebMountSiteRoute(watching: record, registry: registry) else {
                 banner = "此站点会话未绑定可用站点，无法观看。"

@@ -4,6 +4,7 @@ import app.amber.ai.core.MessageRole
 import app.amber.ai.core.ReasoningLevel
 import app.amber.ai.core.Tool
 import app.amber.ai.provider.Model
+import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.OpenAIAuthMode
@@ -16,6 +17,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -201,16 +203,28 @@ class OpenAIKmpProviderRequestTest {
                 model = reasoningModel("gpt-6-astra"),
                 temperature = 0.2f,
                 topP = 0.9f,
+                maxTokens = 1200,
                 reasoningLevel = ReasoningLevel.OFF,
+                customBody = listOf(CustomBody("max_output_tokens", JsonPrimitive(1200)), CustomBody("stream", JsonPrimitive(false))),
             ),
-            stream = true,
+            stream = false,
         )
 
         assertTrue(usesOpenAIResponsesApi(codex, "gpt-6-astra"))
         assertTrue(body.getValue("stream").jsonPrimitive.boolean)
         assertFalse("temperature" in body)
         assertFalse("top_p" in body)
+        assertFalse("max_output_tokens" in body)
         assertEquals("low", body.getValue("reasoning").jsonObject.getValue("effort").jsonPrimitive.content)
+
+        val apiBody = provider.buildResponsesRequestBody(
+            providerSetting = setting.copy(useResponseApi = true),
+            messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+            params = TextGenerationParams(model = reasoningModel("gpt-6-astra"), maxTokens = 1200),
+            stream = false,
+        )
+        assertFalse(apiBody.getValue("stream").jsonPrimitive.boolean)
+        assertEquals("1200", apiBody.getValue("max_output_tokens").jsonPrimitive.content)
     }
 
     @Test

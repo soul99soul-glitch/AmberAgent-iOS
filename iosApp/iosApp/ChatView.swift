@@ -131,6 +131,7 @@ struct ChatView: View {
     @State private var showWebMountDesktopBackends = false
     @State private var focusedRemoteWebMountSessionId: String?
     @State private var collapsedWebMountSessionId: String?
+    @State private var expandedWebMountSessionId: String?
     @State private var photoPickerItems: [PhotosPickerItem] = []
     @State private var personalContextPicker = IOSPersonalContextPickerCoordinator.shared
     @State private var personalContextPhotoItems: [PhotosPickerItem] = []
@@ -191,7 +192,10 @@ struct ChatView: View {
                     AgentBrowserTaskCompactBar(
                         record: record,
                         runSummary: browserTaskRunSummary,
-                        onExpand: { collapsedWebMountSessionId = nil }
+                        onExpand: {
+                            collapsedWebMountSessionId = nil
+                            expandedWebMountSessionId = record.id
+                        }
                     )
                     .padding(.horizontal, ChatLayout.contentHorizontalInset)
                     .padding(.bottom, max(10, composerBarHeight + 8))
@@ -231,6 +235,9 @@ struct ChatView: View {
             }
         }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
+        .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
+            expandedWebMountSessionId = nil
+        }
         .safeAreaBar(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 topBar
@@ -726,13 +733,47 @@ struct ChatView: View {
 
     private var activeWebMountSession: IOSWebMountSessionRecord? {
         guard let conversationId = currentConversationIdString else { return nil }
+        let recentUserTurnStartMillis = webMountRecentUserTurnStartMillis
         return IOSWebMountController.shared.sessionStore.records
-            .filter {
-                $0.ownerConversationId == conversationId &&
-                    ($0.ownerRunId?.nilIfBlank != nil || $0.controlOwner == .user) &&
-                    webMountSessionIsOpenable($0)
+            .filter { record in
+                Self.webMountSessionIsRetained(
+                    record,
+                    conversationId: conversationId,
+                    recentUserTurnStartMillis: recentUserTurnStartMillis
+                ) &&
+                    webMountSessionIsOpenable(record)
             }
             .max { $0.lastActivityMillis < $1.lastActivityMillis }
+    }
+
+    /// Card retention follows the same user-turn boundary as tool exposure.
+    /// Agent rounds and retries update activity inside this window without
+    /// creating another user message, so they do not consume a turn.
+    private var webMountRecentUserTurnStartMillis: Int64? {
+        Self.webMountRecentUserTurnStartMillis(from: viewModel.messages)
+    }
+
+    static func webMountRecentUserTurnStartMillis(from messages: [UIMessage]) -> Int64? {
+        messages.reversed()
+            .filter { $0.role == MessageRole.user }
+            // recentToolsForExposure scans assistant messages until it sees
+            // the sixth user message. Use that same boundary so the session
+            // used by the previous turn remains visible for all five next
+            // user turns.
+            .prefix(6)
+            .last
+            .flatMap { ChatContextSnapshot.epochMillis(from: $0.createdAt) }
+    }
+
+    static func webMountSessionIsRetained(
+        _ record: IOSWebMountSessionRecord,
+        conversationId: String,
+        recentUserTurnStartMillis: Int64?
+    ) -> Bool {
+        guard record.ownerConversationId == conversationId, !record.cardHidden else { return false }
+        return record.ownerRunId?.nilIfBlank != nil ||
+            record.controlOwner == .user ||
+            (recentUserTurnStartMillis.map { record.lastActivityMillis >= $0 } ?? false)
     }
 
     private var displayedWebMountSession: IOSWebMountSessionRecord? {
@@ -744,8 +785,13 @@ struct ChatView: View {
     private var compactWebMountSession: IOSWebMountSessionRecord? {
         guard !isAttachExpanded,
               let record = displayedWebMountSession,
-              collapsedWebMountSessionId == record.id else { return nil }
+              webMountSessionIsCompact(record) else { return nil }
         return record
+    }
+
+    private func webMountSessionIsCompact(_ record: IOSWebMountSessionRecord) -> Bool {
+        collapsedWebMountSessionId == record.id ||
+            (record.ownerRunId?.nilIfBlank == nil && record.controlOwner != .user && expandedWebMountSessionId != record.id)
     }
 
     private var browserTaskRunSummary: String? {
@@ -780,6 +826,25 @@ struct ChatView: View {
     private func openWebMountSession(sessionId: String) {
         let controller = IOSWebMountController.shared
         guard let record = controller.sessionStore.record(sessionId: sessionId) else { return }
+        if record.needsReopen {
+            guard controller.sessionStore.reopen(sessionId: sessionId) != nil else {
+                conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                    title: IOSAppLocalization.string(
+                        "浏览器任务无法重新打开",
+                        defaultValue: "浏览器任务无法重新打开"
+                    ),
+                    message: IOSAppLocalization.string(
+                        "此会话已回收，当前无法创建新的页面；请先关闭其他浏览器会话后重试。",
+                        defaultValue: "此会话已回收，当前无法创建新的页面；请先关闭其他浏览器会话后重试。"
+                    ),
+                    severity: .warning
+                ))
+                return
+            }
+        }
+        controller.sessionStore.showCard(sessionId: sessionId)
+        collapsedWebMountSessionId = nil
+        expandedWebMountSessionId = sessionId
         if record.backend == .local {
             guard let route = WebMountSiteRoute(watching: record, registry: controller.registry) else { return }
             router.navigate(to: .webMountSite(site: route))
@@ -1266,10 +1331,18 @@ struct ChatView: View {
             }
 
             if let record = displayedWebMountSession,
-               collapsedWebMountSessionId != record.id {
+               !webMountSessionIsCompact(record) {
                 AgentBrowserTaskCard(
                     record: record,
-                    onCollapse: { collapsedWebMountSessionId = record.id }
+                    onCollapse: {
+                        collapsedWebMountSessionId = record.id
+                        expandedWebMountSessionId = nil
+                    },
+                    onHide: {
+                        IOSWebMountController.shared.sessionStore.hideCard(sessionId: record.id)
+                        collapsedWebMountSessionId = nil
+                        expandedWebMountSessionId = nil
+                    }
                 ) {
                     openWebMountSession(sessionId: record.id)
                 }
