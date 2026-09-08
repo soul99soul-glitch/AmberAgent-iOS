@@ -144,4 +144,42 @@ struct IOSLocalNotificationTests {
 
         #expect(received == [url])
     }
+
+    @Test func watchHandoffSurvivesHandlerInstallationUntilDestinationAcknowledges() throws {
+        let suite = "WatchHandoff.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let url = try #require(IOSAppDeepLink.url(for: .conversation(id: "conversation-1")))
+        let first = IOSDeepLinkInbox(defaults: defaults)
+        var received: [URL] = []
+        first.submit(url, persistUntilHandled: true)
+        first.installHandler { received.append($0) }
+        #expect(received == [url])
+
+        // Installing a handler is not evidence that bootstrap/navigation finished.
+        let restarted = IOSDeepLinkInbox(defaults: defaults)
+        received = []
+        restarted.installHandler { received.append($0) }
+        #expect(received == [url])
+        restarted.acknowledge(url)
+
+        received = []
+        IOSDeepLinkInbox(defaults: defaults).installHandler { received.append($0) }
+        #expect(received.isEmpty)
+    }
+
+    @Test func watchHandoffWithLiveHandlerIsDurableAndDeliveredOnce() throws {
+        let suite = "WatchHandoffLive.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let url = try #require(IOSAppDeepLink.url(for: .conversation(id: "conversation-2")))
+        let inbox = IOSDeepLinkInbox(defaults: defaults)
+        var received: [URL] = []
+        inbox.installHandler { received.append($0) }
+        inbox.submit(url, persistUntilHandled: true)
+        #expect(received == [url])
+        received = []
+        IOSDeepLinkInbox(defaults: defaults).installHandler { received.append($0) }
+        #expect(received == [url])
+    }
 }

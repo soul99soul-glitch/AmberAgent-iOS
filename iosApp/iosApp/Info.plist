@@ -162,9 +162,12 @@
         <string>com.apple.developer.icloud-services</string>
         <string>com.apple.developer.journal.allow</string>
         <string>com.apple.developer.weatherkit</string>
+        <string>com.apple.security.application-groups</string>
     </array>
     <key>AmberAgentExperimentalConfiguredEntitlements</key>
-    <array/>
+    <array>
+        <string>com.apple.security.application-groups</string>
+    </array>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UIApplicationSupportsMultipleScenes</key>

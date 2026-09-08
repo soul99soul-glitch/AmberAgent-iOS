@@ -275,6 +275,9 @@ struct ChatMiniAppOutputApplication {
     let messages: [UIMessage]
     let rollbackMessages: [UIMessage]
     let outcome: Outcome
+    /// Exact title from the committed `IOSMiniAppRecord`; never inferred from
+    /// the assistant's status text or arbitrary response content.
+    let resultTitle: String?
     private let commitHandler: (@MainActor () -> Bool)?
     private let rollbackHandler: (@MainActor () -> Bool)?
     private let workspaceSyncHandler: (@MainActor () -> ChatMiniAppWorkspaceSyncFailure?)?
@@ -283,6 +286,7 @@ struct ChatMiniAppOutputApplication {
         messages: [UIMessage],
         rollbackMessages: [UIMessage]? = nil,
         outcome: Outcome = .applied,
+        resultTitle: String? = nil,
         commit: (@MainActor () -> Bool)? = nil,
         rollback: (@MainActor () -> Bool)? = nil,
         syncWorkspace: (@MainActor () -> ChatMiniAppWorkspaceSyncFailure?)? = nil
@@ -290,6 +294,7 @@ struct ChatMiniAppOutputApplication {
         self.messages = messages
         self.rollbackMessages = rollbackMessages ?? messages
         self.outcome = outcome
+        self.resultTitle = resultTitle
         self.commitHandler = commit
         self.rollbackHandler = rollback
         self.workspaceSyncHandler = syncWorkspace

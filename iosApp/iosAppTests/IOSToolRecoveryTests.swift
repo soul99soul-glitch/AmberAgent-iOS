@@ -620,6 +620,197 @@ final class IOSToolRecoveryTests: XCTestCase {
         XCTAssertEqual(interruptedRun?.status, .interrupted)
     }
 
+    @MainActor
+    func testTwoOutcomeUnknownCallsKeepTheSecondGateAcrossReconcileRetryAndW3() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runStore = IOSDurableRunStore(dao: dao)
+        let store = makeConversationStore()
+        await store.bootstrap()
+        await store.saveCurrent(messages: [
+            toolCallMessage(toolCallId: "tc-1", toolName: "workspace_file_write"),
+            toolCallMessage(toolCallId: "tc-2", toolName: "workspace_file_write"),
+        ])
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let conversationIdString = conversationId.toHexDashString()
+        let runId = "tool-unknown-two-gates-\(UUID().uuidString)"
+
+        let didStartRun = try await runStore.startChatRun(
+            runId: runId,
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: conversationIdString
+        )
+        XCTAssertTrue(didStartRun)
+        let firstStarted = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-1",
+            toolName: "workspace_file_write",
+            argsDigest: "digest-1",
+            effectClass: .sideEffect
+        )
+        let secondStarted = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: "tc-2",
+            toolName: "workspace_file_write",
+            argsDigest: "digest-2",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(firstStarted)
+        XCTAssertTrue(secondStarted)
+
+        let firstViewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false,
+            agentRuntimeDao: dao
+        )
+        firstViewModel.conversationStore = store
+        firstViewModel.reloadFromStore()
+        let firstSweep = await firstViewModel.applyToolCallLedgerRecovery(
+            forInterruptedRuns: [(runId: runId, conversationId: conversationIdString)]
+        )
+
+        XCTAssertTrue(firstSweep.outcomeUnknownRunIds.contains(runId))
+        XCTAssertEqual(firstViewModel.pendingToolOutcomeUnknown?.toolCallId, "tc-1")
+        XCTAssertTrue(firstViewModel.hasPendingUserGate)
+
+        await firstViewModel.reconcilePendingToolOutcome(didApply: true)
+        XCTAssertEqual(firstViewModel.pendingToolOutcomeUnknown?.toolCallId, "tc-2")
+        XCTAssertTrue(firstViewModel.hasPendingUserGate)
+
+        // The same decision may be delivered again after its ledger transition
+        // committed but a later read failed. It must be idempotent and leave the
+        // second unknown gate in place.
+        let repeatedReconcile = await IOSRunRecovery.reconcileOutcomeUnknown(
+            runId: runId,
+            toolCallId: "tc-1",
+            didApply: true,
+            dao: dao,
+            runStore: runStore
+        )
+        XCTAssertTrue(repeatedReconcile)
+        let runAfterRepeatedReconcile = try await runStore.snapshot(runId: runId)
+        XCTAssertEqual(runAfterRepeatedReconcile?.status, .outcomeUnknown)
+        let loadedAfterRepeatedReconcile = await ledger.toolTransactions(runId: runId)
+        let transactionsAfterRepeatedReconcile = try XCTUnwrap(loadedAfterRepeatedReconcile)
+        let stateByToolCallId = Dictionary(uniqueKeysWithValues: transactionsAfterRepeatedReconcile.map {
+            ($0.toolCallId, $0.state)
+        })
+        XCTAssertEqual(stateByToolCallId["tc-1"], .reconciled)
+        XCTAssertEqual(stateByToolCallId["tc-2"], .outcomeUnknown)
+
+        // A newly composed VM must rediscover the remaining gate from Room/W3.
+        let restoredViewModel = ChatViewModel(
+            settingsStore: SettingsStore(),
+            autoGenerateResponses: false,
+            agentRuntimeDao: dao
+        )
+        restoredViewModel.conversationStore = store
+        restoredViewModel.reloadFromStore()
+        let loadedPairs = await IOSRunRecovery.unfinishedRunConversationPairs(runStore: runStore)
+        let restoredPairs = try XCTUnwrap(loadedPairs).filter { $0.runId == runId }
+        XCTAssertEqual(restoredPairs.count, 1)
+        let restoredSweep = await restoredViewModel.applyToolCallLedgerRecovery(
+            forInterruptedRuns: restoredPairs
+        )
+
+        XCTAssertTrue(restoredSweep.outcomeUnknownRunIds.contains(runId))
+        XCTAssertEqual(restoredViewModel.pendingToolOutcomeUnknown?.toolCallId, "tc-2")
+        XCTAssertTrue(restoredViewModel.hasPendingUserGate)
+        let runAfterW3 = try await runStore.snapshot(runId: runId)
+        XCTAssertEqual(runAfterW3?.status, .outcomeUnknown)
+
+        await restoredViewModel.reconcilePendingToolOutcome(didApply: false)
+        XCTAssertNil(restoredViewModel.pendingToolOutcomeUnknown)
+        let runAfterLastDecision = try await runStore.snapshot(runId: runId)
+        XCTAssertEqual(runAfterLastDecision?.status, .interrupted)
+
+        WatchTaskCoordinator.shared.clear(runId: runId)
+    }
+
+    @MainActor
+    func testColdCancelRejectsRecoveryPendingRunWithUnknownLedger() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let runStore = IOSDurableRunStore(dao: dao)
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let runId = "watch-cold-cancel-unknown-\(UUID().uuidString)"
+        let conversationId = "conversation-\(UUID().uuidString)"
+        let toolCallId = "tc-cold-cancel"
+
+        let didStartRun = try await runStore.startChatRun(
+            runId: runId,
+            startedAt: 1,
+            inputDigest: "digest",
+            conversationId: conversationId
+        )
+        XCTAssertTrue(didStartRun)
+        let didMarkRecoveryPending = try await runStore.transition(
+            runId: runId,
+            expected: .running,
+            to: .recoveryPending,
+            detail: "tool_outcome_unknown"
+        )
+        XCTAssertTrue(didMarkRecoveryPending)
+        let didStartTool = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: toolCallId,
+            toolName: "workspace_file_write",
+            argsDigest: "digest",
+            effectClass: .sideEffect
+        )
+        XCTAssertTrue(didStartTool)
+        let didMarkUnknown = await ledger.recordToolCallRecoveryTransition(
+            runId: runId,
+            toolCallId: toolCallId,
+            expected: .started,
+            to: .outcomeUnknown,
+            outcome: "process_interrupted"
+        )
+        XCTAssertTrue(didMarkUnknown)
+
+        let suite = "IOSToolRecoveryTests.WatchColdCancel.\(UUID().uuidString)"
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSToolRecoveryTests-WatchColdCancel-\(UUID().uuidString)")
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let service = IOSWatchCompanionService(baseDirectory: root, defaults: defaults)
+        let noColdStart: WatchTaskColdStartPreparer = { nil }
+        let coordinator = WatchTaskCoordinator(
+            bridge: WatchConnectivityBridge(),
+            companionService: service,
+            coldStartPreparer: noColdStart,
+            attachmentWaitNanoseconds: 0,
+            agentRuntimeDao: dao
+        )
+        let result = await coordinator.handleWatchAction(WatchTaskActionRequest(
+            requestId: "cold-cancel-\(UUID().uuidString)",
+            runId: runId,
+            conversationId: conversationId,
+            decisionId: nil,
+            action: .cancel,
+            optionId: nil,
+            text: nil,
+            createdAt: Date()
+        ))
+
+        XCTAssertFalse(result.accepted)
+        XCTAssertEqual(result.message, "操作结果待核实，请在原 iPhone 对话中确认")
+        let snapshot = coordinator.currentSnapshot()
+        XCTAssertEqual(snapshot.runId, runId)
+        XCTAssertTrue(WatchTaskSnapshotBuilder.isPhoneOnlyDecision(snapshot.decision))
+        let runAfterCancel = try await runStore.snapshot(runId: runId)
+        XCTAssertEqual(runAfterCancel?.status, .recoveryPending)
+        let loadedTransactions = await ledger.toolTransactions(runId: runId)
+        let transactions = try XCTUnwrap(loadedTransactions)
+        let transaction = transactions.first(where: { $0.toolCallId == toolCallId })
+        XCTAssertEqual(transaction?.state, .outcomeUnknown)
+    }
+
     // F1 fix (docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md's independent-review
     // findings): `ChatViewModel.terminateRecoveredPendingApprovals` used to
     // short-circuit — `guard let pendingTool = ... first(where: descriptor's

@@ -36,16 +36,34 @@ enum WatchTaskSnapshotBuilder {
         if let decision = visibleDecision {
             switch decision.type {
             case .approval:
-                actions.append(contentsOf: [.approve, .deny])
+                // Keep the action projection in lockstep with the options on
+                // the decision card. In particular, a phone-only approval must
+                // never leave a stale approve action in the snapshot.
+                if decision.options.contains(where: { $0.style == .approve }) {
+                    actions.append(.approve)
+                }
+                if decision.options.contains(where: { $0.style == .deny }) {
+                    actions.append(.deny)
+                }
             case .askUser:
-                actions.append(contentsOf: [.choose, .dictate])
+                if decision.options.contains(where: { $0.style == .choice }) {
+                    actions.append(.choose)
+                }
+                if decision.allowsVoice,
+                   decision.options.contains(where: { $0.style == .dictate }) {
+                    actions.append(.dictate)
+                }
             case .voiceReply:
-                actions.append(.dictate)
+                if decision.allowsVoice,
+                   decision.options.contains(where: { $0.style == .dictate }) {
+                    actions.append(.dictate)
+                }
             }
         }
         if presentation.phase == .running
-            || presentation.phase == .waitingForUser
-            || presentation.phase == .reconnecting {
+            || presentation.phase == .reconnecting
+            || (presentation.phase == .waitingForUser
+                && !isPhoneOnlyDecision(visibleDecision)) {
             actions.append(.cancel)
         }
         if presentation.phase == .failed,
@@ -99,16 +117,18 @@ enum WatchTaskSnapshotBuilder {
                 languageCode: languageCode
             )
         case .search(let request):
+            let allowsApproval = allowsApprovalOnWatch(prompt)
             return approvalDecision(
                 id: request.id,
                 title: request.title,
-                body: body(
-                    primary: request.target,
-                    fallback: request.reason,
-                    chips: [request.providerName],
-                    languageCode: languageCode
-                ),
+                body: allowsApproval
+                    ? searchApprovalBody(request, languageCode: languageCode)
+                    : localized(
+                        "目标、服务或发送内容无法在手表完整显示，请在 iPhone 查看。",
+                        languageCode: languageCode
+                    ),
                 risk: .medium,
+                allowsWatchApproval: allowsApproval,
                 languageCode: languageCode
             )
         case .webMount(let request):
@@ -249,19 +269,75 @@ enum WatchTaskSnapshotBuilder {
         }
     }
 
+    /// Hard gate shared by the Watch snapshot projection and the phone-side
+    /// resolver. Only a complete, read-only search/web-read request can be
+    /// approved on the Watch. Callers on the phone must repeat this check
+    /// immediately before resolving the approval; hiding a button is not a
+    /// security boundary.
+    static func allowsApprovalOnWatch(_ prompt: ChatToolApprovalPrompt) -> Bool {
+        guard case .search(let request) = prompt else { return false }
+        return completeSearchApprovalDetails(for: request) != nil
+    }
+
+    /// A durable side-effect result can survive a process death without an
+    /// authoritative answer. The Watch may only hand the user back to the
+    /// original iPhone conversation in that state; it must not expose a
+    /// cancel/approve/retry affordance that could be mistaken for a decision.
+    static func outcomeUnknownDecision(
+        id: String,
+        languageCode: String? = nil
+    ) -> WatchDecision {
+        WatchDecision(
+            id: id,
+            type: .voiceReply,
+            title: localized("结果待核实", languageCode: languageCode),
+            body: localized(
+                "操作结果尚未确认，请在原 iPhone 对话中核实。",
+                languageCode: languageCode
+            ),
+            options: [
+                WatchDecisionOption(
+                    id: "open-phone",
+                    title: localized("在 iPhone 核实", languageCode: languageCode),
+                    style: .openOnPhone
+                )
+            ],
+            riskLevel: .high,
+            allowsVoice: false
+        )
+    }
+
+    static func isPhoneOnlyDecision(_ decision: WatchDecision?) -> Bool {
+        guard let decision,
+              !decision.allowsVoice,
+              decision.options.count == 1,
+              decision.options.first?.style == .openOnPhone else {
+            return false
+        }
+        return true
+    }
+
     static func askUserDecision(
         from request: WatchAskUserRequest,
         languageCode: String? = nil
     ) -> WatchDecision {
-        // Match schema maxItems=6; keep free-text/dictate for anything beyond.
-        let options = request.options.prefix(6).enumerated().map { index, title in
-            WatchDecisionOption(
-                id: "choice-\(index)",
-                title: WatchTaskText.singleLine(title, maxLength: 28)
-                    ?? localized("选项", languageCode: languageCode) + " \(index + 1)",
-                style: .choice
-            )
-        }
+        let question = request.question
+        let questionIsComplete = !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && question.count <= 2_000
+        let optionsAreComplete = request.options.count <= 6
+            && request.options.allSatisfy { option in
+                option.count <= 500
+            }
+        let isComplete = questionIsComplete && optionsAreComplete
+        let options = isComplete
+            ? request.options.enumerated().map { index, title in
+                WatchDecisionOption(
+                    id: "choice-\(index)",
+                    title: title,
+                    style: .choice
+                )
+            }
+            : []
         var allOptions = Array(options)
         allOptions.append(
             WatchDecisionOption(
@@ -270,13 +346,15 @@ enum WatchTaskSnapshotBuilder {
                 style: .deny
             )
         )
-        allOptions.append(
-            WatchDecisionOption(
-                id: "dictate",
-                title: localized("语音回答", languageCode: languageCode),
-                style: .dictate
+        if isComplete {
+            allOptions.append(
+                WatchDecisionOption(
+                    id: "dictate",
+                    title: localized("语音回答", languageCode: languageCode),
+                    style: .dictate
+                )
             )
-        )
+        }
         allOptions.append(
             WatchDecisionOption(
                 id: "open-phone",
@@ -287,13 +365,14 @@ enum WatchTaskSnapshotBuilder {
 
         return WatchDecision(
             id: request.id,
-            type: options.isEmpty ? .voiceReply : .askUser,
+            type: isComplete && options.isEmpty ? .voiceReply : .askUser,
             title: localized("需要你的回答", languageCode: languageCode),
-            body: WatchTaskText.clipped(request.question, maxLength: 160)
-                ?? localized("模型正在等待你的回答。", languageCode: languageCode),
+            body: isComplete
+                ? question
+                : localized("问题无法在手表完整显示，请在 iPhone 回答。", languageCode: languageCode),
             options: allOptions,
             riskLevel: .low,
-            allowsVoice: true
+            allowsVoice: isComplete
         )
     }
 
@@ -302,9 +381,34 @@ enum WatchTaskSnapshotBuilder {
         title: String,
         body: String,
         risk: WatchRiskLevel,
+        allowsWatchApproval: Bool = false,
         languageCode: String?
     ) -> WatchDecision {
-        WatchDecision(
+        var options = [
+            WatchDecisionOption(
+                id: "deny",
+                title: localized("拒绝", languageCode: languageCode),
+                style: .deny
+            )
+        ]
+        if allowsWatchApproval {
+            options.append(
+                WatchDecisionOption(
+                    id: "approve",
+                    title: localized("允许", languageCode: languageCode),
+                    style: .approve
+                )
+            )
+        }
+        options.append(
+            WatchDecisionOption(
+                id: "open-phone",
+                title: localized("在 iPhone 查看", languageCode: languageCode),
+                style: .openOnPhone
+            )
+        )
+
+        return WatchDecision(
             id: id,
             type: .approval,
             title: WatchTaskText.singleLine(
@@ -313,26 +417,74 @@ enum WatchTaskSnapshotBuilder {
             )
                 ?? localized("等待确认", languageCode: languageCode),
             body: body,
-            options: [
-                WatchDecisionOption(
-                    id: "deny",
-                    title: localized("拒绝", languageCode: languageCode),
-                    style: .deny
-                ),
-                WatchDecisionOption(
-                    id: "approve",
-                    title: localized("允许", languageCode: languageCode),
-                    style: .approve
-                ),
-                WatchDecisionOption(
-                    id: "open-phone",
-                    title: localized("在 iPhone 查看", languageCode: languageCode),
-                    style: .openOnPhone
-                )
-            ],
+            options: options,
             riskLevel: risk,
             allowsVoice: false
         )
+    }
+
+    private static func completeSearchApprovalDetails(
+        for request: SearchToolApprovalRequest
+    ) -> (target: String, providerName: String, providerType: String)? {
+        guard request.toolName == "search_web" || request.toolName == "scrape_web" else {
+            return nil
+        }
+        guard let target = completeDisplayValue(request.target, maxLength: 180),
+              let providerName = completeDisplayValue(request.providerName, maxLength: 80),
+              let providerType = completeDisplayValue(request.providerType, maxLength: 80) else {
+            return nil
+        }
+
+        // `none` is the failover marker used when no search service is
+        // configured. It is a valid diagnostic value, not an executable
+        // service that can be approved on the Watch.
+        guard providerType.caseInsensitiveCompare("none") != .orderedSame,
+              providerName.caseInsensitiveCompare("没有可用搜索服务") != .orderedSame else {
+            return nil
+        }
+
+        if request.toolName == "scrape_web" {
+            // Reuse the execution parser so the Watch gate cannot approve a
+            // URL that the phone would later reject (credentials, loopback,
+            // private hosts, and unsupported schemes).
+            guard (try? IOSSearchExecutor.allowedPublicHTTPURL(from: target)) != nil else {
+                return nil
+            }
+        }
+
+        return (target, providerName, providerType)
+    }
+
+    private static func completeDisplayValue(_ value: String, maxLength: Int) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.count <= maxLength,
+              trimmed.rangeOfCharacter(from: .controlCharacters) == nil,
+              !trimmed.contains("..."),
+              !trimmed.contains("…") else {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func searchApprovalBody(
+        _ request: SearchToolApprovalRequest,
+        languageCode: String?
+    ) -> String {
+        guard let details = completeSearchApprovalDetails(for: request) else {
+            return localized(
+                "目标、服务或发送内容无法在手表完整显示，请在 iPhone 查看。",
+                languageCode: languageCode
+            )
+        }
+        let targetLabel = request.toolName == "scrape_web"
+            ? localized("目标地址", languageCode: languageCode)
+            : localized("发送内容", languageCode: languageCode)
+        return [
+            "\(targetLabel)：\(details.target)",
+            "\(localized("服务", languageCode: languageCode))：\(details.providerName)",
+            "\(localized("服务类型", languageCode: languageCode))：\(details.providerType)",
+        ].joined(separator: "\n")
     }
 
     private static func localizedApprovalTitle(_ title: String, languageCode: String?) -> String {

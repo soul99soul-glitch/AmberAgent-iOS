@@ -263,6 +263,22 @@ enum ChatComposerSendBlockReason: Equatable {
     }
 }
 
+/// Result of a Watch-originated question. The coordinator uses the stable
+/// conversation id for handoff and the run id for live task projection.
+struct IOSWatchQuestionStartResult: Equatable, Sendable {
+    let conversationId: String?
+    let runId: String?
+    let failureMessage: String?
+
+    var started: Bool {
+        conversationId != nil && runId != nil && failureMessage == nil
+    }
+
+    static func failure(_ message: String) -> Self {
+        Self(conversationId: nil, runId: nil, failureMessage: message)
+    }
+}
+
 @MainActor
 @Observable
 final class ChatViewModel {
@@ -306,6 +322,7 @@ final class ChatViewModel {
     @ObservationIgnored private var imageGenerationResumeCacheStoreID: ObjectIdentifier?
     @ObservationIgnored private var retryingFailedRunIds: Set<String> = []
     @ObservationIgnored private var retryMutationRunId: String?
+    @ObservationIgnored private var isStartingWatchQuestion = false
     var pendingMemoryApproval: MemoryToolApprovalRequest? {
         get { currentRun.state.pendingMemoryApproval }
         set { currentRun.state.pendingMemoryApproval = newValue }
@@ -404,6 +421,16 @@ final class ChatViewModel {
     /// 留作快速访问；切换会话后由 reloadFromStore() 刷新。
     var currentConversationId: KotlinUuid? {
         conversationStore?.currentConversation?.id
+    }
+
+    /// Run owner identity used by the Watch cold-start handoff. The headless
+    /// ChatViewModel remains authoritative until its kernel host reaches a
+    /// terminal state, even after AppShell attaches its foreground VM.
+    var currentKernelRunId: String? {
+        conversationRuns.values
+            .compactMap(\.host)
+            .first(where: { $0.isRunning })?
+            .currentRunId
     }
 
     // MARK: - P1-e 编排子线程只读缓存
@@ -1721,6 +1748,15 @@ final class ChatViewModel {
         for descriptor in discoveredUnknowns where !toolOutcomeUnknownDescriptors.contains(descriptor) {
             toolOutcomeUnknownDescriptors.append(descriptor)
         }
+        if let descriptor = discoveredUnknowns.sorted(by: {
+            if $0.runId == $1.runId { return $0.toolCallId < $1.toolCallId }
+            return $0.runId < $1.runId
+        }).first {
+            // W3 is the authoritative discovery point after a cold launch;
+            // keep the Watch projection in sync even when no live producer
+            // was present to publish the original unknown result.
+            _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(descriptor)
+        }
 
         if didUpdateCurrentConversation {
             reloadFromStore(reason: .branchChange)
@@ -1749,6 +1785,16 @@ final class ChatViewModel {
             runStore: runStore
         ) else { return }
         toolOutcomeUnknownDescriptors.removeAll { $0 == descriptor }
+        let hasRemainingUnknown = toolOutcomeUnknownDescriptors.contains {
+            $0.runId == descriptor.runId && $0.conversationId == descriptor.conversationId
+        }
+        _ = WatchTaskCoordinator.shared.publishOutcomeUnknownReconciled(
+            runId: descriptor.runId,
+            conversationId: descriptor.conversationId,
+            toolCallId: descriptor.toolCallId,
+            hasRemainingUnknown: hasRemainingUnknown,
+            didApply: didApply
+        )
         if currentConversationId == conversationId {
             reloadFromStore(reason: .branchChange)
         }
@@ -1895,6 +1941,95 @@ final class ChatViewModel {
         configurationError = nil
         sendUserMessage(text: text, images: pendingImages)
         return true
+    }
+
+    /// Starts a Watch question through the same provider, tool and persistence
+    /// pipeline as a normal text turn. Watch input is accepted only while the
+    /// phone is idle, so an existing draft or run can never be commandeered.
+    @discardableResult
+    func startWatchQuestion(
+        text: String,
+        conversationId requestedConversationId: String? = nil
+    ) async -> IOSWatchQuestionStartResult {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 2_000 else {
+            return .failure("请输入 1–2000 个字符")
+        }
+        guard !isStartingWatchQuestion else {
+            return .failure("已有一条 Watch 请求正在启动")
+        }
+        guard autoGenerateResponses else {
+            return .failure("iPhone 当前未启用自动回答")
+        }
+        guard let store = conversationStore else {
+            return .failure("iPhone 聊天状态不可用")
+        }
+        guard !hasActiveChatGeneration,
+              inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              pendingImages.isEmpty,
+              pendingSelectedFilePreview == nil,
+              !isAttachingSelectedFile,
+              !isRecognizingImages,
+              !hasPendingUserGate else {
+            return .failure("iPhone 当前有未完成的任务、草稿或附件")
+        }
+        if let issue = configurationIssue {
+            return .failure(issue.message)
+        }
+
+        isStartingWatchQuestion = true
+        defer { isStartingWatchQuestion = false }
+
+        let targetConversationId: KotlinUuid
+        if let requestedConversationId {
+            guard let summary = await store.appIntentSummaries(limit: nil).first(where: {
+                $0.id.toHexDashString().caseInsensitiveCompare(requestedConversationId) == .orderedSame
+            }) else {
+                return .failure("找不到这条对话")
+            }
+            targetConversationId = summary.id
+            guard await store.selectConversationIfAvailable(id: targetConversationId) else {
+                return .failure("无法打开这条对话")
+            }
+            reloadFromStore(reason: .conversationSwitch)
+        } else {
+            guard await store.newConversation() else {
+                return .failure("无法新建对话")
+            }
+            reloadFromStore(reason: .conversationSwitch)
+            guard let createdConversationId = currentConversationId else {
+                return .failure("无法确定新对话")
+            }
+            targetConversationId = createdConversationId
+        }
+
+        // Selection is asynchronous. Recheck the target and all gates before
+        // handing the text to the established sendMessage path.
+        guard currentConversationId?.toHexDashString().caseInsensitiveCompare(
+            targetConversationId.toHexDashString()
+        ) == .orderedSame,
+              !hasActiveChatGeneration,
+              inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              pendingImages.isEmpty,
+              pendingSelectedFilePreview == nil,
+              !isAttachingSelectedFile,
+              !isRecognizingImages,
+              !hasPendingUserGate else {
+            return .failure("iPhone 状态已改变，请稍后重试")
+        }
+
+        inputText = trimmed
+        guard sendMessage() else {
+            return .failure(configurationError ?? selectedFileContextError ?? "iPhone 无法发送这条消息")
+        }
+        guard let runId = kernelRunHost.currentRunId else {
+            return .failure("iPhone 无法启动这条任务")
+        }
+        return IOSWatchQuestionStartResult(
+            conversationId: targetConversationId.toHexDashString(),
+            runId: runId,
+            failureMessage: nil
+        )
     }
 
     func modifyGeneratedImage(sourceImageURL: String, prompt: String, aspectRatio: String) {
@@ -3762,6 +3897,7 @@ final class ChatViewModel {
             return ChatMiniAppOutputApplication(
                 messages: updated,
                 rollbackMessages: rollbackMessages,
+                resultTitle: record.title,
                 commit: { [miniAppRepository, mutation] in
                     do {
                         return try miniAppRepository.commit(mutation)

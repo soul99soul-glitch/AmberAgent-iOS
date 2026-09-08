@@ -19,6 +19,9 @@ struct WatchTaskSnapshot: Codable, Hashable, Sendable {
     var actions: [WatchAction]
     var updatedAt: Date
     var isStale: Bool
+    /// Monotonic phone-owned revision; ISO-8601 timestamps alone lose same-second updates.
+    var sequence: Int64? = nil
+    var library: WatchLibrarySnapshot? = nil
 
     static let idle = WatchTaskSnapshot(
         runId: "",
@@ -41,6 +44,72 @@ struct WatchTaskSnapshot: Codable, Hashable, Sendable {
     }
 }
 
+struct WatchLibrarySnapshot: Codable, Hashable, Sendable {
+    var assistantName: String
+    var isConfigured: Bool
+    var configurationMessage: String? = nil
+    var quickActions: [WatchQuickAction]
+    var recent: [WatchRecentConversation]
+    var activities: [WatchRecentActivity]? = nil
+    var updatedAt: Date
+}
+
+struct WatchQuickAction: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var title: String
+    var prompt: String
+
+    static func supports(prompt: String) -> Bool {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !text.isEmpty && text.count <= 2_000
+            && text.range(of: #"^\[ROUTE:[^\]]+\]$"#, options: [.regularExpression, .caseInsensitive]) == nil
+    }
+}
+
+struct WatchRecentConversation: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var title: String
+    var preview: String
+    var updatedAt: Date
+    var runId: String? = nil
+}
+
+/// A compact, phone-authored history item for the Watch library. Terminal
+/// activities and notes share this shape, while `kind` keeps notes distinct
+/// from AI task completion.
+struct WatchRecentActivity: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var runId: String? = nil
+    var conversationId: String? = nil
+    var kind: String
+    var phase: String
+    var title: String
+    /// Exact title of a persisted result/artifact, when the producer owns one.
+    /// `nil` keeps older payloads and ordinary conversation activities on the
+    /// conversation-title fallback path.
+    var resultTitle: String? = nil
+    var summary: String
+    var updatedAt: Date
+}
+
+struct WatchNote: Codable, Hashable, Identifiable, Sendable {
+    var id: String
+    var text: String
+    var createdAt: Date
+    var syncedAt: Date? = nil
+}
+
+enum WatchSnapshotOrdering {
+    static func accepts(_ incoming: WatchTaskSnapshot, after current: WatchTaskSnapshot) -> Bool {
+        if let incomingSequence = incoming.sequence, let currentSequence = current.sequence {
+            return incomingSequence > currentSequence || incoming == current
+        }
+        if current.sequence != nil, incoming.sequence == nil { return false }
+        if incoming.sequence != nil, current.sequence == nil { return true }
+        return incoming.updatedAt > current.updatedAt || incoming == current
+    }
+}
+
 enum WatchSnapshotFreshnessPolicy {
     static let staleAfter: TimeInterval = 60
 
@@ -50,6 +119,7 @@ enum WatchSnapshotFreshnessPolicy {
         now: Date = Date()
     ) -> WatchTaskSnapshot {
         guard snapshot.isActive,
+              !["completed", "failed", "cancelled"].contains(snapshot.phase),
               !isPhoneReachable,
               now.timeIntervalSince(snapshot.updatedAt) >= staleAfter else {
             return snapshot
@@ -132,6 +202,10 @@ enum WatchInboundAction: String, Codable, Hashable, Sendable {
     case retry
     case openOnPhone
     case refresh
+    case ask
+    case saveNote
+    case openConversation
+    case runQuickAction
 }
 
 struct WatchTaskActionResult: Codable, Hashable, Sendable {
@@ -140,6 +214,9 @@ struct WatchTaskActionResult: Codable, Hashable, Sendable {
     var accepted: Bool
     var message: String?
     var snapshot: WatchTaskSnapshot?
+    var conversationId: String? = nil
+    /// A transport timeout is not evidence that the phone did not execute the request.
+    var deliveryUnknown: Bool? = nil
 }
 
 enum WatchConnectivityPayloadKey {
@@ -148,7 +225,7 @@ enum WatchConnectivityPayloadKey {
     static let action = "action"
     static let result = "result"
     static let protocolVersion = "protocolVersion"
-    static let currentProtocolVersion = 2
+    static let currentProtocolVersion = 3
 
     static let typeSnapshot = "snapshot"
     static let typeAction = "action"

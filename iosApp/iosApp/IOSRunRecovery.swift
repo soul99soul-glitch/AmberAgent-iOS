@@ -348,13 +348,25 @@ enum IOSRunRecovery {
     ) async -> Bool {
         let outcome = didApply ? "user_confirmed_applied" : "user_confirmed_not_applied"
         let ledger = IOSAgentRunLedger(dao: dao)
-        guard await ledger.recordToolCallRecoveryTransition(
+        let didRecord = await ledger.recordToolCallRecoveryTransition(
             runId: runId,
             toolCallId: toolCallId,
             expected: .outcomeUnknown,
             to: .reconciled,
             outcome: outcome
-        ) else { return false }
+        )
+        // Reconciliation is per tool call. Keep the run recoverable while
+        // another unknown result still needs a decision after a cold launch.
+        guard let transactions = await ledger.toolTransactions(runId: runId) else { return false }
+        // A previous attempt may have committed the tool decision before a
+        // later read or run-state write failed. Retrying that same decision
+        // is safe; a conflicting decision must not overwrite it.
+        guard didRecord || transactions.contains(where: {
+            $0.toolCallId == toolCallId && $0.state == .reconciled && $0.outcome == outcome
+        }) else { return false }
+        if transactions.contains(where: { $0.state == .outcomeUnknown }) {
+            return (try? await runStore.snapshot(runId: runId)?.status) == .outcomeUnknown
+        }
         if (try? await runStore.transition(
             runId: runId,
             expected: .outcomeUnknown,

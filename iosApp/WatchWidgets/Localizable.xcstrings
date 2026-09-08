@@ -1,0 +1,226 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Amber" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "Amber" } }
+      }
+    },
+    "Ask Amber" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ask Amber" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Amber に質問" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Amber에게 질문" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Спросить Amber" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "问 Amber" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "詢問 Amber" } }
+      }
+    },
+    "Take a note" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Take a note" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メモする" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "메모하기" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сделать заметку" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "随手记" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "隨手記" } }
+      }
+    },
+    "Recent records" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent records" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近の記録" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "최근 기록" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Последние записи" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "最近记录" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "最近記錄" } }
+      }
+    },
+    "Current task" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Current task" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "現在のタスク" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "현재 작업" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Текущая задача" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前任务" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "目前任務" } }
+      }
+    },
+    "Start a question from your watch face." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Start a question from your watch face." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "文字盤から質問を始めます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "워치 페이스에서 질문을 시작하세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Начните вопрос с циферблата." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从表盘快速开始提问。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從錶面快速開始提問。" } }
+      }
+    },
+    "Save a note from your watch face." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Save a note from your watch face." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "文字盤からメモを保存します。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "워치 페이스에서 메모를 저장하세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Сохраните заметку с циферблата." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从表盘快速保存一条笔记。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "從錶面快速儲存一則筆記。" } }
+      }
+    },
+    "Open Amber's recent records." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Amber's recent records." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Amber の最近の記録を開きます。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Amber의 최근 기록을 여세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Откройте последние записи Amber." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "打开 Amber 的最近记录。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "開啟 Amber 的最近記錄。" } }
+      }
+    },
+    "View the current task's private status." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "View the current task's private status." } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "現在のタスクの非公開ステータスを確認します。" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "현재 작업의 비공개 상태를 확인하세요." } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Просмотрите закрытый статус текущей задачи." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查看 Amber 当前任务的隐私状态。" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "查看 Amber 目前任務的隱私狀態。" } }
+      }
+    },
+    "State expired" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "State expired" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "状態の有効期限切れ" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "상태 만료" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Состояние устарело" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "状态已过期" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "狀態已過期" } }
+      }
+    },
+    "Processing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Processing" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "処理中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "처리 중" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Обработка" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在处理" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "處理中" } }
+      }
+    },
+    "Waiting for your action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Waiting for your action" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "操作を待っています" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "작업을 기다리는 중" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Ожидание действия" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待你的操作" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "等待你的操作" } }
+      }
+    },
+    "Reconnecting" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reconnecting" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再接続中" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "다시 연결 중" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Повторное подключение" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在重连" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "正在重新連線" } }
+      }
+    },
+    "Completed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Completed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "完了" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "완료됨" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Завершено" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已完成" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已完成" } }
+      }
+    },
+    "Failed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Failed" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "失敗" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "실패" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Ошибка" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "执行失败" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "執行失敗" } }
+      }
+    },
+    "Cancelled" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancelled" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャンセル済み" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "취소됨" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Отменено" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已取消" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "已取消" } }
+      }
+    },
+    "No task in progress" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No task in progress" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "進行中のタスクはありません" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "진행 중인 작업이 없습니다" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Нет выполняющихся задач" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有进行中的任务" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "沒有進行中的任務" } }
+      }
+    },
+    "Open Amber to see the latest status" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open Amber to see the latest status" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Amber を開いて最新の状態を確認してください" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "Amber를 열어 최신 상태를 확인하세요" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Откройте Amber, чтобы увидеть последнее состояние" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请打开 Amber 查看最新状态" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "請開啟 Amber 查看最新狀態" } }
+      }
+    },
+    "Last synced %@" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Last synced %@" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最終同期 %@" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "마지막 동기화 %@" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Последняя синхронизация: %@" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "最近同步 %@" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "最近同步 %@" } }
+      }
+    },
+    "Tap to view recent records" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Tap to view recent records" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "タップして最近の記録を表示" } },
+        "ko" : { "stringUnit" : { "state" : "translated", "value" : "탭하여 최근 기록 보기" } },
+        "ru" : { "stringUnit" : { "state" : "translated", "value" : "Нажмите, чтобы открыть последние записи" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "点按查看最近记录" } },
+        "zh-Hant" : { "stringUnit" : { "state" : "translated", "value" : "點按查看最近記錄" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

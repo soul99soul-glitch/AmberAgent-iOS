@@ -26,6 +26,23 @@
     <string>$(AMBER_COMPANION_APP_BUNDLE_IDENTIFIER)</string>
     <key>WKRunsIndependentlyOfCompanionApp</key>
     <false/>
+    <key>AmberWatchAppGroupIdentifier</key>
+    <string>$(AMBER_WATCH_APP_GROUP_IDENTIFIER)</string>
+    <key>AmberWatchURLScheme</key>
+    <string>$(AMBER_WATCH_URL_SCHEME)</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>CFBundleURLName</key>
+            <string>$(PRODUCT_BUNDLE_IDENTIFIER).watch</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>$(AMBER_WATCH_URL_SCHEME)</string>
+            </array>
+        </dict>
+    </array>
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>

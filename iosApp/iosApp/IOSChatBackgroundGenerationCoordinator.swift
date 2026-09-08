@@ -51,6 +51,20 @@ private struct IOSChatBackgroundDependencies {
     let saveMiniAppIfPresent: (@MainActor ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?)?
 }
 
+/// Composition created before SwiftUI/AppShell exists when a Watch request
+/// cold-starts the process. AppShell can adopt this exact object graph once a
+/// window appears, so the live kernel host and its stores have one owner.
+struct IOSChatHeadlessComposition {
+    let settingsStore: SettingsStore
+    let sharedSettings: IOSSharedSettingsStore
+    let conversationStore: IOSConversationStore
+    let permissionStore: IOSPermissionStore
+    let documentStore: DocumentAccessStore
+    let systemPermissionCoordinator: IOSSystemPermissionCoordinator
+    let localToolExecutor: IOSLocalToolExecutor
+    let chatViewModel: ChatViewModel
+}
+
 struct IOSChatBackgroundHandoff {
     let runId: String
     let startedAt: Int64
@@ -479,6 +493,9 @@ final class IOSChatBackgroundGenerationCoordinator {
     /// Retains the composition root used only when iOS launches the process for
     /// a background task before SwiftUI creates AppShell.
     private var headlessChatViewModel: ChatViewModel?
+    private var headlessConversationStore: IOSConversationStore?
+    private var headlessSharedSettings: IOSSharedSettingsStore?
+    private var headlessComposition: IOSChatHeadlessComposition?
     private lazy var db: AgentRuntimeDatabase = IosDatabaseFactory.shared.createDatabase()
     private lazy var runStore = IOSDurableRunStore(dao: db.agentRuntimeDao())
     // W1 durable ledger (I-1): background-continued tool execution accounts
@@ -498,6 +515,49 @@ final class IOSChatBackgroundGenerationCoordinator {
             finish(requestId: requestId)
         }
         guard !requestIds.isEmpty, dependencies == nil else { return }
+
+        _ = buildHeadlessChatViewModel()
+        for requestId in requestIds where activeJobs[requestId] == nil {
+            _ = job(for: requestId)
+        }
+    }
+
+    /// Builds the same provider/runtime composition used by a background
+    /// launch so a Watch question can start before SwiftUI creates AppShell.
+    /// The method intentionally returns nil once another composition root has
+    /// installed dependencies; AppShell will attach normally in that case.
+    func prepareHeadlessChatViewModelForWatch() async -> ChatViewModel? {
+        if let headlessChatViewModel {
+            if let conversationStore = headlessConversationStore,
+               conversationStore.summaries.isEmpty {
+                await conversationStore.bootstrap()
+            }
+            return headlessChatViewModel
+        }
+        guard dependencies == nil else { return nil }
+        let chatViewModel = buildHeadlessChatViewModel()
+        if let conversationStore = headlessConversationStore {
+            await conversationStore.bootstrap()
+        }
+        return chatViewModel
+    }
+
+    var headlessSharedSettingsForWatch: IOSSharedSettingsStore? {
+        headlessSharedSettings
+    }
+
+    var headlessCompositionForWatch: IOSChatHeadlessComposition? {
+        headlessComposition
+    }
+
+    private func buildHeadlessChatViewModel() -> ChatViewModel {
+        // A Watch or continued-processing launch can build this graph before
+        // AppShell runs its normal startup load. Load once here so a headless
+        // provider request sees the existing memory library instead of making
+        // the first write fail with `notLoaded`.
+        if IOSMemoryPersistence.shared.loadState == .notLoaded {
+            IOSMemoryPersistence.shared.load()
+        }
 
         let settingsStore = SettingsStore()
         let sharedSettings = IOSSharedSettingsStore()
@@ -531,9 +591,19 @@ final class IOSChatBackgroundGenerationCoordinator {
             }
         )
         headlessChatViewModel = chatViewModel
-        for requestId in requestIds where activeJobs[requestId] == nil {
-            _ = job(for: requestId)
-        }
+        headlessConversationStore = conversationStore
+        headlessSharedSettings = sharedSettings
+        headlessComposition = IOSChatHeadlessComposition(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            conversationStore: conversationStore,
+            permissionStore: permissionStore,
+            documentStore: documentStore,
+            systemPermissionCoordinator: systemPermissionCoordinator,
+            localToolExecutor: localToolExecutor,
+            chatViewModel: chatViewModel
+        )
+        return chatViewModel
     }
 
     /// 生命周期快照里属于本协调器的那一段：只读内存态，不碰磁盘。
@@ -558,7 +628,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         requestIds.formUnion(activeJobs.compactMap { requestId, job in
             job.mode == .resumeResponse && job.responseId != nil ? requestId : nil
         })
-        return Set(requestIds.compactMap { persisted[$0] ?? activeJobs[$0]?.runId })
+        var runIds = Set(requestIds.compactMap { persisted[$0] ?? activeJobs[$0]?.runId })
+        if let headlessRunId = headlessChatViewModel?.currentKernelRunId {
+            runIds.insert(headlessRunId)
+        }
+        return runIds
     }
 
     var reconnectingWatchProjections: [WatchTaskReconnectProjection] {
@@ -1376,8 +1450,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     conversationId: job.conversationId.toHexDashString(),
                     presentation: .failed(),
                     summary: IOSAppLocalization.string(
-                        "网页操作结果待确认。",
-                        defaultValue: "网页操作结果待确认。"
+                        "操作结果尚未保存，请在 iPhone 恢复。",
+                        defaultValue: "操作结果尚未保存，请在 iPhone 恢复。"
                     )
                 )
                 await job.liveActivityController.end(
@@ -1407,28 +1481,30 @@ final class IOSChatBackgroundGenerationCoordinator {
             return false
         }
         outcomeUnknownRequestIds.insert(requestId)
+        var unknownDescriptors: [IOSToolOutcomeUnknownDescriptor] = []
         for toolCallId in unknownToolCallIds.sorted() {
             guard let toolName = recoveredMessages
                 .flatMap(\.parts)
                 .compactMap({ $0 as? UIMessagePart.Tool })
                 .first(where: { $0.toolCallId == toolCallId })?.toolName
                 ?? plan.toolNames[toolCallId] else { continue }
-            onToolOutcomeUnknown?(IOSToolOutcomeUnknownDescriptor(
+            let descriptor = IOSToolOutcomeUnknownDescriptor(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
                 toolCallId: toolCallId,
                 toolName: toolName
-            ))
-        }
-        WatchTaskCoordinator.shared.publish(
-            runId: job.runId,
-            conversationId: job.conversationId.toHexDashString(),
-            presentation: .failed(),
-            summary: IOSAppLocalization.string(
-                "网页操作结果待确认。",
-                defaultValue: "网页操作结果待确认。"
             )
-        )
+            unknownDescriptors.append(descriptor)
+            onToolOutcomeUnknown?(descriptor)
+        }
+        if let descriptor = unknownDescriptors.first {
+            _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(descriptor)
+        } else {
+            _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(
+                runId: job.runId,
+                conversationId: job.conversationId.toHexDashString()
+            )
+        }
         await job.liveActivityController.end(
             runId: job.runId,
             presentation: .failed()
@@ -1490,8 +1566,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         messages: [UIMessage],
         runState: IOSChatBackgroundRunState
     ) async {
-        let stamped = messages.applyingLastAssistantGenerationDuration(runState.generationDuration())
+        var stamped = messages.applyingLastAssistantGenerationDuration(runState.generationDuration())
         let miniAppApplication = job.saveMiniAppIfPresent?(stamped, job.conversationId)
+        if let miniAppApplication {
+            stamped = miniAppApplication.messages
+        }
         let didSave = await job.conversationStore.saveBackgroundCompletion(
             baseMessages: job.displayMessages,
             completedMessages: stamped,
@@ -1522,7 +1601,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             WatchTaskCoordinator.shared.publishCompleted(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
-                summary: Self.backgroundSummary(from: stamped)
+                summary: Self.backgroundSummary(from: stamped),
+                resultTitle: miniAppApplication?.resultTitle
             )
             await job.liveActivityController.end(runId: job.runId, presentation: .completed())
             finish(runId: job.runId, requestId: requestId)
@@ -2148,6 +2228,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     recordedStatus: runStatus,
                     guardStoppedNotice: guardStoppedNotice,
                     miniAppFailed: miniAppFailed,
+                    resultTitle: miniAppApplication?.resultTitle,
                     summary: watchSummary,
                     completedMessages: finalMessages
                 )
@@ -2174,7 +2255,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             WatchTaskCoordinator.shared.publishCompleted(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
-                summary: watchSummary
+                summary: watchSummary,
+                resultTitle: miniAppApplication?.resultTitle
             )
             // 与前台 generationSucceeded → list preview 对齐：用本 job 的消息快照，不读可能已切换的 ChatViewModel。
             if let settings = dependencies?.sharedSettings {
@@ -2851,6 +2933,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         recordedStatus: AgentRunStatus,
         guardStoppedNotice: String?,
         miniAppFailed: Bool,
+        resultTitle: String?,
         summary: String?,
         completedMessages: [UIMessage]
     ) async {
@@ -2863,7 +2946,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             WatchTaskCoordinator.shared.publishCompleted(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
-                summary: summary
+                summary: summary,
+                resultTitle: resultTitle
             )
             if let settings = dependencies?.sharedSettings {
                 ConversationListPreviewGenerator.schedule(
@@ -2945,22 +3029,25 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
         if didSave {
-            onToolOutcomeUnknown?(IOSToolOutcomeUnknownDescriptor(
+            let descriptor = IOSToolOutcomeUnknownDescriptor(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
                 toolCallId: signal.toolCallId,
                 toolName: signal.toolName
-            ))
-        }
-        WatchTaskCoordinator.shared.publish(
-            runId: job.runId,
-            conversationId: job.conversationId.toHexDashString(),
-            presentation: .failed(),
-            summary: IOSAppLocalization.string(
-                "网页操作结果待确认。",
-                defaultValue: "网页操作结果待确认。"
             )
-        )
+            onToolOutcomeUnknown?(descriptor)
+            _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(descriptor)
+        } else {
+            WatchTaskCoordinator.shared.publish(
+                runId: job.runId,
+                conversationId: job.conversationId.toHexDashString(),
+                presentation: .failed(),
+                summary: IOSAppLocalization.string(
+                    "操作结果尚未保存，请在 iPhone 恢复。",
+                    defaultValue: "操作结果尚未保存，请在 iPhone 恢复。"
+                )
+            )
+        }
         await job.liveActivityController.end(runId: job.runId, presentation: .failed())
         if didSave {
             if runState.claimSystemTaskCompletion() {
@@ -2985,22 +3072,25 @@ final class IOSChatBackgroundGenerationCoordinator {
     ) async {
         if didSave {
             removePayload(requestId: requestId)
-            onToolOutcomeUnknown?(IOSToolOutcomeUnknownDescriptor(
+            let descriptor = IOSToolOutcomeUnknownDescriptor(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
                 toolCallId: signal.toolCallId,
                 toolName: signal.toolName
-            ))
-        }
-        WatchTaskCoordinator.shared.publish(
-            runId: job.runId,
-            conversationId: job.conversationId.toHexDashString(),
-            presentation: .failed(),
-            summary: IOSAppLocalization.string(
-                "网页操作结果待确认。",
-                defaultValue: "网页操作结果待确认。"
             )
-        )
+            onToolOutcomeUnknown?(descriptor)
+            _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(descriptor)
+        } else {
+            WatchTaskCoordinator.shared.publish(
+                runId: job.runId,
+                conversationId: job.conversationId.toHexDashString(),
+                presentation: .failed(),
+                summary: IOSAppLocalization.string(
+                    "操作结果尚未保存，请在 iPhone 恢复。",
+                    defaultValue: "操作结果尚未保存，请在 iPhone 恢复。"
+                )
+            )
+        }
         await job.liveActivityController.end(runId: job.runId, presentation: .failed())
         if didSave {
             finish(runId: job.runId, requestId: requestId)

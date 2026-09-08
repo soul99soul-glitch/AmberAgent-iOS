@@ -26,7 +26,9 @@ struct AppShell: View {
     @State private var novelCreationErrorMessage: String?
     @State private var rootRouter = RouterPath()
     @State private var pendingAgentActivityTarget: AgentActivityDeepLink.Target?
+    @State private var pendingAgentActivityURL: URL?
     @State private var pendingAppDeepLinkDestination: IOSAppDeepLink.Destination?
+    @State private var pendingAppDeepLinkURL: URL?
     @State private var isOpeningPendingAppDeepLink = false
     @State private var didBootstrapConversations = false
     @State private var didRunStartupRecovery = false
@@ -41,37 +43,41 @@ struct AppShell: View {
     private var appLanguage = IOSAppLanguage.system.rawValue
 
     init(settingsStore: SettingsStore) {
+        let headlessComposition = IOSChatBackgroundGenerationCoordinator.shared
+            .headlessCompositionForWatch
+        let effectiveSettingsStore = headlessComposition?.settingsStore ?? settingsStore
         let embeddedIshDefaultPolicyMigrationIds: Set<String> =
             IOSTerminalBuildPolicy.experimentalRuntimesLinked &&
-            settingsStore.terminalExperimentalRuntimesEnabled &&
-            settingsStore.terminalDefaultRuntime == .ishExperimental
+            effectiveSettingsStore.terminalExperimentalRuntimesEnabled &&
+            effectiveSettingsStore.terminalDefaultRuntime == .ishExperimental
             ? ["ios.embedded.ish_runtime"]
             : []
-        let permissionStore = IOSPermissionStore(
+        let permissionStore = headlessComposition?.permissionStore ?? IOSPermissionStore(
             defaultPolicyMigrationIds: embeddedIshDefaultPolicyMigrationIds
         )
-        let documentAccessStore = DocumentAccessStore()
+        let documentAccessStore = headlessComposition?.documentStore ?? DocumentAccessStore()
         let workspaceStore = IOSWorkspaceStore.shared
-        let systemPermissionCoordinator = IOSSystemPermissionCoordinator()
-        let sharedSettingsStore = IOSSharedSettingsStore()
-        let conversationStore = IOSConversationStore()
-        let providerRegistry = ProviderRegistryStore(settingsStore: settingsStore)
-        let localToolExecutor = IOSLocalToolExecutor(
+        let systemPermissionCoordinator = headlessComposition?.systemPermissionCoordinator
+            ?? IOSSystemPermissionCoordinator()
+        let sharedSettingsStore = headlessComposition?.sharedSettings ?? IOSSharedSettingsStore()
+        let conversationStore = headlessComposition?.conversationStore ?? IOSConversationStore()
+        let providerRegistry = ProviderRegistryStore(settingsStore: effectiveSettingsStore)
+        let localToolExecutor = headlessComposition?.localToolExecutor ?? IOSLocalToolExecutor(
             permissionStore: permissionStore,
             documentStore: documentAccessStore,
             workspaceStore: workspaceStore,
             systemPermissionCoordinator: systemPermissionCoordinator,
-            settingsStore: settingsStore
+            settingsStore: effectiveSettingsStore
         )
-        let chatViewModel = ChatViewModel(
-            settingsStore: settingsStore,
+        let chatViewModel = headlessComposition?.chatViewModel ?? ChatViewModel(
+            settingsStore: effectiveSettingsStore,
             sharedSettings: sharedSettingsStore,
             localToolExecutor: localToolExecutor
         )
         chatViewModel.conversationStore = conversationStore
         let backgroundToolRuntime = chatViewModel.makeBackgroundToolRuntime()
         let councilChatViewModel = CouncilChatViewModel(
-            settingsStore: settingsStore,
+            settingsStore: effectiveSettingsStore,
             sharedSettings: sharedSettingsStore,
             providerRegistry: providerRegistry,
             permissionStore: permissionStore,
@@ -93,7 +99,7 @@ struct AppShell: View {
             novelSessionViewModel = nil
             novelCreationErrorMessage = error.localizedDescription
         }
-        self.settingsStore = settingsStore
+        self.settingsStore = effectiveSettingsStore
         self._permissionStore = State(initialValue: permissionStore)
         self._documentAccessStore = State(initialValue: documentAccessStore)
         self._workspaceStore = State(initialValue: workspaceStore)
@@ -127,7 +133,9 @@ struct AppShell: View {
         // Load before ChatViewModel can prepare its first provider request.
         // AppShell is MainActor-isolated, so this synchronous file read cannot
         // race the first view render or an early memory mutation.
-        IOSMemoryPersistence.shared.load()
+        if IOSMemoryPersistence.shared.loadState == .notLoaded {
+            IOSMemoryPersistence.shared.load()
+        }
         UIDevice.current.isBatteryMonitoringEnabled = true
         IOSMemoryExtractionCoordinator.shared.configure(
             settings: sharedSettingsStore, conversations: conversationStore,
@@ -224,6 +232,11 @@ struct AppShell: View {
                 IOSMemoryExtractionCoordinator.shared.resume()
             }
         }
+        .onChange(of: sharedSettings.revision) { _, _ in
+            Task { @MainActor in
+                await WatchTaskCoordinator.shared.refreshWatchSnapshot()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
             IOSMemoryExtractionCoordinator.shared.resume()
         }
@@ -255,6 +268,7 @@ struct AppShell: View {
             AgentActivityControlCenter.shared.attach(chatViewModel: chatViewModel)
             WatchTaskCoordinator.shared.attach(
                 chatViewModel: chatViewModel,
+                sharedSettings: sharedSettings,
                 reconnecting: IOSChatBackgroundGenerationCoordinator.shared.reconnectingWatchProjections
             )
             // 启动时引导会话存储：加载历史摘要，选最近一条或新建。
@@ -443,9 +457,11 @@ struct AppShell: View {
         switch destination {
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
+            pendingAgentActivityURL = url
             Task { await openPendingAgentActivityIfReady() }
         default:
             pendingAppDeepLinkDestination = destination
+            pendingAppDeepLinkURL = url
             Task { await openPendingAppDeepLinkIfReady() }
         }
     }
@@ -454,11 +470,13 @@ struct AppShell: View {
         guard !isOpeningPendingAppDeepLink,
               didBootstrapConversations,
               let destination = pendingAppDeepLinkDestination else { return }
+        let sourceURL = pendingAppDeepLinkURL
         isOpeningPendingAppDeepLink = true
         defer {
             isOpeningPendingAppDeepLink = false
             if let pendingAppDeepLinkDestination,
-               pendingAppDeepLinkDestination != destination {
+               (pendingAppDeepLinkDestination != destination
+                || pendingAppDeepLinkURL != sourceURL) {
                 Task { await openPendingAppDeepLinkIfReady() }
             }
         }
@@ -510,7 +528,9 @@ struct AppShell: View {
                     message: "这段对话已被删除或不存在。",
                     severity: .warning
                 ))
+                if let sourceURL { IOSDeepLinkInbox.shared.acknowledge(sourceURL) }
                 pendingAppDeepLinkDestination = nil
+                pendingAppDeepLinkURL = nil
                 return
             }
             guard chatViewModel.prepareForConversationChange(to: summary.id) else { return }
@@ -584,20 +604,30 @@ struct AppShell: View {
             rootRouter.path = [.settings, .appleIntegrations]
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
+            pendingAgentActivityURL = nil
             Task { await openPendingAgentActivityIfReady() }
         }
+        guard pendingAppDeepLinkDestination == destination,
+              pendingAppDeepLinkURL == sourceURL else { return }
+        if let sourceURL {
+            IOSDeepLinkInbox.shared.acknowledge(sourceURL)
+        }
         pendingAppDeepLinkDestination = nil
+        pendingAppDeepLinkURL = nil
     }
 
     private func openPendingAgentActivityIfReady() async {
         guard didBootstrapConversations,
               let target = pendingAgentActivityTarget else { return }
+        let sourceURL = pendingAgentActivityURL
         let conversationSelectionRevision = conversationStore.conversationSwitchedRevision
 
         guard let summary = conversationStore.summaries.first(where: {
             $0.id.toHexDashString().caseInsensitiveCompare(target.conversationId) == .orderedSame
         }) else {
             pendingAgentActivityTarget = nil
+            pendingAgentActivityURL = nil
+            if let sourceURL { IOSDeepLinkInbox.shared.acknowledge(sourceURL) }
             conversationStore.publishUserVisibleError(IOSUserVisibleError(
                 title: IOSAppLocalization.string(
                     "无法打开任务",
@@ -620,12 +650,13 @@ struct AppShell: View {
                 runId: target.runId,
                 conversationId: target.conversationId
             )
-        guard pendingAgentActivityTarget == target else { return }
+        guard pendingAgentActivityTarget == target,
+              pendingAgentActivityURL == sourceURL else { return }
         guard conversationStore.conversationSwitchedRevision == conversationSelectionRevision else { return }
         guard ownsRecordedRun else { return }
-        if target.focus == .confirmation {
-            guard chatViewModel.canOpenActivityConfirmation(runId: target.runId) else { return }
-        }
+        // A confirmation may already be resolved before a durable Watch
+        // handoff is consumed. Its verified conversation remains a valid
+        // destination; navigation never approves or resumes that old prompt.
         guard chatViewModel.prepareForConversationChange(to: summary.id) else { return }
 
         if conversationStore.currentConversation?.id != summary.id {
@@ -637,10 +668,15 @@ struct AppShell: View {
                 }
             ) else { return }
         }
-        guard pendingAgentActivityTarget == target else { return }
+        guard pendingAgentActivityTarget == target,
+              pendingAgentActivityURL == sourceURL else { return }
         guard conversationStore.currentConversation?.id == summary.id else { return }
         rootRouter.path = [.chat]
+        if let sourceURL {
+            IOSDeepLinkInbox.shared.acknowledge(sourceURL)
+        }
         pendingAgentActivityTarget = nil
+        pendingAgentActivityURL = nil
     }
 
     @ViewBuilder
@@ -799,6 +835,7 @@ enum Route: Hashable {
     case healthSummary
     case weather
     case appleIntegrations
+    case appleWatch
     case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)
@@ -933,6 +970,11 @@ private extension View {
             case .appleIntegrations:
                 IOSAppleIntegrationsView(
                     systemPermissionCoordinator: systemPermissionCoordinator
+                )
+            case .appleWatch:
+                IOSWatchSettingsView(
+                    sharedSettings: sharedSettings,
+                    conversationStore: conversationStore
                 )
             case .subscription:
                 IOSSubscriptionView(store: storeCoordinator)

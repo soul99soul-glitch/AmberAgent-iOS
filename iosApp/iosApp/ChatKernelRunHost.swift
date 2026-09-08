@@ -2013,25 +2013,37 @@ final class ChatKernelRunHost {
             releaseLocalRunAfterTerminalRecordFailure(runId: runId)
             return
         }
-        if didPersist,
-           let signal = toolOutcomeUnknownSignal,
-           let conversationHex {
-            bindings.setToolOutcomeUnknown(IOSToolOutcomeUnknownDescriptor(
+        if didPersist, let conversationHex {
+            if let signal = toolOutcomeUnknownSignal {
+                let descriptor = IOSToolOutcomeUnknownDescriptor(
+                    runId: runId,
+                    conversationId: conversationHex,
+                    toolCallId: signal.toolCallId,
+                    toolName: signal.toolName
+                )
+                bindings.setToolOutcomeUnknown(descriptor)
+                _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(descriptor)
+            } else {
+                _ = WatchTaskCoordinator.shared.publishOutcomeUnknown(
+                    runId: runId,
+                    conversationId: conversationHex
+                )
+            }
+        } else {
+            WatchTaskCoordinator.shared.publish(
                 runId: runId,
                 conversationId: conversationHex,
-                toolCallId: signal.toolCallId,
-                toolName: signal.toolName
-            ))
-        }
-        WatchTaskCoordinator.shared.publish(
-            runId: runId,
-            conversationId: conversationHex,
-            presentation: .failed(),
-            summary: IOSAppLocalization.string(
-                "网页操作结果待确认。",
-                defaultValue: "网页操作结果待确认。"
+                presentation: .failed(),
+                summary: IOSAppLocalization.string(
+                    didPersist
+                        ? "操作结果待核实，但没有可打开的 iPhone 对话。"
+                        : "操作结果尚未保存，请在 iPhone 恢复。",
+                    defaultValue: didPersist
+                        ? "操作结果待核实，但没有可打开的 iPhone 对话。"
+                        : "操作结果尚未保存，请在 iPhone 恢复。"
+                )
             )
-        )
+        }
         await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
         bindings.setMessages(finalMessages)
         teardownRun(runId: runId, terminalEvent: .generationFailed)
@@ -2149,7 +2161,12 @@ final class ChatKernelRunHost {
             return
         }
         if didPersist, !miniAppFailed {
-            WatchTaskCoordinator.shared.publishCompleted(runId: runId, conversationId: conversationHex, summary: summary)
+            WatchTaskCoordinator.shared.publishCompleted(
+                runId: runId,
+                conversationId: conversationHex,
+                summary: summary,
+                resultTitle: miniAppApplication?.resultTitle
+            )
         } else {
             WatchTaskCoordinator.shared.publish(
                 runId: runId,

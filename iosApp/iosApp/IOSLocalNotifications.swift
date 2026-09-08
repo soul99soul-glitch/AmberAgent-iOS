@@ -97,6 +97,10 @@ final class IOSLocalNotificationService {
     private let permissionCoordinator: IOSSystemPermissionCoordinator
     private let now: () -> Date
     private let completionNotificationsEnabled: () -> Bool
+    private let watchNotificationDefaults: UserDefaults?
+    private static let pendingWatchAttentionKey = "amber.watch.pendingAttention.v1"
+    private var pendingWatchAttentionIdentifier: String?
+    private var schedulingWatchAttention = Set<String>()
     private var completionCancellationRevision = 0
     private var manualReminderCancellationRevision = 0
     private var agentReminderCancellationRevision = 0
@@ -107,12 +111,15 @@ final class IOSLocalNotificationService {
         now: @escaping () -> Date = Date.init,
         completionNotificationsEnabled: @escaping () -> Bool = {
             UserDefaults.standard.bool(forKey: IOSAppleIntegrationPreferenceKeys.completionNotificationsEnabled)
-        }
+        },
+        watchNotificationDefaults: UserDefaults? = .standard
     ) {
         self.center = center
         self.permissionCoordinator = permissionCoordinator
         self.now = now
         self.completionNotificationsEnabled = completionNotificationsEnabled
+        self.watchNotificationDefaults = watchNotificationDefaults
+        pendingWatchAttentionIdentifier = watchNotificationDefaults?.string(forKey: Self.pendingWatchAttentionKey)
     }
 
     func authorization() async -> IOSLocalNotificationAuthorization {
@@ -150,6 +157,56 @@ final class IOSLocalNotificationService {
             return .notAuthorized
         }
         return .scheduled(identifier: identifier)
+    }
+
+    /// A fresh question gets one notification; progress and old snapshots stay silent.
+    func scheduleWatchAttention(
+        snapshot: WatchTaskSnapshot,
+        notifyIfNeeded: Bool = true,
+        isStillCurrent: () -> Bool
+    ) async throws {
+        let cancellationRevision = completionCancellationRevision
+        guard isStillCurrent() else { return }
+        let nextIdentifier = snapshot.phase == "waitingForUser" ? snapshot.decision.map {
+            "amber.watch-attention.\(snapshot.runId).\($0.id)"
+        } : nil
+        if let pending = pendingWatchAttentionIdentifier, pending != nextIdentifier {
+            center.removePendingRequests(identifiers: [pending])
+        }
+        pendingWatchAttentionIdentifier = nextIdentifier
+        watchNotificationDefaults?.set(nextIdentifier, forKey: Self.pendingWatchAttentionKey)
+        guard notifyIfNeeded, snapshot.phase == "waitingForUser", !snapshot.isStale,
+              let decision = snapshot.decision,
+              let conversationID = snapshot.conversationId,
+              completionNotificationsEnabled(), isStillCurrent() else { return }
+        let identifier = "amber.watch-attention.\(snapshot.runId).\(decision.id)"
+        guard schedulingWatchAttention.insert(identifier).inserted else { return }
+        defer { schedulingWatchAttention.remove(identifier) }
+        let key = "amber.watch.notifiedDecisions.v1"
+        var notified = watchNotificationDefaults?.stringArray(forKey: key) ?? []
+        guard !notified.contains(identifier), await center.authorization() == .allowed,
+              cancellationRevision == completionCancellationRevision,
+              completionNotificationsEnabled(), isStillCurrent(),
+              let deepLink = IOSAppDeepLink.url(for: .agentActivity(AgentActivityDeepLink.Target(
+                runId: snapshot.runId, conversationId: conversationID, focus: .confirmation
+              ))) else { return }
+        try await center.add(IOSLocalNotificationRequest(
+            identifier: identifier,
+            title: IOSAppLocalization.string("Amber 需要你回答", defaultValue: "Amber 需要你回答"),
+            body: IOSAppLocalization.string("点按查看任务并继续。", defaultValue: "点按查看任务并继续。"),
+            fireDate: now().addingTimeInterval(1),
+            deepLink: deepLink
+        ))
+        guard cancellationRevision == completionCancellationRevision,
+              completionNotificationsEnabled(), isStillCurrent() else {
+            center.removePendingRequests(identifiers: [identifier])
+            return
+        }
+        // Persist only opaque event identities, never the question or tool payload.
+        notified = watchNotificationDefaults?.stringArray(forKey: key) ?? notified
+        notified.removeAll { $0 == identifier }
+        notified.append(identifier)
+        watchNotificationDefaults?.set(Array(notified.suffix(64)), forKey: key)
     }
 
     func scheduleManualReminder(
@@ -231,8 +288,10 @@ final class IOSLocalNotificationService {
 
     func cancelTaskCompletionNotifications() async {
         completionCancellationRevision &+= 1
+        pendingWatchAttentionIdentifier = nil
+        watchNotificationDefaults?.removeObject(forKey: Self.pendingWatchAttentionKey)
         let identifiers = await center.pendingRequestIdentifiers().filter {
-            $0.hasPrefix("amber.task-complete.")
+            $0.hasPrefix("amber.task-complete.") || $0.hasPrefix("amber.watch-attention.")
         }
         guard !identifiers.isEmpty else { return }
         center.removePendingRequests(identifiers: identifiers)
@@ -304,11 +363,35 @@ enum IOSNotificationAgentToolExecutor {
 
 @MainActor
 final class IOSDeepLinkInbox {
-    static let shared = IOSDeepLinkInbox()
+    static let shared = IOSDeepLinkInbox(defaults: .standard)
 
     private var pending: [URL] = []
+    private var durablePendingURLs: Set<String> = []
     private var handler: ((URL) -> Void)?
     private var promptHandoffs: [String: String] = [:]
+    private let defaults: UserDefaults
+    private let persistenceEnabled: Bool
+    private let pendingURLsKey = "app.amber.ios.deepLinkInbox.pendingURLs.v1"
+
+    /// The no-argument initializer is intentionally isolated for tests and
+    /// transient callers. Production uses `shared`; tests may inject a suite.
+    init(defaults: UserDefaults? = nil) {
+        self.defaults = defaults ?? UserDefaults()
+        persistenceEnabled = defaults != nil
+        let stored = persistenceEnabled ? (self.defaults.stringArray(forKey: pendingURLsKey) ?? []) : []
+        let storedURLs = stored.compactMap { value -> URL? in
+            guard let url = URL(string: value),
+                  let destination = IOSAppDeepLink.parse(url) else { return nil }
+            if case .agentPrompt = destination { return nil }
+            return url
+        }
+        var deduplicated: [URL] = []
+        for url in storedURLs where !deduplicated.contains(where: { $0.absoluteString == url.absoluteString }) {
+            deduplicated.append(url)
+        }
+        pending = deduplicated
+        durablePendingURLs = Set(pending.map(\.absoluteString))
+    }
 
     func preparePromptHandoff(_ prompt: String) -> IOSAppDeepLink.Destination? {
         guard let prompt = IOSAppDeepLink.normalizedPrompt(prompt) else { return nil }
@@ -321,24 +404,51 @@ final class IOSDeepLinkInbox {
         promptHandoffs.removeValue(forKey: id.lowercased())
     }
 
-    func submit(_ url: URL) {
+    func submit(_ url: URL, persistUntilHandled: Bool = false) {
         guard IOSAppDeepLink.parse(url) != nil else { return }
+        if persistUntilHandled {
+            if !pending.contains(where: { $0.absoluteString == url.absoluteString }) {
+                pending.append(url)
+            }
+            durablePendingURLs.insert(url.absoluteString)
+            persistPendingURLs()
+            handler?(url)
+            return
+        }
         if let handler {
             handler(url)
         } else {
-            pending.append(url)
+            if !pending.contains(where: { $0.absoluteString == url.absoluteString }) {
+                pending.append(url)
+            }
         }
     }
 
     func installHandler(_ handler: @escaping (URL) -> Void) {
         self.handler = handler
         let buffered = pending
-        pending.removeAll()
+        pending.removeAll { !durablePendingURLs.contains($0.absoluteString) }
+        persistPendingURLs()
         buffered.forEach(handler)
+    }
+
+    /// A Watch handoff is removed only after AppShell has successfully applied
+    /// the corresponding destination. Calling this for an ordinary deep link
+    /// is harmless and keeps the consumer path simple.
+    func acknowledge(_ url: URL) {
+        let key = url.absoluteString
+        pending.removeAll { $0.absoluteString == key }
+        durablePendingURLs.remove(key)
+        persistPendingURLs()
     }
 
     func removeHandler() {
         handler = nil
+    }
+
+    private func persistPendingURLs() {
+        guard persistenceEnabled else { return }
+        defaults.set(pending.map(\.absoluteString), forKey: pendingURLsKey)
     }
 }
 

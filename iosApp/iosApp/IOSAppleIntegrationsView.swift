@@ -95,10 +95,10 @@ struct IOSAppleIntegrationsView: View {
                         .foregroundStyle(AmberTheme.accent)
                         .frame(width: 28, height: 28)
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("后台任务完成通知")
+                        Text("任务通知")
                             .font(.body)
                             .foregroundStyle(AmberTheme.foreground)
-                        Text("只在 App 不活跃且本机任务结束时提醒；不使用远程推送。")
+                        Text("App 不活跃时，在任务结束或需要你回答时提醒；Apple Watch 按系统设置接收通知。")
                             .font(.caption)
                             .foregroundStyle(AmberTheme.muted)
                             .fixedSize(horizontal: false, vertical: true)
@@ -116,8 +116,8 @@ struct IOSAppleIntegrationsView: View {
                         ))
                         .labelsHidden()
                         .tint(AmberTheme.accent)
-                        .accessibilityLabel("后台任务完成通知")
-                        .accessibilityHint("只在 Amber 不活跃且本机任务完成时发送本地通知")
+                        .accessibilityLabel("任务通知")
+                        .accessibilityHint("Amber 不活跃时，提醒任务结束或需要回答")
                     }
                 }
                 .padding(.horizontal, 14)
