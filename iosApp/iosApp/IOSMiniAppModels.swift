@@ -19,6 +19,12 @@ enum IOSMiniAppPermission: String, CaseIterable, Codable, Identifiable {
     case sensor
     case location
     case clipboardRead = "clipboard.read"
+    case haptics
+    case device
+    case screen
+    case speech
+    case share
+    case openURL
 
     var id: String { rawValue }
 
@@ -29,6 +35,12 @@ enum IOSMiniAppPermission: String, CaseIterable, Codable, Identifiable {
     }
 
     private static let aliases: [String: String] = [
+        "vibrate": "haptics",
+        "vibration": "haptics",
+        "haptic": "haptics",
+        "振动": "haptics",
+        "震动": "haptics",
+        "openurl": "openURL",
         "fetch": "network",
         "http": "network",
         "https": "network",
@@ -333,7 +345,7 @@ struct IOSMiniAppOutputParser {
       "description": "1-80 字描述",
       "icon": "最多 2 个字符",
       "category": "tool|game|info|custom",
-      "permissions": ["storage","toast","theme","network","externalImages","search","clipboard.copy","host.updateBoardSummary","host.context","host.sendToConversation","host.createArtifact","ai.generate","sharedStore","eventBus","launch","sensor","location","clipboard.read"],
+      "permissions": ["storage","toast","theme","network","externalImages","search","clipboard.copy","host.updateBoardSummary","host.context","host.sendToConversation","host.createArtifact","ai.generate","sharedStore","eventBus","launch","sensor","location","clipboard.read","haptics","device","screen","speech","share","openURL"],
       "html": "<!DOCTYPE html>..."
     }
     约束：只生成单文件 HTML；不要使用 script src、iframe、form、eval、new Function、import()、XMLHttpRequest、WebSocket、localStorage、sessionStorage、geolocation。
@@ -350,6 +362,10 @@ struct IOSMiniAppOutputParser {
     事件用 await Amber.eventBus.subscribe({namespace,topic}, handler) 和 await Amber.eventBus.publish({namespace,topic,payload})，必须声明 eventBus；只在 Runner 生命周期内有效。
     打开其它小应用用 await Amber.launch({appId})，必须声明 launch，不允许 URL。
     定位用 await Amber.location.getCurrent({accuracy:"coarse"})，传感器用 await Amber.sensor.subscribe({type:"accelerometer|gyroscope", intervalMs:500}, handler)，都必须声明权限且会弹确认。常见别名 gyro / accel 也会映射到传感器；iOS 不提供环境光传感器数据。
+    iOS MiniApp 还提供以下系统能力：Amber.haptics.impact({style:"light|medium|heavy|soft|rigid", intensity:0.7})（intensity 范围 0...1）、Amber.haptics.notification({type:"success|warning|error"})、Amber.haptics.selection() 需要 haptics；Amber.device.getInfo() / getBattery() 需要 device；Amber.screen.getBrightness() 返回 0...1 数值、setBrightness(number 或 {brightness})（亮度范围 0...1）、setKeepAwake(bool 或 {enabled}) 需要 screen；Amber.speech.getVoices() 返回语音数组 [{identifier,name,language,quality,gender,voiceTraits}]，speak(string 或 {text,language?,rate?,pitch?,volume?})（text 最多 4000 字符，rate 0...1、pitch 0.5...2、volume 0...1）、stop/pause/resume 需要 speech；Amber.share({text?,url?})（返回 {completed}）需要 share；Amber.openURL(string 或 {url})（返回 {opened,url}）需要 openURL。
+    Amber.getAppInfo() 与 Amber.getCapabilities() 分别读取 app.info / app.capabilities；capabilities 只用于发现当前 iOS 实现的方法、权限和设置，不会弹授权。Amber.qrcode.generate(string 或 {text,size?}) 不需要权限，返回 {dataURL,width,height}；size 默认 256，范围 128...1024，text 最多 1024 UTF-8 字节。
+    系统能力调用必须用 try/catch 捕获错误：缺少硬件、系统不支持、未声明权限、设置关闭或用户拒绝都会以 Promise rejection 返回。screen 的设置仍必须同时写入 manifest 权限并通过独立授权；openURL 每次都会请求用户确认；share 只打开系统分享界面，由用户手动选择目标，不会自动发送。
+    iOS 实现遵循页面生命周期：小应用页面退出时停止进行中的 speech 并释放 keep-awake；进入后台时暂停/停止相关系统活动并立即恢复屏幕状态，回到前台不会自动重新应用之前的屏幕设置。不要假设调用会跨页面或后台持续。
     如做新闻、阅读、列表类小应用，更新按钮可以调用 Amber.search 或 Amber.fetch 获取新内容；如果未声明对应权限，就只能更新本地状态或演示数据。
     新闻、阅读、列表类小应用必须支持纵向滚动；不要把 body 固定成 overflow:hidden 或只能显示一屏，除非用户明确要求全屏游戏/计时器类工具。
     移动端可访问性是强制契约：所有可点击控件的可触区域至少 44×44 CSS px；使用 system-ui/-apple-system 和可缩放的相对字号；在 320px 宽度下必须自动换行且不得横向溢出。

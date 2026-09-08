@@ -13,6 +13,8 @@ struct MiniAppRunnerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(RouterPath.self) private var router
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(IOSMiniAppBridgePolicy.systemCapabilitiesPreferenceKey) private var systemCapabilitiesEnabled = true
 
     let appId: String
     let settingsStore: SettingsStore?
@@ -37,12 +39,14 @@ struct MiniAppRunnerView: View {
         appId: String,
         settingsStore: SettingsStore? = nil,
         sharedSettings: IOSSharedSettingsStore? = nil,
-        chatViewModel: ChatViewModel? = nil
+        chatViewModel: ChatViewModel? = nil,
+        repository: IOSMiniAppRepository? = nil
     ) {
         self.appId = appId
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
         self.chatViewModel = chatViewModel
+        _repository = State(initialValue: repository ?? .shared)
     }
 
     static let sampleHtml = IOSMiniAppFixtures.sampleHtml
@@ -118,10 +122,12 @@ struct MiniAppRunnerView: View {
             _ = hostConfirmationOwner.close()
             systemBridge.close()
         }
-        .overlay(alignment: .bottom) {
-            actionBanner
-                .padding(.horizontal, 16)
-                .padding(.bottom, 18)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if presentedSheet == nil {
+                actionBanner
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 18)
+            }
         }
         .onChange(of: actionMessage) { _, message in
             guard let message else { return }
@@ -201,7 +207,7 @@ struct MiniAppRunnerView: View {
                     Button("完成") { presentedSheet = nil }
                 }
             }
-            .overlay(alignment: .bottom) {
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 actionBanner
                     .padding(.horizontal, 16)
                     .padding(.bottom, 12)
@@ -345,10 +351,29 @@ struct MiniAppRunnerView: View {
         }
     }
 
-    private func grantsSection(_ app: IOSMiniAppRecord) -> some View {
+    func grantsSection(_ app: IOSMiniAppRecord) -> some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "权限")
             AmberFormGroup {
+                if !systemCapabilitiesEnabled,
+                   app.permissions.contains(where: { isSystemCapabilityPermission($0) }) {
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.accentAmber)
+                            .accessibilityHidden(true)
+                        Text("系统交互已在小应用设置中关闭。系统相关权限会保留授权意图，但当前无法调用。")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+
+                    MiniAppCapabilityDivider(leading: 14)
+                }
+
                 if app.permissions.isEmpty {
                     MiniAppCapabilityStatusRow(row: .init(
                         title: IOSAppLocalization.string("无需额外权限", defaultValue: "无需额外权限"),
@@ -361,7 +386,12 @@ struct MiniAppRunnerView: View {
                     ))
                 } else {
                     ForEach(Array(app.permissions.enumerated()), id: \.element) { index, permission in
-                        HStack(spacing: 12) {
+                        let stacksControls = dynamicTypeSize.isAccessibilitySize ||
+                            (!systemCapabilitiesEnabled && isSystemCapabilityPermission(permission))
+                        let layout = stacksControls
+                            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+                            : AnyLayout(HStackLayout(spacing: 12))
+                        layout {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(permissionDisplayName(permission))
                                     .font(.subheadline.weight(.semibold))
@@ -389,11 +419,14 @@ struct MiniAppRunnerView: View {
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(grantTint(appId: app.id, permission: permission))
                                     .padding(.horizontal, 12)
+                                    .padding(.vertical, 4)
                                     .frame(minHeight: 32)
                                     .background(
                                         grantTint(appId: app.id, permission: permission).opacity(0.12),
                                         in: Capsule()
                                     )
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
                             }
                             .frame(minHeight: 44)
                             .accessibilityLabel(permissionDisplayName(permission))
@@ -644,6 +677,12 @@ struct MiniAppRunnerView: View {
         case .sensor: key = "传感器"
         case .location: key = "定位"
         case .clipboardRead: key = "读取剪贴板"
+        case .haptics: key = "振动与触感"
+        case .device: key = "设备与电池信息"
+        case .screen: key = "屏幕控制"
+        case .speech: key = "语音朗读"
+        case .share: key = "系统分享"
+        case .openURL: key = "打开外部链接"
         case nil: key = nil
         }
         guard let key else {
@@ -670,6 +709,12 @@ struct MiniAppRunnerView: View {
         case "clipboard.copy": key = "写入剪贴板"
         case "clipboard.read": key = "读取剪贴板"
         case "location.get", "location.getCurrent": key = "定位"
+        case "haptics.impact", "haptics.notification", "haptics.selection": key = "振动与触感"
+        case "device.getInfo", "device.getBattery": key = "设备与电池信息"
+        case "screen.getBrightness", "screen.setBrightness", "screen.setKeepAwake": key = "屏幕控制"
+        case "speech.getVoices", "speech.speak", "speech.stop", "speech.pause", "speech.resume": key = "语音朗读"
+        case "share": key = "系统分享"
+        case "openURL": key = "打开外部链接"
         default:
             if method.hasPrefix("host.") {
                 key = "宿主能力"
@@ -710,6 +755,12 @@ struct MiniAppRunnerView: View {
     }
 
     private var bridgePolicy: IOSMiniAppBridgePolicy {
+        var policy = sharedBridgePolicy
+        policy.systemCapabilitiesEnabled = systemCapabilitiesEnabled
+        return policy
+    }
+
+    private var sharedBridgePolicy: IOSMiniAppBridgePolicy {
         guard let sharedSettings else {
             return IOSMiniAppBridgePolicy()
         }
@@ -754,9 +805,7 @@ struct MiniAppRunnerView: View {
     private var miniAppAccessIdentity: MiniAppRunnerAccessIdentity {
         _ = repository.revision
         let app = repository.get(appId)
-        let grants = repository.grants(appId: appId)
-            .map { "\($0.permission):\($0.decision.rawValue)" }
-            .sorted()
+        let grants = IOSMiniAppBridgePolicy.reloadGrants(repository.grants(appId: appId))
         return MiniAppRunnerAccessIdentity(
             permissions: app?.permissions.sorted() ?? [],
             grants: grants
@@ -1115,10 +1164,20 @@ struct MiniAppRunnerView: View {
 
     private func grantTitle(appId: String, permission: String) -> String {
         let key = repository.grantDecision(appId: appId, permission: permission)?.title ?? "未设置"
-        return IOSAppLocalization.string(key, defaultValue: key)
+        let title = IOSAppLocalization.string(key, defaultValue: key)
+        guard !systemCapabilitiesEnabled,
+              isSystemCapabilityPermission(permission) else {
+            return title
+        }
+        return IOSAppLocalization.formatted(
+            "%@ · 全局关闭", defaultValue: "%@ · 全局关闭", arguments: [title]
+        )
     }
 
     private func grantTint(appId: String, permission: String) -> Color {
+        if !systemCapabilitiesEnabled, isSystemCapabilityPermission(permission) {
+            return AmberTheme.muted2
+        }
         switch repository.grantDecision(appId: appId, permission: permission) {
         case .allow:
             return AmberTheme.accentGreen
@@ -1126,6 +1185,15 @@ struct MiniAppRunnerView: View {
             return AmberTheme.accentRed
         case nil:
             return AmberTheme.accentAmber
+        }
+    }
+
+    private func isSystemCapabilityPermission(_ permission: String) -> Bool {
+        switch IOSMiniAppPermission(rawValue: permission) {
+        case .haptics, .device, .screen, .speech, .share, .openURL:
+            return true
+        default:
+            return false
         }
     }
 
@@ -1150,6 +1218,12 @@ struct MiniAppRunnerView: View {
         case .sensor: key = "允许订阅设备传感器。"
         case .location: key = "允许读取当前位置。"
         case .clipboardRead: key = "允许读取剪贴板文本。"
+        case .haptics: key = "允许播放短暂振动和触感反馈。"
+        case .device: key = "允许读取系统版本、语言、电量和无障碍偏好，不包含设备标识。"
+        case .screen: key = "允许调整亮度和保持常亮，离开或进入后台时恢复。"
+        case .speech: key = "允许使用系统声音朗读文本，离开或进入后台时停止。"
+        case .share: key = "允许展示系统分享面板，内容由你确认分享。"
+        case .openURL: key = "允许在每次确认后打开网页、邮件或拨号链接。"
         case nil: key = nil
         }
         guard let key else {
@@ -1581,6 +1655,12 @@ struct MiniAppPermissionGrantPrompt: Equatable {
         case .sensor: "传感器"
         case .location: "定位"
         case .clipboardRead: "读取剪贴板"
+        case .haptics: "振动与触感"
+        case .device: "设备与电池信息"
+        case .screen: "屏幕控制"
+        case .speech: "语音朗读"
+        case .share: "系统分享"
+        case .openURL: "打开外部链接"
         }
     }
 
@@ -1604,6 +1684,12 @@ struct MiniAppPermissionGrantPrompt: Equatable {
         case .sensor: "订阅设备传感器"
         case .location: "读取当前位置"
         case .clipboardRead: "读取剪贴板文本"
+        case .haptics: "播放短暂振动和触感反馈"
+        case .device: "读取系统版本、语言、电量和无障碍偏好，不含设备标识"
+        case .screen: "临时调整亮度或保持常亮，离开或进入后台时恢复"
+        case .speech: "使用系统声音朗读文本，离开或进入后台时停止"
+        case .share: "展示系统分享面板，由你选择分享目标并确认"
+        case .openURL: "每次确认后打开网页、邮件或拨号链接"
         }
     }
 }

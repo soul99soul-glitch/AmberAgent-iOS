@@ -151,6 +151,8 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         }
         context.coordinator.currentTheme = theme
         let coordinator = context.coordinator
+        let deviceCapabilities = IOSMiniAppDeviceCapabilities()
+        coordinator.deviceCapabilities = deviceCapabilities
         let runtime = IOSMiniAppBridgeRuntime(
             appId: appId,
             repository: repository,
@@ -163,6 +165,9 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             sensorSubscribeHandler: sensorSubscribeHandler,
             sensorUnsubscribeHandler: sensorUnsubscribeHandler,
             sensitiveConfirmationHandler: sensitiveConfirmationHandler,
+            systemHandler: { method, params in
+                try await deviceCapabilities.dispatch(method: method, params: params)
+            },
             toastHandler: onToast,
             themeProvider: { [weak coordinator] in
                 coordinator?.currentTheme ?? theme
@@ -184,7 +189,15 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
           var eventHandlers = {};
           var sensorHandlers = {};
           function asObject(value) {
-            return value && typeof value === 'object' ? value : {};
+            if (value === undefined || value === null) return {};
+            if (typeof value === 'object' && !Array.isArray(value)) return value;
+            throw new Error('Bridge params must be an object');
+          }
+          function valueParams(value, key) {
+            if (value && typeof value === 'object') return value;
+            var params = {};
+            params[key] = value;
+            return params;
           }
           function call(method, params) {
             return new Promise(function(resolve, reject) {
@@ -261,6 +274,34 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             return value === undefined ? {key: keyOrObject} : {key: keyOrObject, value: value};
           }
           window.Amber = {
+            getAppInfo: function() { return call('app.info', {}); },
+            getCapabilities: function() { return call('app.capabilities', {}); },
+            haptics: {
+              impact: function(options) { return call('haptics.impact', options == null ? {} : options); },
+              notification: function(options) { return call('haptics.notification', options == null ? {} : options); },
+              selection: function() { return call('haptics.selection', {}); }
+            },
+            device: {
+              getInfo: function() { return call('device.getInfo', {}); },
+              getBattery: function() { return call('device.getBattery', {}); }
+            },
+            screen: {
+              getBrightness: function() { return call('screen.getBrightness', {}); },
+              setBrightness: function(value) { return call('screen.setBrightness', valueParams(value, 'brightness')); },
+              setKeepAwake: function(value) { return call('screen.setKeepAwake', valueParams(value, 'enabled')); }
+            },
+            speech: {
+              getVoices: function() { return call('speech.getVoices', {}); },
+              speak: function(value) { return call('speech.speak', valueParams(value, 'text')); },
+              stop: function() { return call('speech.stop', {}); },
+              pause: function() { return call('speech.pause', {}); },
+              resume: function() { return call('speech.resume', {}); }
+            },
+            share: function(options) { return call('share', options == null ? {} : options); },
+            openURL: function(value) { return call('openURL', valueParams(value, 'url')); },
+            qrcode: {
+              generate: function(value) { return call('qrcode.generate', valueParams(value, 'text')); }
+            },
             storage: {
               get: function(key) { return call('storage.get', keyParams(key)); },
               set: function(key, value) { return call('storage.set', keyParams(key, value)); },
@@ -400,6 +441,7 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         webView.isInspectable = policy.webViewDebugEnabled
         webView.navigationDelegate = context.coordinator
         bridge.attach(webView: webView)
+        deviceCapabilities.presentationAnchor = webView
         // Inject the validated HTML. baseURL nil = origin "null" (sandboxed).
         context.coordinator.loadedHTML = html
         context.coordinator.externalImagesAllowed = externalImagesAllowed
@@ -477,6 +519,7 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         let onClose: () -> Void
         let onBlockedNavigation: (URL) -> Void
         var bridge: MiniAppBridge?
+        var deviceCapabilities: IOSMiniAppDeviceCapabilities?
         var loadedHTML = ""
         var externalImagesAllowed = false
         var currentTheme = IOSMiniAppThemeBridge.payload(
@@ -506,6 +549,8 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             isClosed = true
             bridge?.close()
             bridge = nil
+            deviceCapabilities?.close()
+            deviceCapabilities = nil
             onClose()
         }
 
@@ -517,6 +562,7 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         private func setTrustedMainDocument(_ trusted: Bool) {
             isTrustedMainDocument = trusted
             bridge?.setTrustedMainDocument(trusted)
+            if !trusted { deviceCapabilities?.suspend() }
         }
 
         func webView(
@@ -568,8 +614,9 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         }
 
         deinit {
-            Task { @MainActor [bridge] in
+            Task { @MainActor [bridge, deviceCapabilities] in
                 bridge?.close()
+                deviceCapabilities?.close()
             }
         }
     }

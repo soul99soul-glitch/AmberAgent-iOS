@@ -4,6 +4,12 @@ struct MiniAppSettingsView: View {
     let sharedSettings: IOSSharedSettingsStore
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @AppStorage(IOSMiniAppBridgePolicy.systemCapabilitiesPreferenceKey) private var systemCapabilitiesEnabled = true
+
+    private var usesAccessibilityHeader: Bool {
+        dynamicTypeSize >= .accessibility1
+    }
 
     var body: some View {
         ZStack {
@@ -34,13 +40,22 @@ struct MiniAppSettingsView: View {
 
             Spacer()
 
-            VStack(spacing: 2) {
+            if usesAccessibilityHeader {
                 Text("小应用设置")
-                    .font(.title2.weight(.bold))
+                    .font(.headline.weight(.bold))
                     .foregroundStyle(AmberTheme.foreground)
-                Text("权限与宿主能力")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(AmberTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity)
+            } else {
+                VStack(spacing: 2) {
+                    Text("小应用设置")
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(AmberTheme.foreground)
+                    Text("权限与宿主能力")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(AmberTheme.muted)
+                }
             }
 
             Spacer()
@@ -82,6 +97,14 @@ struct MiniAppSettingsView: View {
 
             AmberSectionLabel(text: "小应用权限")
             AmberFormGroup {
+                MiniAppPresetToggleRow(
+                    title: "系统交互",
+                    subtitle: "允许小应用申请振动、设备信息、屏幕亮度与常亮、语音朗读、系统分享和外部链接，也提供本地二维码生成。各项权限仍需单独授权。",
+                    systemImage: "iphone.radiowaves.left.and.right",
+                    tint: AmberTheme.accent,
+                    isOn: $systemCapabilitiesEnabled
+                )
+                MiniAppCapabilityDivider(leading: 54)
                 MiniAppPresetToggleRow(
                     title: "网络 fetch",
                     subtitle: "允许已授权小应用请求公开 https 页面；本地、私网和带凭证 URL 会被拒绝。",
@@ -275,31 +298,62 @@ private struct MiniAppPresetToggleRow: View {
     let systemImage: String
     let tint: Color
     @Binding var isOn: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var usesAccessibilityLayout: Bool {
+        dynamicTypeSize >= .accessibility1
+    }
 
     var body: some View {
-        Toggle(isOn: $isOn) {
-            HStack(spacing: 12) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(tint)
-                    .frame(width: 28, height: 28)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.body)
-                        .foregroundStyle(AmberTheme.foreground)
-                    Text(subtitle)
+        Group {
+            if usesAccessibilityLayout {
+                VStack(alignment: .leading, spacing: 8) {
+                    Toggle(isOn: $isOn) {
+                        HStack(spacing: 12) {
+                            Image(systemName: systemImage)
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(tint)
+                                .frame(width: 28, height: 28)
+                            Text(LocalizedStringKey(title))
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.foreground)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .accessibilityLabel(Text(LocalizedStringKey(title)))
+                    .accessibilityHint(Text(LocalizedStringKey(subtitle)))
+                    Text(LocalizedStringKey(subtitle))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityHidden(true)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Toggle(isOn: $isOn) {
+                    HStack(spacing: 12) {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(tint)
+                            .frame(width: 28, height: 28)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(LocalizedStringKey(title))
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(LocalizedStringKey(subtitle))
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .accessibilityLabel(Text(LocalizedStringKey(title)))
+                .accessibilityHint(Text(LocalizedStringKey(subtitle)))
             }
         }
         .toggleStyle(.switch)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(title)
-        .accessibilityHint(subtitle)
         .frame(minHeight: 54)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

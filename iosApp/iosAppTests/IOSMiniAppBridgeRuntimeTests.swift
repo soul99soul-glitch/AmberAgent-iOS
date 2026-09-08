@@ -765,6 +765,222 @@ final class IOSMiniAppBridgeRuntimeTests: XCTestCase {
         XCTAssertEqual(emitted, .object(["ok": .bool(true)]))
     }
 
+    func testEverySystemMethodRequiresItsDeclaredPermissionAndHonorsRevocation() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        for (method, permission) in IOSMiniAppBridgeRuntime.systemMethodPermissions {
+            var calls = 0
+            let undeclared = try repo.saveGenerated(output(permissions: []))
+            let deniedRuntime = IOSMiniAppBridgeRuntime(
+                appId: undeclared.id, repository: repo,
+                systemHandler: { _, _ in calls += 1; return .bool(true) }
+            )
+            let denied = await deniedRuntime.dispatch(method: method, params: [:])
+            XCTAssertTrue(denied.errorMessage?.contains("not declared") == true, method)
+
+            let app = try repo.saveGenerated(output(permissions: [permission.rawValue]))
+            let runtime = IOSMiniAppBridgeRuntime(
+                appId: app.id, repository: repo, grantHandler: { _ in true },
+                sensitiveConfirmationHandler: { _, _ in true },
+                systemHandler: { received, _ in
+                    XCTAssertEqual(received, method)
+                    calls += 1
+                    return .bool(true)
+                }
+            )
+            let result = await runtime.dispatch(method: method, params: ["url": "https://example.com"])
+            XCTAssertEqual(result, .success(.bool(true)), method)
+            XCTAssertEqual(repo.grantDecision(appId: app.id, permission: permission.rawValue), .allow)
+            XCTAssertEqual(repo.auditLogs(appId: app.id).first?.method, method)
+            try repo.setGrant(appId: app.id, permission: permission.rawValue, decision: .deny)
+            let revoked = await runtime.dispatch(method: method, params: [:])
+            XCTAssertTrue(revoked.errorMessage?.contains("was denied") == true, method)
+            XCTAssertEqual(calls, 1, method)
+            runtime.close()
+            deniedRuntime.close()
+        }
+    }
+
+    func testFirstUseSystemGrantPreservesDocumentWhileRevocationAndImageGrantsReload() {
+        let granted = IOSMiniAppGrantRecord(appId: "app", permission: "speech", decision: .allow, updatedAt: 1)
+        XCTAssertEqual(IOSMiniAppBridgePolicy.reloadGrants([]), IOSMiniAppBridgePolicy.reloadGrants([granted]))
+        var denied = granted
+        denied.decision = .deny
+        XCTAssertEqual(IOSMiniAppBridgePolicy.reloadGrants([denied]), ["speech:DENY"])
+        var image = granted
+        image.permission = "externalImages"
+        XCTAssertEqual(IOSMiniAppBridgePolicy.reloadGrants([image]), ["externalImages:ALLOW"])
+    }
+
+    func testSystemSwitchAndMissingHandlerNeverInvokeNativeCodeOrPrompt() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: ["haptics"]))
+        let disabled = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo,
+            policy: IOSMiniAppBridgePolicy(systemCapabilitiesEnabled: false),
+            grantHandler: { _ in XCTFail("disabled capability must not prompt"); return true },
+            systemHandler: { _, _ in XCTFail("disabled capability must not execute"); return .null }
+        )
+        for method in IOSMiniAppBridgeRuntime.systemMethods {
+            let result = await disabled.dispatch(method: method, params: [:])
+            XCTAssertEqual(result.errorMessage, "System capabilities are disabled in MiniApp settings.")
+        }
+        let missing = IOSMiniAppBridgeRuntime(appId: app.id, repository: repo)
+        let result = await missing.dispatch(method: "haptics.selection", params: [:])
+        XCTAssertEqual(result.errorMessage, "System capabilities are not available in this runner.")
+    }
+
+    func testSystemCapabilityDiscoveryDoesNotRequestPermission() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: ["haptics"]))
+        try repo.setGrant(appId: app.id, permission: "haptics", decision: .deny)
+        let runtime = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo,
+            policy: IOSMiniAppBridgePolicy(systemCapabilitiesEnabled: false),
+            grantHandler: { _ in XCTFail("discovery must not prompt"); return true },
+            systemHandler: { _, _ in XCTFail("discovery must not invoke a device"); return .null }
+        )
+        let result = await runtime.dispatch(method: "app.capabilities", params: [:])
+        guard case .success(.object(let payload)) = result,
+              case .array(let methods) = payload["methods"],
+              case .array(let permissions) = payload["permissions"] else {
+            return XCTFail("expected capability snapshot")
+        }
+        XCTAssertTrue(methods.contains(.string("haptics.impact")))
+        XCTAssertTrue(methods.contains(.string("qrcode.generate")))
+        XCTAssertFalse(methods.contains(.string("location.getCurrent")))
+        XCTAssertTrue(permissions.contains(.object([
+            "permission": .string("haptics"), "declared": .bool(true),
+            "enabled": .bool(false), "decision": .string("DENY"),
+        ])))
+    }
+
+    func testOpenURLConfirmsEveryCallAndDoesNotExecuteAfterDenialOrRevocation() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: ["openURL"]))
+        var confirmations = 0
+        var calls = 0
+        let runtime = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo, grantHandler: { _ in true },
+            sensitiveConfirmationHandler: { _, message in
+                confirmations += 1
+                XCTAssertTrue(message.contains("https://example.com"))
+                if confirmations == 3 {
+                    try repo.setGrant(appId: app.id, permission: "openURL", decision: .deny)
+                }
+                return confirmations != 2
+            },
+            systemHandler: { _, _ in calls += 1; return .bool(true) }
+        )
+        let invalid = await runtime.dispatch(method: "openURL", params: ["url": "javascript:alert(1)"])
+        XCTAssertNotNil(invalid.errorMessage)
+        XCTAssertEqual(confirmations, 0)
+        let first = await runtime.dispatch(method: "openURL", params: ["url": "https://example.com"])
+        XCTAssertEqual(first, .success(.bool(true)))
+        let denied = await runtime.dispatch(method: "openURL", params: ["url": "https://example.com"])
+        XCTAssertNotNil(denied.errorMessage)
+        let revoked = await runtime.dispatch(method: "openURL", params: ["url": "https://example.com"])
+        XCTAssertTrue(revoked.errorMessage?.contains("permission changed") == true)
+        XCTAssertEqual(confirmations, 3)
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testLongURLConfirmationIsBoundedButOpensTheOriginalURL() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: ["openURL"]))
+        let url = "https://example.com/document?token=" + String(repeating: "private", count: 400)
+        var confirmed = false
+        let runtime = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo, grantHandler: { _ in true },
+            sensitiveConfirmationHandler: { _, message in
+                confirmed = true
+                XCTAssertLessThan(message.count, 400)
+                XCTAssertTrue(message.contains("https://example.com/document"))
+                XCTAssertTrue(message.contains("…"))
+                XCTAssertFalse(message.contains("private"))
+                return true
+            },
+            systemHandler: { _, params in
+                XCTAssertEqual(params["url"] as? String, url)
+                return .bool(true)
+            }
+        )
+        let result = await runtime.dispatch(method: "openURL", params: ["url": url])
+        XCTAssertEqual(result, .success(.bool(true)))
+        XCTAssertTrue(confirmed)
+    }
+
+    func testSystemResultIsDiscardedIfHandlerFinishesAfterCancellation() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: []))
+        let started = expectation(description: "system handler started")
+        var continuation: CheckedContinuation<IOSMiniAppJSONValue, Never>?
+        let runtime = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo,
+            systemHandler: { _, _ in
+                await withCheckedContinuation {
+                    continuation = $0
+                    started.fulfill()
+                }
+            }
+        )
+        let request = Task { await runtime.dispatch(method: "qrcode.generate", params: ["text": "test"]) }
+        await fulfillment(of: [started], timeout: 2)
+        runtime.cancelPendingRequests()
+        continuation?.resume(returning: .string("late result"))
+        let result = await request.value
+        XCTAssertNotNil(result.errorMessage)
+    }
+
+    func testQRCodeNeedsNoGrantAndClosedRuntimeRejectsSystemCalls() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: []))
+        var calls = 0
+        let runtime = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo,
+            grantHandler: { _ in XCTFail("QR generation needs no grant"); return false },
+            systemHandler: { method, _ in
+                XCTAssertEqual(method, "qrcode.generate")
+                calls += 1
+                return .string("qr")
+            }
+        )
+        let result = await runtime.dispatch(method: "qrcode.generate", params: ["text": "Amber"])
+        XCTAssertEqual(result, .success(.string("qr")))
+        runtime.close()
+        let closed = await runtime.dispatch(method: "qrcode.generate", params: ["text": "Amber"])
+        XCTAssertEqual(closed.errorMessage, "MiniApp bridge is closed.")
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testDocumentTrustLossCancelsPendingGrantBeforeSystemAction() async throws {
+        let repo = IOSMiniAppRepository(baseDirectory: tempRoot(), seedOnMissingStore: false)
+        let app = try repo.saveGenerated(output(permissions: ["haptics"]))
+        var grantContinuation: CheckedContinuation<Bool, Never>?
+        var calls = 0
+        let prompted = expectation(description: "permission pending")
+        let runtime = IOSMiniAppBridgeRuntime(
+            appId: app.id, repository: repo,
+            grantHandler: { _ in
+                await withCheckedContinuation { continuation in
+                    grantContinuation = continuation
+                    prompted.fulfill()
+                }
+            },
+            systemHandler: { _, _ in calls += 1; return .bool(true) }
+        )
+        let bridge = MiniAppBridge(runtime: runtime)
+        bridge.setTrustedMainDocument(true)
+        let request = Task { await runtime.dispatch(method: "haptics.selection", params: [:]) }
+        await fulfillment(of: [prompted], timeout: 2)
+        bridge.setTrustedMainDocument(false)
+        grantContinuation?.resume(returning: true)
+        let result = await request.value
+        XCTAssertEqual(result.errorMessage, "MiniApp bridge request was cancelled.")
+        XCTAssertEqual(calls, 0)
+        XCTAssertNil(repo.grantDecision(appId: app.id, permission: "haptics"))
+        bridge.close()
+    }
+
     private func tempRoot() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-miniapp-bridge-tests-\(UUID().uuidString)", isDirectory: true)

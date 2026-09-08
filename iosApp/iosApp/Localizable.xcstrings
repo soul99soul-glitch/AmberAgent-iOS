@@ -94098,7 +94098,2221 @@
           "zh-Hans": { "stringUnit": { "state": "translated", "value": "exit %ld · 无输出" } },
           "zh-Hant": { "stringUnit": { "state": "translated", "value": "exit %ld · 無輸出" } }
         }
+      },
+    "系统交互": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System interactions"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム操作"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 상호작용"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Системные взаимодействия"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统交互"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系統互動"
+          }
+        }
       }
+    },
+    "允许小应用申请振动、设备信息、屏幕亮度与常亮、语音朗读、系统分享和外部链接，也提供本地二维码生成。各项权限仍需单独授权。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow MiniApps to request haptics, device information, screen brightness and keep-awake, speech, system sharing, and external links. Local QR code generation is also available. Each permission still requires separate authorization."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ミニアプリが触覚フィードバック、デバイス情報、画面の明るさと常時点灯、音声読み上げ、システム共有、外部リンクを要求できるようにします。ローカルでのQRコード生成も利用できます。各権限には個別の許可が必要です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MiniApp이 햅틱, 기기 정보, 화면 밝기 및 화면 켜짐 유지, 음성 읽기, 시스템 공유, 외부 링크를 요청하도록 허용합니다. 로컬 QR 코드 생성도 제공합니다. 각 권한은 별도로 승인해야 합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить мини-приложениям запрашивать тактильную отдачу, сведения об устройстве, яркость экрана и постоянное включение экрана, озвучивание текста, системный обмен и внешние ссылки. Также доступно создание локальных QR-кодов. Для каждого разрешения требуется отдельное подтверждение."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许小应用申请振动、设备信息、屏幕亮度与常亮、语音朗读、系统分享和外部链接，也提供本地二维码生成。各项权限仍需单独授权。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許小應用申請觸覺回饋、裝置資訊、螢幕亮度與保持常亮、語音朗讀、系統分享和外部連結，也提供本機 QR 碼產生。各項權限仍需個別授權。"
+          }
+        }
+      }
+    },
+    "系统交互已在小应用设置中关闭。系统相关权限会保留授权意图，但当前无法调用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System interactions are disabled in MiniApp settings. System permissions retain their authorization choices, but cannot be used right now."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ミニアプリの設定でシステム操作が無効になっています。システム権限の許可設定は保持されますが、現在は利用できません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MiniApp 설정에서 시스템 상호작용이 꺼져 있습니다. 시스템 권한의 승인 선택은 유지되지만 현재 사용할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Системные взаимодействия отключены в настройках мини-приложений. Выбранные разрешения сохраняются, но сейчас их нельзя использовать."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统交互已在小应用设置中关闭。系统相关权限会保留授权意图，但当前无法调用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "小應用設定中已關閉系統互動。系統權限會保留授權選擇，但目前無法使用。"
+          }
+        }
+      }
+    },
+    "振动与触感": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Haptics"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "触覚フィードバック"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "햅틱"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Тактильная отдача"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "振动与触感"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "振動與觸覺"
+          }
+        }
+      }
+    },
+    "设备与电池信息": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device and battery info"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デバイスとバッテリー情報"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기기 및 배터리 정보"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сведения об устройстве и батарее"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备与电池信息"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "裝置與電池資訊"
+          }
+        }
+      }
+    },
+    "屏幕控制": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Screen controls"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "画面の制御"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "화면 제어"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Управление экраном"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "屏幕控制"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "螢幕控制"
+          }
+        }
+      }
+    },
+    "语音朗读": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speech"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音声読み上げ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "음성 읽기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Озвучивание текста"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语音朗读"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音朗讀"
+          }
+        }
+      }
+    },
+    "系统分享": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System sharing"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム共有"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 공유"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Системный обмен"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统分享"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系統分享"
+          }
+        }
+      }
+    },
+    "打开外部链接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open external links"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部リンクを開く"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "외부 링크 열기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открытие внешних ссылок"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开外部链接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟外部連結"
+          }
+        }
+      }
+    },
+    "允许播放短暂振动和触感反馈。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow short haptic feedback."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "短い振動と触覚フィードバックを許可します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "짧은 햅틱 피드백을 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить краткие тактильные отклики."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许播放短暂振动和触感反馈。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許短暫振動與觸覺回饋。"
+          }
+        }
+      }
+    },
+    "允许读取系统版本、语言、电量和无障碍偏好，不包含设备标识。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow reading the system version, language, battery level, and accessibility preferences; no device identifier is included."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システムバージョン、言語、バッテリー残量、アクセシビリティ設定の読み取りを許可します。デバイス識別子は含まれません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 버전, 언어, 배터리 잔량 및 손쉬운 사용 환경설정 읽기를 허용합니다. 기기 식별자는 포함되지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить чтение версии системы, языка, уровня заряда и настроек универсального доступа; идентификатор устройства не передаётся."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许读取系统版本、语言、电量和无障碍偏好，不包含设备标识。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許讀取系統版本、語言、電池電量與輔助使用偏好設定，不包含裝置識別碼。"
+          }
+        }
+      }
+    },
+    "允许调整亮度和保持常亮，离开或进入后台时恢复。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow adjusting brightness and keeping the screen awake; restored when leaving or entering the background."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "明るさの調整と画面の常時点灯を許可します。画面を離れるかバックグラウンドに入ると元に戻ります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "밝기 조정과 화면 켜짐 유지를 허용합니다. 화면을 나가거나 백그라운드로 전환하면 복원됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить изменять яркость и не выключать экран; при выходе или переходе в фон состояние будет восстановлено."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许调整亮度和保持常亮，离开或进入后台时恢复。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許調整亮度並保持常亮，離開或進入背景時會還原。"
+          }
+        }
+      }
+    },
+    "允许使用系统声音朗读文本，离开或进入后台时停止。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow using system voices to read text aloud; stops when leaving or entering the background."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム音声によるテキストの読み上げを許可します。画面を離れるかバックグラウンドに入ると停止します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 음성으로 텍스트를 읽도록 허용합니다. 화면을 나가거나 백그라운드로 전환하면 중지됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить озвучивать текст системными голосами; при выходе или переходе в фон воспроизведение остановится."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许使用系统声音朗读文本，离开或进入后台时停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許使用系統語音朗讀文字，離開或進入背景時會停止。"
+          }
+        }
+      }
+    },
+    "允许展示系统分享面板，内容由你确认分享。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow showing the system share sheet; you confirm the content to share."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム共有シートの表示を許可します。共有する内容は自分で確認します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 공유 패널 표시를 허용합니다. 공유할 내용은 직접 확인합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить показывать системную панель общего доступа; содержимое подтверждается вами."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许展示系统分享面板，内容由你确认分享。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許顯示系統分享面板，分享內容由你確認。"
+          }
+        }
+      }
+    },
+    "允许在每次确认后打开网页、邮件或拨号链接。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow opening web, email, or phone links after confirmation each time."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "毎回の確認後にウェブ、メール、電話リンクを開くことを許可します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "매번 확인한 후 웹, 이메일 또는 전화 링크를 열도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить после каждого подтверждения открывать веб-ссылки, ссылки на электронную почту или телефон."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许在每次确认后打开网页、邮件或拨号链接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許在每次確認後開啟網頁、電子郵件或撥號連結。"
+          }
+        }
+      }
+    },
+    "播放短暂振动和触感反馈": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Play short haptic feedback"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "短い振動と触覚フィードバックを再生"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "짧은 햅틱 피드백 재생"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Воспроизводить краткие тактильные отклики"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放短暂振动和触感反馈"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "播放短暫振動與觸覺回饋"
+          }
+        }
+      }
+    },
+    "读取系统版本、语言、电量和无障碍偏好，不含设备标识": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read the system version, language, battery level, and accessibility preferences without a device identifier"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デバイス識別子を含めず、システムバージョン、言語、バッテリー残量、アクセシビリティ設定を読み取る"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기기 식별자 없이 시스템 버전, 언어, 배터리 잔량 및 손쉬운 사용 환경설정을 읽기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Читать версию системы, язык, уровень заряда и настройки универсального доступа без идентификатора устройства"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取系统版本、语言、电量和无障碍偏好，不含设备标识"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀取系統版本、語言、電池電量與輔助使用偏好設定，不含裝置識別碼"
+          }
+        }
+      }
+    },
+    "临时调整亮度或保持常亮，离开或进入后台时恢复": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Temporarily adjust brightness or keep the screen awake; restored when leaving or entering the background"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一時的に明るさを調整するか画面を常時点灯し、画面を離れるかバックグラウンドに入ると元に戻す"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일시적으로 밝기를 조정하거나 화면 켜짐을 유지하고, 화면을 나가거나 백그라운드로 전환하면 복원"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Временно изменять яркость или не выключать экран; восстанавливать состояние при выходе или переходе в фон"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "临时调整亮度或保持常亮，离开或进入后台时恢复"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暫時調整亮度或保持常亮，離開或進入背景時會還原"
+          }
+        }
+      }
+    },
+    "使用系统声音朗读文本，离开或进入后台时停止": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use system voices to read text aloud; stops when leaving or entering the background"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム音声でテキストを読み上げ、画面を離れるかバックグラウンドに入ると停止"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 음성으로 텍스트를 읽고, 화면을 나가거나 백그라운드로 전환하면 중지"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать системные голоса для озвучивания текста; останавливать при выходе или переходе в фон"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用系统声音朗读文本，离开或进入后台时停止"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用系統語音朗讀文字，離開或進入背景時會停止"
+          }
+        }
+      }
+    },
+    "展示系统分享面板，由你选择分享目标并确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show the system share sheet so you choose and confirm a destination"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "システム共有シートを表示し、共有先を選んで確認"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "시스템 공유 패널을 표시하고 공유 대상을 직접 선택 및 확인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать системную панель общего доступа, чтобы вы выбрали и подтвердили получателя"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展示系统分享面板，由你选择分享目标并确认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示系統分享面板，由你選擇分享目標並確認"
+          }
+        }
+      }
+    },
+    "每次确认后打开网页、邮件或拨号链接": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open web, email, or phone links after confirmation each time"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "毎回の確認後にウェブ、メール、電話リンクを開く"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "매번 확인한 후 웹, 이메일 또는 전화 링크 열기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открывать веб-ссылки, ссылки на электронную почту или телефон после каждого подтверждения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每次确认后打开网页、邮件或拨号链接"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每次確認後開啟網頁、電子郵件或撥號連結"
+          }
+        }
+      }
+    },
+    "%@ · 全局关闭": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · Globally disabled"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · グローバルで無効"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 전체 비활성화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · Отключено глобально"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 全局关闭"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 全域關閉"
+          }
+        }
+      }
+    },
+    "链接较长，已省略部分内容。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The link is long; part of it has been omitted."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リンクが長いため、一部を省略しています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "링크가 길어 일부가 생략되었습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ссылка слишком длинная, часть URL скрыта."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "链接较长，已省略部分内容。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連結較長，已省略部分內容。"
+          }
+        }
+      }
+    },
+    "允许打开外部链接？": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow opening external links?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外部リンクを開くことを許可しますか？"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "외부 링크를 열도록 허용할까요?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить открыть внешнюю ссылку?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许打开外部链接？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許開啟外部連結？"
+          }
+        }
+      }
+    },
+    "「%@」想打开：\n%@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@” wants to open:\n%@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」が開こうとしています：\n%@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」에서 열려고 합니다:\n%@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«%@» хочет открыть:\n%@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」想打开：\n%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」想開啟：\n%@"
+          }
+        }
+      }
+    },
+    "启用小应用": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enable MiniApps"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ミニアプリを有効にする"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MiniApp 활성화"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Включить мини-приложения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "启用小应用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "啟用小應用"
+          }
+        }
+      }
+    },
+    "关闭后不再注入小应用生成指令，也不会保存或运行新的小应用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When disabled, MiniApp generation instructions are no longer injected, and new MiniApps are neither saved nor run."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無効にすると、ミニアプリ生成用の指示は注入されず、新しいミニアプリも保存または実行されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "끄면 MiniApp 생성 지침을 더 이상 주입하지 않으며 새 MiniApp을 저장하거나 실행하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "После отключения инструкции для генерации мини-приложений больше не добавляются, а новые мини-приложения не сохраняются и не запускаются."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭后不再注入小应用生成指令，也不会保存或运行新的小应用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉後不再注入小應用產生指令，也不會儲存或執行新的小應用。"
+          }
+        }
+      }
+    },
+    "网络 fetch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network fetch"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ネットワーク fetch"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "네트워크 fetch"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сетевые fetch-запросы"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网络 fetch"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "網路 fetch"
+          }
+        }
+      }
+    },
+    "允许已授权小应用请求公开 https 页面；本地、私网和带凭证 URL 会被拒绝。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to request public HTTPS pages; local, private-network, and credentialed URLs are rejected."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリが公開 HTTPS ページをリクエストできるようにします。ローカル、プライベートネットワーク、認証情報付きの URL は拒否されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 공개 HTTPS 페이지를 요청하도록 허용합니다. 로컬, 사설 네트워크 및 인증 정보가 포함된 URL은 거부됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям запрашивать общедоступные страницы HTTPS; локальные URL, адреса частных сетей и URL с учётными данными отклоняются."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用请求公开 https 页面；本地、私网和带凭证 URL 会被拒绝。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用請求公開 HTTPS 頁面；本機、私有網路和帶有憑證的 URL 會被拒絕。"
+          }
+        }
+      }
+    },
+    "允许已明确授权 externalImages 权限的小应用加载 HTTPS 图片；未授权或已拒绝时会阻止。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow MiniApps with explicit externalImages permission to load HTTPS images; block them when unauthorized or denied."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "externalImages 権限を明示的に許可したミニアプリによる HTTPS 画像の読み込みを許可します。未許可または拒否の場合はブロックされます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "externalImages 권한을 명시적으로 승인한 MiniApp이 HTTPS 이미지를 로드하도록 허용합니다. 승인되지 않았거나 거부된 경우 차단됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить мини-приложениям с явно выданным разрешением externalImages загружать изображения HTTPS; без разрешения или при отказе загрузка блокируется."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已明确授权 externalImages 权限的小应用加载 HTTPS 图片；未授权或已拒绝时会阻止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許明確授權 externalImages 權限的小應用載入 HTTPS 圖片；未授權或遭拒絕時會封鎖。"
+          }
+        }
+      }
+    },
+    "允许已授权小应用通过内置搜索执行公开检索。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to run public searches through built-in search."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリが内蔵検索で公開検索を実行できるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 내장 검색으로 공개 검색을 실행하도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям выполнять общедоступный поиск через встроенный поиск."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用通过内置搜索执行公开检索。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用透過內建搜尋執行公開搜尋。"
+          }
+        }
+      }
+    },
+    "允许已授权小应用调用宿主 AI 生成文本；缺少 API Key 时会返回错误。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to call the host AI to generate text; an error is returned when no API key is available."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリがホスト AI を呼び出してテキストを生成できるようにします。API キーがない場合はエラーが返されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 호스트 AI를 호출해 텍스트를 생성하도록 허용합니다. API Key가 없으면 오류가 반환됩니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям вызывать ИИ хоста для генерации текста; при отсутствии ключа API возвращается ошибка."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用调用宿主 AI 生成文本；缺少 API Key 时会返回错误。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用呼叫主機 AI 產生文字；缺少 API Key 時會回傳錯誤。"
+          }
+        }
+      }
+    },
+    "复制到剪贴板": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Copy to Clipboard"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "クリップボードにコピー"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "클립보드에 복사"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Копировать в буфер обмена"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "复制到剪贴板"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "複製到剪貼簿"
+          }
+        }
+      }
+    },
+    "允许已授权小应用写入剪贴板。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to write to the clipboard."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリがクリップボードに書き込めるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 클립보드에 쓰도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям записывать данные в буфер обмена."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用写入剪贴板。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用寫入剪貼簿。"
+          }
+        }
+      }
+    },
+    "SharedStore": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SharedStore"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SharedStore"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SharedStore"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SharedStore"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SharedStore"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "SharedStore"
+          }
+        }
+      }
+    },
+    "允许已授权小应用读写自己的共享存储命名空间。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to read and write their own shared storage namespace."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリが自身の共有ストレージ名前空間を読み書きできるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 자체 공유 저장소 네임스페이스를 읽고 쓰도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям читать и записывать собственное пространство имён общего хранилища."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用读写自己的共享存储命名空间。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用讀寫自己的共享儲存命名空間。"
+          }
+        }
+      }
+    },
+    "EventBus": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EventBus"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EventBus"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EventBus"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EventBus"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EventBus"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "EventBus"
+          }
+        }
+      }
+    },
+    "允许已授权小应用在自身命名空间内订阅和发布事件。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to subscribe to and publish events in their own namespace."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリが自身の名前空間でイベントを購読・公開できるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 자체 네임스페이스에서 이벤트를 구독하고 게시하도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям подписываться на события и публиковать их в собственном пространстве имён."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用在自身命名空间内订阅和发布事件。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用在自己的命名空間內訂閱與發佈事件。"
+          }
+        }
+      }
+    },
+    "深度阅读摘要": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deep reading summary"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "深掘り読書の要約"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "심층 읽기 요약"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Краткое содержание глубокого чтения"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "深度阅读摘要"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "深度閱讀摘要"
+          }
+        }
+      }
+    },
+    "允许已授权小应用更新自己的深度阅读摘要。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow authorized MiniApps to update their own deep reading summary."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "許可されたミニアプリが自身の深掘り読書の要約を更新できるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "승인된 MiniApp이 자체 심층 읽기 요약을 업데이트하도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить авторизованным мини-приложениям обновлять собственное краткое содержание глубокого чтения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许已授权小应用更新自己的深度阅读摘要。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許已授權小應用更新自己的深度閱讀摘要。"
+          }
+        }
+      }
+    },
+    "读取宿主上下文": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Read host context"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストコンテキストを読み取る"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트 컨텍스트 읽기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чтение контекста хоста"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "读取宿主上下文"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "讀取主機上下文"
+          }
+        }
+      }
+    },
+    "允许 host.context 在前台确认后返回最小化上下文。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow host.context to return minimal context after foreground confirmation."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前景で確認した後、host.context が最小限のコンテキストを返すことを許可します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "포그라운드에서 확인한 후 host.context가 최소한의 컨텍스트를 반환하도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить host.context возвращать минимальный контекст после подтверждения на переднем плане."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许 host.context 在前台确认后返回最小化上下文。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許 host.context 在前景確認後回傳最小上下文。"
+          }
+        }
+      }
+    },
+    "宿主写回": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Write back to host"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ホストへ書き戻す"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "호스트에 쓰기"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запись в хост"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "宿主写回"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "寫回主機"
+          }
+        }
+      }
+    },
+    "允许 host.sendToConversation / host.createArtifact 在前台确认后写入草稿或内容卡片。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow host.sendToConversation / host.createArtifact to write a draft or content card after foreground confirmation."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前景で確認した後、host.sendToConversation / host.createArtifact が下書きまたはコンテンツカードを書き込むことを許可します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "포그라운드에서 확인한 후 host.sendToConversation / host.createArtifact가 초안 또는 콘텐츠 카드를 작성하도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить host.sendToConversation / host.createArtifact записывать черновик или карточку содержимого после подтверждения на переднем плане."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许 host.sendToConversation / host.createArtifact 在前台确认后写入草稿或内容卡片。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許 host.sendToConversation / host.createArtifact 在前景確認後寫入草稿或內容卡片。"
+          }
+        }
+      }
+    },
+    "允许声明 launch 权限的小应用按 appId 打开另一个已保存的小应用。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow MiniApps declaring the launch permission to open another saved MiniApp by appId."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "launch 権限を宣言したミニアプリが appId で別の保存済みミニアプリを開けるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "launch 권한을 선언한 MiniApp이 appId로 저장된 다른 MiniApp을 열도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить мини-приложениям с разрешением launch открывать другое сохранённое мини-приложение по appId."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许声明 launch 权限的小应用按 appId 打开另一个已保存的小应用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許宣告 launch 權限的小應用依 appId 開啟另一個已儲存的小應用。"
+          }
+        }
+      }
+    },
+    "设备传感器": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Device sensors"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デバイスセンサー"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기기 센서"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Датчики устройства"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设备传感器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "裝置感測器"
+          }
+        }
+      }
+    },
+    "允许声明 sensor 权限的小应用订阅加速度计或陀螺仪；iOS 不提供环境光传感器数据。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow MiniApps declaring the sensor permission to subscribe to the accelerometer or gyroscope; iOS does not provide ambient light sensor data."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sensor 権限を宣言したミニアプリが加速度センサーまたはジャイロスコープを購読できるようにします。iOS は環境光センサーのデータを提供しません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "sensor 권한을 선언한 MiniApp이 가속도계 또는 자이로스코프를 구독하도록 허용합니다. iOS는 주변광 센서 데이터를 제공하지 않습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить мини-приложениям с разрешением sensor подписываться на акселерометр или гироскоп; iOS не предоставляет данные датчика внешней освещённости."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许声明 sensor 权限的小应用订阅加速度计或陀螺仪；iOS 不提供环境光传感器数据。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許宣告 sensor 權限的小應用訂閱加速度計或陀螺儀；iOS 不提供環境光感測器資料。"
+          }
+        }
+      }
+    },
+    "当前位置": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Current location"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在地"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "현재 위치"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Текущее местоположение"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当前位置"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "目前位置"
+          }
+        }
+      }
+    },
+    "允许声明 location 权限的小应用在系统授权后读取一次当前位置。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow MiniApps declaring the location permission to read the current location once after system authorization."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "location 権限を宣言したミニアプリが、システムの許可後に現在地を一度読み取れるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "location 권한을 선언한 MiniApp이 시스템 승인 후 현재 위치를 한 번 읽도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить мини-приложениям с разрешением location один раз прочитать текущее местоположение после системного разрешения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许声明 location 权限的小应用在系统授权后读取一次当前位置。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許宣告 location 權限的小應用在系統授權後讀取一次目前位置。"
+          }
+        }
+      }
+    },
+    "允许声明 clipboard.read 权限的小应用读取当前剪贴板文本。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow MiniApps declaring the clipboard.read permission to read the current clipboard text."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "clipboard.read 権限を宣言したミニアプリが現在のクリップボードテキストを読み取れるようにします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "clipboard.read 권한을 선언한 MiniApp이 현재 클립보드 텍스트를 읽도록 허용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить мини-приложениям с разрешением clipboard.read читать текущий текст буфера обмена."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许声明 clipboard.read 权限的小应用读取当前剪贴板文本。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許宣告 clipboard.read 權限的小應用讀取目前剪貼簿文字。"
+          }
+        }
+      }
+    },
+    "显示源码": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show source"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ソースを表示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "소스 표시"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать исходный код"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示源码"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示原始碼"
+          }
+        }
+      }
+    },
+    "在小应用运行页显示源码和手动版本编辑入口。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show source code and the manual version editing entry on the MiniApp run page."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ミニアプリの実行画面にソースコードと手動バージョン編集の入口を表示します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MiniApp 실행 화면에 소스 코드와 수동 버전 편집 진입점을 표시합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показывать исходный код и вход в ручное редактирование версии на странице запуска мини-приложения."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在小应用运行页显示源码和手动版本编辑入口。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在小應用執行頁顯示原始碼和手動版本編輯入口。"
+          }
+        }
+      }
+    },
+    "WebView 调试": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebView debugging"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebView デバッグ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebView 디버깅"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отладка WebView"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebView 调试"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "WebView 偵錯"
+          }
+        }
+      }
+    },
+    "允许 Safari Web Inspector 检查小应用，仅建议开发时开启。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow Safari Web Inspector to inspect MiniApps; recommended only during development."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Safari Web Inspector によるミニアプリの検査を許可します。開発時のみ有効にすることをおすすめします。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Safari Web Inspector가 MiniApp을 검사하도록 허용합니다. 개발 중에만 켜는 것이 좋습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить Safari Web Inspector проверять мини-приложения; рекомендуется включать только во время разработки."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许 Safari Web Inspector 检查小应用，仅建议开发时开启。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許 Safari Web Inspector 檢查小應用，建議只在開發時開啟。"
+          }
+        }
+      }
+    }
   },
   "version": "1.0"
 }

@@ -4,6 +4,19 @@ import UIKit
 #endif
 
 struct IOSMiniAppBridgePolicy: Equatable, Hashable {
+    static let systemCapabilitiesPreferenceKey = "app.amber.ios.miniApp.systemCapabilitiesEnabled"
+
+    static func reloadGrants(_ grants: [IOSMiniAppGrantRecord]) -> [String] {
+        grants.compactMap { grant in
+            // First-use grants must not destroy the Promise or a newly started system action.
+            // Image grants rebuild the CSP; denials tear down any active native resources.
+            guard grant.permission == IOSMiniAppPermission.externalImages.rawValue || grant.decision == .deny else {
+                return nil
+            }
+            return "\(grant.permission):\(grant.decision.rawValue)"
+        }.sorted()
+    }
+
     var miniAppEnabled: Bool = true
     var storageEnabled: Bool = true
     var toastEnabled: Bool = true
@@ -23,6 +36,7 @@ struct IOSMiniAppBridgePolicy: Equatable, Hashable {
     var locationEnabled: Bool = false
     var clipboardReadEnabled: Bool = false
     var webViewDebugEnabled: Bool = false
+    var systemCapabilitiesEnabled: Bool = true
 }
 
 enum IOSMiniAppBridgeDispatchResult: Equatable {
@@ -192,6 +206,17 @@ final class IOSMiniAppBridgeRuntime {
     ) throws -> Void
     typealias SensorUnsubscribeHandler = (_ subscriptionId: String) -> Void
     typealias SensitiveConfirmationHandler = (_ title: String, _ message: String) async throws -> Bool
+    typealias SystemHandler = @MainActor (_ method: String, _ params: [String: Any]) async throws -> IOSMiniAppJSONValue
+
+    static let systemMethodPermissions: [String: IOSMiniAppPermission] = [
+        "haptics.impact": .haptics, "haptics.notification": .haptics, "haptics.selection": .haptics,
+        "device.getInfo": .device, "device.getBattery": .device,
+        "screen.getBrightness": .screen, "screen.setBrightness": .screen, "screen.setKeepAwake": .screen,
+        "speech.getVoices": .speech, "speech.speak": .speech,
+        "speech.stop": .speech, "speech.pause": .speech, "speech.resume": .speech,
+        "share": .share, "openURL": .openURL,
+    ]
+    static let systemMethods = systemMethodPermissions.keys.sorted() + ["qrcode.generate"]
 
     let appId: String
 
@@ -207,6 +232,7 @@ final class IOSMiniAppBridgeRuntime {
     private let sensorSubscribeHandler: SensorSubscribeHandler?
     private let sensorUnsubscribeHandler: SensorUnsubscribeHandler?
     private let sensitiveConfirmationHandler: SensitiveConfirmationHandler?
+    private let systemHandler: SystemHandler?
     private let toastHandler: (String) -> Void
     private let clipboardCopyHandler: (String) -> Void
     private let themeProvider: () -> IOSMiniAppThemePayload
@@ -238,6 +264,7 @@ final class IOSMiniAppBridgeRuntime {
         sensorSubscribeHandler: SensorSubscribeHandler? = nil,
         sensorUnsubscribeHandler: SensorUnsubscribeHandler? = nil,
         sensitiveConfirmationHandler: SensitiveConfirmationHandler? = nil,
+        systemHandler: SystemHandler? = nil,
         toastHandler: @escaping (String) -> Void = { _ in },
         clipboardCopyHandler: @escaping (String) -> Void = {
             #if canImport(UIKit)
@@ -269,6 +296,7 @@ final class IOSMiniAppBridgeRuntime {
         self.sensorSubscribeHandler = sensorSubscribeHandler
         self.sensorUnsubscribeHandler = sensorUnsubscribeHandler
         self.sensitiveConfirmationHandler = sensitiveConfirmationHandler
+        self.systemHandler = systemHandler
         self.toastHandler = toastHandler
         self.clipboardCopyHandler = clipboardCopyHandler
         self.themeProvider = themeProvider
@@ -304,6 +332,9 @@ final class IOSMiniAppBridgeRuntime {
             guard policy.miniAppEnabled else {
                 throw BridgeError.denied("MiniApp runtime is disabled in settings.")
             }
+            if Self.systemMethods.contains(method) {
+                return .success(try await dispatchSystem(method: method, params: params))
+            }
             switch method {
             case "log":
                 return .success(.object(["ok": .bool(true)]))
@@ -311,6 +342,8 @@ final class IOSMiniAppBridgeRuntime {
                 return .success(try IOSMiniAppJSONValue(any: params))
             case "app.info":
                 return .success(try appInfo())
+            case "app.capabilities":
+                return .success(capabilities())
             case "storage.get":
                 try await require(.storage, method: method)
                 let key = try stringParam("key", params)
@@ -610,9 +643,7 @@ final class IOSMiniAppBridgeRuntime {
     func close() {
         guard !isClosed else { return }
         isClosed = true
-        let tasks = Array(inFlightTasks.values)
-        inFlightTasks.removeAll()
-        tasks.forEach { $0.cancel() }
+        cancelPendingRequests()
         for id in eventSubscriptionIds {
             IOSMiniAppEventBus.unsubscribe(id)
         }
@@ -621,6 +652,12 @@ final class IOSMiniAppBridgeRuntime {
             sensorUnsubscribeHandler?(id)
         }
         sensorSubscriptionIds.removeAll()
+    }
+
+    func cancelPendingRequests() {
+        let tasks = Array(inFlightTasks.values)
+        inFlightTasks.removeAll()
+        tasks.forEach { $0.cancel() }
     }
 
     private func appInfo() throws -> IOSMiniAppJSONValue {
@@ -634,13 +671,95 @@ final class IOSMiniAppBridgeRuntime {
         }
         return .object([
             "platform": .string("ios"),
-            "bridgeVersion": .string("0.2-local-runner"),
+            "bridgeVersion": .string("0.3-system-capabilities"),
             "appId": .string(appId),
             "title": .string(app?.title ?? "Unknown MiniApp"),
             "version": .number(Double(app?.version ?? 0)),
             "runCount": .number(Double(app?.runCount ?? 0)),
             "permissions": .array((app?.permissions ?? []).map { .string($0) }),
             "grants": .array(grantObjects),
+        ])
+    }
+
+    private func dispatchSystem(method: String, params: [String: Any]) async throws -> IOSMiniAppJSONValue {
+        guard let systemHandler else {
+            throw BridgeError.denied("System capabilities are not available in this runner.")
+        }
+        guard policy.systemCapabilitiesEnabled else {
+            throw BridgeError.denied("System capabilities are disabled in MiniApp settings.")
+        }
+        if let permission = Self.systemMethodPermissions[method] {
+            try await require(permission, method: method)
+            if method == "openURL" {
+                let url = try IOSMiniAppDeviceCapabilities.validatedOpenURL(stringParam("url", params))
+                try await confirmSensitive(
+                    title: IOSAppLocalization.string("允许打开外部链接？", defaultValue: "允许打开外部链接？"),
+                    message: IOSAppLocalization.formatted(
+                        "「%@」想打开：\n%@", defaultValue: "「%@」想打开：\n%@",
+                        arguments: [currentAppTitle, Self.externalURLPreview(url)]
+                    ),
+                    permission: permission
+                )
+            }
+            // Store only an action label; shared text, speech and URLs stay out of the audit payload.
+            try audit(method: method, permission: permission, summary: method, payload: ["method": method])
+        }
+        try Task.checkCancellation()
+        guard !isClosed else { throw CancellationError() }
+        let result = try await systemHandler(method, params)
+        try Task.checkCancellation()
+        guard !isClosed else { throw CancellationError() }
+        return result
+    }
+
+    private static func externalURLPreview(_ url: URL) -> String {
+        guard url.absoluteString.count > 300 else { return url.absoluteString }
+        let preview: String
+        if let host = url.host {
+            // Keep the destination visible even when the query is very long.
+            let displayedHost = host.count > 200
+                ? String(host.prefix(100)) + "…" + String(host.suffix(100)) : host
+            let port = url.port.map { ":\($0)" } ?? ""
+            preview = "\(url.scheme ?? "https")://\(displayedHost)\(port)\(url.path.prefix(80))…"
+        } else {
+            preview = String(url.absoluteString.prefix(240)) + "…"
+        }
+        return preview + "\n\n" + IOSAppLocalization.string(
+            "链接较长，已省略部分内容。", defaultValue: "链接较长，已省略部分内容。"
+        )
+    }
+
+    private func capabilities() -> IOSMiniAppJSONValue {
+        var methods = [
+            "app.info", "app.capabilities", "log", "echo", "storage.get", "storage.set", "storage.remove",
+            "toast", "host.getTheme", "theme", "clipboard.copy", "host.updateBoardSummary",
+            "sharedStore.get", "sharedStore.set", "sharedStore.remove", "eventBus.subscribe",
+            "eventBus.unsubscribe", "eventBus.publish", "fetch", "search",
+        ]
+        if aiGenerateHandler != nil { methods.append("ai.generate") }
+        if hostHandler != nil {
+            methods += ["host.getConversationContext", "host.sendToConversation", "host.createArtifact"]
+        }
+        if launchHandler != nil { methods.append("launch") }
+        if clipboardReadHandler != nil { methods.append("clipboard.read") }
+        if locationHandler != nil { methods.append("location.getCurrent") }
+        if sensorSubscribeHandler != nil { methods += ["sensor.subscribe", "sensor.unsubscribe"] }
+        if systemHandler != nil { methods += Self.systemMethods }
+        let declared = Set(repository.get(appId)?.permissions ?? [])
+        return .object([
+            "platform": .string("ios"),
+            "bridgeVersion": .string("0.3-system-capabilities"),
+            "systemCapabilitiesEnabled": .bool(policy.systemCapabilitiesEnabled),
+            "methods": .array(methods.sorted().map { .string($0) }),
+            "permissions": .array(IOSMiniAppPermission.allCases.map { permission in
+                .object([
+                    "permission": .string(permission.rawValue),
+                    "declared": .bool(declared.contains(permission.rawValue)),
+                    "enabled": .bool(settingAllows(permission)),
+                    "decision": repository.grantDecision(appId: appId, permission: permission.rawValue)
+                        .map { .string($0.rawValue) } ?? .null,
+                ])
+            }),
         ])
     }
 
@@ -723,6 +842,8 @@ final class IOSMiniAppBridgeRuntime {
             return policy.locationEnabled
         case .clipboardRead:
             return policy.clipboardReadEnabled
+        case .haptics, .device, .screen, .speech, .share, .openURL:
+            return policy.systemCapabilitiesEnabled
         }
     }
 

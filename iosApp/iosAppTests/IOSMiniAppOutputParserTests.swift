@@ -29,6 +29,13 @@ final class IOSMiniAppOutputParserTests: XCTestCase {
         XCTAssertThrowsError(try IOSMiniAppOutputParser().parse(text))
     }
 
+    func testParsesSystemPermissionsAndVibrationAliases() throws {
+        let output = try IOSMiniAppOutputParser().parse("""
+        {"title":"触感工具","description":"系统能力","permissions":["vibrate","振动","haptics","device","screen","speech","share","openurl"],"html":"<!doctype html><html><body>ok</body></html>"}
+        """)
+        XCTAssertEqual(output.permissions, ["haptics", "device", "screen", "speech", "share", "openURL"])
+    }
+
     func testParsesJsonWithDefaultCategoryAndPermissions() throws {
         let text = """
         {"title":"计时器","description":"一个番茄钟","html":"<!DOCTYPE html><html><body>ok</body></html>"}

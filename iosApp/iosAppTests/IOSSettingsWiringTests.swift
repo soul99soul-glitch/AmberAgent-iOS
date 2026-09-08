@@ -3,6 +3,20 @@ import XCTest
 @testable import iosApp
 
 final class IOSSettingsWiringTests: XCTestCase {
+    func testMiniAppSystemSwitchIsPersistedAndConsumedByRunnerPolicy() throws {
+        let settings = try source("iosApp/MiniAppSettingsView.swift")
+        let runner = try source("iosApp/MiniAppRunnerView.swift")
+        let webView = try source("iosApp/MiniAppRunnerWebView.swift")
+        for view in [settings, runner] {
+            XCTAssertTrue(view.contains("@AppStorage(IOSMiniAppBridgePolicy.systemCapabilitiesPreferenceKey)"))
+        }
+        XCTAssertTrue(settings.contains("isOn: $systemCapabilitiesEnabled"))
+        XCTAssertTrue(runner.contains("policy.systemCapabilitiesEnabled = systemCapabilitiesEnabled"))
+        XCTAssertTrue(webView.contains("policy: policy"))
+        XCTAssertTrue(webView.contains("deviceCapabilities.presentationAnchor = webView"))
+        XCTAssertTrue(webView.contains("deviceCapabilities?.close()"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let iosAppRoot = testsDir.deletingLastPathComponent()
