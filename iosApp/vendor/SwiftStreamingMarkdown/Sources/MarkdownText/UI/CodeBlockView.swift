@@ -47,20 +47,29 @@ private actor HighlightTaskManager: ObservableObject {
   }
 }
 
-struct CodeBlockView: View {
+public struct CodeBlockView: View {
 
   let language: String
   let code: String
   let onCodeCopied: (() -> Void)?
+  let autoWrap: Bool
+  let autoCollapse: Bool
+  let headerAccessory: AnyView?
+
+  @State private var expanded = false
 
   @State var copied: Bool = false
   @State var attributedString: AttributedString?
   @StateObject private var taskManager: HighlightTaskManager = HighlightTaskManager()
 
-  init(language: String, code: String, onCodeCopied: (() -> Void)? = nil) {
+  public init(language: String, code: String, onCodeCopied: (() -> Void)? = nil,
+              autoWrap: Bool = false, autoCollapse: Bool = false, headerAccessory: AnyView? = nil) {
     self.language = language
     self.code = code
     self.onCodeCopied = onCodeCopied
+    self.autoWrap = autoWrap
+    self.autoCollapse = autoCollapse
+    self.headerAccessory = headerAccessory
   }
 
   private func updateAttributedString(code: String) async {
@@ -69,28 +78,54 @@ struct CodeBlockView: View {
     }
   }
 
-  @ViewBuilder
-  var codeblock: some View {
-    ScrollView(.horizontal) {
-      HStack(alignment: .top) {
-        if #available(iOS 16.1, *) {  // Minimum version for HighlightSwift
-          Text(attributedString ?? AttributedString(code))
-            .font(Typography.codeTextFonts)
-            .transition(.opacity)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-          Text(code)
-            .font(Typography.codeTextFonts)
-            .foregroundStyle(Color.Theme.Component.CodeBlock.Foreground.FunctionParameter)
-            .transition(.opacity)
-        }
-      }
+  private var shouldCollapse: Bool {
+    autoCollapse && code.count > 500 && !expanded
+  }
 
+  private var displayedCode: String {
+    shouldCollapse ? String(code.prefix(300)) : code
+  }
+
+  @ViewBuilder
+  private var codeText: some View {
+    if #available(iOS 16.1, *) {
+      Text(attributedString ?? AttributedString(displayedCode))
+        .font(Typography.codeTextFonts)
+        .foregroundStyle(Color.Theme.Component.CodeBlock.Foreground.FunctionParameter)
+        .transition(.opacity)
+    } else {
+      Text(displayedCode)
+        .font(Typography.codeTextFonts)
+        .foregroundStyle(Color.Theme.Component.CodeBlock.Foreground.FunctionParameter)
+        .transition(.opacity)
     }
-    // Keep the horizontal scroller inside the proposed column width; otherwise a
-    // long unbroken code line expands the parent vertical ScrollView and the chat
-    // column is centered/clipped on both edges.
-    .frame(maxWidth: .infinity, alignment: .leading)
+  }
+
+  var codeblock: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if autoWrap || shouldCollapse {
+        codeText
+          .lineLimit(shouldCollapse ? 8 : nil)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      } else {
+        ScrollView(.horizontal) {
+          HStack(alignment: .top) {
+            codeText
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+          }
+        }
+        // Keep long code lines inside the proposed chat column width.
+        .frame(maxWidth: .infinity, alignment: .leading)
+      }
+      if shouldCollapse {
+        Button("展开（共 \(code.count) 字符）") {
+          expanded = true
+        }
+        .font(Typography.smallTextFonts)
+        .foregroundStyle(Color.Static.Stone.Stone350)
+        .buttonStyle(.plain)
+      }
+    }
     .transaction { transaction in
       // The horizontal scrollView resizing animation was causing the code block to animate
       // all janky.
@@ -99,13 +134,15 @@ struct CodeBlockView: View {
     .padding(16)
   }
 
-  var body: some View {
+  public var body: some View {
     VStack(spacing: 0) {
       HStack(alignment: .top) {
         Text(language)
           .font(Typography.smallTextFonts)
           .foregroundStyle(Color.Static.Stone.Stone350)
         Spacer()
+        headerAccessory
+          .foregroundStyle(Color.Static.Stone.Stone350)
         HStack(alignment: .firstTextBaseline, spacing: 6.0) {
           Image("copyIcon14", bundle: .module)
             .renderingMode(.template)
@@ -153,14 +190,14 @@ struct CodeBlockView: View {
         }
       }
     })
-    .onChange(of: code, perform: { value in
+    .onChange(of: displayedCode, perform: { value in
       Task {
         await updateAttributedString(code: value)
       }
     })
     .onAppear(perform: {
       Task {
-        await updateAttributedString(code: code)
+        await updateAttributedString(code: displayedCode)
       }
     })
   }

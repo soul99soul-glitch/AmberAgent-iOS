@@ -306,8 +306,6 @@ struct AmberMarkdownView: View {
 
     // MARK: - Code Block
 
-    @State private var codeBlockExpanded: Set<String> = []
-
     func codeBlockText(from node: PackedAstNode, source: String) -> String {
         // The block span includes its fence and language; text children contain only code.
         node.children.map { child in
@@ -331,72 +329,15 @@ struct AmberMarkdownView: View {
     private func renderCodeBlock(_ node: PackedAstNode, source: String) -> some View {
         let code = codeBlockText(from: node, source: source)
         let lang = node.codeLang()
-        let autoWrap = displaySetting?.codeBlockAutoWrap ?? true
-        let autoCollapse = displaySetting?.codeBlockAutoCollapse ?? false
-        let blockId = "\(node.startOffset)-\(node.endOffset)"
-        let isExpanded = codeBlockExpanded.contains(blockId) || !autoCollapse
-        let shouldCollapse = autoCollapse && code.count > 500 && !isExpanded
-
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                if let lang, !lang.isEmpty {
-                    Text(lang)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let lang, ["svg", "html"].contains(lang.lowercased()) {
-                    WidgetCodePreviewButton(code: code)
-                }
-                Button {
-                    UIPasteboard.general.string = code
-                } label: {
-                    Label("复制", systemImage: "doc.on.doc")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-            if shouldCollapse {
-                Text(String(code.prefix(300)))
-                    .font(.system(.body, design: .monospaced))
-                    .lineLimit(8)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                Button {
-                    codeBlockExpanded.insert(blockId)
-                } label: {
-                    Text("展开（共 \(code.count) 字符）")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.bottom, 8)
-                        .padding(.leading, 12)
-                }
-                .buttonStyle(.plain)
-            } else if autoWrap {
-                Text(code)
-                    .font(.system(.body, design: .monospaced))
-                    .textSelection(.enabled)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                // 不换行时必须自己横滑；裸 fixedSize(horizontal:true) 会把外层
-                // ScrollView 内容宽撑破，触发聊天列左右对称裁切。
-                ScrollView(.horizontal, showsIndicators: false) {
-                    Text(code)
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .padding(12)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .background(Color(.systemGray6))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        return CodeBlockView(
+            language: lang ?? "",
+            code: code,
+            autoWrap: displaySetting?.codeBlockAutoWrap ?? true,
+            autoCollapse: displaySetting?.codeBlockAutoCollapse ?? false,
+            headerAccessory: lang.map { ["svg", "html"].contains($0.lowercased()) } == true
+                ? AnyView(WidgetCodePreviewButton(code: code)) : nil
+        )
+        .textSelection(.enabled)
     }
 
     // MARK: - Table
