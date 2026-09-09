@@ -1,4 +1,5 @@
 import XCTest
+import SQLite3
 @preconcurrency import Shared
 @testable import iosApp
 
@@ -208,6 +209,32 @@ final class IOSOrchestrationToolTests: XCTestCase {
 
     // MARK: - spawn 全链路
 
+    func testSpawnDoesNotSaveChildOrStartWhenEdgeWriteFails() async throws {
+        let base = makeTempDirectory("SpawnEdgeFailure")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let db = makeDatabase(directory: base)
+        _ = try await db.threadEdgeDao().allEdges()
+        var connection: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(base.appendingPathComponent("orchestration.db").path, &connection), SQLITE_OK)
+        defer { sqlite3_close(connection) }
+        XCTAssertEqual(sqlite3_exec(connection,
+            "CREATE TRIGGER reject_test_edge BEFORE INSERT ON thread_edge BEGIN SELECT RAISE(ABORT, 'edge write rejected'); END",
+            nil, nil, nil), SQLITE_OK)
+        let scheduler = FakeBackgroundScheduler()
+        let service = makeService(store: store, db: db, scheduler: scheduler, currentConversationId: { parentId })
+        let result = parseJSON(await service.execute(
+            toolName: "spawn_agent", arguments: spawnArguments(taskName: "rejected"),
+            providerSetting: makeProviderSetting(), params: makeParams(), runId: "edge-failure"
+        ))
+        XCTAssertEqual(result["ok"] as? Bool, false)
+        XCTAssertNil(scheduler.startedHandoff)
+        XCTAssertEqual(store.allSummaries.map { $0.id }, [parentId])
+        XCTAssertTrue((result["reason"] as? String)?.contains("关系保存失败") == true)
+    }
+
     func testSpawnForkAllWritesEdgeBootstrapsTaskAndStartsBackgroundRun() async throws {
         let base = makeTempDirectory("SpawnAll")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -236,6 +263,13 @@ final class IOSOrchestrationToolTests: XCTestCase {
         )
         let providerSetting = makeProviderSetting()
         let params = makeParams()
+        var checkedInitialChildWrite = false
+        store.beforePersistForTesting = { conversation in
+            guard conversation.id != parentId, !checkedInitialChildWrite else { return }
+            checkedInitialChildWrite = true
+            let edge = try? await db.threadEdgeDao().edgeFor(childThreadId: conversation.id.toHexDashString())
+            XCTAssertEqual(edge?.parentThreadId, parentHex, "首次写子会话之前，编排关系必须已落盘")
+        }
 
         let result = parseJSON(await service.execute(
             toolName: "spawn_agent",
@@ -248,6 +282,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
 
         XCTAssertEqual(result["ok"] as? Bool, true)
         XCTAssertEqual(result["status"] as? String, "started")
+        XCTAssertTrue(checkedInitialChildWrite)
         XCTAssertEqual(result["task_name"] as? String, "research")
         XCTAssertEqual(result["agent_path"] as? String, "/root/research")
         let childHex = try XCTUnwrap(result["child_thread_id"] as? String)
@@ -262,6 +297,10 @@ final class IOSOrchestrationToolTests: XCTestCase {
         // 子会话含 NEW_TASK 渲染消息（bootstrap 直接持久化）。
         let childId = try! KotlinUuid.companion.parse(uuidString: childHex)
         let childMessages = await store.messages(for: childId) ?? []
+        XCTAssertFalse(store.summaries.contains { $0.id == childId })
+        XCTAssertTrue(store.allSummaries.contains { $0.id == childId })
+        XCTAssertEqual(store.currentConversation?.id, parentId)
+        XCTAssertEqual(IosMailboxMessageBridge.shared.sender(message: try XCTUnwrap(childMessages.last)), "/root")
         let childUserTexts = childMessages.filter { $0.role == MessageRole.user }.map { $0.toText() }
         XCTAssertEqual(
             childUserTexts,
@@ -935,8 +974,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
     func testFinalAnswerReachesParentMailboxAndFoldsAtParentBoundary() async throws {
         let base = makeTempDirectory("FinalAnswer")
         defer { try? FileManager.default.removeItem(at: base) }
-        let store = makeStore(directory: base)
         let db = makeDatabase(directory: base)
+        let store = IOSConversationStore(baseDirectory: base, threadEdgeDaoProvider: { db.threadEdgeDao() })
         let scheduler = FakeBackgroundScheduler()
 
         // 父会话 → 子会话（current）。
@@ -959,6 +998,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
             status: "Open",
             createdAt: now
         ))
+
+        try await store.refreshSubagentConversationVisibility()
 
         let service = makeService(
             store: store, db: db, scheduler: scheduler, currentConversationId: { childId }
@@ -997,6 +1038,21 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertEqual(uploadUserTexts, [
             "[mailbox FINAL_ANSWER from /root/sub]\n子线程最终回答",
         ])
+
+        var affectedIDs: [KotlinUuid] = []
+        let deleted = await store.deleteConversation(id: parentId) { affectedIDs = $0 }
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(Set(affectedIDs.map { $0.toHexDashString() }), [parentId.toHexDashString(), childId.toHexDashString()])
+        XCTAssertTrue(store.allSummaries.contains { $0.id == childId })
+        XCTAssertFalse(store.summaries.contains { $0.id == childId })
+        let retainedMessages = await store.messages(for: childId)
+        XCTAssertEqual(retainedMessages?.last?.toText(), "子线程最终回答")
+        await service.notifyRunTerminal(
+            conversationId: childId, runId: "after-parent-deletion",
+            finalMessages: [UIMessage.companion.assistant(prompt: "late result")]
+        )
+        let pendingAfterDeletion = try await db.mailboxDao().pendingForRecipient(recipientId: parentId.toHexDashString())
+        XCTAssertTrue(pendingAfterDeletion.isEmpty)
     }
 
     // MARK: - P1-c 复核修复回归（后台 runtime 注入 / run 锚定 / cancel 终态 /

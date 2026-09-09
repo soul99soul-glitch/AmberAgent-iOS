@@ -536,6 +536,12 @@ struct ChatToolStepModel: Identifiable {
     /// 未单独映射的工具:给一个友好中文标签,不显示裸工具名。状态由胶囊上的对勾/转圈表示,不再加文字。
     static func friendlyToolTitle(_ name: String, executed: Bool) -> String {
         let known: [String: String] = [
+            "spawn_agent": Self.localized("创建子代理"),
+            "followup_task": Self.localized("追加子代理任务"),
+            "send_message": Self.localized("发送会话消息"),
+            "list_agents": Self.localized("查看子代理列表"),
+            "interrupt_agent": Self.localized("停止子代理"),
+            "wait_agent": Self.localized("等待会话消息"),
             "file_read_selected": Self.localized("读取选中文件"),
             "skills_list": Self.localized("列出技能"),
             "use_skill": Self.localized("加载技能"),

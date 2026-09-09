@@ -2278,13 +2278,10 @@ final class ChatViewModel {
         let envelopes = await mailboxStore.drainPending(forConversationId: state.conversationId)
         guard !envelopes.isEmpty else { return [] }
         let drained = envelopes.map { envelope in
-            makeUserMessage(
-                prompt: MailboxEnvelopeKt.renderMailboxEnvelopeToUserText(
-                    authorThreadId: envelope.authorThreadId,
-                    type: envelope.type,
-                    payload: envelope.payload
-                ),
-                images: []
+            IosMailboxMessageBridge.shared.makeMessage(
+                authorThreadId: envelope.authorThreadId,
+                type: envelope.type,
+                payload: envelope.payload
             )
         }
         // 与 drainSteerQueue 同款上屏：真实 user 消息进 timeline（后续会话落盘

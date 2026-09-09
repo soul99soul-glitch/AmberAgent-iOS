@@ -89,6 +89,122 @@ final class IOSConversationStoreTests: XCTestCase {
         XCTAssertEqual(summaryUpdate, conversationUpdate)
     }
 
+    func testFailedVisibilityReadDoesNotExposeChildrenOrSelectANewConversation() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seed = IOSConversationStore(baseDirectory: directory)
+        await seed.bootstrap()
+        let childID = try XCTUnwrap(seed.currentConversation?.id)
+        var fails = true
+        let store = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: {
+            if fails { throw NSError(domain: "EdgeRead", code: 1) }
+            return [childID.toHexDashString()]
+        })
+        await store.bootstrap()
+        XCTAssertNil(store.currentConversation)
+        XCTAssertTrue(store.summaries.isEmpty)
+        fails = false
+        await store.bootstrap()
+        XCTAssertFalse(store.summaries.contains { $0.id == childID })
+        XCTAssertTrue(store.allSummaries.contains { $0.id == childID })
+        XCTAssertNotEqual(store.currentConversation?.id, childID)
+    }
+
+    func testRegisteredSubagentIsExcludedFromVisibleSummariesButRetainedInAllSummaries() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreSubagentProjection-")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+
+        var subagentIDs = Set<String>()
+        let store = IOSConversationStore(
+            baseDirectory: baseDirectory,
+            subagentConversationIDsProvider: { subagentIDs }
+        )
+        await store.bootstrap()
+        let childID = KotlinUuid.companion.random()
+        subagentIDs.insert(childID.toHexDashString())
+        store.registerSubagentConversation(id: childID)
+
+        let didSave = await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childID,
+            assistantId: AssistantKt.DEFAULT_ASSISTANT_ID,
+            messages: [],
+            newConversation: false
+        ))
+        XCTAssertTrue(didSave)
+
+        XCTAssertTrue(store.allSummaries.contains { $0.id == childID })
+        XCTAssertFalse(store.summaries.contains { $0.id == childID })
+    }
+
+    func testBootstrapDoesNotSelectPersistedSubagentAsCurrentConversation() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreSubagentBootstrap-")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+
+        var subagentIDs = Set<String>()
+        let firstStore = IOSConversationStore(
+            baseDirectory: baseDirectory,
+            subagentConversationIDsProvider: { subagentIDs }
+        )
+        await firstStore.bootstrap()
+        let rootID = try XCTUnwrap(firstStore.currentConversation?.id)
+        let childID = KotlinUuid.companion.random()
+        subagentIDs.insert(childID.toHexDashString())
+        firstStore.registerSubagentConversation(id: childID)
+        let didSave = await firstStore.saveForkedConversation(Conversation.companion.ofId(
+            id: childID,
+            assistantId: AssistantKt.DEFAULT_ASSISTANT_ID,
+            messages: [],
+            newConversation: false
+        ))
+        XCTAssertTrue(didSave)
+
+        let restartedStore = IOSConversationStore(
+            baseDirectory: baseDirectory,
+            subagentConversationIDsProvider: { subagentIDs }
+        )
+        await restartedStore.bootstrap()
+
+        XCTAssertEqual(restartedStore.currentConversation?.id, rootID)
+        XCTAssertFalse(restartedStore.summaries.contains { $0.id == childID })
+        XCTAssertTrue(restartedStore.allSummaries.contains { $0.id == childID })
+    }
+
+    func testRefreshingSubagentVisibilityHidesAnExistingSummary() async throws {
+        let baseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSConversationStoreSubagentRefresh-")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: baseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: baseDirectory) }
+
+        var subagentIDs = Set<String>()
+        let store = IOSConversationStore(
+            baseDirectory: baseDirectory,
+            subagentConversationIDsProvider: { subagentIDs }
+        )
+        await store.bootstrap()
+        let childID = KotlinUuid.companion.random()
+        let didSave = await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childID,
+            assistantId: AssistantKt.DEFAULT_ASSISTANT_ID,
+            messages: [],
+            newConversation: false
+        ))
+        XCTAssertTrue(didSave)
+        XCTAssertTrue(store.summaries.contains { $0.id == childID })
+
+        subagentIDs.insert(childID.toHexDashString())
+        try await store.refreshSubagentConversationVisibility()
+
+        XCTAssertFalse(store.summaries.contains { $0.id == childID })
+        XCTAssertTrue(store.allSummaries.contains { $0.id == childID })
+    }
+
     func testImportConversationDocumentsUsesStorageOwnedBatchImport() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("IOSConversationStoreImport-\(UUID().uuidString)")
@@ -105,14 +221,43 @@ final class IOSConversationStoreTests: XCTestCase {
         let documentURL = sourceDirectory.appendingPathComponent("\(sourceId).json")
         let document = try String(contentsOf: documentURL, encoding: .utf8)
 
-        let destination = IOSConversationStore(baseDirectory: destinationDirectory)
+        await source.newConversation()
+        let childId = try XCTUnwrap(source.currentConversation?.id)
+        let childDocument = try String(contentsOf: sourceDirectory.appendingPathComponent("\(childId).json"), encoding: .utf8)
+        let edge = IOSConversationThreadEdge(
+            childThreadId: childId.toHexDashString(), parentThreadId: sourceId.toHexDashString(),
+            agentPath: "/root/research", nickname: nil, roleAssistantId: nil,
+            forkTurns: "none", status: "Open", createdAt: 1
+        )
+        let database = IosDatabaseFactory.shared.createDatabase(atFilePath: root.appendingPathComponent("restored.db").path)
+        let destination = IOSConversationStore(baseDirectory: destinationDirectory, threadEdgeDaoProvider: { database.threadEdgeDao() })
         await destination.bootstrap()
-        let importedCount = try await destination.importConversationDocuments([document])
+        let importedCount = try await destination.importConversationDocuments([document, childDocument], threadEdges: [edge])
 
-        XCTAssertEqual(importedCount, 1)
+        XCTAssertEqual(importedCount, 2)
         XCTAssertTrue(destination.summaries.contains { $0.id == sourceId })
+        XCTAssertFalse(destination.summaries.contains { $0.id == childId })
         await destination.selectConversation(id: sourceId)
         XCTAssertEqual(destination.currentMessages.map { $0.toText() }, ["restored message"])
+        let restarted = IOSConversationStore(baseDirectory: destinationDirectory, threadEdgeDaoProvider: { database.threadEdgeDao() })
+        await restarted.bootstrap()
+        XCTAssertFalse(restarted.summaries.contains { $0.id == childId })
+        let restoredEdges = try await restarted.orchestrationEdgesForBackup()
+        XCTAssertEqual(restoredEdges, [edge])
+
+        // The local child edge remains while only the parent is re-imported.
+        // Reversing that parent link must not form a cycle through local data.
+        let cyclic = IOSConversationThreadEdge(
+            childThreadId: sourceId.toHexDashString(), parentThreadId: childId.toHexDashString(),
+            agentPath: "/root/cycle", nickname: nil, roleAssistantId: nil,
+            forkTurns: "none", status: "Open", createdAt: 2
+        )
+        do {
+            _ = try await restarted.importConversationDocuments([document], threadEdges: [cyclic])
+            XCTFail("循环关系应在写入前被拒绝")
+        } catch let error as IOSConversationThreadEdgeValidationError {
+            guard case .cycle = error else { return XCTFail("unexpected error: \(error)") }
+        }
     }
 
     func testImportInvalidatesPreImportBaselineEvenWhenSequenceIsZero() async throws {
@@ -835,7 +980,7 @@ final class IOSConversationStoreTests: XCTestCase {
         }
         var didCommitOwnerCleanup = false
 
-        let didDelete = await store.deleteConversation(id: conversationId) {
+        let didDelete = await store.deleteConversation(id: conversationId) { _ in
             didCommitOwnerCleanup = true
         }
 
@@ -1215,7 +1360,7 @@ final class IOSConversationStoreTests: XCTestCase {
             [
                 "background base",
                 "new foreground message",
-                "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。",
+                IOSAppLocalization.string("后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。"),
                 "late background result",
             ],
             "前台新消息落盘后，后台重试应保留前台内容并把生成结果显式合并，而不是用旧快照覆盖"
@@ -1307,7 +1452,7 @@ final class IOSConversationStoreTests: XCTestCase {
             [
                 "background base",
                 "new foreground message",
-                "后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。",
+                IOSAppLocalization.string("后台生成已完成；当前会话期间已有新内容，以下是后台完成的结果。"),
                 "late background result",
             ],
             "后台回复的旧 baseline 被拒后应以新 baseline 重试并合并为 notice，而不是凭空消失"

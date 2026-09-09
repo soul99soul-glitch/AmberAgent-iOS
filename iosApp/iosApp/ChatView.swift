@@ -1823,6 +1823,8 @@ struct ChatView: View {
             router.navigate(to: .miniAppRunner(appId: appId))
         case .openMiniApps:
             router.navigate(to: .miniApps)
+        case let .openSubagentConversation(id):
+            router.navigate(to: .subAgentConversation(id: id))
         case .primaryConfiguration:
             openPrimaryConfigurationAction()
         case .modelDefaults:

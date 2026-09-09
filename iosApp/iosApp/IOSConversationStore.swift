@@ -119,6 +119,10 @@ final class IOSConversationStore {
     /// 会话摘要列表（按 updateAt 倒序、置顶优先，由 KMP 层排序）。
     private(set) var summaries: [ConversationSummary] = []
 
+    /// 全部已持久化会话摘要。子代理会话不进入 [summaries]，但仍保留在这里供
+    /// 编排详情、存储统计和清理操作按明确目标访问。
+    private(set) var allSummaries: [ConversationSummary] = []
+
     /// 首页列表 meta 用的 LLM 浓缩预览（会话 id 字符串 → 单行文案）。
     /// 与 KMP `ConversationSummary` 解耦：不改 index schema，落盘在 conversations/list-previews.json。
     private(set) var listPreviewsByConversationId: [String: String] = [:]
@@ -188,7 +192,11 @@ final class IOSConversationStore {
     private let storage: JsonConversationStorage
     private let listPreviewsFileURL: URL
     private let listIconsFileURL: URL
+    private let subagentConversationIDsProvider: () async throws -> Set<String>
+    private let threadEdgeDaoProvider: (() -> ThreadEdgeDao)?
     private var deletedConversationIds: Set<String> = []
+    private var subagentConversationIDs: Set<String> = []
+    private var didLoadSummaries = false
     private var writeSequences: [String: UInt64] = [:]
     private var importEpoch: UInt64 = 0
     /// A restore must first drain snapshot writers that have already crossed
@@ -205,7 +213,11 @@ final class IOSConversationStore {
 
     // MARK: - Init
 
-    init(baseDirectory: URL? = nil) {
+    init(
+        baseDirectory: URL? = nil,
+        subagentConversationIDsProvider: (() async throws -> Set<String>)? = nil,
+        threadEdgeDaoProvider: (() -> ThreadEdgeDao)? = nil
+    ) {
         // Documents/conversations/ —— iOS Documents 目录会被 iTunes 文件共享暴露，
         // 第一版可接受（便于调试）；后续如要隐藏可换 Application Support。
         let baseDirPath: String
@@ -232,24 +244,48 @@ final class IOSConversationStore {
         self.storage = JsonConversationStorage(baseDir: baseDir)
         self.listPreviewsFileURL = previewsURL
         self.listIconsFileURL = iconsURL
+        let edgeDao: (() -> ThreadEdgeDao)? = threadEdgeDaoProvider
+            ?? (baseDirectory == nil ? { IosDatabaseFactory.shared.createDatabase().threadEdgeDao() } : nil)
+        self.threadEdgeDaoProvider = edgeDao
+        if let subagentConversationIDsProvider {
+            self.subagentConversationIDsProvider = subagentConversationIDsProvider
+        } else if let edgeDao {
+            self.subagentConversationIDsProvider = {
+                Set(try await edgeDao().allEdges().map { $0.childThreadId.lowercased() })
+            }
+        } else {
+            // Isolated test stores must not read the app's production Room database.
+            self.subagentConversationIDsProvider = { [] }
+        }
         self.listPreviewsByConversationId = Self.loadListPreviews(from: previewsURL)
         self.listIconsByConversationId = Self.loadListPreviews(from: iconsURL)
+    }
+
+    /// Update the visible projection after the edge is durable and before the
+    /// first child save, so the current list never briefly shows the child.
+    func registerSubagentConversation(id: KotlinUuid) {
+        subagentConversationIDs.insert(subagentConversationKey(for: id))
+        applySummaryVisibility()
+    }
+
+    /// Re-read the durable `thread_edge` projection. The provider is injected by
+    /// the composition root so isolated stores can remain independent of the
+    /// production Room database.
+    func refreshSubagentConversationVisibility() async throws {
+        let discovered = try await subagentConversationIDsProvider()
+        subagentConversationIDs.formUnion(discovered.map { $0.lowercased() })
+        applySummaryVisibility()
     }
 
     // MARK: - Bootstrap
 
     /// App 启动时调用：加载摘要列表，选最近一条作为 current；无历史则新建空会话。
     func bootstrap(allowNewConversationDuringImport: Bool = false) async {
+        didLoadSummaries = false
         listPreviewsByConversationId = Self.loadListPreviews(from: listPreviewsFileURL)
         listIconsByConversationId = Self.loadListPreviews(from: listIconsFileURL)
-        do {
-            summaries = try await storage.listSummaries()
-        } catch {
-            // listSummaries 内部已对损坏 index 做了 rebuild 兜底；到这里的 error 是更底层
-            // 的 I/O 故障。不致命：降级为空列表，下面会新建会话，内存里仍可用。
-            publishIOError(operation: "读取列表", detail: "\(error)")
-            summaries = []
-        }
+        _ = await loadSummaryProjectionIfNeeded()
+        guard didLoadSummaries else { return }
 
         if let mostRecent = summaries.first {
             // summaries 已按 updateAt 倒序，第一条即最近。
@@ -306,7 +342,10 @@ final class IOSConversationStore {
     /// The KMP implementation validates the whole batch before taking any write
     /// and rebuilds index.json under the same operation mutex.
     @discardableResult
-    func importConversationDocuments(_ documents: [String]) async throws -> Int {
+    func importConversationDocuments(
+        _ documents: [String],
+        threadEdges: [IOSConversationThreadEdge]? = nil
+    ) async throws -> Int {
         guard !documents.isEmpty else { return 0 }
         guard !isImportingConversationDocuments else {
             throw IOSConversationImportInProgressError()
@@ -314,17 +353,47 @@ final class IOSConversationStore {
         isImportingConversationDocuments = true
         defer { isImportingConversationDocuments = false }
 
-        await waitForConversationWritesToDrain()
-        try await storage.importConversations(serializedConversations: documents)
-        deletedConversationIds.removeAll()
-        writeSequences.removeAll()
-        importEpoch &+= 1
         let restoredIds = Set(documents.compactMap { document -> String? in
             guard let data = document.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let id = object["id"] as? String else { return nil }
             return id.lowercased()
         })
+        let edgeDao = threadEdges == nil ? nil : threadEdgeDaoProvider?()
+        let restoredEdges: [IOSConversationThreadEdge]?
+        if let threadEdges {
+            guard let edgeDao else {
+                throw NSError(domain: "IOSConversationStore", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "编排关系存储不可用。"])
+            }
+            let existingEdges = try await edgeDao.allEdges().map(IOSConversationThreadEdge.init(entity:))
+            restoredEdges = try IOSConversationThreadEdge.validated(
+                threadEdges, documentIDs: restoredIds,
+                existingEdges: existingEdges.filter { !restoredIds.contains($0.childThreadId) }
+            )
+        } else {
+            restoredEdges = nil
+        }
+        await waitForConversationWritesToDrain()
+        try await storage.importConversations(serializedConversations: documents)
+        var relationRestoreError: Error?
+        if let restoredEdges, let edgeDao {
+            do {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    edgeDao.restoreEdges(conversationIds: Array(restoredIds), edges: restoredEdges.map { $0.toEntity() }) { error in
+                        if let error { continuation.resume(throwing: error) }
+                        else { continuation.resume() }
+                    }
+                }
+                subagentConversationIDs.subtract(restoredIds)
+                subagentConversationIDs.formUnion(restoredEdges.map(\.childThreadId))
+            } catch {
+                relationRestoreError = error
+            }
+        }
+        deletedConversationIds.removeAll()
+        writeSequences.removeAll()
+        importEpoch &+= 1
         for id in restoredIds {
             listPreviewsByConversationId.removeValue(forKey: id)
             listIconsByConversationId.removeValue(forKey: id)
@@ -335,7 +404,17 @@ final class IOSConversationStore {
         // observe the new epoch while `currentConversation` still holds the
         // pre-restore document and write that old snapshot back.
         await bootstrap(allowNewConversationDuringImport: true)
+        if let relationRestoreError {
+            throw NSError(domain: "IOSConversationStore", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "会话文件已恢复，但子代理关系恢复失败，请重新导入备份：\(relationRestoreError.localizedDescription)"
+            ])
+        }
         return documents.count
+    }
+
+    func orchestrationEdgesForBackup() async throws -> [IOSConversationThreadEdge] {
+        guard let dao = threadEdgeDaoProvider?() else { return [] }
+        return try await dao.allEdges().map(IOSConversationThreadEdge.init(entity:))
     }
 
     // MARK: - CRUD
@@ -391,11 +470,7 @@ final class IOSConversationStore {
         }
 
         let sourceSummaries: [ConversationSummary]
-        if summaries.isEmpty {
-            sourceSummaries = (try? await storage.listSummaries()) ?? []
-        } else {
-            sourceSummaries = summaries
-        }
+        sourceSummaries = await visibleSummariesForListing()
         guard acceptsImportEpoch(operationImportEpoch) else { return false }
 
         if let mostRecent = sourceSummaries.first,
@@ -418,7 +493,7 @@ final class IOSConversationStore {
     /// Read-only projection for App Entity queries. It deliberately avoids
     /// bootstrap so querying Shortcuts never creates or selects a conversation.
     func appIntentSummaries(limit: Int? = 20) async -> [ConversationSummary] {
-        let source = summaries.isEmpty ? ((try? await storage.listSummaries()) ?? []) : summaries
+        let source = await visibleSummariesForListing()
         guard let limit else { return source }
         let boundedLimit = max(0, min(limit, 50))
         return Array(source.prefix(boundedLimit))
@@ -799,8 +874,13 @@ final class IOSConversationStore {
     /// 只列出 POLLUTED 会话（设置页「受外部内容影响的会话」列表投影）。实时读盘，
     /// 不依赖内存 currentConversation。
     func pollutedConversationSummaries() async -> [ConversationSummary] {
-        let all = (try? await storage.listSummaries()) ?? []
-        return all.filter { $0.memoryMode == .polluted }
+        do {
+            try await refreshSubagentConversationVisibility()
+            await refreshSummaries()
+        } catch {
+            publishIOError(operation: "读取子代理关系", detail: "\(error)")
+        }
+        return summaries.filter { $0.memoryMode == .polluted }
     }
 
     /// 重建一个仅 title 不同的 Conversation（Swift 侧无 partial copy，用全字段构造器）。
@@ -833,9 +913,21 @@ final class IOSConversationStore {
     @discardableResult
     func deleteConversation(
         id: KotlinUuid,
-        onDeletionCommitted: () -> Void = {}
+        onDeletionCommitted: ([KotlinUuid]) -> Void = { _ in }
     ) async -> Bool {
         let operationImportEpoch = importEpoch
+        let descendants: [KotlinUuid]
+        do {
+            if let dao = threadEdgeDaoProvider?() {
+                descendants = try await dao.descendantsOf(rootThreadId: id.toHexDashString())
+                    .map { KotlinUuid.companion.parse(uuidString: $0.childThreadId) }
+            } else {
+                descendants = []
+            }
+        } catch {
+            publishIOError(operation: "读取关联子任务，删除未执行", detail: "\(error)")
+            return false
+        }
         guard beginConversationWrite(expectedImportEpoch: operationImportEpoch, allowDuringImport: false) else {
             return false
         }
@@ -863,7 +955,7 @@ final class IOSConversationStore {
             publishIOError(operation: "删除会话", detail: "\(id): \(error)")
         }
 
-        onDeletionCommitted()
+        onDeletionCommitted([id] + descendants)
         pendingBackgroundContentConversationIds.remove(String(describing: id))
         if listPreviewsByConversationId.removeValue(forKey: sequenceKey(for: id)) != nil {
             persistListPreviews()
@@ -942,7 +1034,7 @@ final class IOSConversationStore {
             return
         }
         defer { finishConversationWrite() }
-        let currentPinned = summaries.first(where: { $0.id == id })?.isPinned ?? false
+        let currentPinned = allSummaries.first(where: { $0.id == id })?.isPinned ?? false
         let newPinned = KotlinBoolean(value: !currentPinned)
         do {
             try await storage.updateMetadata(id: id, title: nil, isPinned: newPinned)
@@ -1018,12 +1110,7 @@ final class IOSConversationStore {
         let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, limit > 0 else { return [] }
 
-        let sourceSummaries: [ConversationSummary]
-        if summaries.isEmpty {
-            sourceSummaries = (try? await storage.listSummaries()) ?? []
-        } else {
-            sourceSummaries = summaries
-        }
+        let sourceSummaries = await visibleSummariesForListing()
 
         var results: [IOSConversationSearchResult] = []
         for summary in sourceSummaries {
@@ -1074,12 +1161,7 @@ final class IOSConversationStore {
         let results = await searchConversations(query: query, limit: limit)
         guard !results.isEmpty else { return [] }
 
-        let sourceSummaries: [ConversationSummary]
-        if summaries.isEmpty {
-            sourceSummaries = (try? await storage.listSummaries()) ?? []
-        } else {
-            sourceSummaries = summaries
-        }
+        let sourceSummaries = await visibleSummariesForListing()
         let countByConversation = Dictionary(
             sourceSummaries.map { ($0.id.toHexDashString(), $0.messageCount) },
             uniquingKeysWith: { first, _ in first }
@@ -1123,12 +1205,7 @@ final class IOSConversationStore {
     /// or write back to disk. It loads recent conversations by summary id and returns a
     /// compact tail window for the Board collector's local heuristics.
     func boardSignalCandidates(limit: Int = 30) async -> [IOSBoardConversationCandidate] {
-        let sourceSummaries: [ConversationSummary]
-        if summaries.isEmpty {
-            sourceSummaries = (try? await storage.listSummaries()) ?? []
-        } else {
-            sourceSummaries = summaries
-        }
+        let sourceSummaries = await visibleSummariesForListing()
 
         var candidates: [IOSBoardConversationCandidate] = []
         for summary in sourceSummaries.prefix(max(limit, 0)) {
@@ -1716,11 +1793,35 @@ final class IOSConversationStore {
 
     private func refreshSummaries() async {
         do {
-            summaries = try await storage.listSummaries()
+            if !didLoadSummaries {
+                try await refreshSubagentConversationVisibility()
+            }
+            allSummaries = try await storage.listSummaries()
                 .filter { !isDeletedConversation($0.id) }
+            didLoadSummaries = true
+            applySummaryVisibility()
         } catch {
-            publishIOError(operation: "刷新列表", detail: "\(error)")
+            publishIOError(operation: "读取会话列表及编排关系", detail: "\(error)")
         }
+    }
+
+    private func loadSummaryProjectionIfNeeded() async -> [ConversationSummary] {
+        if !didLoadSummaries { await refreshSummaries() }
+        return summaries
+    }
+
+    private func visibleSummariesForListing() async -> [ConversationSummary] {
+        await loadSummaryProjectionIfNeeded()
+    }
+
+    private func applySummaryVisibility() {
+        summaries = allSummaries.filter { summary in
+            !subagentConversationIDs.contains(subagentConversationKey(for: summary.id))
+        }
+    }
+
+    private func subagentConversationKey(for id: KotlinUuid) -> String {
+        id.toHexDashString().lowercased()
     }
 
     private func markDeletedConversation(_ id: KotlinUuid) {

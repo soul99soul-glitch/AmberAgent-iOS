@@ -520,7 +520,7 @@ struct AppShell: View {
             rootRouter.path = [.chat]
 
         case .conversation(let id):
-            guard let summary = conversationStore.summaries.first(where: {
+            guard let summary = conversationStore.allSummaries.first(where: {
                 $0.id.toHexDashString().caseInsensitiveCompare(id) == .orderedSame
             }) else {
                 conversationStore.publishUserVisibleError(IOSUserVisibleError(
@@ -528,6 +528,13 @@ struct AppShell: View {
                     message: "这段对话已被删除或不存在。",
                     severity: .warning
                 ))
+                if let sourceURL { IOSDeepLinkInbox.shared.acknowledge(sourceURL) }
+                pendingAppDeepLinkDestination = nil
+                pendingAppDeepLinkURL = nil
+                return
+            }
+            if !conversationStore.summaries.contains(where: { $0.id == summary.id }) {
+                rootRouter.navigate(to: .subAgentConversation(id: id))
                 if let sourceURL { IOSDeepLinkInbox.shared.acknowledge(sourceURL) }
                 pendingAppDeepLinkDestination = nil
                 pendingAppDeepLinkURL = nil
@@ -883,6 +890,7 @@ enum Route: Hashable {
     case seatEditor
     case subagents
     case subAgentRole(name: String, roleId: String)
+    case subAgentConversation(id: String)
     case sandbox
     case conversation(id: String)
     case assistant(id: String)
@@ -1197,6 +1205,8 @@ private extension View {
                 }
             case .conversation(let id):
                 PlaceholderDetailView(title: "Conversation", subtitle: id, systemImage: "text.bubble")
+            case .subAgentConversation(let id):
+                SubAgentConversationView(conversationId: id, sharedSettings: sharedSettings, workspaceStore: workspaceStore)
             case .assistant:
                 PlaceholderDetailView(
                     title: "Amber Assistant",

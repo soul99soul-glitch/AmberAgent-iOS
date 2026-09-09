@@ -14,6 +14,31 @@ struct ToolDetailTarget: Identifiable {
     }
 }
 
+struct SubagentConversationLink: Identifiable, Equatable {
+    let id: String
+    let title: String
+
+    static func links(from tool: UIMessagePart.Tool) -> [Self] {
+        guard ["spawn_agent", "followup_task", "send_message", "interrupt_agent", "list_agents"].contains(tool.toolName) else { return [] }
+        var links: [Self] = []
+        for case let part as UIMessagePart.Text in tool.output {
+            guard let data = part.text.data(using: .utf8),
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  result["ok"] as? Bool == true else { continue }
+            let entries = tool.toolName == "list_agents" ? (result["threads"] as? [[String: Any]] ?? []) : [result]
+            for entry in entries {
+                guard let rawID = (entry["child_thread_id"] ?? entry["recipient_thread_id"]) as? String,
+                      let id = UUID(uuidString: rawID)?.uuidString.lowercased(),
+                      !links.contains(where: { $0.id == id }) else { continue }
+                let path = (entry["agent_path"] ?? entry["task_name"] ?? entry["target"]) as? String
+                let title = path?.split(separator: "/").last.map(String.init) ?? "子代理会话"
+                links.append(Self(id: id, title: title))
+            }
+        }
+        return links
+    }
+}
+
 /// Detail sheet shown when a tool / subagent capsule is tapped. Mirrors the
 /// Android `ToolCallPreviewSheet` / `SubAgentRunSheet`: for a normal tool it
 /// shows the call arguments + rendered output; for a subagent it shows the
@@ -25,6 +50,7 @@ struct ChatToolDetailSheet: View {
     /// Optional live model for a running subagent (nil for normal tools or when
     /// no live flow is available — then the stored `tool.output` is shown).
     var live: SubAgentLiveModel? = nil
+    var onOpenSubagentConversation: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -62,7 +88,30 @@ struct ChatToolDetailSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if isSubAgent { subAgentSections } else { toolSections }
+                    if let onOpenSubagentConversation {
+                        ForEach(SubagentConversationLink.links(from: tool)) { link in
+                            Button {
+                                dismiss()
+                                onOpenSubagentConversation(link.id)
+                            } label: {
+                                HStack {
+                                    Label("查看会话：\(link.title)", systemImage: "text.bubble")
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                }
+                                .frame(minHeight: 44)
+                            }
+                            .buttonStyle(.bordered)
+                            .accessibilityIdentifier("tool.openSubagentConversation")
+                        }
+                    }
+                    if isSubAgent {
+                        subAgentSections
+                    } else if tool.toolName == "spawn_agent" || tool.toolName == "followup_task" {
+                        orchestrationSections
+                    } else {
+                        toolSections
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(16)
@@ -83,6 +132,32 @@ struct ChatToolDetailSheet: View {
     }
 
     // MARK: - Normal tool
+
+    @ViewBuilder private var orchestrationSections: some View {
+        if let message = ChatToolCallParsing.jsonObject(tool.input)?["message"] as? String {
+            section("任务") {
+                Text(message).font(.subheadline).textSelection(.enabled)
+            }
+        }
+        section("本次操作") {
+            if let outputFailureReason {
+                Text(outputFailureReason).font(.subheadline).foregroundStyle(AmberTheme.accentAmber)
+            } else if !executed {
+                statusLine("正在提交任务…")
+            } else {
+                let result = ChatToolCallParsing.jsonObject(storedOutputText)
+                if result?["status"] as? String == "started" {
+                    statusLine("启动请求已提交，打开会话查看执行记录。")
+                } else if result?["status"] as? String == "queued" {
+                    statusLine("后续任务已排队，打开会话查看记录。")
+                } else {
+                    statusLine("本次调用已返回，打开会话查看记录。")
+                }
+            }
+        }
+        DisclosureGroup("调用详情") { toolSections }
+            .font(.subheadline)
+    }
 
     @ViewBuilder private var toolSections: some View {
         section("工具") {
@@ -178,6 +253,9 @@ struct ChatToolDetailSheet: View {
     }
 
     private var friendlyName: String {
+        if ["spawn_agent", "followup_task", "send_message", "list_agents", "interrupt_agent", "wait_agent"].contains(tool.toolName) {
+            return ChatToolStepModel.friendlyToolTitle(tool.toolName, executed: executed)
+        }
         if isSubAgent { return "子智能体" }
         if tool.toolName == "terminal_execute" { return "Remote SSH 执行" }
         if tool.toolName == IOSAmberShellToolCatalog.executeToolName {

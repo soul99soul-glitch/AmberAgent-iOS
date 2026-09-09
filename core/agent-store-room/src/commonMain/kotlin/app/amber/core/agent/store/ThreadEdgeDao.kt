@@ -15,6 +15,7 @@ interface ThreadEdgeDao {
 
     /** 写一条 spawn 边。REPLACE：同一 childThreadId 的重试（同一次逻辑 spawn）
      *  幂等覆盖，不产生重复边。 */
+    @Throws(Exception::class)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEdge(edge: ThreadEdgeEntity)
 
@@ -24,13 +25,26 @@ interface ThreadEdgeDao {
     @Query("SELECT * FROM thread_edge WHERE parent_thread_id = :parentThreadId")
     suspend fun childrenOf(parentThreadId: String): List<ThreadEdgeEntity>
 
+    @Throws(Exception::class)
     @Query("SELECT * FROM thread_edge")
     suspend fun allEdges(): List<ThreadEdgeEntity>
+
+    @Query("DELETE FROM thread_edge WHERE child_thread_id IN (:conversationIds)")
+    suspend fun deleteEdgesForConversations(conversationIds: List<String>)
+
+    /** Restore only the imported conversations; unrelated local trees stay intact. */
+    @Throws(Exception::class)
+    @Transaction
+    suspend fun restoreEdges(conversationIds: List<String>, edges: List<ThreadEdgeEntity>) {
+        deleteEdgesForConversations(conversationIds)
+        edges.forEach { insertEdge(it) }
+    }
 
     @Query("UPDATE thread_edge SET status = :status WHERE child_thread_id = :childThreadId")
     suspend fun setStatus(childThreadId: String, status: String): Int
 
     /** 该 root 的全部后代边（含所有传递子级），BFS 稳定序（parent 分组序）。 */
+    @Throws(Exception::class)
     @Transaction
     suspend fun descendantsOf(rootThreadId: String): List<ThreadEdgeEntity> =
         descendantsOf(rootThreadId, allEdges())

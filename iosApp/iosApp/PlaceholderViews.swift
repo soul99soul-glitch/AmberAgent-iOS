@@ -2387,15 +2387,15 @@ struct ConversationsView: View {
             Button("删除", role: .destructive) {
                 if let id = deletingConversationId {
                     Task { @MainActor in
-                        await conversationStore.deleteConversation(id: id) {
-                            chatViewModel.prepareForConversationDeletion(id)
+                        await conversationStore.deleteConversation(id: id) { affectedIDs in
+                            affectedIDs.forEach(chatViewModel.prepareForConversationDeletion)
                         }
                     }
                 }
                 deletingConversationId = nil
             }
         } message: {
-            Text("此操作不可撤销，会话内的全部消息将被删除。")
+            Text("此操作不可撤销，会话内的全部消息将被删除。关联子任务会停止，子会话记录保留在“对话存储”中。")
         }
     }
 

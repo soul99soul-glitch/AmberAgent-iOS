@@ -472,6 +472,28 @@ final class IOSThreadOrchestrationToolService {
             forkTurns: forkTurns,
             assistantId: resolvedRoleAssistantId
         )
+        // Persist the relationship before any child document. A saved child
+        // must remain identifiable after a restart, even if bootstrap stops here.
+        do {
+            try await threadEdgeDao.insertEdge(
+                edge: ThreadEdgeEntity(
+                    childThreadId: childHex,
+                    parentThreadId: parentHex,
+                    agentPath: childAgentPath,
+                    nickname: nil,
+                    roleAssistantId: roleAssistantId,
+                    forkTurns: forkTurns,
+                    status: EdgeStatus.open,
+                    createdAt: now
+                )
+            )
+        } catch {
+            return Self.errorJSON(
+                toolName: "spawn_agent", code: ErrorCode.startFailed,
+                reason: "子代理关系保存失败，任务未启动：\(error.localizedDescription)"
+            )
+        }
+        store.registerSubagentConversation(id: childConversationId)
         guard await store.saveForkedConversation(forked) else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -482,12 +504,11 @@ final class IOSThreadOrchestrationToolService {
 
         // (f) bootstrap：NEW_TASK 信封渲染为 user 消息直接持久化进子会话，
         // 信封 Room 记录标 delivered（不等任何消费点）。
-        let renderedTask = MailboxEnvelopeKt.renderMailboxEnvelopeToUserText(
+        let newTaskMessage = IosMailboxMessageBridge.shared.makeMessage(
             authorThreadId: parentAgentPath,
             type: MailboxEnvelopeType.theNewTask.name,
             payload: message
         )
-        let newTaskMessage = UIMessage.companion.user(prompt: renderedTask)
         let forkMessages = Self.removingOrchestrationConfigurationMessages(from: forked.currentMessages)
         var childMessages = forkMessages
         if let configuration = launch.configuration {
@@ -518,21 +539,6 @@ final class IOSThreadOrchestrationToolService {
             )
         )
 
-        // (e) 写 thread_edge（Open）。
-        await Self.insertEdge(
-            threadEdgeDao: threadEdgeDao,
-            edge: ThreadEdgeEntity(
-                childThreadId: childHex,
-                parentThreadId: parentHex,
-                agentPath: childAgentPath,
-                nickname: nil,
-                roleAssistantId: roleAssistantId,
-                forkTurns: forkTurns,
-                status: EdgeStatus.open,
-                createdAt: now
-            )
-        )
-
         // (g) 启动子 run（P1-d 抽取助手：记账 + durable handoff → BGTask；
         // start 失败回收 running 行，见助手内注释）。
         let childRunId = UUID().uuidString
@@ -540,7 +546,7 @@ final class IOSThreadOrchestrationToolService {
             targetConversationId: childConversationId,
             targetHex: childHex,
             targetMessages: childMessages,
-            renderedText: renderedTask,
+            renderedText: newTaskMessage.toText(),
             providerSetting: launch.providerSetting,
             params: launch.params,
             runId: childRunId,
@@ -1237,7 +1243,7 @@ final class IOSThreadOrchestrationToolService {
                 reason: error.reason
             )
         }
-        let renderedTask = MailboxEnvelopeKt.renderMailboxEnvelopeToUserText(
+        let newTaskMessage = IosMailboxMessageBridge.shared.makeMessage(
             authorThreadId: senderAgentPath,
             type: MailboxEnvelopeType.theNewTask.name,
             payload: trimmedMessage
@@ -1246,7 +1252,7 @@ final class IOSThreadOrchestrationToolService {
         if let configuration = launch.configuration {
             updatedMessages.append(Self.orchestrationConfigurationMessage(configuration))
         }
-        updatedMessages.append(UIMessage.companion.user(prompt: renderedTask))
+        updatedMessages.append(newTaskMessage)
         // 信封渲染消息直写目标会话（与 spawn 的 bootstrap 同语义：先持久化，
         // 后 durable 启动；进程死亡也不丢任务消息）。
         guard await Self.persistTargetMessages(store: store, conversationId: targetId, messages: updatedMessages) else {
@@ -1261,7 +1267,7 @@ final class IOSThreadOrchestrationToolService {
             targetConversationId: targetId,
             targetHex: target.hex,
             targetMessages: updatedMessages,
-            renderedText: renderedTask,
+            renderedText: newTaskMessage.toText(),
             providerSetting: launch.providerSetting,
             params: launch.params,
             runId: targetRunId,
@@ -1525,7 +1531,7 @@ final class IOSThreadOrchestrationToolService {
             fullToolNames: fullToolNames,
             executionPolicy: executionPolicy
         )
-        let didStart = backgroundCoordinator.start(
+        let didStart = !Task.isCancelled && backgroundCoordinator.start(
             handoff: handoff,
             conversationStore: store,
             toolRuntime: makeBackgroundToolRuntime(),
@@ -1606,6 +1612,20 @@ final class IOSThreadOrchestrationToolService {
         guard let edge = await Self.edgeFor(childThreadId: childHex, threadEdgeDao: threadEdgeDaoProvider()),
               edge.status == EdgeStatus.open else {
             return
+        }
+        if let store = conversationStoreProvider() {
+            let parentID = KotlinUuid.companion.parse(uuidString: edge.parentThreadId)
+            do {
+                // Deleted parents cannot consume mail. The child transcript is
+                // retained and remains accessible from conversation storage.
+                guard try await store.loadConversationForOrchestration(parentID) != nil else { return }
+            } catch {
+                // A read error does not prove deletion; keep the result durable
+                // in the mailbox and surface the storage error.
+                store.publishUserVisibleError(IOSUserVisibleError(
+                    title: "读取父会话失败", message: error.localizedDescription, severity: .error
+                ))
+            }
         }
         let text = Self.lastAssistantText(finalMessages)
         // P1-c 修复：空转录（如整轮失败、无 assistant 输出）也回传终态——改投
@@ -1742,12 +1762,6 @@ final class IOSThreadOrchestrationToolService {
                 if let error { cont.resume(throwing: error) }
                 else { cont.resume() }
             }
-        }
-    }
-
-    private static func insertEdge(threadEdgeDao: ThreadEdgeDao, edge: ThreadEdgeEntity) async {
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            threadEdgeDao.insertEdge(edge: edge) { _ in cont.resume() }
         }
     }
 

@@ -56,6 +56,17 @@ enum ChatDataImageLoadState: Sendable {
     }
 }
 
+private struct ChatMessageEditingAllowedKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
+extension EnvironmentValues {
+    var chatMessageEditingAllowed: Bool {
+        get { self[ChatMessageEditingAllowedKey.self] }
+        set { self[ChatMessageEditingAllowedKey.self] = newValue }
+    }
+}
+
 struct MessageBubbleView: View {
 
     let message: UIMessage
@@ -75,6 +86,7 @@ struct MessageBubbleView: View {
     var onModifyGeneratedImage: (String, String, String) -> Void = { _, _, _ in }
     var onOpenMiniApp: (String) -> Void = { _ in }
     var onOpenMiniApps: () -> Void = {}
+    var onOpenSubagentConversation: ((String) -> Void)? = nil
     var isGenerating: Bool = false
     /// Global chat busy flag (any in-flight generation), used by MiniApp modify gate.
     var isChatGenerationActive: Bool = false
@@ -99,6 +111,7 @@ struct MessageBubbleView: View {
 
     @Environment(IOSWorkspaceStore.self) private var workspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
@@ -110,7 +123,7 @@ struct MessageBubbleView: View {
     private var canBranch: Bool {
         // Disable branch actions while a run is active, including tool approval
         // pauses where no stream job is currently running.
-        !isGenerating
+        messageEditingAllowed && !isGenerating
     }
 
     var body: some View {
@@ -120,6 +133,13 @@ struct MessageBubbleView: View {
                     Spacer(minLength: 48)
 
                     VStack(alignment: .trailing, spacing: 4) {
+                        if let sender = IosMailboxMessageBridge.shared.sender(message: message) {
+                            Label(mailboxSourceTitle(sender), systemImage: "arrow.turn.down.right")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityIdentifier("chat.mailbox.source")
+                        }
                         variantSwitcher
                         messageParts
                     }
@@ -224,6 +244,15 @@ struct MessageBubbleView: View {
 
     // MARK: - Branching controls
 
+    private func mailboxSourceTitle(_ sender: String) -> String {
+        let source = sender == "/root" ? "主会话" : String(sender.split(separator: "/").last ?? Substring(sender))
+        switch IosMailboxMessageBridge.shared.kind(message: message) {
+        case "NEW_TASK": return "来自\(source)的任务"
+        case "FINAL_ANSWER": return "来自\(source)的结果"
+        default: return "来自\(source)的消息"
+        }
+    }
+
     @ViewBuilder
     private var variantSwitcher: some View {
         if let info = variantInfo, info.hasMultipleVariants, canBranch {
@@ -310,7 +339,9 @@ struct MessageBubbleView: View {
                     // 气泡现在是内容尺寸(已移除其内部的 300pt 框),contextMenu 的高亮平台贴合气泡。
                     // 再用 .contentShape(.contextMenuPreview, 气泡圆角) 把平台裁成气泡形状,消除灰角。
                     ChatUserBubble(
-                        text: GenerativeUiPlanner.shared.stripVisualRouteTagsForDisplay(text: textPart.text)
+                        text: GenerativeUiPlanner.shared.stripVisualRouteTagsForDisplay(
+                            text: IosMailboxMessageBridge.shared.displayText(part: textPart)
+                        )
                     )
                         .contentShape(
                             .contextMenuPreview,
@@ -375,7 +406,7 @@ struct MessageBubbleView: View {
                     onRun: { onOpenMiniApp(miniApp.appId) },
                     onOpenList: onOpenMiniApps,
                     onModify: { prompt in
-                        guard !isChatGenerationActive else { return false }
+                        guard messageEditingAllowed && !isChatGenerationActive else { return false }
                         onGenerativeWidgetAction(prompt)
                         return true
                     }
@@ -441,7 +472,8 @@ struct MessageBubbleView: View {
                 tool: currentTool,
                 live: currentTool.toolName.contains("subagent_dispatch")
                     ? SubAgentLiveRegistry.shared.model(forToolCallId: currentTool.toolCallId)
-                    : nil
+                    : nil,
+                onOpenSubagentConversation: onOpenSubagentConversation
             )
         }
     }
@@ -3023,6 +3055,9 @@ private struct ChatGeneratedImageTile: View {
     var display = ChatGeneratedImageRequestDisplay(toolInput: nil)
     var onModify: (String, String, String) -> Void = { _, _, _ in }
     var allowsModify: Bool = true
+    @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
+
+    private var canModify: Bool { allowsModify && messageEditingAllowed }
     @State private var saveState: ChatGeneratedImagePhotoSaveState = .idle
     @State private var saveAlert: ChatGeneratedImageSaveAlert?
     @State private var dataImageState: ChatDataImageLoadState = .loading
@@ -3142,13 +3177,13 @@ private struct ChatGeneratedImageTile: View {
                         ChatGeneratedImageActionLabel(
                             title: "修改",
                             systemImage: "wand.and.stars",
-                            foreground: allowsModify ? AmberTheme.accent : AmberTheme.muted,
-                            fill: allowsModify ? AmberTheme.accentTint : AmberTheme.surface2
+                            foreground: canModify ? AmberTheme.accent : AmberTheme.muted,
+                            fill: canModify ? AmberTheme.accentTint : AmberTheme.surface2
                         )
                     }
                     .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-                    .disabled(!allowsModify)
-                    .accessibilityLabel(allowsModify ? "修改图片" : "生成中，暂不可修改图片")
+                    .disabled(!canModify)
+                    .accessibilityLabel(canModify ? "修改图片" : (messageEditingAllowed ? "生成中，暂不可修改图片" : "只读会话中不可修改图片"))
                 }
             }
         }

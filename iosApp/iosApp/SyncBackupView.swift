@@ -617,25 +617,33 @@ struct SyncBackupView: View {
     }
 
     private func exportSettingsBackup() {
-        do {
-            // Include conversations when present (Android SyncArchiveManager
-            // parity). The conversations dir is Documents/conversations (the
-            // same path IOSConversationStore uses by default).
-            let conversationsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-                .appendingPathComponent("conversations")
-            let conversationsZip = try conversationsDir.flatMap {
-                try IOSSyncBackup.conversationsZip(fromDirectory: $0)
+        Task { @MainActor in
+            do {
+                try await exportSettingsBackupAsync()
+            } catch {
+                alert = .error("导出失败：\(error.localizedDescription)")
             }
-            let data = try IOSSyncBackup.export(
-                settings: sharedSettings.snapshot,
-                passphrase: passphrase,
-                conversationsZip: conversationsZip
-            )
-            exportedFile = IOSSyncBackupDocument(data: data)
-            isExportingFile = true
-        } catch {
-            alert = .error("导出失败：\(error.localizedDescription)")
         }
+    }
+
+    @MainActor
+    private func exportSettingsBackupAsync() async throws {
+        // Include conversations when present (Android SyncArchiveManager
+        // parity). The conversations dir is Documents/conversations (the
+        // same path IOSConversationStore uses by default).
+        let conversationsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("conversations")
+        let threadEdges = try await conversationStore.orchestrationEdgesForBackup()
+        let conversationsZip = try conversationsDir.flatMap {
+            try IOSSyncBackup.conversationsZip(fromDirectory: $0, threadEdges: threadEdges)
+        }
+        let data = try IOSSyncBackup.export(
+            settings: sharedSettings.snapshot,
+            passphrase: passphrase,
+            conversationsZip: conversationsZip
+        )
+        exportedFile = IOSSyncBackupDocument(data: data)
+        isExportingFile = true
     }
 
     private func importSettingsBackup(from url: URL) {
@@ -683,8 +691,9 @@ struct SyncBackupView: View {
 
             let conversationsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
                 .appendingPathComponent("conversations")
+            let threadEdges = try await conversationStore.orchestrationEdgesForBackup()
             let conversationsZip = try conversationsDir.flatMap {
-                try IOSSyncBackup.conversationsZip(fromDirectory: $0)
+                try IOSSyncBackup.conversationsZip(fromDirectory: $0, threadEdges: threadEdges)
             }
             let data = try IOSSyncBackup.export(
                 settings: sharedSettings.snapshot,
@@ -745,7 +754,11 @@ struct SyncBackupView: View {
             var restoredConversationCount = 0
             if let conversationsZip = result.conversationsZip {
                 let documents = try IOSSyncBackup.conversationDocuments(zipData: conversationsZip)
-                restoredConversationCount = try await conversationStore.importConversationDocuments(documents)
+                let threadEdges = try IOSSyncBackup.conversationThreadEdges(zipData: conversationsZip)
+                restoredConversationCount = try await conversationStore.importConversationDocuments(
+                    documents,
+                    threadEdges: threadEdges
+                )
             }
             sharedSettings.restoreSnapshot(result.settings)
             if let snapshot = pendingRestore.snapshot {

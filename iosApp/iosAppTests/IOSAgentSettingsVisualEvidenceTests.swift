@@ -1,5 +1,6 @@
 import SwiftUI
 import XCTest
+@preconcurrency import Shared
 @testable import iosApp
 
 @MainActor
@@ -61,5 +62,48 @@ final class IOSAgentSettingsVisualEvidenceTests: XCTestCase {
         try await capture(SubAgentsView(sharedSettings: settings), name: "subagents-settings")
         try await capture(SubAgentRoleView(sharedSettings: settings, name: "Browser", roleId: "browser"), name: "subagent-browser-config")
         try await capture(SubAgentsView(sharedSettings: settings), name: "subagents-settings-large", type: .accessibility1)
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.bootstrap()
+        let parentID = try XCTUnwrap(store.currentConversation?.id)
+        let childID = KotlinUuid.companion.random()
+        store.registerSubagentConversation(id: childID)
+        let saved = await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childID, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID,
+            messages: [], newConversation: false
+        ))
+        XCTAssertTrue(saved)
+        let wroteMessages = await store.save(messages: [
+                IosMailboxMessageBridge.shared.makeMessage(authorThreadId: "/root", type: "NEW_TASK", payload: "请继续检查网页，并把关键结论发回主会话。"),
+                UIMessage.companion.assistant(prompt: "已收到补充上下文，正在继续整理结果。")
+            ], to: childID, ifUnchangedSince: store.writeBaseline(for: childID))
+        XCTAssertTrue(wroteMessages)
+        try await capture(SubAgentConversationView(
+            conversationId: childID.toHexDashString(), sharedSettings: settings,
+            workspaceStore: IOSWorkspaceStore(baseDirectory: directory)
+        ).environment(store), name: "subagent-hidden-conversation")
+        try await capture(SubAgentConversationView(
+            conversationId: childID.toHexDashString(), sharedSettings: settings,
+            workspaceStore: IOSWorkspaceStore(baseDirectory: directory)
+        ).environment(store), name: "subagent-hidden-conversation-large", type: .accessibility1)
+        let viewModel = ChatViewModel(settingsStore: SettingsStore(), autoGenerateResponses: false)
+        try await capture(ConversationStorageView(sharedSettings: settings)
+            .environment(store).environment(viewModel), name: "subagent-storage-entry")
+        XCTAssertEqual(store.currentConversation?.id, parentID)
+        XCTAssertFalse(store.summaries.contains { $0.id == childID })
+        let result = try JSONSerialization.data(withJSONObject: [
+            "ok": true, "child_thread_id": childID.toHexDashString(),
+            "agent_path": "/root/browser", "status": "started"
+        ])
+        let tool = UIMessagePart.Tool(
+            toolCallId: UUID().uuidString, toolName: "spawn_agent", input: "{\"task_name\":\"browser\",\"message\":\"请继续检查网页，并整理关键结论。\"}",
+            output: [UIMessagePart.Text(text: String(decoding: result, as: UTF8.self), metadata: nil)],
+            approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+        )
+        try await capture(ChatToolDetailSheet(tool: tool, onOpenSubagentConversation: { _ in }), name: "subagent-tool-conversation-link")
+        try await capture(ChatToolDetailSheet(tool: tool, onOpenSubagentConversation: { _ in }), name: "subagent-tool-conversation-link-large", type: .accessibility1)
+
     }
 }

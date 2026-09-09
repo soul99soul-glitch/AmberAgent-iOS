@@ -10,6 +10,7 @@ private let widgetStreamUpdateDelay: TimeInterval = 0.016
 
 @MainActor
 struct IOSGenerativeWidgetCard: View {
+    @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
     let widget: IOSGenerativeWidget
     var generativeUiSetting: GenerativeUiSetting?
     var onAction: (String) -> Void = { _ in }
@@ -211,6 +212,7 @@ struct IOSGenerativeWidgetCard: View {
             .buttonStyle(.bordered)
             .frame(maxWidth: stacked ? .infinity : nil, minHeight: 44, alignment: .leading)
             .fixedSize(horizontal: !stacked, vertical: false)
+            .disabled(!messageEditingAllowed)
         }
     }
 

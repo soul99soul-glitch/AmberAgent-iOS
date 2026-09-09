@@ -14,6 +14,7 @@ enum ChatListAction {
     case modifyGeneratedImage(urlString: String, prompt: String, aspectRatio: String)
     case openMiniApp(appId: String)
     case openMiniApps
+    case openSubagentConversation(id: String)
     case primaryConfiguration
     case modelDefaults
 }
@@ -2843,6 +2844,7 @@ private struct ChatSwiftUIMessageBubble: View, @MainActor Equatable {
             },
             onOpenMiniApp: { appId in onAction(.openMiniApp(appId: appId)) },
             onOpenMiniApps: { onAction(.openMiniApps) },
+            onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) },
             isGenerating: row.isLast && isGenerationActive,
             isChatGenerationActive: isGenerationActive,
             isLastMessage: row.isLast,
@@ -2993,6 +2995,7 @@ private struct ChatMessageHostedBubble: View {
             },
             onOpenMiniApp: { appId in onAction(.openMiniApp(appId: appId)) },
             onOpenMiniApps: { onAction(.openMiniApps) },
+            onOpenSubagentConversation: { onAction(.openSubagentConversation(id: $0)) },
             isGenerating: model.row.isLast && isGenerationActive,
             isChatGenerationActive: isGenerationActive,
             isLastMessage: model.row.isLast,

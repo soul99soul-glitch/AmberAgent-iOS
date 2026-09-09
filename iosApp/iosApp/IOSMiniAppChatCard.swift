@@ -245,6 +245,7 @@ struct ChatMiniAppStreamingCard: View {
 
 /// Chat-inline MiniApp card: run / modify / export / versions.
 struct IOSMiniAppChatCard: View {
+    @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
     let part: UIMessagePart.MiniApp
     var onRun: () -> Void = {}
     var onOpenList: () -> Void = {}
@@ -504,6 +505,7 @@ struct IOSMiniAppChatCard: View {
                 modifyPrompt = ""
                 showModifySheet = true
             }
+            .disabled(!messageEditingAllowed)
             miniAppActionButton(
                 title: "导出",
                 systemImage: "square.and.arrow.up",

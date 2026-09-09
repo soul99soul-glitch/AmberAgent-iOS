@@ -48,10 +48,12 @@ struct IOSSyncBackup {
     private static let settingsEntry = "settings.json"
     private static let payloadManifestEntry = "payload_manifest.json"
     private static let conversationsEntry = "conversations.zip"
+    private static let threadEdgesEntry = "thread-edges.json"
     private static let conversationMetadataEntries: Set<String> = [
         "index.json",
         "list-previews.json",
         "list-icons.json",
+        threadEdgesEntry,
     ]
     private static let healthToolName = "health_summary_read"
 
@@ -131,7 +133,10 @@ struct IOSSyncBackup {
     /// Bundles every `{id}.json` conversation file in the given directory into a
     /// zip for inclusion in the backup payload. Returns nil if the directory
     /// is missing or empty (the caller then exports settings-only, honestly).
-    static func conversationsZip(fromDirectory directoryURL: URL) throws -> Data? {
+    static func conversationsZip(
+        fromDirectory directoryURL: URL,
+        threadEdges: [IOSConversationThreadEdge]? = nil
+    ) throws -> Data? {
         let fm = FileManager.default
         guard fm.fileExists(atPath: directoryURL.path) else { return nil }
         let entries = try fm.contentsOfDirectory(at: directoryURL, includingPropertiesForKeys: nil)
@@ -139,7 +144,7 @@ struct IOSSyncBackup {
             isConversationDocumentName($0.lastPathComponent)
         }
         guard !jsonFiles.isEmpty else { return nil }
-        let zipEntries = try jsonFiles.compactMap { file -> IOSStoredZipArchive.Entry? in
+        var zipEntries = try jsonFiles.compactMap { file -> IOSStoredZipArchive.Entry? in
             let data = try Data(contentsOf: file)
             // HealthKit data must never enter Amber's local export or remote
             // CloudKit/WebDAV snapshot. A health tool call makes the whole
@@ -148,6 +153,27 @@ struct IOSSyncBackup {
             return IOSStoredZipArchive.Entry(name: file.lastPathComponent, data: data)
         }
         guard !zipEntries.isEmpty else { return nil }
+
+        if let threadEdges {
+            let storedConversationIDs = Set(jsonFiles.map {
+                $0.deletingPathExtension().lastPathComponent.lowercased()
+            })
+            let exportedConversationIDs = Set(zipEntries.compactMap { entry in
+                conversationID(from: entry.data)
+            })
+            let eligibleEdges = threadEdges.filter { edge in
+                guard let child = canonicalConversationID(edge.childThreadId),
+                      let parent = canonicalConversationID(edge.parentThreadId) else {
+                    return false
+                }
+                return exportedConversationIDs.contains(child)
+                    && (exportedConversationIDs.contains(parent) || !storedConversationIDs.contains(parent))
+            }
+            zipEntries.append(.init(
+                name: threadEdgesEntry,
+                data: try JSONEncoder().encode(eligibleEdges)
+            ))
+        }
         return try IOSStoredZipArchive.write(entries: zipEntries)
     }
 
@@ -188,10 +214,34 @@ struct IOSSyncBackup {
             }
     }
 
+    /// Reads the optional relationship sidecar. Older conversation bundles do
+    /// not contain it and intentionally return nil.
+    static func conversationThreadEdges(zipData: Data) throws -> [IOSConversationThreadEdge]? {
+        let entries = try IOSStoredZipArchive.read(data: zipData)
+        guard let sidecar = entries[threadEdgesEntry] else { return nil }
+        do {
+            return try JSONDecoder().decode([IOSConversationThreadEdge].self, from: sidecar)
+        } catch {
+            throw IOSSyncBackupError.invalidArchive("线程关系 sidecar 无效：\(error.localizedDescription)")
+        }
+    }
+
     private static func isConversationDocumentName(_ name: String) -> Bool {
         let component = (name as NSString).lastPathComponent.lowercased()
         return (component as NSString).pathExtension == "json"
             && !conversationMetadataEntries.contains(component)
+    }
+
+    private static func conversationID(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawID = object["id"] as? String else {
+            return nil
+        }
+        return canonicalConversationID(rawID)
+    }
+
+    private static func canonicalConversationID(_ raw: String) -> String? {
+        UUID(uuidString: raw)?.uuidString.lowercased()
     }
 
     private static func containsHealthToolCall(_ data: Data) -> Bool {

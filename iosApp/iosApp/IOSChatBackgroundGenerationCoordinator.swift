@@ -3541,11 +3541,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         let snapshots = await mailboxStore.drainPending(forConversationId: conversationId)
         guard !snapshots.isEmpty else { return IOSMailboxDrainResult(values: []) }
         let drained = snapshots.map { envelope in
-            UIMessage.companion.user(prompt: MailboxEnvelopeKt.renderMailboxEnvelopeToUserText(
+            IosMailboxMessageBridge.shared.makeMessage(
                 authorThreadId: envelope.authorThreadId,
                 type: envelope.type,
                 payload: envelope.payload
-            ))
+            )
         }
         // 持久化：会话既有消息 + 渲染信封（复用既有写路径与 operationMutex，
         // 不在 Swift 侧另建写通道；drain 事务保证信封不会重复落盘）。

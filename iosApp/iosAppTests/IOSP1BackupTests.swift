@@ -116,6 +116,56 @@ final class IOSP1BackupTests: XCTestCase {
         XCTAssertTrue(restored.contains("hello"))
     }
 
+    func testConversationThreadEdgesRoundTripAndLegacyBundleHasNoSidecar() throws {
+        let sourceDir = try makeTempDir("ConvEdges")
+        defer { try? FileManager.default.removeItem(at: sourceDir) }
+        let parentID = "11111111-1111-1111-1111-111111111111"
+        let childID = "22222222-2222-2222-2222-222222222222"
+        try #"{"id":"\#(parentID)","messageNodes":[]}"#.write(
+            to: sourceDir.appendingPathComponent("\(parentID).json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try #"{"id":"\#(childID)","messageNodes":[]}"#.write(
+            to: sourceDir.appendingPathComponent("\(childID).json"),
+            atomically: true,
+            encoding: .utf8
+        )
+        let edge = IOSConversationThreadEdge(
+            childThreadId: childID,
+            parentThreadId: parentID,
+            agentPath: "/root/research",
+            nickname: nil,
+            roleAssistantId: nil,
+            forkTurns: "all",
+            status: "Open",
+            createdAt: 1
+        )
+
+        let zip = try XCTUnwrap(
+            IOSSyncBackup.conversationsZip(fromDirectory: sourceDir, threadEdges: [edge])
+        )
+        XCTAssertEqual(try IOSSyncBackup.conversationThreadEdges(zipData: zip), [edge])
+        XCTAssertEqual(try IOSSyncBackup.conversationDocuments(zipData: zip).count, 2)
+
+        let emptyRelationZip = try XCTUnwrap(
+            IOSSyncBackup.conversationsZip(fromDirectory: sourceDir, threadEdges: [])
+        )
+        XCTAssertEqual(try IOSSyncBackup.conversationThreadEdges(zipData: emptyRelationZip), [])
+
+        let legacyZip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: sourceDir))
+        XCTAssertNil(try IOSSyncBackup.conversationThreadEdges(zipData: legacyZip))
+
+        let parentFile = sourceDir.appendingPathComponent("\(parentID).json")
+        try #"{"id":"\#(parentID)","toolName":"health_summary_read"}"#.write(to: parentFile, atomically: true, encoding: .utf8)
+        let privateParentZip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: sourceDir, threadEdges: [edge]))
+        XCTAssertEqual(try IOSSyncBackup.conversationThreadEdges(zipData: privateParentZip), [])
+        try FileManager.default.removeItem(at: parentFile)
+        let retainedChildZip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: sourceDir, threadEdges: [edge]))
+        XCTAssertEqual(try IOSSyncBackup.conversationThreadEdges(zipData: retainedChildZip), [edge])
+        XCTAssertEqual(try IOSSyncBackup.conversationDocuments(zipData: retainedChildZip).count, 1)
+    }
+
     func testExportWithConversationsIncludesConversationsDataset() throws {
         let dir = try makeTempDir("ConvExport")
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -6,7 +6,7 @@ struct ConversationStorageView: View {
 
     // [Slice 2] 注入 IOSConversationStore（AppShell 已 .environment(conversationStore)，
     // Phase 2 完成）。本页旧占位操作已改为真接：
-    //   - 对话文件数 → conversationStore.summaries.count（IOSConversationStore.swift:25）
+    //   - 对话文件数 → conversationStore.allSummaries.count（包含隐藏子代理会话）
     //   - 按时间清理 → 按 summary.updateAt 过滤 + 批量 deleteConversation（IOSConversationStore.swift:174）
     //   - 删除全部 → 确认 alert + 循环 deleteConversation
     //   - 用量统计 → 扫描 Documents/conversations/ 求和
@@ -23,7 +23,12 @@ struct ConversationStorageView: View {
     @State private var usageBytes: Int64 = 0
     @State private var usageFileCount: Int = 0
 
-    private var conversationCount: Int { conversationStore.summaries.count }
+    private var conversationCount: Int { conversationStore.allSummaries.count }
+
+    private var subagentSummaries: [ConversationSummary] {
+        let visibleIDs = Set(conversationStore.summaries.map { $0.id })
+        return conversationStore.allSummaries.filter { !visibleIDs.contains($0.id) }
+    }
 
     private var usageItems: [StorageUsageItem] {
         [
@@ -43,6 +48,7 @@ struct ConversationStorageView: View {
                     header
                     intro
                     usageSection
+                    subagentRecordsSection
                     cleanupSection
                     deleteSection
                 }
@@ -135,6 +141,42 @@ struct ConversationStorageView: View {
         }
     }
 
+    @ViewBuilder
+    private var subagentRecordsSection: some View {
+        if !subagentSummaries.isEmpty {
+            AmberSectionLabel(text: "子代理")
+            AmberFormGroup {
+                NavigationLink {
+                    List(subagentSummaries, id: \.id) { summary in
+                        NavigationLink(value: Route.subAgentConversation(id: summary.id.toHexDashString())) {
+                            Text(summary.title.isEmpty ? "子代理会话" : summary.title)
+                                .font(.body)
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                    .background(AmberTheme.background)
+                    .navigationTitle("子代理会话记录")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(false)
+                    .toolbar(.visible, for: .navigationBar)
+                } label: {
+                    HStack {
+                        Label("子代理会话记录", systemImage: "text.bubble")
+                        Spacer()
+                        Text("\(subagentSummaries.count)").foregroundStyle(AmberTheme.muted)
+                        Image(systemName: "chevron.right").foregroundStyle(AmberTheme.muted)
+                    }
+                    .font(.body)
+                    .frame(minHeight: 44)
+                    .padding(.horizontal, 15)
+                    .padding(.vertical, 8)
+                }
+                .buttonStyle(.plain)
+            }
+            StorageNote("子代理记录不显示在首页。父会话删除后，仍可在这里查看保留的记录。")
+        }
+    }
+
     private var cleanupSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "清理")
@@ -215,7 +257,7 @@ struct ConversationStorageView: View {
     /// 符合时间清理条件的会话数（updateAt 早于 30 天且未置顶）。
     private var staleConversationTargetCount: Int {
         let threshold = staleThresholdMs
-        return conversationStore.summaries.filter { summary in
+        return conversationStore.allSummaries.filter { summary in
             !summary.isPinned && summary.updateAt.toEpochMilliseconds() < threshold
         }.count
     }
@@ -223,7 +265,7 @@ struct ConversationStorageView: View {
     // MARK: - Actions
 
     private func requestTimeBasedCleanup() {
-        let targets = conversationStore.summaries.filter { summary in
+        let targets = conversationStore.allSummaries.filter { summary in
             !summary.isPinned && summary.updateAt.toEpochMilliseconds() < staleThresholdMs
         }
         guard !targets.isEmpty else {
@@ -237,7 +279,7 @@ struct ConversationStorageView: View {
         guard conversationCount > 0 else { return }
         pendingConfirmation = .deleteAll(
             count: conversationCount,
-            ids: conversationStore.summaries.map { $0.id }
+            ids: conversationStore.allSummaries.map { $0.id }
         )
     }
 
@@ -248,8 +290,8 @@ struct ConversationStorageView: View {
         Task { @MainActor in
             var deleted = 0
             for id in ids {
-                let didDelete = await conversationStore.deleteConversation(id: id) {
-                    chatViewModel.prepareForConversationDeletion(id)
+                let didDelete = await conversationStore.deleteConversation(id: id) { affectedIDs in
+                    affectedIDs.forEach(chatViewModel.prepareForConversationDeletion)
                 }
                 if didDelete {
                     deleted += 1
