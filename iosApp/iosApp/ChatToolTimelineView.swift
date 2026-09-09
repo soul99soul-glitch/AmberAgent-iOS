@@ -24,7 +24,9 @@ enum ChatToolVisualKind: String, Equatable, CaseIterable {
 
     static func resolve(toolName: String) -> ChatToolVisualKind {
         let name = toolName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.contains("subagent_dispatch") { return .subagent }
+        if name.contains("subagent_dispatch") || name == "spawn_agent" || name == "followup_task" {
+            return .subagent
+        }
         if IOSRemoteTerminalToolCatalog.supportedToolNames.contains(name) { return .terminal }
         if IOSAppleAgentToolCatalog.toolNames.contains(name) { return .apple }
         switch name {
@@ -213,6 +215,174 @@ enum ChatToolStepState: Equatable {
     }
 }
 
+/// The compact identity/status projection used by a subagent capsule.
+///
+/// The model output is deliberately kept out of the row. A dispatch can return
+/// a long report and that report must never become a continuously remeasured
+/// label in the chat timeline. The capsule only gets a bounded role name,
+/// status, and one short work hint; the detail sheet remains the place for the
+/// full objective and report.
+struct ChatSubAgentCapsulePresentation: Equatable {
+    let identity: String
+    let displayName: String
+    let status: String
+    let workSummary: String?
+    /// The child conversation that owns this orchestration request. This is
+    /// intentionally kept separate from the display identity so a dynamic
+    /// name can be changed without losing the durable run lookup key.
+    let threadID: String?
+    /// Only successful spawn/followup receipts may be reconciled with a child
+    /// run. A failed request can still contain a target id, but its old child
+    /// status must never repaint the failed tool capsule as completed.
+    let hasAcceptedReceipt: Bool
+
+    var statusLine: String {
+        guard let workSummary, !workSummary.isEmpty else { return status }
+        return "\(status) · \(workSummary)"
+    }
+}
+
+/// Runtime-only projection for orchestration capsules. The tool receipt says
+/// that a request was accepted; this value says what the child run actually
+/// did. It is intentionally not persisted back into the historical tool part.
+enum ChatSubAgentRunVisualState: Equatable {
+    case queued
+    case running
+    case completed
+    case failed
+    case cancelled
+    case unknown
+
+    init?(rawStatus: String?) {
+        guard let rawStatus else { return nil }
+        let normalized = rawStatus
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard !normalized.isEmpty, normalized != "none" else { return nil }
+        switch normalized {
+        case "created", "queued", "pending", "waiting", "waiting_user", "waiting_external",
+             "awaiting_permission", "recovery_pending", "resumable":
+            self = .queued
+        case "started", "running":
+            self = .running
+        case "completed", "complete", "done":
+            self = .completed
+        case "failed", "failure", "error":
+            self = .failed
+        case "cancelled", "canceled", "interrupted":
+            self = .cancelled
+        case "outcome_unknown", "unknown":
+            self = .unknown
+        default:
+            self = .unknown
+        }
+    }
+
+    var stepState: ChatToolStepState {
+        switch self {
+        case .queued, .completed:
+            .done
+        case .unknown:
+            // The child may have produced an irreversible side effect before
+            // the app lost its outcome. Reuse the existing exclamation slot
+            // so this cannot be mistaken for a successful green dot.
+            .failed
+        case .running:
+            .active
+        case .failed:
+            .failed
+        case .cancelled:
+            .cancelled
+        }
+    }
+
+    /// A dot is reserved for an accepted request whose work is still queued.
+    /// An unknown outcome uses the exclamation slot instead of looking healthy.
+    var usesPendingIndicator: Bool {
+        switch self {
+        case .queued:
+            true
+        case .running, .completed, .failed, .cancelled, .unknown:
+            false
+        }
+    }
+
+    var accessibilityTitle: String {
+        switch self {
+        case .queued:
+            IOSAppLocalization.string("已排队", defaultValue: "已排队")
+        case .running:
+            IOSAppLocalization.string("进行中", defaultValue: "进行中")
+        case .completed:
+            IOSAppLocalization.string("已完成", defaultValue: "已完成")
+        case .failed:
+            IOSAppLocalization.string("执行失败", defaultValue: "执行失败")
+        case .cancelled:
+            IOSAppLocalization.string("已取消", defaultValue: "已取消")
+        case .unknown:
+            IOSAppLocalization.string("状态未知", defaultValue: "状态未知")
+        }
+    }
+}
+
+struct ChatSubAgentPixelAvatar: View {
+    let identity: String
+    var size: CGFloat = 20
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: max(4, size * 0.24), style: .continuous)
+                .fill(ChatSubAgentPixelAvatarPalette.background(for: identity))
+            HomePixelSitShape(bits: ChatSubAgentPixelAvatarPalette.bits(for: identity))
+                .fill(ChatSubAgentPixelAvatarPalette.foreground(for: identity))
+                .padding(size * 0.17)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+private enum ChatSubAgentPixelAvatarPalette {
+    private static let facePatterns: [[UInt8]] = [
+        [0b00111100, 0b01111110, 0b11111111, 0b11011011,
+         0b11111111, 0b11100111, 0b01111110, 0b00111100],
+        [0b01111110, 0b11111111, 0b11111111, 0b11011011,
+         0b11011011, 0b11000011, 0b11111111, 0b01111110],
+        [0b10000001, 0b01111110, 0b11111111, 0b11011011,
+         0b11111111, 0b11000011, 0b01111110, 0b00111100]
+    ]
+
+    private static func seed(for identity: String) -> UInt64 {
+        identity.utf8.reduce(UInt64(14695981039346656037)) { hash, byte in
+            (hash ^ UInt64(byte)) &* 1099511628211
+        }
+    }
+
+    static func bits(for identity: String) -> [UInt16] {
+        let pattern = facePatterns[Int(seed(for: identity) % UInt64(facePatterns.count))]
+        return pattern.flatMap { logicalRow in
+            var row: UInt16 = 0
+            for column in 0..<8 where logicalRow & (1 << (7 - column)) != 0 {
+                row |= 1 << (15 - column * 2)
+                row |= 1 << (14 - column * 2)
+            }
+            return [row, row]
+        }
+    }
+
+    static func foreground(for identity: String) -> Color {
+        let hash = seed(for: identity)
+        let hue = Double(hash % 360) / 360
+        return Color(hue: hue, saturation: 0.68, brightness: 0.68)
+    }
+
+    static func background(for identity: String) -> Color {
+        let hash = seed(for: identity)
+        let hue = Double(hash % 360) / 360
+        return Color(hue: hue, saturation: 0.26, brightness: 0.96)
+    }
+}
+
 struct ChatToolStepModel: Identifiable {
     let id: String
     /// 顶栏活动岛 / Live Activity 用的 SF Symbol（胶囊 leading 用 `koboyoMark`）。
@@ -222,10 +392,25 @@ struct ChatToolStepModel: Identifiable {
     let detail: String?
     let state: ChatToolStepState
     let isSubAgent: Bool
+    /// Bounded identity/status projection used only by the subagent capsule.
+    let subAgentPresentation: ChatSubAgentCapsulePresentation?
     /// Carried for subagent steps so the detail sheet can read the live prompt + streaming output.
     let tool: UIMessagePart.Tool?
 
     var koboyoMark: ChatKoboyoMark { visualKind.koboyoMark }
+
+    /// Runtime child status may refine an accepted orchestration receipt only
+    /// after the tool step itself has completed successfully. A target id on a
+    /// failed/cancelled request can point at an older child run and must never
+    /// repaint that request as the older run's outcome.
+    var canApplySubAgentRunStatus: Bool {
+        guard state == .done,
+              subAgentPresentation?.hasAcceptedReceipt == true,
+              let toolName = tool?.toolName else {
+            return false
+        }
+        return toolName == "spawn_agent" || toolName == "followup_task"
+    }
 
     init(
         id: String = UUID().uuidString,
@@ -234,6 +419,7 @@ struct ChatToolStepModel: Identifiable {
         detail: String? = nil,
         state: ChatToolStepState,
         isSubAgent: Bool = false,
+        subAgentPresentation: ChatSubAgentCapsulePresentation? = nil,
         tool: UIMessagePart.Tool? = nil
     ) {
         self.id = id
@@ -243,6 +429,7 @@ struct ChatToolStepModel: Identifiable {
         self.detail = detail
         self.state = state
         self.isSubAgent = isSubAgent
+        self.subAgentPresentation = subAgentPresentation
         self.tool = tool
     }
 
@@ -254,13 +441,42 @@ struct ChatToolStepModel: Identifiable {
         if tool.toolName.contains("subagent_dispatch") {
             let executed = !tool.output.isEmpty
             let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let state = Self.state(executed: executed, failureReason: failureReason)
             self.init(
                 id: stableID,
                 visualKind: .subagent,
                 title: Self.localized("启动子智能体"),
                 detail: failureReason ?? Self.subAgentDetail(from: tool.input),
-                state: Self.state(executed: executed, failureReason: failureReason),
+                state: state,
                 isSubAgent: true,
+                subAgentPresentation: Self.subAgentPresentation(
+                    input: tool.input,
+                    output: tool.output,
+                    toolCallId: tool.toolCallId,
+                    state: state
+                ),
+                tool: tool
+            )
+            return
+        }
+
+        if tool.toolName == "spawn_agent" || tool.toolName == "followup_task" {
+            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let state = Self.subAgentOrchestrationState(for: tool, failureReason: failureReason)
+            self.init(
+                id: stableID,
+                visualKind: .subagent,
+                title: Self.friendlyToolTitle(tool.toolName, executed: !tool.output.isEmpty),
+                detail: failureReason ?? Self.subAgentDetail(from: tool.input),
+                state: state,
+                isSubAgent: true,
+                subAgentPresentation: Self.subAgentPresentation(
+                    input: tool.input,
+                    output: tool.output,
+                    toolCallId: tool.toolCallId,
+                    toolName: tool.toolName,
+                    state: state
+                ),
                 tool: tool
             )
             return
@@ -526,6 +742,22 @@ struct ChatToolStepModel: Identifiable {
         return failureReason == nil ? .done : .failed
     }
 
+    private static func subAgentOrchestrationState(
+        for tool: UIMessagePart.Tool,
+        failureReason: String?
+    ) -> ChatToolStepState {
+        guard !tool.output.isEmpty else { return .active }
+        if failureReason != nil { return .failed }
+        switch (firstJSONObject(in: tool.output)?["status"] as? String)?.lowercased() {
+        case "started", "queued", "waiting", "pending":
+            return .done
+        case "cancelled", "canceled", "interrupted":
+            return .cancelled
+        default:
+            return .done
+        }
+    }
+
     private static func stableID(for tool: UIMessagePart.Tool) -> String {
         let callID = tool.toolCallId.trimmingCharacters(in: .whitespacesAndNewlines)
         if !callID.isEmpty { return callID }
@@ -658,7 +890,9 @@ struct ChatToolStepModel: Identifiable {
 
     static func subAgentRole(from input: String) -> String? {
         let args = subAgentArgs(from: input)
-        let role = (args?["role_id"] as? String) ?? (args?["subagent_id"] as? String)
+        let role = (args?["role_id"] as? String)
+            ?? (args?["subagent_id"] as? String)
+            ?? (args?["role"] as? String)
         guard let role, !role.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         return role
     }
@@ -671,13 +905,13 @@ struct ChatToolStepModel: Identifiable {
             return (trimmed.isEmpty || trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) ? nil : trimmed
         }
         // 顶层字符串键
-        for key in ["task", "prompt", "instruction", "objective", "input", "query"] {
+        for key in ["task", "prompt", "instruction", "objective", "input", "query", "message"] {
             if let value = args[key] as? String,
                !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return value
             }
         }
-        // 嵌套 task.objective(Android custom_subagent 的 task 结构)
+        // 嵌套 task.objective 结构
         if let task = args["task"] as? [String: Any] {
             for key in ["objective", "prompt", "instruction"] {
                 if let value = task[key] as? String,
@@ -687,6 +921,193 @@ struct ChatToolStepModel: Identifiable {
             }
         }
         return nil
+    }
+
+    static func subAgentPresentation(
+        input: String,
+        output: [UIMessagePart],
+        toolCallId: String,
+        toolName: String = "subagent_dispatch",
+        state: ChatToolStepState
+    ) -> ChatSubAgentCapsulePresentation {
+        let args = subAgentArgs(from: input) ?? [:]
+        let result = firstJSONObject(in: output) ?? [:]
+        let value: ([String: Any], [String]) -> String? = { object, keys in
+            keys.lazy.compactMap { object[$0] as? String }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
+        }
+        let inputRoleID = value(args, ["role_id", "subagent_id", "id", "role"])
+        let resultRoleID = value(result, ["role_id", "subagent_id", "id", "role"])
+        let taskName = value(result, ["task_name"]) ?? value(args, ["task_name"])
+        let inputPath = value(args, ["agent_path"])
+        let resultPath = value(result, ["agent_path"])
+        let targetPath = value(args, ["target"])
+        let pathName = (inputPath ?? resultPath ?? targetPath).flatMap(Self.subAgentPathName)
+        let explicitName = value(args, ["custom_role_name", "role_name", "name", "agent_name"])
+            ?? value(result, ["custom_role_name", "role_name", "name", "agent_name"])
+            ?? (toolName == "spawn_agent" ? taskName : nil)
+            ?? (toolName == "followup_task" ? pathName : nil)
+        let roleID = inputRoleID ?? resultRoleID
+            ?? (toolName.contains("subagent_dispatch") && explicitName == nil && args["custom_role_prompt"] == nil
+                ? "explorer"
+                : nil)
+        let displayName = subAgentDisplayName(explicitName: explicitName, roleID: roleID)
+        let threadID = value(result, ["child_thread_id", "recipient_thread_id"])
+            ?? value(args, ["child_thread_id", "recipient_thread_id"])
+        let reference = value(args, ["agent_path", "child_thread_id", "recipient_thread_id", "target", "task_name"])
+            ?? value(result, ["agent_path", "child_thread_id", "recipient_thread_id", "target", "task_name"])
+        let task = subAgentTask(from: input)
+        let identity = subAgentAvatarIdentity(
+            roleID: roleID,
+            explicitName: explicitName,
+            displayName: displayName,
+            toolCallId: toolCallId,
+            reference: reference,
+            task: task
+        )
+        let work = value(args, ["work", "activity", "stage", "phase", "status_text", "summary", "custom_role_lens", "message"])
+            ?? value(result, ["work", "activity", "stage", "phase", "status_text"])
+            ?? task
+            ?? value(result, ["summary", "message"])
+        let status = subAgentStatus(toolName: toolName, result: result, fallback: state.accessibilityTitle)
+        let rawResultStatus = value(result, ["status"])?.lowercased()
+        let acceptedStatuses: Set<String> = [
+            "started", "queued", "waiting", "pending", "completed", "complete", "done"
+        ]
+        let hasAcceptedReceipt = (toolName == "spawn_agent" || toolName == "followup_task")
+            && (result["ok"] as? Bool) == true
+            && (rawResultStatus.map { acceptedStatuses.contains($0) } ?? false)
+
+        return ChatSubAgentCapsulePresentation(
+            identity: identity,
+            displayName: displayName,
+            status: status,
+            workSummary: compactSubAgentWork(work, status: status),
+            threadID: threadID,
+            hasAcceptedReceipt: hasAcceptedReceipt
+        )
+    }
+
+    private static func subAgentStatus(toolName: String, result: [String: Any], fallback: String) -> String {
+        guard toolName == "spawn_agent" || toolName == "followup_task",
+              let raw = (result["status"] as? String)?.lowercased() else {
+            return fallback
+        }
+        switch raw {
+        case "started": return Self.localized("已启动")
+        case "queued": return Self.localized("已排队")
+        case "waiting", "pending": return Self.localized("等待中")
+        case "interrupted": return Self.localized("已中断")
+        case "cancelled", "canceled": return Self.localized("已取消")
+        case "completed", "complete", "done": return Self.localized("已完成")
+        case "failed", "failure", "error": return Self.localized("执行失败")
+        default: return fallback
+        }
+    }
+
+    private static func subAgentPathName(_ raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.contains("/") || trimmed.hasPrefix("@") else { return nil }
+        let component = trimmed.split(whereSeparator: { $0 == "/" || $0 == "\\" }).last.map(String.init)
+        let name = component?.trimmingCharacters(in: CharacterSet(charactersIn: "@")) ?? ""
+        return name.isEmpty ? nil : name
+    }
+
+    private static func subAgentDisplayName(explicitName: String?, roleID: String?) -> String {
+        if let explicitName {
+            let cleaned = explicitName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "@"))
+            if !cleaned.isEmpty { return widthCappedPrefix(cleaned, units: 12) }
+        }
+
+        let normalizedRole = roleID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let builtInNames: [String: String] = [
+            "explorer": "探索者",
+            "historian": "历史学家",
+            "oracle": "预言家",
+            "designer": "设计师",
+            "writer": "写作者",
+            "fixer": "执行者",
+            "browser": "浏览器"
+        ]
+        if let normalizedRole, let key = builtInNames[normalizedRole] {
+            return Self.localized(key)
+        }
+        if let roleID, !roleID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let readable = roleID.replacingOccurrences(of: "_", with: " ")
+            return widthCappedPrefix(readable, units: 12)
+        }
+        return Self.localized("子代理")
+    }
+
+    private static func subAgentAvatarIdentity(
+        roleID: String?,
+        explicitName: String?,
+        displayName: String,
+        toolCallId: String,
+        reference: String?,
+        task: String?
+    ) -> String {
+        if let roleID = roleID?.trimmingCharacters(in: .whitespacesAndNewlines), !roleID.isEmpty {
+            // Built-in role identities are shared across calls. Dynamic role
+            // ids stay distinct from the built-in namespace.
+            return "role:\(roleID.lowercased())"
+        }
+        if let explicitName = explicitName?.trimmingCharacters(in: .whitespacesAndNewlines), !explicitName.isEmpty {
+            return "dynamic:\(explicitName.lowercased())"
+        }
+        if let reference = reference?.trimmingCharacters(in: .whitespacesAndNewlines), !reference.isEmpty {
+            return "reference:\(reference.lowercased())"
+        }
+        if !toolCallId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "call:\(toolCallId)"
+        }
+        return "dynamic:\(displayName)|\(task ?? "")"
+    }
+
+    private static func compactSubAgentWork(_ raw: String?, status: String) -> String? {
+        guard let raw else { return nil }
+        let singleLine = raw
+            .replacingOccurrences(of: "\\n", with: " ")
+            .replacingOccurrences(of: "\\r", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !singleLine.isEmpty else { return nil }
+        let firstClause = singleLine.split(
+            whereSeparator: { "。！？!?；;，,\n".contains($0) }
+        ).first.map(String.init) ?? singleLine
+        let compact = shortSubAgentTask(firstClause)
+        guard !compact.isEmpty, compact != status else { return nil }
+        return compact
+    }
+
+    private static func shortSubAgentTask(_ raw: String) -> String {
+        if raw.count <= 4, !raw.contains(where: { $0.isWhitespace }) { return raw }
+        let lowercased = raw.lowercased()
+        let rules: [([String], String)] = [
+            (["搜索", "检索", "查找", "search"], "搜索资料"),
+            (["修复", "bug", "fix"], "修复问题"),
+            (["润色", "表达", "校对", "edit", "proofread"], "润色表达"),
+            (["来源", "source"], "核对来源"),
+            (["登录", "login"], "核对登录"),
+            (["页面", "网页", "浏览", "web", "browser"], "检查网页"),
+            (["整理", "总结", "归纳", "organize", "summary"], "整理内容"),
+            (["代码", "编程", "code", "compile"], "检查代码")
+        ]
+        if let (_, label) = rules.first(where: { needles, _ in
+            needles.contains(where: { lowercased.contains($0) })
+        }) {
+            return Self.localized(label)
+        }
+        if firstClauseHasAtMostSixCharacters(raw) {
+            return raw
+        }
+        return Self.localized("处理任务")
+    }
+
+    private static func firstClauseHasAtMostSixCharacters(_ text: String) -> Bool {
+        text.count <= 6 && !text.contains(where: { $0.isWhitespace })
     }
 
     private static func subAgentDetail(from input: String) -> String? {
@@ -1120,11 +1541,50 @@ struct ChatToolStepModel: Identifiable {
 
 }
 
+typealias ChatSubAgentRunStatusLoader = @MainActor @Sendable ([String]) async -> [String: String]
+
 struct ChatToolTimeline: View {
     let steps: [ChatToolStepModel]
     /// Tapping a step (used for subagent steps, which open a detail sheet). nil = not tappable.
     var onTapStep: ((ChatToolStepModel) -> Void)? = nil
+    private let subAgentRunStatusLoader: ChatSubAgentRunStatusLoader
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var subAgentRunStatuses: [String: String] = [:]
+    @State private var subAgentStatusRevision: UInt = 0
+
+    init(
+        steps: [ChatToolStepModel],
+        onTapStep: ((ChatToolStepModel) -> Void)? = nil,
+        subAgentRunStatusLoader: @escaping ChatSubAgentRunStatusLoader = { conversationHexes in
+            await IOSChatBackgroundGenerationCoordinator.shared
+                .subAgentRunStatuses(conversationHexes: conversationHexes)
+        }
+    ) {
+        self.steps = steps
+        self.onTapStep = onTapStep
+        self.subAgentRunStatusLoader = subAgentRunStatusLoader
+    }
+
+    private var subAgentThreadIDs: [String] {
+        var seen = Set<String>()
+        return steps.compactMap { step in
+            guard step.canApplySubAgentRunStatus else { return nil }
+            guard let threadID = step.subAgentPresentation?.threadID else { return nil }
+            let normalized = threadID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty, seen.insert(normalized).inserted else { return nil }
+            return normalized
+        }
+    }
+
+    private var subAgentStatusTaskID: String {
+        let stepIdentity = steps.map { step in
+            let threadID = step.subAgentPresentation?.threadID?.lowercased() ?? ""
+            let receiptStatus = step.subAgentPresentation?.status ?? ""
+            return "\(step.id)|\(threadID)|\(step.state)|\(receiptStatus)"
+        }.joined(separator: "\u{1F}")
+        return "\(subAgentStatusRevision)|\(stepIdentity)"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: ChatLayout.assistantPartSpacing) {
@@ -1136,11 +1596,7 @@ struct ChatToolTimeline: View {
                         .frame(minHeight: 44, alignment: .leading)
                         .contentShape(Rectangle())
                         .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(IOSAppLocalization.formatted(
-                            "%@，状态：%@",
-                            defaultValue: "%@，状态：%@",
-                            arguments: [step.title, step.state.accessibilityTitle]
-                        ))
+                        .accessibilityLabel(accessibilityTitle(for: step))
                         .accessibilityValue(step.detail ?? "")
                 } else {
                     row(step, chevron: false)
@@ -1148,6 +1604,58 @@ struct ChatToolTimeline: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: subAgentStatusTaskID) {
+            await refreshSubAgentRunStatuses(for: subAgentThreadIDs)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .amberChatBackgroundJobStateDidChange)) { notification in
+            refreshSubAgentStatusesIfNeeded(for: notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .amberChatBackgroundJobDidTerminate)) { notification in
+            refreshSubAgentStatusesIfNeeded(for: notification)
+        }
+    }
+
+    @MainActor
+    private func refreshSubAgentStatusesIfNeeded(for notification: Notification) {
+        let eventConversationID = (notification.object as? IOSChatBackgroundJobStateEvent)?.conversationId
+            ?? (notification.object as? IOSChatBackgroundJobTerminalEvent)?.conversationId
+        guard let eventConversationID else { return }
+        let normalized = eventConversationID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard subAgentThreadIDs.contains(normalized) else { return }
+        subAgentStatusRevision &+= 1
+    }
+
+    @MainActor
+    private func refreshSubAgentRunStatuses(for threadIDs: [String]) async {
+        guard !threadIDs.isEmpty else {
+            if subAgentRunStatuses.isEmpty { return }
+            guard !Task.isCancelled else { return }
+            subAgentRunStatuses = [:]
+            return
+        }
+        // Fail closed while the batch read is in flight. A reused timeline
+        // view can otherwise briefly show the previous child run's terminal
+        // check for a newly dispatched run with the same thread id.
+        guard !Task.isCancelled else { return }
+        subAgentRunStatuses = [:]
+        let statuses = await subAgentRunStatusLoader(threadIDs)
+        guard !Task.isCancelled else { return }
+        subAgentRunStatuses = statuses.reduce(into: [:]) { result, entry in
+            let key = entry.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !key.isEmpty else { return }
+            result[key] = entry.value
+        }
+    }
+
+    private func runtimeState(for step: ChatToolStepModel) -> ChatSubAgentRunVisualState? {
+        guard step.canApplySubAgentRunStatus,
+              let threadID = step.subAgentPresentation?.threadID else { return nil }
+        let normalized = threadID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return ChatSubAgentRunVisualState(rawStatus: subAgentRunStatuses[normalized])
+    }
+
+    private func displayState(for step: ChatToolStepModel) -> ChatToolStepState {
+        runtimeState(for: step)?.stepState ?? step.state
     }
 
     // Cream capsule: colored tool icon (no backing square) + title (+ optional detail) + trailing
@@ -1155,26 +1663,36 @@ struct ChatToolTimeline: View {
     // pill style shared with the reasoning card.
     @ViewBuilder
     private func row(_ step: ChatToolStepModel, chevron: Bool) -> some View {
+        let state = displayState(for: step)
+        let runtimeState = runtimeState(for: step)
         HStack(spacing: 7) {
-            // Koboyo 实心剪影：与思考胶囊同系；进行中轻呼吸（不用 SF symbolEffect）。
-            Group {
-                if step.state == .active {
-                    ChatKoboyoSpinningIcon(
-                        mark: step.koboyoMark,
-                        pointSize: 14,
-                        tint: UIColor(step.state.color),
-                        isActive: !reduceMotion
-                    )
-                } else {
-                    ChatKoboyoIcon(step.koboyoMark, size: 14)
-                        .foregroundStyle(step.state.color)
+            if step.isSubAgent, let presentation = step.subAgentPresentation {
+                subAgentContents(presentation, state: state)
+            } else {
+                // Koboyo 实心剪影：与思考胶囊同系；进行中轻呼吸（不用 SF symbolEffect）。
+                Group {
+                    if state == .active {
+                        ChatKoboyoSpinningIcon(
+                            mark: step.koboyoMark,
+                            pointSize: 14,
+                            tint: UIColor(state.color),
+                            isActive: !reduceMotion
+                        )
+                    } else {
+                        ChatKoboyoIcon(step.koboyoMark, size: 14)
+                            .foregroundStyle(state.color)
+                    }
                 }
+                .frame(width: 16, height: 16)
+
+                titleLabel(for: step)
             }
-            .frame(width: 16, height: 16)
 
-            titleLabel(for: step)
-
-            trailingStatus(for: step.state)
+            trailingStatus(
+                for: state,
+                subAgentPresentation: step.subAgentPresentation,
+                usesPendingIndicator: runtimeState?.usesPendingIndicator
+            )
 
             if chevron {
                 Image(systemName: "chevron.right")
@@ -1188,17 +1706,17 @@ struct ChatToolTimeline: View {
         // titles truncate without expanding ScrollView content width. Short titles
         // stay chip-sized and leading-aligned — do not use fixedSize(horizontal:false)
         // here or the capsule stretches to full column width.
-        .background(step.state.rowFill, in: Capsule(style: .continuous))
+        .background(state.rowFill, in: Capsule(style: .continuous))
         .overlay {
             Capsule(style: .continuous)
-                .stroke(step.state.stroke, lineWidth: 0.7)
+                .stroke(state.stroke, lineWidth: 0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Capsule(style: .continuous))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(step.title)
+        .accessibilityLabel(accessibilityTitle(for: step))
         .accessibilityValue(
-            [step.state.accessibilityTitle, step.detail]
+            [runtimeState?.accessibilityTitle ?? state.accessibilityTitle, step.detail]
                 .compactMap { $0?.nilIfBlank }
                 .joined(separator: "，")
         )
@@ -1207,6 +1725,72 @@ struct ChatToolTimeline: View {
         .transaction { transaction in
             transaction.animation = nil
         }
+    }
+
+    private func accessibilityTitle(for step: ChatToolStepModel) -> String {
+        let state = displayState(for: step)
+        let runtimeStatus = runtimeState(for: step)
+        let statusTitle = runtimeStatus?.accessibilityTitle ?? state.accessibilityTitle
+        guard let presentation = step.subAgentPresentation else {
+            return IOSAppLocalization.formatted(
+                "%@，状态：%@",
+                defaultValue: "%@，状态：%@",
+                arguments: [step.title, statusTitle]
+            )
+        }
+        return [
+            "@\(presentation.displayName)",
+            presentation.workSummary,
+            statusTitle
+        ]
+        .compactMap { $0?.nilIfBlank }
+        .joined(separator: "，")
+    }
+
+    /// The subagent row intentionally keeps the generic tool title out of the
+    /// visual hierarchy. A pixel face + @name + one bounded work/status hint
+    /// makes parallel workers distinguishable at a glance, while the trailing
+    /// slot preserves the same 44pt tap target and terminal state affordance.
+    @ViewBuilder
+    private func subAgentContents(
+        _ presentation: ChatSubAgentCapsulePresentation,
+        state: ChatToolStepState
+    ) -> some View {
+        ChatSubAgentPixelAvatar(identity: presentation.identity, size: 20)
+            .frame(width: 20, height: 20)
+
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 0) {
+                nameLabel(for: presentation)
+                if let workSummary = presentation.workSummary {
+                    workSummaryLabel(workSummary, color: state.color)
+                }
+            }
+            .frame(minWidth: 0, alignment: .leading)
+        } else {
+            nameLabel(for: presentation)
+            if let workSummary = presentation.workSummary {
+                workSummaryLabel(workSummary, color: state.color)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func nameLabel(for presentation: ChatSubAgentCapsulePresentation) -> some View {
+        Text("@\(presentation.displayName)")
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(AmberTheme.foreground2)
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+
+    @ViewBuilder
+    private func workSummaryLabel(_ summary: String, color: Color) -> some View {
+        Text(summary)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .truncationMode(.tail)
     }
 
     @ViewBuilder
@@ -1219,28 +1803,48 @@ struct ChatToolTimeline: View {
     }
 
     @ViewBuilder
-    private func trailingStatus(for state: ChatToolStepState) -> some View {
+    private func trailingStatus(
+        for state: ChatToolStepState,
+        subAgentPresentation: ChatSubAgentCapsulePresentation? = nil,
+        usesPendingIndicator: Bool? = nil
+    ) -> some View {
         Group {
-            switch state {
-            case .done:
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AmberTheme.accentGreen)
-                    .contentTransition(.symbolEffect(.replace.downUp))
-            case .active:
-                ProgressView()
-                    .controlSize(.mini)
-                    .tint(AmberTheme.accent)
-            case .cancelled:
-                Image(systemName: "minus")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AmberTheme.muted)
-                    .contentTransition(.symbolEffect(.replace.downUp))
-            case .failed:
-                Image(systemName: "exclamationmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(AmberTheme.accentRed)
-                    .contentTransition(.symbolEffect(.replace.downUp))
+            let pendingStatuses = [
+                IOSAppLocalization.string("已启动", defaultValue: "已启动"),
+                IOSAppLocalization.string("已排队", defaultValue: "已排队"),
+                IOSAppLocalization.string("等待中", defaultValue: "等待中")
+            ]
+            let shouldUsePendingIndicator = usesPendingIndicator
+                ?? (subAgentPresentation.map { pendingStatuses.contains($0.status) } ?? false)
+            if state == .done, shouldUsePendingIndicator {
+                Circle()
+                    .fill(AmberTheme.accentGreen)
+                    .frame(width: 7, height: 7)
+            } else {
+                switch state {
+                case .done:
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AmberTheme.accentGreen)
+                        .contentTransition(.symbolEffect(.replace.downUp))
+                case .active:
+                    ProgressView()
+                        .controlSize(.mini)
+                        // The decorative spinner shares a fixed slot with the
+                        // other status glyphs; only the capsule text scales.
+                        .dynamicTypeSize(.large)
+                        .tint(AmberTheme.accent)
+                case .cancelled:
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AmberTheme.muted)
+                        .contentTransition(.symbolEffect(.replace.downUp))
+                case .failed:
+                    Image(systemName: "exclamationmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .contentTransition(.symbolEffect(.replace.downUp))
+                }
             }
         }
         // 状态指示器固定占位（转圈/对勾/叹号同槽居中）：胶囊宽度在

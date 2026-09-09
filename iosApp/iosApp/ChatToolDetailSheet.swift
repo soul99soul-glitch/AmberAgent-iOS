@@ -54,7 +54,30 @@ struct ChatToolDetailSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    private var isSubAgent: Bool { tool.toolName.contains("subagent_dispatch") }
+    private var isSubAgent: Bool {
+        tool.toolName.contains("subagent_dispatch")
+            || tool.toolName == "spawn_agent"
+            || tool.toolName == "followup_task"
+    }
+
+    private var isSubAgentOrchestration: Bool {
+        tool.toolName == "spawn_agent" || tool.toolName == "followup_task"
+    }
+
+    private var capsulePresentation: ChatSubAgentCapsulePresentation? {
+        ChatToolStepModel(tool: tool).subAgentPresentation
+    }
+
+    private var subAgentTask: String? {
+        ChatToolStepModel.subAgentTask(from: tool.input)
+    }
+
+    private var receiptStatus: String? {
+        (ChatToolStepModel.firstJSONObject(in: tool.output)?["status"] as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
     private var executed: Bool { !tool.output.isEmpty }
 
     private var storedOutputText: String {
@@ -88,7 +111,7 @@ struct ChatToolDetailSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    if let onOpenSubagentConversation {
+                    if !isSubAgent, let onOpenSubagentConversation {
                         ForEach(SubagentConversationLink.links(from: tool)) { link in
                             Button {
                                 dismiss()
@@ -107,8 +130,6 @@ struct ChatToolDetailSheet: View {
                     }
                     if isSubAgent {
                         subAgentSections
-                    } else if tool.toolName == "spawn_agent" || tool.toolName == "followup_task" {
-                        orchestrationSections
                     } else {
                         toolSections
                     }
@@ -132,32 +153,6 @@ struct ChatToolDetailSheet: View {
     }
 
     // MARK: - Normal tool
-
-    @ViewBuilder private var orchestrationSections: some View {
-        if let message = ChatToolCallParsing.jsonObject(tool.input)?["message"] as? String {
-            section("任务") {
-                Text(message).font(.subheadline).textSelection(.enabled)
-            }
-        }
-        section("本次操作") {
-            if let outputFailureReason {
-                Text(outputFailureReason).font(.subheadline).foregroundStyle(AmberTheme.accentAmber)
-            } else if !executed {
-                statusLine("正在提交任务…")
-            } else {
-                let result = ChatToolCallParsing.jsonObject(storedOutputText)
-                if result?["status"] as? String == "started" {
-                    statusLine("启动请求已提交，打开会话查看执行记录。")
-                } else if result?["status"] as? String == "queued" {
-                    statusLine("后续任务已排队，打开会话查看记录。")
-                } else {
-                    statusLine("本次调用已返回，打开会话查看记录。")
-                }
-            }
-        }
-        DisclosureGroup("调用详情") { toolSections }
-            .font(.subheadline)
-    }
 
     @ViewBuilder private var toolSections: some View {
         section("工具") {
@@ -207,42 +202,179 @@ struct ChatToolDetailSheet: View {
     // MARK: - Subagent
 
     @ViewBuilder private var subAgentSections: some View {
-        if let objective = Self.subAgentObjective(from: tool.input) {
-            section("任务目标") {
-                Text(objective)
-                    .font(.subheadline)
-                    .foregroundStyle(AmberTheme.foreground)
-                    .textSelection(.enabled)
+        subAgentIdentityHeader
+
+        if subAgentConversationLinks.count > 1, let onOpenSubagentConversation {
+            ForEach(subAgentConversationLinks) { link in
+                compactConversationLink(link, onOpen: onOpenSubagentConversation)
             }
         }
-        section("状态") {
-            HStack(spacing: 6) {
-                if isRunning {
-                    ProgressView().controlSize(.mini).tint(AmberTheme.accent)
-                    Text("正在工作").foregroundStyle(AmberTheme.accent)
-                } else if outputFailureReason != nil {
-                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(AmberTheme.accentRed)
-                    Text("执行失败").foregroundStyle(AmberTheme.accentRed)
+
+        if let subAgentTask {
+            section("任务") {
+                LazyToolTextBlock(text: subAgentTask, style: .markdown)
+            }
+        }
+
+        if isSubAgentOrchestration {
+            subAgentReceiptSection
+        } else {
+            section("生成内容") {
+                let text = subAgentText
+                if let outputFailureReason {
+                    Text(outputFailureReason)
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if text.isEmpty {
+                    statusLine(isRunning ? "等待输出…" : "(无输出)")
                 } else {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(AmberTheme.accentGreen)
-                    Text("已完成").foregroundStyle(AmberTheme.accentGreen)
+                    LazyToolTextBlock(text: text, style: .markdown)
                 }
             }
-            .font(.footnote.weight(.medium))
         }
-        section("生成内容") {
-            let text = subAgentText
+
+        DisclosureGroup("调用详情") { toolSections }
+            .font(.subheadline)
+    }
+
+    @ViewBuilder private var subAgentIdentityHeader: some View {
+        let presentation = capsulePresentation
+        let links = subAgentConversationLinks
+        if let onOpenSubagentConversation,
+           links.count == 1,
+           let link = links.first {
+            Button {
+                dismiss()
+                onOpenSubagentConversation(link.id)
+            } label: {
+                subAgentIdentityContent(presentation: presentation, showsConversationChevron: true)
+            }
+            .buttonStyle(.plain)
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+            .accessibilityLabel("查看子代理会话 \(link.title)")
+            .accessibilityIdentifier("tool.openSubagentConversation")
+        } else {
+            subAgentIdentityContent(presentation: presentation, showsConversationChevron: false)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(AmberTheme.borderSoft, lineWidth: 1)
+                }
+        }
+    }
+
+    @ViewBuilder private func subAgentIdentityContent(
+        presentation: ChatSubAgentCapsulePresentation?,
+        showsConversationChevron: Bool
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            ChatSubAgentPixelAvatar(
+                identity: presentation?.identity ?? "call:\(tool.toolCallId)",
+                size: 28
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(presentation.map { "@\($0.displayName)" } ?? "子代理")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                if let workSummary = presentation?.workSummary {
+                    Text(workSummary)
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .layoutPriority(1)
+
+            if showsConversationChevron {
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AmberTheme.muted)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(minHeight: 44)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            presentation.map { "@\($0.displayName) \($0.workSummary ?? "")" } ?? "子代理"
+        )
+    }
+
+    private var subAgentConversationLinks: [SubagentConversationLink] {
+        SubagentConversationLink.links(from: tool)
+    }
+
+    private func compactConversationLink(
+        _ link: SubagentConversationLink,
+        onOpen: @escaping (String) -> Void
+    ) -> some View {
+        Button {
+            dismiss()
+            onOpen(link.id)
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "text.bubble")
+                Text("查看会话")
+                Text(link.title)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(AmberTheme.accent)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 1)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("tool.openSubagentConversation")
+        .accessibilityLabel("查看子代理会话 \(link.title)")
+    }
+
+    @ViewBuilder private var subAgentReceiptSection: some View {
+        section("本次操作") {
             if let outputFailureReason {
                 Text(outputFailureReason)
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.accentAmber)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !executed {
+                statusLine("正在提交任务…")
+            } else {
+                Text(subAgentReceiptSummary)
                     .font(.footnote)
-                    .foregroundStyle(AmberTheme.accentRed)
+                    .foregroundStyle(AmberTheme.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if text.isEmpty {
-                statusLine(isRunning ? "等待输出…" : "(无输出)")
-            } else {
-                LazyToolTextBlock(text: text, style: .markdown)
-            }
+        }
+    }
+
+    private var subAgentReceiptSummary: String {
+        switch receiptStatus {
+        case "queued": return "后续任务已排队；本次请求已提交。"
+        default: return "本次请求已提交，打开会话查看执行记录。"
         }
     }
 

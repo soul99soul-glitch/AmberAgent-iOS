@@ -39,6 +39,27 @@ final class IOSAgentToolEngineKernelHookTests: XCTestCase {
         }
     }
 
+    /// Returns the foreground wait control marker for `wait_agent`, while
+    /// completing every other tool normally. This deliberately supports a
+    /// mixed batch so the engine test can prove later tool outputs are kept.
+    private final class WaitMarkerExecutor: IOSToolExecutor, @unchecked Sendable {
+        let yielded: Bool
+        private(set) var invocations: [String] = []
+
+        init(yielded: Bool) {
+            self.yielded = yielded
+        }
+
+        func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+            invocations.append(name)
+            if name == "wait_agent" {
+                let marker = yielded ? ",\"yielded\":true" : ",\"timed_out\":true"
+                return .filled("{\"ok\":true,\"tool\":\"wait_agent\"\(marker)}")
+            }
+            return .filled("{\"ok\":true,\"tool\":\"\(name)\"}")
+        }
+    }
+
     /// String recorder safe to capture from `@Sendable` hook closures under
     /// Swift 6 strict concurrency (tests are single-threaded in practice).
     private final class EventRecorder: @unchecked Sendable {
@@ -117,13 +138,17 @@ final class IOSAgentToolEngineKernelHookTests: XCTestCase {
         )
 
         let drainOrder = EventRecorder()
+        let mailboxResult = IOSMailboxDrainResult(values: [F.userMessage("mailbox-envelope")])
         let result = await engine.run(
             providerSetting: F.makeProviderSetting(),
             messages: [F.userMessage("hi")],
             params: F.makeParams(toolNames: ["echo"]),
             mailboxDrain: {
                 drainOrder.append("mailbox")
-                return IOSMailboxDrainResult(values: [F.userMessage("mailbox-envelope")])
+                // A real mailbox envelope is claimed once. The final plain-text
+                // boundary may probe again, but it must see an empty mailbox
+                // rather than manufacture a fresh message and loop forever.
+                return drainOrder.count == 1 ? mailboxResult : IOSMailboxDrainResult(values: [])
             },
             drainSteer: {
                 drainOrder.append("steer")
@@ -131,8 +156,8 @@ final class IOSAgentToolEngineKernelHookTests: XCTestCase {
             }
         )
 
-        XCTAssertEqual(drainOrder.values, ["mailbox", "steer"],
-                       "round-boundary consumption order must be mailbox first, then steer (CGC parity)")
+        XCTAssertEqual(drainOrder.values, ["mailbox", "steer", "mailbox"],
+                       "round-boundary consumption order must be mailbox first, then steer; final text gets one empty mailbox probe")
         XCTAssertEqual(provider.uploads.count, 2)
         let round2Texts = provider.uploads[1].flatMap { $0.parts }.compactMap { ($0 as? UIMessagePart.Text)?.text }
         guard let mailboxIndex = round2Texts.firstIndex(of: "mailbox-envelope"),
@@ -144,6 +169,180 @@ final class IOSAgentToolEngineKernelHookTests: XCTestCase {
         let resultTexts = result.messages.flatMap { $0.parts }.compactMap { ($0 as? UIMessagePart.Text)?.text }
         XCTAssertTrue(resultTexts.contains("mailbox-envelope"))
         XCTAssertTrue(resultTexts.contains("steer-note"))
+    }
+
+    func testMailboxDrainSkipsTheFinalToolRoundWithoutAProviderRound() async {
+        let provider = UploadRecordingProvider([
+            makeToolMessage(toolCallId: "tc-last", toolName: "echo")
+        ])
+        let executor = OrderRecordingExecutor()
+        let drainCalls = EventRecorder()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["echo": executor],
+            configuration: .init(maxSteps: 1, honorApprovalPause: false)
+        )
+
+        let result = await engine.run(
+            providerSetting: F.makeProviderSetting(),
+            messages: [F.userMessage("hi")],
+            params: F.makeParams(toolNames: ["echo"]),
+            mailboxDrain: {
+                drainCalls.append("drain")
+                return IOSMailboxDrainResult(values: [F.userMessage("must survive")])
+            }
+        )
+
+        XCTAssertEqual(executor.invocations, ["echo"])
+        XCTAssertEqual(drainCalls.values, [],
+                       "a final tool round cannot claim a mailbox envelope without a next provider upload")
+        XCTAssertTrue(result.hitStepLimit)
+        XCTAssertEqual(provider.uploads.count, 1)
+    }
+
+    func testMailboxDrainCollapsesAStableEnvelopeAlreadyInTheUpload() async {
+        let envelopeMessage = amberMailboxMessage(
+            envelopeId: "resume-duplicate-1",
+            authorThreadId: "/root",
+            type: "NEW_TASK",
+            payload: "同一信封"
+        )
+        let provider = UploadRecordingProvider([F.assistantText("done")])
+        let mailboxResult = IOSMailboxDrainResult(values: [envelopeMessage])
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: [:],
+            configuration: .init(maxSteps: 3, honorApprovalPause: false)
+        )
+
+        let result = await engine.run(
+            providerSetting: F.makeProviderSetting(),
+            messages: [F.userMessage("hi"), envelopeMessage],
+            params: F.makeParams(toolNames: []),
+            mailboxDrain: {
+                mailboxResult
+            }
+        )
+
+        let stableId = envelopeMessage.id.toHexDashString().lowercased()
+        XCTAssertEqual(
+            result.messages.filter { $0.id.toHexDashString().lowercased() == stableId }.count,
+            1,
+            "post-accept drain must not append the already persisted envelope again"
+        )
+    }
+
+    func testForegroundWaitYieldsAfterCompletingEveryToolInTheBatch() async {
+        let batch = F.assistantMessage(parts: [
+            UIMessagePart.Tool(
+                toolCallId: "tc-wait",
+                toolName: "wait_agent",
+                input: "{}",
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ),
+            UIMessagePart.Tool(
+                toolCallId: "tc-after-wait",
+                toolName: "after_wait",
+                input: "{}",
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+        ])
+        let provider = UploadRecordingProvider([batch, F.assistantText("must not request another round")])
+        let executor = WaitMarkerExecutor(yielded: true)
+        let drainCalls = EventRecorder()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["wait_agent": executor, "after_wait": executor],
+            configuration: .init(maxSteps: 4)
+        )
+
+        let result = await engine.run(
+            providerSetting: F.makeProviderSetting(),
+            messages: [F.userMessage("等待")],
+            params: F.makeParams(toolNames: ["wait_agent", "after_wait"]),
+            drainSteer: {
+                drainCalls.append("steer")
+                return [F.userMessage("queued input")]
+            }
+        )
+
+        XCTAssertTrue(result.yielded, "foreground wait marker must release the run")
+        XCTAssertEqual(executor.invocations, ["wait_agent", "after_wait"],
+                       "a yielded wait must not skip later tools in the same provider batch")
+        XCTAssertEqual(provider.uploads.count, 1,
+                       "yield must stop before requesting another provider round")
+        XCTAssertEqual(drainCalls.count, 0,
+                       "queued steer stays for the host terminal path to consume")
+        XCTAssertTrue(F.toolOutputText(toolCallId: "tc-wait", in: result.messages).contains("yielded"))
+        XCTAssertTrue(F.toolOutputText(toolCallId: "tc-after-wait", in: result.messages).contains("after_wait"))
+    }
+
+    func testBackgroundWaitResultWithoutYieldContinuesToTheNextProviderRound() async {
+        let provider = UploadRecordingProvider([
+            makeToolMessage(toolCallId: "tc-wait-bg", toolName: "wait_agent"),
+            F.assistantText("后台继续")
+        ])
+        let executor = WaitMarkerExecutor(yielded: false)
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["wait_agent": executor],
+            configuration: .init(maxSteps: 4)
+        )
+
+        let result = await engine.run(
+            providerSetting: F.makeProviderSetting(),
+            messages: [F.userMessage("后台等待")],
+            params: F.makeParams(toolNames: ["wait_agent"])
+        )
+
+        XCTAssertFalse(result.yielded, "ordinary timeout output must remain a normal tool result")
+        XCTAssertEqual(provider.uploads.count, 2)
+        XCTAssertEqual(executor.invocations, ["wait_agent"])
+        XCTAssertTrue(result.messages.contains { $0.toText().contains("后台继续") })
+    }
+
+    func testMailboxDrainSkipsTheGuardStoppedBatchBeforeTerminalExplanation() async {
+        // A real provider issues a fresh tool-call id for every repeated call.
+        // Reusing one id makes the engine correctly discard the echoed call as
+        // already completed before the loop guard can observe the third repeat.
+        let provider = UploadRecordingProvider([
+            makeToolMessage(toolCallId: "tc-loop-1", toolName: "echo"),
+            makeToolMessage(toolCallId: "tc-loop-2", toolName: "echo"),
+            makeToolMessage(toolCallId: "tc-loop-3", toolName: "echo")
+        ])
+        let executor = OrderRecordingExecutor()
+        let drainCalls = EventRecorder()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["echo": executor],
+            configuration: .init(maxSteps: 8, honorApprovalPause: false)
+        )
+
+        let result = await engine.run(
+            providerSetting: F.makeProviderSetting(),
+            messages: [F.userMessage("loop")],
+            params: F.makeParams(toolNames: ["echo"]),
+            mailboxDrain: {
+                drainCalls.append("drain")
+                // The third call is the guard-stopped batch. Returning a value
+                // there would prove that an erroneous drain claimed it.
+                if drainCalls.count == 3 {
+                    return IOSMailboxDrainResult(values: [F.userMessage("must stay pending")])
+                }
+                return IOSMailboxDrainResult(values: [])
+            }
+        )
+
+        XCTAssertTrue(result.guardStopped)
+        XCTAssertEqual(drainCalls.count, 2,
+                       "guardStopped must skip mailbox drain before the terminal explanation turn")
+        XCTAssertFalse(result.messages.contains { $0.toText() == "must stay pending" })
     }
 
     // MARK: - sortPendingToolCalls

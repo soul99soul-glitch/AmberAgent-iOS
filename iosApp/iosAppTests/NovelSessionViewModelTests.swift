@@ -559,7 +559,12 @@ final class NovelSessionViewModelTests: XCTestCase {
 
         let didStart = await harness.session.send(text: "下一步该怎么规划？")
         XCTAssertTrue(didStart)
-        let didFinish = await eventually { !harness.session.isRunning }
+        let didFinish = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .completed &&
+                harness.session.durableMessages.last?.kind == .discussion &&
+                harness.session.durableMessages.last?.content == "完整讨论建议"
+        }
         XCTAssertTrue(didFinish)
 
         XCTAssertEqual(harness.session.durableMessages.map(\.kind), [.userInput, .discussion])
@@ -1334,7 +1339,12 @@ final class NovelSessionViewModelTests: XCTestCase {
 
         let runID = try XCTUnwrap(harness.session.activeRunID)
         await harness.adapter.resume(runID: runID)
-        let didFinish = await eventually { !harness.session.isRunning }
+        let didFinish = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.id == runID &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .completed &&
+                harness.session.durableMessages.last?.content == "最终前缀与结尾"
+        }
         XCTAssertTrue(didFinish)
         XCTAssertEqual(harness.session.durableMessages.last?.content, "最终前缀与结尾")
     }
@@ -3697,7 +3707,10 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.mode = .discussPlan
         let firstStarted = await harness.session.send(text: "第一条")
         XCTAssertTrue(firstStarted)
-        let firstFinished = await eventually { !harness.session.isRunning }
+        let firstFinished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed
+        }
         XCTAssertTrue(firstFinished)
         let firstRunID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.first?.id)
 
@@ -3707,14 +3720,23 @@ final class NovelSessionViewModelTests: XCTestCase {
             harness.session.transientTail?.content == "第二次也中断"
         }
         XCTAssertTrue(sawSecondPartial)
+        let secondRunID = try XCTUnwrap(harness.session.transientTail?.runID)
         await harness.session.stop()
-        let secondFinished = await eventually { !harness.session.isRunning }
+        let secondFinished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.contains(where: {
+                    $0.id == secondRunID && $0.status == .interrupted
+                }) == true
+        }
         XCTAssertTrue(secondFinished)
-        let secondRunID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.last?.id)
 
         let didRetryFirst = await harness.session.retryGeneration(runID: firstRunID)
         XCTAssertTrue(didRetryFirst)
-        let retryFinished = await eventually { !harness.session.isRunning }
+        let retryFinished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .completed &&
+                harness.session.durableMessages.last?.content == "只重试第一条"
+        }
         XCTAssertTrue(retryFinished)
         let final = try await harness.repository.loadProject(id: harness.projectID).document
         XCTAssertEqual(final.sessions[0].messages.last?.content, "只重试第一条")
@@ -3736,7 +3758,11 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.mode = .writeProse
         let started = await harness.session.send(text: "续写")
         XCTAssertTrue(started)
-        let finished = await eventually { !harness.session.isRunning }
+        let finished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed &&
+                harness.session.canRetryLastTerminal
+        }
         XCTAssertTrue(finished)
         let runID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.last?.id)
 
@@ -3760,7 +3786,11 @@ final class NovelSessionViewModelTests: XCTestCase {
 
         let started = await harness.session.startWholeChapterRegeneration(chapterID: fixture.chapterID)
         XCTAssertTrue(started)
-        let finished = await eventually { !harness.session.isRunning }
+        let finished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed &&
+                harness.session.canRetryLastTerminal
+        }
         XCTAssertTrue(finished)
         XCTAssertTrue(harness.session.canRetryLastTerminal)
 
@@ -3781,7 +3811,11 @@ final class NovelSessionViewModelTests: XCTestCase {
 
         let started = await harness.session.startWholeChapterRegeneration(chapterID: fixture.chapterID)
         XCTAssertTrue(started)
-        let finished = await eventually { !harness.session.isRunning }
+        let finished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed &&
+                harness.session.canRetryLastTerminal
+        }
         XCTAssertTrue(finished)
         let runID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.last?.id)
         XCTAssertTrue(harness.session.canRetryLastTerminal)
@@ -3869,7 +3903,11 @@ final class NovelSessionViewModelTests: XCTestCase {
         )
         let started = await harness.session.startWholeChapterPolish(chapterID: fixture.chapterID)
         XCTAssertTrue(started)
-        let finished = await eventually { !harness.session.isRunning }
+        let finished = await eventually {
+            harness.session.transientTail == nil &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed &&
+                harness.session.canRetryLastTerminal
+        }
         XCTAssertTrue(finished)
         let runID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.last?.id)
 

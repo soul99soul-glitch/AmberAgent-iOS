@@ -149,6 +149,15 @@ final class IOSThreadOrchestrationToolService {
         let reason: String
     }
 
+    /// A pending NEW_TASK projected out of Room so the terminal-resume path
+    /// never carries Kotlin entities across an async boundary.
+    private struct PendingTaskSnapshot: Sendable {
+        let id: String
+        let authorThreadId: String
+        let payload: String
+        let parentTurnId: String?
+    }
+
     private static let configurationMarker = "[amber orchestration configuration v1]"
 
     /// P1-d wait_agent 竞速结果。
@@ -174,6 +183,11 @@ final class IOSThreadOrchestrationToolService {
     /// P1-e: spawn bootstrap 在途计数（服务内跟踪）。限额检查与占槽之间无
     /// await（全部 MainActor 同步读），两个并发 spawn 不会同时通过检查。
     private var inFlightBootstrapCount = 0
+    /// Idle followup bootstrap and terminal resume share one per-child gate.
+    /// A second operation waits for the first operation's active check plus
+    /// enqueue/start sequence, instead of observing a transient idle window.
+    private var inFlightFollowupTargets: Set<String> = []
+    private var followupGateWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
     /// P1-d: 进程内 mailbox 活动广播（wait_agent 的事件源；默认共享实例）。
     private let activityCenter: IOSMailboxActivityCenter
     /// M4: role_assistant_id 存在性校验（生产 = 设置快照里的 assistants；
@@ -187,6 +201,29 @@ final class IOSThreadOrchestrationToolService {
     private let waitTimeoutMinMs: Int64
     private let waitTimeoutMaxMs: Int64
     private let waitTimeoutDefaultMs: Int64
+
+    private func acquireFollowupGate(for targetHex: String) async {
+        guard !inFlightFollowupTargets.insert(targetHex).inserted else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            followupGateWaiters[targetHex, default: []].append(continuation)
+        }
+    }
+
+    private func releaseFollowupGate(for targetHex: String) {
+        guard var waiters = followupGateWaiters[targetHex], !waiters.isEmpty else {
+            inFlightFollowupTargets.remove(targetHex)
+            return
+        }
+        let next = waiters.removeFirst()
+        if waiters.isEmpty {
+            followupGateWaiters.removeValue(forKey: targetHex)
+        } else {
+            followupGateWaiters[targetHex] = waiters
+        }
+        // Keep the target in `inFlightFollowupTargets` while handing ownership
+        // to the resumed waiter. The next acquire therefore returns directly.
+        next.resume()
+    }
 
     init(
         conversationStoreProvider: @escaping () -> IOSConversationStore?,
@@ -1039,6 +1076,186 @@ final class IOSThreadOrchestrationToolService {
 
     // MARK: - send_message / followup_task / wait_agent（P1-d）
 
+    /// User-facing child-page followup. The page has no parent run to borrow for
+    /// target resolution, so resolve the child's recorded parent first and then
+    /// reuse the exact followup path (queue an active run, bootstrap an idle run).
+    func appendUserTask(
+        to targetConversationId: KotlinUuid,
+        message: String,
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        toolExposureBridge: IosToolExposureBridge? = nil,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) async -> String {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            return Self.errorJSON(
+                toolName: "followup_task",
+                code: ErrorCode.invalidArguments,
+                reason: "message 不能为空。"
+            )
+        }
+        let childHex = targetConversationId.toHexDashString()
+        guard let edge = await Self.edgeFor(
+            childThreadId: childHex,
+            threadEdgeDao: threadEdgeDaoProvider()
+        ), let parentId = Self.parseKotlinUuid(edge.parentThreadId) else {
+            return Self.errorJSON(
+                toolName: "followup_task",
+                code: ErrorCode.unknownTarget,
+                reason: "找不到子代理线程 \(childHex)。"
+            )
+        }
+        let arguments = IOSWorkspaceStore.json([
+            "target": childHex,
+            "message": trimmedMessage
+        ])
+        return await followupTask(
+            arguments: arguments,
+            providerSetting: providerSetting,
+            params: params,
+            runId: "user-followup-\(UUID().uuidString)",
+            conversationId: parentId,
+            toolExposureBridge: toolExposureBridge,
+            executionPolicy: executionPolicy
+        )
+    }
+
+    /// Resume a child after its background run released ownership. The old run
+    /// may have reached a terminal boundary while a NEW_TASK was being queued;
+    /// this path folds every pending task into one durable bootstrap. Pending
+    /// envelopes are only marked delivered after the new BG task was accepted,
+    /// so a failed start remains recoverable for a later retry.
+    @discardableResult
+    func resumePendingTasks(
+        for conversationId: KotlinUuid,
+        providerSetting: ProviderSetting,
+        params: TextGenerationParams,
+        toolExposureBridge: IosToolExposureBridge? = nil,
+        executionPolicy: IOSExecutionPolicySnapshot? = nil
+    ) async -> Bool {
+        let targetHex = conversationId.toHexDashString()
+        await acquireFollowupGate(for: targetHex)
+        defer { releaseFollowupGate(for: targetHex) }
+
+        // The coordinator invokes this after releasing its active ownership,
+        // but keep the guard here as well for foreground/background races.
+        guard foregroundActiveRunId(targetHex) == nil,
+              backgroundCoordinator.activeRunId(conversationHex: targetHex) == nil,
+              let edge = await Self.edgeFor(
+                  childThreadId: targetHex,
+                  threadEdgeDao: threadEdgeDaoProvider()
+              ),
+              edge.status == EdgeStatus.open else {
+            return false
+        }
+        let pending = await Self.pendingTaskSnapshots(
+            mailboxDao: mailboxDaoProvider(),
+            recipientId: targetHex
+        )
+        guard !pending.isEmpty,
+              let store = conversationStoreProvider(),
+              let targetId = Self.parseKotlinUuid(targetHex) else {
+            return false
+        }
+
+        let currentMessages: [UIMessage]
+        if store.currentConversation?.id == targetId {
+            currentMessages = store.currentConversation?.currentMessages ?? []
+        } else {
+            guard let conversation = try? await store.loadConversationForOrchestration(targetId) else {
+                return false
+            }
+            currentMessages = conversation.currentMessages
+        }
+
+        let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
+        let launchResult = resolveAgentLaunch(
+            arguments: [:],
+            providerSetting: providerSetting,
+            params: params,
+            toolExposureBridge: toolExposureBridge,
+            inherited: inheritedConfiguration
+        )
+        let launch: ResolvedAgentLaunch
+        switch launchResult {
+        case .success(let value):
+            launch = value
+        case .failure:
+            // Configuration errors do not consume the mailbox. The next user
+            // retry can repair the child settings and try again.
+            return false
+        }
+
+        let taskMessages = pending.map { envelope in
+            amberMailboxMessage(
+                envelopeId: envelope.id,
+                authorThreadId: envelope.authorThreadId,
+                type: MailboxEnvelopeType.theNewTask.name,
+                payload: envelope.payload
+            )
+        }
+        var updatedMessages = Self.removingOrchestrationConfigurationMessages(from: currentMessages)
+        if let configuration = launch.configuration {
+            updatedMessages.append(Self.orchestrationConfigurationMessage(configuration))
+        }
+        // A previous start may have persisted these messages before BGTask
+        // submission failed. Stable envelope-derived ids make a retry merge
+        // them instead of appending another visible copy.
+        let existingMessageIds = Set(updatedMessages.map { $0.id.toHexDashString().lowercased() })
+        updatedMessages.append(contentsOf: taskMessages.filter {
+            !existingMessageIds.contains($0.id.toHexDashString().lowercased())
+        })
+
+        // Keep the same write-before-start ordering as the ordinary idle
+        // followup bootstrap. If this fails, every envelope stays pending.
+        guard await Self.persistTargetMessages(
+            store: store,
+            conversationId: targetId,
+            messages: updatedMessages
+        ) else {
+            return false
+        }
+
+        let renderedText = taskMessages.map { $0.toText() }.joined(separator: "\n")
+        guard await startDurableBackgroundRun(
+            targetConversationId: targetId,
+            targetHex: targetHex,
+            targetMessages: updatedMessages,
+            renderedText: renderedText,
+            providerSetting: launch.providerSetting,
+            params: launch.params,
+            runId: UUID().uuidString,
+            store: store,
+            toolExposureBridge: toolExposureBridge,
+            executionPolicy: executionPolicy,
+            configuration: launch.configuration
+        ) != nil else {
+            // The task messages are already durable, but the original Room
+            // envelopes remain pending and can drive a later retry.
+            return false
+        }
+
+        let deliveredAt = Int64(Date().timeIntervalSince1970 * 1000)
+        let delivered = await Self.markDelivered(
+            mailboxDao: mailboxDaoProvider(),
+            ids: pending.map(\.id),
+            deliveredAt: deliveredAt
+        )
+        if delivered != pending.count {
+            // A concurrent foreground drain may have claimed some envelopes.
+            // The run is already durable; leave the DAO's exactly-once result
+            // authoritative and do not start another run.
+            NSLog(
+                "[AmberOrchestration] pending task delivery changed during resume: %d/%d",
+                delivered,
+                pending.count
+            )
+        }
+        await activityCenter.signal(conversationIdHex: targetHex)
+        return true
+    }
+
     /// P1-d: 投递不唤醒。信封（type=MESSAGE, triggerTurn=false）入目标 mailbox，
     /// idle 目标的消息留在 mailbox 直到其下次 run；运行中目标在工具循环边界折入。
     private func sendMessage(arguments: String, runId: String, conversationId: KotlinUuid?) async -> String {
@@ -1148,6 +1365,12 @@ final class IOSThreadOrchestrationToolService {
             }
             return Self.errorJSON(toolName: "followup_task", code: ErrorCode.unknownTarget, reason: "找不到线程 \(targetRaw)。")
         }
+        // Serialize the active check with the complete enqueue/idle-bootstrap
+        // sequence. A terminal callback can otherwise query an empty mailbox
+        // while this task is suspended in `enqueue`, then both paths observe
+        // idle and leave the newly queued task without an owner.
+        await acquireFollowupGate(for: target.hex)
+        defer { releaseFollowupGate(for: target.hex) }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let senderAgentPath = await agentPath(of: runConversationId.toHexDashString(), threadEdgeDao: threadEdgeDaoProvider())
 
@@ -1188,6 +1411,7 @@ final class IOSThreadOrchestrationToolService {
                 "ok": true,
                 "tool": "followup_task",
                 "target": targetRaw,
+                "agent_path": target.edge?.agentPath ?? "/root",
                 "recipient_thread_id": target.hex,
                 "status": "queued",
             ])
@@ -1302,13 +1526,15 @@ final class IOSThreadOrchestrationToolService {
             "ok": true,
             "tool": "followup_task",
             "target": targetRaw,
+            "agent_path": target.edge?.agentPath ?? "/root",
             "recipient_thread_id": target.hex,
             "status": "started",
         ])
     }
 
-    /// P1-d: 等本线程 mailbox 任何活动。先订阅（防丢信号）再查 pending；
-    /// pending 非空立即返回；否则事件（含 steer 打断）与超时竞速。
+    /// P1-d: 后台线程等待 mailbox 时先订阅（防丢信号）再查 pending；
+    /// pending 非空立即返回，否则事件（含 steer 打断）与超时竞速。
+    /// 前台根会话没有 mailbox 时返回 yielded 控制结果，让出交互 run。
     private func waitAgent(arguments: String, conversationId: KotlinUuid?) async -> String {
         guard let runConversationId = conversationId ?? currentConversationId() else {
             return Self.errorJSON(
@@ -1320,6 +1546,43 @@ final class IOSThreadOrchestrationToolService {
         let hex = runConversationId.toHexDashString()
         let args = ChatToolCallParsing.jsonObject(arguments)
         let requestedMs = (args?["timeout_ms"] as? NSNumber)?.int64Value
+
+        // A foreground root is an interactive turn. Waiting here holds the
+        // only foreground run owner, so return a control result immediately
+        // and let the host release the run. Child/background runs retain the
+        // event-backed wait below. The edge check is deliberate: a foreground
+        // child must still be able to wait and report its completion to its
+        // parent instead of being mistaken for the root conversation.
+        var isForegroundRoot = false
+        if foregroundActiveRunId(hex) != nil {
+            isForegroundRoot = await Self.edgeFor(
+                childThreadId: hex,
+                threadEdgeDao: threadEdgeDaoProvider()
+            ) == nil
+        }
+        if isForegroundRoot {
+            let pendingCount = await Self.pendingCount(
+                mailboxDao: mailboxDaoProvider(),
+                recipientId: hex
+            )
+            if pendingCount > 0 {
+                return IOSWorkspaceStore.json([
+                    "ok": true,
+                    "tool": "wait_agent",
+                    "message": "mailbox already has \(pendingCount) pending",
+                    "timed_out": false,
+                    "pending_count": pendingCount,
+                ])
+            }
+            return IOSWorkspaceStore.json([
+                "ok": true,
+                "tool": "wait_agent",
+                "message": "Foreground run yielded; resume on a child completion report unless newer user input supersedes this wait.",
+                "timed_out": false,
+                "pending_count": 0,
+                "yielded": true,
+            ])
+        }
 
         // 订阅在前：订阅后的信号由缓冲流兜住，订阅前的信号必已落 Room 由
         // 下方 pending 检查兜住——两个窗口都不丢（选型理由见文件头注释）。
@@ -1549,6 +1812,42 @@ final class IOSThreadOrchestrationToolService {
             return nil
         }
         return handoff
+    }
+
+    private static func pendingTaskSnapshots(
+        mailboxDao: MailboxDao,
+        recipientId: String
+    ) async -> [PendingTaskSnapshot] {
+        await withCheckedContinuation { continuation in
+            mailboxDao.pendingForRecipient(recipientId: recipientId) { result, _ in
+                let snapshots = (result ?? []).compactMap { envelope -> PendingTaskSnapshot? in
+                    guard envelope.type == MailboxEnvelopeType.theNewTask.name,
+                          envelope.triggerTurn else {
+                        return nil
+                    }
+                    return PendingTaskSnapshot(
+                        id: envelope.id,
+                        authorThreadId: envelope.authorThreadId,
+                        payload: envelope.payload,
+                        parentTurnId: envelope.parentTurnId
+                    )
+                }
+                continuation.resume(returning: snapshots)
+            }
+        }
+    }
+
+    private static func markDelivered(
+        mailboxDao: MailboxDao,
+        ids: [String],
+        deliveredAt: Int64
+    ) async -> Int {
+        guard !ids.isEmpty else { return 0 }
+        return await withCheckedContinuation { continuation in
+            mailboxDao.markDelivered(ids: ids, deliveredAt: deliveredAt) { result, _ in
+                continuation.resume(returning: result?.intValue ?? 0)
+            }
+        }
     }
 
     private static func pendingCount(mailboxDao: MailboxDao, recipientId: String) async -> Int {
@@ -1805,7 +2104,7 @@ final class IOSThreadOrchestrationToolService {
         return (try? await store.recoverableRuns().count) ?? 0
     }
 
-    private static func latestRunStatusByConversation(agentRuntimeDao: AgentRuntimeDao) async -> [String: String] {
+    static func latestRunStatusByConversation(agentRuntimeDao: AgentRuntimeDao) async -> [String: String] {
         await withCheckedContinuation { cont in
             agentRuntimeDao.listAllRuns() { result, _ in
                 let runs = result ?? []

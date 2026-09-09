@@ -413,6 +413,9 @@ struct ChatView: View {
             Text("删除后不可恢复。")
         }
         .onAppear(perform: handleChatAppear)
+        .task(id: "\(currentConversationIdString ?? ""): \(viewModel.isGenerationActive)") {
+            await viewModel.observeIdleMailboxResults(conversationId: viewModel.currentConversationId)
+        }
         // 仅观察 store 的「切会话」修订号——它只在真正切到另一个会话时 +1，
         // 不受同会话落盘（生成中 tool start/result/complete）影响。
         // 这样落盘不再触发重灌历史 + 重建 ScrollView，消除抖动和「上滑看历史被甩回锚点」。
@@ -796,7 +799,7 @@ struct ChatView: View {
 
     private var browserTaskRunSummary: String? {
         guard viewModel.isGenerationActiveForCurrentConversation,
-              let message = viewModel.messages.last,
+              let message = viewModel.messages.last(where: ChatMessageProjector.isConversationMessage),
               message.role == MessageRole.assistant,
               let tool = message.parts.compactMap({ $0 as? UIMessagePart.Tool })
                 .last(where: { $0.toolName.hasPrefix("wm_") }) else { return nil }
@@ -1009,7 +1012,7 @@ struct ChatView: View {
         let messages = viewModel.messages
         var next = chatListSummary
         next.hasMessages = !messages.isEmpty
-        next.awaitingFirstAssistantChunk = isStreamingFollowActive && messages.last?.role == MessageRole.user
+        next.awaitingFirstAssistantChunk = isStreamingFollowActive && messages.last(where: ChatMessageProjector.isConversationMessage)?.role == MessageRole.user
         next.activeToolStep = activeToolStepForIsland(messages: messages)
         next.failedToolStep = failedToolStepForIsland(messages: messages)
         next.lastAssistantHasOpenReasoning = lastAssistantHasOpenReasoning(messages: messages)
@@ -1074,7 +1077,7 @@ struct ChatView: View {
     }
 
     private func lastAssistantHasOpenReasoning(messages: [UIMessage]) -> Bool {
-        guard let last = messages.last, last.role == MessageRole.assistant else { return false }
+        guard let last = messages.last(where: ChatMessageProjector.isConversationMessage), last.role == MessageRole.assistant else { return false }
         return last.parts.contains { part in
             guard let reasoning = part as? UIMessagePart.Reasoning else { return false }
             return reasoning.finishedAt == nil

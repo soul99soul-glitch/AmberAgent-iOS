@@ -15,6 +15,33 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
     private typealias F = IOSChatForegroundFixtures
 
+    private final class YieldEventRecorder {
+        var events: [String] = []
+        var runId: String?
+    }
+
+    /// Minimal scheduler used only to make the real orchestration service
+    /// executable in the Host test. `wait_agent` does not start a background
+    /// job, but the service still requires its scheduling dependency.
+    private final class YieldBackgroundScheduler: IOSThreadOrchestrationToolService.BackgroundScheduling {
+        var activeJobCount = 0
+
+        func start(
+            handoff: IOSChatBackgroundHandoff,
+            conversationStore: IOSConversationStore,
+            toolRuntime: ChatToolRuntime,
+            liveActivityController: AgentLiveActivityController,
+            saveMiniAppIfPresent: (@MainActor ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?)?
+        ) -> Bool {
+            true
+        }
+
+        func activeRunId(conversationHex: String) -> String? { nil }
+
+        @discardableResult
+        func cancelJob(runId: String) -> Bool { true }
+    }
+
     // MARK: - 剧本化 provider
 
     /// generateText 轮次剧本。
@@ -120,6 +147,142 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         )
     }
 
+    /// Assemble just enough production wiring to exercise the complete
+    /// `wait_agent` → Engine result.yielded → Adapter callback → Host teardown
+    /// path. The shared harness intentionally has no orchestration service,
+    /// so this fixture keeps that dependency isolated to this regression.
+    private func makeForegroundYieldHost() async throws -> (
+        host: ChatKernelRunHost,
+        provider: HostScriptedProvider,
+        recorder: YieldEventRecorder,
+        conversationId: KotlinUuid,
+        directory: URL
+    ) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KernelHostForegroundYield-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.newConversation()
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let database = IosDatabaseFactory.shared.createDatabase(
+            atFilePath: directory.appendingPathComponent("yield.db").path
+        )
+        let center = IOSMailboxActivityCenter()
+        let scheduler = YieldBackgroundScheduler()
+        let service = IOSThreadOrchestrationToolService(
+            conversationStoreProvider: { store },
+            mailboxDaoProvider: { database.mailboxDao() },
+            threadEdgeDaoProvider: { database.threadEdgeDao() },
+            agentRuntimeDaoProvider: { database.agentRuntimeDao() },
+            backgroundCoordinator: scheduler,
+            makeBackgroundToolRuntime: {
+                ChatToolRuntime(
+                    settingsStore: SettingsStore(),
+                    sharedSettings: IOSSharedSettingsStore(),
+                    localToolExecutor: nil,
+                    searchTransport: IOSURLSessionSearchHTTPTransport(),
+                    mcpManager: IOSMcpManager(serverProvider: { [] })
+                )
+            },
+            currentConversationId: { conversationId },
+            foregroundActiveRunId: { _ in "foreground-yield-run" },
+            cancelForegroundRun: { _ in false },
+            activityCenter: center
+        )
+
+        let defaultsSuite = "KernelHostForegroundYield-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: defaultsSuite)!
+        defaults.removePersistentDomain(forName: defaultsSuite)
+        let settingsStore = SettingsStore(
+            userDefaults: defaults,
+            storageKey: "foreground-yield-settings"
+        )
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let dependencies = ChatGenerationDependencies(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            localToolExecutor: nil,
+            searchTransport: IOSForegroundNoopSearchTransport(),
+            liveActivityController: .shared,
+            autoGenerateResponses: true,
+            mcpManager: IOSMcpManager(serverProvider: { [] }),
+            orchestrationToolService: service,
+            memoryPollutionMarker: nil,
+            conversationStoreProvider: { store }
+        )
+
+        var messages = [F.userMessage("等待子代理")]
+        let recorder = YieldEventRecorder()
+        let keepAlive = BackgroundGenerationKeepAlive(
+            beginBackgroundTask: { _, _ in UIBackgroundTaskIdentifier(rawValue: 902) },
+            endBackgroundTask: { _ in },
+            submitTaskRequest: { _ in },
+            cancelTaskRequest: { _ in },
+            registerLaunchHandler: { _, _ in true },
+            audioKeepAlive: NoOpBackgroundAudioKeepAlive(),
+            isAudioKeepAliveEnabled: { false }
+        )
+        var bindings = ChatGenerationBindings(
+            getMessages: { messages },
+            setMessages: { messages = $0 },
+            bumpMessageRevision: { _, _ in },
+            setIsLoading: { _ in },
+            setPendingMemoryApproval: { _ in },
+            setPendingSearchApproval: { _ in },
+            setPendingWebMountApproval: { _ in },
+            setPendingWorkspaceApproval: { _ in },
+            setPendingIshHandoffApproval: { _ in },
+            setPendingMcpApproval: { _ in },
+            setPendingCouncilApproval: { _ in },
+            setPendingAskUser: { _ in },
+            setContextCompactState: { _ in },
+            persistMessages: { _ in true },
+            capturePersistMessagesBaseline: { _ in nil },
+            persistMessagesSnapshot: { _, _, _ in true },
+            recordRun: { runId, _, status, _, _, _ in
+                if status == .running { recorder.runId = runId }
+                return true
+            },
+            startLiveActivity: { _, _, _ in },
+            saveMiniAppIfPresent: { _, _ in nil },
+            messagesByInjectingRuntimeContext: { $0 },
+            userFacingGenerationError: { rawMessage, _ in rawMessage }
+        )
+        bindings.onForegroundYield = { runId in
+            recorder.events.append("yield:\(runId)")
+        }
+        bindings.handleSteerQueueAtTerminal = { _, autoContinue in
+            recorder.events.append("steer:\(autoContinue)")
+        }
+
+        let bridge = IosToolExposureBridge(
+            tools: ToolKt.iosToolDeclarations(names: ["wait_agent"])
+        )
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("wait-1", "wait_agent", #"{"timeout_ms":60000}"#)
+        ])
+        let host = ChatKernelRunHost(
+            dependencies: dependencies,
+            bindings: bindings,
+            backgroundExecution: keepAlive,
+            // Keep the provider-before-tool request snapshot deterministic;
+            // the Room-backed production ledger uses the shared default DB,
+            // which is intentionally not part of this isolated fixture.
+            toolLedger: IOSRunEventLogLedger(log: IOSRunEventLog()),
+            textProvider: provider
+        )
+        host.start(
+            providerSetting: F.makeProviderSetting(),
+            params: F.makeParams(toolNames: [], tools: bridge.visibleTools()),
+            inputDigest: "foreground-yield-test",
+            conversationId: conversationId,
+            uploadMessages: messages,
+            toolExposureBridge: bridge
+        )
+        return (host, provider, recorder, conversationId, directory)
+    }
+
     private func makeIshLocalExecutor() -> IOSLocalToolExecutor {
         let defaults = UserDefaults(suiteName: "terminal-approval-\(UUID().uuidString)")!
         return IOSLocalToolExecutor(
@@ -188,11 +351,40 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
     // MARK: - 完成终态
 
+    /// A yielded foreground wait is a completed Host run, but it must notify
+    /// the bindings before terminal steer handling so the VM can retain the
+    /// waiting ownership and later resume when child mail arrives.
+    func testForegroundYieldNotifiesBindingsBeforeTerminalSteerHandling() async throws {
+        let fixture = try await makeForegroundYieldHost()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let idle = await waitForHostIdle(fixture.host)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(fixture.provider.callCount, 1, "yield 必须在当前轮结束，不得继续请求下一轮 provider")
+
+        let yieldIndexes = fixture.recorder.events.indices.filter {
+            fixture.recorder.events[$0].hasPrefix("yield:")
+        }
+        XCTAssertEqual(yieldIndexes.count, 1, "一次 yielded 终态只通知一次等待归属")
+        guard let yieldIndex = yieldIndexes.first else { return }
+        XCTAssertEqual(
+            fixture.recorder.events[yieldIndex],
+            "yield:\(fixture.recorder.runId ?? "")"
+        )
+        XCTAssertEqual(
+            fixture.recorder.events.dropFirst(yieldIndex + 1).first,
+            "steer:true",
+            "onForegroundYield 必须先于 handleSteerQueueAtTerminal"
+        )
+    }
+
     /// completed 序列(CG-C :2732-2797 + finishStreaming :4919-4979):
     /// recordRun(completed) → handleSteerQueueAtTerminal(autoContinue: true) →
     /// generationSucceeded → onRunTerminal;无 composer 回填。
     func testCompletedRunTerminalSequence() async {
         let harness = makeHarness()
+        var foregroundYieldRunIds: [String] = []
+        harness.bindings.onForegroundYield = { foregroundYieldRunIds.append($0) }
         var succeededCount = 0
         var restoreLeftoverCount = 0
         var terminalReports: [(runId: String, messageCount: Int)] = []
@@ -219,6 +411,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertTrue(idleAfterComplete, "run 必须收尾(isRunning 清空)")
         XCTAssertFalse(harness.isLoading)
         XCTAssertEqual(harness.terminalSteerAutoContinue, [true], "成功收尾自动续发队列")
+        XCTAssertTrue(foregroundYieldRunIds.isEmpty, "普通 completed 不得伪装成 foreground yield")
         XCTAssertEqual(succeededCount, 1)
         XCTAssertEqual(memoryExtractionRequests, 1)
         XCTAssertEqual(restoreLeftoverCount, 0, "completed 不做 composer 回填(那是 cancel 语义)")
@@ -491,6 +684,8 @@ final class IOSChatKernelRunHostTests: XCTestCase {
     /// cancelled 只报一次、第二轮绝不开跑。
     func testCancelDuringApprovalWait() async {
         let harness = makeHarness()
+        var foregroundYieldRunIds: [String] = []
+        harness.bindings.onForegroundYield = { foregroundYieldRunIds.append($0) }
         var restoreLeftoverCount = 0
         var succeededCount = 0
         harness.bindings.restoreSteerQueueLeftover = { _ in restoreLeftoverCount += 1 }
@@ -516,6 +711,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertNil(harness.pendingSearchApproval, "取消必须清卡")
         XCTAssertEqual(restoreLeftoverCount, 1, "cancel 回填 composer(CG-C :1533)")
         XCTAssertEqual(harness.terminalSteerAutoContinue, [], "cancel 不走 handleSteerQueueAtTerminal")
+        XCTAssertTrue(foregroundYieldRunIds.isEmpty, "cancel 不得伪装成 foreground yield")
         XCTAssertEqual(succeededCount, 0, "cancel 不发 generationSucceeded")
         let filled = F.toolOutputText(toolCallId: "tc-1", in: harness.messages)
         XCTAssertTrue(filled.contains("User cancelled."), "未决工具必须原地填取消输出,实际: \(filled)")

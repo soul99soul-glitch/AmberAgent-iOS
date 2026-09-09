@@ -839,6 +839,25 @@ enum ChatTimelinePlanner {
 }
 
 enum ChatMessageProjector {
+    /// Internal progress stays in context; completed results have a dedicated
+    /// agent-side card while retaining their provider transport role.
+    static func isVisibleInTimeline(_ message: UIMessage) -> Bool {
+        guard message.role == MessageRole.user else { return true }
+        switch IosMailboxMessageBridge.shared.kind(message: message) {
+        case "MESSAGE": return false
+        default: return true
+        }
+    }
+
+    static func isSubAgentResult(_ message: UIMessage) -> Bool {
+        message.role == MessageRole.user &&
+            IosMailboxMessageBridge.shared.kind(message: message) == "FINAL_ANSWER"
+    }
+
+    static func isConversationMessage(_ message: UIMessage) -> Bool {
+        isVisibleInTimeline(message) && !isSubAgentResult(message)
+    }
+
     static func messageId(for message: UIMessage) -> String {
         // String(describing:) 走桥接 description 路径(单次 ~25µs,逐行×每 delta);
         // toHexDashString() 是直接访问器,产出同样的 8-4-4-4-12 字符串
@@ -847,8 +866,11 @@ enum ChatMessageProjector {
     }
 
     static func isAssistantContinuation(at index: Int, in messages: [UIMessage]) -> Bool {
-        index > 0 && messages[index].role == MessageRole.assistant &&
-            messages[index - 1].role == MessageRole.assistant
+        guard index > 0, messages[index].role == MessageRole.assistant else { return false }
+        for previous in messages[..<index].reversed() where isVisibleInTimeline(previous) {
+            return previous.role == MessageRole.assistant
+        }
+        return false
     }
 
     static func rows(
@@ -857,22 +879,25 @@ enum ChatMessageProjector {
         streamedMessageIDs: Set<String> = [],
         startIndex: Int = 0
     ) -> [ChatMessageRowModel] {
-        messages.indices.dropFirst(max(0, startIndex)).map { index in
+        let lastVisibleIndex = messages.lastIndex(where: isVisibleInTimeline)
+        return messages.indices.dropFirst(max(0, startIndex)).compactMap { index in
             let message = messages[index]
+            guard isVisibleInTimeline(message) else { return nil }
             let messageId = messageId(for: message)
-            let isLast = index == messages.count - 1
+            let isResult = isSubAgentResult(message)
+            let isLast = index == lastVisibleIndex
             let isLastAssistant = isLast && message.role == MessageRole.assistant
             let isStreaming = event == .assistantStreamDelta && isLastAssistant
-            let hasEverStreamed = isStreaming || streamedMessageIDs.contains(messageId)
-            let canAnimateInsertion = event == .userMessageAppended &&
+            let hasEverStreamed = !isResult && (isStreaming || streamedMessageIDs.contains(messageId))
+            let canAnimateInsertion = (event == .toolResultAppended && isResult) || (event == .userMessageAppended &&
                 isLast &&
-                message.role == MessageRole.user
+                message.role == MessageRole.user && !isResult)
 
             return ChatMessageRowModel(
                 rowId: messageId,
                 messageId: messageId,
                 message: message,
-                role: message.role,
+                role: isResult ? MessageRole.assistant : message.role,
                 parts: message.parts,
                 index: index,
                 isLast: isLast,

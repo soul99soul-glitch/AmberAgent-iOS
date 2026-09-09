@@ -376,4 +376,102 @@ final class IOSMiniAppChatMessageFactoryTests: XCTestCase {
         XCTAssertTrue(fromJSON.contains("\n<html>"))
         XCTAssertFalse(fromJSON.contains("\\n"))
     }
+
+    func testMiniAppStreamingCodePreviewKeepsLatestWindowAndReportsOmittedCharacters() {
+        let html = "<!DOCTYPE html>" + String(repeating: "旧", count: 2_300) + "<p>最新</p></html>"
+        let preview = ChatMiniAppStreamingCard.codePreview(from: html)
+        let omittedCount = html.count - 2_000
+        let notice = IOSAppLocalization.formatted(
+            "已省略 %lld 字", defaultValue: "已省略 %lld 字",
+            arguments: [Int64(omittedCount)]
+        ) + "\n"
+
+        XCTAssertTrue(preview.hasPrefix(notice))
+        XCTAssertEqual(String(preview.dropFirst(notice.count)), String(html.suffix(2_000)))
+    }
+
+    func testMiniAppStreamingCodePreviewDecodesJSONEscapesAndUnicode() {
+        let json = #"{"title":"计时","description":"番茄钟","html":"<div>line\n\u4F60\u597D\u0065\u0301😀</div>"}"#
+        let preview = ChatMiniAppStreamingCard.codePreview(from: json)
+
+        XCTAssertEqual(preview, "<div>line\n你好é😀</div>")
+        XCTAssertEqual(preview.count, "<div>line\n你好é😀</div>".count)
+        XCTAssertFalse(preview.contains("\\u"))
+    }
+
+    func testMiniAppStreamingCodePreviewWindowTracksGrowthAndReplacement() {
+        let initialHTML = "<html>" + String(repeating: "a", count: 2_050) + "-initial</html>"
+        let grownHTML = initialHTML + "-grown"
+
+        let initialPreview = ChatMiniAppStreamingCard.codePreview(from: initialHTML)
+        let grownPreview = ChatMiniAppStreamingCard.codePreview(from: grownHTML)
+        let replacement = ChatMiniAppStreamingCard.codePreview(from: "<html>replacement</html>")
+
+        XCTAssertTrue(initialPreview.hasSuffix(String(initialHTML.suffix(2_000))))
+        XCTAssertTrue(grownPreview.hasSuffix(String(grownHTML.suffix(2_000))))
+        XCTAssertFalse(grownPreview.hasSuffix(String(initialHTML.suffix(2_000))))
+        XCTAssertEqual(replacement, "<html>replacement</html>")
+    }
+
+    func testMiniAppStreamingPreviewStateDecodesEscapesAcrossChunks() {
+        var state = IOSMiniAppStreamingCodePreviewState()
+        let first = "{\"html\":\"<p>\\"
+        let second = first + "n\\uD83D"
+        let third = second + "\\uDE00</p>\"}"
+
+        state.update(first)
+        state.update(second)
+        state.update(third)
+        state.finish()
+
+        XCTAssertEqual(state.displayText, "<p>\n😀</p>")
+    }
+
+    func testMiniAppStreamingPreviewStateResetsOnReplacementAndKeepsTail() {
+        var state = IOSMiniAppStreamingCodePreviewState()
+        let oldHTML = String(repeating: "旧", count: 2_100) + "尾"
+        let oldPrefix = "{\"html\":\"" + String(repeating: "旧", count: 2_100)
+
+        state.update(oldPrefix)
+        state.update(oldPrefix + "尾\"}")
+
+        let omittedCount = oldHTML.count - 2_000
+        let notice = IOSAppLocalization.formatted(
+            "已省略 %lld 字", defaultValue: "已省略 %lld 字",
+            arguments: [Int64(omittedCount)]
+        ) + "\n"
+        XCTAssertTrue(state.displayText.hasPrefix(notice))
+        XCTAssertTrue(state.displayText.hasSuffix(String(oldHTML.suffix(2_000))))
+
+        state.update(#"{"html":"新😀"}"#)
+        state.finish()
+
+        XCTAssertEqual(state.displayText, "新😀")
+    }
+
+    func testMiniAppStreamingPreviewStateCountsLiteralGraphemeAcrossChunks() {
+        var state = IOSMiniAppStreamingCodePreviewState()
+        let expected = String(repeating: "a", count: 1_999) + "e\u{301}"
+        let first = "{\"html\":\"" + String(repeating: "a", count: 1_999) + "e"
+
+        state.update(first)
+        state.update(first + "\u{301}")
+        state.update(first + "\u{301}\"}")
+        state.finish()
+
+        XCTAssertEqual(state.displayText, expected)
+    }
+
+    func testMiniAppStreamingPreviewStateCountsEscapedGraphemeAcrossChunks() {
+        var state = IOSMiniAppStreamingCodePreviewState()
+        let expected = String(repeating: "a", count: 1_999) + "e\u{301}"
+        let first = "{\"html\":\"" + String(repeating: "a", count: 1_999) + "\\u0065"
+
+        state.update(first)
+        state.update(first + "\\u0301")
+        state.update(first + "\\u0301\"}")
+        state.finish()
+
+        XCTAssertEqual(state.displayText, expected)
+    }
 }

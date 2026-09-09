@@ -374,8 +374,7 @@ struct NativeChatTimelineView: View {
                 .padding(.bottom, 28)
                 .scrollTargetLayout()
                 .onGeometryChange(for: String?.self) { _ in
-                    messages.indices.contains(startIndex)
-                        ? ChatMessageProjector.messageId(for: messages[startIndex]) : nil
+                    projection.entries.first(where: { $0.kind == .message })?.messageId
                 } action: { firstMessageID in
                     laidOutHistoryFirstMessageID = firstMessageID
                     restoreHistoryRevealAnchorIfReady(using: historyScrollProxy)
@@ -588,7 +587,11 @@ struct NativeChatTimelineView: View {
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
         guard startIndex > 0, historyRevealAnchor == nil else { return }
-        let anchorID = "message-\(ChatMessageProjector.messageId(for: messages[startIndex]))"
+        guard let firstVisible = messages.dropFirst(startIndex).first(where: ChatMessageProjector.isVisibleInTimeline) else {
+            historyStartIndex = max(0, startIndex - Self.historyPageSize)
+            return
+        }
+        let anchorID = "message-\(ChatMessageProjector.messageId(for: firstVisible))"
         historyBoundaryIDs.insert(anchorID)
         historyRevealAnchor = HistoryRevealAnchor(
             id: "history-boundary-" + anchorID,
@@ -608,8 +611,10 @@ struct NativeChatTimelineView: View {
     private var isHistoryWindowLaidOut: Bool {
         let messages = messagesProvider()
         let startIndex = resolvedHistoryStartIndex(messages: messages)
-        return messages.indices.contains(startIndex) &&
-            laidOutHistoryFirstMessageID == ChatMessageProjector.messageId(for: messages[startIndex])
+        guard let firstVisible = messages.dropFirst(startIndex).first(where: ChatMessageProjector.isVisibleInTimeline) else {
+            return false
+        }
+        return laidOutHistoryFirstMessageID == ChatMessageProjector.messageId(for: firstVisible)
     }
 
     private func restoreHistoryRevealAnchorIfReady(using proxy: ScrollViewProxy) {
@@ -975,6 +980,9 @@ struct NativeChatTimelineView: View {
     }
 
     private func userMessageInsertionTransition(for entry: NativeTimelineEntry) -> AnyTransition {
+        if let message = entry.message, ChatMessageProjector.isSubAgentResult(message) {
+            return reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8))
+        }
         guard !reduceMotion,
               entry.canAnimateInsertion,
               entry.role == MessageRole.user else { return .identity }
@@ -989,7 +997,7 @@ struct NativeChatTimelineView: View {
             nativeStreamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
         }
         if event == .assistantStreamDelta,
-           let last = messages.last,
+           let last = messages.last(where: ChatMessageProjector.isConversationMessage),
            last.role == MessageRole.assistant {
             streamedMessageIDs.insert(ChatMessageProjector.messageId(for: last))
         } else {
@@ -1007,7 +1015,7 @@ struct NativeChatTimelineView: View {
 
     private func effectiveStreamedMessageIDsForRender(event: ChatEvent, messages: [UIMessage]) -> Set<String> {
         if event == .assistantStreamDelta,
-           let last = messages.last,
+           let last = messages.last(where: ChatMessageProjector.isConversationMessage),
            last.role == MessageRole.assistant {
             var next = streamedMessageIDs
             next.insert(ChatMessageProjector.messageId(for: last))
@@ -1073,7 +1081,7 @@ struct NativeChatTimelineView: View {
         else { return }
         let message = indexedMessage.element
         let messageID = ChatMessageProjector.messageId(for: message)
-        let isLast = indexedMessage.offset == messages.count - 1
+        let isLast = indexedMessage.offset == messages.lastIndex(where: ChatMessageProjector.isVisibleInTimeline)
         let isStreaming = signal.event == .assistantStreamDelta && isLast
         let row = ChatMessageRowModel(
             rowId: messageID,
@@ -2057,7 +2065,7 @@ struct ChatSwiftUIMessageList: View {
                 messages: messages,
                 event: signal.event,
                 streamedMessageIDs: streamedMessageIDs,
-                includePendingAssistant: (isGenerationActive || isLoading) && messages.last?.role == MessageRole.user,
+                includePendingAssistant: (isGenerationActive || isLoading) && messages.last(where: ChatMessageProjector.isConversationMessage)?.role == MessageRole.user,
                 // SwiftUI 列表路径不消费 renderToken,跳过逐行 token 计算。
                 includeRenderTokens: false
             )
@@ -2147,6 +2155,9 @@ struct ChatSwiftUIMessageList: View {
     }
 
     private func userMessageInsertionTransition(for row: ChatMessageRowModel) -> AnyTransition {
+        if ChatMessageProjector.isSubAgentResult(row.message) {
+            return reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 8))
+        }
         guard !reduceMotion,
               row.canAnimateInsertion,
               row.role == MessageRole.user else { return .identity }
@@ -2240,7 +2251,7 @@ struct ChatSwiftUIMessageList: View {
              .generationHandedOffToBackground:
             if ChatSwiftUIExplicitBottomLiveTailPolicy.shouldCancelAtTerminal(
                 forceActive: explicitBottomForcesLiveTail,
-                hasAssistantTail: messages.last?.role == MessageRole.assistant
+                hasAssistantTail: messages.last(where: ChatMessageProjector.isConversationMessage)?.role == MessageRole.assistant
             ) {
                 cancelExplicitBottomAnimation()
             }
@@ -2560,7 +2571,7 @@ struct ChatSwiftUIMessageList: View {
         // 一轮 body 重求值(即使集合没变)。结构性事件才走完整清理分支。
         if event == .assistantStreamDelta {
             if event.remembersStreamingRenderer,
-               let last = messages.last,
+               let last = messages.last(where: ChatMessageProjector.isConversationMessage),
                last.role == MessageRole.assistant {
                 let lastID = ChatMessageProjector.messageId(for: last)
                 if !streamedMessageIDs.contains(lastID) {
@@ -2578,7 +2589,7 @@ struct ChatSwiftUIMessageList: View {
             streamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
         default:
             if event.remembersStreamingRenderer,
-               let last = messages.last,
+               let last = messages.last(where: ChatMessageProjector.isConversationMessage),
                last.role == MessageRole.assistant {
                 streamedMessageIDs.insert(ChatMessageProjector.messageId(for: last))
             }

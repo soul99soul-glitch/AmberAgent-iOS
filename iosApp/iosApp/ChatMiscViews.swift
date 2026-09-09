@@ -442,11 +442,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     /// Finite stand-in for "unbounded". `.greatestFiniteMagnitude` makes
     /// TextKit line-fragment math pathologically slow (Chat `ParagraphUIView`).
     private static let unboundedMeasuringHeight: CGFloat = 10_000_000
-    /// Live thinking is height-capped at 180pt. Keep a tail window in TextKit
-    /// so a 100k-character Gemini thought does not relayout the whole document
-    /// every 48ms. Full text is restored when thinking ends or the user scrolls.
-    private static let liveStorageWindowUTF16 = 6_000
-    private static let liveStorageTrimUTF16 = 12_000
+    // Keep the same bounded window during streaming, manual scrolling, and
+    // completion. Restoring full text here would reintroduce the layout stall.
 
     private static let wordFadeDuration: CFTimeInterval = 0.5
 
@@ -462,6 +459,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     private static let followSettleDuration: CFTimeInterval = 0.12
 
     private var renderedText = ""
+    private var textWindow = ChatTextWindow()
+    private var renderedOmissionNotice: String?
     private var storageText = ""
     private var renderedFont: UIFont?
     private var renderedColor: UIColor?
@@ -546,22 +545,20 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         font = newFont
         textColor = resolvedColor
 
-        if newText == renderedText, !styleChanged {
+        if newText == renderedText, !styleChanged,
+           textWindow.omissionNotice == renderedOmissionNotice {
             if !animatesNewWords {
                 finishWordFades()
-                expandToFullTextIfNeeded()
             }
             requestBottomFollow()
             return
         }
 
         let oldText = renderedText
-        let isLogicalAppend = !styleChanged && newText.hasPrefix(oldText)
-        let targetStorage = nextDisplaySlice(
-            fullText: newText,
-            isLive: animatesNewWords,
-            isLogicalAppend: isLogicalAppend
-        )
+        let previousWindowText = textWindow.text
+        let sourceAppended = textWindow.update(newText)
+        let isLogicalAppend = !styleChanged && sourceAppended
+        let targetStorage = textWindow.displayText
         let attributes: [NSAttributedString.Key: Any] = [
             .font: newFont,
             .foregroundColor: resolvedColor,
@@ -580,75 +577,90 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
             } else {
                 finishWordFades()
             }
-        } else if targetStorage != storageText {
+        } else if isLogicalAppend, slideWindow(
+            from: previousWindowText,
+            addedLength: newText.utf16.count - oldText.utf16.count,
+            attributes: attributes,
+            animatesNewWords: animatesNewWords
+        ) {
+            // Retained glyphs keep their in-flight fade as the prefix leaves.
+        } else if targetStorage != storageText || styleChanged {
             finishWordFades()
             attributedText = NSAttributedString(string: targetStorage, attributes: attributes)
             lastUnconstrainedHeight = 0
             lastMeasureWidth = 0
-            if storageText.isEmpty, animatesNewWords, !targetStorage.isEmpty {
-                appendTailFade(in: NSRange(location: 0, length: textStorage.length))
+            if animatesNewWords, !targetStorage.isEmpty,
+               isLogicalAppend || storageText.isEmpty {
+                let addedLength = isLogicalAppend
+                    ? max(0, newText.utf16.count - oldText.utf16.count)
+                    : textStorage.length
+                let fadeLength = min(addedLength, textWindow.text.utf16.count)
+                appendTailFade(in: NSRange(
+                    location: textStorage.length - fadeLength,
+                    length: fadeLength
+                ))
             }
         } else if !animatesNewWords {
             finishWordFades()
         }
         renderedText = newText
+        renderedOmissionNotice = textWindow.omissionNotice
         storageText = targetStorage
 
-        if !isLogicalAppend || !animatesNewWords {
-            accessibilityLabel = newText
-        }
+        accessibilityLabel = targetStorage
         followSettleUntil = CACurrentMediaTime() + Self.followSettleDuration
         requestBottomFollow()
     }
 
-    private func nextDisplaySlice(
-        fullText: String,
-        isLive: Bool,
-        isLogicalAppend: Bool
-    ) -> String {
-        if !isLive { return fullText }
-        let fullNS = fullText as NSString
-        if fullNS.length <= Self.liveStorageTrimUTF16 { return fullText }
-        if isLogicalAppend, !storageText.isEmpty {
-            let oldLength = (renderedText as NSString).length
-            let added = fullNS.substring(from: min(oldLength, fullNS.length))
-            let grown = storageText + added
-            let grownNS = grown as NSString
-            if grownNS.length <= Self.liveStorageTrimUTF16 {
-                return grown
-            }
-            return grownNS.substring(from: grownNS.length - Self.liveStorageWindowUTF16)
+    private func slideWindow(
+        from oldBody: String,
+        addedLength: Int,
+        attributes: [NSAttributedString.Key: Any],
+        animatesNewWords: Bool
+    ) -> Bool {
+        let body = textWindow.text as NSString
+        let retainedLength = body.length - addedLength
+        let old = oldBody as NSString
+        guard addedLength > 0, retainedLength > 0, retainedLength <= old.length,
+              body.substring(to: retainedLength) == old.substring(from: old.length - retainedLength)
+        else { return false }
+
+        let removedLength = textStorage.length - retainedLength
+        let notice = textWindow.omissionNotice.map { $0 + "\n" } ?? ""
+        let noticeLength = notice.utf16.count
+        let retainedRange = NSRange(location: removedLength, length: retainedLength)
+        activeWordFades = activeWordFades.compactMap { fade in
+            let overlap = NSIntersectionRange(fade.range, retainedRange)
+            guard overlap.length > 0 else { return nil }
+            return WordFade(
+                startTime: fade.startTime,
+                duration: fade.duration,
+                range: NSRange(location: overlap.location - removedLength + noticeLength,
+                               length: overlap.length)
+            )
         }
-        return fullNS.substring(from: fullNS.length - Self.liveStorageWindowUTF16)
+        textStorage.beginEditing()
+        textStorage.replaceCharacters(
+            in: NSRange(location: 0, length: removedLength),
+            with: NSAttributedString(string: notice, attributes: attributes)
+        )
+        textStorage.append(NSAttributedString(
+            string: body.substring(from: retainedLength), attributes: attributes
+        ))
+        textStorage.endEditing()
+        lastUnconstrainedHeight = 0
+        lastMeasureWidth = 0
+        if animatesNewWords {
+            appendTailFade(in: NSRange(location: noticeLength + retainedLength, length: addedLength))
+        } else {
+            finishWordFades()
+        }
+        return true
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         followsBottom = false
         followSettleUntil = 0
-        expandToFullTextIfNeeded()
-    }
-
-    private func expandToFullTextIfNeeded() {
-        guard storageText != renderedText,
-              let renderedFont,
-              let renderedColor else { return }
-        let oldHeight = contentSize.height
-        let oldOffset = contentOffset.y
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: renderedFont,
-            .foregroundColor: renderedColor,
-        ]
-        attributedText = NSAttributedString(string: renderedText, attributes: attributes)
-        storageText = renderedText
-        lastUnconstrainedHeight = 0
-        lastMeasureWidth = 0
-        accessibilityLabel = renderedText
-        layoutIfNeeded()
-        let extra = max(0, contentSize.height - oldHeight)
-        setContentOffset(
-            CGPoint(x: contentOffset.x, y: oldOffset + extra),
-            animated: false
-        )
     }
 
     private func updateFollowOwnership() {

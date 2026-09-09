@@ -128,7 +128,10 @@ struct MessageBubbleView: View {
 
     var body: some View {
         Group {
-            if isUser {
+            if ChatMessageProjector.isSubAgentResult(message) {
+                ChatSubAgentResultCard(message: message, displaySetting: displaySetting)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else if isUser {
                 HStack {
                     Spacer(minLength: 48)
 

@@ -2,6 +2,353 @@ import Shared
 import SwiftUI
 import UIKit
 
+/// Incremental presentation state for a live MiniApp payload.
+///
+/// The message still owns the complete raw payload. This state keeps that
+/// payload to distinguish an append from a replacement and to preserve the
+/// bare-HTML fallback, while the JSON decoder consumes just the new suffix.
+/// The decoded source is kept
+/// intact for the presentation window's count and tail; only the returned text
+/// is capped at `ChatTextWindow.limit`.
+struct IOSMiniAppStreamingCodePreviewState {
+    private enum ScanState {
+        case searchingHTMLKey
+        case waitingForHTMLValue
+        case readingHTMLValue
+        case finishedHTMLValue
+    }
+
+    private enum EscapeState {
+        case normal
+        case escaped
+        case unicode
+    }
+
+    private static let htmlKey = Array("\"html\"")
+    private static let bareHTMLOverlapLength = 13
+    private static let doctypeMarker = "<!DOCTYPE html"
+    private static let htmlMarker = "<html"
+
+    private var rawSource = ""
+    private var rawSourceUTF8Count = 0
+    private var rawCharacterCount = 0
+    private var rawSearchTail = ""
+    private var rawHTMLStartCharacter: Int?
+    private var bareHTMLSource = ""
+    private var scanState: ScanState = .searchingHTMLKey
+    private var htmlKeyProgress = 0
+    private var escapeState: EscapeState = .normal
+    private var unicodeDigits = ""
+    private var pendingHighSurrogate: UInt16?
+    private var decodedHTML = ""
+    private var decodedCharacterCount = 0
+    private(set) var displayText = ""
+
+    init(_ source: String = "") {
+        update(source)
+    }
+
+    private static func characterCountAfterAppending(
+        _ delta: String,
+        to source: String,
+        currentCount: Int
+    ) -> Int {
+        guard !delta.isEmpty else { return currentCount }
+        guard let last = source.last else {
+            return currentCount + delta.count
+        }
+        // Recount the boundary grapheme. A streamed chunk can begin with a
+        // combining mark or joiner that extends the preceding Character.
+        return currentCount + (String(last) + delta).count - 1
+    }
+
+    /// Consumes a new cumulative payload. The single prefix check is needed
+    /// because the current message API supplies snapshots rather than deltas;
+    /// decoding itself remains incremental for ordinary streaming appends.
+    @discardableResult
+    mutating func update(_ next: String) -> Bool {
+        if next == rawSource {
+            refreshDisplay()
+            return false
+        }
+
+        let isAppend = !rawSource.isEmpty && next.utf8.starts(with: rawSource.utf8)
+        let delta: String
+        let rawCharacterCountBeforeDelta: Int
+        if isAppend {
+            delta = String(decoding: next.utf8.dropFirst(rawSourceUTF8Count), as: UTF8.self)
+            rawCharacterCountBeforeDelta = rawCharacterCount
+            rawCharacterCount = Self.characterCountAfterAppending(
+                delta,
+                to: rawSource,
+                currentCount: rawCharacterCount
+            )
+            rawSourceUTF8Count += delta.utf8.count
+        } else {
+            resetDecoder()
+            delta = next
+            rawCharacterCountBeforeDelta = 0
+            rawCharacterCount = next.count
+            rawSourceUTF8Count = next.utf8.count
+        }
+
+        consume(delta)
+        rawSource = next
+        scanBareHTML(in: delta, absoluteStart: rawCharacterCountBeforeDelta)
+        refreshDisplay()
+        return isAppend
+    }
+
+    /// Flushes an incomplete final escape/surrogate when a live response ends.
+    /// Valid streams do not need this, but it prevents the last malformed piece
+    /// from disappearing if a provider stops immediately after `\\u12`.
+    mutating func finish() {
+        guard scanState == .readingHTMLValue else {
+            refreshDisplay()
+            return
+        }
+        var suffix = ""
+        flushIncompleteValue(into: &suffix)
+        appendDecoded(suffix)
+        refreshDisplay()
+    }
+
+    private mutating func resetDecoder() {
+        scanState = .searchingHTMLKey
+        htmlKeyProgress = 0
+        escapeState = .normal
+        unicodeDigits.removeAll(keepingCapacity: true)
+        pendingHighSurrogate = nil
+        rawSearchTail.removeAll(keepingCapacity: true)
+        rawHTMLStartCharacter = nil
+        bareHTMLSource.removeAll(keepingCapacity: true)
+        decodedHTML.removeAll(keepingCapacity: true)
+        decodedCharacterCount = 0
+    }
+
+    private mutating func scanBareHTML(in delta: String, absoluteStart: Int) {
+        guard decodedHTML.isEmpty else { return }
+        guard rawHTMLStartCharacter == nil else {
+            bareHTMLSource.append(contentsOf: delta)
+            return
+        }
+
+        let candidatePrefix = rawSearchTail
+        let candidate = candidatePrefix + delta
+        guard let marker = candidate.range(of: Self.doctypeMarker, options: .caseInsensitive)
+            ?? candidate.range(of: Self.htmlMarker, options: .caseInsensitive) else {
+            rawSearchTail = String(candidate.suffix(Self.bareHTMLOverlapLength))
+            return
+        }
+
+        let markerOffset = candidate.distance(from: candidate.startIndex, to: marker.lowerBound)
+        let start = max(0, absoluteStart - candidatePrefix.count + markerOffset)
+        rawHTMLStartCharacter = start
+        bareHTMLSource = String(rawSource.dropFirst(start))
+        rawSearchTail.removeAll(keepingCapacity: true)
+    }
+
+    private mutating func consume(_ delta: String) {
+        guard !delta.isEmpty else { return }
+        var decodedDelta = ""
+        decodedDelta.reserveCapacity(min(delta.utf8.count, 16_384))
+        for character in delta {
+            consume(character, into: &decodedDelta)
+        }
+        appendDecoded(decodedDelta)
+    }
+
+    private mutating func consume(_ character: Character, into output: inout String) {
+        var current: Character? = character
+        while let character = current {
+            current = nil
+            switch scanState {
+            case .searchingHTMLKey:
+                if character == Self.htmlKey[htmlKeyProgress] {
+                    htmlKeyProgress += 1
+                    if htmlKeyProgress == Self.htmlKey.count {
+                        htmlKeyProgress = 0
+                        scanState = .waitingForHTMLValue
+                    }
+                } else {
+                    htmlKeyProgress = character == Self.htmlKey[0] ? 1 : 0
+                }
+
+            case .waitingForHTMLValue:
+                if character.isWhitespace || character == ":" {
+                    continue
+                }
+                if character == "\"" {
+                    scanState = .readingHTMLValue
+                    escapeState = .normal
+                    continue
+                }
+                // The first occurrence may have been text inside another
+                // string. Resume the same cheap key scan instead of getting
+                // stuck and missing a later real HTML field.
+                scanState = .searchingHTMLKey
+                htmlKeyProgress = character == Self.htmlKey[0] ? 1 : 0
+
+            case .readingHTMLValue:
+                consumeHTMLValueCharacter(character, into: &output, reprocess: &current)
+
+            case .finishedHTMLValue:
+                return
+            }
+        }
+    }
+
+    private mutating func consumeHTMLValueCharacter(
+        _ character: Character,
+        into output: inout String,
+        reprocess: inout Character?
+    ) {
+        switch escapeState {
+        case .normal:
+            if character == "\\" {
+                escapeState = .escaped
+            } else if character == "\"" {
+                flushPendingSurrogate(into: &output)
+                scanState = .finishedHTMLValue
+            } else {
+                flushPendingSurrogate(into: &output)
+                output.append(character)
+            }
+
+        case .escaped:
+            switch character {
+            case "n":
+                flushPendingSurrogate(into: &output)
+                output.append("\n")
+            case "r":
+                flushPendingSurrogate(into: &output)
+                output.append("\r")
+            case "t":
+                flushPendingSurrogate(into: &output)
+                output.append("\t")
+            case "b":
+                flushPendingSurrogate(into: &output)
+                output.append("\u{8}")
+            case "f":
+                flushPendingSurrogate(into: &output)
+                output.append("\u{c}")
+            case "\"", "\\", "/":
+                flushPendingSurrogate(into: &output)
+                output.append(character)
+            case "u":
+                unicodeDigits.removeAll(keepingCapacity: true)
+                escapeState = .unicode
+                return
+            default:
+                // Preserve the historical streaming behavior for an unknown
+                // escape: the slash is syntax and the character is content.
+                flushPendingSurrogate(into: &output)
+                output.append(character)
+            }
+            escapeState = .normal
+
+        case .unicode:
+            guard let scalar = character.unicodeScalars.first,
+                  scalar.value <= 0x7F,
+                  String(character).count == 1,
+                  "0123456789abcdefABCDEF".contains(character) else {
+                output.append("\\u")
+                output.append(contentsOf: unicodeDigits)
+                unicodeDigits.removeAll(keepingCapacity: true)
+                escapeState = .normal
+                reprocess = character
+                return
+            }
+            unicodeDigits.append(character)
+            guard unicodeDigits.count == 4 else { return }
+            let codeUnit = UInt16(unicodeDigits, radix: 16) ?? 0xFFFD
+            unicodeDigits.removeAll(keepingCapacity: true)
+            escapeState = .normal
+            appendUnicodeCodeUnit(codeUnit, into: &output)
+        }
+    }
+
+    private mutating func appendUnicodeCodeUnit(_ codeUnit: UInt16, into output: inout String) {
+        if let high = pendingHighSurrogate {
+            if (0xDC00...0xDFFF).contains(codeUnit) {
+                let scalar = 0x10000 +
+                    ((UInt32(high) - 0xD800) << 10) +
+                    (UInt32(codeUnit) - 0xDC00)
+                output.append(Character(UnicodeScalar(scalar)!))
+                pendingHighSurrogate = nil
+                return
+            }
+            output.append("\u{FFFD}")
+            pendingHighSurrogate = nil
+        }
+
+        if (0xD800...0xDBFF).contains(codeUnit) {
+            pendingHighSurrogate = codeUnit
+        } else if (0xDC00...0xDFFF).contains(codeUnit) {
+            output.append("\u{FFFD}")
+        } else {
+            output.append(Character(UnicodeScalar(codeUnit)!))
+        }
+    }
+
+    private mutating func flushPendingSurrogate(into output: inout String) {
+        guard pendingHighSurrogate != nil else { return }
+        output.append("\u{FFFD}")
+        pendingHighSurrogate = nil
+    }
+
+    private mutating func flushIncompleteValue(into output: inout String) {
+        switch escapeState {
+        case .normal:
+            break
+        case .escaped:
+            output.append("\\")
+        case .unicode:
+            output.append("\\u")
+            output.append(contentsOf: unicodeDigits)
+        }
+        unicodeDigits.removeAll(keepingCapacity: true)
+        escapeState = .normal
+        flushPendingSurrogate(into: &output)
+    }
+
+    private mutating func appendDecoded(_ text: String) {
+        guard !text.isEmpty else { return }
+        decodedCharacterCount = Self.characterCountAfterAppending(
+            text,
+            to: decodedHTML,
+            currentCount: decodedCharacterCount
+        )
+        decodedHTML.append(contentsOf: text)
+    }
+
+    private mutating func refreshDisplay() {
+        let source: String
+        let count: Int
+        if !decodedHTML.isEmpty {
+            source = decodedHTML
+            count = decodedCharacterCount
+        } else if let start = rawHTMLStartCharacter {
+            source = bareHTMLSource
+            count = rawCharacterCount - start
+        } else {
+            source = rawSource
+            count = rawCharacterCount
+        }
+        let tail = String(source.suffix(ChatTextWindow.limit))
+        guard count > ChatTextWindow.limit else {
+            displayText = tail
+            return
+        }
+        let notice = IOSAppLocalization.formatted(
+            "已省略 %lld 字",
+            defaultValue: "已省略 %lld 字",
+            arguments: [Int64(count - ChatTextWindow.limit)]
+        )
+        displayText = notice + "\n" + tail
+    }
+}
+
 /// Streaming MiniApp payload card: image-gen-like surface by default, tap to
 /// watch frontend/code stream, tap again to collapse. Replaces flat markdown
 /// while the model is emitting MiniApp JSON/HTML.
@@ -10,6 +357,7 @@ struct ChatMiniAppStreamingCard: View {
     var isGenerating: Bool = true
 
     @State private var showCode = false
+    @State private var previewState = IOSMiniAppStreamingCodePreviewState()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var hasCode: Bool {
@@ -27,7 +375,7 @@ struct ChatMiniAppStreamingCard: View {
     }
 
     private var displayCode: String {
-        Self.codePreview(from: text)
+        previewState.displayText
     }
 
     var body: some View {
@@ -59,6 +407,16 @@ struct ChatMiniAppStreamingCard: View {
             showCode ? "显示预览" : "显示代码",
             defaultValue: showCode ? "显示预览" : "显示代码"
         )), toggleMode)
+        .onAppear {
+            previewState.update(text)
+            if !isGenerating { previewState.finish() }
+        }
+        .onChange(of: text) { _, newValue in
+            previewState.update(newValue)
+        }
+        .onChange(of: isGenerating) { _, generating in
+            if !generating { previewState.finish() }
+        }
     }
 
     private func cardShell<Content: View>(@ViewBuilder content: () -> Content) -> some View {
@@ -129,9 +487,10 @@ struct ChatMiniAppStreamingCard: View {
     }
 
     private var codeBody: some View {
-        ScrollViewReader { proxy in
+        let code = displayCode
+        return ScrollViewReader { proxy in
             ScrollView {
-                Text(displayCode.isEmpty ? " " : displayCode)
+                Text(code.isEmpty ? " " : code)
                     .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                     .foregroundStyle(AmberTheme.foreground2)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -147,7 +506,7 @@ struct ChatMiniAppStreamingCard: View {
             .padding(.bottom, 10)
             // Streaming: disable selection so parent card tap can collapse.
             // (Selection while generating fights the toggle gesture.)
-            .onChange(of: displayCode) { _, _ in
+            .onChange(of: code) { _, _ in
                 guard isGenerating else { return }
                 if reduceMotion {
                     proxy.scrollTo("miniapp-code-bottom", anchor: .bottom)
@@ -178,68 +537,11 @@ struct ChatMiniAppStreamingCard: View {
     /// Prefer decoded `"html"` field while JSON is streaming; fall back to a bare HTML
     /// document if present; otherwise show the full payload so partial output still paints.
     static func codePreview(from text: String) -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "" }
-        // JSON payloads embed HTML as escaped text — decode that first so code mode
-        // shows real frontend source instead of `\"` / `\n` soup.
-        if trimmed.contains("\"html\""), let unescaped = unescapedHTMLField(from: trimmed) {
-            return unescaped
-        }
-        if let doctype = trimmed.range(of: "<!DOCTYPE html", options: .caseInsensitive)
-            ?? trimmed.range(of: "<html", options: .caseInsensitive) {
-            return String(trimmed[doctype.lowerBound...])
-        }
-        return trimmed
-    }
-
-    private static func unescapedHTMLField(from text: String) -> String? {
-        // Cheap scan for `"html":"..."` while the model is still streaming.
-        guard let key = text.range(of: "\"html\"") else { return nil }
-        var index = key.upperBound
-        while index < text.endIndex, text[index].isWhitespace || text[index] == ":" {
-            index = text.index(after: index)
-        }
-        guard index < text.endIndex, text[index] == "\"" else { return nil }
-        index = text.index(after: index)
-        var result = ""
-        result.reserveCapacity(min(text.distance(from: index, to: text.endIndex), 16_384))
-        var escaped = false
-        while index < text.endIndex {
-            let ch = text[index]
-            if escaped {
-                switch ch {
-                case "n": result.append("\n")
-                case "r": result.append("\r")
-                case "t": result.append("\t")
-                case "\"", "\\", "/": result.append(ch)
-                case "u":
-                    // Skip \uXXXX if complete; otherwise keep raw.
-                    let hexStart = text.index(after: index)
-                    if let hexEnd = text.index(hexStart, offsetBy: 4, limitedBy: text.endIndex),
-                       let scalar = UInt32(text[hexStart..<hexEnd], radix: 16),
-                       let unicode = UnicodeScalar(scalar) {
-                        result.append(Character(unicode))
-                        index = hexEnd
-                        escaped = false
-                        continue
-                    }
-                    result.append(ch)
-                default:
-                    result.append(ch)
-                }
-                escaped = false
-            } else if ch == "\\" {
-                escaped = true
-            } else if ch == "\"" {
-                break
-            } else {
-                result.append(ch)
-            }
-            index = text.index(after: index)
-            if result.count > 48_000 { break }
-        }
-        let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? nil : cleaned
+        var state = IOSMiniAppStreamingCodePreviewState(
+            text.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        state.finish()
+        return state.displayText
     }
 }
 

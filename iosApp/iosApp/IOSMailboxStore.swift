@@ -15,6 +15,9 @@ final class IOSMailboxStore {
     /// 只传渲染所需的字符串字段（转换在 DAO 回调内完成，遵循仓库既有模式——
     /// 参考 `recordedAgentRunBelongsToConversation` 的回调内归约）。
     struct EnvelopeSnapshot: Sendable {
+        /// Durable envelope identity is also the idempotency key for the
+        /// rendered UI message during terminal-resume races.
+        let id: String
         let authorThreadId: String
         let type: String
         let payload: String
@@ -29,6 +32,22 @@ final class IOSMailboxStore {
         self.mailboxDaoProvider = mailboxDao
     }
 
+    /// Idle UI may preview reports, but only the run boundary acknowledges
+    /// delivery. A user starting a run during this read cannot lose its mail.
+    func pendingResults(forConversationId conversationId: KotlinUuid) async throws -> [EnvelopeSnapshot] {
+        try await withCheckedThrowingContinuation { continuation in
+            mailboxDao.pendingForRecipient(recipientId: conversationId.toHexDashString()) { result, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                continuation.resume(returning: (result ?? []).filter { $0.type == "FINAL_ANSWER" }.map {
+                    EnvelopeSnapshot(id: $0.id, authorThreadId: $0.authorThreadId, type: $0.type, payload: $0.payload)
+                })
+            }
+        }
+    }
+
     /// drain 该会话（根线程地址 = conversationId hex-dash，与 agent_run.conversation_id
     /// 同格式）的全部未投递信封（FIFO），并在同一事务标记 delivered。二次调用返回空。
     func drainPending(forConversationId conversationId: KotlinUuid?) async -> [EnvelopeSnapshot] {
@@ -39,6 +58,7 @@ final class IOSMailboxStore {
             mailboxDao.drainPending(recipientId: recipientId, deliveredAt: deliveredAt) { result, _ in
                 let snapshots = (result ?? []).map { entity in
                     EnvelopeSnapshot(
+                        id: entity.id,
                         authorThreadId: entity.authorThreadId,
                         type: entity.type,
                         payload: entity.payload
