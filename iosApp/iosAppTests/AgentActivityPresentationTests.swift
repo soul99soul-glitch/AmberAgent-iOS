@@ -3,6 +3,30 @@ import ActivityKit
 @testable import iosApp
 
 final class AgentActivityPresentationTests: XCTestCase {
+    func testActivityCopyReadsEverySupportedLanguageFromItsLocalizedTable() {
+        let expected: [String: String] = [
+            "en": "Generating",
+            "zh-Hans": "正在生成",
+            "zh-Hant": "產生中",
+            "ja": "生成中",
+            "ko": "생성 중",
+            "ru": "Генерация",
+        ]
+
+        for (languageCode, value) in expected {
+            XCTAssertEqual(
+                AgentActivityCopy.text(
+                    "agent.activity.stage.generating",
+                    languageCode: languageCode
+                ),
+                value,
+                languageCode
+            )
+        }
+        XCTAssertEqual(AgentActivityStage.waitingForConfirmation.localizedCompactTitle(languageCode: "en"), "Confirm")
+        XCTAssertEqual(AgentActivityStage.failed.localizedCompactTitle(languageCode: "en"), "Failed")
+    }
+
     func testIndeterminateAgentWorkHasNoProgress() {
         let presentation = AgentActivityPresentation.generatingResponse(
             modelName: "private-model-name"
@@ -407,22 +431,6 @@ final class AgentActivityPresentationTests: XCTestCase {
             ),
             ["run-a-new", "run-b"]
         )
-    }
-
-    func testOrbAnimationDurationUsesResolvedStateSpeedWithinWidgetLimit() {
-        for state in OrbState.allCases {
-            let speed = orbResolvePreset(state, .small).speed
-            let duration = AgentActivityOrbAnimationTiming.duration(speed: speed)
-
-            XCTAssertEqual(
-                duration,
-                min(2, (2 * Double.pi) / speed),
-                accuracy: 0.000_001,
-                "\(state)"
-            )
-            XCTAssertGreaterThan(duration, 0, "\(state)")
-            XCTAssertLessThanOrEqual(duration, 2, "\(state)")
-        }
     }
 
     func testNewPayloadDoesNotEncodeLegacyTextFields() throws {

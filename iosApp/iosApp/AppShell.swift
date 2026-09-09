@@ -622,7 +622,7 @@ struct AppShell: View {
         let sourceURL = pendingAgentActivityURL
         let conversationSelectionRevision = conversationStore.conversationSwitchedRevision
 
-        guard let summary = conversationStore.summaries.first(where: {
+        guard let summary = conversationStore.allSummaries.first(where: {
             $0.id.toHexDashString().caseInsensitiveCompare(target.conversationId) == .orderedSame
         }) else {
             pendingAgentActivityTarget = nil
@@ -654,6 +654,13 @@ struct AppShell: View {
               pendingAgentActivityURL == sourceURL else { return }
         guard conversationStore.conversationSwitchedRevision == conversationSelectionRevision else { return }
         guard ownsRecordedRun else { return }
+        if !conversationStore.summaries.contains(where: { $0.id == summary.id }) {
+            rootRouter.navigate(to: .subAgentConversation(id: summary.id.toHexDashString()))
+            if let sourceURL { IOSDeepLinkInbox.shared.acknowledge(sourceURL) }
+            pendingAgentActivityTarget = nil
+            pendingAgentActivityURL = nil
+            return
+        }
         // A confirmation may already be resolved before a durable Watch
         // handoff is consumed. Its verified conversation remains a valid
         // destination; navigation never approves or resumes that old prompt.

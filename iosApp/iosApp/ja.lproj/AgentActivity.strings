@@ -40,11 +40,11 @@
 "agent.activity.compact.thinking" = "思考中";
 "agent.activity.compact.searching" = "検索中";
 "agent.activity.compact.readingSources" = "閲覧中";
-"agent.activity.compact.readingWeb" = "Web閲覧中";
+"agent.activity.compact.readingWeb" = "閲覧中";
 "agent.activity.compact.generating" = "生成中";
 "agent.activity.compact.generatingImage" = "描画中";
 "agent.activity.compact.organizing" = "整理中";
-"agent.activity.compact.readingDocument" = "ファイル読込中";
+"agent.activity.compact.readingDocument" = "読込中";
 "agent.activity.compact.updatingMemory" = "更新中";
 "agent.activity.compact.runningTool" = "処理中";
 
@@ -58,3 +58,10 @@
 "agent.activity.metric.item.progress" = "%ld / %ld件の項目";
 "agent.activity.control.cancel" = "キャンセル";
 "agent.activity.control.retry" = "再試行";
+
+"agent.activity.compact.waitingForConfirmation" = "確認待ち";
+"agent.activity.compact.reconnecting" = "再接続中";
+"agent.activity.compact.stale" = "期限切れ";
+"agent.activity.compact.completed" = "完了";
+"agent.activity.compact.failed" = "未完了";
+"agent.activity.compact.cancelled" = "停止";

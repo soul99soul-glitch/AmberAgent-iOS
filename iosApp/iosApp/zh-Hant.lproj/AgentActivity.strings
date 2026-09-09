@@ -40,11 +40,11 @@
 "agent.activity.compact.thinking" = "思考中";
 "agent.activity.compact.searching" = "搜尋中";
 "agent.activity.compact.readingSources" = "閱讀中";
-"agent.activity.compact.readingWeb" = "閱讀網頁";
+"agent.activity.compact.readingWeb" = "閱讀中";
 "agent.activity.compact.generating" = "產生中";
 "agent.activity.compact.generatingImage" = "繪圖中";
 "agent.activity.compact.organizing" = "整理中";
-"agent.activity.compact.readingDocument" = "讀取檔案";
+"agent.activity.compact.readingDocument" = "閱讀中";
 "agent.activity.compact.updatingMemory" = "更新中";
 "agent.activity.compact.runningTool" = "處理中";
 
@@ -58,3 +58,10 @@
 "agent.activity.metric.item.progress" = "%ld / %ld 個項目";
 "agent.activity.control.cancel" = "取消";
 "agent.activity.control.retry" = "重試";
+
+"agent.activity.compact.waitingForConfirmation" = "待確認";
+"agent.activity.compact.reconnecting" = "重連中";
+"agent.activity.compact.stale" = "已過期";
+"agent.activity.compact.completed" = "已完成";
+"agent.activity.compact.failed" = "未完成";
+"agent.activity.compact.cancelled" = "已停止";

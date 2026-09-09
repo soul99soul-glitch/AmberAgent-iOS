@@ -40,12 +40,12 @@
 "agent.activity.compact.thinking" = "생각 중";
 "agent.activity.compact.searching" = "검색 중";
 "agent.activity.compact.readingSources" = "읽는 중";
-"agent.activity.compact.readingWeb" = "웹 읽는 중";
+"agent.activity.compact.readingWeb" = "읽는 중";
 "agent.activity.compact.generating" = "생성 중";
 "agent.activity.compact.generatingImage" = "그리는 중";
 "agent.activity.compact.organizing" = "정리 중";
-"agent.activity.compact.readingDocument" = "파일 읽는 중";
-"agent.activity.compact.updatingMemory" = "업데이트 중";
+"agent.activity.compact.readingDocument" = "읽는 중";
+"agent.activity.compact.updatingMemory" = "갱신 중";
 "agent.activity.compact.runningTool" = "작업 중";
 
 "agent.activity.metric.source.count" = "%ld개 출처 조회됨";
@@ -58,3 +58,10 @@
 "agent.activity.metric.item.progress" = "%ld / %ld개 항목";
 "agent.activity.control.cancel" = "취소";
 "agent.activity.control.retry" = "재시도";
+
+"agent.activity.compact.waitingForConfirmation" = "확인 대기";
+"agent.activity.compact.reconnecting" = "재연결 중";
+"agent.activity.compact.stale" = "만료됨";
+"agent.activity.compact.completed" = "완료";
+"agent.activity.compact.failed" = "실패";
+"agent.activity.compact.cancelled" = "중지";

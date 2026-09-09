@@ -178,6 +178,7 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
     private var operationTask: Task<IOSAgentToolEngineResult, Never>?
     private var expiredOperationTask: Task<IOSAgentToolEngineResult, Never>?
     private var speedClock = ChatGenerationSpeedClock()
+    private var presentationStage: AgentActivityStage = .preparing
 
     var isExpired: Bool {
         lock.lock()
@@ -238,7 +239,29 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
     func resetGenerationRound() {
         lock.lock()
         speedClock.resetRound()
+        presentationStage = .preparing
         lock.unlock()
+    }
+
+    func nextPresentationStage(_ candidate: AgentActivityStage) -> AgentActivityStage? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let next = AgentActivityResponseStagePolicy.nextPublishedStage(
+            current: presentationStage,
+            candidate: candidate
+        ) else {
+            return nil
+        }
+        presentationStage = next
+        return next
+    }
+
+    func shouldPublishPresentationStage(_ stage: AgentActivityStage) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return terminalOwner == nil
+            && !terminalFinalized
+            && presentationStage == stage
     }
 
     func noteVisibleDelta() {
@@ -1265,6 +1288,11 @@ final class IOSChatBackgroundGenerationCoordinator {
         let runState = activeRunStates[requestId] ?? IOSChatBackgroundRunState()
         activeRunStates[requestId] = runState
         runState.resetGenerationRound()
+        await publishRunningPresentation(
+            AgentActivityPresentation.response(stage: .preparing),
+            for: job,
+            runState: runState
+        )
         let accumulator = IOSChatDurableResponseAccumulator(
             displayMessages: job.displayMessages,
             model: job.params.model
@@ -1284,7 +1312,20 @@ final class IOSChatBackgroundGenerationCoordinator {
                         if ChatGenerationSpeedClock.chunkHasVisibleContent(chunk) {
                             runState.noteVisibleDelta()
                         }
-                        job.messagesSnapshot.replace(with: accumulator.append(chunk))
+                        let messages = accumulator.append(chunk)
+                        job.messagesSnapshot.replace(with: messages)
+                        if let candidate = Self.resumePresentationStage(for: chunk),
+                           let stage = runState.nextPresentationStage(candidate) {
+                            Task { @MainActor [weak self] in
+                                guard let self else { return }
+                                guard runState.shouldPublishPresentationStage(stage) else { return }
+                                await self.publishRunningPresentation(
+                                    AgentActivityPresentation.response(stage: stage),
+                                    for: job,
+                                    runState: runState
+                                )
+                            }
+                        }
                     },
                     onCheckpoint: { _, _ in },
                     onComplete: {
@@ -2254,6 +2295,17 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
         let succeeded = runStatus == .completed
+        let terminalPresentation: AgentActivityPresentation
+        if succeeded {
+            terminalPresentation = .completed()
+        } else {
+            terminalPresentation = await backgroundFailurePresentation(
+                job: job,
+                didSave: didSave,
+                status: runStatus,
+                finalMessages: finalMessages
+            )
+        }
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         if succeeded {
             IOSMemoryExtractionCoordinator.shared.enqueue(
@@ -2278,14 +2330,14 @@ final class IOSChatBackgroundGenerationCoordinator {
             WatchTaskCoordinator.shared.publish(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
-                presentation: .failed(),
+                presentation: terminalPresentation,
                 summary: guardStoppedNotice.flatMap { WatchTaskText.clipped($0, maxLength: 200) }
                     ?? (miniAppFailed ? watchSummary : nil)
             )
         }
         await job.liveActivityController.end(
             runId: job.runId,
-            presentation: succeeded ? .completed() : .failed()
+            presentation: terminalPresentation
         )
         progress.completedUnitCount = progress.totalUnitCount
         if runState.claimSystemTaskCompletion() {
@@ -2323,9 +2375,10 @@ final class IOSChatBackgroundGenerationCoordinator {
         if didSave {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
         }
+        let recordedStatus: AgentRunStatus = didSave ? .failed : .recoveryPending
         guard await recordRun(
             job.runId,
-            status: didSave ? .failed : .recoveryPending,
+            status: recordedStatus,
             conversationId: job.conversationId
         ) else {
             releaseRuntimeOwnership(requestId: backgroundTask.identifier)
@@ -2334,11 +2387,18 @@ final class IOSChatBackgroundGenerationCoordinator {
         let didFinalize = runState.finalizeTerminal()
         guard didFinalize else {
             if runState.terminalIsOwned(by: .expiration) {
+                let failurePresentation = await backgroundFailurePresentation(
+                    job: job,
+                    didSave: didSave,
+                    status: recordedStatus,
+                    finalMessages: finalMessages
+                )
                 _ = await publishTruncatedTerminal(
                     job: job,
                     requestId: backgroundTask.identifier,
                     didSave: didSave,
-                    summary: Self.backgroundSummary(from: finalMessages)
+                    summary: Self.backgroundSummary(from: finalMessages),
+                    presentation: failurePresentation
                 )
             }
             return
@@ -2358,11 +2418,18 @@ final class IOSChatBackgroundGenerationCoordinator {
             return
         }
 
+        let failurePresentation = await backgroundFailurePresentation(
+            job: job,
+            didSave: didSave,
+            status: recordedStatus,
+            finalMessages: finalMessages
+        )
         guard await publishTruncatedTerminal(
             job: job,
             requestId: backgroundTask.identifier,
             didSave: true,
-            summary: Self.backgroundSummary(from: finalMessages)
+            summary: Self.backgroundSummary(from: finalMessages),
+            presentation: failurePresentation
         ) else { return }
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         backgroundTask.updateTitle(
@@ -2379,15 +2446,16 @@ final class IOSChatBackgroundGenerationCoordinator {
         job: IOSChatBackgroundRuntimeJob,
         requestId: String,
         didSave: Bool,
-        summary: String?
+        summary: String?,
+        presentation: AgentActivityPresentation
     ) async -> Bool {
         WatchTaskCoordinator.shared.publish(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
-            presentation: .failed(),
+            presentation: presentation,
             summary: summary
         )
-        await job.liveActivityController.end(runId: job.runId, presentation: .failed())
+        await job.liveActivityController.end(runId: job.runId, presentation: presentation)
         if didSave {
             finish(runId: job.runId, requestId: requestId)
         } else {
@@ -2465,9 +2533,12 @@ final class IOSChatBackgroundGenerationCoordinator {
         if didSave {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
         }
+        let recordedStatus: AgentRunStatus = didSave && !requiresRecovery
+            ? .failed
+            : .recoveryPending
         guard await recordRun(
             job.runId,
-            status: didSave && !requiresRecovery ? .failed : .recoveryPending,
+            status: recordedStatus,
             conversationId: job.conversationId
         ) else {
             releaseRuntimeOwnership(requestId: backgroundTask.identifier)
@@ -2481,12 +2552,21 @@ final class IOSChatBackgroundGenerationCoordinator {
                 if didSave && !requiresRecovery {
                     removePayload(requestId: backgroundTask.identifier)
                 }
+                let failurePresentation = await backgroundFailurePresentation(
+                    job: job,
+                    didSave: didSave,
+                    status: recordedStatus,
+                    finalMessages: finalMessages
+                )
                 WatchTaskCoordinator.shared.publish(
                     runId: job.runId,
                     conversationId: job.conversationId.toHexDashString(),
-                    presentation: .failed()
+                    presentation: failurePresentation
                 )
-                await job.liveActivityController.end(runId: job.runId, presentation: .failed())
+                await job.liveActivityController.end(
+                    runId: job.runId,
+                    presentation: failurePresentation
+                )
                 finish(
                     runId: job.runId,
                     requestId: backgroundTask.identifier,
@@ -2516,13 +2596,22 @@ final class IOSChatBackgroundGenerationCoordinator {
             )
             return
         }
+        let failurePresentation = await backgroundFailurePresentation(
+            job: job,
+            didSave: didSave,
+            status: recordedStatus,
+            finalMessages: finalMessages
+        )
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         WatchTaskCoordinator.shared.publish(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
-            presentation: .failed()
+            presentation: failurePresentation
         )
-        await job.liveActivityController.end(runId: job.runId, presentation: .failed())
+        await job.liveActivityController.end(
+            runId: job.runId,
+            presentation: failurePresentation
+        )
         if runState.claimSystemTaskCompletion() {
             finish(runId: job.runId, requestId: backgroundTask.identifier)
             backgroundTask.setTaskCompleted(success: false)
@@ -2738,21 +2827,31 @@ final class IOSChatBackgroundGenerationCoordinator {
         if didSave {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: job.runId)
         }
+        let recordedStatus: AgentRunStatus = didSave ? .failed : .recoveryPending
         guard await recordRun(
             job.runId,
-            status: didSave ? .failed : .recoveryPending,
+            status: recordedStatus,
             conversationId: job.conversationId
         ) else {
             releaseRuntimeOwnership(requestId: requestId)
             return false
         }
+        let failurePresentation = await backgroundFailurePresentation(
+            job: job,
+            didSave: didSave,
+            status: recordedStatus,
+            finalMessages: finalMessages
+        )
         notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         WatchTaskCoordinator.shared.publish(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
-            presentation: .failed()
+            presentation: failurePresentation
         )
-        await job.liveActivityController.end(runId: job.runId, presentation: .failed())
+        await job.liveActivityController.end(
+            runId: job.runId,
+            presentation: failurePresentation
+        )
         if didSave {
             finish(runId: job.runId, requestId: requestId)
         } else {
@@ -2945,6 +3044,17 @@ final class IOSChatBackgroundGenerationCoordinator {
         completedMessages: [UIMessage]
     ) async {
         let succeeded = recordedStatus == .completed
+        let terminalPresentation: AgentActivityPresentation
+        if succeeded {
+            terminalPresentation = .completed()
+        } else {
+            terminalPresentation = await backgroundFailurePresentation(
+                job: job,
+                didSave: didSave,
+                status: recordedStatus,
+                finalMessages: completedMessages
+            )
+        }
         if didSave {
             removePayload(requestId: requestId)
         }
@@ -2968,14 +3078,14 @@ final class IOSChatBackgroundGenerationCoordinator {
             WatchTaskCoordinator.shared.publish(
                 runId: job.runId,
                 conversationId: job.conversationId.toHexDashString(),
-                presentation: .failed(),
+                presentation: terminalPresentation,
                 summary: guardStoppedNotice.flatMap { WatchTaskText.clipped($0, maxLength: 200) }
                     ?? (miniAppFailed ? summary : nil)
             )
         }
         await job.liveActivityController.end(
             runId: job.runId,
-            presentation: succeeded ? .completed() : .failed()
+            presentation: terminalPresentation
         )
         if didSave {
             finish(runId: job.runId, requestId: requestId)
@@ -3509,6 +3619,90 @@ final class IOSChatBackgroundGenerationCoordinator {
             return .failed
         }
         return singleToolFailureReason == nil ? .completed : .failed
+    }
+
+    private static func resumePresentationStage(
+        for chunk: MessageChunk
+    ) -> AgentActivityStage? {
+        var hasReasoningDelta = false
+        var hasTextDelta = false
+        for choice in chunk.choices {
+            let parts = choice.delta?.parts ?? choice.message?.parts ?? []
+            hasReasoningDelta = hasReasoningDelta || parts.contains { part in
+                guard let reasoning = part as? UIMessagePart.Reasoning else { return false }
+                return !reasoning.reasoning.isEmpty
+            }
+            hasTextDelta = hasTextDelta || parts.contains { part in
+                guard let text = part as? UIMessagePart.Text else { return false }
+                return !text.text.isEmpty
+            }
+        }
+        return AgentActivityResponseStagePolicy.updatedStage(
+            hasReasoningDelta: hasReasoningDelta,
+            hasTextDelta: hasTextDelta
+        )
+    }
+
+    private func backgroundFailurePresentation(
+        job: IOSChatBackgroundRuntimeJob,
+        didSave: Bool,
+        status: AgentRunStatus,
+        finalMessages: [UIMessage]
+    ) async -> AgentActivityPresentation {
+        guard didSave, status == .failed, job.mode != .singleToolOnly else {
+            AgentActivityRetryEligibilityStore.shared.setEligible(
+                false,
+                runId: job.runId,
+                conversationId: job.conversationId.toHexDashString()
+            )
+            return .failed(retryable: false)
+        }
+        let transactions = await toolLedger.toolTransactions(runId: job.runId)
+        let visibleConversations = await job.conversationStore.appIntentSummaries(limit: nil)
+        let supportsChatRetry = visibleConversations.contains {
+            $0.id.toHexDashString().caseInsensitiveCompare(
+                job.conversationId.toHexDashString()
+            ) == .orderedSame
+        }
+        let retryable = Self.backgroundFailureIsRetryable(
+            mode: job.mode,
+            didSave: didSave,
+            status: status,
+            supportsChatRetry: supportsChatRetry,
+            hasToolTransactions: transactions.map { !$0.isEmpty },
+            hasCurrentRunTool: Self.hasToolInCurrentRun(finalMessages)
+        )
+        AgentActivityRetryEligibilityStore.shared.setEligible(
+            retryable,
+            runId: job.runId,
+            conversationId: job.conversationId.toHexDashString()
+        )
+        return .failed(retryable: retryable)
+    }
+
+    static func backgroundFailureIsRetryable(
+        mode: IOSChatBackgroundHandoffMode,
+        didSave: Bool,
+        status: AgentRunStatus,
+        supportsChatRetry: Bool,
+        hasToolTransactions: Bool?,
+        hasCurrentRunTool: Bool
+    ) -> Bool {
+        didSave
+            && status == .failed
+            && mode != .singleToolOnly
+            && supportsChatRetry
+            && hasToolTransactions == false
+            && !hasCurrentRunTool
+    }
+
+    private static func hasToolInCurrentRun(_ messages: [UIMessage]) -> Bool {
+        guard let lastUserIndex = messages.lastIndex(where: { $0.role == .user }) else {
+            return true
+        }
+        return messages[lastUserIndex...].contains { message in
+            message.parts.contains { $0 is UIMessagePart.Tool }
+        }
     }
 
     private static func rehydratedParams(

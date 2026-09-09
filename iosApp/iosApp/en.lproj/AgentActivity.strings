@@ -36,16 +36,16 @@
 "agent.activity.fact.failed" = "Not completed";
 "agent.activity.fact.cancelled" = "Stopped";
 
-"agent.activity.compact.preparing" = "Preparing";
+"agent.activity.compact.preparing" = "Starting";
 "agent.activity.compact.thinking" = "Thinking";
-"agent.activity.compact.searching" = "Searching";
+"agent.activity.compact.searching" = "Search";
 "agent.activity.compact.readingSources" = "Reading";
-"agent.activity.compact.readingWeb" = "Reading web";
-"agent.activity.compact.generating" = "Generating";
+"agent.activity.compact.readingWeb" = "Reading";
+"agent.activity.compact.generating" = "Writing";
 "agent.activity.compact.generatingImage" = "Drawing";
-"agent.activity.compact.organizing" = "Organizing";
-"agent.activity.compact.readingDocument" = "Reading file";
-"agent.activity.compact.updatingMemory" = "Updating";
+"agent.activity.compact.organizing" = "Sorting";
+"agent.activity.compact.readingDocument" = "Reading";
+"agent.activity.compact.updatingMemory" = "Saving";
 "agent.activity.compact.runningTool" = "Working";
 
 "agent.activity.metric.source.count" = "%ld sources viewed";
@@ -58,3 +58,10 @@
 "agent.activity.metric.item.progress" = "%ld / %ld items";
 "agent.activity.control.cancel" = "Cancel";
 "agent.activity.control.retry" = "Retry";
+
+"agent.activity.compact.waitingForConfirmation" = "Confirm";
+"agent.activity.compact.reconnecting" = "Retrying";
+"agent.activity.compact.stale" = "Expired";
+"agent.activity.compact.completed" = "Done";
+"agent.activity.compact.failed" = "Failed";
+"agent.activity.compact.cancelled" = "Stopped";

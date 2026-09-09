@@ -36,17 +36,17 @@
 "agent.activity.fact.failed" = "未完成";
 "agent.activity.fact.cancelled" = "已停止";
 
-"agent.activity.compact.preparing" = "正在准备";
-"agent.activity.compact.thinking" = "正在思考";
-"agent.activity.compact.searching" = "正在搜索";
-"agent.activity.compact.readingSources" = "正在阅读";
-"agent.activity.compact.readingWeb" = "正在读网页";
-"agent.activity.compact.generating" = "正在生成";
-"agent.activity.compact.generatingImage" = "正在绘图";
-"agent.activity.compact.organizing" = "正在整理";
-"agent.activity.compact.readingDocument" = "正在读文档";
-"agent.activity.compact.updatingMemory" = "正在记忆";
-"agent.activity.compact.runningTool" = "正在处理";
+"agent.activity.compact.preparing" = "准备中";
+"agent.activity.compact.thinking" = "思考中";
+"agent.activity.compact.searching" = "搜索中";
+"agent.activity.compact.readingSources" = "阅读中";
+"agent.activity.compact.readingWeb" = "阅读中";
+"agent.activity.compact.generating" = "生成中";
+"agent.activity.compact.generatingImage" = "绘图中";
+"agent.activity.compact.organizing" = "整理中";
+"agent.activity.compact.readingDocument" = "阅读中";
+"agent.activity.compact.updatingMemory" = "更新中";
+"agent.activity.compact.runningTool" = "处理中";
 
 "agent.activity.metric.source.count" = "已查看 %ld 个来源";
 "agent.activity.metric.source.progress" = "%ld / %ld 个来源";
@@ -58,3 +58,10 @@
 "agent.activity.metric.item.progress" = "%ld / %ld 项";
 "agent.activity.control.cancel" = "取消";
 "agent.activity.control.retry" = "重试";
+
+"agent.activity.compact.waitingForConfirmation" = "待确认";
+"agent.activity.compact.reconnecting" = "重连中";
+"agent.activity.compact.stale" = "已过期";
+"agent.activity.compact.completed" = "已完成";
+"agent.activity.compact.failed" = "未完成";
+"agent.activity.compact.cancelled" = "已停止";

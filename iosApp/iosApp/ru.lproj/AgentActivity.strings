@@ -36,17 +36,17 @@
 "agent.activity.fact.failed" = "Не завершено";
 "agent.activity.fact.cancelled" = "Остановлено";
 
-"agent.activity.compact.preparing" = "Подготовка";
-"agent.activity.compact.thinking" = "Размышление";
+"agent.activity.compact.preparing" = "Запуск";
+"agent.activity.compact.thinking" = "Думаю";
 "agent.activity.compact.searching" = "Поиск";
-"agent.activity.compact.readingSources" = "Чтение";
-"agent.activity.compact.readingWeb" = "Чтение веба";
-"agent.activity.compact.generating" = "Генерация";
-"agent.activity.compact.generatingImage" = "Рисование";
-"agent.activity.compact.organizing" = "Сортировка";
-"agent.activity.compact.readingDocument" = "Чтение файла";
-"agent.activity.compact.updatingMemory" = "Обновление";
-"agent.activity.compact.runningTool" = "В работе";
+"agent.activity.compact.readingSources" = "Читаю";
+"agent.activity.compact.readingWeb" = "Читаю";
+"agent.activity.compact.generating" = "Пишу";
+"agent.activity.compact.generatingImage" = "Рисую";
+"agent.activity.compact.organizing" = "Итоги";
+"agent.activity.compact.readingDocument" = "Читаю";
+"agent.activity.compact.updatingMemory" = "Память";
+"agent.activity.compact.runningTool" = "Работа";
 
 "agent.activity.metric.source.count" = "Просмотрено источников: %ld";
 "agent.activity.metric.source.progress" = "%ld / %ld источников";
@@ -58,3 +58,10 @@
 "agent.activity.metric.item.progress" = "%ld / %ld элементов";
 "agent.activity.control.cancel" = "Отменить";
 "agent.activity.control.retry" = "Повторить";
+
+"agent.activity.compact.waitingForConfirmation" = "Жду";
+"agent.activity.compact.reconnecting" = "Повтор";
+"agent.activity.compact.stale" = "Истекло";
+"agent.activity.compact.completed" = "Готово";
+"agent.activity.compact.failed" = "Ошибка";
+"agent.activity.compact.cancelled" = "Стоп";

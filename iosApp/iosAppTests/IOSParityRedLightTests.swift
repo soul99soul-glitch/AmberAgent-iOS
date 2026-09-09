@@ -1361,6 +1361,13 @@ final class IOSParityRedLightTests: XCTestCase {
         let cancelledState = IOSChatBackgroundRunState()
         let completedState = IOSChatBackgroundRunState()
 
+        XCTAssertEqual(completedState.nextPresentationStage(.thinking), .thinking)
+        XCTAssertNil(completedState.nextPresentationStage(.thinking))
+        XCTAssertEqual(completedState.nextPresentationStage(.generating), .generating)
+        XCTAssertNil(completedState.nextPresentationStage(.thinking))
+        XCTAssertFalse(completedState.shouldPublishPresentationStage(.thinking))
+        XCTAssertTrue(completedState.shouldPublishPresentationStage(.generating))
+
         XCTAssertTrue(expiredState.allowsRunningPresentation)
         XCTAssertTrue(cancelledState.allowsRunningPresentation)
         XCTAssertTrue(completedState.allowsRunningPresentation)
@@ -1372,6 +1379,7 @@ final class IOSParityRedLightTests: XCTestCase {
         XCTAssertFalse(expiredState.allowsRunningPresentation)
         XCTAssertFalse(cancelledState.allowsRunningPresentation)
         XCTAssertFalse(completedState.allowsRunningPresentation)
+        XCTAssertFalse(completedState.shouldPublishPresentationStage(.generating))
     }
 
     func testBackgroundCancellationCancelsTheInstalledOperationTask() {
@@ -1483,6 +1491,33 @@ final class IOSParityRedLightTests: XCTestCase {
             ),
             "failed"
         )
+    }
+
+    func testBackgroundRetryRequiresACommittedPureChatFailure() {
+        let cases: [(IOSChatBackgroundHandoffMode, Bool, AgentRunStatus, Bool, Bool?, Bool, Bool)] = [
+            (.continueModel, true, .failed, true, false, false, true),
+            (.resumeResponse, true, .failed, true, false, false, true),
+            (.continueModel, false, .recoveryPending, true, false, false, false),
+            (.singleToolOnly, true, .failed, true, false, false, false),
+            (.continueModel, true, .failed, false, false, false, false),
+            (.continueModel, true, .failed, true, true, false, false),
+            (.continueModel, true, .failed, true, nil, false, false),
+            (.continueModel, true, .failed, true, false, true, false),
+        ]
+
+        for (mode, didSave, status, supportsChatRetry, hasToolTransactions, hasCurrentRunTool, expected) in cases {
+            XCTAssertEqual(
+                IOSChatBackgroundGenerationCoordinator.backgroundFailureIsRetryable(
+                    mode: mode,
+                    didSave: didSave,
+                    status: status,
+                    supportsChatRetry: supportsChatRetry,
+                    hasToolTransactions: hasToolTransactions,
+                    hasCurrentRunTool: hasCurrentRunTool
+                ),
+                expected
+            )
+        }
     }
 
     func testBackgroundSystemTaskCompletionCanOnlyBeClaimedOnce() {

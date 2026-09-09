@@ -273,7 +273,6 @@ targets:
       - path: iosApp/AgentActivityModels.swift
       - path: iosApp/AgentActivityControlIntents.swift
       - path: iosApp/IOSAlarmActivityModels.swift
-      - path: iosApp/ThinkingOrbEngine.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: iosApp/Localizable.xcstrings
         buildPhase: resources
@@ -281,11 +280,17 @@ targets:
         buildPhase: resources
       - path: AlarmKitResources
       - path: iosApp/en.lproj
+        buildPhase: resources
       - path: iosApp/zh-Hans.lproj
+        buildPhase: resources
       - path: iosApp/zh-Hant.lproj
+        buildPhase: resources
       - path: iosApp/ja.lproj
+        buildPhase: resources
       - path: iosApp/ko.lproj
+        buildPhase: resources
       - path: iosApp/ru.lproj
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.activity
@@ -306,7 +311,6 @@ targets:
       - path: iosApp/AgentActivityModels.swift
       - path: iosApp/AgentActivityControlIntents.swift
       - path: iosApp/IOSAlarmActivityModels.swift
-      - path: iosApp/ThinkingOrbEngine.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: iosApp/Localizable.xcstrings
         buildPhase: resources
@@ -314,11 +318,17 @@ targets:
         buildPhase: resources
       - path: AlarmKitResources
       - path: iosApp/en.lproj
+        buildPhase: resources
       - path: iosApp/zh-Hans.lproj
+        buildPhase: resources
       - path: iosApp/zh-Hant.lproj
+        buildPhase: resources
       - path: iosApp/ja.lproj
+        buildPhase: resources
       - path: iosApp/ko.lproj
+        buildPhase: resources
       - path: iosApp/ru.lproj
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: "$(AMBER_EXPERIMENTAL_BUNDLE_IDENTIFIER).activity"

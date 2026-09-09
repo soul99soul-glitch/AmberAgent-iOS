@@ -497,15 +497,6 @@ enum AgentActivityElapsedTimePolicy {
     }
 }
 
-enum AgentActivityOrbAnimationTiming {
-    private static let engineCycle = 2 * Double.pi
-    private static let widgetAnimationLimit: TimeInterval = 2
-
-    static func duration(speed: Double) -> TimeInterval {
-        min(widgetAnimationLimit, engineCycle / speed)
-    }
-}
-
 enum AgentActivityCopy {
     static func text(_ key: String, languageCode: String? = nil) -> String {
         let bundle: Bundle
@@ -582,45 +573,10 @@ extension AgentActivityStage {
     }
 
     func localizedCompactTitle(languageCode: String?) -> String {
-        switch self {
-        case .preparing, .thinking, .searching, .readingSources, .readingWeb,
-             .generating, .generatingImage, .organizing, .readingDocument,
-             .updatingMemory, .runningTool:
-            AgentActivityCopy.text(
-                "agent.activity.compact.\(rawValue)",
-                languageCode: languageCode
-            )
-        case .waitingForConfirmation:
-            AgentActivityCopy.text(
-                "agent.activity.fact.waiting",
-                languageCode: languageCode
-            )
-        case .reconnecting:
-            AgentActivityCopy.text(
-                "agent.activity.fact.reconnecting",
-                languageCode: languageCode
-            )
-        case .stale:
-            AgentActivityCopy.text(
-                "agent.activity.fact.stale",
-                languageCode: languageCode
-            )
-        case .completed:
-            AgentActivityCopy.text(
-                "agent.activity.fact.completed",
-                languageCode: languageCode
-            )
-        case .failed:
-            AgentActivityCopy.text(
-                "agent.activity.fact.failed",
-                languageCode: languageCode
-            )
-        case .cancelled:
-            AgentActivityCopy.text(
-                "agent.activity.fact.cancelled",
-                languageCode: languageCode
-            )
-        }
+        AgentActivityCopy.text(
+            "agent.activity.compact.\(rawValue)",
+            languageCode: languageCode
+        )
     }
 }
 
