@@ -23,6 +23,7 @@ final class ChatViewModelConcurrentConversationTests: XCTestCase {
         enum Mode: Equatable {
             case text
             case searchApproval
+            case themeApproval
         }
 
         private let lock = NSLock()
@@ -73,6 +74,26 @@ final class ChatViewModelConcurrentConversationTests: XCTestCase {
                 }
                 return IOSChatForegroundFixtures.chunk(
                     with: IOSChatForegroundFixtures.assistantText("A reply")
+                )
+            }
+
+            if mode == .themeApproval, label == "A", callNumber <= 2 {
+                let input = callNumber == 1
+                    ? #"{"query":"生成主题","limit":12}"#
+                    : #"{"id":"theme-owner-route","display_name":"Owner theme","paper":"paper","accent_hex":"0xB56A4A","ink_hex":"0xFFF8F0","canvas_style":"flat","brand_mark":"systemWordmark","shortcut_icon_style":"phosphorFill","chrome_typeface":"system"}"#
+                return IOSChatForegroundFixtures.chunk(
+                    with: IOSChatForegroundFixtures.assistantMessage(parts: [
+                        UIMessagePart.Tool(
+                            toolCallId: "theme-a-\(callNumber)",
+                            toolName: callNumber == 1 ? "tool_search" : "theme_pack_import",
+                            input: input,
+                            output: [],
+                            approvalState: ToolApprovalState.Auto.shared,
+                            streamIndex: nil,
+                            metadata: nil
+                        )
+                    ]),
+                    finishReason: "tool_calls"
                 )
             }
 
@@ -322,6 +343,64 @@ final class ChatViewModelConcurrentConversationTests: XCTestCase {
         await store.selectConversation(id: conversationA)
         viewModel.reloadFromStore()
         XCTAssertEqual(viewModel.messages.last?.toText(), "A reply")
+    }
+
+    func testThemeApprovalRoutesToOriginalRunAfterSwitchingConversation() async throws {
+        let runtime = AmberThemeRuntime.shared
+        let baseline = AmberThemePackTransfer.document(from: runtime)
+        let (store, directory) = try makeStore()
+        defer {
+            runtime.discardTryOn()
+            try? runtime.apply(baseline)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        await store.bootstrap()
+        let conversationA = try XCTUnwrap(store.currentConversation?.id)
+        let defaults = makeDefaults()
+        let viewModel = makeViewModel(defaults: defaults, sharedSettings: makeSharedSettings(defaults: defaults), store: store)
+        viewModel.kernelTextProviderOverrideForTesting = ConcurrentConversationProvider(mode: .themeApproval)
+        viewModel.reloadFromStore()
+        viewModel.inputText = "A theme request"
+        XCTAssertTrue(viewModel.sendMessage())
+        let paused = await waitForCondition { viewModel.pendingMcpApproval?.toolName == "theme_pack_import" }
+        XCTAssertTrue(paused)
+        let approval = try XCTUnwrap(runtime.tryOnSession?.approval)
+        defer { viewModel.resolveThemeTryOnApproval(approval, allow: false) }
+        XCTAssertTrue(viewModel.isShowingThemeTryOnApproval(approval))
+
+        XCTAssertTrue(viewModel.prepareForConversationChange())
+        let created = await store.startNewConversationReusingEmpty()
+        XCTAssertTrue(created)
+        viewModel.reloadFromStore()
+        let conversationB = try XCTUnwrap(store.currentConversation?.id)
+        XCTAssertNotEqual(conversationA, conversationB)
+        XCTAssertNil(viewModel.pendingMcpApproval)
+        XCTAssertFalse(viewModel.isShowingThemeTryOnApproval(approval))
+        XCTAssertFalse(viewModel.resolveThemeTryOnApproval(
+            AmberThemeTryOnApproval(runId: approval.runId, requestId: "different-request"), allow: false
+        ))
+        XCTAssertTrue(viewModel.resolveThemeTryOnApproval(approval, allow: false))
+        let completed = await waitForCondition { !viewModel.isGenerationActive(conversationId: conversationA) }
+        XCTAssertTrue(completed)
+        XCTAssertFalse(runtime.isTryOnActive)
+        XCTAssertEqual(store.currentConversation?.id, conversationB)
+        XCTAssertNil(viewModel.pendingMcpApproval)
+        let stored = await waitForStoredMessage(store: store, conversationId: conversationA, containing: "A approved reply")
+        XCTAssertNotNil(stored)
+
+        // Cancelling immediately after approval must release this run's preview,
+        // before the resumed tool can finish its commit.
+        viewModel.kernelTextProviderOverrideForTesting = ConcurrentConversationProvider(mode: .themeApproval)
+        viewModel.inputText = "A theme cancellation"
+        XCTAssertTrue(viewModel.sendMessage())
+        let pausedAgain = await waitForCondition { viewModel.pendingMcpApproval?.toolName == "theme_pack_import" }
+        XCTAssertTrue(pausedAgain)
+        let cancelledApproval = try XCTUnwrap(runtime.tryOnSession?.approval)
+        XCTAssertTrue(viewModel.resolveThemeTryOnApproval(cancelledApproval, allow: true))
+        XCTAssertTrue(viewModel.cancelGeneration(runId: cancelledApproval.runId))
+        XCTAssertFalse(runtime.isTryOnActive)
+        let cancelled = await waitForCondition { !viewModel.isGenerationActive(conversationId: conversationB) }
+        XCTAssertTrue(cancelled)
     }
 
     func testApprovalStateSurvivesConversationSwitchAndResumesTheOwningRun() async throws {

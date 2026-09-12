@@ -12,6 +12,7 @@ extension View {
     /// 输入条下折射发脏；`.standard` 不垫，保持经典包体观感。
     @ViewBuilder
     func composerDockGlass(cornerRadius: CGFloat) -> some View {
+        let cornerRadius = AmberTheme.controlRadius(cornerRadius)
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         // Matches home `HomeGlassControlModifier`; 0 keeps classic packs unchanged.
         let pad: Double = {
@@ -25,8 +26,10 @@ extension View {
             if pad > 0 {
                 background(AmberTheme.homeGlassTop.opacity(pad), in: shape)
                     .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
             } else {
                 glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
             }
         } else {
             background(.thinMaterial, in: shape)

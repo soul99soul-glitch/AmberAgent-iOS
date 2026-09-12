@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct AppearanceSettingsView: View {
     let prepareGeneration: () -> String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
     private let runtime = AmberThemeRuntime.shared
@@ -278,7 +279,12 @@ struct AppearanceSettingsView: View {
         let isActive = matchingThemeId == document.id
         let isPicked = selectedRemovableIds.contains(document.id)
         let paper = AmberThemeRuntime.Paper(rawValue: document.paper) ?? .neutral
-        let palette = paper.lightPalette
+        // Legacy packs keep their light footer; authored designs follow the same
+        // resolved palette as the mini preview in the current appearance.
+        let basePalette = paper.lightPalette
+        let palette = document.design.map { design in
+            (colorScheme == .dark ? design.dark : design.light).resolving(basePalette)
+        } ?? basePalette
         let accent = (try? AmberThemePackTransfer.parseHex(document.accentHex)) ?? AmberAccentOption.amberGold.accentHex
         let canvas = AmberCanvasStyle(rawValue: document.canvasStyle) ?? .flat
         let brand = AmberBrandMarkStyle(rawValue: document.brandMark) ?? .systemWordmark
@@ -312,7 +318,8 @@ struct AppearanceSettingsView: View {
                     accent: Color(hex: accent),
                     canvasStyle: canvas,
                     paintBrandHint: brand == .paintAMBER,
-                    serifBrandHint: brand == .serifWordmark
+                    serifBrandHint: brand == .serifWordmark,
+                    design: document.design
                 )
             }
         }
@@ -364,13 +371,13 @@ struct AppearanceSettingsView: View {
     }
 
     private func backgroundCard(_ paper: AmberThemeRuntime.Paper, palette: AmberPalette, name: String) -> some View {
-        let isSel = runtime.paper == paper
+        let isSel = runtime.design == nil && runtime.paper == paper
         // 暖白 vs 中性白预览接近：暖白卡固定示意 Notion 蓝点，避免只靠 footer 文案区分。
         let previewAccent = paper == .notion
             ? Color(hex: AmberAccentOption.notionBlue.accentHex)
             : AmberTheme.accent
         return Button {
-            applyTakingOverTryOn { runtime.paper = paper }
+            applyTakingOverTryOn { runtime.apply(paper) }
         } label: {
             themeCardChrome(
                 isSelected: isSel,
@@ -392,8 +399,9 @@ struct AppearanceSettingsView: View {
     private func applyTakingOverTryOn(_ apply: () throws -> Void) {
         if runtime.isTryOnActive {
             let visible = AmberThemePackTransfer.document(from: runtime)
+            let approval = runtime.tryOnSession?.approval
             runtime.endTryOnWithoutRestore()
-            NotificationCenter.default.post(name: .amberThemeTryOnTakenOver, object: nil)
+            NotificationCenter.default.post(name: .amberThemeTryOnTakenOver, object: approval)
             do {
                 try runtime.apply(visible)
             } catch {
@@ -517,13 +525,13 @@ struct AppearanceSettingsView: View {
 
     private var themeGenerationForm: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("例如：雨天书店，暖灰纸张与墨绿色", text: $themeDescription, axis: .vertical)
+            TextField("例如：薄荷色渐变、稀疏点阵，搭配圆润卡片和深绿文字", text: $themeDescription, axis: .vertical)
                 .lineLimit(2...4)
                 .font(.body)
                 .padding(12)
                 .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                 .accessibilityLabel("主题风格描述")
-            transferButton(title: "生成并试穿", systemImage: "sparkles") {
+            transferButton(title: "生成并试穿") {
                 startThemeGeneration()
             }
             .disabled(themeDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -570,11 +578,13 @@ struct AppearanceSettingsView: View {
         }
     }
 
-    private func transferButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+    private func transferButton(title: String, systemImage: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 14, weight: .semibold))
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                }
                 Text(verbatim: IOSAppLocalization.string(title, defaultValue: title))
                     .font(.subheadline.weight(.semibold))
             }

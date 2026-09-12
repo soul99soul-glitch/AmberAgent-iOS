@@ -2162,14 +2162,15 @@ fun createSettingsSetModelSlotToolDeclaration(): Tool = Tool(
 
 /**
  * Theme pack tools (iOS host executes). Status is a pure catalog; import
- * try-on + persist requires a foreground approval card. Packs change color /
- * texture / brand slots only — never list layout, appearance mode, or chat fonts.
+ * try-on + persist requires a foreground approval card. Packs may define a
+ * complete visual treatment (including per-mode surfaces, gradients, patterns,
+ * and chrome geometry) — never list layout, appearance mode, or chat fonts.
  */
 fun createThemePackStatusToolDeclaration(): Tool = Tool(
     name = "theme_pack_status",
     description = """
         Read the current Amber theme recipe, any in-progress try-on, installed pack ids,
-        and allowed slot enums. Call this before theme_pack_import. Does not change the UI.
+        and allowed slot/design constraints. Call this before theme_pack_import. Does not change the UI.
         Builtin ids sit-terracotta, pi-steel, notion-blue are reserved.
     """.trimIndent().replace("\n", " "),
     parameters = {
@@ -2185,12 +2186,18 @@ fun createThemePackStatusToolDeclaration(): Tool = Tool(
 fun createThemePackImportToolDeclaration(): Tool = Tool(
     name = "theme_pack_import",
     description = """
-        Propose an Amber theme pack. The host immediately try-on the recipe on the real UI
-        without saving; the user taps 套用 to persist or 还原 to revert. Allowed paper:
-        paper, neutral, white, pi, notion (no immersive). Default canvas_scope to shell so
-        chat stays untextured. High-luminance accent_hex needs a dark ink_hex; contrast
-        must be at least 3.0. id must be a new slug, not a builtin. Never claim you changed
-        the theme until the user confirms 套用.
+        Propose an Amber theme pack. The host immediately tries on the recipe on the real UI
+        without saving; the user taps 套用 to persist or 还原 to revert. Use the optional
+        design object to create a complete visual style: separate light and dark palettes,
+        per-mode gradients, a patterns array with up to three composable layers, and optional
+        chrome geometry.
+        Gradient colors and darkColors are separate light/dark ramps with 2...4 hex colors each.
+        Palette foreground must keep at least 4.5:1 contrast against background and surface;
+        mutedForeground must keep at least 3:1. Allowed paper is paper, neutral, white, pi,
+        notion (no immersive). Default canvas_scope to shell; use appWide when the user asks
+        for the design across the whole app. High-luminance accent_hex needs a dark ink_hex;
+        contrast must be at least 3.0. id must be a new slug, not a builtin. Never claim you
+        changed the theme until the user confirms 套用.
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
@@ -2236,7 +2243,7 @@ fun createThemePackImportToolDeclaration(): Tool = Tool(
                     put("type", "string")
                     put("description", "Home shortcut glyph skin.")
                     put("enum", buildJsonArray {
-                        add("phosphorFill"); add("pixelSit")
+                        add("phosphorFill"); add("pixelSit"); add("systemOutline")
                     })
                 })
                 put("chrome_typeface", buildJsonObject {
@@ -2273,6 +2280,7 @@ fun createThemePackImportToolDeclaration(): Tool = Tool(
                     put("type", "string")
                     put("enum", buildJsonArray { add("none"); add("matchBrand") })
                 })
+                put("design", themeDesignSchema())
             },
             required = listOf(
                 "id", "display_name", "paper", "accent_hex", "ink_hex",
@@ -2283,6 +2291,153 @@ fun createThemePackImportToolDeclaration(): Tool = Tool(
     needsApproval = true,
     execute = { emptyList() }
 )
+
+/** JSON Schema for the optional user-authored visual design layer. */
+private fun themeDesignSchema(): JsonObject = buildJsonObject {
+    put("type", "object")
+    put(
+        "description",
+        "Optional complete visual design. Provide both light and dark palettes and a patterns array (it may be empty); gradient and components are optional."
+    )
+    put("properties", buildJsonObject {
+        put("light", themeDesignPaletteSchema("Light-mode palette."))
+        put("dark", themeDesignPaletteSchema("Dark-mode palette."))
+        put("gradient", themeDesignGradientSchema())
+        put("patterns", themeDesignPatternsSchema())
+        put("components", themeDesignComponentsSchema())
+    })
+    put("required", buildJsonArray { add("light"); add("dark"); add("patterns") })
+}
+
+private fun themeDesignPaletteSchema(description: String): JsonObject = buildJsonObject {
+    put("type", "object")
+    put("description", description)
+    put("properties", buildJsonObject {
+        put("background", buildJsonObject {
+            put("type", "string")
+            put("description", "Hex color (#RRGGBB or 0xRRGGBB). Main app background.")
+        })
+        put("surface", buildJsonObject {
+            put("type", "string")
+            put("description", "Hex color (#RRGGBB or 0xRRGGBB). Cards, sheets, and controls.")
+        })
+        put("foreground", buildJsonObject {
+            put("type", "string")
+            put("description", "Hex color with at least 4.5:1 contrast against background and surface.")
+        })
+        put("mutedForeground", buildJsonObject {
+            put("type", "string")
+            put("description", "Hex color with at least 3:1 contrast against background and surface.")
+        })
+        put("border", buildJsonObject {
+            put("type", "string")
+            put("description", "Hex color for borders and separators.")
+        })
+    })
+    put("required", buildJsonArray {
+        add("background")
+        add("surface")
+        add("foreground")
+        add("mutedForeground")
+        add("border")
+    })
+}
+
+private fun themeDesignGradientSchema(): JsonObject = buildJsonObject {
+    put("type", "object")
+    put("description", "Optional gradient ramps. colors is light mode; darkColors is dark mode.")
+    put("properties", buildJsonObject {
+        put("colors", buildJsonObject {
+            put("type", "array")
+            put("minItems", 2)
+            put("maxItems", 4)
+            put("description", "Light-mode hex colors, 2...4 stops.")
+            put("items", buildJsonObject { put("type", "string") })
+        })
+        put("darkColors", buildJsonObject {
+            put("type", "array")
+            put("minItems", 2)
+            put("maxItems", 4)
+            put("description", "Dark-mode hex colors, 2...4 stops; keep them readable with the dark palette foreground.")
+            put("items", buildJsonObject { put("type", "string") })
+        })
+        put("angle", buildJsonObject {
+            put("type", "number")
+            put("description", "Gradient angle in degrees.")
+        })
+    })
+    put("required", buildJsonArray { add("colors"); add("darkColors"); add("angle") })
+}
+
+private fun themeDesignPatternsSchema(): JsonObject = buildJsonObject {
+    put("type", "array")
+    put("maxItems", 3)
+    put("description", "Composable texture layers; provide an array (possibly empty) with at most 3 layers.")
+    put("items", buildJsonObject {
+        put("type", "object")
+        put("properties", buildJsonObject {
+            put("kind", buildJsonObject {
+                put("type", "string")
+                put("enum", buildJsonArray {
+                    add("dots"); add("grid"); add("diagonal"); add("crosses"); add("waves"); add("rings")
+                })
+            })
+            put("color", buildJsonObject {
+                put("type", "string")
+                put("description", "Pattern color as #RRGGBB or 0xRRGGBB.")
+            })
+            put("opacity", buildJsonObject {
+                put("type", "number")
+                put("minimum", 0)
+                put("maximum", 0.3)
+                put("description", "Pattern opacity, 0...0.3.")
+            })
+            put("spacing", buildJsonObject {
+                put("type", "number")
+                put("minimum", 12)
+                put("maximum", 120)
+                put("description", "Pattern spacing, 12...120 points.")
+            })
+            put("size", buildJsonObject {
+                put("type", "number")
+                put("minimum", 0.5)
+                put("maximum", 8)
+                put("description", "Pattern stroke/dot size, 0.5...8 points.")
+            })
+        })
+        put("required", buildJsonArray {
+            add("kind"); add("color"); add("opacity"); add("spacing"); add("size")
+        })
+    })
+}
+
+private fun themeDesignComponentsSchema(): JsonObject = buildJsonObject {
+    put("type", "object")
+    put("description", "Optional chrome geometry, brand text, and shadow tuning; every field is optional.")
+    put("properties", buildJsonObject {
+        put("cardRadius", themeDesignComponentNumberSchema("Card corner radius, 0...32 points.", 0, 32))
+        put("bubbleRadius", themeDesignComponentNumberSchema("Chat bubble corner radius, 0...28 points.", 0, 28))
+        put("controlRadius", themeDesignComponentNumberSchema("Control corner radius, 0...28 points.", 0, 28))
+        put("borderWidth", themeDesignComponentNumberSchema("Border width, 0...3 points.", 0, 3))
+        put("shadowOpacity", themeDesignComponentNumberSchema("Shadow opacity, 0...0.35.", 0, 0.35))
+        put("shadowRadius", themeDesignComponentNumberSchema("Shadow blur radius, 0...24 points.", 0, 24))
+        put("brandText", buildJsonObject {
+            put("type", "string")
+            put("minLength", 1)
+            put("maxLength", 16)
+            put("description", "Optional custom brand text, 1...16 characters.")
+        })
+        put("brandSize", themeDesignComponentNumberSchema("Optional brand text size, 20...40 points.", 20, 40))
+        put("brandTracking", themeDesignComponentNumberSchema("Optional brand text tracking, -2...6 points.", -2, 6))
+    })
+}
+
+private fun themeDesignComponentNumberSchema(description: String, minimum: Number, maximum: Number): JsonObject = buildJsonObject {
+    put("type", "number")
+    put("minimum", minimum)
+    put("maximum", maximum)
+    put("description", description)
+}
 
 /**
  * P0-b: one discovered MCP tool flattened into an independent declaration

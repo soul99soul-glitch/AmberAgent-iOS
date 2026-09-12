@@ -70,10 +70,33 @@ struct ChatUserBubble: View {
         IOSChatFont(rawValue: chatFont) ?? .default
     }
 
+    /// 用户气泡沿用原先的 `radiusXLarge` 语义；自定义组件只覆盖气泡槽，
+    /// 不能因为卡片圆角也开放了就意外跟随 `cardRadius`。
+    private static var userBubbleRadius: CGFloat {
+        if let radius = AmberThemeRuntime.shared.design?.components?.bubbleRadius {
+            return CGFloat(radius)
+        }
+        switch AmberThemeRuntime.shared.bubbleChrome {
+        case .standard: return 18
+        case .soft: return 22
+        case .crisp: return 14
+        }
+    }
+
+    static var bubbleShape: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: userBubbleRadius,
+            bottomLeadingRadius: userBubbleRadius,
+            bottomTrailingRadius: 6,
+            topTrailingRadius: userBubbleRadius,
+            style: .continuous
+        )
+    }
+
     var body: some View {
         Text(text)
             .font(.system(size: scaledBodyPointSize * boundedScale, design: selectedFont.design))
-            .foregroundStyle(.white)
+            .foregroundStyle(AmberTheme.accentInk)
             .lineSpacing(3 * boundedScale)
             // cell self-sizing 测量会传入受限的垂直 proposal,普通 Text 会按 proposal
             // 截断——曾表现为用户消息只显示一行。fixedSize 让文本按理想高度完整布局;
@@ -82,16 +105,12 @@ struct ChatUserBubble: View {
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            .background(
-                AmberTheme.accent,
-                in: UnevenRoundedRectangle(
-                    topLeadingRadius: AmberTheme.radiusXLarge,
-                    bottomLeadingRadius: AmberTheme.radiusXLarge,
-                    bottomTrailingRadius: 6,
-                    topTrailingRadius: AmberTheme.radiusXLarge,
-                    style: .continuous
-                )
-            )
+            .background(AmberTheme.accent, in: Self.bubbleShape)
+            .overlay {
+                Self.bubbleShape
+                    .stroke(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth)
+                    .allowsHitTesting(false)
+            }
             // 不在这里 cap 宽度:气泡保持内容尺寸,长按 contextMenu 的高亮平台才会贴合气泡而非
             // 撑成 300pt 灰条。宽度上限由各调用方的父容器负责(消息流是 MessageBubbleView 的 VStack)。
     }

@@ -3185,6 +3185,23 @@ final class ChatViewModel {
         )
     }
 
+    func isShowingThemeTryOnApproval(_ approval: AmberThemeTryOnApproval) -> Bool {
+        currentRun.host?.currentRunId == approval.runId
+            && pendingMcpApproval?.id == approval.requestId
+            && pendingMcpApproval?.toolName == "theme_pack_import"
+    }
+
+    @discardableResult
+    func resolveThemeTryOnApproval(_ approval: AmberThemeTryOnApproval, allow: Bool) -> Bool {
+        guard let run = conversationRuns.values.first(where: { $0.host?.currentRunId == approval.runId }),
+              run.state.pendingMcpApproval?.id == approval.requestId,
+              run.state.pendingMcpApproval?.toolName == "theme_pack_import",
+              let host = run.host else { return false }
+        return allow
+            ? host.approvePendingMcpTool(requestId: approval.requestId)
+            : host.denyPendingMcpTool(requestId: approval.requestId)
+    }
+
     func approvePendingMcpTool(requestId: String) {
         kernelRunHost.approvePendingMcpTool(requestId: requestId)
     }

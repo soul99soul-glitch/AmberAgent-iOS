@@ -2881,7 +2881,11 @@ final class ChatToolRuntime {
         if toolName == "theme_pack_import" {
             do {
                 let document = try themePackToolService.prepareImport(
-                    argumentsJSON: pending.toolCall.input
+                    argumentsJSON: pending.toolCall.input,
+                    approval: AmberThemeTryOnApproval(
+                        runId: pending.runId,
+                        requestId: ChatToolCallParsing.requestId(for: pending.toolCall)
+                    )
                 )
                 let request = McpToolApprovalRequest(
                     id: ChatToolCallParsing.requestId(for: pending.toolCall),

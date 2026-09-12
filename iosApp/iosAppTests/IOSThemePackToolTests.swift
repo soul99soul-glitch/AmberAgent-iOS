@@ -171,11 +171,19 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertEqual((payload["contrast_min"] as? NSNumber)?.doubleValue, 3.0)
         let current = payload["current"] as? [String: Any]
         XCTAssertEqual(current?["paper"] as? String, "notion")
+        XCTAssertTrue(current?["design"] is NSNull)
         XCTAssertTrue(payload["try_on"] is NSNull)
         let allowed = payload["allowed"] as? [String: Any]
         let papers = allowed?["paper"] as? [String]
         XCTAssertEqual(papers, ["paper", "neutral", "white", "pi", "notion"])
         XCTAssertFalse(papers?.contains("garnet") == true)
+        let design = allowed?["design"] as? [String: Any]
+        XCTAssertEqual(design?["required"] as? [String], ["light", "dark", "patterns"])
+        XCTAssertNotNil(design?["light"] as? [String: Any])
+        XCTAssertNotNil(design?["dark"] as? [String: Any])
+        let patterns = design?["patterns"] as? [String: Any]
+        XCTAssertEqual((patterns?["max_items"] as? NSNumber)?.intValue, 3)
+        XCTAssertEqual(patterns?["kind"] as? [String], ["dots", "grid", "diagonal", "crosses", "waves", "rings"])
         let builtins = payload["builtin_ids"] as? [String]
         XCTAssertEqual(builtins, ["sit-terracotta", "pi-steel", "notion-blue"])
         let rules = payload["rules"] as? [String] ?? []
@@ -221,6 +229,59 @@ final class IOSThemePackToolTests: XCTestCase {
         service.discardPreparedImport()
         XCTAssertFalse(runtime.isTryOnActive)
         XCTAssertEqual(runtime.paper, .notion)
+        XCTAssertTrue(library.installed.isEmpty)
+    }
+
+    func testStaleServiceCannotCommitOrDiscardTheCurrentTryOn() throws {
+        runtime.apply(AmberThemePack.builtins.first { $0.id == "notion-blue" }!)
+        let library = makeLibrary()
+        let serviceA = IOSThemePackToolService(runtime: runtime, library: library)
+        let serviceB = IOSThemePackToolService(runtime: runtime, library: library)
+
+        _ = try serviceA.prepareImport(
+            argumentsJSON: importJSON(id: "theme-a", displayName: "主题 A", accent: .terracotta)
+        )
+        _ = try serviceB.prepareImport(
+            argumentsJSON: importJSON(id: "theme-b", displayName: "主题 B", accent: .mistBlue, canvasStyle: "lineGrid")
+        )
+        XCTAssertEqual(runtime.tryOnSession?.candidate.id, "theme-b")
+
+        XCTAssertThrowsError(try serviceA.commitPreparedImport()) { error in
+            XCTAssertEqual(error as? AmberThemeTryOnError, .replacedTryOn)
+        }
+        serviceA.discardPreparedImport()
+        XCTAssertEqual(runtime.tryOnSession?.candidate.id, "theme-b")
+        XCTAssertFalse(library.contains(id: "theme-a"))
+
+        let committed = parseJSON(try serviceB.commitPreparedImport())
+        XCTAssertEqual(committed["ok"] as? Bool, true)
+        XCTAssertEqual(committed["id"] as? String, "theme-b")
+        XCTAssertFalse(runtime.isTryOnActive)
+        XCTAssertTrue(library.contains(id: "theme-b"))
+        XCTAssertEqual(runtime.accentHex, AmberAccentOption.mistBlue.accentHex)
+    }
+
+    func testCommitWriteFailureRestoresBaselineAndClearsTryOn() throws {
+        runtime.apply(AmberThemePack.builtins.first { $0.id == "notion-blue" }!)
+        let baseline = AmberThemePackTransfer.document(from: runtime)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("theme-pack-tool-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let blocker = root.appendingPathComponent("no-such-dir")
+        try Data("not-a-dir".utf8).write(to: blocker)
+        let library = AmberThemePackLibrary(
+            fileURL: blocker.appendingPathComponent("library.json")
+        )
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        _ = try service.prepareImport(argumentsJSON: importJSON(id: "write-failure"))
+        XCTAssertTrue(runtime.isTryOnActive)
+
+        XCTAssertThrowsError(try service.commitPreparedImport())
+        XCTAssertFalse(runtime.isTryOnActive)
+        XCTAssertNil(runtime.tryOnSession)
+        XCTAssertTrue(baseline.matches(runtime: runtime))
         XCTAssertTrue(library.installed.isEmpty)
     }
 
@@ -387,12 +448,15 @@ final class IOSThemePackToolTests: XCTestCase {
             XCTAssertTrue(upsertIndex < commitIndex, "orphan 套用 must upsert before commitTryOn")
         }
         let appearance = try source("iosApp/AppearanceSettingsView.swift")
-        XCTAssertTrue(appearance.contains("applyTakingOverTryOn { runtime.paper = paper }"))
         XCTAssertTrue(appearance.contains("applyTakingOverTryOn { runtime.apply(option) }"))
         XCTAssertTrue(appearance.contains("AmberThemePackTransfer.document(from: runtime)"))
     }
 
     func testTimelineTitles() {
+        let defaults = UserDefaults.standard
+        let saved = defaults.object(forKey: IOSAppLanguagePreference.defaultsKey)
+        defaults.set("zh-Hans", forKey: IOSAppLanguagePreference.defaultsKey)
+        defer { defaults.set(saved, forKey: IOSAppLanguagePreference.defaultsKey) }
         XCTAssertEqual(ChatToolStepModel(tool: makeTool("theme_pack_status")).title, "查看主题")
         XCTAssertEqual(ChatToolStepModel(tool: makeTool("theme_pack_import")).title, "试穿主题")
     }

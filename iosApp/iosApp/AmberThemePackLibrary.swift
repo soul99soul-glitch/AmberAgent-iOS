@@ -95,8 +95,10 @@ final class AmberThemePackLibrary {
         do {
             let data = try Data(contentsOf: fileURL)
             let envelope = try JSONDecoder().decode(Envelope.self, from: data)
-            // Drop any accidental builtin ids from older files.
-            installed = envelope.packs.filter { !Self.isBuiltinId($0.id) }
+            // Validate before previews consume persisted drawing parameters.
+            installed = envelope.packs.filter {
+                !Self.isBuiltinId($0.id) && (try? AmberThemePackTransfer.validate($0)) != nil
+            }
         } catch {
             installed = []
         }
@@ -143,7 +145,8 @@ extension AmberThemePackDocument {
         let asset = assetMode.flatMap(AmberThemeAssetMode.init(rawValue:)) ?? .builtinOnly
         let immersive = immersivePolicy.flatMap(AmberImmersivePolicy.init(rawValue:)) ?? .hidden
 
-        return paper == runtime.paper
+        return design == runtime.design
+            && paper == runtime.paper
             && accent == runtime.accentHex
             && ink == runtime.accentInkHex
             && canvas == runtime.canvasStyle

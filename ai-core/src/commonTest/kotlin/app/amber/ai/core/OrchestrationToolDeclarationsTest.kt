@@ -1,6 +1,8 @@
 package app.amber.ai.core
 
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.double
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -183,6 +185,72 @@ class OrchestrationToolDeclarationsTest {
         val paperEnum = paper["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(listOf("paper", "neutral", "white", "pi", "notion"), paperEnum)
         assertFalse("garnet" in paperEnum)
+        val shortcutIconStyle = params.properties["shortcut_icon_style"]!!.jsonObject
+        assertEquals(
+            listOf("phosphorFill", "pixelSit", "systemOutline"),
+            shortcutIconStyle["enum"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+
+        assertTrue(import.description.contains("design"), "主题说明必须引导模型使用完整设计对象")
+        assertTrue(import.description.contains("appWide"), "主题说明必须保留 appWide 范围能力")
+        val design = params.properties["design"]!!.jsonObject
+        assertEquals("object", design["type"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(
+            listOf("light", "dark", "patterns"),
+            design["required"]!!.jsonArray.map { it.jsonPrimitive.content },
+        )
+
+        val palette = design["properties"]!!.jsonObject["light"]!!.jsonObject
+        assertEquals(
+            setOf("background", "surface", "foreground", "mutedForeground", "border"),
+            palette["properties"]!!.jsonObject.keys,
+        )
+        assertEquals(
+            setOf("background", "surface", "foreground", "mutedForeground", "border"),
+            palette["required"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet(),
+        )
+
+        val gradient = design["properties"]!!.jsonObject["gradient"]!!.jsonObject
+        val gradientProperties = gradient["properties"]!!.jsonObject
+        assertEquals("array", gradientProperties["colors"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(2, gradientProperties["colors"]!!.jsonObject["minItems"]?.jsonPrimitive?.int)
+        assertEquals(4, gradientProperties["colors"]!!.jsonObject["maxItems"]?.jsonPrimitive?.int)
+        assertEquals("array", gradientProperties["darkColors"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(2, gradientProperties["darkColors"]!!.jsonObject["minItems"]?.jsonPrimitive?.int)
+        assertEquals(4, gradientProperties["darkColors"]!!.jsonObject["maxItems"]?.jsonPrimitive?.int)
+        assertEquals("number", gradientProperties["angle"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull)
+
+        val patterns = design["properties"]!!.jsonObject["patterns"]!!.jsonObject
+        assertEquals(3, patterns["maxItems"]?.jsonPrimitive?.int)
+        val pattern = patterns["items"]!!.jsonObject
+        val patternProperties = pattern["properties"]!!.jsonObject
+        val kinds = patternProperties["kind"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals(listOf("dots", "grid", "diagonal", "crosses", "waves", "rings"), kinds)
+        assertEquals(0.3, patternProperties["opacity"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(12.0, patternProperties["spacing"]!!.jsonObject["minimum"]?.jsonPrimitive?.double)
+        assertEquals(120.0, patternProperties["spacing"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(0.5, patternProperties["size"]!!.jsonObject["minimum"]?.jsonPrimitive?.double)
+        assertEquals(8.0, patternProperties["size"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+
+        val components = design["properties"]!!.jsonObject["components"]!!.jsonObject
+        assertEquals(
+            setOf(
+                "cardRadius", "bubbleRadius", "controlRadius", "borderWidth", "shadowOpacity", "shadowRadius",
+                "brandText", "brandSize", "brandTracking",
+            ),
+            components["properties"]!!.jsonObject.keys,
+        )
+        assertEquals(32.0, components["properties"]!!.jsonObject["cardRadius"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(28.0, components["properties"]!!.jsonObject["bubbleRadius"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(28.0, components["properties"]!!.jsonObject["controlRadius"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(3.0, components["properties"]!!.jsonObject["borderWidth"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(0.35, components["properties"]!!.jsonObject["shadowOpacity"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(24.0, components["properties"]!!.jsonObject["shadowRadius"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(1, components["properties"]!!.jsonObject["brandText"]!!.jsonObject["minLength"]?.jsonPrimitive?.int)
+        assertEquals(16, components["properties"]!!.jsonObject["brandText"]!!.jsonObject["maxLength"]?.jsonPrimitive?.int)
+        assertEquals(40.0, components["properties"]!!.jsonObject["brandSize"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+        assertEquals(-2.0, components["properties"]!!.jsonObject["brandTracking"]!!.jsonObject["minimum"]?.jsonPrimitive?.double)
+        assertEquals(6.0, components["properties"]!!.jsonObject["brandTracking"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
     }
 
     @Test

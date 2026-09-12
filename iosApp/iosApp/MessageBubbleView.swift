@@ -345,13 +345,7 @@ struct MessageBubbleView: View {
                     )
                         .contentShape(
                             .contextMenuPreview,
-                            UnevenRoundedRectangle(
-                                topLeadingRadius: AmberTheme.radiusXLarge,
-                                bottomLeadingRadius: AmberTheme.radiusXLarge,
-                                bottomTrailingRadius: 6,
-                                topTrailingRadius: AmberTheme.radiusXLarge,
-                                style: .continuous
-                            )
+                            ChatUserBubble.bubbleShape
                         )
                         .contextMenu { messageActions }
                 } else if Self.shouldRenderMiniAppStreamingCard(

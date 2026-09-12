@@ -447,17 +447,18 @@ final class AmberThemePackTests: XCTestCase {
     }
 
     func testAppearanceMiniPreviewPinsLightColorSchemeForCanvasInk() throws {
-        // Light-recipe cards must not resolve overlay ink against dark Appearance traits.
-        let preview = try source("iosApp/AmberThemePack.swift")
-        XCTAssertTrue(preview.contains("struct AmberThemePackMiniPreview"))
-        XCTAssertTrue(preview.contains("AmberDotGridOverlay()"))
-        XCTAssertTrue(preview.contains("AmberPaperGrainOverlay()"))
-        XCTAssertTrue(
-            preview.contains(".environment(\\.colorScheme, .light)"),
-            "miniPreview canvas overlays must pin light so grain/grid stay visible in dark Appearance"
-        )
-        let appearance = try source("iosApp/AppearanceSettingsView.swift")
-        XCTAssertTrue(appearance.contains("AmberThemePackMiniPreview("))
+        func render(_ scheme: ColorScheme) throws -> Data {
+            let preview = AmberThemePackMiniPreview(
+                palette: AmberTheme.paperLight,
+                accent: Color(hex: 0xB56A4A),
+                canvasStyle: .dotGrid
+            )
+            .frame(width: 180, height: 120)
+            .environment(\.colorScheme, scheme)
+            let renderer = ImageRenderer(content: preview)
+            return try XCTUnwrap(renderer.uiImage?.pngData())
+        }
+        XCTAssertEqual(try render(.light), try render(.dark), "Legacy previews retain their light recipe in either appearance")
     }
 
     func testAssetModeRemainsBuiltinOnly() {

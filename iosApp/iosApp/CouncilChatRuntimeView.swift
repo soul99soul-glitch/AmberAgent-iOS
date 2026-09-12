@@ -946,16 +946,7 @@ private struct CouncilMessageRow: View, Equatable {
             Spacer(minLength: 48)
             ChatUserBubble(text: message.body)
                 // 长按高亮平台裁成气泡形状(与 Chat 页一致),消除灰角。
-                .contentShape(
-                    .contextMenuPreview,
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: 18,
-                        bottomLeadingRadius: 18,
-                        bottomTrailingRadius: 6,
-                        topTrailingRadius: 18,
-                        style: .continuous
-                    )
-                )
+                .contentShape(.contextMenuPreview, ChatUserBubble.bubbleShape)
                 .contextMenu { messageActions }
         }
     }

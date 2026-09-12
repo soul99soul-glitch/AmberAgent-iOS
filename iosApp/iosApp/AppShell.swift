@@ -35,6 +35,7 @@ struct AppShell: View {
     @State private var didFinalizeStaleBackgroundJobs = false
     @State private var staleBackgroundOutcomeUnknownRunIds = Set<String>()
     @State private var isResolvingThemeTryOn = false
+    @State private var themeTryOnError: String?
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
     @AppStorage(IOSAppleIntegrationPreferenceKeys.completionNotificationsEnabled)
@@ -199,8 +200,16 @@ struct AppShell: View {
                 .padding(.bottom, 12)
             }
         }
-        .onChange(of: AmberThemeRuntime.shared.isTryOnActive) { _, active in
-            if !active { isResolvingThemeTryOn = false }
+        .onChange(of: AmberThemeRuntime.shared.tryOnSession?.id) { _, _ in
+            isResolvingThemeTryOn = false
+        }
+        .alert("主题试穿", isPresented: Binding(
+            get: { themeTryOnError != nil },
+            set: { if !$0 { themeTryOnError = nil } }
+        )) {
+            Button("好", role: .cancel) { themeTryOnError = nil }
+        } message: {
+            Text(themeTryOnError ?? "")
         }
         .task {
             await storeCoordinator.start()
@@ -219,10 +228,9 @@ struct AppShell: View {
         .onDisappear {
             IOSDeepLinkInbox.shared.removeHandler()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .amberThemeTryOnTakenOver)) { _ in
-            if let request = chatViewModel.pendingMcpApproval,
-               request.toolName == "theme_pack_import" {
-                chatViewModel.denyPendingMcpTool(requestId: request.id)
+        .onReceive(NotificationCenter.default.publisher(for: .amberThemeTryOnTakenOver)) { notification in
+            if let approval = notification.object as? AmberThemeTryOnApproval {
+                chatViewModel.resolveThemeTryOnApproval(approval, allow: false)
             }
         }
         .onChange(of: scenePhase) { _, phase in
@@ -354,42 +362,45 @@ struct AppShell: View {
     }
 
     private var shouldShowThemeTryOnBar: Bool {
-        guard AmberThemeRuntime.shared.isTryOnActive else { return false }
+        guard let session = AmberThemeRuntime.shared.tryOnSession else { return false }
         guard let last = rootRouter.path.last else { return true }
         switch last {
         case .chat, .chatMessage(anchor: _):
-            return chatViewModel.pendingMcpApproval?.toolName != "theme_pack_import"
+            return session.approval.map { !chatViewModel.isShowingThemeTryOnApproval($0) } ?? true
         default:
             return true
         }
     }
 
     private func commitThemeTryOnFromShell() {
-        guard !isResolvingThemeTryOn else { return }
-        if let request = chatViewModel.pendingMcpApproval, request.toolName == "theme_pack_import" {
-            isResolvingThemeTryOn = true
-            chatViewModel.approvePendingMcpTool(requestId: request.id)
+        guard !isResolvingThemeTryOn,
+              let session = AmberThemeRuntime.shared.tryOnSession else { return }
+        if let approval = session.approval {
+            isResolvingThemeTryOn = chatViewModel.resolveThemeTryOnApproval(approval, allow: true)
+            if !isResolvingThemeTryOn {
+                themeTryOnError = "无法找到这次主题审批，请返回生成主题的对话确认。"
+            }
             return
         }
         isResolvingThemeTryOn = true
-        let candidate = AmberThemeRuntime.shared.tryOnSession?.candidate
         do {
-            if let candidate {
-                try AmberThemePackLibrary.shared.upsert(candidate)
-            }
+            try AmberThemePackLibrary.shared.upsert(session.candidate)
             try AmberThemeRuntime.shared.commitTryOn()
         } catch {
-            // Orphan try-on without a pending card: still drop the overlay.
             AmberThemeRuntime.shared.discardTryOn()
+            themeTryOnError = error.localizedDescription
         }
         isResolvingThemeTryOn = false
     }
 
     private func revertThemeTryOnFromShell() {
-        guard !isResolvingThemeTryOn else { return }
-        if let request = chatViewModel.pendingMcpApproval, request.toolName == "theme_pack_import" {
-            isResolvingThemeTryOn = true
-            chatViewModel.denyPendingMcpTool(requestId: request.id)
+        guard !isResolvingThemeTryOn,
+              let session = AmberThemeRuntime.shared.tryOnSession else { return }
+        if let approval = session.approval {
+            isResolvingThemeTryOn = chatViewModel.resolveThemeTryOnApproval(approval, allow: false)
+            if !isResolvingThemeTryOn {
+                themeTryOnError = "无法找到这次主题审批，请返回生成主题的对话确认。"
+            }
             return
         }
         AmberThemeRuntime.shared.discardTryOn()

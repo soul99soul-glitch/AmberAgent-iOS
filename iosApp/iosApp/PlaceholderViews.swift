@@ -118,8 +118,9 @@ enum AmberTheme {
 
     private static func base(_ key: KeyPath<AmberPalette, UInt32>, alpha: Double = 1) -> Color {
         let paper = AmberThemeRuntime.shared.paper
-        let lightHex = paper.lightPalette[keyPath: key]
-        let darkHex = paper.darkPalette[keyPath: key]
+        let design = AmberThemeRuntime.shared.design
+        let lightHex = (design?.light.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: key]
+        let darkHex = (design?.dark.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: key]
         return Color(uiColor: UIColor { trait in
             UIColor(hex: trait.userInterfaceStyle == .dark ? darkHex : lightHex, alpha: alpha)
         })
@@ -160,19 +161,26 @@ enum AmberTheme {
     static let radiusMedium: CGFloat = 8
     /// Chat / tool card radius — follows optional `bubbleChrome` theme slot.
     static var radiusLarge: CGFloat {
-        switch AmberThemeRuntime.shared.bubbleChrome {
+        if let radius = AmberThemeRuntime.shared.design?.components?.cardRadius { return CGFloat(radius) }
+        return switch AmberThemeRuntime.shared.bubbleChrome {
         case .standard: 12
         case .soft: 14
         case .crisp: 10
         }
     }
     static var radiusXLarge: CGFloat {
-        switch AmberThemeRuntime.shared.bubbleChrome {
+        if let radius = AmberThemeRuntime.shared.design?.components?.cardRadius { return CGFloat(radius) }
+        return switch AmberThemeRuntime.shared.bubbleChrome {
         case .standard: 18
         case .soft: 22
         case .crisp: 14
         }
     }
+    static var homeCardRadius: CGFloat { CGFloat(AmberThemeRuntime.shared.design?.components?.cardRadius ?? 22) }
+    static func controlRadius(_ fallback: CGFloat) -> CGFloat {
+        AmberThemeRuntime.shared.design?.components?.controlRadius.map { CGFloat($0) } ?? fallback
+    }
+    static var designBorderWidth: CGFloat { CGFloat(AmberThemeRuntime.shared.design?.components?.borderWidth ?? 0) }
     static let radiusPill: CGFloat = 980
 
     // ── 首页设计令牌 ────────────────────────────────────────────────
@@ -257,14 +265,21 @@ enum AmberTheme {
     static var homeGlassShadowAmbient: Color { homeColor(\.glassShadow, alpha: \.glassShadowAmbientAlpha) }
     static var homeGlassShadowContact: Color { homeColor(\.glassShadow, alpha: \.glassShadowContactAlpha) }
     /// 贴身接触线投影（卡片「坐」在画布上的关键，不要飘）。
-    static var cardShadowContact: Color { homeColor(\.shadowContact, alpha: \.shadowContactAlpha) }
+    static var cardShadowContact: Color {
+        if let opacity = AmberThemeRuntime.shared.design?.components?.shadowOpacity { return .black.opacity(opacity * 0.5) }
+        return homeColor(\.shadowContact, alpha: \.shadowContactAlpha)
+    }
     /// 弱环境光投影。
-    static var cardShadowAmbient: Color { homeColor(\.shadowAmbient, alpha: \.shadowAmbientAlpha) }
+    static var cardShadowAmbient: Color {
+        if let opacity = AmberThemeRuntime.shared.design?.components?.shadowOpacity { return .black.opacity(opacity) }
+        return homeColor(\.shadowAmbient, alpha: \.shadowAmbientAlpha)
+    }
 
     /// 环境光投影的几何随主题变化（浅色 0 5px 14px -6px，深色 0 8px 20px -8px），
     /// 颜色已通过上面的动态令牌解析，这里只提供几何。
     static func cardShadowAmbientGeometry(for colorScheme: ColorScheme) -> (radius: CGFloat, y: CGFloat) {
-        colorScheme == .dark ? (10, 8) : (7, 5)
+        if let radius = AmberThemeRuntime.shared.design?.components?.shadowRadius { return (CGFloat(radius), CGFloat(radius) * 0.5) }
+        return colorScheme == .dark ? (10, 8) : (7, 5)
     }
 
     private struct AmberHomeTokens {
@@ -324,7 +339,26 @@ enum AmberTheme {
         glassShadow: 0x000000, glassShadowAmbientAlpha: 0.30, glassShadowContactAlpha: 0.22
     )
 
-    private static func homeTokens(for paper: AmberThemeRuntime.Paper, dark: Bool) -> AmberHomeTokens {
+    private static func homeTokens(for paper: AmberThemeRuntime.Paper, dark: Bool, design: AmberThemeDesign? = nil) -> AmberHomeTokens {
+        if let design {
+            let palette = dark ? design.dark.resolving(paper.darkPalette) : design.light.resolving(paper.lightPalette)
+            let chrome = dark ? homeDark : homeNeutral
+            return AmberHomeTokens(
+                sep: palette.foreground, press: palette.foreground,
+                hoverCard: palette.surface2, activeCard: palette.surface2,
+                sepAlpha: chrome.sepAlpha, pressAlpha: chrome.pressAlpha,
+                section: palette.foreground2,
+                avatarActive: palette.surface2, avatarActiveInk: palette.foreground,
+                avatarIdle: palette.surface2, avatarIdleInk: palette.muted,
+                shadowContact: chrome.shadowContact, shadowAmbient: chrome.shadowAmbient,
+                shadowContactAlpha: chrome.shadowContactAlpha, shadowAmbientAlpha: chrome.shadowAmbientAlpha,
+                glassTopAlpha: chrome.glassTopAlpha, glassBottomAlpha: chrome.glassBottomAlpha,
+                glassEdgeAlpha: chrome.glassEdgeAlpha, glassHighlightAlpha: chrome.glassHighlightAlpha,
+                glassShadow: chrome.glassShadow,
+                glassShadowAmbientAlpha: chrome.glassShadowAmbientAlpha,
+                glassShadowContactAlpha: chrome.glassShadowContactAlpha
+            )
+        }
         if dark {
             switch paper {
             case .neutral:
@@ -386,8 +420,9 @@ enum AmberTheme {
     /// 玻璃用的动态白（alpha 随主题表解析）。
     private static func homeGlassWhite(_ alpha: KeyPath<AmberHomeTokens, Double>) -> Color {
         let paper = AmberThemeRuntime.shared.paper
+        let design = AmberThemeRuntime.shared.design
         return Color(uiColor: UIColor { trait in
-            let tokens = homeTokens(for: paper, dark: trait.userInterfaceStyle == .dark)
+            let tokens = homeTokens(for: paper, dark: trait.userInterfaceStyle == .dark, design: design)
             return UIColor(hex: 0xFFFFFF, alpha: tokens[keyPath: alpha])
         })
     }
@@ -397,8 +432,9 @@ enum AmberTheme {
         alpha: KeyPath<AmberHomeTokens, Double>? = nil
     ) -> Color {
         let paper = AmberThemeRuntime.shared.paper
+        let design = AmberThemeRuntime.shared.design
         return Color(uiColor: UIColor { trait in
-            let tokens = homeTokens(for: paper, dark: trait.userInterfaceStyle == .dark)
+            let tokens = homeTokens(for: paper, dark: trait.userInterfaceStyle == .dark, design: design)
             return UIColor(hex: tokens[keyPath: key], alpha: alpha.map { tokens[keyPath: $0] } ?? 1)
         })
     }
@@ -476,6 +512,13 @@ final class AmberThemeRuntime {
         }
     }
 
+    var design: AmberThemeDesign? {
+        didSet {
+            guard persistEnabled else { return }
+            UserDefaults.standard.set(design.flatMap { try? JSONEncoder().encode($0) }, forKey: Keys.design)
+        }
+    }
+
     var paper: Paper { didSet { persistString(Keys.paper, paper.rawValue) } }
     var accentHex: UInt32 { didSet { persistInt(Keys.accent, Int(accentHex)) } }
     var accentInkHex: UInt32 { didSet { persistInt(Keys.accentInk, Int(accentInkHex)) } }
@@ -529,6 +572,7 @@ final class AmberThemeRuntime {
     private var persistEnabled = true
 
     private enum Keys {
+        static let design = "app.amber.ios.theme.design"
         static let paper = "app.amber.ios.theme.paper"
         static let accent = "app.amber.ios.theme.accentHex"
         static let accentInk = "app.amber.ios.theme.accentInkHex"
@@ -548,6 +592,12 @@ final class AmberThemeRuntime {
 
     private init() {
         let d = UserDefaults.standard
+        let savedDesign = d.data(forKey: Keys.design).flatMap { try? JSONDecoder().decode(AmberThemeDesign.self, from: $0) }
+        if let savedDesign, (try? savedDesign.validate()) != nil {
+            design = savedDesign
+        } else {
+            design = nil
+        }
         // 默认主题 = 中性暖灰 × 琥珀金（E 版定稿）；用户显式选择过的偏好仍以持久化值为准。
         // Style 槽缺省 = 现状观感，旧安装升级后仍匹配原 6 色 pack。
         paper = Paper(rawValue: d.string(forKey: Keys.paper) ?? "") ?? .neutral
@@ -567,10 +617,15 @@ final class AmberThemeRuntime {
         immersivePolicy = AmberImmersivePolicy(rawValue: d.string(forKey: Keys.immersivePolicy) ?? "") ?? .hidden
         // Pi builtin withdrew chat texture: migrate legacy appWide lineGrid on pi paper → shell.
         // didSet 在 init 内不触发，需显式落盘，否则下次冷启动仍读到 appWide。
-        if paper == .pi, canvasStyle == .lineGrid, canvasScope == .appWide {
+        if design == nil, paper == .pi, canvasStyle == .lineGrid, canvasScope == .appWide {
             canvasScope = .shell
             d.set(AmberCanvasScope.shell.rawValue, forKey: Keys.canvasScope)
         }
+    }
+
+    func apply(_ paper: Paper) {
+        design = nil
+        self.paper = paper
     }
 
     func apply(_ option: AmberAccentOption) {
@@ -582,7 +637,8 @@ final class AmberThemeRuntime {
     /// replaces the candidate but keeps the original baseline. Persistence stays
     /// off until commit / discard / appearance takeover.
     @MainActor
-    func beginTryOn(_ candidate: AmberThemePackDocument) throws {
+    @discardableResult
+    func beginTryOn(_ candidate: AmberThemePackDocument, approval: AmberThemeTryOnApproval? = nil) throws -> UUID {
         if AmberThemePackLibrary.isBuiltinId(candidate.id) {
             throw AmberThemeTryOnError.reservedBuiltinId(candidate.id)
         }
@@ -591,7 +647,9 @@ final class AmberThemeRuntime {
         persistEnabled = false
         do {
             try apply(candidate)
-            tryOnSession = AmberThemeTryOnSession(baseline: baseline, candidate: candidate)
+            let session = AmberThemeTryOnSession(baseline: baseline, candidate: candidate, approval: approval)
+            tryOnSession = session
+            return session.id
         } catch {
             persistEnabled = true
             throw error
@@ -642,9 +700,16 @@ final class AmberThemeRuntime {
     }
 }
 
+struct AmberThemeTryOnApproval: Equatable {
+    let runId: String
+    let requestId: String
+}
+
 struct AmberThemeTryOnSession: Equatable {
+    let id = UUID()
     let baseline: AmberThemePackDocument
     let candidate: AmberThemePackDocument
+    let approval: AmberThemeTryOnApproval?
 }
 
 extension Notification.Name {
@@ -655,6 +720,7 @@ extension Notification.Name {
 enum AmberThemeTryOnError: LocalizedError, Equatable {
     case reservedBuiltinId(String)
     case noActiveTryOn
+    case replacedTryOn
 
     var errorDescription: String? {
         switch self {
@@ -662,6 +728,8 @@ enum AmberThemeTryOnError: LocalizedError, Equatable {
             "id「\(id)」是内置主题，请换一个新 id。"
         case .noActiveTryOn:
             "当前没有试穿中的主题。"
+        case .replacedTryOn:
+            "这次主题试穿已被替换或结束，请确认当前的主题预览。"
         }
     }
 }
@@ -935,7 +1003,7 @@ private struct AmberProminentGlassModifier: ViewModifier {
 
 extension View {
     func amberGlass(cornerRadius: CGFloat, interactive: Bool = true) -> some View {
-        modifier(AmberGlassModifier(cornerRadius: cornerRadius, interactive: interactive))
+        modifier(AmberGlassModifier(cornerRadius: AmberTheme.controlRadius(cornerRadius), interactive: interactive))
     }
 
     func amberProminentGlass(
@@ -943,7 +1011,7 @@ extension View {
         tint: Color = AmberTheme.accent,
         interactive: Bool = true
     ) -> some View {
-        modifier(AmberProminentGlassModifier(cornerRadius: cornerRadius, tint: tint, interactive: interactive))
+        modifier(AmberProminentGlassModifier(cornerRadius: AmberTheme.controlRadius(cornerRadius), tint: tint, interactive: interactive))
     }
 }
 
@@ -1876,7 +1944,7 @@ private enum HomeCardSlice { case top, middle, bottom, single }
 private struct HomeSliceShape: Shape {
     let slice: HomeCardSlice
     func path(in rect: CGRect) -> Path {
-        let radius: CGFloat = 22
+        let radius: CGFloat = AmberTheme.homeCardRadius
         switch slice {
         case .top: return UnevenRoundedRectangle(topLeadingRadius: radius, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: radius, style: .continuous).path(in: rect)
         case .bottom: return UnevenRoundedRectangle(topLeadingRadius: 0, bottomLeadingRadius: radius, bottomTrailingRadius: radius, topTrailingRadius: 0, style: .continuous).path(in: rect)
@@ -1914,10 +1982,11 @@ private struct HomeEmptyCard: View {
                                 .opacity(HomeCardCanvasTexture.dotGridOpacity)
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: AmberTheme.homeCardRadius, style: .continuous))
                 }
             }
             .background(HomeSliceShape(slice: .single).fill(AmberTheme.card))
+            .overlay { HomeSliceShape(slice: .single).stroke(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
             .shadow(color: AmberTheme.cardShadowContact, radius: 1, y: 1)
             .shadow(color: AmberTheme.cardShadowAmbient, radius: ambient.radius, y: ambient.y)
             .padding(.horizontal, 16)
@@ -2129,7 +2198,8 @@ private struct HomeGlassControlModifier: ViewModifier {
 
 private extension View {
     func homeGlassControl(cornerRadius: CGFloat, interactive: Bool = true) -> some View {
-        modifier(HomeGlassControlModifier(cornerRadius: cornerRadius, interactive: interactive))
+        modifier(HomeGlassControlModifier(cornerRadius: AmberTheme.controlRadius(cornerRadius), interactive: interactive))
+            .overlay { RoundedRectangle(cornerRadius: AmberTheme.controlRadius(cornerRadius)).strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
     }
 
     /// iOS 26 原生 glass morph 标记；旧系统 no-op。
@@ -2581,7 +2651,7 @@ struct ConversationsView: View {
         .homeGlassControl(cornerRadius: 14)
         .homeGlassEffectID("homeSearch", in: homeSearchNamespace)
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: AmberTheme.controlRadius(14), style: .continuous)
                 .strokeBorder(AmberTheme.focusRing, lineWidth: 1.5)
                 .opacity(searchFocused ? 1 : 0)
                 .allowsHitTesting(false)
@@ -2755,7 +2825,8 @@ struct ConversationsView: View {
                 HomeCardCanvasTexture()
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: AmberTheme.homeCardRadius, style: .continuous))
+        .overlay { RoundedRectangle(cornerRadius: AmberTheme.homeCardRadius).strokeBorder(AmberTheme.border, lineWidth: AmberTheme.designBorderWidth).allowsHitTesting(false) }
         .shadow(color: AmberTheme.cardShadowContact, radius: 1, y: 1)
         .shadow(color: AmberTheme.cardShadowAmbient, radius: ambient.radius, y: ambient.y)
         .padding(.horizontal, 16).padding(.top, 20)

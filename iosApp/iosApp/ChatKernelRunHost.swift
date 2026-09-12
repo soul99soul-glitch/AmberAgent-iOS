@@ -1062,6 +1062,7 @@ final class ChatKernelRunHost {
         // cancelled 会制造 Finished(completed) 与取消消息互相矛盾的快照。
         if activeImageToolCall != nil, imageToolTerminalClaimed { return }
         cancelCause = cause
+        toolRuntime.discardPreparedThemeImport()
         let toolFailureReason: String
         switch cause {
         case .user:
@@ -1382,12 +1383,14 @@ final class ChatKernelRunHost {
         _ = resolvePendingApproval(decision: .deny, category: .ish, requestId: requestId)
     }
 
-    func approvePendingMcpTool(requestId: String? = nil) {
-        _ = resolvePendingApproval(decision: .approve, category: .mcp, requestId: requestId)
+    @discardableResult
+    func approvePendingMcpTool(requestId: String? = nil) -> Bool {
+        resolvePendingApproval(decision: .approve, category: .mcp, requestId: requestId)
     }
 
-    func denyPendingMcpTool(requestId: String? = nil) {
-        _ = resolvePendingApproval(decision: .deny, category: .mcp, requestId: requestId)
+    @discardableResult
+    func denyPendingMcpTool(requestId: String? = nil) -> Bool {
+        resolvePendingApproval(decision: .deny, category: .mcp, requestId: requestId)
     }
 
     func approvePendingRecipeTool(requestId: String? = nil) {
@@ -2452,6 +2455,7 @@ final class ChatKernelRunHost {
     }
 
     private func clearRunIdentity() {
+        toolRuntime.discardPreparedThemeImport()
         currentRunId = nil
         currentStartedAt = 0
         currentInputDigest = ""

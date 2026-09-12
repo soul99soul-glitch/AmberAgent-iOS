@@ -43,6 +43,8 @@ enum AmberShortcutIconStyle: String, CaseIterable, Hashable, Identifiable {
     case phosphorFill
     /// Pixel / sit glyphs for the five home shortcuts.
     case pixelSit
+    /// Native outline symbols for a lighter shortcut treatment.
+    case systemOutline
 
     var id: String { rawValue }
 }
@@ -351,6 +353,7 @@ struct AmberThemePack: Identifiable, Equatable, Hashable {
     /// 整包匹配：核心槽 + 可选表面槽。
     func matches(runtime: AmberThemeRuntime) -> Bool {
         paper == runtime.paper
+            && runtime.design == nil
             && accent.accentHex == runtime.accentHex
             && accent.inkHex == runtime.accentInkHex
             && canvasStyle == runtime.canvasStyle
@@ -392,6 +395,7 @@ extension AmberThemeRuntime {
     }
 
     func apply(_ pack: AmberThemePack) {
+        design = nil
         paper = pack.paper
         apply(pack.accent)
         canvasStyle = pack.canvasStyle
@@ -451,6 +455,7 @@ struct AmberThemePackDocument: Codable, Equatable, Sendable {
     var launchBrand: String?
     var assetMode: String?
     var immersivePolicy: String?
+    var design: AmberThemeDesign? = nil
 }
 
 enum AmberThemePackTransferError: LocalizedError, Equatable {
@@ -558,7 +563,8 @@ enum AmberThemePackTransfer {
             settingsChrome: runtime.settingsChrome,
             launchBrand: runtime.launchBrand.rawValue,
             assetMode: runtime.assetMode.rawValue,
-            immersivePolicy: runtime.immersivePolicy.rawValue
+            immersivePolicy: runtime.immersivePolicy.rawValue,
+            design: runtime.design
         )
     }
 
@@ -603,6 +609,16 @@ enum AmberThemePackTransfer {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
+        let design: AmberThemeDesign?
+        if let raw = args["design"], !(raw is NSNull) {
+            do {
+                design = try JSONDecoder().decode(AmberThemeDesign.self, from: JSONSerialization.data(withJSONObject: raw))
+            } catch {
+                throw AmberThemePackTransferError.invalidJSON
+            }
+        } else {
+            design = nil
+        }
         return AmberThemePackDocument(
             format: AmberThemePackDocument.formatID,
             version: AmberThemePackDocument.currentVersion,
@@ -622,7 +638,8 @@ enum AmberThemePackTransfer {
             settingsChrome: args["settings_chrome"] as? Bool,
             launchBrand: optional("launch_brand"),
             assetMode: AmberThemeAssetMode.builtinOnly.rawValue,
-            immersivePolicy: AmberImmersivePolicy.hidden.rawValue
+            immersivePolicy: AmberImmersivePolicy.hidden.rawValue,
+            design: design
         )
     }
 
@@ -651,6 +668,7 @@ enum AmberThemePackTransfer {
         guard document.version == AmberThemePackDocument.currentVersion else {
             throw AmberThemePackTransferError.unsupportedVersion(document.version)
         }
+        try document.design?.validate()
         _ = try resolvedPaper(document.paper)
         let accent = try parseHex(document.accentHex)
         let ink = try parseHex(document.inkHex)
@@ -697,6 +715,7 @@ enum AmberThemePackTransfer {
             throw AmberThemePackTransferError.unknownChromeTypeface(document.chromeTypeface)
         }
 
+        runtime.design = document.design
         runtime.paper = paper
         runtime.accentHex = accent
         runtime.accentInkHex = ink
@@ -784,15 +803,26 @@ struct AmberThemePackMiniPreview: View {
     var canvasStyle: AmberCanvasStyle = .flat
     var paintBrandHint: Bool = false
     var serifBrandHint: Bool = false
+    var design: AmberThemeDesign? = nil
+    var appearance: ColorScheme? = nil
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let appearance = appearance ?? (design == nil ? .light : colorScheme)
+        let palette = (appearance == .dark ? design?.dark : design?.light)?.resolving(palette) ?? palette
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 9) {
                 Circle()
                     .fill(accent)
                     .frame(width: 15, height: 15)
                 VStack(alignment: .leading, spacing: 6) {
-                    if paintBrandHint {
+                    if let text = design?.components?.brandText {
+                        Text(text)
+                            .font(.system(size: CGFloat(design?.components?.brandSize ?? 32) * 0.375, weight: .bold))
+                            .tracking(CGFloat(design?.components?.brandTracking ?? -0.64) * 0.375)
+                            .foregroundStyle(Color(hex: palette.foreground))
+                            .lineLimit(1)
+                    } else if paintBrandHint {
                         HStack(spacing: 2) {
                             ForEach(0..<5, id: \.self) { i in
                                 RoundedRectangle(cornerRadius: 1, style: .continuous)
@@ -815,7 +845,11 @@ struct AmberThemePackMiniPreview: View {
             }
             .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: palette.surface), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .background(Color(hex: palette.surface), in: RoundedRectangle(cornerRadius: CGFloat(design?.components?.cardRadius.map { $0 * 0.5 } ?? 11), style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: CGFloat(design?.components?.cardRadius.map { $0 * 0.5 } ?? 11))
+                    .strokeBorder(Color(hex: palette.border), lineWidth: CGFloat(design?.components?.borderWidth ?? 0))
+            }
 
             Capsule().fill(Color(hex: palette.surface2)).frame(height: 7).frame(maxWidth: .infinity)
             Capsule().fill(Color(hex: palette.surface2)).frame(width: 92, height: 7)
@@ -825,7 +859,11 @@ struct AmberThemePackMiniPreview: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background {
             ZStack {
-                Color(hex: palette.background)
+                if let design {
+                    AmberThemeDesignBackground(design: design)
+                } else {
+                    Color(hex: palette.background)
+                }
                 switch canvasStyle {
                 case .flat:
                     EmptyView()
@@ -837,9 +875,8 @@ struct AmberThemePackMiniPreview: View {
                     AmberPaperGrainOverlay()
                 }
             }
-            // Pack/background cards always paint the light recipe; overlays resolve ink via
-            // UIColor traits, so pin light here or dark Appearance washes out grain/grid.
-            .environment(\.colorScheme, .light)
+            // Legacy recipes remain light; authored designs follow the preview appearance.
+            .environment(\.colorScheme, appearance)
         }
         .clipped()
     }
@@ -851,7 +888,11 @@ struct AmberCanvasBackground: View {
 
     var body: some View {
         ZStack {
-            AmberTheme.background
+            if let design = runtime.design {
+                AmberThemeDesignBackground(design: design)
+            } else {
+                AmberTheme.background
+            }
             canvasOverlay
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -1087,20 +1128,31 @@ struct AmberBrandMarkView: View {
     private let runtime = AmberThemeRuntime.shared
 
     var body: some View {
-        switch runtime.brandMarkStyle {
-        case .systemWordmark:
-            systemWordmark
-        case .paintAMBER:
-            pixelSitMark
-        case .serifWordmark:
-            serifMark
+        if let text = runtime.design?.components?.brandText {
+            Text(text)
+                .font(AmberChromeFont.system(size: CGFloat(runtime.design?.components?.brandSize ?? 32), weight: .bold))
+                .tracking(CGFloat(runtime.design?.components?.brandTracking ?? -0.64))
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .frame(maxWidth: 180, alignment: .leading)
+                .accessibilityLabel(text)
+        } else {
+            switch runtime.brandMarkStyle {
+            case .systemWordmark:
+                systemWordmark
+            case .paintAMBER:
+                pixelSitMark
+            case .serifWordmark:
+                serifMark
+            }
         }
     }
 
     private var systemWordmark: some View {
         Text("Amber")
-            .font(AmberChromeFont.system(size: 32, weight: .bold))
-            .tracking(-0.64)
+            .font(AmberChromeFont.system(size: CGFloat(runtime.design?.components?.brandSize ?? 32), weight: .bold))
+            .tracking(CGFloat(runtime.design?.components?.brandTracking ?? -0.64))
             .foregroundStyle(AmberTheme.foreground)
             .accessibilityLabel("Amber")
     }
@@ -1117,10 +1169,10 @@ struct AmberBrandMarkView: View {
     /// Pi-dotgrid brand: serif italic (Iowan/Charter-like via system serif). Accent never on the mark.
     private var serifMark: some View {
         Text("Amber")
-            .font(.system(size: 30, weight: .regular, design: .serif).italic())
-            .tracking(-0.5)
+            .font(.system(size: CGFloat(runtime.design?.components?.brandSize ?? 30), weight: .regular, design: .serif).italic())
+            .tracking(CGFloat(runtime.design?.components?.brandTracking ?? -0.5))
             .foregroundStyle(AmberTheme.foreground)
-            .frame(height: 34, alignment: .center)
+            .frame(height: runtime.design?.components?.brandSize.map { max(34, CGFloat($0) * 1.2) } ?? 34, alignment: .center)
             .accessibilityLabel("Amber")
     }
 }
@@ -1261,6 +1313,21 @@ struct HomeShortcutIconView: View {
             HomePhosphorIcon(entry.phosphor, size: size)
         case .pixelSit:
             HomePixelSitIcon(entry: entry, size: size)
+        case .systemOutline:
+            Image(systemName: outlineSymbol)
+                .font(.system(size: size, weight: .regular))
+                .frame(width: size, height: size)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var outlineSymbol: String {
+        switch entry {
+        case .deepRead: "book"
+        case .novel: "pencil.and.outline"
+        case .council: "bubble.left.and.bubble.right"
+        case .miniApps: "square.grid.2x2"
+        case .webMount: "globe"
         }
     }
 }

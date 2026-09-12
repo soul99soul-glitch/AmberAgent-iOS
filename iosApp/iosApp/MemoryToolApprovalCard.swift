@@ -884,7 +884,8 @@ struct McpToolApprovalCard: View {
                 accent: Color(hex: (try? AmberThemePackTransfer.parseHex(document.accentHex)) ?? AmberAccentOption.amberGold.accentHex),
                 canvasStyle: AmberCanvasStyle(rawValue: document.canvasStyle) ?? .flat,
                 paintBrandHint: document.brandMark == AmberBrandMarkStyle.paintAMBER.rawValue,
-                serifBrandHint: document.brandMark == AmberBrandMarkStyle.serifWordmark.rawValue
+                serifBrandHint: document.brandMark == AmberBrandMarkStyle.serifWordmark.rawValue,
+                design: document.design
             )
             .frame(width: 180, height: 120)
             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
