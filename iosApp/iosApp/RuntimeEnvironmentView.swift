@@ -1,15 +1,24 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 struct RuntimeEnvironmentView: View {
     @Bindable var settingsStore: SettingsStore
     let sharedSettings: IOSSharedSettingsStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var terminalSmokeResult: IOSTerminalJobSnapshot?
     @State private var sshProfileDraft = IOSSSHProfile()
     @State private var sshPasswordDraft = ""
-    @State private var loadedSSHPasswordDraft = ""
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var sshPrivateKeyDraft = ""
+    @State private var sshPublicKey = ""
+    @State private var showsSSHPublicKey = false
+    @State private var showsSSHKeyImporter = false
+    @State private var showsSSHKeyManagement = false
+    @State private var sshProbeSnapshot: SSHProbeSnapshot?
+    @State private var sshVerificationTask: Task<Void, Never>?
     @State private var sshPortDraft = "22"
     @State private var sshStatus: SSHStatus = .idle
     @State private var remoteCommand = "echo amber-remote-task"
@@ -27,6 +36,12 @@ struct RuntimeEnvironmentView: View {
 
     private struct SelectedTerminalTask: Identifiable {
         let id: String
+    }
+
+    private struct SSHProbeSnapshot: Equatable {
+        let candidate: IOSSSHProfile
+        let persistedProfile: IOSSSHProfile?
+        let fingerprint: String
     }
 
     private enum RuntimeEnvironmentSheet: String, Identifiable {
@@ -104,12 +119,32 @@ struct RuntimeEnvironmentView: View {
                 loadSSHProfile(selected)
             }
         }
-        .sheet(item: $activeSheet) { sheet in
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { clearSSHDrafts() }
+        }
+        .onDisappear { clearSSHDrafts() }
+        .onChange(of: sshProfileDraft.authMethod) { _, _ in
+            sshPasswordDraft = ""
+            sshPrivateKeyDraft = ""
+            sshPublicKey = ""
+        }
+        .sheet(item: $activeSheet, onDismiss: { clearSSHDrafts() }) { sheet in
             RuntimeSheetChrome(title: sheet.title, subtitle: sheet.subtitle) {
                 sheetContent(for: sheet)
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+            .sheet(isPresented: $showsSSHKeyManagement) {
+                RuntimeSheetChrome(title: "SSH 密钥管理",
+                                   subtitle: "导入或生成私钥，按需查看和复制公钥。") {
+                    sshKeyManagementSection
+                }
+                .fileImporter(isPresented: $showsSSHKeyImporter, allowedContentTypes: [.item]) { result in
+                    importSSHPrivateKey(result)
+                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
             .sheet(item: $selectedTerminalTask) { selection in
                 TerminalTaskDetailView(taskStore: taskStore, taskId: selection.id)
                     .presentationDetents([.medium, .large])
@@ -395,13 +430,45 @@ struct RuntimeEnvironmentView: View {
             AmberFormGroup {
                 RuntimeTextFieldRow(title: "Profile 名称", text: $sshProfileDraft.name, placeholder: "未命名")
                 RuntimeDivider()
-                RuntimeTextFieldRow(title: "Host", text: $sshProfileDraft.host, placeholder: "example.com", monospace: true)
+                RuntimeTextFieldRow(title: "Host", text: sshHostBinding, placeholder: "example.com", monospace: true)
                 RuntimeDivider()
-                RuntimeTextFieldRow(title: "端口", text: $sshPortDraft, placeholder: "22", monospace: true, keyboardType: .numberPad)
+                RuntimeTextFieldRow(title: "端口", text: sshPortBinding, placeholder: "22", monospace: true, keyboardType: .numberPad)
                 RuntimeDivider()
-                RuntimeTextFieldRow(title: "用户名", text: $sshProfileDraft.username, placeholder: "root", monospace: true)
+                RuntimeTextFieldRow(title: "用户名", text: sshUsernameBinding, placeholder: "root", monospace: true)
                 RuntimeDivider()
-                RuntimeSecureFieldRow(title: "密码", text: $sshPasswordDraft, placeholder: "留空则不修改")
+                if dynamicTypeSize.isAccessibilitySize {
+                    Menu {
+                        Picker("认证方式", selection: sshAuthMethodBinding) {
+                            ForEach(IOSSSHAuthMethod.allCases) { method in
+                                Text(method.displayName).tag(method)
+                            }
+                        }
+                    } label: {
+                        RuntimeValueRow(title: "认证方式", subtitle: "选择连接认证方式",
+                                        value: sshProfileDraft.authMethod.displayName, systemImage: "key.fill")
+                    }
+                } else {
+                    Picker("认证方式", selection: sshAuthMethodBinding) {
+                        ForEach(IOSSSHAuthMethod.allCases) { method in
+                            Text(method.displayName).tag(method)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(14)
+                }
+                if sshProfileDraft.authMethod == .password {
+                    RuntimeSecureFieldRow(title: "密码", text: $sshPasswordDraft, placeholder: "留空保留已存密码")
+                } else {
+                    RuntimeNavigationRow(
+                        title: "SSH 私钥",
+                        subtitle: sshKeySummary,
+                        value: "管理",
+                        systemImage: "key.fill",
+                        accent: sshKeyStatusAccent
+                    ) {
+                        showsSSHKeyManagement = true
+                    }
+                }
             }
             .padding(.top, settingsStore.sshProfiles.isEmpty ? 0 : 10)
 
@@ -415,20 +482,146 @@ struct RuntimeEnvironmentView: View {
                 }
                 if settingsStore.sshProfiles.contains(where: { $0.id == sshProfileDraft.id }) {
                     RuntimeDivider()
-                    RuntimeActionRow(title: "清除密码", color: AmberTheme.accentRed) {
-                        clearSSHPassword()
+                    RuntimeActionRow(title: "清除已存凭证", color: AmberTheme.accentRed) {
+                        clearSSHCredential()
                     }
                 }
             }
             .padding(.top, 10)
 
-            Text("密码会保存在本机钥匙串。留空保存不会覆盖已存密码；新建 Profile 会清空表单，避免误覆盖。")
+            Text("凭证仅存本机钥匙串，解锁后可读取，不随配置导出或同步。留空保留原凭证；保存新的连接目标或认证方式时，需重新提供凭证。")
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted2)
                 .lineSpacing(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.top, 7)
+        }
+        .disabled(sshStatus.isTesting)
+    }
+
+    private var sshKeyManagementSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "SSH 私钥")
+
+            AmberFormGroup {
+                RuntimeSecureFieldRow(
+                    title: "私钥",
+                    text: Binding(
+                        get: { sshPrivateKeyDraft },
+                        set: { newValue in
+                            sshPrivateKeyDraft = newValue
+                            sshPublicKey = ""
+                        }
+                    ),
+                    placeholder: "已保存则无需回填"
+                )
+                RuntimeDivider()
+                Menu {
+                    Button("从文件导入私钥", systemImage: "doc") {
+                        showsSSHKeyImporter = true
+                    }
+                    Button("生成 Ed25519 密钥", systemImage: "wand.and.stars") {
+                        generateSSHKey()
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(width: 30, height: 30)
+                            .background(AmberTheme.accentTint, in: Circle())
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("更换密钥")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text("从文件导入，或生成新的 Ed25519 密钥")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            if !sshPrivateKeyDraft.isEmpty {
+                AmberFormGroup {
+                    RuntimeActionRow(title: "保存私钥到本机", color: AmberTheme.accent) {
+                        saveSSHKeyDraft()
+                    }
+                }
+                .padding(.top, 10)
+            }
+
+            AmberFormGroup {
+                RuntimeActionRow(title: sshPrivateKeyDraft.isEmpty ? "复制公钥" : "保存并复制公钥", color: AmberTheme.accent) {
+                    copySSHPublicKey()
+                }
+            }
+            .padding(.top, 10)
+
+            AmberFormGroup {
+                DisclosureGroup(isExpanded: $showsSSHPublicKey) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !sshPublicKey.isEmpty {
+                            Text(sshPublicKey)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(AmberTheme.foreground2)
+                                .textSelection(.disabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 8)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .foregroundStyle(AmberTheme.accent)
+                        Text("查看完整公钥")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                        Spacer()
+                        Text("按需显示")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                    .frame(minHeight: 52)
+                    .padding(.horizontal, 14)
+                }
+            }
+            .padding(.top, 10)
+
+            if case .success(let message) = sshStatus {
+                Text(message).font(.footnote).foregroundStyle(AmberTheme.accentGreen)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+            } else if case .failure(let message) = sshStatus {
+                Text(message).font(.footnote).foregroundStyle(AmberTheme.accentRed)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+            }
+
+            Text("私钥仅存本机钥匙串，不会回填。支持未加密 Ed25519 OpenSSH、ECDSA PEM；暂不支持 RSA 或带口令的私钥文件。复制后将公钥添加到服务器账户的 ~/.ssh/authorized_keys。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted2)
+                .lineSpacing(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.top, 7)
+        }
+        .onAppear { showsSSHPublicKey = false }
+        .onChange(of: showsSSHPublicKey) { _, expanded in
+            if expanded, sshPublicKey.isEmpty {
+                showSSHPublicKey()
+            }
         }
     }
 
@@ -508,7 +701,7 @@ struct RuntimeEnvironmentView: View {
             HostFingerprintCard(
                 status: sshStatus,
                 onTrust: trustSSHHost,
-                onRetry: testSSHConnection
+                onCancel: cancelSSHProbe
             )
 
             HStack {
@@ -705,8 +898,8 @@ struct RuntimeEnvironmentView: View {
     private var sshConnectionSummary: String {
         guard let profile = settingsStore.defaultSSHProfile else {
             return IOSAppLocalization.string(
-                "为 Remote SSH 添加 host、端口、用户名和密码",
-                defaultValue: "为 Remote SSH 添加 host、端口、用户名和密码"
+                "为 Remote SSH 添加主机、用户名和密码或私钥",
+                defaultValue: "为 Remote SSH 添加主机、用户名和密码或私钥"
             )
         }
         let host = profile.host.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -715,6 +908,34 @@ struct RuntimeEnvironmentView: View {
             ? IOSAppLocalization.string("Host 未填写", defaultValue: "Host 未填写")
             : "\(host):\(profile.port)"
         return user.isEmpty ? endpoint : "\(user)@\(endpoint)"
+    }
+
+    private var sshKeySummary: String {
+        guard sshProfileDraft.authMethod == .privateKey else {
+            return "当前使用密码认证"
+        }
+        if !sshPrivateKeyDraft.isEmpty { return "私钥待保存" }
+        var draft = sshProfileDraft
+        draft.port = Int(sshPortDraft) ?? 0
+        guard let validatedDraft = try? draft.validated(),
+              let persisted = settingsStore.sshProfiles.first(where: { $0.id == validatedDraft.id }) else {
+            return "尚未保存私钥"
+        }
+        guard persisted.host == validatedDraft.host,
+              persisted.port == validatedDraft.port,
+              persisted.username == validatedDraft.username,
+              persisted.authMethod == validatedDraft.authMethod else {
+            return "连接已变更，需重新保存私钥"
+        }
+        return settingsStore.hasCredentialForSSHProfile(validatedDraft)
+            ? "私钥已保存；不会回填明文"
+            : "尚未保存私钥"
+    }
+
+    private var sshKeyStatusAccent: Color {
+        if sshKeySummary.contains("已保存") { return AmberTheme.accentGreen }
+        if sshKeySummary.contains("密码") { return AmberTheme.accentAmber }
+        return AmberTheme.accentAmber
     }
 
     private var sshStatusValue: String {
@@ -728,7 +949,9 @@ struct RuntimeEnvironmentView: View {
         case .needsTrust:
             return IOSAppLocalization.string("需确认", defaultValue: "需确认")
         case .success:
-            return IOSAppLocalization.string("已信任", defaultValue: "已信任")
+            return settingsStore.defaultSSHProfile?.knownHostSHA256?.isEmpty == false
+                ? IOSAppLocalization.string("已信任", defaultValue: "已信任")
+                : IOSAppLocalization.string("待检查", defaultValue: "待检查")
         case .failure:
             return IOSAppLocalization.string("异常", defaultValue: "异常")
         }
@@ -737,7 +960,9 @@ struct RuntimeEnvironmentView: View {
     private var sshStatusAccent: Color {
         switch sshStatus {
         case .success:
-            return AmberTheme.accentGreen
+            return settingsStore.defaultSSHProfile?.knownHostSHA256?.isEmpty == false
+                ? AmberTheme.accentGreen
+                : AmberTheme.muted
         case .needsTrust, .testing:
             return AmberTheme.accentAmber
         case .failure:
@@ -864,20 +1089,33 @@ struct RuntimeEnvironmentView: View {
             "echo amber-terminal-smoke"
         }
         Task {
-            let started = await IOSTerminalRuntime.shared.startJob(
-                command: command,
-                runtime: settingsStore.terminalDefaultRuntime,
-                experimentalEnabled: settingsStore.terminalExperimentalRuntimesEnabled,
-                sshProfile: settingsStore.defaultSSHProfile,
-                sshPassword: settingsStore.defaultSSHProfile.flatMap { settingsStore.passwordForSSHProfile(id: $0.id) }
-            )
-            if started.status == IOSTerminalJobStatus.running.rawValue {
-                terminalSmokeResult = await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 65)
-                _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
-            } else {
-                terminalSmokeResult = started
+            do {
+                let profile = settingsStore.defaultSSHProfile
+                let credential = settingsStore.terminalDefaultRuntime == .remoteSSH
+                    ? try profile.flatMap { try settingsStore.credentialForSSHProfile($0) } : nil
+                let started = await IOSTerminalRuntime.shared.startJob(
+                    command: command,
+                    runtime: settingsStore.terminalDefaultRuntime,
+                    experimentalEnabled: settingsStore.terminalExperimentalRuntimesEnabled,
+                    sshProfile: settingsStore.defaultSSHProfile,
+                    sshCredential: credential
+                )
+                if started.status == IOSTerminalJobStatus.running.rawValue {
+                    terminalSmokeResult = await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 65)
+                    _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
+                } else {
+                    terminalSmokeResult = started
+                }
+            } catch {
+                terminalSmokeResult = sshCredentialFailure(error, runtime: settingsStore.terminalDefaultRuntime)
             }
         }
+    }
+
+    private func sshCredentialFailure(_ error: Error, runtime: IOSTerminalRuntimeKind = .remoteSSH) -> IOSTerminalJobSnapshot {
+        IOSTerminalJobSnapshot(id: UUID().uuidString, runtime: runtime,
+                              status: IOSTerminalJobStatus.failed.rawValue, exitCode: nil,
+                              outputTail: "", startedAt: Date(), updatedAt: Date(), error: error.localizedDescription)
     }
 
     private func runRemoteCommand() {
@@ -919,7 +1157,6 @@ struct RuntimeEnvironmentView: View {
         }
 
         let profile = settingsStore.defaultSSHProfile
-        let password = profile.flatMap { settingsStore.passwordForSSHProfile(id: $0.id) }
         let workingDirectory = remoteWorkingDirectory.nilIfBlank
         var taskMetadata = ["runtime": IOSTerminalRuntimeKind.remoteSSH.rawValue]
         if let workingDirectory {
@@ -946,13 +1183,21 @@ struct RuntimeEnvironmentView: View {
         )
 
         Task {
+            let credential: IOSSSHCredential?
+            do { credential = try profile.flatMap { try settingsStore.credentialForSSHProfile($0) } }
+            catch {
+                remoteCommandResult = sshCredentialFailure(error)
+                _ = taskStore.updateTask(id: task.id, status: .failed, error: error.localizedDescription,
+                                         retryable: true, cancelCapability: false)
+                return
+            }
             let started = await IOSTerminalRuntime.shared.startJob(
                 command: validatedCommand,
                 runtime: .remoteSSH,
                 experimentalEnabled: false,
                 workingDirectory: workingDirectory,
                 sshProfile: profile,
-                sshPassword: password,
+                sshCredential: credential,
                 timeoutSeconds: 60
             )
             remoteCommandResult = started
@@ -1053,34 +1298,79 @@ struct RuntimeEnvironmentView: View {
         }
     }
 
-    private func saveSSHProfile() {
-        do {
-            var draft = sshProfileDraft
-            draft.port = Int(sshPortDraft) ?? 0
-            let validated = try draft.validated()
-            let isExistingProfile = settingsStore.sshProfiles.contains { $0.id == validated.id }
-            try settingsStore.upsertSSHProfile(validated, password: nil)
-            if sshPasswordDraft.isEmpty || sshPasswordDraft != loadedSSHPasswordDraft {
-                settingsStore.clearSSHPassword(profileId: validated.id)
-                loadedSSHPasswordDraft = ""
-            }
-            sshProfileDraft = validated
-            sshPortDraft = String(validated.port)
-            if !sshPasswordDraft.isEmpty && sshPasswordDraft != loadedSSHPasswordDraft {
-                sshStatus = .success("SSH profile saved. Test SSH Connection to verify and save the password.")
-            } else {
-                sshStatus = .success(isExistingProfile ? "SSH profile saved." : "SSH profile saved. Test SSH Connection before running commands.")
-            }
-        } catch {
-            sshStatus = .failure(error.localizedDescription)
+    private var sshHostBinding: Binding<String> {
+        Binding(
+            get: { sshProfileDraft.host },
+            set: { newValue in updateSSHConnectionDraft { sshProfileDraft.host = newValue } }
+        )
+    }
+
+    private var sshPortBinding: Binding<String> {
+        Binding(
+            get: { sshPortDraft },
+            set: { newValue in updateSSHConnectionDraft { sshPortDraft = newValue } }
+        )
+    }
+
+    private var sshUsernameBinding: Binding<String> {
+        Binding(
+            get: { sshProfileDraft.username },
+            set: { newValue in updateSSHConnectionDraft { sshProfileDraft.username = newValue } }
+        )
+    }
+
+    private var sshAuthMethodBinding: Binding<IOSSSHAuthMethod> {
+        Binding(
+            get: { sshProfileDraft.authMethod },
+            set: { newValue in updateSSHConnectionDraft { sshProfileDraft.authMethod = newValue } }
+        )
+    }
+
+    private func updateSSHConnectionDraft(_ update: () -> Void) {
+        update()
+        invalidateSSHVerificationState()
+    }
+
+    private func invalidateSSHVerificationState() {
+        sshVerificationTask?.cancel()
+        sshVerificationTask = nil
+        sshProbeSnapshot = nil
+        switch sshStatus {
+        case .testing, .needsTrust, .success:
+            sshStatus = .idle
+        case .idle, .failure:
+            break
         }
     }
 
+    private func currentSSHProfile() throws -> IOSSSHProfile {
+        var draft = sshProfileDraft
+        draft.port = Int(sshPortDraft) ?? 0
+        return try draft.validated()
+    }
+
+    private func draftSSHCredential() -> IOSSSHCredential? {
+        switch sshProfileDraft.authMethod {
+        case .password: sshPasswordDraft.isEmpty ? nil : .password(sshPasswordDraft)
+        case .privateKey: sshPrivateKeyDraft.isEmpty ? nil : .privateKey(sshPrivateKeyDraft)
+        }
+    }
+
+    private func saveSSHProfile() {
+        do {
+            let profile = try currentSSHProfile()
+            try settingsStore.upsertSSHProfile(profile, credential: draftSSHCredential())
+            sshProfileDraft = settingsStore.sshProfiles.first { $0.id == profile.id } ?? profile
+            sshPasswordDraft = ""
+            sshPrivateKeyDraft = ""
+            sshStatus = .success("连接配置已保存。请检查主机指纹并验证认证。")
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
     private func loadSSHProfile(_ profile: IOSSSHProfile) {
+        clearSSHDrafts()
         sshProfileDraft = profile
         sshPortDraft = String(profile.port)
-        sshPasswordDraft = settingsStore.passwordForSSHProfile(id: profile.id) ?? ""
-        loadedSSHPasswordDraft = sshPasswordDraft
         sshStatus = .idle
     }
 
@@ -1090,109 +1380,234 @@ struct RuntimeEnvironmentView: View {
             return
         }
         do {
-            var draft = sshProfileDraft
-            draft.port = Int(sshPortDraft) ?? 0
-            let profile = try draft.validated()
-            guard !sshPasswordDraft.isEmpty else { throw IOSSSHError.missingPassword }
-
+            let profile = try currentSSHProfile()
+            let draftCredential = draftSSHCredential()
+            let persistedProfileBeforeProbe = settingsStore.sshProfiles.first { $0.id == profile.id }
             sshStatus = .testing
-            Task {
+            sshVerificationTask = Task {
                 do {
-                    let result = try await IOSTerminalRuntime.shared.testSSHConnection(
-                        profile: profile,
-                        password: sshPasswordDraft
-                    )
+                    let result = try await IOSTerminalRuntime.shared.testSSHConnection(profile: profile)
+                    guard !Task.isCancelled else { return }
                     switch result.trustState {
                     case .trusted:
-                        guard await verifySSHPassword(profile: profile, password: sshPasswordDraft) else {
-                            settingsStore.clearSSHPassword(profileId: profile.id)
-                            sshStatus = .failure("Host trusted, but password authentication failed. Check the password and try again.")
-                            return
-                        }
-                        try settingsStore.upsertSSHProfile(profile, password: sshPasswordDraft)
-                        loadedSSHPasswordDraft = sshPasswordDraft
-                        sshStatus = .success("SSH host trusted and password verified.")
+                        await verifySSHCredential(
+                            profile: profile,
+                            draftCredential: draftCredential,
+                            persistedProfileBeforeVerification: persistedProfileBeforeProbe
+                        )
                     case .needsTrust(let fingerprint):
-                        try settingsStore.upsertSSHProfile(profile, password: nil)
-                        settingsStore.clearSSHPassword(profileId: profile.id)
+                        // Probing is read-only. Keep both the in-memory candidate
+                        // and the persisted snapshot until explicit trust + auth
+                        // succeeds, so cancelling cannot delete old credentials.
+                        guard settingsStore.sshProfiles.first(where: { $0.id == profile.id }) == persistedProfileBeforeProbe else {
+                            throw IOSSSHError.invalidProfile("连接配置已变化，请重新检查主机指纹。")
+                        }
+                        sshProbeSnapshot = SSHProbeSnapshot(
+                            candidate: profile,
+                            persistedProfile: persistedProfileBeforeProbe,
+                            fingerprint: fingerprint
+                        )
                         sshStatus = .needsTrust(profileId: profile.id, fingerprint: fingerprint)
                     case .mismatch(let expected, let actual):
-                        sshStatus = .failure("Host fingerprint mismatch. Expected \(expected), got \(actual).")
+                        sshProbeSnapshot = nil
+                        sshStatus = .failure("主机指纹不匹配。预期 \(expected)，实际 \(actual)。")
                     }
                 } catch {
+                    guard !Task.isCancelled else { return }
                     sshStatus = .failure(error.localizedDescription)
                 }
             }
-        } catch {
-            sshStatus = .failure(error.localizedDescription)
-        }
+        } catch { sshStatus = .failure(error.localizedDescription) }
     }
 
     private func trustSSHHost() {
-        guard case .needsTrust(let profileId, let fingerprint) = sshStatus else { return }
+        guard case .needsTrust(let profileId, _) = sshStatus,
+              let snapshot = sshProbeSnapshot,
+              snapshot.candidate.id == profileId else { return }
         do {
-            try settingsStore.trustHost(profileId: profileId, fingerprint: fingerprint)
-            guard let profile = settingsStore.sshProfiles.first(where: { $0.id == profileId }) else {
-                throw IOSSSHError.invalidProfile("SSH profile was not found.")
+            let current = try currentSSHProfile()
+            guard current == snapshot.candidate,
+                  settingsStore.sshProfiles.first(where: { $0.id == profileId }) == snapshot.persistedProfile else {
+                throw IOSSSHError.invalidProfile("连接配置已变化，请重新检查主机指纹。")
             }
-            sshProfileDraft = profile
-            guard !sshPasswordDraft.isEmpty else {
-                settingsStore.clearSSHPassword(profileId: profileId)
-                sshStatus = .success("Host trusted. Add a password before running remote SSH commands.")
+            var trustedCandidate = snapshot.candidate
+            trustedCandidate.knownHostSHA256 = snapshot.fingerprint
+            trustedCandidate.knownHostHost = trustedCandidate.host
+            trustedCandidate.knownHostPort = trustedCandidate.port
+            trustedCandidate = try trustedCandidate.validated()
+            // Keep the trusted pin on the in-memory candidate while auth runs;
+            // SettingsStore is still untouched until authentication succeeds.
+            sshProfileDraft = trustedCandidate
+            sshPortDraft = String(trustedCandidate.port)
+            let draftCredential = draftSSHCredential()
+            sshStatus = .testing
+            sshVerificationTask = Task {
+                await verifySSHCredential(
+                    profile: trustedCandidate,
+                    draftCredential: draftCredential,
+                    persistedProfileBeforeVerification: snapshot.persistedProfile
+                )
+            }
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
+    private func verifySSHCredential(
+        profile: IOSSSHProfile,
+        draftCredential: IOSSSHCredential?,
+        persistedProfileBeforeVerification: IOSSSHProfile?
+    ) async {
+        guard !Task.isCancelled else { return }
+        let savedProfileBefore = persistedProfileBeforeVerification
+        guard sharedSettings.isCapabilityGateEnabled(.remoteRuntime) else {
+            sshStatus = .failure(IOSCapabilityGate.remoteRuntime.disabledReason)
+            return
+        }
+        do {
+            let credential: IOSSSHCredential?
+            if let draftCredential { credential = draftCredential }
+            else { credential = try settingsStore.credentialForSSHProfile(profile) }
+            guard let credential else {
+                throw profile.authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
+            }
+            let started = await IOSTerminalRuntime.shared.startJob(
+                command: "echo amber-terminal-auth-check",
+                runtime: .remoteSSH,
+                experimentalEnabled: false,
+                sshProfile: profile,
+                sshCredential: credential,
+                timeoutSeconds: 15
+            )
+            let finished = started.status == IOSTerminalJobStatus.running.rawValue
+                ? await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 20) : started
+            if Task.isCancelled { _ = IOSTerminalRuntime.shared.stopJob(id: started.id) }
+            _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
+            guard !Task.isCancelled else { return }
+            guard finished?.status == IOSTerminalJobStatus.completed.rawValue && finished?.exitCode == 0 else {
+                sshStatus = .failure(finished?.error ?? IOSSSHError.authenticationFailed.localizedDescription)
                 return
             }
-            sshStatus = .testing
-            Task {
-                guard await verifySSHPassword(profile: profile, password: sshPasswordDraft) else {
-                    settingsStore.clearSSHPassword(profileId: profileId)
-                    sshStatus = .failure("Host trusted, but password authentication failed. Check the password and try again.")
-                    return
-                }
-                do {
-                    try settingsStore.upsertSSHProfile(profile, password: sshPasswordDraft)
-                    loadedSSHPasswordDraft = sshPasswordDraft
-                    sshStatus = .success("Host trusted and password verified. Remote SSH commands can now run.")
-                } catch {
-                    sshStatus = .failure(error.localizedDescription)
-                }
+            // A late verification must not overwrite a newer saved target.
+            guard try currentSSHProfile() == profile,
+                  settingsStore.sshProfiles.first(where: { $0.id == profile.id }) == savedProfileBefore else {
+                throw IOSSSHError.invalidProfile("连接配置已变化，请重新验证认证。")
             }
+            try settingsStore.upsertSSHProfile(profile, credential: credential)
+            sshPasswordDraft = ""
+            sshPrivateKeyDraft = ""
+            sshProbeSnapshot = nil
+            sshStatus = .success("主机已信任，SSH 认证通过，凭证已安全保存。")
         } catch {
+            guard !Task.isCancelled else { return }
             sshStatus = .failure(error.localizedDescription)
         }
     }
 
-    private func verifySSHPassword(profile: IOSSSHProfile, password: String) async -> Bool {
-        guard sharedSettings.isCapabilityGateEnabled(.remoteRuntime) else { return false }
-        let started = await IOSTerminalRuntime.shared.startJob(
-            command: "echo amber-terminal-auth-check",
-            runtime: .remoteSSH,
-            experimentalEnabled: false,
-            sshProfile: profile,
-            sshPassword: password,
-            timeoutSeconds: 15
-        )
-        let finished = started.status == IOSTerminalJobStatus.running.rawValue
-            ? await IOSTerminalRuntime.shared.waitJob(id: started.id, timeoutSeconds: 20)
-            : started
-        let succeeded = finished?.status == IOSTerminalJobStatus.completed.rawValue && finished?.exitCode == 0
-        _ = IOSTerminalRuntime.shared.consumeTerminalJob(id: started.id)
-        return succeeded
+    private func saveSSHKeyDraft() {
+        do {
+            if sshPrivateKeyDraft.isEmpty {
+                saveSSHProfile()
+            } else {
+                try persistSSHKeyDraft()
+                sshStatus = .success("私钥已保存到本机钥匙串。")
+            }
+        } catch { sshStatus = .failure(error.localizedDescription) }
     }
 
-    private func resetSSHProfileDraft() {
-        sshProfileDraft = IOSSSHProfile()
+    private func persistSSHKeyDraft() throws {
+        let profile = try currentSSHProfile()
+        try settingsStore.upsertSSHProfile(profile, credential: .privateKey(sshPrivateKeyDraft))
+        sshProfileDraft = settingsStore.sshProfiles.first { $0.id == profile.id } ?? profile
+        sshPrivateKeyDraft = ""
+    }
+
+    private func generateSSHKey() {
+        do {
+            let key = try IOSSSHPrivateKey.generate()
+            sshPrivateKeyDraft = key.privateKey
+            sshPublicKey = key.publicKey
+            sshStatus = .success("已生成专用密钥，请保存后将公钥添加到服务器。")
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
+    private func importSSHPrivateKey(_ result: Result<URL, Error>) {
+        do {
+            let url = try result.get()
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: 65_537) ?? Data()
+            guard data.count <= 65_536, let key = String(data: data, encoding: .utf8) else {
+                throw IOSSSHError.invalidPrivateKey
+            }
+            let publicKey = try IOSSSHPrivateKey.publicKey(from: key)
+            sshPrivateKeyDraft = key
+            sshPublicKey = publicKey
+            sshStatus = .success("私钥已读入，请保存。Amber 不会另存明文文件。")
+        } catch let error as IOSSSHError { sshStatus = .failure(error.localizedDescription) }
+        catch { sshStatus = .failure("无法读取私钥文件，请重新选择。") }
+    }
+
+    private func showSSHPublicKey() {
+        do {
+            sshPublicKey = try currentSSHPublicKey()
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
+    private func copySSHPublicKey() {
+        do {
+            if !sshPrivateKeyDraft.isEmpty {
+                try persistSSHKeyDraft()
+            }
+            sshPublicKey = try currentSSHPublicKey()
+            UIPasteboard.general.string = sshPublicKey
+            sshStatus = .success("公钥已复制。私钥如未保存，请点击保存私钥。")
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
+    private func currentSSHPublicKey() throws -> String {
+        if !sshPrivateKeyDraft.isEmpty {
+            return try IOSSSHPrivateKey.publicKey(from: sshPrivateKeyDraft)
+        }
+        let profile = try currentSSHProfile()
+        guard case .privateKey(let key) = try settingsStore.credentialForSSHProfile(profile) else {
+            throw IOSSSHError.missingPrivateKey
+        }
+        return try IOSSSHPrivateKey.publicKey(from: key)
+    }
+
+    private func clearSSHDrafts() {
+        sshVerificationTask?.cancel()
+        sshVerificationTask = nil
         sshPasswordDraft = ""
-        loadedSSHPasswordDraft = ""
-        sshPortDraft = "22"
+        sshPrivateKeyDraft = ""
+        sshPublicKey = ""
+        showsSSHPublicKey = false
+        sshProbeSnapshot = nil
         sshStatus = .idle
     }
 
-    private func clearSSHPassword() {
-        settingsStore.clearSSHPassword(profileId: sshProfileDraft.id)
-        sshPasswordDraft = ""
-        loadedSSHPasswordDraft = ""
-        sshStatus = .success("SSH password cleared.")
+    private func cancelSSHProbe() {
+        sshVerificationTask?.cancel()
+        sshVerificationTask = nil
+        sshProbeSnapshot = nil
+        sshStatus = .idle
     }
+
+    private func resetSSHProfileDraft() {
+        clearSSHDrafts()
+        sshProfileDraft = IOSSSHProfile()
+        sshPortDraft = "22"
+    }
+
+    private func clearSSHCredential() {
+        do {
+            try settingsStore.clearSSHCredential(profileId: sshProfileDraft.id)
+            clearSSHDrafts()
+            sshStatus = .success("已清除本机保存的 SSH 凭证。")
+        } catch { sshStatus = .failure(error.localizedDescription) }
+    }
+
 }
 
 private struct RuntimeSheetChrome<Content: View>: View {
@@ -1421,7 +1836,7 @@ private struct RuntimeChoiceRow: View {
     private var runtimeSummary: String {
         switch runtime {
         case .remoteSSH:
-            return "稳定远程命令主线；需要 SSH Profile、密码和 Host 信任"
+            return "稳定远程命令主线；需要 SSH Profile、认证凭证和 Host 信任"
         case .localIOSTools:
             return IOSAppLocalization.string(
                 "AmberShell；受限文件/文本命令、管道、重定向与 CPython 3.14 python -c，无 PTY",
@@ -1720,6 +2135,8 @@ private struct RuntimeSecureFieldRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             SecureField(placeholder, text: $text)
+                .privacySensitive()
+                .autocorrectionDisabled()
                 .font(.system(.subheadline, design: .monospaced))
                 .foregroundStyle(AmberTheme.foreground)
                 .multilineTextAlignment(.trailing)
@@ -1935,14 +2352,14 @@ private struct RemoteTaskTextCard: View {
 private struct HostFingerprintCard: View {
     let status: RuntimeEnvironmentView.SSHStatus
     let onTrust: () -> Void
-    let onRetry: () -> Void
+    let onCancel: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             switch status {
             case .idle:
                 FingerprintTitle(systemImage: "checkmark.shield", title: "尚未验证 Host 指纹", color: AmberTheme.foreground)
-                Text("连接前需检查服务器可达性与 host key 指纹。未信任或指纹不匹配时不会发送密码。")
+                Text("连接前需检查服务器可达性与 host key 指纹。未信任或指纹不匹配时不会提交认证。私钥留在本机，只用于签名。")
                     .fingerprintDescription()
             case .testing:
                 FingerprintTitle(systemImage: "arrow.triangle.2.circlepath", title: "正在连接并获取 host key...", color: AmberTheme.foreground)
@@ -1960,16 +2377,16 @@ private struct HostFingerprintCard: View {
                         Label("信任此 Host", systemImage: "checkmark")
                     }
                     .buttonStyle(RuntimeFilledButtonStyle())
-                    Button("取消", action: onRetry)
+                    Button("取消", action: onCancel)
                         .buttonStyle(RuntimeGlassButtonStyle())
                 }
             case .success(let message):
-                FingerprintTitle(systemImage: "checkmark.shield", title: "Host 已信任", color: AmberTheme.accentGreen)
+                FingerprintTitle(systemImage: "checkmark.shield", title: "SSH 状态", color: AmberTheme.accentGreen)
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.accentGreen)
             case .failure(let message):
-                FingerprintTitle(systemImage: "xmark.shield", title: "Host 指纹不匹配或连接失败", color: AmberTheme.accentRed)
+                FingerprintTitle(systemImage: "xmark.shield", title: "SSH 验证失败", color: AmberTheme.accentRed)
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(AmberTheme.accentRed)

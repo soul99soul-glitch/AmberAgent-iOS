@@ -11,15 +11,14 @@ import NIOSSH
 #endif
 
 final class IOSSSHRuntimeBackend: IOSSSHRuntimeBackendProtocol, @unchecked Sendable {
-    func testConnection(profile: IOSSSHProfile, password: String) async throws -> IOSSSHConnectionProbeResult {
+    func testConnection(profile: IOSSSHProfile) async throws -> IOSSSHConnectionProbeResult {
         let validated = try profile.validated()
-        guard !password.isEmpty else { throw IOSSSHError.missingPassword }
 
         #if canImport(NIOCore) && canImport(NIOPosix) && canImport(NIOSSH)
         let session = IOSSSHActiveSessionRegistry()
         return try await withTaskCancellationHandler {
             try await Task.detached {
-                try IOSSSHExecClient.probe(profile: validated, password: password, registry: session)
+                try IOSSSHExecClient.probe(profile: validated, registry: session)
             }.value
         } onCancel: {
             session.cancelAll()
@@ -32,12 +31,12 @@ final class IOSSSHRuntimeBackend: IOSSSHRuntimeBackendProtocol, @unchecked Senda
     func execute(
         command: String,
         profile: IOSSSHProfile,
-        password: String,
+        credential: IOSSSHCredential,
         timeout: TimeInterval,
         output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
     ) async throws -> IOSSSHCommandResult {
         let validated = try profile.validated()
-        guard !password.isEmpty else { throw IOSSSHError.missingPassword }
+        let validatedCredential = try credential.validated(for: validated)
         guard let fingerprint = validated.knownHostSHA256, !fingerprint.isEmpty else {
             throw IOSSSHError.hostKeyNotTrusted("Run Test Connection and Trust Host first.")
         }
@@ -49,7 +48,7 @@ final class IOSSSHRuntimeBackend: IOSSSHRuntimeBackendProtocol, @unchecked Senda
                 try IOSSSHExecClient.execute(
                     command: command,
                     profile: validated,
-                    password: password,
+                    credential: validatedCredential,
                     timeout: timeout,
                     output: output,
                     registry: session
@@ -110,7 +109,7 @@ private final class IOSSSHActiveSessionRegistry: @unchecked Sendable {
 private enum IOSSSHClientError: Error {
     case invalidChannelType
     case invalidHostKey
-    case passwordAuthenticationNotSupported
+    case authenticationFailed
     case probeComplete
 }
 
@@ -119,16 +118,15 @@ private enum IOSSSHExecClient {
 
     static func probe(
         profile: IOSSSHProfile,
-        password: String,
         registry: IOSSSHActiveSessionRegistry
     ) throws -> IOSSSHConnectionProbeResult {
         let result = try connect(
             profile: profile,
-            password: password,
+            credential: nil,
             command: nil,
             output: nil,
             enforceHostKey: false,
-            abortAfterHostKey: IOSSSHProbePolicy.abortsAfterHostKey,
+            abortAfterHostKey: true,
             timeout: 15,
             registry: registry
         )
@@ -138,14 +136,14 @@ private enum IOSSSHExecClient {
     static func execute(
         command: String,
         profile: IOSSSHProfile,
-        password: String,
+        credential: IOSSSHCredential,
         timeout: TimeInterval,
         output: @escaping @Sendable (IOSSSHOutputChunk) -> Void,
         registry: IOSSSHActiveSessionRegistry
     ) throws -> IOSSSHCommandResult {
         let result = try connect(
             profile: profile,
-            password: password,
+            credential: credential,
             command: command,
             output: output,
             enforceHostKey: true,
@@ -169,7 +167,7 @@ private enum IOSSSHExecClient {
 
     private static func connect(
         profile: IOSSSHProfile,
-        password: String,
+        credential: IOSSSHCredential?,
         command: String?,
         output: (@Sendable (IOSSSHOutputChunk) -> Void)?,
         enforceHostKey: Bool,
@@ -180,9 +178,9 @@ private enum IOSSSHExecClient {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         defer { try? group.syncShutdownGracefully() }
 
-        let authDelegate = IOSSSHPasswordAuthDelegate(
+        let authDelegate = try IOSSSHAuthDelegate(
             username: profile.username,
-            password: command == nil ? IOSSSHProbePolicy.passwordOffer(realPassword: password) : password
+            credential: credential
         )
         let hostDelegate = IOSSSHHostKeyDelegate(
             expectedFingerprint: profile.knownHostSHA256,
@@ -266,8 +264,15 @@ private enum IOSSSHExecClient {
         let trustState = hostResult.trustState
 
         guard case .trusted = trustState else {
-            try channel.close().wait()
+            // Host validation may already have closed the channel. Preserve
+            // the fingerprint failure instead of replacing it with AlreadyClosed.
+            try? channel.close().wait()
             return (fingerprint, trustState, nil)
+        }
+        guard let credential else {
+            // A probe never reaches the command path and therefore never
+            // falls back to a real or synthetic credential here.
+            throw IOSSSHError.credentialUnavailable
         }
 
         let resultPromise = channel.eventLoop.makePromise(of: IOSSSHCommandResult.self)
@@ -284,6 +289,7 @@ private enum IOSSSHExecClient {
                         try sync.addHandler(
                             IOSSSHExecHandler(
                                 command: command,
+                                credential: credential,
                                 output: output,
                                 completePromise: resultPromise,
                                 timeout: timeout
@@ -296,7 +302,7 @@ private enum IOSSSHExecClient {
             }.wait()
         } catch {
             resultPromise.fail(error)
-            throw error
+            throw mapAuthenticationError(error, authDelegate: authDelegate)
         }
         guard registry.register(childChannel) else {
             throw IOSSSHError.commandCancelled
@@ -310,7 +316,7 @@ private enum IOSSSHExecClient {
             if registry.isCancelled {
                 throw IOSSSHError.commandCancelled
             }
-            throw error
+            throw mapAuthenticationError(error, authDelegate: authDelegate)
         }
         if registry.isCancelled {
             throw IOSSSHError.commandCancelled
@@ -352,38 +358,111 @@ private enum IOSSSHExecClient {
             return
         } catch IOSSSHError.hostKeyMismatch {
             return
+        } catch IOSSSHClientError.authenticationFailed {
+            throw IOSSSHError.authenticationFailed
         } catch {
             if channel.isActive {
                 throw error
             }
         }
     }
+
+    private static func mapAuthenticationError(_ error: Error, authDelegate: IOSSSHAuthDelegate) -> Error {
+        if authDelegate.didFailAuthentication {
+            return IOSSSHError.authenticationFailed
+        }
+        if let error = error as? IOSSSHClientError,
+           case .authenticationFailed = error {
+            return IOSSSHError.authenticationFailed
+        }
+        return error
+    }
 }
 
-private final class IOSSSHPasswordAuthDelegate: NIOSSHClientUserAuthenticationDelegate, Sendable {
-    private let username: String
-    private let password: String
+private final class IOSSSHAuthDelegate: NIOSSHClientUserAuthenticationDelegate, @unchecked Sendable {
+    private enum Material: Sendable {
+        case none
+        case password(String)
+        case privateKey(NIOSSHPrivateKey)
+    }
 
-    init(username: String, password: String) {
+    private let lock = NSLock()
+    private let username: String
+    private let material: Material
+    private var hasAttemptedAuthentication = false
+    private var authenticationFailed = false
+
+    var didFailAuthentication: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return authenticationFailed
+    }
+
+    init(username: String, credential: IOSSSHCredential?) throws {
         self.username = username
-        self.password = password
+        if let credential {
+            switch credential {
+            case .password(let password):
+                guard !password.isEmpty else { throw IOSSSHError.missingPassword }
+                self.material = .password(password)
+            case .privateKey(let privateKey):
+                self.material = .privateKey(try IOSSSHPrivateKey.parse(privateKey))
+            }
+        } else {
+            self.material = .none
+        }
     }
 
     func nextAuthenticationType(
         availableMethods: NIOSSHAvailableUserAuthenticationMethods,
         nextChallengePromise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
     ) {
-        guard availableMethods.contains(.password) else {
-            nextChallengePromise.fail(IOSSSHClientError.passwordAuthenticationNotSupported)
+        lock.lock()
+        guard !hasAttemptedAuthentication else {
+            lock.unlock()
+            failAuthentication(nextChallengePromise)
             return
         }
-        nextChallengePromise.succeed(
-            NIOSSHUserAuthenticationOffer(
-                username: username,
-                serviceName: "",
-                offer: .password(.init(password: password))
+        hasAttemptedAuthentication = true
+        lock.unlock()
+
+        switch material {
+        case .none:
+            nextChallengePromise.succeed(nil)
+        case .password(let password):
+            guard availableMethods.contains(.password) else {
+                failAuthentication(nextChallengePromise)
+                return
+            }
+            nextChallengePromise.succeed(
+                NIOSSHUserAuthenticationOffer(
+                    username: username,
+                    serviceName: "",
+                    offer: .password(.init(password: password))
+                )
             )
-        )
+        case .privateKey(let privateKey):
+            guard availableMethods.contains(.publicKey) else {
+                failAuthentication(nextChallengePromise)
+                return
+            }
+            nextChallengePromise.succeed(
+                NIOSSHUserAuthenticationOffer(
+                    username: username,
+                    serviceName: "",
+                    offer: .privateKey(.init(privateKey: privateKey))
+                )
+            )
+        }
+    }
+
+    private func failAuthentication(
+        _ promise: EventLoopPromise<NIOSSHUserAuthenticationOffer?>
+    ) {
+        lock.lock()
+        authenticationFailed = true
+        lock.unlock()
+        promise.fail(IOSSSHClientError.authenticationFailed)
     }
 }
 
@@ -489,6 +568,7 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
     private static let outputTailLimit = 128 * 1024
 
     private let command: String
+    private let redactor: IOSSSHOutputRedactor
     private let output: (@Sendable (IOSSSHOutputChunk) -> Void)?
     private var completePromise: EventLoopPromise<IOSSSHCommandResult>?
     private var stdoutBuffer = ""
@@ -497,11 +577,13 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
 
     init(
         command: String,
+        credential: IOSSSHCredential,
         output: (@Sendable (IOSSSHOutputChunk) -> Void)?,
         completePromise: EventLoopPromise<IOSSSHCommandResult>,
         timeout: TimeInterval
     ) {
         self.command = command
+        self.redactor = IOSSSHOutputRedactor(credential: credential)
         self.output = output
         self.completePromise = completePromise
         self.timeout = timeout
@@ -525,17 +607,16 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let data = unwrapInboundIn(data)
         guard case .byteBuffer(var bytes) = data.data else { return }
-        let chunk = bytes.readString(length: bytes.readableBytes) ?? ""
-        guard !chunk.isEmpty else { return }
-        switch data.type {
-        case .channel:
-            stdoutBuffer = limitedTail(stdoutBuffer + chunk)
-        case .stdErr:
-            stderrBuffer = limitedTail(stderrBuffer + chunk)
-        default:
-            stdoutBuffer = limitedTail(stdoutBuffer + chunk)
+        let rawChunk = bytes.readString(length: bytes.readableBytes) ?? ""
+        guard !rawChunk.isEmpty else { return }
+        let rawOutput = IOSSSHOutputChunk(text: rawChunk, isStderr: data.type == .stdErr)
+        guard let chunk = redactor.redact(rawOutput) else { return }
+        if chunk.isStderr {
+            stderrBuffer = limitedTail(stderrBuffer + chunk.text)
+        } else {
+            stdoutBuffer = limitedTail(stdoutBuffer + chunk.text)
         }
-        output?(IOSSSHOutputChunk(text: chunk, isStderr: data.type == .stdErr))
+        output?(chunk)
     }
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -561,6 +642,7 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
         guard let completePromise else { return }
         self.completePromise = nil
         timeoutTask?.cancel()
+        flushRedactor()
         completePromise.succeed(IOSSSHCommandResult(
             stdout: stdoutBuffer,
             stderr: stderrBuffer,
@@ -572,7 +654,19 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
         guard let completePromise else { return }
         self.completePromise = nil
         timeoutTask?.cancel()
+        flushRedactor()
         completePromise.fail(error)
+    }
+
+    private func flushRedactor() {
+        for chunk in redactor.finish() {
+            if chunk.isStderr {
+                stderrBuffer = limitedTail(stderrBuffer + chunk.text)
+            } else {
+                stdoutBuffer = limitedTail(stdoutBuffer + chunk.text)
+            }
+            output?(chunk)
+        }
     }
 
     private func limitedTail(_ value: String) -> String {

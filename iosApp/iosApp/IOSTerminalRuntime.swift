@@ -378,7 +378,7 @@ final class IOSAdvancedTaskStore {
             retryable: false,
             cancelCapability: true,
             sourceToolName: sourceToolName,
-            metadata: metadata.mapValues(Self.redacted),
+            metadata: Self.redactedMetadata(metadata),
             createdAt: now,
             updatedAt: now
         )
@@ -406,8 +406,8 @@ final class IOSAdvancedTaskStore {
         if let retryable { tasks[index].retryable = retryable }
         if let cancelCapability { tasks[index].cancelCapability = cancelCapability }
         if let metadata {
-            for (key, value) in metadata {
-                tasks[index].metadata[key] = Self.redacted(value)
+            for (key, value) in Self.redactedMetadata(metadata) {
+                tasks[index].metadata[key] = value
             }
         }
         tasks[index].updatedAt = now
@@ -519,7 +519,7 @@ final class IOSAdvancedTaskStore {
         sanitized.logTail = Self.redactedLog(record.logTail)
         sanitized.resultSummary = Self.redacted(record.resultSummary)
         sanitized.error = Self.redacted(record.error)
-        sanitized.metadata = record.metadata.mapValues(Self.redacted)
+        sanitized.metadata = Self.redactedMetadata(record.metadata)
 
         if let index = tasks.firstIndex(where: { $0.id == sanitized.id }) {
             tasks[index] = sanitized
@@ -561,7 +561,18 @@ final class IOSAdvancedTaskStore {
     }
 
     static func redacted(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        redact(value, preservingWhitespace: false)
+    }
+
+    private static func redactedMetadata(_ metadata: [String: String]) -> [String: String] {
+        metadata.reduce(into: [:]) { result, entry in
+            let isOutput = entry.key == "stdout_tail" || entry.key == "stderr_tail"
+            result[entry.key] = redact(entry.value, preservingWhitespace: isOutput)
+        }
+    }
+
+    private static func redact(_ value: String, preservingWhitespace: Bool) -> String {
+        let trimmed = preservingWhitespace ? value : value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let patterns = [
             #"(?i)bearer\s+[A-Za-z0-9._~+/=-]{6,}"#,
@@ -569,7 +580,7 @@ final class IOSAdvancedTaskStore {
             #"sk-[A-Za-z0-9_\-]{12,}"#,
             #"(?i)(ssh-rsa|ssh-ed25519)\s+[A-Za-z0-9+/=]+"#
         ]
-        var output = trimmed
+        var output = IOSSSHOutputRedactor.redact(trimmed, credential: .password(""))
         for pattern in patterns {
             output = output.replacingOccurrences(
                 of: pattern,
@@ -699,12 +710,14 @@ enum IOSPOSIXWorkingDirectoryError: LocalizedError {
     }
 }
 
+/// SSH backends sanitize stdout/stderr before buffering or truncating it.
+/// Runtime errors are sanitized again at the job boundary before persistence.
 protocol IOSSSHRuntimeBackendProtocol: Sendable {
-    func testConnection(profile: IOSSSHProfile, password: String) async throws -> IOSSSHConnectionProbeResult
+    func testConnection(profile: IOSSSHProfile) async throws -> IOSSSHConnectionProbeResult
     func execute(
         command: String,
         profile: IOSSSHProfile,
-        password: String,
+        credential: IOSSSHCredential,
         timeout: TimeInterval,
         output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
     ) async throws -> IOSSSHCommandResult
@@ -792,10 +805,8 @@ final class IOSTerminalRuntime {
         self.experimentalRuntimesLinked = experimentalRuntimesLinked
     }
 
-    func testSSHConnection(profile: IOSSSHProfile, password: String) async throws -> IOSSSHConnectionProbeResult {
-        let validated = try profile.validated()
-        guard !password.isEmpty else { throw IOSSSHError.missingPassword }
-        return try await sshBackend.testConnection(profile: validated, password: password)
+    func testSSHConnection(profile: IOSSSHProfile) async throws -> IOSSSHConnectionProbeResult {
+        try await sshBackend.testConnection(profile: profile.validated())
     }
 
     func startJob(
@@ -822,7 +833,8 @@ final class IOSTerminalRuntime {
         experimentalEnabled: Bool,
         workingDirectory: String? = nil,
         sshProfile: IOSSSHProfile?,
-        sshPassword: String?,
+        sshPassword: String? = nil,
+        sshCredential: IOSSSHCredential? = nil,
         timeoutSeconds: TimeInterval = 60,
         jobId: String? = nil,
         workspaceStore: IOSWorkspaceStore = .shared,
@@ -857,7 +869,7 @@ final class IOSTerminalRuntime {
                 workingDirectory: workingDirectory,
                 now: now,
                 profile: sshProfile,
-                password: sshPassword,
+                credential: sshCredential ?? sshPassword.map(IOSSSHCredential.password),
                 timeoutSeconds: timeoutSeconds,
                 jobId: jobId
             )
@@ -962,7 +974,7 @@ final class IOSTerminalRuntime {
         workingDirectory: String?,
         now: Date,
         profile: IOSSSHProfile?,
-        password: String?,
+        credential: IOSSSHCredential?,
         timeoutSeconds: TimeInterval,
         jobId: String?
     ) -> IOSTerminalJobSnapshot {
@@ -992,13 +1004,17 @@ final class IOSTerminalRuntime {
             )
         }
         let validated: IOSSSHProfile
+        let credentialToUse: IOSSSHCredential
         do {
             guard let profile else { throw IOSSSHError.noDefaultProfile }
             validated = try profile.validated()
             guard validated.knownHostSHA256?.isEmpty == false else {
                 throw IOSSSHError.hostKeyNotTrusted("Run Test Connection and Trust Host first.")
             }
-            guard let password, !password.isEmpty else { throw IOSSSHError.missingPassword }
+            guard let credential else {
+                throw validated.authMethod == .password ? IOSSSHError.missingPassword : IOSSSHError.missingPrivateKey
+            }
+            credentialToUse = try credential.validated(for: validated)
         } catch {
             return failedSnapshot(
                 runtime: .remoteSSH,
@@ -1019,7 +1035,6 @@ final class IOSTerminalRuntime {
 
         let jobId = job.id
         let sshBackend = sshBackend
-        let sshPassword = password ?? ""
         job.task = Task {
             do {
                 let result = try await sshBackend.execute(
@@ -1028,7 +1043,7 @@ final class IOSTerminalRuntime {
                         workingDirectory: normalizedWorkingDirectory
                     ),
                     profile: validated,
-                    password: sshPassword,
+                    credential: credentialToUse,
                     timeout: timeoutSeconds,
                     output: { chunk in
                         Task { @MainActor in
@@ -1067,7 +1082,7 @@ final class IOSTerminalRuntime {
                     status: .failed,
                     exitCode: nil,
                     output: nil,
-                    error: error.localizedDescription
+                    error: IOSSSHOutputRedactor.redact(error.localizedDescription, credential: credentialToUse)
                 )
             }
         }
@@ -1424,8 +1439,8 @@ enum IOSRemoteTerminalExecuteExecutor {
                expectedTargetDigest != remoteSSHTargetDigest(profile) {
                 throw IOSRemoteTerminalExecuteError.approvedTargetChanged
             }
-            let password = settingsStore.passwordForSSHProfile(id: profile.id) ?? ""
-            return await execute(request: request, profile: profile, password: password, runtime: runtime)
+            let credential = try settingsStore.credentialForSSHProfile(profile)
+            return await execute(request: request, profile: profile, credential: credential, runtime: runtime)
         } catch {
             return failureJSON(error)
         }
@@ -1441,7 +1456,7 @@ enum IOSRemoteTerminalExecuteExecutor {
             return await execute(
                 request: try parseRequest(input),
                 profile: profile,
-                password: password,
+                credential: .password(password),
                 runtime: runtime
             )
         } catch {
@@ -1480,7 +1495,7 @@ enum IOSRemoteTerminalExecuteExecutor {
     private static func execute(
         request: IOSRemoteTerminalExecuteRequest,
         profile: IOSSSHProfile,
-        password: String,
+        credential: IOSSSHCredential?,
         runtime: IOSTerminalRuntime
     ) async -> String {
         let started = await runtime.startJob(
@@ -1489,7 +1504,7 @@ enum IOSRemoteTerminalExecuteExecutor {
             experimentalEnabled: false,
             workingDirectory: request.workingDirectory,
             sshProfile: profile,
-            sshPassword: password,
+            sshCredential: credential,
             timeoutSeconds: request.timeoutSeconds
         )
         var snapshot = started
@@ -2008,7 +2023,7 @@ enum IOSAgentTerminalJobExecutor {
            expectedTargetDigest != remoteSSHTargetDigest(profile) {
             throw IOSRemoteTerminalJobError.approvedTargetChanged
         }
-        let password = settingsStore.passwordForSSHProfile(id: profile.id) ?? ""
+        let credential = try settingsStore.credentialForSSHProfile(profile)
         let jobId = UUID().uuidString
         let now = Date()
         taskStore.startTask(
@@ -2042,7 +2057,7 @@ enum IOSAgentTerminalJobExecutor {
             experimentalEnabled: false,
             workingDirectory: request.workingDirectory,
             sshProfile: profile,
-            sshPassword: password,
+            sshCredential: credential,
             timeoutSeconds: request.timeoutSeconds,
             jobId: jobId
         )
@@ -2584,6 +2599,7 @@ private enum IOSRemoteTerminalExecuteError: LocalizedError {
 private func remoteSSHTargetDigest(_ profile: IOSSSHProfile) -> String {
     chatInputDigest(for: [
         profile.id,
+        profile.authMethod.rawValue,
         profile.username.trimmingCharacters(in: .whitespacesAndNewlines),
         profile.host.trimmingCharacters(in: .whitespacesAndNewlines),
         String(profile.port),

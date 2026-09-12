@@ -25,12 +25,6 @@ final class IOSSSHProfileTests: XCTestCase {
         XCTAssertThrowsError(try IOSSSHProfile(host: "example.com", username: "").validated())
     }
 
-    func testProbePolicyNeverOffersRealPassword() {
-        XCTAssertTrue(IOSSSHProbePolicy.abortsAfterHostKey)
-        XCTAssertEqual(IOSSSHProbePolicy.passwordOffer(realPassword: "secret"), IOSSSHProbePolicy.passwordPlaceholder)
-        XCTAssertNotEqual(IOSSSHProbePolicy.passwordOffer(realPassword: "secret"), "secret")
-    }
-
     func testKnownHostTrustIsBoundToHostAndPort() throws {
         let trusted = IOSSSHProfile(
             host: "example.com",
@@ -617,6 +611,8 @@ final class IOSTerminalSSHRuntimeTests: XCTestCase {
         XCTAssertEqual(finished["stdout"] as? String, "done\n")
         XCTAssertEqual(finished["stderr"] as? String, "notice\n")
         XCTAssertEqual(taskStore.task(id: jobId)?.status, .completed)
+        XCTAssertEqual(taskStore.task(id: jobId)?.metadata["stdout_tail"], "done\n")
+        XCTAssertEqual(taskStore.task(id: jobId)?.metadata["stderr_tail"], "notice\n")
 
         let missing = try jsonObject(await IOSAgentTerminalJobExecutor.execute(
             toolName: "terminal_job_read",
@@ -774,14 +770,14 @@ private final class MockSSHBackend: IOSSSHRuntimeBackendProtocol, @unchecked Sen
         self.streamsBeforeDelay = streamsBeforeDelay
     }
 
-    func testConnection(profile: IOSSSHProfile, password: String) async throws -> IOSSSHConnectionProbeResult {
+    func testConnection(profile: IOSSSHProfile) async throws -> IOSSSHConnectionProbeResult {
         probeResult
     }
 
     func execute(
         command: String,
         profile: IOSSSHProfile,
-        password: String,
+        credential: IOSSSHCredential,
         timeout: TimeInterval,
         output: @escaping @Sendable (IOSSSHOutputChunk) -> Void
     ) async throws -> IOSSSHCommandResult {

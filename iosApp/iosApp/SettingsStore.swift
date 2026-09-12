@@ -183,26 +183,40 @@ final class SettingsStore {
     }
 
     func upsertSSHProfile(_ profile: IOSSSHProfile, password: String?) throws {
-        let validated = try profile.validated()
-        if let password {
-            try IOSSSHSecretStore.savePassword(password, profileId: validated.id)
+        try upsertSSHProfile(profile, credential: password.map(IOSSSHCredential.password))
+    }
+
+    func upsertSSHProfile(_ profile: IOSSSHProfile, credential: IOSSSHCredential?) throws {
+        var validated = try profile.validated()
+        let previous = sshProfiles.first { $0.id == validated.id }
+        if let previous,
+           previous.host != validated.host || previous.port != validated.port,
+           validated.knownHostHost != validated.host || validated.knownHostPort != validated.port {
+            // Keep an explicitly verified new endpoint, but do not carry an
+            // old unbound/legacy pin into a different saved connection.
+            validated.knownHostSHA256 = nil
+            validated.knownHostHost = nil
+            validated.knownHostPort = nil
+        }
+        if let credential {
+            try IOSSSHSecretStore.saveCredential(credential, profile: validated)
+        } else if let previous,
+                  previous.host != validated.host || previous.port != validated.port ||
+                  previous.username != validated.username || previous.authMethod != validated.authMethod {
+            try IOSSSHSecretStore.deleteCredential(profileId: validated.id)
         }
         if let index = sshProfiles.firstIndex(where: { $0.id == validated.id }) {
             sshProfiles[index] = validated
         } else {
             sshProfiles.append(validated)
         }
-        if sshDefaultProfileId == nil {
-            sshDefaultProfileId = validated.id
-        }
+        if sshDefaultProfileId == nil { sshDefaultProfileId = validated.id }
     }
 
-    func deleteSSHProfile(id: String) {
+    func deleteSSHProfile(id: String) throws {
+        try IOSSSHSecretStore.deleteCredential(profileId: id)
         sshProfiles.removeAll { $0.id == id }
-        IOSSSHSecretStore.deletePassword(profileId: id)
-        if sshDefaultProfileId == id {
-            sshDefaultProfileId = sshProfiles.first?.id
-        }
+        if sshDefaultProfileId == id { sshDefaultProfileId = sshProfiles.first?.id }
     }
 
     func trustHost(profileId: String, fingerprint: String) throws {
@@ -216,12 +230,31 @@ final class SettingsStore {
         sshProfiles[index] = try profile.validated()
     }
 
-    func passwordForSSHProfile(id: String) -> String? {
-        IOSSSHSecretStore.loadPassword(profileId: id)
+    func credentialForSSHProfile(_ profile: IOSSSHProfile) throws -> IOSSSHCredential? {
+        let requested = try profile.validated()
+        guard let stored = sshProfiles.first(where: { $0.id == requested.id }) else { return nil }
+        let saved = try stored.validated()
+        guard saved.host == requested.host, saved.port == requested.port,
+              saved.username == requested.username, saved.authMethod == requested.authMethod else {
+            throw IOSSSHError.credentialUnavailable
+        }
+        // Legacy password reads migrate their Keychain item. Only a persisted
+        // endpoint may perform that migration, never an unsaved UI candidate.
+        return try IOSSSHSecretStore.loadCredential(profile: requested)
+    }
+
+    /// Read-only Keychain metadata query used by settings summaries. It never
+    /// loads or exposes the password/private-key payload.
+    func hasCredentialForSSHProfile(_ profile: IOSSSHProfile) -> Bool {
+        (try? IOSSSHSecretStore.hasCredential(profile: profile)) ?? false
+    }
+
+    func clearSSHCredential(profileId: String) throws {
+        try IOSSSHSecretStore.deleteCredential(profileId: profileId)
     }
 
     func clearSSHPassword(profileId: String) {
-        IOSSSHSecretStore.deletePassword(profileId: profileId)
+        try? clearSSHCredential(profileId: profileId)
     }
 
     /// Public read-only access to the Keychain-stored API key.
