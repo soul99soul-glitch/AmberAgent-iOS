@@ -172,6 +172,14 @@ class OrchestrationToolDeclarationsTest {
         assertEquals("theme_pack_status", status.name)
         assertFalse(status.needsApproval)
         assertTrue(status.description.contains("theme_pack_import"))
+        val statusParams = assertIs<InputSchema.Obj>(status.parameters())
+        assertTrue(statusParams.required.isNullOrEmpty())
+        val statusId = statusParams.properties["id"]!!.jsonObject
+        assertEquals("string", statusId["type"]?.jsonPrimitive?.contentOrNull)
+        val statusIdDescription = statusId["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        assertTrue("current" in statusIdDescription)
+        assertTrue("installed" in statusIdDescription)
+        assertTrue("builtin" in statusIdDescription)
 
         val import = createThemePackImportToolDeclaration()
         assertEquals("theme_pack_import", import.name)
@@ -179,8 +187,19 @@ class OrchestrationToolDeclarationsTest {
         val params = import.parameters()
         assertIs<InputSchema.Obj>(params)
         val required = params.required.orEmpty()
-        assertTrue("id" in required)
-        assertTrue("accent_hex" in required)
+        assertTrue(required.isEmpty(), "新建与 patch 共用 schema，条件必填由 host 验证")
+        val baseId = params.properties["base_id"]!!.jsonObject
+        assertEquals("string", baseId["type"]?.jsonPrimitive?.contentOrNull)
+        val baseIdDescription = baseId["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        assertTrue("current" in baseIdDescription)
+        assertTrue("installed" in baseIdDescription)
+        assertTrue("builtin" in baseIdDescription)
+        listOf(
+            "id", "display_name", "paper", "accent_hex", "ink_hex",
+            "canvas_style", "brand_mark", "shortcut_icon_style", "chrome_typeface",
+        ).forEach { field ->
+            assertTrue("`$field`" in import.description, "新建说明必须列出字段: $field")
+        }
         val paper = params.properties["paper"]!!.jsonObject
         val paperEnum = paper["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(listOf("paper", "neutral", "white", "pi", "notion"), paperEnum)
@@ -194,23 +213,20 @@ class OrchestrationToolDeclarationsTest {
         assertTrue(import.description.contains("design"), "主题说明必须引导模型使用完整设计对象")
         assertTrue(import.description.contains("appWide"), "主题说明必须保留 appWide 范围能力")
         val design = params.properties["design"]!!.jsonObject
-        assertEquals("object", design["type"]?.jsonPrimitive?.contentOrNull)
-        assertEquals(
-            listOf("light", "dark", "patterns"),
-            design["required"]!!.jsonArray.map { it.jsonPrimitive.content },
-        )
+        assertEquals(listOf("object", "null"), design["type"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(design["required"]!!.jsonArray.isEmpty(), "design patch 可局部省略")
 
         val palette = design["properties"]!!.jsonObject["light"]!!.jsonObject
+        assertEquals(listOf("object", "null"), palette["type"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(
             setOf("background", "surface", "foreground", "mutedForeground", "border"),
             palette["properties"]!!.jsonObject.keys,
         )
-        assertEquals(
-            setOf("background", "surface", "foreground", "mutedForeground", "border"),
-            palette["required"]!!.jsonArray.map { it.jsonPrimitive.content }.toSet(),
-        )
+        assertTrue(palette["required"]!!.jsonArray.isEmpty(), "palette patch 可局部省略")
 
         val gradient = design["properties"]!!.jsonObject["gradient"]!!.jsonObject
+        assertEquals(listOf("object", "null"), gradient["type"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(gradient["required"]!!.jsonArray.isEmpty(), "gradient patch 可局部省略")
         val gradientProperties = gradient["properties"]!!.jsonObject
         assertEquals("array", gradientProperties["colors"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull)
         assertEquals(2, gradientProperties["colors"]!!.jsonObject["minItems"]?.jsonPrimitive?.int)
@@ -224,6 +240,11 @@ class OrchestrationToolDeclarationsTest {
         assertEquals(3, patterns["maxItems"]?.jsonPrimitive?.int)
         val pattern = patterns["items"]!!.jsonObject
         val patternProperties = pattern["properties"]!!.jsonObject
+        assertEquals(
+            listOf("kind", "color", "opacity", "spacing", "size"),
+            pattern["required"]!!.jsonArray.map { it.jsonPrimitive.content },
+            "patterns item 必须保持完整配方",
+        )
         val kinds = patternProperties["kind"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content }
         assertEquals(listOf("dots", "grid", "diagonal", "crosses", "waves", "rings"), kinds)
         assertEquals(0.3, patternProperties["opacity"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
@@ -233,12 +254,25 @@ class OrchestrationToolDeclarationsTest {
         assertEquals(8.0, patternProperties["size"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
 
         val components = design["properties"]!!.jsonObject["components"]!!.jsonObject
+        assertEquals(listOf("object", "null"), components["type"]!!.jsonArray.map { it.jsonPrimitive.content })
         assertEquals(
             setOf(
                 "cardRadius", "bubbleRadius", "controlRadius", "borderWidth", "shadowOpacity", "shadowRadius",
                 "brandText", "brandSize", "brandTracking",
             ),
             components["properties"]!!.jsonObject.keys,
+        )
+        listOf("cardRadius", "bubbleRadius", "controlRadius", "borderWidth", "shadowOpacity", "shadowRadius", "brandSize", "brandTracking")
+            .forEach { field ->
+                assertEquals(
+                    listOf("number", "null"),
+                    components["properties"]!!.jsonObject[field]!!.jsonObject["type"]!!.jsonArray.map { it.jsonPrimitive.content },
+                    "组件属性 $field 支持 null 清除",
+                )
+            }
+        assertEquals(
+            listOf("string", "null"),
+            components["properties"]!!.jsonObject["brandText"]!!.jsonObject["type"]!!.jsonArray.map { it.jsonPrimitive.content },
         )
         assertEquals(32.0, components["properties"]!!.jsonObject["cardRadius"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
         assertEquals(28.0, components["properties"]!!.jsonObject["bubbleRadius"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
@@ -251,6 +285,21 @@ class OrchestrationToolDeclarationsTest {
         assertEquals(40.0, components["properties"]!!.jsonObject["brandSize"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
         assertEquals(-2.0, components["properties"]!!.jsonObject["brandTracking"]!!.jsonObject["minimum"]?.jsonPrimitive?.double)
         assertEquals(6.0, components["properties"]!!.jsonObject["brandTracking"]!!.jsonObject["maximum"]?.jsonPrimitive?.double)
+    }
+
+    @Test
+    fun themePackPatchDescriptionPreservesNestedMergeAndArrayReplacementRules() {
+        val description = createThemePackImportToolDeclaration().description
+        assertTrue("omitted fields stay unchanged" in description)
+        assertTrue("merge recursively" in description)
+        assertTrue("patterns" in description && "replaces that whole array" in description)
+        assertTrue("gradient.colors" in description && "gradient.darkColors" in description)
+        assertTrue("null" in description && "clears optional design" in description)
+        assertTrue("saved custom theme keeps its id" in description)
+        assertTrue("first edit of a builtin derives a new custom id" in description)
+        assertTrue("Do not redesign fields the user did not request" in description)
+        assertTrue("Component-only patches work on builtin/legacy" in description)
+        assertTrue("inherit the existing paper colors" in description)
     }
 
     @Test

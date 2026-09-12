@@ -119,8 +119,8 @@ enum AmberTheme {
     private static func base(_ key: KeyPath<AmberPalette, UInt32>, alpha: Double = 1) -> Color {
         let paper = AmberThemeRuntime.shared.paper
         let design = AmberThemeRuntime.shared.design
-        let lightHex = (design?.light.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: key]
-        let darkHex = (design?.dark.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: key]
+        let lightHex = (design?.light?.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: key]
+        let darkHex = (design?.dark?.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: key]
         return Color(uiColor: UIColor { trait in
             UIColor(hex: trait.userInterfaceStyle == .dark ? darkHex : lightHex, alpha: alpha)
         })
@@ -340,8 +340,8 @@ enum AmberTheme {
     )
 
     private static func homeTokens(for paper: AmberThemeRuntime.Paper, dark: Bool, design: AmberThemeDesign? = nil) -> AmberHomeTokens {
-        if let design {
-            let palette = dark ? design.dark.resolving(paper.darkPalette) : design.light.resolving(paper.lightPalette)
+        if let source = dark ? design?.dark : design?.light {
+            let palette = source.resolving(dark ? paper.darkPalette : paper.lightPalette)
             let chrome = dark ? homeDark : homeNeutral
             return AmberHomeTokens(
                 sep: palette.foreground, press: palette.foreground,
@@ -519,6 +519,15 @@ final class AmberThemeRuntime {
         }
     }
 
+    /// Identity is independent of visual equality: two named packs may share
+    /// exactly the same recipe and must still remain separate edit targets.
+    private(set) var selectedThemeID: String? {
+        didSet { persistString(Keys.selectedThemeID, selectedThemeID) }
+    }
+    private(set) var selectedThemeName: String? {
+        didSet { persistString(Keys.selectedThemeName, selectedThemeName) }
+    }
+
     var paper: Paper { didSet { persistString(Keys.paper, paper.rawValue) } }
     var accentHex: UInt32 { didSet { persistInt(Keys.accent, Int(accentHex)) } }
     var accentInkHex: UInt32 { didSet { persistInt(Keys.accentInk, Int(accentInkHex)) } }
@@ -572,6 +581,8 @@ final class AmberThemeRuntime {
     private var persistEnabled = true
 
     private enum Keys {
+        static let selectedThemeID = "app.amber.ios.theme.selectedThemeID"
+        static let selectedThemeName = "app.amber.ios.theme.selectedThemeName"
         static let design = "app.amber.ios.theme.design"
         static let paper = "app.amber.ios.theme.paper"
         static let accent = "app.amber.ios.theme.accentHex"
@@ -592,6 +603,8 @@ final class AmberThemeRuntime {
 
     private init() {
         let d = UserDefaults.standard
+        selectedThemeID = d.string(forKey: Keys.selectedThemeID)
+        selectedThemeName = d.string(forKey: Keys.selectedThemeName)
         let savedDesign = d.data(forKey: Keys.design).flatMap { try? JSONDecoder().decode(AmberThemeDesign.self, from: $0) }
         if let savedDesign, (try? savedDesign.validate()) != nil {
             design = savedDesign
@@ -624,13 +637,40 @@ final class AmberThemeRuntime {
     }
 
     func apply(_ paper: Paper) {
+        if design != nil || self.paper != paper {
+            rememberThemeIdentity(id: nil, displayName: nil)
+        }
         design = nil
         self.paper = paper
     }
 
     func apply(_ option: AmberAccentOption) {
+        if accentHex != option.accentHex || accentInkHex != option.inkHex {
+            rememberThemeIdentity(id: nil, displayName: nil)
+        }
         accentHex = option.accentHex
         accentInkHex = option.inkHex
+    }
+
+    func rememberThemeIdentity(id: String?, displayName: String?) {
+        selectedThemeID = id
+        selectedThemeName = displayName
+    }
+
+    /// Library deletion detaches identity even while preference writes are
+    /// suspended for try-on. Reverting may restore colors, never a deleted id.
+    func forgetThemeIdentity(id: String) {
+        if selectedThemeID == id {
+            rememberThemeIdentity(id: nil, displayName: nil)
+        }
+        if tryOnSession?.baseline.id == id {
+            tryOnSession?.baseline.id = "custom"
+            tryOnSession?.baseline.displayName = "自定义"
+        }
+        if UserDefaults.standard.string(forKey: Keys.selectedThemeID) == id {
+            UserDefaults.standard.removeObject(forKey: Keys.selectedThemeID)
+            UserDefaults.standard.removeObject(forKey: Keys.selectedThemeName)
+        }
     }
 
     /// Wear `candidate` on screen without writing UserDefaults. A second call
@@ -684,7 +724,7 @@ final class AmberThemeRuntime {
         tryOnSession = nil
     }
 
-    private func persistString(_ key: String, _ value: String) {
+    private func persistString(_ key: String, _ value: String?) {
         guard persistEnabled else { return }
         UserDefaults.standard.set(value, forKey: key)
     }
@@ -707,7 +747,7 @@ struct AmberThemeTryOnApproval: Equatable {
 
 struct AmberThemeTryOnSession: Equatable {
     let id = UUID()
-    let baseline: AmberThemePackDocument
+    var baseline: AmberThemePackDocument
     let candidate: AmberThemePackDocument
     let approval: AmberThemeTryOnApproval?
 }

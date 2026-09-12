@@ -281,9 +281,10 @@ struct AppearanceSettingsView: View {
         let paper = AmberThemeRuntime.Paper(rawValue: document.paper) ?? .neutral
         // Legacy packs keep their light footer; authored designs follow the same
         // resolved palette as the mini preview in the current appearance.
-        let basePalette = paper.lightPalette
+        let followsAppearance = document.design?.light != nil || document.design?.dark != nil
+        let basePalette = followsAppearance && colorScheme == .dark ? paper.darkPalette : paper.lightPalette
         let palette = document.design.map { design in
-            (colorScheme == .dark ? design.dark : design.light).resolving(basePalette)
+            (colorScheme == .dark ? design.dark : design.light)?.resolving(basePalette) ?? basePalette
         } ?? basePalette
         let accent = (try? AmberThemePackTransfer.parseHex(document.accentHex)) ?? AmberAccentOption.amberGold.accentHex
         let canvas = AmberCanvasStyle(rawValue: document.canvasStyle) ?? .flat
@@ -525,17 +526,23 @@ struct AppearanceSettingsView: View {
 
     private var themeGenerationForm: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("例如：薄荷色渐变、稀疏点阵，搭配圆润卡片和深绿文字", text: $themeDescription, axis: .vertical)
+            TextField("主题风格或修改要求", text: $themeDescription,
+                      prompt: Text("例如：保留当前配色，把卡片圆角调小；或描述一个新主题")
+                        .foregroundColor(AmberTheme.muted), axis: .vertical)
                 .lineLimit(2...4)
                 .font(.body)
                 .padding(12)
                 .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14))
-                .accessibilityLabel("主题风格描述")
-            transferButton(title: "生成并试穿") {
+                .accessibilityLabel("主题风格或修改要求")
+            transferButton(title: "修改并试穿", systemImage: "slider.horizontal.3") {
+                startThemeGeneration(editCurrent: true)
+            }
+            .disabled(themeDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            transferButton(title: "生成并试穿", systemImage: "paintpalette") {
                 startThemeGeneration()
             }
             .disabled(themeDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            Text("将在新对话中生成并试穿。满意后点“套用”保存，也可随时还原。")
+            Text("修改会保留未提及的设计，套用后更新原主题；内置主题保存为副本。生成会新建主题。两者都可先试穿再套用或还原。")
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
             if let generationError {
@@ -546,9 +553,13 @@ struct AppearanceSettingsView: View {
         }
     }
 
-    private func startThemeGeneration() {
+    private func startThemeGeneration(editCurrent: Bool = false) {
         generationError = nil
-        guard let prompt = IOSThemePackToolCatalog.generationPrompt(style: themeDescription) else {
+        let base = runtime.tryOnSession?.candidate ?? AmberThemePackTransfer.document(from: runtime)
+        let requestedPrompt = editCurrent
+            ? IOSThemePackToolCatalog.editingPrompt(style: themeDescription, baseID: base.id)
+            : IOSThemePackToolCatalog.generationPrompt(style: themeDescription)
+        guard let prompt = requestedPrompt else {
             generationError = "请简短描述你想要的主题风格后重试。"
             return
         }
@@ -584,6 +595,7 @@ struct AppearanceSettingsView: View {
                 if let systemImage {
                     Image(systemName: systemImage)
                         .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 18, height: 18)
                 }
                 Text(verbatim: IOSAppLocalization.string(title, defaultValue: title))
                     .font(.subheadline.weight(.semibold))

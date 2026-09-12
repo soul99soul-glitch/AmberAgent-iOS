@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import UIKit
 @preconcurrency import Shared
 @testable import iosApp
 
@@ -20,10 +22,13 @@ final class IOSThemePackToolTests: XCTestCase {
     private var savedLaunch: AmberLaunchBrandStyle = .none
     private var savedAsset: AmberThemeAssetMode = .builtinOnly
     private var savedImmersive: AmberImmersivePolicy = .hidden
+    private var savedDesign: AmberThemeDesign?
+    private var savedThemeID: String?
+    private var savedThemeName: String?
     private var libraryRoot: URL!
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         savedPaper = runtime.paper
         savedAccent = runtime.accentHex
         savedInk = runtime.accentInkHex
@@ -39,11 +44,14 @@ final class IOSThemePackToolTests: XCTestCase {
         savedLaunch = runtime.launchBrand
         savedAsset = runtime.assetMode
         savedImmersive = runtime.immersivePolicy
+        savedDesign = runtime.design
+        savedThemeID = runtime.selectedThemeID
+        savedThemeName = runtime.selectedThemeName
         libraryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("theme-pack-tool-\(UUID().uuidString)", isDirectory: true)
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         runtime.discardTryOn()
         runtime.paper = savedPaper
         runtime.accentHex = savedAccent
@@ -60,8 +68,10 @@ final class IOSThemePackToolTests: XCTestCase {
         runtime.launchBrand = savedLaunch
         runtime.assetMode = savedAsset
         runtime.immersivePolicy = savedImmersive
+        runtime.design = savedDesign
+        runtime.rememberThemeIdentity(id: savedThemeID, displayName: savedThemeName)
         try? FileManager.default.removeItem(at: libraryRoot)
-        super.tearDown()
+        try await super.tearDown()
     }
 
     private func makeLibrary() -> AmberThemePackLibrary {
@@ -196,6 +206,8 @@ final class IOSThemePackToolTests: XCTestCase {
         let accentKey = "app.amber.ios.theme.accentHex"
         let persistedPaper = UserDefaults.standard.string(forKey: paperKey)
         let persistedAccent = UserDefaults.standard.object(forKey: accentKey) as? Int
+        let identityKey = "app.amber.ios.theme.selectedThemeID"
+        let persistedID = UserDefaults.standard.string(forKey: identityKey)
         let library = makeLibrary()
         let service = IOSThemePackToolService(runtime: runtime, library: library)
 
@@ -205,6 +217,7 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertEqual(runtime.paper, .paper)
         XCTAssertEqual(UserDefaults.standard.string(forKey: paperKey), persistedPaper)
         XCTAssertEqual(UserDefaults.standard.object(forKey: accentKey) as? Int, persistedAccent)
+        XCTAssertEqual(UserDefaults.standard.string(forKey: identityKey), persistedID)
 
         let status = parseJSON(service.status())
         let tryOn = status["try_on"] as? [String: Any]
@@ -217,6 +230,7 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertEqual(committed["installed"] as? Bool, true)
         XCTAssertFalse(runtime.isTryOnActive)
         XCTAssertEqual(UserDefaults.standard.string(forKey: paperKey), "paper")
+        XCTAssertEqual(UserDefaults.standard.string(forKey: identityKey), document.id)
         XCTAssertTrue(library.contains(id: "rain-bookstore"))
         XCTAssertTrue(parseJSON(service.status())["try_on"] is NSNull)
     }
@@ -329,6 +343,167 @@ final class IOSThemePackToolTests: XCTestCase {
         service.discardPreparedImport()
     }
 
+    private func editableTheme() throws -> AmberThemePackDocument {
+        var document = try AmberThemePackTransfer.document(fromToolArguments: parseJSON(importJSON()))
+        document.canvasScope = "appWide"
+        document.design = AmberThemeDesign(
+            light: .init(background: "#FFFFFF", surface: "#F8F8F8", foreground: "#111111", mutedForeground: "#666666", border: "#CCCCCC"),
+            dark: .init(background: "#111111", surface: "#222222", foreground: "#FFFFFF", mutedForeground: "#AAAAAA", border: "#444444"),
+            gradient: .init(colors: ["#FFFFFF", "#EEEEEE"], darkColors: ["#111111", "#222222"], angle: 45),
+            patterns: [.init(kind: "dots", color: "#888888", opacity: 0.1, spacing: 24, size: 1)],
+            components: .init(cardRadius: 20, borderWidth: 1, brandText: "书店")
+        )
+        return document
+    }
+
+    func testPatchPreservesRecipeAndReplacesTheSameLibraryEntryOnlyAfterCommit() throws {
+        runtime.apply(AmberThemePack.builtins[0])
+        let library = makeLibrary()
+        let original = try editableTheme()
+        try library.upsert(original)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        let status = parseJSON(service.execute(toolName: "theme_pack_status", argumentsJSON: #"{"id":"rain-bookstore"}"#))
+        XCTAssertEqual((status["base"] as? [String: Any])?["id"] as? String, original.id)
+
+        let candidate = try service.prepareImport(argumentsJSON: ##"{"base_id":"rain-bookstore","design":{"light":{"border":"#BBBBBB"},"components":{"cardRadius":12}}}"##)
+        var expected = original
+        expected.design?.light?.border = "#BBBBBB"
+        expected.design?.components?.cardRadius = 12
+        XCTAssertEqual(candidate, expected, "未提供的深色配方、渐变、纹理、品牌和槽位必须原样保留")
+        XCTAssertEqual(library.installed, [original], "试穿不能提前覆盖原主题")
+        let committed = parseJSON(try service.commitPreparedImport())
+        XCTAssertEqual(committed["operation"] as? String, "updated")
+        XCTAssertEqual(library.installed, [expected])
+        XCTAssertEqual(makeLibrary().installed, [expected], "保存和重载仍只有原来的主题 id")
+    }
+
+    func testPatchCurrentUsesLatestTryOnAndDiscardRestoresOriginal() throws {
+        let library = makeLibrary()
+        let original = try editableTheme()
+        try library.upsert(original)
+        try runtime.apply(original)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        _ = try service.prepareImport(argumentsJSON: #"{"base_id":"current","design":{"components":{"cardRadius":12}}}"#)
+        let status = parseJSON(service.status())
+        XCTAssertEqual((status["base"] as? [String: Any])?["id"] as? String, original.id)
+        let second = try service.prepareImport(argumentsJSON: #"{"base_id":"current","design":{"components":{"brandText":"雨天"}}}"#)
+        XCTAssertEqual(second.id, original.id)
+        XCTAssertEqual(second.design?.components?.cardRadius, 12)
+        XCTAssertEqual(second.design?.components?.brandText, "雨天")
+        service.discardPreparedImport()
+        XCTAssertTrue(original.matches(runtime: runtime))
+        XCTAssertEqual(library.installed, [original])
+    }
+
+    func testLegacyScopeAndUneditedGradientStopsArePreserved() throws {
+        let library = makeLibrary()
+        var original = try editableTheme()
+        original.canvasScope = nil
+        try library.upsert(original)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        let status = parseJSON(service.execute(toolName: "theme_pack_status", argumentsJSON: #"{"id":"rain-bookstore"}"#))
+        XCTAssertEqual((status["base"] as? [String: Any])?["canvas_scope"] as? String, "homeOnly")
+        let candidate = try service.prepareImport(argumentsJSON: ##"{"base_id":"rain-bookstore","design":{"gradient":{"colors":["#FAFAFA","#EEEEEE","#FFFFFF"]}}}"##)
+        var expected = original
+        expected.design?.gradient?.colors = ["#FAFAFA", "#EEEEEE", "#FFFFFF"]
+        XCTAssertEqual(candidate, expected, "只替换浅色渐变数组，保留暗色渐变、方向和旧配方缺省范围")
+    }
+
+    func testPatchNullClearsOnlyRequestedOptionalFieldsAndArraysReplace() throws {
+        let library = makeLibrary()
+        let original = try editableTheme()
+        try library.upsert(original)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        let candidate = try service.prepareImport(argumentsJSON: #"{"base_id":"rain-bookstore","design":{"gradient":null,"patterns":[],"components":{"borderWidth":null}}}"#)
+        var expected = original
+        expected.design?.gradient = nil
+        expected.design?.patterns = []
+        expected.design?.components?.borderWidth = nil
+        XCTAssertEqual(candidate, expected)
+    }
+
+    func testInvalidPatchCannotChangeIdentityOrReplaceAnActivePreview() throws {
+        let library = makeLibrary()
+        let original = try editableTheme()
+        try library.upsert(original)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        let visible = try service.prepareImport(argumentsJSON: importJSON(id: "preview"))
+        let sessionID = runtime.tryOnSession?.id
+        for json in [
+            #"{"base_id":"missing","display_name":"丢失"}"#,
+            #"{"base_id":"rain-bookstore","id":"a-new-theme","display_name":"改名"}"#,
+            #"{"base_id":"rain-bookstore","design":{"components":{"cardRaduis":12}}}"#,
+            ##"{"base_id":"rain-bookstore","design":{"light":{"foreground":"#FFFFFF"}}}"##,
+            #"{"base_id":"rain-bookstore","design":{"components":{"cardRadius":100}}}"#,
+            #"{"base_id":"rain-bookstore","display_name":"  "}"#,
+            #"{"base_id":"rain-bookstore"}"#,
+        ] {
+            XCTAssertThrowsError(try service.prepareImport(argumentsJSON: json), json)
+            XCTAssertEqual(runtime.tryOnSession?.id, sessionID)
+            XCTAssertEqual(runtime.tryOnSession?.candidate, visible)
+            XCTAssertEqual(library.installed, [original])
+        }
+        let unknown = parseJSON(service.execute(toolName: "theme_pack_status", argumentsJSON: #"{"id":"missing"}"#))
+        XCTAssertEqual(unknown["ok"] as? Bool, false)
+        let invalid = parseJSON(service.execute(toolName: "theme_pack_import", argumentsJSON: #"{"base_id":"missing","display_name":"丢失"}"#))
+        XCTAssertEqual(invalid["ok"] as? Bool, false)
+        XCTAssertEqual(runtime.tryOnSession?.id, sessionID, "失败的修改不能撤掉已经可见的试穿")
+    }
+
+    func testBuiltinPatchCreatesAnEditableCopyAndKeepsBuiltinUnchanged() throws {
+        let builtin = AmberThemePack.builtins[0]
+        let original = AmberThemePackTransfer.document(from: builtin)
+        runtime.apply(builtin)
+        let library = makeLibrary()
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        let candidate = try service.prepareImport(argumentsJSON: #"{"base_id":"current","canvas_style":"lineGrid"}"#)
+        var expected = original
+        expected.id = candidate.id
+        expected.canvasStyle = "lineGrid"
+        XCTAssertEqual(candidate, expected)
+        XCTAssertFalse(AmberThemePackLibrary.isBuiltinId(candidate.id))
+        _ = try service.commitPreparedImport()
+        let updated = try service.prepareImport(argumentsJSON: #"{"base_id":"current","chrome_typeface":"rounded"}"#)
+        XCTAssertEqual(updated.id, candidate.id)
+        _ = try service.commitPreparedImport()
+        XCTAssertEqual(library.installed.count, 1)
+        XCTAssertEqual(AmberThemePackTransfer.document(from: builtin), original)
+    }
+
+    func testBuiltinComponentOnlyPatchPreservesBothModeColorsAndSurvivesReload() throws {
+        let library = makeLibrary()
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        func colors() -> [UIColor] {
+            let tokens: [Color] = [AmberTheme.background, AmberTheme.surface, AmberTheme.surface2,
+                AmberTheme.foreground, AmberTheme.foreground2, AmberTheme.muted, AmberTheme.muted2,
+                AmberTheme.border, AmberTheme.borderSoft, AmberTheme.section, AmberTheme.avatarIdle,
+                AmberTheme.avatarIdleInk, AmberTheme.homeGlassShadowAmbient]
+            return [UIUserInterfaceStyle.light, .dark].flatMap { style in
+                tokens.map { UIColor($0).resolvedColor(with: UITraitCollection(userInterfaceStyle: style)) }
+            }
+        }
+        for builtin in AmberThemePack.builtins {
+            runtime.apply(builtin)
+            let before = colors()
+            let candidate = try service.prepareImport(argumentsJSON: #"{"base_id":"current","design":{"components":{"cardRadius":12}}}"#)
+            XCTAssertNil(candidate.design?.light)
+            XCTAssertNil(candidate.design?.dark)
+            XCTAssertEqual(candidate.design?.patterns, [])
+            XCTAssertEqual(AmberTheme.homeCardRadius, 12)
+            XCTAssertEqual(colors(), before, "只改圆角不能重新推导原有浅深色及首页次级颜色：\(builtin.id)")
+            XCTAssertEqual(runtime.canvasStyle, builtin.canvasStyle)
+            _ = try service.commitPreparedImport()
+            let reloaded = try XCTUnwrap(makeLibrary().installed.first { $0.id == candidate.id })
+            XCTAssertEqual(reloaded, candidate)
+            try runtime.apply(reloaded)
+            XCTAssertEqual(colors(), before)
+            let updated = try service.prepareImport(argumentsJSON: #"{"base_id":"current","design":{"components":{"brandText":"自定义"}}}"#)
+            XCTAssertEqual(updated.id, candidate.id)
+            XCTAssertEqual(updated.design?.components?.cardRadius, 12)
+            service.discardPreparedImport()
+        }
+    }
+
     func testToolsDeferredAndChineseSearchHit() throws {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
@@ -387,6 +562,25 @@ final class IOSThemePackToolTests: XCTestCase {
         XCTAssertLessThan(preflight.lowerBound, handoff.lowerBound)
         let shell = try source("iosApp/AppShell.swift")
         XCTAssertTrue(shell.contains("AppearanceSettingsView(prepareGeneration: chatViewModel.prepareForThemeGeneration)"))
+    }
+
+    func testThemeEditingHandsBaseIdentityAndPartialChangesToChat() throws {
+        XCTAssertNil(IOSThemePackToolCatalog.editingPrompt(style: " \n", baseID: "rain-bookstore"))
+        XCTAssertNil(IOSThemePackToolCatalog.editingPrompt(style: String(repeating: "色", count: 2_001), baseID: "rain-bookstore"))
+        let prompt = try XCTUnwrap(IOSThemePackToolCatalog.editingPrompt(style: "  只把圆角缩小  ", baseID: "rain-bookstore"))
+        XCTAssertTrue(prompt.hasSuffix("只把圆角缩小"))
+        XCTAssertTrue(prompt.contains("rain-bookstore"))
+        XCTAssertTrue(prompt.contains("base_id"))
+        XCTAssertTrue(prompt.contains("theme_pack_status"))
+        XCTAssertTrue(prompt.contains("theme_pack_import"))
+        let inbox = IOSDeepLinkInbox()
+        guard case .agentPrompt(let id) = try XCTUnwrap(inbox.preparePromptHandoff(prompt)) else {
+            return XCTFail("Edit must use the existing agent chat handoff")
+        }
+        XCTAssertEqual(inbox.consumePromptHandoff(id: id), prompt)
+        let appearance = try source("iosApp/AppearanceSettingsView.swift")
+        XCTAssertTrue(appearance.contains("修改并试穿"))
+        XCTAssertTrue(appearance.contains("IOSThemePackToolCatalog.editingPrompt(style: themeDescription, baseID: base.id)"))
     }
 
     func testBackgroundRegistersStatusOnlyDeniesImport() async {

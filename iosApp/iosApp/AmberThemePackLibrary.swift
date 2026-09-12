@@ -72,6 +72,11 @@ final class AmberThemePackLibrary {
             installed = previous
             throw error
         }
+        if self === Self.shared {
+            for document in previous where removable.contains(document.id) {
+                AmberThemeRuntime.shared.forgetThemeIdentity(id: document.id)
+            }
+        }
         return removed
     }
 

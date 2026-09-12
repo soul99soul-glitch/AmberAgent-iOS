@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import XCTest
 @testable import iosApp
@@ -20,9 +21,12 @@ final class AmberThemePackTests: XCTestCase {
     private var savedLaunch: AmberLaunchBrandStyle = .none
     private var savedAsset: AmberThemeAssetMode = .builtinOnly
     private var savedImmersive: AmberImmersivePolicy = .hidden
+    private var savedDesign: AmberThemeDesign?
+    private var savedThemeID: String?
+    private var savedThemeName: String?
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         savedPaper = runtime.paper
         savedAccent = runtime.accentHex
         savedInk = runtime.accentInkHex
@@ -38,9 +42,12 @@ final class AmberThemePackTests: XCTestCase {
         savedLaunch = runtime.launchBrand
         savedAsset = runtime.assetMode
         savedImmersive = runtime.immersivePolicy
+        savedDesign = runtime.design
+        savedThemeID = runtime.selectedThemeID
+        savedThemeName = runtime.selectedThemeName
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         runtime.discardTryOn()
         runtime.paper = savedPaper
         runtime.accentHex = savedAccent
@@ -57,7 +64,9 @@ final class AmberThemePackTests: XCTestCase {
         runtime.launchBrand = savedLaunch
         runtime.assetMode = savedAsset
         runtime.immersivePolicy = savedImmersive
-        super.tearDown()
+        runtime.design = savedDesign
+        runtime.rememberThemeIdentity(id: savedThemeID, displayName: savedThemeName)
+        try await super.tearDown()
     }
 
     func testBuiltinsUniqueIdsAndPaperAccentPairs() {
@@ -962,6 +971,148 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertEqual(reader.installed.map(\.id), ["fixture-mist"])
     }
 
+    func testBuiltinMetadataEditKeepsCustomIdentityForSubsequentPatch() throws {
+        let builtin = AmberThemePack.builtins[0]
+        let original = AmberThemePackTransfer.document(from: builtin)
+        runtime.apply(builtin)
+
+        let shared = AmberThemePackLibrary.shared
+        let previous = shared.installed
+        defer {
+            _ = try? shared.remove(ids: Set(shared.installed.map(\.id)))
+            for pack in previous {
+                _ = try? shared.upsert(pack)
+            }
+        }
+        _ = try? shared.remove(ids: Set(shared.installed.map(\.id)))
+
+        let service = IOSThemePackToolService(runtime: runtime, library: shared)
+        let renamed = "\(builtin.displayName) · 改名"
+        let first = try service.prepareImport(argumentsJSON: toolJSON([
+            "base_id": "current",
+            "display_name": renamed,
+        ]))
+
+        XCTAssertFalse(AmberThemePackLibrary.isBuiltinId(first.id))
+        var expected = original
+        expected.id = first.id
+        expected.displayName = renamed
+        XCTAssertEqual(first, expected, "内置主题只改名称时，视觉槽位必须完整保留")
+        _ = try service.commitPreparedImport()
+
+        XCTAssertEqual(shared.installed.count, 1)
+        XCTAssertEqual(runtime.matchingThemeId, first.id)
+        let firstSnapshot = AmberThemePackTransfer.document(from: runtime)
+        XCTAssertEqual(firstSnapshot.id, first.id)
+        XCTAssertEqual(firstSnapshot.displayName, renamed)
+
+        // This is the id the Appearance editor snapshots for its next edit.
+        let uiBaseID = firstSnapshot.id
+        let secondName = "\(builtin.displayName) · 二次改名"
+        let second = try service.prepareImport(argumentsJSON: toolJSON([
+            "base_id": uiBaseID,
+            "display_name": secondName,
+        ]))
+        XCTAssertEqual(second.id, first.id, "已保存自定义主题的 patch 不得派生新 id")
+        _ = try service.commitPreparedImport()
+
+        XCTAssertEqual(shared.installed.count, 1)
+        XCTAssertEqual(shared.installed.first?.id, first.id)
+        XCTAssertEqual(shared.installed.first?.displayName, secondName)
+        XCTAssertEqual(runtime.matchingThemeId, first.id)
+        XCTAssertEqual(AmberThemePackTransfer.document(from: runtime).id, first.id)
+    }
+
+    func testApplyingSecondIdenticalInstalledThemeKeepsExplicitIdentity() throws {
+        let shared = AmberThemePackLibrary.shared
+        let previous = shared.installed
+        defer {
+            runtime.apply(.neutral)
+            _ = try? shared.remove(ids: Set(shared.installed.map(\.id)))
+            for pack in previous {
+                _ = try? shared.upsert(pack)
+            }
+        }
+        _ = try? shared.remove(ids: Set(shared.installed.map(\.id)))
+
+        let first = AmberThemePackTransfer.document(from: AmberThemePack(
+            id: "identical-style-first",
+            displayName: "同样式甲",
+            paper: .paper,
+            accent: .rose,
+            canvasStyle: .dotGrid,
+            brandMark: .serifWordmark,
+            shortcutIconStyle: .phosphorFill,
+            chromeTypeface: .rounded,
+            canvasScope: .shell,
+            bubbleChrome: .soft,
+            glassChrome: .quieter,
+            emptyArt: .character
+        ))
+        var second = first
+        second.id = "identical-style-second"
+        second.displayName = "同样式乙"
+        XCTAssertEqual(first.paper, second.paper)
+        XCTAssertEqual(first.canvasStyle, second.canvasStyle)
+        XCTAssertEqual(first.brandMark, second.brandMark)
+        XCTAssertEqual(first.chromeTypeface, second.chromeTypeface)
+
+        XCTAssertEqual(try shared.upsert(first), .installed)
+        XCTAssertEqual(try shared.upsert(second), .installed)
+        try runtime.apply(second)
+
+        XCTAssertEqual(runtime.matchingThemeId, second.id)
+        let snapshot = AmberThemePackTransfer.document(from: runtime)
+        XCTAssertEqual(snapshot.id, second.id)
+        XCTAssertEqual(snapshot.displayName, second.displayName)
+        XCTAssertNotEqual(snapshot.id, first.id)
+        XCTAssertNotEqual(runtime.matchingThemeId, first.id)
+    }
+
+    func testThemeIdentityPersistsAndManualPaperOrAccentSelectionClearsIt() throws {
+        let defaults = UserDefaults.standard
+        let identityIDKey = "app.amber.ios.theme.selectedThemeID"
+        let identityNameKey = "app.amber.ios.theme.selectedThemeName"
+        let identityDocument = AmberThemePackTransfer.document(from: AmberThemePack(
+            id: "identity-persistence",
+            displayName: "身份持久化",
+            paper: .white,
+            accent: .mistBlue
+        ))
+        defer { runtime.apply(.neutral) }
+
+        try runtime.apply(identityDocument)
+        XCTAssertEqual(runtime.selectedThemeID, identityDocument.id)
+        XCTAssertEqual(runtime.selectedThemeName, identityDocument.displayName)
+        XCTAssertEqual(AmberThemePackTransfer.document(from: runtime).id, identityDocument.id)
+        XCTAssertEqual(defaults.string(forKey: identityIDKey), identityDocument.id)
+        XCTAssertEqual(defaults.string(forKey: identityNameKey), identityDocument.displayName)
+
+        // Re-selecting the same accent is a no-op and must keep the identity.
+        runtime.apply(.mistBlue)
+        XCTAssertEqual(runtime.selectedThemeID, identityDocument.id)
+        XCTAssertEqual(runtime.selectedThemeName, identityDocument.displayName)
+
+        try runtime.apply(identityDocument)
+        runtime.apply(.rose)
+        XCTAssertNil(runtime.selectedThemeID, "手动选择不同强调色必须清除主题身份")
+        XCTAssertNil(runtime.selectedThemeName)
+        XCTAssertNil(defaults.string(forKey: identityIDKey))
+        XCTAssertNil(defaults.string(forKey: identityNameKey))
+
+        try runtime.apply(identityDocument)
+        // Re-selecting the same paper is a no-op and must keep the identity.
+        runtime.apply(.white)
+        XCTAssertEqual(runtime.selectedThemeID, identityDocument.id)
+        XCTAssertEqual(runtime.selectedThemeName, identityDocument.displayName)
+
+        runtime.apply(.pi)
+        XCTAssertNil(runtime.selectedThemeID, "手动选择不同 paper 必须清除主题身份")
+        XCTAssertNil(runtime.selectedThemeName)
+        XCTAssertNil(defaults.string(forKey: identityIDKey))
+        XCTAssertNil(defaults.string(forKey: identityNameKey))
+    }
+
     func testMatchingThemeIdIncludesInstalledLibraryPack() throws {
         let shared = AmberThemePackLibrary.shared
         let previous = shared.installed
@@ -995,6 +1146,34 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertTrue(runtime.isCustomCombination)
         let afterRemove = AmberThemePackTransfer.document(from: runtime)
         XCTAssertEqual(afterRemove.id, "custom")
+    }
+
+    func testDeletingTryOnBaselineDoesNotRestoreDeletedIdentityOnDiscard() throws {
+        let library = AmberThemePackLibrary.shared
+        let previous = library.installed
+        defer {
+            runtime.discardTryOn()
+            _ = try? library.remove(ids: Set(library.installed.map(\.id)))
+            for document in previous { try? library.upsert(document) }
+        }
+        _ = try library.remove(ids: Set(library.installed.map(\.id)))
+        let document = AmberThemePackTransfer.document(from: AmberThemePack(
+            id: "deleted-preview-base", displayName: "删除前", paper: .white, accent: .ink
+        ))
+        try library.upsert(document)
+        try runtime.apply(document)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        _ = try service.prepareImport(argumentsJSON: toolJSON([
+            "base_id": document.id, "display_name": "预览中",
+        ]))
+        let sessionID = runtime.tryOnSession?.id
+        _ = try library.remove(ids: [document.id])
+        XCTAssertEqual(runtime.tryOnSession?.id, sessionID, "删除不能替换正在等待确认的试穿会话")
+        service.discardPreparedImport()
+        XCTAssertEqual(AmberThemePackTransfer.document(from: runtime).id, "custom")
+        XCTAssertNil(UserDefaults.standard.string(forKey: "app.amber.ios.theme.selectedThemeID"))
+        XCTAssertTrue(library.installed.isEmpty)
+        XCTAssertTrue(document.matches(runtime: runtime), "还原外观但不恢复已经删除的主题身份")
     }
 
     func testThemeLibraryUpsertRollsBackWhenPersistFails() throws {
@@ -1137,6 +1316,14 @@ final class AmberThemePackTests: XCTestCase {
             contentsOf: testsDirectory.deletingLastPathComponent().appendingPathComponent(relativePath),
             encoding: .utf8
         )
+    }
+
+    private func toolJSON(_ object: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]) else {
+            XCTFail("无法编码主题工具参数")
+            return "{}"
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func resolvedHex(_ color: Color, traits: UITraitCollection) -> UInt32 {
