@@ -148,12 +148,16 @@ final class IslandGlowCanvasView: UIView {
     private var isReduceMotion = false
     private var gradientImage: CGImage?
     private var displayLink: CADisplayLink?
+    private var cachedStrokeBounds: CGRect = .null
+    private var cachedStrokePaths: [CGPath?] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
         isOpaque = false
         contentScaleFactor = 2
+        // Static tool/terminal glows have no display link to redraw a resize.
+        contentMode = .redraw
     }
 
     required init?(coder: NSCoder) { nil }
@@ -161,6 +165,7 @@ final class IslandGlowCanvasView: UIView {
     func configure(spec: IslandGlowSpec, opacity: Double, paused: Bool, reduceMotion: Bool) {
         let specChanged = self.spec != spec
         self.spec = spec
+        let opacityChanged = effOpacity != opacity
         effOpacity = opacity
         let pausedChanged = isPaused != paused
         isPaused = paused
@@ -172,7 +177,12 @@ final class IslandGlowCanvasView: UIView {
         if specChanged || pausedChanged || motionChanged {
             updateRunning()
         }
-        setNeedsDisplay()
+        // SwiftUI can update the representable for unrelated chat changes.
+        // Avoid scheduling an extra Core Graphics frame when the render inputs
+        // are identical; the CADisplayLink already invalidates animated frames.
+        if specChanged || opacityChanged || pausedChanged || motionChanged {
+            setNeedsDisplay()
+        }
     }
 
     // MARK: Display link lifecycle
@@ -244,16 +254,23 @@ final class IslandGlowCanvasView: UIView {
         let side = max(bounds.width, bounds.height) * 1.6
         let gradientRect = CGRect(x: center.x - side / 2, y: center.y - side / 2, width: side, height: side)
 
-        for stroke in IslandGlowSpec.strokeLadder {
-            let inset = margin + stroke.width / 2
-            let capsuleRect = bounds.insetBy(dx: inset, dy: inset)
-            guard capsuleRect.width > 0, capsuleRect.height > 0 else { continue }
+        if cachedStrokeBounds != bounds {
+            cachedStrokeBounds = bounds
+            cachedStrokePaths = IslandGlowSpec.strokeLadder.map { stroke in
+                let inset = margin + stroke.width / 2
+                let capsuleRect = bounds.insetBy(dx: inset, dy: inset)
+                guard capsuleRect.width > 0, capsuleRect.height > 0 else { return nil }
+                return UIBezierPath(
+                    roundedRect: capsuleRect,
+                    cornerRadius: capsuleRect.height / 2
+                ).cgPath
+            }
+        }
+
+        for (stroke, path) in zip(IslandGlowSpec.strokeLadder, cachedStrokePaths) {
+            guard let path else { continue }
             ctx.saveGState()
-            let path = UIBezierPath(
-                roundedRect: capsuleRect,
-                cornerRadius: capsuleRect.height / 2
-            )
-            ctx.addPath(path.cgPath)
+            ctx.addPath(path)
             ctx.replacePathWithStrokedPath()
             ctx.clip()
             ctx.setAlpha(CGFloat(stroke.opacity * breath * motionAlpha * effOpacity))

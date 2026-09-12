@@ -463,7 +463,15 @@ private final class StreamStepState: @unchecked Sendable {
         return true
     }
 
-    func appendAssistantDelta(from chunk: MessageChunk) -> AssistantUpdate {
+    func appendAssistantDelta(
+        from chunk: MessageChunk,
+        collectText: Bool = true,
+        collectReasoning: Bool = true
+    ) -> AssistantUpdate {
+        // The accumulator remains the source of truth for the final message
+        // and optional snapshots. Only callbacks that actually consume
+        // cumulative text need a second growing String here; otherwise each
+        // chunk would maintain an unused duplicate of the response.
         lock.lock()
         defer { lock.unlock() }
         var textChanged = false
@@ -475,29 +483,37 @@ private final class StreamStepState: @unchecked Sendable {
                 finishReason = reason
             }
             if let delta = choice.delta, delta.role == MessageRole.assistant {
-                hasReasoningDelta = hasReasoningDelta || Self.hasReasoning(in: delta)
-                hasTextDelta = hasTextDelta || Self.hasText(in: delta)
-                let deltaReasoning = Self.reasoning(in: delta)
-                if !deltaReasoning.isEmpty {
-                    assistantReasoning += deltaReasoning
+                let hasReasoning = Self.hasReasoning(in: delta)
+                hasReasoningDelta = hasReasoningDelta || hasReasoning
+                let hasText = Self.hasText(in: delta)
+                hasTextDelta = hasTextDelta || hasText
+                if hasReasoning {
+                    if collectReasoning {
+                        assistantReasoning += Self.reasoning(in: delta)
+                    }
                     reasoningChanged = true
                 }
-                let deltaText = Self.text(in: delta)
-                if !deltaText.isEmpty {
-                    assistantText += deltaText
+                if hasText {
+                    if collectText {
+                        assistantText += Self.text(in: delta)
+                    }
                     textChanged = true
                 }
             } else if let message = choice.message, message.role == MessageRole.assistant {
-                hasReasoningDelta = hasReasoningDelta || Self.hasReasoning(in: message)
-                hasTextDelta = hasTextDelta || Self.hasText(in: message)
-                let fullReasoning = Self.reasoning(in: message)
-                if !fullReasoning.isEmpty {
-                    assistantReasoning = fullReasoning
+                let hasReasoning = Self.hasReasoning(in: message)
+                hasReasoningDelta = hasReasoningDelta || hasReasoning
+                let hasText = Self.hasText(in: message)
+                hasTextDelta = hasTextDelta || hasText
+                if hasReasoning {
+                    if collectReasoning {
+                        assistantReasoning = Self.reasoning(in: message)
+                    }
                     reasoningChanged = true
                 }
-                let fullText = Self.text(in: message)
-                if !fullText.isEmpty {
-                    assistantText = fullText
+                if hasText {
+                    if collectText {
+                        assistantText = Self.text(in: message)
+                    }
                     textChanged = true
                 }
             }
@@ -514,8 +530,8 @@ private final class StreamStepState: @unchecked Sendable {
             publishedStage = nextStage
         }
         return AssistantUpdate(
-            text: textChanged && !assistantText.isEmpty ? assistantText : nil,
-            reasoning: reasoningChanged && !assistantReasoning.isEmpty ? assistantReasoning : nil,
+            text: collectText && textChanged && !assistantText.isEmpty ? assistantText : nil,
+            reasoning: collectReasoning && reasoningChanged && !assistantReasoning.isEmpty ? assistantReasoning : nil,
             stage: publishedStage
         )
     }
@@ -612,7 +628,10 @@ private final class StreamStepState: @unchecked Sendable {
     }
 
     private static func hasReasoning(in message: UIMessage) -> Bool {
-        !reasoning(in: message).isEmpty
+        message.parts.contains {
+            guard let reasoning = $0 as? UIMessagePart.Reasoning else { return false }
+            return !reasoning.reasoning.isEmpty
+        }
     }
 
     private static func reasoning(in message: UIMessage) -> String {
@@ -818,6 +837,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         // coroutine (no concurrent access), but Swift 6 can't prove it. The box
         // also makes the @Sendable callbacks legal.
         let state = StreamStepState(accumulator: MessageStreamAccumulator(initialMessages: [seed], model: nil))
+        let collectAssistantText = onAssistantText != nil
+        let collectAssistantReasoning = onAssistantReasoning != nil
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MessageChunk, Error>) in
                 state.install(continuation: continuation)
@@ -835,7 +856,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                         // 可见文本；nil → 原样零变化）。
                         let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
                         state.accumulator.append(chunk: strippedChunk)
-                        let update = state.appendAssistantDelta(from: strippedChunk)
+                        let update = state.appendAssistantDelta(
+                            from: strippedChunk,
+                            collectText: collectAssistantText,
+                            collectReasoning: collectAssistantReasoning
+                        )
                         if let stage = update.stage {
                             onAssistantStage?(stage)
                         }
@@ -906,6 +931,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let state = StreamStepState(
             accumulator: MessageStreamAccumulator(initialMessages: [seed], model: nil)
         )
+        let collectAssistantText = onAssistantText != nil
+        let collectAssistantReasoning = onAssistantReasoning != nil
         let boxed = UncheckedUIMessageBox(messages)
         let task = Task { @MainActor in
             try await IOSGrokWebClient(
@@ -913,7 +940,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             ).streamText(messages: boxed.value, params: params) { chunk in
                 let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
                 state.accumulator.append(chunk: strippedChunk)
-                let update = state.appendAssistantDelta(from: strippedChunk)
+                let update = state.appendAssistantDelta(
+                    from: strippedChunk,
+                    collectText: collectAssistantText,
+                    collectReasoning: collectAssistantReasoning
+                )
                 if let stage = update.stage { onAssistantStage?(stage) }
                 if let reasoning = update.reasoning { onAssistantReasoning?(reasoning) }
                 if let text = update.text { onAssistantText?(text) }
@@ -969,6 +1000,8 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let state = StreamStepState(
             accumulator: MessageStreamAccumulator(initialMessages: [seed], model: nil)
         )
+        let collectAssistantText = onAssistantText != nil
+        let collectAssistantReasoning = onAssistantReasoning != nil
         let boxed = UncheckedUIMessageBox(messages)
         try await Task { @MainActor in
             try await IOSGeminiClient(provider: provider).streamText(
@@ -977,7 +1010,11 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             ) { chunk in
                 let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
                 state.accumulator.append(chunk: strippedChunk)
-                let update = state.appendAssistantDelta(from: strippedChunk)
+                let update = state.appendAssistantDelta(
+                    from: strippedChunk,
+                    collectText: collectAssistantText,
+                    collectReasoning: collectAssistantReasoning
+                )
                 if let stage = update.stage {
                     onAssistantStage?(stage)
                 }

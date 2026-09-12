@@ -396,12 +396,22 @@ enum NativeTimelineProjector {
             )
         }
 
-        let existingIds = Set(messages.map(ChatMessageProjector.messageId(for:)))
-        let boundaries = contextCompactBoundaries.filter {
-            $0.coveredMessageIds.isSubset(of: existingIds) && existingIds.contains($0.afterMessageId)
+        // Most conversations have no compaction markers. Keep their initial
+        // projection proportional to the loaded history window, without bridging
+        // every message ID just to validate an empty set of boundaries.
+        let boundaries: [ChatContextCompactBoundary]
+        if contextCompactBoundaries.isEmpty {
+            boundaries = []
+        } else {
+            let existingIds = Set(messages.map(ChatMessageProjector.messageId(for:)))
+            boundaries = contextCompactBoundaries.filter {
+                $0.coveredMessageIds.isSubset(of: existingIds) && existingIds.contains($0.afterMessageId)
+            }
         }
         let anchors = Set(boundaries.map(\.afterMessageId))
-        let compactedEnd = messages.lastIndex { anchors.contains(ChatMessageProjector.messageId(for: $0)) }
+        let compactedEnd = anchors.isEmpty ? nil : messages.lastIndex {
+            anchors.contains(ChatMessageProjector.messageId(for: $0))
+        }
         let compactedIds = Set(messages.prefix(compactedEnd.map { $0 + 1 } ?? 0).map(ChatMessageProjector.messageId(for:)))
         let boundariesByAnchor = Dictionary(grouping: boundaries, by: \.afterMessageId)
         for entry in plan.entries {

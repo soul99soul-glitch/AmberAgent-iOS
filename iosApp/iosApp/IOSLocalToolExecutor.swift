@@ -1878,6 +1878,7 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
 
     private var loadSequence = 0
     private var pendingLoad: (id: Int, continuation: CheckedContinuation<IOSWebMountRuntimeSnapshot, Never>)?
+    private var pendingLoadTimeoutTask: Task<Void, Never>?
     private var navigationPolicy: IOSWebMountURLPolicy?
     private(set) var userBrowsingEnabled = false
     private var effectiveNavigationPolicy: IOSWebMountURLPolicy? {
@@ -2004,6 +2005,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
         cancelBrowserPresentation()
         for popup in popupWebViews { closePopup(popup) }
         browserNotice = nil
+        pendingLoadTimeoutTask?.cancel()
+        pendingLoadTimeoutTask = nil
         loadSequence += 1
         let loadId = loadSequence
         pendingLoad?.continuation.resume(returning: snapshot)
@@ -2071,12 +2074,17 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
                     }
                 }
             }
-            Task { @MainActor [weak self] in
+            pendingLoadTimeoutTask = Task { @MainActor [weak self] in
                 let nanos = timeoutMillis * 1_000_000
-                try? await Task.sleep(nanoseconds: nanos)
+                do {
+                    try await Task.sleep(nanoseconds: nanos)
+                } catch {
+                    return
+                }
                 guard let self,
                       let pendingLoad = self.pendingLoad,
                       pendingLoad.id == loadId else { return }
+                self.pendingLoadTimeoutTask = nil
                 self.snapshot.status = .failed
                 self.snapshot.error = "load timed out after \(timeoutMillis)ms"
                 self.snapshot.updatedAtMillis = IOSWebMountClock.nowMillis()
@@ -2982,6 +2990,8 @@ final class IOSWebMountWKRuntime: NSObject, ObservableObject, IOSWebMountRuntime
     }
 
     private func completePendingLoad() {
+        pendingLoadTimeoutTask?.cancel()
+        pendingLoadTimeoutTask = nil
         guard let pendingLoad else { return }
         self.pendingLoad = nil
         fragmentNavigationTarget = nil

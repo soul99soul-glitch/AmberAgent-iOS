@@ -58,6 +58,11 @@ private final class OrbLinkProxy: NSObject {
 @MainActor
 final class OrbCanvasView: UIView {
     private var resolved: OrbResolved?
+    // SwiftUI may call updateUIView for every unrelated state change in the
+    // containing chat. Keep the preset identity separately so those updates
+    // do not rebuild and compare the option dictionary on every pass.
+    private var configuredState: OrbState?
+    private var configuredPreset: OrbPreset?
     private var effSpeed: Double = 1
     private var isDark = false
     private var isReduceMotion = false
@@ -84,10 +89,16 @@ final class OrbCanvasView: UIView {
         state: OrbState, preset: OrbPreset, size: CGFloat, speed: Double,
         paused: Bool, reduceMotion: Bool, dark: Bool
     ) {
-        let newResolved = orbResolvePreset(state, preset)
-        let configChanged = resolved?.mode != newResolved.mode || resolved?.opts != newResolved.opts
-        resolved = newResolved
-        effSpeed = newResolved.speed * speed
+        let configChanged = resolved == nil
+            || configuredState != state
+            || configuredPreset != preset
+        if configChanged {
+            resolved = orbResolvePreset(state, preset)
+            configuredState = state
+            configuredPreset = preset
+        }
+        effSpeed = (resolved?.speed ?? 1) * speed
+        let sizeChanged = configuredSize != size
         configuredSize = size
 
         let darkChanged = isDark != dark
@@ -99,8 +110,9 @@ final class OrbCanvasView: UIView {
         let motionChanged = isReduceMotion != reduceMotion
         isReduceMotion = reduceMotion
 
-        if configChanged || motionChanged || pausedChanged {
+        if configChanged || sizeChanged || motionChanged || pausedChanged {
             updateRunning()
+            if sizeChanged { invalidateIntrinsicContentSize() }
             setNeedsDisplay()
         } else if darkChanged {
             setNeedsDisplay()

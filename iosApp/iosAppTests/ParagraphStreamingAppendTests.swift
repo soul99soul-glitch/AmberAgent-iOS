@@ -3,6 +3,42 @@ import UIKit
 @testable import SwiftStreamingMarkdown
 @testable import iosApp
 
+@MainActor
+private final class TextKit1IntrinsicInvalidationProbe: ParagraphUIView {
+    private(set) var invalidationCount = 0
+
+    override func invalidateIntrinsicContentSize() {
+        invalidationCount += 1
+        super.invalidateIntrinsicContentSize()
+    }
+
+    static func makeProbe() -> TextKit1IntrinsicInvalidationProbe {
+        let storage = NSTextStorage()
+        let layoutManager = NSLayoutManager()
+        let textContainer = NSTextContainer(size: .zero)
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(textContainer)
+
+        let view = TextKit1IntrinsicInvalidationProbe(
+            frame: .zero,
+            textContainer: textContainer
+        )
+        // Mirror ParagraphUIView.makeTextKit1View(). The production factory
+        // applies this after init/setupView has completed.
+        view.textContainer.heightTracksTextView = false
+        view.textContainer.size.height = 10_000_000
+        return view
+    }
+
+    override init(frame: CGRect, textContainer: NSTextContainer?) {
+        super.init(frame: frame, textContainer: textContainer)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+}
+
 /// vendor TextKit 1 流式 append 快路径的行为契约。
 ///
 /// 长文流式的每次发布此前会整段替换 `attributedText` 并在测量时抖动
@@ -13,6 +49,35 @@ import UIKit
 /// 2. 前缀判定必须在字符或属性发生任何改写时拒绝,回退全量替换。
 @MainActor
 final class ParagraphStreamingAppendTests: XCTestCase {
+
+    func testTextKit1StableLayoutDoesNotReinvalidateIntrinsicSize() {
+        let view = TextKit1IntrinsicInvalidationProbe.makeProbe()
+        view.frame = CGRect(x: 0, y: 0, width: 337, height: 1)
+        let initial = NSMutableAttributedString(
+            string: String(repeating: "连续正文，用于验证稳定布局不会重复触发 intrinsic 测量。", count: 20),
+            attributes: [
+                .font: UIFont.systemFont(ofSize: 17),
+                .foregroundColor: UIColor.label
+            ]
+        )
+
+        view.setParagraphContents(initial, lineSpacing: 4, animatedByWord: false)
+        let firstHeight = view.sizeThatFits(
+            CGSize(width: view.bounds.width, height: .greatestFiniteMagnitude)
+        ).height
+        view.frame.size.height = firstHeight
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        let afterFirstLayout = view.invalidationCount
+
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+        XCTAssertEqual(
+            view.invalidationCount,
+            afterFirstLayout,
+            "稳定 TextKit 1 layout 不应再次触发 intrinsic 测量"
+        )
+    }
 
     private let attributes: [NSAttributedString.Key: Any] = [
         .font: UIFont.systemFont(ofSize: 17),

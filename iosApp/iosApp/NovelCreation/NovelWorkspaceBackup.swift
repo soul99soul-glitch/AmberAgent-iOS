@@ -27,6 +27,53 @@ enum NovelWorkspaceBackup {
         var usedPaths: Set<String> = []
         let passthrough = document.workspacePassthrough
 
+        // Export runs on every workspace-native commit. Keep lookups outside
+        // the branch/material loops: the old first(where:) calls made a large
+        // book pay a linear scan of the complete history for every chapter.
+        // These maps intentionally keep the old first-match semantics for a
+        // malformed document; exportValidated is normally reached after the
+        // document validator has accepted the input.
+        let materialByID = Dictionary(
+            document.materials.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let materialRevisionByID = Dictionary(
+            document.materialRevisions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let chapterByID = Dictionary(
+            document.chapters.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let chapterVersionByID = Dictionary(
+            document.chapterVersions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let stateSnapshotByID = Dictionary(
+            document.stateSnapshots.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let eventByID = Dictionary(
+            document.events.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let chapterPlanByBranchID = Dictionary(
+            document.chapterPlans.map { ($0.branchID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let upcomingArcByBranchID = Dictionary(
+            document.upcomingArcs.map { ($0.branchID, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var latestVersionByChapterID: [NovelChapterID: NovelChapterVersionRecord] = [:]
+        for version in document.chapterVersions {
+            guard let current = latestVersionByChapterID[version.chapterID],
+                  current.createdAt >= version.createdAt else {
+                latestVersionByChapterID[version.chapterID] = version
+                continue
+            }
+        }
+
         func extensions(_ anchor: String) -> [String] {
             passthrough.frontmatterExtensions[anchor] ?? []
         }
@@ -73,16 +120,12 @@ enum NovelWorkspaceBackup {
 
         let liveMaterials = document.materials.filter { !$0.isDeleted }
         for material in liveMaterials {
-            guard let revision = document.materialRevisions.first(where: {
-                $0.id == material.currentRevisionID
-            }) else {
+            guard let revision = materialRevisionByID[material.currentRevisionID] else {
                 continue
             }
-            let uniqueKind = liveMaterials.filter { $0.kind == material.kind }.count == 1
             let relative = materialPath(
                 material: material,
-                revision: revision,
-                uniqueKind: uniqueKind
+                revision: revision
             )
             let path = reservedPath(relative, used: &usedPaths, fallback: material.id.description)
             files.append(
@@ -130,11 +173,9 @@ enum NovelWorkspaceBackup {
             var usedChapterNames: Set<String> = []
             var ordinal = 0
             for selection in branch.workingChapterSelections {
-                let chapter = document.chapters.first { $0.id == selection.chapterID }
-                guard chapter?.discardedAt == nil,
-                      let version = document.chapterVersions.first(where: {
-                          $0.id == selection.versionID && $0.chapterID == selection.chapterID
-                      }) else {
+                guard chapterByID[selection.chapterID]?.discardedAt == nil,
+                      let version = chapterVersionByID[selection.versionID],
+                      version.chapterID == selection.chapterID else {
                     continue
                 }
                 ordinal += 1
@@ -161,9 +202,17 @@ enum NovelWorkspaceBackup {
                 )
             }
 
+            let selectedVersionIDByChapterID = Dictionary(
+                branch.workingChapterSelections.map { ($0.chapterID, $0.versionID) },
+                uniquingKeysWith: { first, _ in first }
+            )
             var usedDiscardedNames: Set<String> = []
             for chapter in document.chapters where chapter.discardedAt != nil {
-                let version = discardedVersion(for: chapter.id, branch: branch, in: document)
+                let version = selectedVersionIDByChapterID[chapter.id].flatMap { versionID in
+                    guard let version = chapterVersionByID[versionID],
+                          version.chapterID == chapter.id else { return nil }
+                    return version
+                } ?? latestVersionByChapterID[chapter.id]
                 guard let version else { continue }
                 let name = reservedPath(
                     slug(version.title),
@@ -187,9 +236,7 @@ enum NovelWorkspaceBackup {
                 )
             }
 
-            if let snapshot = document.stateSnapshots.first(where: {
-                $0.id == branch.currentStateSnapshotID
-            }) {
+            if let snapshot = stateSnapshotByID[branch.currentStateSnapshotID] {
                 var currentBody = snapshot.summary
                 let highlights = snapshot.recentWrittenHighlights.filter {
                     !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -225,9 +272,7 @@ enum NovelWorkspaceBackup {
                         )
                     )
                 )
-                let events = snapshot.eventIDs.compactMap { eventID in
-                    document.events.first { $0.id == eventID }
-                }
+                let events = snapshot.eventIDs.compactMap { eventByID[$0] }
                 let eventLines = events.map { event in
                     let summary = event.summary.trimmingCharacters(in: .whitespacesAndNewlines)
                     return summary.hasPrefix("- ") ? summary : "- \(summary)"
@@ -253,19 +298,21 @@ enum NovelWorkspaceBackup {
                     branch: branch,
                     in: document
                 )
+                let workingIndexByChapterID = Dictionary(
+                    working.enumerated().map { ($0.element.chapterID, $0.offset) },
+                    uniquingKeysWith: { first, _ in first }
+                )
                 for (index, module) in snapshot.chapterPlots.enumerated() {
-                    guard let ordinal = working.firstIndex(
-                        where: { $0.chapterID == module.chapterID }
-                    ).map({ $0 + 1 }) else { continue }
-                    let title = working.first(where: { $0.chapterID == module.chapterID })
-                        .flatMap { selection in
-                            document.chapterVersions.first {
-                                $0.id == selection.versionID && $0.chapterID == selection.chapterID
-                            }?.title
-                        } ?? "第\(index + 1)章"
+                    guard let workingIndex = workingIndexByChapterID[module.chapterID] else {
+                        continue
+                    }
+                    let selection = working[workingIndex]
+                    let title = chapterVersionByID[selection.versionID].flatMap { version in
+                        version.chapterID == selection.chapterID ? version.title : nil
+                    } ?? "第\(index + 1)章"
                     files.append(
                         File(
-                            path: "\(prefix)/plot/chapters/\(String(format: "%03d", ordinal))-\(slug(title)).md",
+                            path: "\(prefix)/plot/chapters/\(String(format: "%03d", workingIndex + 1))-\(slug(title)).md",
                             contents: render(
                                 fields: [
                                     "id": module.chapterID.description,
@@ -280,7 +327,7 @@ enum NovelWorkspaceBackup {
                 }
             }
 
-            if let plan = document.chapterPlans.first(where: { $0.branchID == branch.id }) {
+            if let plan = chapterPlanByBranchID[branch.id] {
                 files.append(
                     File(
                         path: "\(prefix)/plan/this-chapter.md",
@@ -297,7 +344,7 @@ enum NovelWorkspaceBackup {
                     )
                 )
             }
-            if let arc = document.upcomingArcs.first(where: { $0.branchID == branch.id }) {
+            if let arc = upcomingArcByBranchID[branch.id] {
                 files.append(
                     File(
                         path: "\(prefix)/plan/upcoming.md",
@@ -316,8 +363,8 @@ enum NovelWorkspaceBackup {
 
             var usedOverrideNames: Set<String> = []
             for revisionID in branch.overrideRevisionIDs {
-                guard let revision = document.materialRevisions.first(where: { $0.id == revisionID }),
-                      let material = document.materials.first(where: { $0.id == revision.materialID })
+                guard let revision = materialRevisionByID[revisionID],
+                      let material = materialByID[revision.materialID]
                 else {
                     continue
                 }
@@ -386,6 +433,10 @@ enum NovelWorkspaceBackup {
     static func draftFiles(from document: NovelProjectDocumentV1) -> [File] {
         var usedDraftNames: Set<String> = []
         var files: [File] = []
+        let plansByID = Dictionary(
+            document.chapterPlans.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         for candidate in document.candidates where candidate.status == .available {
             let name = reservedPath(
                 String(candidate.id.description.prefix(8)),
@@ -399,7 +450,10 @@ enum NovelWorkspaceBackup {
                         fields: [
                             "id": candidate.id.description,
                             "kind": "chapter",
-                            "title": draftTitle(for: candidate, in: document),
+                            "title": draftTitle(
+                                for: candidate,
+                                plansByID: plansByID
+                            ),
                         ],
                         body: candidate.content
                     )
@@ -415,6 +469,18 @@ enum NovelWorkspaceBackup {
     ) -> String {
         if let planID = candidate.ghostwritePlanID,
            let plan = document.chapterPlans.first(where: { $0.id == planID }) {
+            let title = plan.outlinePlacement.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty { return title }
+        }
+        return "未收录草稿"
+    }
+
+    private static func draftTitle(
+        for candidate: NovelCandidateRecord,
+        plansByID: [NovelChapterPlanID: NovelChapterPlanRecord]
+    ) -> String {
+        if let planID = candidate.ghostwritePlanID,
+           let plan = plansByID[planID] {
             let title = plan.outlinePlacement.trimmingCharacters(in: .whitespacesAndNewlines)
             if !title.isEmpty { return title }
         }
@@ -532,28 +598,10 @@ enum NovelWorkspaceBackup {
 }
 
 private extension NovelWorkspaceBackup {
-    static func discardedVersion(
-        for chapterID: NovelChapterID,
-        branch: NovelBranchRecord,
-        in document: NovelProjectDocumentV1
-    ) -> NovelChapterVersionRecord? {
-        if let selection = branch.workingChapterSelections.first(where: { $0.chapterID == chapterID }),
-           let version = document.chapterVersions.first(where: {
-               $0.id == selection.versionID && $0.chapterID == chapterID
-           }) {
-            return version
-        }
-        return document.chapterVersions
-            .filter { $0.chapterID == chapterID }
-            .max(by: { $0.createdAt < $1.createdAt })
-    }
-
     static func materialPath(
         material: NovelMaterialRecord,
-        revision: NovelMaterialRevisionRecord,
-        uniqueKind: Bool
+        revision: NovelMaterialRevisionRecord
     ) -> String {
-        _ = uniqueKind
         let name = slug(revision.title)
         return "setting/\(materialFolder(for: material.kind))/\(name).md"
     }

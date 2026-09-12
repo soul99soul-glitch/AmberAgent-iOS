@@ -1453,15 +1453,19 @@ final class ChatRunKernelAdapter {
         if IOSSearchExecutor.supportedToolNames.contains(toolName) { return 1 }
         if IOSWorkspaceToolCatalog.supportedToolNames.contains(toolName) { return 2 }
         if IOSAgentTerminalToolCatalog.supportedToolNames.contains(toolName) { return 3 }
-        let webMountNames = IOSWebMountToolCatalog.supportedToolNames
-            .union(IOSWebMountToolCatalog.unsupportedToolNames)
-        if webMountNames.contains(toolName) { return 4 }
+        if webMountToolNames.contains(toolName) { return 4 }
         if toolName == "memory_tool" { return 5 }
         if toolName == "generate_image" { return 6 }
         if toolName == "ask_user" { return 7 }
         if ["session_search", "session_read"].contains(toolName) { return 8 }
         return 9
     }
+
+    /// `kindRank` runs once per comparator call while ordering a tool batch.
+    /// Keep this union out of the comparator so a parallel tool batch does not
+    /// allocate the same set repeatedly; both source sets are immutable catalogs.
+    private nonisolated static let webMountToolNames =
+        IOSWebMountToolCatalog.supportedToolNames.union(IOSWebMountToolCatalog.unsupportedToolNames)
 
     /// CGC 的轮后裁定:彻底未知的名字(全目录之外)整批硬失败;预算耗尽
     /// 整批失败化。返回 nil = 放行。

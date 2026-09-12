@@ -215,14 +215,21 @@ enum NovelWorkspaceAuthority {
     private static func workingChapterBodies(
         in document: NovelProjectDocumentV1
     ) -> [String: ChapterBody] {
+        let chapterByID = Dictionary(
+            document.chapters.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let versionsByID = Dictionary(
+            document.chapterVersions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var result: [String: ChapterBody] = [:]
         for branch in document.branches where branch.lifecycle == .active {
             let branchSlug = NovelWorkspaceBackup.slug(branch.name)
             for selection in branch.workingChapterSelections {
-                guard document.chapters.first(where: { $0.id == selection.chapterID })?.discardedAt == nil,
-                      let version = document.chapterVersions.first(where: {
-                          $0.id == selection.versionID && $0.chapterID == selection.chapterID
-                      }) else {
+                guard chapterByID[selection.chapterID]?.discardedAt == nil,
+                      let version = versionsByID[selection.versionID],
+                      version.chapterID == selection.chapterID else {
                     continue
                 }
                 result[chapterBodyKey(branchSlug: branchSlug, chapterID: selection.chapterID)] = ChapterBody(

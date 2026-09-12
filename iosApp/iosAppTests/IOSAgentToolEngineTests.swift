@@ -1196,7 +1196,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             executors: [:]
         )
 
-        _ = await engine.run(
+        let result = await engine.run(
             providerSetting: makeProviderSetting(),
             messages: [userMessage("ask")],
             params: makeParams(tools: []),
@@ -1204,6 +1204,9 @@ final class IOSAgentToolEngineTests: XCTestCase {
         )
 
         XCTAssertEqual(recorder.snapshot, [.thinking, .generating])
+        // Stage-only consumers must still receive the accumulator's final
+        // message even though no cumulative text callback is registered.
+        XCTAssertEqual(result.messages.last?.toText(), "答案")
     }
 
     func testStreamingAssistantReasoningCallbackAccumulates() async {

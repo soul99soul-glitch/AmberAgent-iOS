@@ -107,6 +107,12 @@ func orbDrawOrbits(
     let orbitN = Int(ov(o, "orbitN", 12))
     let ghostN = Int(ov(o, "ghostN", 40))
     let particles = Int(ov(o, "particles", 3))
+    let ghostRadius = ov(o, "ghostR", 0.9) * rs
+    let ghostAlpha = ov(o, "ghostA", 0.5)
+    let particleRadius = ov(o, "partR", 1.2)
+    let particleDepthRadius = ov(o, "partRDepth", 1.6)
+    let minimumRadius = ov(o, "rMin", 0.3)
+    dots.reserveCapacity(max(0, orbitN * (ghostN + particles)))
 
     for orb in 0..<orbitN {
         let h1 = orbHash(Double(orb), 1.7)
@@ -141,9 +147,9 @@ func orbDrawOrbits(
             let depth = (z / ro + 1) / 2
             dots.append(OrbDot(
                 x: px, y: py, z: z,
-                r: ov(o, "ghostR", 0.9) * rs,
+                r: ghostRadius,
                 white: 0.72,
-                a: ov(o, "ghostA", 0.5) * (0.4 + 0.6 * depth)
+                a: ghostAlpha * (0.4 + 0.6 * depth)
             ))
         }
         for m in 0..<particles {
@@ -158,13 +164,13 @@ func orbDrawOrbits(
             let depth = (z / ro + 1) / 2
             dots.append(OrbDot(
                 x: px, y: py, z: z,
-                r: (ov(o, "partR", 1.2) + ov(o, "partRDepth", 1.6) * depth) * rs,
+                r: (particleRadius + particleDepthRadius * depth) * rs,
                 white: 0.3 - 0.22 * depth,
                 a: 1
             ))
         }
     }
-    orbPaint(ctx, &dots, dark: dark, rMin: ov(o, "rMin", 0.3))
+    orbPaint(ctx, &dots, dark: dark, rMin: minimumRadius)
 }
 
 // MARK: - Lattice modes (globe / rubik / wave)
@@ -257,10 +263,17 @@ func orbDrawGlobe(
     let scan = t * (spin + (1.7 - spin) * ov(o, "scanMul", 1))
     let rs = orbRadiusScale(size, ov(o, "rsPow", 0.6))
     let dimBase = ov(o, "dimBase", 1)
+    let radiusBase = ov(o, "rBase", 0.6)
+    let radiusDepth = ov(o, "rDepth", 1.7)
+    let radiusBoost = ov(o, "rBoost", 1)
+    let inkFar = ov(o, "inkFar", 0.62)
+    let inkSpan = ov(o, "inkSpan", 0.54)
+    let minimumRadius = ov(o, "rMin", 0.3)
 
     var dots: [OrbDot] = []
     let latRings = Int(ov(o, "latRings", 17))
     let lonDensity = Int(ov(o, "lonDensity", 44))
+    dots.reserveCapacity(max(0, (latRings + 1) * lonDensity))
     for li in 0...latRings {
         let lat = -.pi / 2 + (Double(li) / Double(latRings)) * .pi
         let cosLat = cos(lat)
@@ -274,13 +287,13 @@ func orbDrawGlobe(
             let boost = exp(-(d * d) / 0.18) * max(0, z)
             dots.append(OrbDot(
                 x: px, y: py, z: z,
-                r: (ov(o, "rBase", 0.6) + ov(o, "rDepth", 1.7) * depth + ov(o, "rBoost", 1) * boost) * rs,
-                white: ov(o, "inkFar", 0.62) - ov(o, "inkSpan", 0.54) * depth,
+                r: (radiusBase + radiusDepth * depth + radiusBoost * boost) * rs,
+                white: inkFar - inkSpan * depth,
                 a: dimBase + (1 - dimBase) * min(1, boost)
             ))
         }
     }
-    orbPaint(ctx, &dots, dark: dark, rMin: ov(o, "rMin", 0.3))
+    orbPaint(ctx, &dots, dark: dark, rMin: minimumRadius)
 }
 
 func orbDrawRubik(
@@ -296,10 +309,17 @@ func orbDrawRubik(
     let moveCount = Int(ov(o, "moveCount", 14))
     let moves = orbMakeMoves(moveCount)
     let sc = orbSolveCycle(t, count: moveCount, slotDur: 0.42, rest: 1.2)
+    let radiusBase = ov(o, "rBase", 0.6)
+    let radiusDepth = ov(o, "rDepth", 1.7)
+    let activeRadius = ov(o, "rActive", 0.3)
+    let inkFar = ov(o, "inkFar", 0.62)
+    let inkSpan = ov(o, "inkSpan", 0.54)
+    let minimumRadius = ov(o, "rMin", 0.3)
 
     var dots: [OrbDot] = []
     let latRings = Int(ov(o, "latRings", 15))
     let lonDensity = Int(ov(o, "lonDensity", 40))
+    dots.reserveCapacity(max(0, (latRings + 1) * lonDensity))
     for li in 0...latRings {
         let lat = -.pi / 2 + (Double(li) / Double(latRings)) * .pi
         let cosLat = cos(lat)
@@ -314,13 +334,13 @@ func orbDrawRubik(
             let depth = (zr + 1) / 2
             dots.append(OrbDot(
                 x: px, y: py, z: zr,
-                r: (ov(o, "rBase", 0.6) + ov(o, "rDepth", 1.7) * depth + (inActive ? ov(o, "rActive", 0.3) : 0)) * rs,
-                white: ov(o, "inkFar", 0.62) - ov(o, "inkSpan", 0.54) * depth - (inActive ? 0.14 : 0),
+                r: (radiusBase + radiusDepth * depth + (inActive ? activeRadius : 0)) * rs,
+                white: inkFar - inkSpan * depth - (inActive ? 0.14 : 0),
                 a: 1
             ))
         }
     }
-    orbPaint(ctx, &dots, dark: dark, rMin: ov(o, "rMin", 0.3))
+    orbPaint(ctx, &dots, dark: dark, rMin: minimumRadius)
 }
 
 func orbDrawWave(
@@ -331,10 +351,14 @@ func orbDrawWave(
     let R = (size / 2) * 0.874
     let pt = orbMakeProj(yaw: t * 0.18, tilt: 0.38, cx: cx, cy: cy, scale: 1)
     let rs = orbRadiusScale(size, ov(o, "rsPow", 0.6))
+    let radiusBase = ov(o, "rBase", 0.6)
+    let radiusDepth = ov(o, "rDepth", 1.7)
+    let minimumRadius = ov(o, "rMin", 0.3)
 
     var dots: [OrbDot] = []
     let rings = Int(ov(o, "rings", 15))
     let lonDensity = Int(ov(o, "lonDensity", 40))
+    dots.reserveCapacity(max(0, (rings + 1) * lonDensity))
     for ri in 0...rings {
         let lat = -.pi / 2 + (Double(ri) / Double(rings)) * .pi
         let cosLat = cos(lat)
@@ -349,13 +373,13 @@ func orbDrawWave(
             let crest = max(0, w)
             dots.append(OrbDot(
                 x: px, y: py, z: z,
-                r: (ov(o, "rBase", 0.6) + ov(o, "rDepth", 1.7) * depth) * (1 + 0.4 * crest) * rs,
+                r: (radiusBase + radiusDepth * depth) * (1 + 0.4 * crest) * rs,
                 white: 0.66 - 0.56 * depth - 0.1 * crest,
                 a: 1
             ))
         }
     }
-    orbPaint(ctx, &dots, dark: dark, rMin: ov(o, "rMin", 0.3))
+    orbPaint(ctx, &dots, dark: dark, rMin: minimumRadius)
 }
 
 // MARK: - Ribbon (composing)
@@ -369,9 +393,17 @@ func orbDrawRibbon(
     let spin = ov(o, "spin", 1)
     let pt = orbMakeProj(yaw: t * 0.1 * spin, tilt: 0.3, cx: cx, cy: cy, scale: 1)
     let rs = orbRadiusScale(size, ov(o, "rsPow", 0.6))
+    let baseLanes = ov(o, "lanes", 5)
+    let segs = Int(ov(o, "segs", 88))
+    let lanes = max(1, Int((baseLanes * ov(o, "bandMul", 1)).rounded()))
+    let wobbleMultiplier = ov(o, "wobMul", 1)
+    let radiusBase = ov(o, "rBase", 1.1)
+    let radiusDepth = ov(o, "rDepth", 1.7)
+    let minimumRadius = ov(o, "rMin", 0.3)
 
     var dots: [OrbDot] = []
     let ghostN = Int(ov(o, "ghostN", 150))
+    dots.reserveCapacity(max(0, ghostN + lanes * segs))
     for i in 0..<ghostN {
         let d = orbFibDir(i, ghostN)
         let (px, py, z) = pt(d.0 * R, d.1 * R, d.2 * R)
@@ -391,15 +423,12 @@ func orbDrawRibbon(
     let ny = uz * vx - ux * vz
     let nz = ux * vy - uy * vx
 
-    let baseLanes = ov(o, "lanes", 5)
-    let segs = Int(ov(o, "segs", 88))
-    let lanes = max(1, Int((baseLanes * ov(o, "bandMul", 1)).rounded()))
     for w in 0..<lanes {
         let laneOff = (Double(w) - Double(lanes - 1) / 2) * 0.075
         let edge = abs(Double(w) - Double(lanes - 1) / 2) / max(1, Double(lanes - 1) / 2)
         for k in 0..<segs {
             let a = (Double(k) / Double(segs)) * 2 * .pi
-            let wob = (0.16 * sin(a * 3 - t * 1.7 + Double(w) * 0.22) + 0.07 * sin(a * 5 + t * 1.1)) * ov(o, "wobMul", 1)
+            let wob = (0.16 * sin(a * 3 - t * 1.7 + Double(w) * 0.22) + 0.07 * sin(a * 5 + t * 1.1)) * wobbleMultiplier
             let off = laneOff + wob
             let x = ux * cos(a) + vx * sin(a) + nx * off
             let y = uy * cos(a) + vy * sin(a) + ny * off
@@ -409,13 +438,13 @@ func orbDrawRibbon(
             let depth = (zr / R + 1) / 2
             dots.append(OrbDot(
                 x: px, y: py, z: zr,
-                r: (ov(o, "rBase", 1.1) + ov(o, "rDepth", 1.7) * depth) * (1 - 0.25 * edge) * rs,
+                r: (radiusBase + radiusDepth * depth) * (1 - 0.25 * edge) * rs,
                 white: 0.52 - 0.44 * depth + 0.18 * edge,
                 a: 0.4 + 0.6 * depth
             ))
         }
     }
-    orbPaint(ctx, &dots, dark: dark, rMin: ov(o, "rMin", 0.3))
+    orbPaint(ctx, &dots, dark: dark, rMin: minimumRadius)
 }
 
 // MARK: - Morph (shaping)
@@ -481,6 +510,9 @@ func orbDrawMorph(
     let local = tc - Double(k) * orbSeg
     let m = local > orbHold ? orbSmoothE((local - orbHold) / orbMorph) : 0
     let sprd = ov(o, "spread", 1)
+    let iconDensity = ov(o, "iconD", 1)
+    let dotRadius = ov(o, "rDot", 0.021) * 1.35 * sprd
+    let minimumRadius = ov(o, "rMin", 0.25)
 
     let pA = orbCycle[k]
     let pB = orbCycle[(k + 1) % K]
@@ -502,11 +534,11 @@ func orbDrawMorph(
         total += l
     }
 
-    let n = orbMorphN(ov(o, "iconD", 1))
-    let re = ov(o, "rDot", 0.021) * 1.35 * sprd
+    let n = orbMorphN(iconDensity)
     let pulse = 1 + 0.02 * sin(local * 3.1)
 
     var dots: [OrbDot] = []
+    dots.reserveCapacity(n)
     let c2 = size / 2
     var seg = 0
     var acc = 0.0
@@ -523,10 +555,10 @@ func orbDrawMorph(
         let y = (a.1 + (b.1 - a.1) * f) * pulse
         dots.append(OrbDot(
             x: c2 + x * size, y: c2 + y * size, z: 0,
-            r: max(0.35, re * size), white: 0.1, a: 1
+            r: max(0.35, dotRadius * size), white: 0.1, a: 1
         ))
     }
-    orbPaint(ctx, &dots, dark: dark, rMin: ov(o, "rMin", 0.25))
+    orbPaint(ctx, &dots, dark: dark, rMin: minimumRadius)
 }
 
 // MARK: - Profiles, presets, resolution

@@ -52,6 +52,11 @@ class ParagraphUIView: UITextView {
   private(set) var activeAnimations: [FadeAnimationData] = []
   private var fadeAnimationDisplayLink: CADisplayLink?
   private var cachedSize: CachedParagraphUIViewSize?
+  /// Bounds width seen by the last layout pass. `cachedSize` is populated only
+  /// by `intrinsicContentSize`; SwiftUI's `UIViewRepresentable.sizeThatFits`
+  /// path can leave it nil even after a stable layout, so it cannot be used as
+  /// the per-pass invalidation sentinel.
+  private var lastLaidOutWidth: CGFloat?
 
   var textContextMenu: TextContextMenu?
   var markdownController: MarkdownController?
@@ -170,8 +175,11 @@ class ParagraphUIView: UITextView {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    if bounds.width != cachedSize?.targetWidth {
+    var needsIntrinsicSizeInvalidation = false
+    if lastLaidOutWidth != bounds.width {
       invalidateCachedSize()
+      lastLaidOutWidth = bounds.width
+      needsIntrinsicSizeInvalidation = true
     }
     // Vendored fix (AmberAgent): `sizeThatFits` resizes the text container to
     // the SwiftUI proposal as a measurement side effect. If the view's final
@@ -194,9 +202,18 @@ class ParagraphUIView: UITextView {
           actualCharacterRange: nil
         )
         setNeedsDisplay()
+        needsIntrinsicSizeInvalidation = true
       }
     }
-    invalidateIntrinsicContentSize()
+    // Invalidating intrinsic size from every layout pass schedules another
+    // measurement even when neither the content nor the width changed. The
+    // AmberAgent streaming path opts into TextKit 1 for attachment-free text;
+    // keep that hot path tied to actual size input changes. TextKit 2 retains
+    // the upstream invalidation behavior because its intrinsic measurement
+    // contract is different and the default package behavior must stay intact.
+    if !usesTextKit1 || needsIntrinsicSizeInvalidation {
+      invalidateIntrinsicContentSize()
+    }
   }
 
   override func sizeThatFits(_ size: CGSize) -> CGSize {
@@ -278,7 +295,7 @@ class ParagraphUIView: UITextView {
     )
   }
 
-  /// Union of the actually laid-out line fragments. `usedRect(for:)` can lag a
+  /// Union of the actually used line-fragment bounds. `usedRect(for:)` can lag a
   /// just-invalidated layout by one query; reading the fragments directly gives
   /// the width the text will really render at. O(line count) — only called on
   /// container-width transitions, never on the steady-state streaming path.
@@ -292,7 +309,10 @@ class ParagraphUIView: UITextView {
     var glyphIndex = 0
     while glyphIndex < glyphCount {
       var range = NSRange(location: 0, length: 0)
-      let rect = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: &range)
+      // Match the steady-state `usedRect(for:)` measurement. The allocated
+      // fragment rect includes unused trailing space up to the container edge,
+      // which made a full layout report a wider size than incremental appends.
+      let rect = layoutManager.lineFragmentUsedRect(forGlyphAt: glyphIndex, effectiveRange: &range)
       bounds = bounds.union(rect)
       guard range.length > 0 else { break }
       glyphIndex = range.location + range.length
@@ -664,6 +684,7 @@ class ParagraphUIView: UITextView {
     lineSpacing = nil
     attributedText = NSAttributedString()
     invalidateCachedSize()
+    lastLaidOutWidth = nil
     // Vendored fix (AmberAgent): also drop the previous context's frame. A
     // recycled view keeps its old bounds (e.g. a wide table cell); with valid
     // bounds, `intrinsicContentSize` trusts them and advertises the stale wide

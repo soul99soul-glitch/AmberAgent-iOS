@@ -148,13 +148,14 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
     private let lock = NSLock()
     private let stripper = IOSMemoryCitationStripper()
     private var capturedIds: Set<Int32> = []
+    private var absorbedCitationCount = 0
 
     /// 剥离 chunk 中 assistant 文本 delta 的隐藏标记；无标记时原样返回同一 chunk。
     func stripped(_ chunk: MessageChunk) -> MessageChunk {
         lock.lock()
         defer { lock.unlock() }
         let result = Self.stripping(chunk, stripper: stripper)
-        capturedIds = Set(stripper.citations.flatMap(\.ids))
+        absorbNewCitations()
         return result
     }
 
@@ -164,7 +165,7 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let remainder = stripper.finish()
-        capturedIds = Set(stripper.citations.flatMap(\.ids))
+        absorbNewCitations()
         return remainder
     }
 
@@ -173,6 +174,17 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return capturedIds
+    }
+
+    /// `stripped` runs for every streamed chunk. Rebuilding a Set from every
+    /// citation seen so far on each call needlessly scans and allocates for
+    /// ordinary chunks; only the newly completed tags can change the result.
+    private func absorbNewCitations() {
+        guard absorbedCitationCount < stripper.citations.count else { return }
+        for citation in stripper.citations[absorbedCitationCount...] {
+            capturedIds.formUnion(citation.ids)
+        }
+        absorbedCitationCount = stripper.citations.count
     }
 
     /// 把 `finish()` 返回的剩余可见文本并入消息快照：追加到最后一条 assistant

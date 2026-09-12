@@ -77,7 +77,12 @@ struct SingleBlockView: View {
         // stay nil — passing a value here would make `setParagraphContents`
         // overwrite the merged styles on the appended suffix and flatten the
         // paragraph gaps. See RenderableDocument+Coalescing.swift.
-        let usesTextKit1 = shouldUseTextKit1(for: contents)
+        // `coalescedText` is produced only by `coalescingAdjacentTextBlocks`,
+        // which admits attachment-free paragraphs by construction. Do not scan
+        // the entire attributed string on every SwiftUI body evaluation just to
+        // rediscover that invariant; long streaming answers otherwise pay an
+        // O(text length) main-thread walk for the same stable block.
+        let usesTextKit1 = usesTextKit1ForAttachmentFreeText
         ParagraphView(
           contents: contents,
           lineSpacing: nil,

@@ -462,11 +462,15 @@ enum NovelWorkspaceProjectStore {
         files: [NovelWorkspaceBackup.File]
     ) -> [String] {
         let onDisk = Set(NovelWorkspaceAuthority.diskChapterBodies(in: files).keys)
+        let chapterByID = Dictionary(
+            document.chapters.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var missing: [String] = []
         for branch in document.branches where branch.lifecycle == .active {
             let branchSlug = NovelWorkspaceBackup.slug(branch.name)
             for selection in branch.workingChapterSelections {
-                guard document.chapters.first(where: { $0.id == selection.chapterID })?.discardedAt == nil else {
+                guard chapterByID[selection.chapterID]?.discardedAt == nil else {
                     continue
                 }
                 let key = NovelWorkspaceAuthority.chapterBodyKey(
@@ -498,19 +502,26 @@ enum NovelWorkspaceProjectStore {
         }
         let onDisk = NovelWorkspaceAuthority.diskChapterBodies(in: files)
         var next = document
+        let chapterByID = Dictionary(
+            next.chapters.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let versionsByID = Dictionary(
+            next.chapterVersions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
         var adopted = false
         for branchIndex in next.branches.indices where next.branches[branchIndex].lifecycle == .active {
             let branch = next.branches[branchIndex]
             let branchSlug = NovelWorkspaceBackup.slug(branch.name)
             for selection in branch.workingChapterSelections {
-                guard next.chapters.first(where: { $0.id == selection.chapterID })?.discardedAt == nil,
+                guard chapterByID[selection.chapterID]?.discardedAt == nil,
                       let disk = onDisk[NovelWorkspaceAuthority.chapterBodyKey(
                           branchSlug: branchSlug,
                           chapterID: selection.chapterID
                       )],
-                      let current = next.chapterVersions.first(where: {
-                          $0.id == selection.versionID && $0.chapterID == selection.chapterID
-                      }) else { continue }
+                      let current = versionsByID[selection.versionID],
+                      current.chapterID == selection.chapterID else { continue }
                 guard current.title != disk.title || current.content != disk.content else { continue }
                 let command = NovelSaveManualEditCommand(
                     context: NovelMutationContext(

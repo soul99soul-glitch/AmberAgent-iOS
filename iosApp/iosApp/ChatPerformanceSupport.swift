@@ -345,7 +345,7 @@ struct ChatPerfReplayView: View {
     var body: some View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
-            ChatSwiftUIMessageList(
+            NativeChatTimelineView(
                 signal: model.signal,
                 configurationIssue: nil,
                 isGenerationActive: model.isGenerationActive,
@@ -359,6 +359,8 @@ struct ChatPerfReplayView: View {
                 workspaceStore: workspaceStore,
                 scrollToBottomTrigger: model.scrollToBottomTrigger,
                 scrollToBottomSource: .button,
+                messageAnchor: nil,
+                currentConversationID: "chat-perf-replay",
                 messagesProvider: { model.messages },
                 variantInfoProvider: { _ in nil },
                 onAction: { _ in },

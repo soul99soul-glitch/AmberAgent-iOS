@@ -68,12 +68,15 @@ enum NativeStaticTimelineRendererMemory {
         event: ChatEvent,
         messages: [UIMessage]
     ) -> Set<String> {
-        let currentIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
         switch event {
         case .conversationLoaded, .conversationSwitched, .branchChanged:
             return []
         default:
-            var retained = previous.intersection(currentIDs)
+            // Empty renderer memory needs no full-history ID scan. This is the
+            // normal cold-history path, including body updates while browsing.
+            var retained = previous.isEmpty ? previous : previous.intersection(
+                Set(messages.map(ChatMessageProjector.messageId(for:)))
+            )
             if event.remembersStreamingRenderer,
                let lastAssistant = messages.last(where: { $0.role == MessageRole.assistant }) {
                 retained.insert(ChatMessageProjector.messageId(for: lastAssistant))
