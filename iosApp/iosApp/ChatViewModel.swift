@@ -213,6 +213,15 @@ private final class ChatConversationRunState {
     var contextCompactState: ChatContextCompactState = .idle
     var pendingAssistantRegeneration: PendingAssistantRegeneration?
     var steerQueue: [IOSSteerQueueEntry] = []
+    var waitingForChildRunId: String?
+    var childResultWakeTask: Task<Void, Never>?
+
+    func clearChildResultWait() {
+        waitingForChildRunId = nil
+        childResultWakeTask?.cancel()
+        childResultWakeTask = nil
+    }
+
     var isOrchestratedChild = false
     var hasOrchestrationLinks = false
     var toolExposureBridge: IosToolExposureBridge?
@@ -475,6 +484,27 @@ final class ChatViewModel {
     /// 不加视觉徽标；此查询留待后续 UI 接线）。
     func isOrchestratedChild(conversationId: KotlinUuid) async -> Bool {
         await orchestrationToolService.isOrchestratedChild(conversationId: conversationId)
+    }
+
+    /// The hidden child transcript has its own composer. Reuse the same
+    /// orchestration service as model-driven followup_task so a user message
+    /// is queued at an active child's next boundary or starts an idle child.
+    func appendTaskToSubAgent(conversationId: KotlinUuid, message: String) async -> String {
+        guard let provider = makeProviderSetting() else {
+            return IOSThreadOrchestrationToolService.errorJSON(
+                toolName: "followup_task",
+                code: "missing_provider",
+                reason: "当前模型或服务商不可用，无法追加子代理任务。"
+            )
+        }
+        let params = makeTextGenerationParams()
+        return await orchestrationToolService.appendUserTask(
+            to: conversationId,
+            message: message,
+            providerSetting: provider,
+            params: params,
+            toolExposureBridge: lastAssembledToolExposureBridge
+        )
     }
 
     var contextSnapshot: ChatContextSnapshot {
@@ -1205,6 +1235,16 @@ final class ChatViewModel {
                 finalMessages: finalMessages
             )
         }
+        IOSChatBackgroundGenerationCoordinator.shared.onRunFinishedWithPendingTasks = {
+            [weak self] conversationId, provider, params, bridge, policy in
+            _ = await self?.orchestrationToolService.resumePendingTasks(
+                for: conversationId,
+                providerSetting: provider,
+                params: params,
+                toolExposureBridge: bridge,
+                executionPolicy: policy
+            )
+        }
         IOSChatBackgroundGenerationCoordinator.shared.onToolOutcomeUnknown = {
             [weak self] descriptor in
             guard let self,
@@ -1258,6 +1298,7 @@ final class ChatViewModel {
                     }
                 },
                 setIsLoading: { isLoading in
+                    if isLoading { state.clearChildResultWait() }
                     state.isLoading = isLoading
                 },
                 setPendingMemoryApproval: { request in
@@ -1395,7 +1436,11 @@ final class ChatViewModel {
                 restoreSteerQueueLeftover: { [weak self] conversationId in
                     self?.restoreSteerQueueLeftoverToComposer(state: state)
                 },
+                onForegroundYield: { runId in
+                    state.waitingForChildRunId = runId
+                },
                 onRunTerminal: { [weak self] conversationId, runId, finalMessages in
+                    self?.observeYieldedChildResults(state: state, runId: runId)
                     await self?.orchestrationToolService.notifyRunTerminal(
                         conversationId: conversationId,
                         runId: runId,
@@ -1448,7 +1493,8 @@ final class ChatViewModel {
             steerQueue = steerQueueStore.load(conversationId: currentConversationId)
         }
         conversationRuns = conversationRuns.filter { _, run in
-            run === selectedRun || run.host?.isRunning == true || !run.state.inputText.isEmpty
+            run === selectedRun || run.host?.isRunning == true
+                || run.state.waitingForChildRunId != nil || !run.state.inputText.isEmpty
         }
         refreshContextCompactBoundaries()
         // P1-a: 队列随会话切换重灌（冷启动恢复：只进队列 UI，不自动发送）。
@@ -2067,6 +2113,7 @@ final class ChatViewModel {
     /// Returns the input digest + conversation id so the caller can start generation.
     @discardableResult
     private func appendUserMessage(text: String, images: [PendingChatImage]) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
+        currentRun.state.clearChildResultWait()
         let prompt = Self.promptText(userText: text, selectedFilePreview: pendingSelectedFilePreview)
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
         let userMsg = makeUserMessage(prompt: prompt, images: images)
@@ -2112,6 +2159,7 @@ final class ChatViewModel {
         guard !trimmed.isEmpty || !images.isEmpty || selectedFile != nil else { return false }
         guard isGenerationActive else { return false }
         guard steerQueue.count < IOSSteerQueueStore.maxPendingUserMessages else { return false }
+        currentRun.state.clearChildResultWait()
         steerQueue.append(IOSSteerQueueEntry(
             id: UUID().uuidString,
             text: trimmed,
@@ -2264,10 +2312,120 @@ final class ChatViewModel {
 
     // MARK: - Mailbox 消费（P1-b）
 
+    /// Owned by the visible chat's task. Re-subscribing when a run becomes
+    /// idle also catches reports that arrived between yield and teardown.
+    func observeIdleMailboxResults(conversationId: KotlinUuid?) async {
+        guard let conversationId else { return }
+        await orchestratedStatusRefreshTask?.value
+        guard !Task.isCancelled, isCurrentConversation(conversationId),
+              !isGenerationActive, !currentConversationIsOrchestratedChild else { return }
+        let stream = await mailboxActivityCenter.events(for: conversationId.toHexDashString())
+        await previewIdleMailboxResults(conversationId: conversationId)
+        for await _ in stream {
+            guard !Task.isCancelled else { break }
+            await previewIdleMailboxResults(conversationId: conversationId)
+        }
+    }
+
+#if DEBUG
+    @ObservationIgnored var beforeIdleMailboxPreviewApplyForTesting: (() async -> Void)?
+    @ObservationIgnored var beforeChildResultWakeApplyForTesting: (() async throws -> Void)?
+
+    func beginChildResultWaitForTesting(runId: String, provider: ProviderSetting, params: TextGenerationParams) {
+        _ = kernelRunHost
+        let state = currentRun.state
+        state.generationConfiguration = (provider, params, nil)
+        makeGenerationBindings(state: state).onForegroundYield(runId)
+        observeYieldedChildResults(state: state, runId: runId)
+    }
+
+#endif
+
+    func previewIdleMailboxResults(conversationId: KotlinUuid) async {
+        guard !Task.isCancelled, isCurrentConversation(conversationId),
+              !isGenerationActive, !currentConversationIsOrchestratedChild else { return }
+        let state = currentRun.state
+        guard let reports = try? await mailboxStore.pendingResults(forConversationId: conversationId) else { return }
+#if DEBUG
+        await beforeIdleMailboxPreviewApplyForTesting?()
+#endif
+        // A run or conversation switch may happen while Room reads. Because
+        // this was only a peek, declining the UI update leaves all mail intact.
+        guard !Task.isCancelled, isCurrentConversation(conversationId),
+              !isGenerationActive, !state.isOrchestratedChild else { return }
+        _ = appendMailboxEnvelopes(reports, state: state)
+    }
+
+    /// Own the subscription at conversation scope, independent of the visible
+    /// ChatView. Subscribe before peeking so completion during teardown is caught.
+    private func observeYieldedChildResults(state: ChatConversationRunState, runId: String) {
+        guard state.waitingForChildRunId == runId, let id = state.conversationId else { return }
+        state.childResultWakeTask?.cancel()
+        let center = mailboxActivityCenter
+        state.childResultWakeTask = Task { @MainActor [weak self, weak state] in
+            let events = await center.events(for: id.toHexDashString())
+            var iterator = events.makeAsyncIterator()
+            var retrySeconds = 1
+            while !Task.isCancelled {
+                do {
+                    if try await self?.resumeYieldedRunIfReady(state: state, runId: runId) != false { return }
+                    retrySeconds = 1
+                    guard await iterator.next() != nil else { return }
+                } catch {
+                    // Protected files/Room can be temporarily unavailable. Keep
+                    // ownership and retry without requiring another child signal.
+                    guard !Task.isCancelled else { return }
+                    NSLog("[AmberChat] Child-result resume deferred: %@", error.localizedDescription)
+                    do { try await Task.sleep(for: .seconds(retrySeconds)) }
+                    catch { return }
+                    retrySeconds = min(30, retrySeconds * 2)
+                }
+            }
+        }
+    }
+
+    /// A newer send/start/cancel clears ownership synchronously. Recheck after
+    /// every read; previews never acknowledge mail, the resumed run does that.
+    private func resumeYieldedRunIfReady(state: ChatConversationRunState?, runId: String) async throws -> Bool {
+        guard let state, !Task.isCancelled, state.waitingForChildRunId == runId,
+              let id = state.conversationId, let host = host(for: id),
+              !isGenerationActive(conversationId: id) else { return true }
+        let reports = try await mailboxStore.pendingResults(forConversationId: id)
+#if DEBUG
+        try await beforeChildResultWakeApplyForTesting?()
+#endif
+        guard !Task.isCancelled, state.waitingForChildRunId == runId,
+              !isGenerationActive(conversationId: id) else { return true }
+        guard !reports.isEmpty else { return false }
+        guard let store = conversationStore,
+              try await store.loadConversationForOrchestration(id) != nil else {
+            state.clearChildResultWait()
+            return true
+        }
+        guard !Task.isCancelled, state.waitingForChildRunId == runId,
+              !isGenerationActive(conversationId: id),
+              let configuration = state.generationConfiguration else { return true }
+        // Consume the permission before starting. All pending reports share one
+        // run, and its normal mailbox boundary acknowledges them exactly once.
+        state.waitingForChildRunId = nil
+        state.childResultWakeTask = nil
+        _ = appendMailboxEnvelopes(reports, state: state)
+        host.start(
+            providerSetting: configuration.provider,
+            params: configuration.params,
+            inputDigest: chatInputDigest(for: "child-results:\(runId)"),
+            conversationId: id,
+            uploadMessages: state.messages,
+            toolExposureBridge: state.toolExposureBridge,
+            recipeCatalogSnapshot: configuration.dynamicSnapshot
+        )
+        return true
+    }
+
     /// 工具循环/新 run 首轮边界消费 mailbox：Room 事务 drain 未投递信封（exactly-once，
-    /// 二次调用为空），渲染为带结构头的真实 user 消息上屏并按既有路径持久化进会话，
-    /// 返回生成的消息供下一轮 upload 折入。与 steer 不同：未消费信封不回 composer
-    /// （留在 Room 等下次 run），本阶段不写 UI。队列为空或 run 不属于当前会话时零操作。
+    /// 二次调用为空），按既有路径持久化进会话并供下一轮 upload 折入。
+    /// 结果由 timeline 投影为独立代理卡片，不伪装成用户发送，也不改变草稿或附件提示。
+    /// 未消费信封不回 composer，留在 Room 等下次 run。
     @discardableResult
     func drainMailbox(conversationId: KotlinUuid?) async -> [UIMessage] {
         guard isCurrentConversation(conversationId) else { return [] }
@@ -2276,24 +2434,32 @@ final class ChatViewModel {
 
     private func drainMailbox(state: ChatConversationRunState) async -> [UIMessage] {
         let envelopes = await mailboxStore.drainPending(forConversationId: state.conversationId)
+        return appendMailboxEnvelopes(envelopes, state: state)
+    }
+
+    private func appendMailboxEnvelopes(
+        _ envelopes: [IOSMailboxStore.EnvelopeSnapshot], state: ChatConversationRunState
+    ) -> [UIMessage] {
         guard !envelopes.isEmpty else { return [] }
+        let existingIDs = Set(state.messages.map { $0.id.toHexDashString().lowercased() })
         let drained = envelopes.map { envelope in
-            IosMailboxMessageBridge.shared.makeMessage(
+            amberMailboxMessage(
+                envelopeId: envelope.id,
                 authorThreadId: envelope.authorThreadId,
                 type: envelope.type,
                 payload: envelope.payload
             )
+        }.filter {
+            !existingIDs.contains($0.id.toHexDashString().lowercased())
         }
-        // 与 drainSteerQueue 同款上屏：真实 user 消息进 timeline（后续会话落盘
-        // 与工具轮次持久化共用既有 persistMessages 路径）。
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+        guard !drained.isEmpty else { return [] }
+        withAnimation(.smooth(duration: 0.3)) {
             state.messages.append(contentsOf: drained)
-            if isCurrentConversation(state.conversationId) { bumpMessageRevision(reason: .userAppend) }
-        }
-        if isCurrentConversation(state.conversationId) {
-            invalidateSuggestionRequest()
-            chatSuggestions = []
-            selectedFileContextError = nil
+            if isCurrentConversation(state.conversationId) {
+                // A mailbox update is not a user's send action and must not
+                // resume following while the user reads history.
+                bumpMessageRevision(reason: .toolResultAppended)
+            }
         }
         Task { @MainActor [weak self] in
             _ = await self?.persistMessages(state: state)
@@ -3265,6 +3431,7 @@ final class ChatViewModel {
     }
 
     func cancelGeneration() {
+        currentRun.state.clearChildResultWait()
         // cancel() itself publishes the cancelled watch snapshot; do not clear first.
         if kernelRunHost.isRunning {
             kernelRunHost.cancel()
@@ -3662,8 +3829,8 @@ final class ChatViewModel {
     static let orchestrationContextPrompt = """
     Thread orchestration is active for this conversation.
     - Messages prefixed `[mailbox MESSAGE|NEW_TASK|FINAL_ANSWER from /root/...]` are inter-agent mail, not user input; FINAL_ANSWER is a child thread's completion report.
-    - Child threads run in the background and report back automatically; call wait_agent to block for new mail mid-run, send_message/followup_task to contact a child, interrupt_agent to stop one (the thread stays addressable).
-    - The user cannot type into child threads; relay important results to the user yourself.
+    - Child threads run in the background and their completed reports appear automatically as compact cards. Keep working on independent work; when none remains, call wait_agent to yield the foreground turn when you still need child results. A completed child report automatically resumes that waiting task so you can summarize it. Finishing a reply without wait_agent does not request automatic continuation. Do not repeatedly wait or poll for children and occupy the user's conversation.
+    - Use send_message/followup_task to contact a child, interrupt_agent to stop one (the thread stays addressable). The user can also append tasks from the child conversation UI. Respond to new user input normally; completed reports remain available as context for your next reply.
     """
 
     private func messagesByInjectingRuntimeContext(

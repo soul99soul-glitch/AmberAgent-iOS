@@ -8,6 +8,46 @@ private let backgroundRunLedgerLogger = Logger(subsystem: "app.amber.ios", categ
 private let backgroundToolExposureLogger = Logger(subsystem: "app.amber.ios", category: "chat-bg-tools")
 private let backgroundMailboxLogger = Logger(subsystem: "app.amber.ios", category: "chat-bg-mailbox")
 
+/// Mailbox messages may be observed by the terminal-resume bootstrap and by
+/// the first round of the newly accepted background job. Derive their UI id
+/// from the durable envelope id so that either observer can safely collapse
+/// the same envelope instead of rendering it twice.
+func amberStableMailboxMessageId(envelopeId: String) -> KotlinUuid {
+    let digest = Array(chatInputDigest(for: "amber-mailbox-message:\(envelopeId)"))
+    let uuidString = [
+        String(digest[0..<8]),
+        String(digest[8..<12]),
+        String(digest[12..<16]),
+        String(digest[16..<20]),
+        String(digest[20..<32])
+    ].joined(separator: "-")
+    return KotlinUuid.companion.parse(uuidString: uuidString)
+}
+
+func amberMailboxMessage(
+    envelopeId: String,
+    authorThreadId: String,
+    type: String,
+    payload: String
+) -> UIMessage {
+    let rendered = IosMailboxMessageBridge.shared.makeMessage(
+        authorThreadId: authorThreadId,
+        type: type,
+        payload: payload
+    )
+    return UIMessage(
+        id: amberStableMailboxMessageId(envelopeId: envelopeId),
+        role: rendered.role,
+        parts: rendered.parts,
+        annotations: rendered.annotations,
+        createdAt: rendered.createdAt,
+        finishedAt: rendered.finishedAt,
+        modelId: rendered.modelId,
+        usage: rendered.usage,
+        translation: rendered.translation
+    )
+}
+
 private struct IOSChatBackgroundRuntimeJob {
     let runId: String
     let startedAt: Int64
@@ -480,6 +520,20 @@ extension IOSChatBackgroundGenerationCoordinator: IOSThreadOrchestrationToolServ
 final class IOSChatBackgroundGenerationCoordinator {
     static let shared = IOSChatBackgroundGenerationCoordinator()
 
+    /// Background continuations need enough rounds for a child-agent tool
+    /// chain to finish. Keep this separate from the user-configurable
+    /// foreground budget: background jobs have no settings UI, and six rounds
+    /// truncated ordinary subagent chains before they could report back.
+    /// Thirty is a bounded five-fold increase over the old cap of six.
+    static let backgroundToolLoopMaxSteps = 30
+
+    /// The production engine configuration is shared with the regression test
+    /// so it exercises the same budget used by `handle(_:)`.
+    static let backgroundToolLoopConfiguration = IOSAgentToolEngine.Configuration(
+        maxSteps: backgroundToolLoopMaxSteps,
+        honorApprovalPause: false
+    )
+
     private enum RunRecordResult: Equatable {
         case recorded
         case conflict
@@ -489,6 +543,19 @@ final class IOSChatBackgroundGenerationCoordinator {
     /// P1-c: 后台 job 终态钩子（子线程完成/失败/截断/取消时向父线程投递
     /// FINAL_ANSWER 由 ChatViewModel 接线到编排服务）。nil 时零开销。
     var onRunTerminal: (@MainActor (KotlinUuid, String, [UIMessage]) async -> Void)?
+    /// A terminal run can release ownership while a user followup is already
+    /// pending in the child mailbox. The owner must be released before this
+    /// callback starts the idle bootstrap, otherwise the service quite
+    /// correctly observes the old run as active and leaves the task queued.
+    /// ChatViewModel wires this to
+    /// `IOSThreadOrchestrationToolService.resumePendingTasks`.
+    var onRunFinishedWithPendingTasks: (@MainActor (
+        KotlinUuid,
+        ProviderSetting,
+        TextGenerationParams,
+        IosToolExposureBridge,
+        IOSExecutionPolicySnapshot?
+    ) async -> Void)?
     var onToolOutcomeUnknown: (@MainActor (IOSToolOutcomeUnknownDescriptor) -> Void)?
 
     private var bundleIdentifier: String { Bundle.main.bundleIdentifier ?? "app.amber.ios" }
@@ -935,6 +1002,29 @@ final class IOSChatBackgroundGenerationCoordinator {
                 return lhs.startedAt < rhs.startedAt
             }?
             .runId
+    }
+
+    /// Read-only presentation projection. Durable runs survive page/app reloads;
+    /// a live owner wins while a newer run is entering or leaving the ledger.
+    func subAgentRunStatuses(conversationHexes: [String]) async -> [String: String] {
+        guard !conversationHexes.isEmpty else { return [:] }
+        let requested = Set(conversationHexes.map { $0.lowercased() })
+        let durable = await IOSThreadOrchestrationToolService.latestRunStatusByConversation(
+            agentRuntimeDao: db.agentRuntimeDao()
+        )
+        var result: [String: String] = [:]
+        for (id, status) in durable where requested.contains(id.lowercased()) {
+            result[id.lowercased()] = status
+        }
+        for job in activeJobs.values {
+            let id = job.conversationId.toHexDashString().lowercased()
+            guard requested.contains(id) else { continue }
+            // Ownership also survives permission/recovery pauses. Read this
+            // exact run instead of presenting every retained job as running.
+            let snapshot = try? await runStore.snapshot(runId: job.runId)
+            result[id] = snapshot?.status.name ?? "running"
+        }
+        return result
     }
 
     @discardableResult
@@ -1859,11 +1949,9 @@ final class IOSChatBackgroundGenerationCoordinator {
             // 「声明且可执行」；闭包捕获的是当轮 params/bridge（与首次注册
             // 同一入口）。未传桥的 SubAgent/Novel 路径（本文件外构造点）保持
             // 静态表不变。
-            // G7: 后台续跑步数上限保持 6（引擎默认 8）。理由：后台续跑是前台预算
-            // 之外的第二道防线，跑在无人盯屏的电池/流量预算上；前台上限已参数化
-            // （默认 12），交互式长链由前台设置自控，后台保持较短预算以约束静默耗电。
-            // 若后续发现后台续跑频繁在 6 步被掐断，再同步到引擎默认 8。
-            configuration: .init(maxSteps: 6, honorApprovalPause: false),
+            // G7: 后台续跑单独维持有界预算，允许子代理工具链完成多个回合，
+            // 同时避免无人盯屏时无限耗电。前台设置仍只控制前台续跑。
+            configuration: Self.backgroundToolLoopConfiguration,
             ledger: toolLedger,
             ledgerRunId: job.runId,
             executorRebuilder: { params in
@@ -1879,8 +1967,9 @@ final class IOSChatBackgroundGenerationCoordinator {
                 )
             }
         )
-        // P1-d: 后台引擎 mailbox drain——每轮批量执行后把本会话信封渲染折入下一轮
-        // upload 并持久化进会话（后台无 UI 上屏，折入 = 持久化 + 入 working）。
+        // P1-d: 后台引擎 mailbox drain——每轮批量执行后，或纯文本终态收口前，
+        // 把本会话信封渲染折入下一轮 upload 并持久化进会话（后台无 UI 上屏，
+        // 折入 = 持久化 + 入 working）。
         // 前后台双 drain 由 MailboxDao.drainPending 的事务加固兜底（loser 返回空）。
         let mailboxStore = IOSMailboxStore(mailboxDao: self.db.mailboxDao())
         let mailboxDrain: @Sendable () async -> IOSMailboxDrainResult = { [weak self] in
@@ -3541,7 +3630,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         let snapshots = await mailboxStore.drainPending(forConversationId: conversationId)
         guard !snapshots.isEmpty else { return IOSMailboxDrainResult(values: []) }
         let drained = snapshots.map { envelope in
-            IosMailboxMessageBridge.shared.makeMessage(
+            amberMailboxMessage(
+                envelopeId: envelope.id,
                 authorThreadId: envelope.authorThreadId,
                 type: envelope.type,
                 payload: envelope.payload
@@ -3555,8 +3645,19 @@ final class IOSChatBackgroundGenerationCoordinator {
         } else {
             current = (try? await store.loadConversationForOrchestration(conversationId))?.currentMessages ?? []
         }
+        // `resumePendingTasks` writes the same stable envelope message before
+        // accepting the new BG task. If that task starts quickly enough to
+        // drain the still-pending Room row before the post-accept ack, the
+        // transaction has already claimed it; avoid adding a second copy.
+        let existingIds = Set(current.map { $0.id.toHexDashString().lowercased() })
+        let uniqueDrained = drained.filter {
+            !existingIds.contains($0.id.toHexDashString().lowercased())
+        }
+        guard !uniqueDrained.isEmpty else {
+            return IOSMailboxDrainResult(values: [])
+        }
         let baseline = store.writeBaseline(for: conversationId)
-        let persisted = await store.save(messages: current + drained, to: conversationId, ifUnchangedSince: baseline)
+        let persisted = await store.save(messages: current + uniqueDrained, to: conversationId, ifUnchangedSince: baseline)
         if !persisted {
             // 信封已标 delivered，持久化失败时由终态 persist（working 含 drained）兜底；
             // 只记录日志便于诊断，不回滚 drain（会丢投递记录）。
@@ -3564,7 +3665,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 "mailbox drain persist failed for \(conversationId) — terminal persist is the fallback"
             )
         }
-        return IOSMailboxDrainResult(values: drained)
+        return IOSMailboxDrainResult(values: uniqueDrained)
     }
 
     private static func assistantMessage(_ text: String) -> UIMessage {
@@ -3957,6 +4058,26 @@ final class IOSChatBackgroundGenerationCoordinator {
         return didHydrate
     }
 
+    /// Simulate the ownership barrier after a terminal background job without
+    /// registering a real BGTask. The callback is scheduled only after
+    /// `finish` has removed the active job, matching the production ordering.
+    func finishForTesting(
+        _ handoff: IOSChatBackgroundHandoff,
+        conversationStore: IOSConversationStore,
+        toolRuntime: ChatToolRuntime
+    ) {
+        let requestId = requestIdentifier(for: handoff.runId)
+        activeJobs[requestId] = runtimeJob(
+            handoff: handoff,
+            conversationStore: conversationStore,
+            toolRuntime: toolRuntime,
+            liveActivityController: .shared,
+            saveMiniAppIfPresent: nil
+        )
+        remember(runId: handoff.runId, requestId: requestId)
+        finish(requestId: requestId)
+    }
+
     /// 临时换依赖供 `job(for:)` 水合，不走 `configure()` 的 task-map 预热
     /// （预热会把 payload 填进 `activeJobs`，掩盖「只按 runId 取消」的缺口）。
     func withDependenciesForTesting(
@@ -4046,6 +4167,23 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         for job in terminatedJobs {
             publishTerminalEvent(for: job)
+            guard let resumePendingTasks = onRunFinishedWithPendingTasks else {
+                continue
+            }
+            let conversationId = job.conversationId
+            let providerSetting = job.providerSetting
+            let params = job.params
+            let toolExposureBridge = job.toolExposureBridge
+            let executionPolicy = job.executionPolicy
+            Task { @MainActor in
+                await resumePendingTasks(
+                    conversationId,
+                    providerSetting,
+                    params,
+                    toolExposureBridge,
+                    executionPolicy
+                )
+            }
         }
         IOSMemoryExtractionCoordinator.shared.resume()
     }

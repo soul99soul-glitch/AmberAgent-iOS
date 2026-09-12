@@ -521,8 +521,23 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let body = bubble[bodyStart.lowerBound..<bodyEnd.lowerBound]
 
         XCTAssertTrue(
-            body.contains("ChatAssistantMarkdownView"),
+            body.contains("ChatAssistantMarkdownView")
+                || body.contains("NovelSessionWindowedMarkdown"),
             "Assistant manuscript/discussion body must render via markdown"
+        )
+        XCTAssertTrue(
+            bubble.contains("struct NovelSessionWindowedMarkdown")
+                && bubble.contains("ChatAssistantMarkdownView")
+                && bubble.contains("window.update(newValue)")
+                && bubble.contains("markdown: window.text")
+                && bubble.contains("window.omissionNotice")
+                && bubble.contains(".id(pageIndex)")
+                && bubble.contains("@State private var loadedPages: [String]? = nil")
+                && bubble.contains("ProgressView()")
+                && bubble.contains(".task(id: text)")
+                && bubble.contains("Task.detached(priority: .userInitiated)")
+                && bubble.contains("withTaskCancellationHandler"),
+            "Long novel replies must keep markdown rendering behind the presentation window"
         )
         // Empty pending / muted hints may use ChatAssistantText; manuscript content must not.
         XCTAssertFalse(

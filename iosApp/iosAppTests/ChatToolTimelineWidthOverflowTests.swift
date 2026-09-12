@@ -42,7 +42,10 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             metadata: nil
         )
         let title = ChatToolStepModel(tool: tool).title
-        XCTAssertEqual(title, "添加 WebMount 站点")
+        XCTAssertEqual(
+            title,
+            IOSAppLocalization.string("添加 WebMount 站点", defaultValue: "添加 WebMount 站点")
+        )
         XCTAssertFalse(title.contains("{"), "标题不应再塞整段 JSON，实际=\(title)")
     }
 
@@ -58,7 +61,10 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             metadata: nil
         )
         let title = ChatToolStepModel(tool: tool).title
-        XCTAssertEqual(title, "添加 WebMount 站点")
+        XCTAssertEqual(
+            title,
+            IOSAppLocalization.string("添加 WebMount 站点", defaultValue: "添加 WebMount 站点")
+        )
         XCTAssertFalse(title.contains("https://"), "不应退回整段 URL，实际=\(title)")
     }
 
@@ -629,7 +635,265 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
     }
 }
 
+@MainActor
 final class ChatToolGlyphMappingTests: XCTestCase {
+    @MainActor
+    private final class StatusLoaderProbe {
+        var responses: [[String: String]]
+        private(set) var calls = 0
+
+        init(responses: [[String: String]]) {
+            self.responses = responses
+        }
+
+        func load(_ conversationHexes: [String]) async -> [String: String] {
+            calls += 1
+            guard !responses.isEmpty else { return [:] }
+            let index = min(calls - 1, responses.count - 1)
+            return responses[index]
+        }
+    }
+
+    func testSubAgentNotificationRefreshesHostedCapsuleStatus() async throws {
+        let probe = StatusLoaderProbe(responses: [
+            ["child-ui": "running"],
+            ["child-ui": "completed"]
+        ])
+        let tool = UIMessagePart.Tool(
+            toolCallId: "subagent-ui-state",
+            toolName: "spawn_agent",
+            input: #"{"task_name":"browser","message":"观察页面"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"task_name":"browser","child_thread_id":"child-ui","status":"started"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let step = ChatToolStepModel(tool: tool)
+        let host = UIHostingController(rootView: ChatToolTimeline(
+            steps: [step],
+            onTapStep: { _ in },
+            subAgentRunStatusLoader: { [probe] conversationHexes in
+                await probe.load(conversationHexes)
+            }
+        ))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first)
+        let previousKeyWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 393, height: 240)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKey()
+        }
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        host.view.frame = window.bounds
+        host.view.layoutIfNeeded()
+
+        let loadedInitialStatus = await waitUntil(timeout: 1.0) { probe.calls >= 1 }
+        XCTAssertTrue(loadedInitialStatus, "Hosted capsule must load the child's durable status on appearance")
+        let initialCalls = probe.calls
+        NotificationCenter.default.post(
+            name: .amberChatBackgroundJobStateDidChange,
+            object: IOSChatBackgroundJobStateEvent(conversationId: "child-ui")
+        )
+        let refreshed = await waitUntil(timeout: 1.0) { probe.calls > initialCalls }
+        XCTAssertTrue(refreshed, "A matching runtime notification must refresh the hosted capsule's status")
+    }
+
+    func testFailedOrchestrationReceiptCannotApplyStaleChildRunStatus() throws {
+        let tool = UIMessagePart.Tool(
+            toolCallId: "orchestration-followup-failed",
+            toolName: "followup_task",
+            input: #"{"target":"child-old","message":"补充检查"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":false,"recipient_thread_id":"child-old","status":"failed","error":"start_failed"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+
+        let step = ChatToolStepModel(tool: tool)
+        let presentation = try XCTUnwrap(step.subAgentPresentation)
+        XCTAssertEqual(step.state, .failed)
+        XCTAssertEqual(presentation.threadID, "child-old")
+        XCTAssertFalse(presentation.hasAcceptedReceipt)
+        XCTAssertFalse(step.canApplySubAgentRunStatus)
+    }
+
+    func testSubAgentRunVisualStateMapsDurableWireStatuses() {
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "started"), .running)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "created"), .queued)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "WAITING_EXTERNAL"), .queued)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "running"), .running)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "COMPLETED"), .completed)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "failed"), .failed)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "cancelled"), .cancelled)
+        XCTAssertEqual(ChatSubAgentRunVisualState(rawStatus: "outcome_unknown"), .unknown)
+        XCTAssertEqual(ChatSubAgentRunVisualState.unknown.stepState, .failed)
+        XCTAssertNil(ChatSubAgentRunVisualState(rawStatus: "none"))
+        XCTAssertNil(ChatSubAgentRunVisualState(rawStatus: nil))
+    }
+
+    func testSubAgentRunVisualStateNeverShowsPendingDotForTerminalOutcome() {
+        XCTAssertTrue(ChatSubAgentRunVisualState.queued.usesPendingIndicator)
+        XCTAssertFalse(ChatSubAgentRunVisualState.unknown.usesPendingIndicator)
+        XCTAssertFalse(ChatSubAgentRunVisualState.running.usesPendingIndicator)
+        XCTAssertFalse(ChatSubAgentRunVisualState.completed.usesPendingIndicator)
+        XCTAssertFalse(ChatSubAgentRunVisualState.failed.usesPendingIndicator)
+        XCTAssertFalse(ChatSubAgentRunVisualState.cancelled.usesPendingIndicator)
+    }
+
+    func testSubAgentCapsuleResolvesBuiltInIdentityAndShortWorkHint() throws {
+        let objective = "搜索公开资料并整理关键证据，然后交叉核对来源和时间线"
+        let tool = UIMessagePart.Tool(
+            toolCallId: "subagent-explorer-1",
+            toolName: "subagent_dispatch",
+            input: #"{"role_id":"explorer","objective":"\#(objective)"}"#,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+
+        let step = ChatToolStepModel(tool: tool)
+        let presentation = try XCTUnwrap(step.subAgentPresentation)
+        XCTAssertTrue(step.isSubAgent)
+        XCTAssertEqual(presentation.identity, "role:explorer")
+        XCTAssertEqual(
+            presentation.displayName,
+            IOSAppLocalization.string("探索者", defaultValue: "探索者")
+        )
+        let activeStatus = IOSAppLocalization.string("进行中", defaultValue: "进行中")
+        XCTAssertEqual(presentation.status, activeStatus)
+        let searchTask = IOSAppLocalization.string("搜索资料", defaultValue: "搜索资料")
+        XCTAssertEqual(presentation.workSummary, searchTask)
+        XCTAssertEqual(presentation.statusLine, "\(activeStatus) · \(searchTask)")
+    }
+
+    func testSubAgentCapsuleKeepsDynamicNameAndIdentityAcrossCompletion() throws {
+        let input = #"{"role_id":"source_checker","custom_role_name":"@来源核查","objective":"核对网页来源"}"#
+        let activeTool = UIMessagePart.Tool(
+            toolCallId: "subagent-dynamic-1",
+            toolName: "subagent_dispatch",
+            input: input,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let completedTool = UIMessagePart.Tool(
+            toolCallId: "subagent-dynamic-1",
+            toolName: "subagent_dispatch",
+            input: input,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"role_id":"source_checker","role_name":"来源核查","status":"completed","summary":"已核对来源"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+
+        let active = try XCTUnwrap(ChatToolStepModel(tool: activeTool).subAgentPresentation)
+        let completed = try XCTUnwrap(ChatToolStepModel(tool: completedTool).subAgentPresentation)
+        XCTAssertEqual(active.displayName, "来源核查")
+        XCTAssertEqual(completed.displayName, active.displayName)
+        XCTAssertEqual(completed.identity, active.identity)
+        XCTAssertEqual(completed.status, IOSAppLocalization.string("已完成", defaultValue: "已完成"))
+        XCTAssertEqual(
+            completed.workSummary,
+            IOSAppLocalization.string("核对来源", defaultValue: "核对来源")
+        )
+    }
+
+    func testSpawnCapsuleUsesResolvedNameAfterSiblingCollision() throws {
+        let spawn = UIMessagePart.Tool(
+            toolCallId: "name-collision", toolName: "spawn_agent",
+            input: #"{"task_name":"alex","message":"核对来源"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"task_name":"alex_2","agent_path":"/root/alex_2","child_thread_id":"child-2","status":"started"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let presentation = try XCTUnwrap(ChatToolStepModel(tool: spawn).subAgentPresentation)
+        XCTAssertEqual(presentation.displayName, "alex_2")
+        XCTAssertEqual(presentation.identity, "dynamic:alex_2")
+        XCTAssertEqual(presentation.threadID, "child-2")
+    }
+
+    func testOrchestrationCapsulesMapSpawnAndFollowupStatuses() throws {
+        let spawn = UIMessagePart.Tool(
+            toolCallId: "orchestration-spawn-1",
+            toolName: "spawn_agent",
+            input: #"{"task_name":"browser","message":"观察页面并整理关键结论"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"task_name":"browser","agent_path":"/root/browser","child_thread_id":"child-1","status":"started"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let spawnStep = ChatToolStepModel(tool: spawn)
+        let spawnPresentation = try XCTUnwrap(spawnStep.subAgentPresentation)
+        XCTAssertTrue(spawnStep.isSubAgent)
+        XCTAssertEqual(spawnStep.state, .done)
+        XCTAssertEqual(spawnPresentation.displayName, "browser")
+        XCTAssertEqual(
+            spawnPresentation.status,
+            IOSAppLocalization.string("已启动", defaultValue: "已启动")
+        )
+        XCTAssertEqual(
+            spawnPresentation.workSummary,
+            IOSAppLocalization.string("检查网页", defaultValue: "检查网页")
+        )
+        XCTAssertEqual(spawnPresentation.threadID, "child-1")
+        XCTAssertNotEqual(
+            spawnPresentation.status,
+            IOSAppLocalization.string("已完成", defaultValue: "已完成")
+        )
+
+        let followup = UIMessagePart.Tool(
+            toolCallId: "orchestration-followup-1",
+            toolName: "followup_task",
+            input: #"{"target":"child-old","message":"补充核对登录状态"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"target":"child-1","agent_path":"/root/browser","recipient_thread_id":"child-1","status":"queued"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let followupStep = ChatToolStepModel(tool: followup)
+        let followupPresentation = try XCTUnwrap(followupStep.subAgentPresentation)
+        XCTAssertTrue(followupStep.isSubAgent)
+        XCTAssertEqual(followupStep.state, .done)
+        XCTAssertEqual(followupPresentation.displayName, "browser")
+        XCTAssertEqual(
+            followupPresentation.status,
+            IOSAppLocalization.string("已排队", defaultValue: "已排队")
+        )
+        XCTAssertEqual(
+            followupPresentation.workSummary,
+            IOSAppLocalization.string("核对登录", defaultValue: "核对登录")
+        )
+        XCTAssertEqual(followupPresentation.threadID, "child-1")
+        XCTAssertEqual(followupPresentation.identity, "dynamic:browser")
+        XCTAssertTrue(followupPresentation.hasAcceptedReceipt)
+    }
+
     func testKoboyoMarksParseToNonEmptyPaths() {
         for mark in ChatKoboyoMark.allCases {
             let bounds = mark.renderedPath.boundingRect
@@ -655,6 +919,8 @@ final class ChatToolGlyphMappingTests: XCTestCase {
             ("ios_ish_execute", .terminal, .solidTerminal, "terminal"),
             ("mcp_call", .mcp, .solidPuzzle, "puzzlepiece.extension"),
             ("subagent_dispatch", .subagent, .solidUsers, "person.2.fill"),
+            ("spawn_agent", .subagent, .solidUsers, "person.2.fill"),
+            ("followup_task", .subagent, .solidUsers, "person.2.fill"),
             ("model_council_run", .council, .solidPeopleGroup, "person.3.sequence"),
             ("memory_tool", .memory, .solidBrain, "brain.head.profile"),
         ]
@@ -688,4 +954,17 @@ final class ChatToolGlyphMappingTests: XCTestCase {
         XCTAssertEqual(ChatToolVisualKind.image.activeIslandTint, .green)
         XCTAssertEqual(ChatToolVisualKind.search.activeIslandTint, .cyan)
     }
+
+    private func waitUntil(
+        timeout: TimeInterval,
+        condition: @escaping @MainActor () -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
 }

@@ -7,6 +7,166 @@ import Shared
 
 @MainActor
 final class ChatMessageProjectionTests: XCTestCase {
+    func testAgentResultsUseStaticAgentCardsWhileInternalProgressStaysOutOfTimeline() throws {
+        let user = UIMessage.companion.user(prompt: "继续当前任务")
+        let answer = UIMessage.companion.assistant(prompt: "正在整理")
+        let result = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/root/test_alpha", type: "FINAL_ANSWER", payload: "子代理结果"
+        )
+        let message = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/root/test_beta", type: "MESSAGE", payload: "内部进展"
+        )
+        let before = NativeTimelineProjector.build(messages: [user, answer], event: .toolResultAppended)
+        let hiddenProgress = NativeTimelineProjector.build(messages: [user, answer, message], event: .toolResultAppended)
+        XCTAssertEqual(hiddenProgress, before, "内部进展不改变可见尾行与布局 token")
+        let after = NativeTimelineProjector.build(messages: [user, answer, result, message], event: .toolResultAppended)
+        let card = try XCTUnwrap(after.entries.last { $0.kind == .message })
+        XCTAssertEqual(card.role, MessageRole.assistant)
+        XCTAssertEqual(card.message?.role, MessageRole.user, "模型输入与持久化协议不变")
+        XCTAssertEqual(card.renderer, .staticAssistantMarkdown)
+        XCTAssertFalse(card.isStreaming)
+        XCTAssertTrue(card.canAnimateInsertion)
+        XCTAssertEqual(card.index, 2)
+        XCTAssertEqual([user, answer, result, message].last(where: ChatMessageProjector.isConversationMessage)?.id, answer.id)
+        XCTAssertEqual(result.toText(), "[mailbox FINAL_ANSWER from /root/test_alpha]\n子代理结果")
+
+        let continuation = UIMessage.companion.assistant(prompt: "整理后的回答")
+        let messages = [user, answer, result, message, continuation]
+        let projected = NativeTimelineProjector.build(messages: messages, event: .assistantStreamDelta)
+        let tail = try XCTUnwrap(projected.entries.last { $0.kind == .message })
+        XCTAssertEqual(tail.index, 4, "操作与分支索引仍指向完整会话")
+        XCTAssertFalse(tail.isAssistantContinuation, "独立子代理结果卡与主代理正文保持各自标题")
+        let fastPath = try XCTUnwrap(NativeTimelineProjector.replacingStreamingTail(
+            in: projected, messages: messages, event: .assistantStreamDelta,
+            isGenerationActive: true, viewportState: ChatViewportState()
+        ))
+        XCTAssertFalse(try XCTUnwrap(fastPath.entries.last { $0.kind == .message }).isAssistantContinuation)
+    }
+
+    func testTaskInstructionsAndOrdinaryUserTextRemainVisible() {
+        let task = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/root", type: "NEW_TASK", payload: "追加核查"
+        )
+        let literal = UIMessage.companion.user(prompt: "[mailbox FINAL_ANSWER from /root/test]\n我输入的文字")
+        let rows = ChatMessageProjector.rows(messages: [task, literal], event: .conversationLoaded)
+        XCTAssertEqual(rows.map(\.index), [0, 1])
+    }
+
+    func testSubAgentResultCardVisualLayout() async throws {
+        let report = "## 适合并行的任务\n\n- **独立推进**：几个任务互不依赖。\n- **交叉核查**：从不同角度验证同一结论。\n\n> 完成后由主代理整理结果。\n\n`TEST_ALPHA_OK`"
+        let message = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/root/test_alpha", type: "FINAL_ANSWER",
+            payload: report
+        )
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        for (name, width, type, expanded) in [
+            ("subagent-result-glass-393", CGFloat(393), DynamicTypeSize.large, false),
+            ("subagent-result-glass-320", CGFloat(320), DynamicTypeSize.large, false),
+            ("subagent-result-glass-accessibility", CGFloat(393), DynamicTypeSize.accessibility3, false),
+            ("subagent-result-expanded-393", CGFloat(393), DynamicTypeSize.large, true)
+        ] {
+            let window = UIWindow(windowScene: scene)
+            let host = UIHostingController(rootView:
+                ScrollView {
+                    Group {
+                        if expanded {
+                            ChatSubAgentResultCard(sender: "/root/test_alpha", displayText: report, initiallyExpanded: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            MessageBubbleView(message: message)
+                        }
+                    }
+                    .padding(16)
+                }
+                .background(AmberTheme.background)
+                .environment(IOSWorkspaceStore())
+                .environment(\.dynamicTypeSize, type)
+                .environment(\.locale, Locale(identifier: "zh_Hans"))
+            )
+            window.frame = CGRect(x: 0, y: 0, width: width, height: 852)
+            window.rootViewController = host
+            window.overrideUserInterfaceStyle = .light
+            window.makeKeyAndVisible()
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+                previous?.makeKey()
+            }
+            try await Task.sleep(for: .milliseconds(600))
+            host.view.layoutIfNeeded()
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let output = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).png")
+            try XCTUnwrap(image.pngData()).write(to: output)
+            print("SUBAGENT_RESULT_EVIDENCE \(output.path)")
+        }
+    }
+
+    func testSubAgentResultCardHugsShortContentAndBoundsLongMarkdown() {
+        func measured(_ text: String, width: CGFloat, expanded: Bool = true) -> CGSize {
+            let host = UIHostingController(rootView: ChatSubAgentResultCard(
+                sender: "/root/worker", displayText: text, initiallyExpanded: expanded
+            ))
+            return host.sizeThatFits(in: CGSize(width: width, height: 10_000))
+        }
+        let short = measured("已核对。", width: 361)
+        let longText = "## 核查结果\n\n" + String(repeating: "结果包含说明和证据，需要在卡片内自然换行。", count: 12)
+        let long = measured(longText, width: 361)
+        let narrow = measured(longText, width: 288)
+        let collapsed = measured(longText, width: 361, expanded: false)
+        XCTAssertLessThan(short.width, long.width, "短结果必须随内容收窄")
+        XCTAssertLessThanOrEqual(long.width, 300.5)
+        XCTAssertLessThanOrEqual(narrow.width, 288 * 0.88 + 0.5)
+        XCTAssertLessThan(collapsed.width, long.width, "收起后只保留紧凑标题宽度")
+        XCTAssertEqual(collapsed.height, 44, accuracy: 0.5)
+        XCTAssertGreaterThan(long.height, short.height)
+        XCTAssertGreaterThan(narrow.height, long.height)
+    }
+
+    func testResultCardBoundsUnbrokenMarkdownAndAccessibilityNames() {
+        let token = String(repeating: "W", count: 160)
+        let cases = [
+            "https://example.com/" + token,
+            "```text\n" + token + "\n```",
+            "| Column | Column | Column | Column |\n|---|---|---|---|\n| " + Array(repeating: token, count: 4).joined(separator: " | ") + " |"
+        ]
+        for width: CGFloat in [288, 361] {
+            for type: DynamicTypeSize in [.large, .accessibility3] {
+                for (index, text) in cases.enumerated() {
+                    let host = UIHostingController(rootView: ChatSubAgentResultCard(
+                        sender: "/root/" + token, displayText: text, initiallyExpanded: true
+                    ).environment(\.dynamicTypeSize, type))
+                    let size = host.sizeThatFits(in: CGSize(width: width, height: 10_000))
+                    XCTAssertLessThanOrEqual(size.width, min(300, width * 0.88) + 0.5,
+                        "case \(index), width \(width), type \(type)")
+                    XCTAssertTrue(size.height.isFinite)
+                }
+            }
+        }
+    }
+
+    func testResultCardStartsCollapsedAndLongResultsDoNotGrowTheRow() {
+        func height(_ text: String) -> CGFloat {
+            let host = UIHostingController(rootView: ChatSubAgentResultCard(sender: "/root/nora", displayText: text))
+            return host.sizeThatFits(in: CGSize(width: 288, height: 10_000)).height
+        }
+        let short = height("已完成任务")
+        let long = height(String(repeating: "## 已收集网页内容\n\n详细内容需要用户主动展开查看。\n", count: 200))
+        XCTAssertEqual(short, 44, accuracy: 0.5)
+        XCTAssertEqual(long, short, accuracy: 0.5, "长结果到达时不得自动展开正文")
+        XCTAssertEqual(ChatSubAgentResultCard.compactSummary("## 已收集网页内容\n\n详细报告"), "已收集网页内容")
+        XCTAssertEqual(ChatSubAgentResultCard.compactSummary("执行失败"), "执行失败")
+        for text in ["", "## 这是一段很长的任务结论不能全放在标题里", "**已完成任务**", "👨‍👩‍👧‍👦 已完成"] {
+            XCTAssertLessThanOrEqual(ChatSubAgentResultCard.compactSummary(text).count, 7)
+        }
+    }
+
     func testHistoryWindowPreservesAbsoluteIndicesCompactionAndStreamingTail() throws {
         let messages = (0..<451).map { UIMessage.companion.assistant(prompt: "历史消息 \($0)") }
         let boundary = ChatContextCompactBoundary(

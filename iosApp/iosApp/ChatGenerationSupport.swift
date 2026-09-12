@@ -370,6 +370,7 @@ struct ChatGenerationBindings {
     var restoreSteerQueueLeftover: (KotlinUuid?) -> Void = { _ in }
     /// P1-c: run 终态回传钩子——编排服务据此向父线程 mailbox 投递 FINAL_ANSWER
     /// （conversationId、runId、终态消息快照）。默认空实现零开销。
+    var onForegroundYield: (String) -> Void = { _ in }
     var onRunTerminal: @MainActor (KotlinUuid?, String, [UIMessage]) async -> Void = { _, _, _ in }
     /// Surfaces the existing reconciliation card for a live side effect whose
     /// executor could not determine whether it applied.

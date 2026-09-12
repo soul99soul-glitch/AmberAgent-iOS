@@ -1217,7 +1217,12 @@ private extension View {
             case .conversation(let id):
                 PlaceholderDetailView(title: "Conversation", subtitle: id, systemImage: "text.bubble")
             case .subAgentConversation(let id):
-                SubAgentConversationView(conversationId: id, sharedSettings: sharedSettings, workspaceStore: workspaceStore)
+                SubAgentConversationView(
+                    conversationId: id,
+                    sharedSettings: sharedSettings,
+                    workspaceStore: workspaceStore,
+                    chatViewModel: chatViewModel
+                )
             case .assistant:
                 PlaceholderDetailView(
                     title: "Amber Assistant",

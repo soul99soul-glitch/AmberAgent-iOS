@@ -13,6 +13,29 @@ import QuartzCore
 @MainActor
 final class ChatReasoningCardTests: XCTestCase {
 
+    func testWindowRetainsLatestGraphemesAndCountsOnlyOmittedContent() {
+        let emoji = "👩🏽‍💻"
+        var window = ChatTextWindow(String(repeating: "中", count: 2_000))
+        XCTAssertEqual(window.omittedCount, 0)
+        XCTAssertEqual(window.text.count, 2_000)
+        XCTAssertTrue(window.update(String(repeating: "中", count: 2_000) + emoji))
+        XCTAssertEqual(window.omittedCount, 1)
+        XCTAssertEqual(window.text.count, 2_000)
+        XCTAssertTrue(window.text.hasSuffix(emoji))
+        XCTAssertFalse(window.update("替换输出"))
+        XCTAssertEqual(window.text, "替换输出")
+        XCTAssertEqual(window.omittedCount, 0)
+    }
+
+    func testWindowHandlesGraphemeSplitAcrossDeltas() {
+        let prefix = String(repeating: "中", count: 2_000)
+        var window = ChatTextWindow(prefix + "e")
+        XCTAssertTrue(window.update(prefix + "e\u{301}"))
+        XCTAssertEqual(window.omittedCount, 1)
+        XCTAssertEqual(window.text.count, 2_000)
+        XCTAssertTrue(window.text.hasSuffix("é"))
+    }
+
     private final class StreamingReasoningModel: ObservableObject {
         @Published var text: String
         @Published var isThinking = true
@@ -56,6 +79,8 @@ final class ChatReasoningCardTests: XCTestCase {
         private var previousTimestamp: CFTimeInterval?
         private(set) var gaps: [TimeInterval] = []
         private(set) var contentOffsets: [CGFloat] = []
+        private(set) var contentHeights: [CGFloat] = []
+        private(set) var bottomDistances: [CGFloat] = []
 
         init(scrollView: UIScrollView? = nil) {
             self.scrollView = scrollView
@@ -76,6 +101,12 @@ final class ChatReasoningCardTests: XCTestCase {
             defer { previousTimestamp = displayLink.timestamp }
             if let scrollView {
                 contentOffsets.append(scrollView.contentOffset.y)
+                contentHeights.append(scrollView.contentSize.height)
+                let bottomOffset = max(
+                    -scrollView.adjustedContentInset.top,
+                    scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
+                )
+                bottomDistances.append(max(0, bottomOffset - scrollView.contentOffset.y))
             }
             guard let previousTimestamp else { return }
             gaps.append(displayLink.timestamp - previousTimestamp)
@@ -214,15 +245,18 @@ final class ChatReasoningCardTests: XCTestCase {
         probe.start()
         pump(seconds: 0.15)
         for index in 0..<28 {
-            let previousLength = (model.text as NSString).length
-            model.text +=
+            let appendedText =
                 "第 \(index) 步继续核对状态所有权与终止路径，不能用额外兜底掩盖根因。\n"
+            model.text += appendedText
             pump(seconds: 0.048)
             if index == 0 {
-                let appendedRange = NSRange(
-                    location: previousLength,
-                    length: (model.text as NSString).length - previousLength
-                )
+                // The body is a 2000-grapheme tail window, so the full source
+                // offset is not a valid UITextView range after capping.
+                let appendedRange = (textView.text as NSString).range(of: appendedText)
+                guard appendedRange.location != NSNotFound else {
+                    XCTFail("本次追加思考片段应出现在可见尾窗中。")
+                    continue
+                }
                 let newWordAlphas = foregroundAlphas(in: textView, range: appendedRange)
                 XCTAssertTrue(
                     newWordAlphas.contains { $0 < 0.95 },
@@ -231,7 +265,7 @@ final class ChatReasoningCardTests: XCTestCase {
                 XCTAssertGreaterThanOrEqual(
                     foregroundAlphas(
                         in: textView,
-                        range: NSRange(location: 0, length: previousLength)
+                        range: NSRange(location: 0, length: appendedRange.location)
                     ).min() ?? 1,
                     0.99,
                     "逐词淡入只能作用于本次新增词段。"
@@ -254,11 +288,8 @@ final class ChatReasoningCardTests: XCTestCase {
             p95Gap,
             maxGap
         ))
-        let maximumOffsetStep = zip(
-            probe.contentOffsets,
-            probe.contentOffsets.dropFirst()
-        ).map { abs($1 - $0) }.max() ?? 0
-        print(String(format: "[PERF-SCROLL] reasoning maxStep=%.2fpt", maximumOffsetStep))
+        let maximumOffsetStep = maximumVisualFollowStep(in: probe)
+        print(String(format: "[PERF-SCROLL] reasoning maxVisualStep=%.2fpt", maximumOffsetStep))
 
         XCTAssertLessThanOrEqual(
             p95Gap,
@@ -275,7 +306,7 @@ final class ChatReasoningCardTests: XCTestCase {
             10,
             "思考正文贴底应按帧连续推进，不能随每个 chunk 整行跳动。"
         )
-        XCTAssertEqual(textView.text, model.text, "性能修复不能漏掉或截断流式思考正文。")
+        XCTAssertEqual(textView.text, ChatTextWindow(model.text).displayText)
         XCTAssertGreaterThanOrEqual(
             foregroundAlphas(
                 in: textView,
@@ -343,12 +374,9 @@ final class ChatReasoningCardTests: XCTestCase {
             Int((Double(gapMilliseconds.count) * 0.95).rounded(.up)) - 1
         )
         let p95Gap = gapMilliseconds[max(0, p95Index)]
-        let maximumOffsetStep = zip(
-            probe.contentOffsets,
-            probe.contentOffsets.dropFirst()
-        ).map { abs($1 - $0) }.max() ?? 0
+        let maximumOffsetStep = maximumVisualFollowStep(in: probe)
         print(String(
-            format: "[PERF-HITCH] longReasoning samples=%d p95=%.2fms max=%.2fms maxStep=%.2fpt chars=%d",
+            format: "[PERF-HITCH] longReasoning samples=%d p95=%.2fms max=%.2fms maxVisualStep=%.2fpt chars=%d",
             gapMilliseconds.count,
             p95Gap,
             maxGap,
@@ -362,16 +390,16 @@ final class ChatReasoningCardTests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(
             (textView.text as NSString).length,
-            12_000,
-            "直播思考超过高度上限后，TextKit 只保留尾窗，避免全文重排。"
+            2_050,
+            "正文最多2000字，另加省略提示，避免全文重排。"
         )
         XCTAssertEqual(textView.bounds.height, 180, accuracy: 0.5)
         model.isThinking = false
         pump(seconds: 0.35)
         XCTAssertEqual(
             textView.text,
-            model.text,
-            "思考结束后必须恢复完整思考正文。"
+            ChatTextWindow(model.text).displayText,
+            "结束后保持尾窗，完整思考保留在消息源中。"
         )
         XCTAssertLessThanOrEqual(
             p95Gap,
@@ -415,7 +443,7 @@ final class ChatReasoningCardTests: XCTestCase {
         model.isThinking = false
         pump(seconds: 0.05)
 
-        XCTAssertEqual(textView.text, model.text)
+        XCTAssertEqual(textView.text, ChatTextWindow(model.text).displayText)
         XCTAssertGreaterThanOrEqual(
             foregroundAlphas(
                 in: textView,
@@ -476,7 +504,7 @@ final class ChatReasoningCardTests: XCTestCase {
         pump(seconds: 0.35)
 
         XCTAssertEqual(textView.contentOffset.y, historyOffset, accuracy: 1)
-        XCTAssertEqual(textView.text, model.text)
+        XCTAssertEqual(textView.text, ChatTextWindow(model.text).displayText)
     }
 
     private func mountHarness(model: StreamingReasoningModel) -> (
@@ -521,6 +549,35 @@ final class ChatReasoningCardTests: XCTestCase {
             result.append(color.cgColor.alpha)
         }
         return result
+    }
+
+    private func maximumVisualFollowStep(in probe: DisplayLinkGapProbe) -> CGFloat {
+        let sampleCount = min(
+            probe.contentOffsets.count,
+            min(probe.contentHeights.count, probe.bottomDistances.count)
+        )
+        guard sampleCount > 1 else { return 0 }
+
+        var maximum: CGFloat = 0
+        for index in 0..<(sampleCount - 1) {
+            let offsetDelta = probe.contentOffsets[index + 1] - probe.contentOffsets[index]
+            let heightDelta = probe.contentHeights[index + 1] - probe.contentHeights[index]
+            let bottomDistanceDelta = abs(
+                probe.bottomDistances[index + 1] - probe.bottomDistances[index]
+            )
+
+            // Removing the head of a capped tail window rebases both the
+            // document height and content offset by the same amount. When
+            // the distance to the bottom is unchanged, no visible scroll
+            // occurred and this coordinate change must not count as a hitch.
+            let isHeadRebase = heightDelta < -0.5 &&
+                abs(offsetDelta - heightDelta) <= 0.5 &&
+                bottomDistanceDelta <= 0.5
+            if !isHeadRebase {
+                maximum = max(maximum, abs(offsetDelta))
+            }
+        }
+        return maximum
     }
 
     private static func mainThreadCPUNanos() -> UInt64 {

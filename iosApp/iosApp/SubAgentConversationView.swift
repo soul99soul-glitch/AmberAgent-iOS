@@ -1,12 +1,13 @@
 import SwiftUI
 @preconcurrency import Shared
 
-/// A transcript viewer only: loading a child never replaces the main chat's
+/// Child transcript route: loading a child never replaces the main chat's
 /// selected conversation or takes ownership of its foreground/background run.
 struct SubAgentConversationView: View {
     let conversationId: String
     let sharedSettings: IOSSharedSettingsStore
     let workspaceStore: IOSWorkspaceStore
+    let chatViewModel: ChatViewModel?
 
     @Environment(IOSConversationStore.self) private var conversationStore
     @Environment(RouterPath.self) private var router
@@ -18,11 +19,33 @@ struct SubAgentConversationView: View {
     @State private var actionError: IOSUserVisibleError?
     @State private var viewport = ChatViewportState()
     @State private var bottomTrigger = 0
+    @State private var followupText = ""
+    @State private var isSubmittingFollowup = false
+    @State private var followupStatus: String?
+    @State private var followupInputHeight: CGFloat = 40
+    @State private var followupFieldFocused = false
+    @State private var followupInputController = ComposerInputController()
+
+    init(
+        conversationId: String,
+        sharedSettings: IOSSharedSettingsStore,
+        workspaceStore: IOSWorkspaceStore,
+        chatViewModel: ChatViewModel? = nil
+    ) {
+        self.conversationId = conversationId
+        self.sharedSettings = sharedSettings
+        self.workspaceStore = workspaceStore
+        self.chatViewModel = chatViewModel
+    }
 
     private var summary: ConversationSummary? {
         conversationStore.allSummaries.first {
             $0.id.toHexDashString().caseInsensitiveCompare(conversationId) == .orderedSame
         }
+    }
+
+    private var canSubmitFollowup: Bool {
+        !isSubmittingFollowup && !followupText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var refreshKey: String {
@@ -64,7 +87,13 @@ struct SubAgentConversationView: View {
                     variantInfoProvider: { _ in nil },
                     onAction: handleAction,
                     onViewportStateChange: { viewport = $0 },
-                    onDismissKeyboard: {}
+                    onDismissKeyboard: {
+                        if let committedText = followupInputController.committedText() {
+                            followupText = committedText
+                        }
+                        followupInputController.textView?.resignFirstResponder()
+                        followupFieldFocused = false
+                    }
                 )
                 .environment(\.chatMessageEditingAllowed, false)
                 .overlay(alignment: .bottomTrailing) {
@@ -89,13 +118,89 @@ struct SubAgentConversationView: View {
                             .disabled(isLoading)
                     }
                 }
-                Text("此页仅供查看，任务和上下文由主代理派发。")
+                HStack(alignment: .bottom, spacing: 8) {
+                    ZStack(alignment: .topLeading) {
+                        ComposerInputTextView(
+                            text: $followupText,
+                            height: $followupInputHeight,
+                            isFocused: $followupFieldFocused,
+                            isEnabled: !isSubmittingFollowup,
+                            sendOnEnter: true,
+                            controller: followupInputController,
+                            onSubmit: submitFollowup
+                        )
+                        .frame(height: max(40, followupInputHeight))
+                        .accessibilityLabel(
+                            IOSAppLocalization.string(
+                                "给子代理追加任务",
+                                defaultValue: "给子代理追加任务"
+                            )
+                        )
+                        if followupText.isEmpty {
+                            Text("给子代理追加任务")
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.muted)
+                                .padding(.top, 8)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .padding(.leading, 8)
+
+                    Button(action: submitFollowup) {
+                        ZStack {
+                            Circle()
+                                .fill(canSubmitFollowup || isSubmittingFollowup ? AmberTheme.accent : AmberTheme.surface2)
+                            if isSubmittingFollowup {
+                                ProgressView()
+                                    .tint(AmberTheme.accentInk)
+                            } else {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundStyle(canSubmitFollowup ? AmberTheme.accentInk : AmberTheme.muted)
+                            }
+                        }
+                        .frame(width: 36, height: 36)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .selection))
+                    .accessibilityLabel(
+                        IOSAppLocalization.string(
+                            "给子代理追加任务",
+                            defaultValue: "给子代理追加任务"
+                        )
+                    )
+                    .disabled(!canSubmitFollowup)
+                }
+                .padding(6)
+                .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        .stroke(followupFieldFocused ? AmberTheme.accent.opacity(0.45) : AmberTheme.border, lineWidth: 1)
+                }
+                .animation(.easeInOut(duration: 0.16), value: followupFieldFocused)
+                .animation(.easeInOut(duration: 0.16), value: canSubmitFollowup)
+                if let followupStatus {
+                    Text(followupStatus)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .padding(.horizontal, 14)
+                }
+                Text("追加任务会在子代理当前工作轮结束后继续执行。")
+                    .font(.caption2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 14)
             }
             .font(.caption)
             .foregroundStyle(AmberTheme.muted)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
             .background(AmberTheme.background)
+            .overlay(alignment: .top) {
+                Rectangle().fill(AmberTheme.borderSoft).frame(height: 0.5)
+            }
         }
         .navigationTitle("子代理会话")
         .navigationBarTitleDisplayMode(.inline)
@@ -147,8 +252,69 @@ struct SubAgentConversationView: View {
         case .openSubagentConversation(let id): router.navigate(to: .subAgentConversation(id: id))
         default:
             actionError = IOSUserVisibleError(
-                title: "请在主会话继续", message: "这个页面用于查看编排记录，追加任务请交给主代理。", severity: .info
+                title: "请在主会话继续", message: "这个操作请返回主会话完成。", severity: .info
             )
+        }
+    }
+
+    private func submitFollowup() {
+        guard !isSubmittingFollowup else { return }
+        // Read the native text view before changing focus or disabling it so a
+        // CJK marked-text composition is committed instead of losing its last
+        // syllable from the SwiftUI binding.
+        let committedDraft = followupInputController.committedText() ?? followupText
+        let text = committedDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        guard let chatViewModel else {
+            actionError = IOSUserVisibleError(
+                title: "无法追加任务", message: "主代理运行时不可用，请返回会话后重试。", severity: .error
+            )
+            return
+        }
+        guard let uuid = UUID(uuidString: conversationId) else {
+            actionError = IOSUserVisibleError(
+                title: "无法追加任务", message: "子代理会话标识无效。", severity: .error
+            )
+            return
+        }
+
+        if followupText != committedDraft {
+            followupText = committedDraft
+        }
+        followupFieldFocused = false
+        isSubmittingFollowup = true
+        followupStatus = nil
+        Task { @MainActor in
+            defer { isSubmittingFollowup = false }
+            let childId = KotlinUuid.companion.parse(uuidString: uuid.uuidString.lowercased())
+            let rawResult = await chatViewModel.appendTaskToSubAgent(
+                conversationId: childId,
+                message: text
+            )
+            let payload = rawResult.data(using: .utf8).flatMap {
+                try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+            }
+            guard let payload, payload["ok"] as? Bool == true else {
+                let reason = payload?["reason"] as? String
+                    ?? "子代理没有接受这项追加任务，请重试。"
+                actionError = IOSUserVisibleError(
+                    title: "追加任务失败", message: reason, severity: .error
+                )
+                return
+            }
+            if followupText == committedDraft {
+                followupText = ""
+            }
+            followupStatus = (payload["status"] as? String) == "queued"
+                ? IOSAppLocalization.string(
+                    "已加入队列，子代理会在当前工作轮结束后继续。",
+                    defaultValue: "已加入队列，子代理会在当前工作轮结束后继续。"
+                )
+                : IOSAppLocalization.string(
+                    "已启动追加任务。",
+                    defaultValue: "已启动追加任务。"
+                )
+            await loadMessages()
         }
     }
 }

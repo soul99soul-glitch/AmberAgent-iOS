@@ -10,6 +10,7 @@ import Shared
 enum MarkdownStyle {
     case standard
     case magazine
+    case compact
 }
 
 private struct AmberMarkdownParseResult {
@@ -295,9 +296,9 @@ struct AmberMarkdownView: View {
 
     private func renderHeading(_ node: PackedAstNode, source: String) -> Text {
         let level = node.headingLevel() ?? 1
-        let sizes: [CGFloat] = style == .magazine
-            ? [30, 23, 19, 17, 16, 15]
-            : [28, 24, 20, 18, 16, 14]
+        let sizes: [CGFloat] = style == .compact
+            ? [20, 18, 16, 15, 14, 13]
+            : (style == .magazine ? [30, 23, 19, 17, 16, 15] : [28, 24, 20, 18, 16, 14])
         let size = sizes[max(0, min(5, level - 1))]
         let design: Font.Design = style == .magazine ? .serif : .default
         return buildInlineText(node.children, source: source)
@@ -407,7 +408,7 @@ struct AmberMarkdownView: View {
         // resolved column width and proposes (columnWidth, rowHeight), so the Text
         // wraps naturally and never gets truncated or overlapped.
         buildInlineText(cell?.children ?? [], source: source)
-            .font(isHeader ? .subheadline.weight(.semibold) : .body)
+            .font(isHeader ? .subheadline.weight(.semibold) : (style == .compact ? .subheadline : .body))
             .multilineTextAlignment(.leading)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

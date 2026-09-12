@@ -1396,8 +1396,10 @@ fun createSpawnAgentToolDeclaration(): Tool = Tool(
         the canonical agent path is /root/{task_name} (or
         /root/{parent_task}/{task_name} for grandchildren). Inspect threads with
         list_agents; stop a child with interrupt_agent (the thread stays addressable).
-        The child starts in the background so the parent can continue; use
-        wait_agent only when the result is needed. Use role_id for a built-in role
+        The child starts in the background so the parent can continue. Keep the
+        user conversation available; do not repeatedly poll or wait for children.
+        When no independent work remains, finish your reply or call wait_agent
+        to yield the foreground turn. Reports arrive automatically. Use role_id for a built-in role
         (explorer, historian, oracle, designer, writer, fixer, or browser).
         When dynamic subagents are enabled, system_prompt, context, tool_scope and
         skill_names define a one-off role. Tool scope is enforced by the child
@@ -1481,19 +1483,21 @@ fun createFollowupTaskToolDeclaration(): Tool = Tool(
 
 /**
  * P1-d: suspend this tool call until this thread's mailbox receives any
- * activity (a message from another thread or a child's final answer), until
- * the wait is interrupted by new user input, or until timeout_ms elapses.
- * Returns immediately when the mailbox already has pending activity.
+ * activity in a background run. Interactive foreground runs yield instead of
+ * occupying the conversation while children work. Pending mail returns immediately.
  */
 fun createWaitAgentToolDeclaration(): Tool = Tool(
     name = "wait_agent",
     description = """
-        Suspend this tool call until this thread's mailbox receives any activity
-        (a message from another thread or a child's final answer), until the
-        wait is interrupted by new user input, or until timeout_ms elapses.
         Returns immediately when the mailbox already has pending activity.
-        timeout_ms is clamped to [5000, 300000] milliseconds and defaults to
-        30000.
+        In an interactive foreground conversation, an empty mailbox yields the
+        current turn immediately so the user can keep chatting. Child agents
+        continue running and their reports arrive automatically. Do not loop
+        on wait_agent or keep the user waiting for background work.
+        In a background run, suspend this tool call until mailbox activity,
+        until the wait is interrupted by new user input, or until timeout_ms
+        elapses. Background timeout_ms is clamped to [5000, 300000] milliseconds
+        and defaults to 30000.
     """.trimIndent(),
     parameters = { waitAgentParameters() },
     needsApproval = false,
@@ -1561,12 +1565,22 @@ private fun sessionReadParameters(): InputSchema = InputSchema.Obj(
     required = listOf("conversation_id"),
 )
 
+private const val subAgentEnglishNames =
+    "Alex, Alice, Anna, Ben, Chloe, Claire, Daniel, David, Ella, Emma, Eric, Eva, " +
+    "Grace, Hannah, Henry, Jack, James, Julia, Kate, Leo, Liam, Lily, Lisa, Lucas, " +
+    "Lucy, Max, Mia, Nathan, Noah, Nora, Oliver, Oscar, Owen, Rose, Ruby, Sam, " +
+    "Sarah, Simon, Sophie, Zoe"
+
+private const val subAgentChineseNames =
+    "小明、小华、小林、小雨、小夏、小雪、小宁、小安、小宇、小晨、小月、小星、" +
+    "小青、小梅、小兰、小敏、小静、小燕、小芳、小云、小平、小乐、小文、小杰"
+
 private fun spawnAgentParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
         put("task_name", buildJsonObject {
             put("type", "string")
             put("pattern", "^[a-z0-9_]+$")
-            put("description", "Required. Lowercase letters, digits and underscores only; used for the canonical agent path (e.g. research_notes).")
+            put("description", "Required. Lowercase letters, digits and underscores only; used for the canonical agent path. For a dynamic agent, choose a familiar English first name from: $subAgentEnglishNames. Lowercase it here (e.g. alex, emma, leo). Prefer a different name for each sibling; keep it stable for followups and use the returned agent_path. Avoid test labels, arbitrary role codes and task descriptions as names. Put the work in message. Preserve an explicitly user-requested name when it fits the path format; built-in role ids stay unchanged.")
         })
         put("message", buildJsonObject {
             put("type", "string")
@@ -1864,7 +1878,7 @@ private fun subAgentDispatchParameters(): InputSchema = InputSchema.Obj(
         })
         put("custom_role_name", buildJsonObject {
             put("type", "string")
-            put("description", "optional display name for a one-off custom role; used with custom_role_prompt")
+            put("description", "Display name for a one-off custom role; supply it with custom_role_prompt. Prefer a familiar English first name from: $subAgentEnglishNames. Only when the user prefers Chinese names, choose from: $subAgentChineseNames. Choose different names for agents in the same group. Keep the name short; put the task or specialty in objective/custom_role_lens, not in the name. Avoid test labels and arbitrary role codes. Preserve a name explicitly requested by the user.")
         })
         put("custom_role_lens", buildJsonObject {
             put("type", "string")

@@ -8,6 +8,9 @@ final class IOSAgentSettingsVisualEvidenceTests: XCTestCase {
     func testMcpAndSubAgentSettingsLayout() async throws {
         let suite = "AgentSettingsVisual.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let languageKey = IOSAppLanguagePreference.defaultsKey
+        let previousLanguage = UserDefaults.standard.object(forKey: languageKey)
+        UserDefaults.standard.set("zh-Hans", forKey: languageKey)
         defaults.set("zh-Hans", forKey: IOSAppLanguagePreference.defaultsKey)
         let settings = IOSSharedSettingsStore(userDefaults: defaults)
         let config = IOSMcpConfigStore(userDefaults: defaults)
@@ -25,18 +28,28 @@ final class IOSAgentSettingsVisualEvidenceTests: XCTestCase {
         defer {
             previous?.makeKey()
             defaults.removePersistentDomain(forName: suite)
+            if let previousLanguage {
+                UserDefaults.standard.set(previousLanguage, forKey: languageKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: languageKey)
+            }
         }
-        func capture<V: View>(_ view: V, name: String, type: DynamicTypeSize = .large) async throws {
+        func capture<V: View>(
+            _ view: V,
+            name: String,
+            type: DynamicTypeSize = .large,
+            size: CGSize = CGSize(width: 393, height: 852),
+            locale: Locale = Locale(identifier: "zh_Hans")
+        ) async throws {
             let window = UIWindow(windowScene: scene)
             defer {
                 window.isHidden = true
                 window.rootViewController = nil
                 previous?.makeKey()
             }
-            let size = CGSize(width: 393, height: 852)
             let host = UIHostingController(rootView: NavigationStack { view }
                 .environment(RouterPath())
-                .environment(\.locale, Locale(identifier: "zh_Hans"))
+                .environment(\.locale, locale)
                 .environment(\.dynamicTypeSize, type)
                 .defaultAppStorage(defaults))
             window.rootViewController = host
@@ -88,6 +101,11 @@ final class IOSAgentSettingsVisualEvidenceTests: XCTestCase {
             conversationId: childID.toHexDashString(), sharedSettings: settings,
             workspaceStore: IOSWorkspaceStore(baseDirectory: directory)
         ).environment(store), name: "subagent-hidden-conversation-large", type: .accessibility1)
+        try await capture(SubAgentConversationView(
+            conversationId: childID.toHexDashString(), sharedSettings: settings,
+            workspaceStore: IOSWorkspaceStore(baseDirectory: directory)
+        ).environment(store), name: "subagent-conversation-narrow-large",
+            type: .accessibility3, size: CGSize(width: 320, height: 640))
         let viewModel = ChatViewModel(settingsStore: SettingsStore(), autoGenerateResponses: false)
         try await capture(ConversationStorageView(sharedSettings: settings)
             .environment(store).environment(viewModel), name: "subagent-storage-entry")
@@ -104,6 +122,146 @@ final class IOSAgentSettingsVisualEvidenceTests: XCTestCase {
         )
         try await capture(ChatToolDetailSheet(tool: tool, onOpenSubagentConversation: { _ in }), name: "subagent-tool-conversation-link")
         try await capture(ChatToolDetailSheet(tool: tool, onOpenSubagentConversation: { _ in }), name: "subagent-tool-conversation-link-large", type: .accessibility1)
+        let compactDetailTool = UIMessagePart.Tool(
+            toolCallId: "visual-subagent-detail-compact",
+            toolName: "spawn_agent",
+            input: #"{"task_name":"test_alpha","message":"核对公开资料并整理关键结论。\n\n- 对比不同来源的说法\n- 标注仍需确认的信息\n- 用三条要点汇总结果"}"#,
+            output: [UIMessagePart.Text(text: String(decoding: result, as: UTF8.self), metadata: nil)],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        try await capture(
+            ChatToolDetailSheet(tool: compactDetailTool, onOpenSubagentConversation: { _ in }),
+            name: "subagent-detail-compact", size: CGSize(width: 393, height: 650)
+        )
+        let longDetailTask = String(repeating: "请核对公开资料、整理关键结论并保留证据。", count: 40)
+        let longDetailInputData = try JSONSerialization.data(withJSONObject: [
+            "task_name": "test_alpha",
+            "message": longDetailTask
+        ])
+        let longDetailTool = UIMessagePart.Tool(
+            toolCallId: "visual-subagent-detail",
+            toolName: "spawn_agent",
+            input: String(decoding: longDetailInputData, as: UTF8.self),
+            output: [UIMessagePart.Text(
+                text: String(decoding: result, as: UTF8.self),
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        try await capture(
+            ChatToolDetailSheet(tool: longDetailTool, onOpenSubagentConversation: { _ in }),
+            name: "subagent-detail-393",
+            size: CGSize(width: 393, height: 760)
+        )
+        try await capture(
+            ChatToolDetailSheet(tool: longDetailTool, onOpenSubagentConversation: { _ in }),
+            name: "subagent-detail-320",
+            size: CGSize(width: 320, height: 760)
+        )
+        try await capture(
+            ChatToolDetailSheet(tool: longDetailTool, onOpenSubagentConversation: { _ in }),
+            name: "subagent-detail-393-accessibility",
+            type: .accessibility3,
+            size: CGSize(width: 393, height: 900)
+        )
+
+        let activeSubagent = UIMessagePart.Tool(
+            toolCallId: "visual-subagent-explorer",
+            toolName: "subagent_dispatch",
+            input: #"{"role_id":"explorer","objective":"搜索公开资料并整理关键证据"}"#,
+            output: [],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let dynamicSubagent = UIMessagePart.Tool(
+            toolCallId: "visual-subagent-writer",
+            toolName: "subagent_dispatch",
+            input: #"{"role_id":"copy_editor","custom_role_name":"写作编辑","objective":"整理结构并润色表达"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"role_id":"copy_editor","role_name":"写作编辑","status":"completed","summary":"已完成"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let startedSubagent = UIMessagePart.Tool(
+            toolCallId: "visual-subagent-browser",
+            toolName: "spawn_agent",
+            input: #"{"task_name":"browser","message":"观察页面并整理关键结论"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"task_name":"browser","agent_path":"/root/browser","child_thread_id":"visual-child-1","status":"started"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let queuedFollowup = UIMessagePart.Tool(
+            toolCallId: "visual-subagent-followup",
+            toolName: "followup_task",
+            input: #"{"target":"/root/browser","message":"补充核对登录状态"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"target":"/root/browser","recipient_thread_id":"visual-child-1","status":"queued"}"#,
+                metadata: nil
+            )],
+            approvalState: ToolApprovalState.Auto.shared,
+            streamIndex: nil,
+            metadata: nil
+        )
+        let subagentCapsules = ChatToolTimeline(
+            steps: [
+                ChatToolStepModel(tool: activeSubagent),
+                ChatToolStepModel(tool: dynamicSubagent),
+                ChatToolStepModel(tool: startedSubagent),
+                ChatToolStepModel(tool: queuedFollowup)
+            ],
+            onTapStep: { _ in }
+        )
+        .padding(.horizontal, 24)
+        try await capture(
+            subagentCapsules,
+            name: "subagent-capsules",
+            size: CGSize(width: 393, height: 320)
+        )
+        try await capture(
+            subagentCapsules,
+            name: "subagent-capsules-large",
+            type: .accessibility1,
+            size: CGSize(width: 393, height: 440)
+        )
+        try await capture(
+            subagentCapsules, name: "subagent-capsules-narrow",
+            size: CGSize(width: 320, height: 320)
+        )
+        try await capture(
+            subagentCapsules, name: "subagent-capsules-largest",
+            type: .accessibility5, size: CGSize(width: 320, height: 650)
+        )
+
+        UserDefaults.standard.set("en", forKey: languageKey)
+        let longNameTool = UIMessagePart.Tool(
+            toolCallId: "visual-long-name", toolName: "spawn_agent",
+            input: #"{"task_name":"international_sources_reviewer","message":"Review public sources and verify their dates"}"#,
+            output: [UIMessagePart.Text(
+                text: #"{"ok":true,"task_name":"international_sources_reviewer","status":"started"}"#,
+                metadata: nil
+            )], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+        )
+        let englishCapsules = ChatToolTimeline(
+            steps: [ChatToolStepModel(tool: activeSubagent), ChatToolStepModel(tool: longNameTool)],
+            onTapStep: { _ in }
+        ).padding(.horizontal, 24)
+        try await capture(englishCapsules, name: "subagent-capsules-english-narrow",
+            size: CGSize(width: 320, height: 280), locale: Locale(identifier: "en"))
+        try await capture(englishCapsules, name: "subagent-capsules-english-large",
+            type: .accessibility3, size: CGSize(width: 320, height: 440),
+            locale: Locale(identifier: "en"))
 
     }
 }

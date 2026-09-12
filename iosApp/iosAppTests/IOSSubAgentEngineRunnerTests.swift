@@ -255,6 +255,78 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
         XCTAssertEqual(parentExecutor.calls.first?.name, "search_web")
     }
 
+    /// The background coordinator's real engine configuration must leave room
+    /// for a child-agent chain longer than the old six-round cap. Unique inputs
+    /// keep the loop guard out of this budget test so only maxSteps is covered.
+    func testBackgroundToolLoopBudgetCompletesMoreThanSixToolRounds() async {
+        final class LoopingExecutor: IOSToolExecutor {
+            private(set) var calls = 0
+
+            func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+                calls += 1
+                return .filled("{\"ok\":true}")
+            }
+        }
+
+        let toolTurns = (1...7).map { round in
+            makeMessage(
+                role: MessageRole.assistant,
+                parts: [UIMessagePart.Tool(
+                    toolCallId: "background-\(round)",
+                    toolName: "background_probe",
+                    input: "{\"round\":\(round)}",
+                    output: [],
+                    approvalState: ToolApprovalState.Auto.shared,
+                    streamIndex: nil,
+                    metadata: nil
+                )]
+            )
+        }
+        let provider = ScriptedProvider(
+            toolTurns + [makeMessage(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "Done.", metadata: nil)])]
+        )
+        let executor = LoopingExecutor()
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["background_probe": executor],
+            configuration: IOSChatBackgroundGenerationCoordinator.backgroundToolLoopConfiguration
+        )
+        let model = Model(
+            modelId: "test",
+            displayName: "test",
+            id: KotlinUuid.companion.random(),
+            type: ModelType.chat,
+            customHeaders: [],
+            customBodies: [],
+            inputModalities: [],
+            outputModalities: [],
+            abilities: [],
+            tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil,
+            providerOverwrite: nil
+        )
+        let params = TextGenerationParams(
+            model: model,
+            temperature: KotlinFloat(value: 0.7),
+            topP: nil,
+            maxTokens: nil,
+            tools: [],
+            reasoningLevel: .off,
+            customHeaders: [],
+            customBody: []
+        )
+
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [makeMessage(role: MessageRole.user, parts: [UIMessagePart.Text(text: "run", metadata: nil)])],
+            params: params
+        )
+
+        XCTAssertEqual(executor.calls, 7)
+        XCTAssertEqual(result.stepsExecuted, 8)
+        XCTAssertFalse(result.hitStepLimit)
+    }
+
     /// When the model never calls subagent_report, the capture executor stays
     /// nil — the runner falls back to visible text (tested at the engine level
     /// by asserting captured is nil after a plain-text-only run).

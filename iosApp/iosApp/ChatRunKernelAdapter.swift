@@ -44,6 +44,7 @@ final class ChatRunKernelAdapter {
     struct Callbacks {
         /// 终态(AgentRunStatus.wireName:completed/failed/cancelled)。
         var onRunTerminal: (String) -> Void = { _ in }
+        var onForegroundYield: () -> Void = {}
         /// CGC `markRunAwaitingPermission` 位置:暂停先于发卡。
         var onAwaitingPermission: (String) -> Void = { _ in }
         /// CGC `claimRunAfterPermission` 位置:新尝试 Started 之后、执行之前。
@@ -549,6 +550,7 @@ final class ChatRunKernelAdapter {
                 // hitOutputLimit 已在上方 A4 分支提前返回,不会到达这里。
                 callbacks.onProviderFailure(failure)
             }
+            if result.yielded { callbacks.onForegroundYield() }
             didReportTerminal = true
             callbacks.onRunTerminal(Self.terminalWireName(of: result))
             return result.messages

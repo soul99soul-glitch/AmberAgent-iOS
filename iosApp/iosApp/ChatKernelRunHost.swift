@@ -98,6 +98,7 @@ final class ChatKernelRunHost {
     private var adapter: ChatRunKernelAdapter?
     private var runTask: Task<Void, Never>?
     private(set) var currentRunId: String?
+    private var didYieldForeground = false
     private var currentStartedAt: Int64 = 0
     private var currentInputDigest: String = ""
     private var currentConversationIdForRun: KotlinUuid?
@@ -210,6 +211,7 @@ final class ChatKernelRunHost {
         if isRunning {
             cancel()
         }
+        didYieldForeground = false
         bindings.setIsLoading(true)
         bindings.setContextCompactState(.idle)
 
@@ -1551,6 +1553,10 @@ final class ChatKernelRunHost {
             }
             return didResume
         }
+        callbacks.onForegroundYield = { [weak self] in
+            guard let self, self.currentRunId == runId else { return }
+            self.didYieldForeground = true
+        }
         callbacks.onRunTerminal = { [weak self] status in
             guard let self, self.currentRunId == runId else { return }
             self.terminalWireName = status
@@ -2426,6 +2432,9 @@ final class ChatKernelRunHost {
         projection.clearAllApprovals()
         bindings.bumpMessageRevision(terminalEvent, 1)
         // P1-a:成功收尾自动发队列下一条;失败回填 composer(CG-C :4965-4969)。
+        if didYieldForeground, terminalEvent == .generationCompleted {
+            bindings.onForegroundYield(runId)
+        }
         bindings.handleSteerQueueAtTerminal(runConversationId, terminalEvent == .generationCompleted)
         // P1-c 终态回传(CG-C :4970-4977 同款 fire-and-forget)。
         let terminalMessages = bindings.getMessages()

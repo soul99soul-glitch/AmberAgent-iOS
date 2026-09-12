@@ -31,6 +31,25 @@ final class NovelSessionReplayTests: XCTestCase {
         ))
     }
 
+    func testFullTextPaginationPreservesGraphemeBoundariesAndSource() {
+        let composed = "e\u{301}"
+        let family = "👨‍👩‍👧‍👦"
+        let source = String(repeating: family, count: 1_999) + composed + "尾"
+
+        let pages = NovelSessionFullTextPagination.pages(source)
+
+        XCTAssertEqual(pages.count, 2)
+        XCTAssertEqual(pages.first?.count, ChatTextWindow.limit)
+        XCTAssertEqual(
+            pages.first,
+            String(repeating: family, count: 1_999) + composed
+        )
+        XCTAssertEqual(pages.last, "尾")
+        XCTAssertTrue(pages.allSatisfy { $0.count <= ChatTextWindow.limit })
+        XCTAssertEqual(pages.joined(), source)
+        XCTAssertEqual(NovelSessionFullTextPagination.pages(""), [""])
+    }
+
     func testPresentationPacerSplitsLightBacklogIntoBoundedSteps() {
         let target = "已显示" + String(repeating: "字", count: 36)
         var displayed = "已显示"
@@ -2075,7 +2094,7 @@ final class NovelSessionReplayTests: XCTestCase {
         XCTAssertTrue(source.contains("contentHeight: geometry.contentSize.height"))
         XCTAssertTrue(source.contains("NovelSessionScrollGeometryPolicy.events("))
         XCTAssertTrue(source.contains("for event in followEvents"))
-        XCTAssertTrue(source.contains("viewModel.retryableBranchPendingOperations.contains(where:"))
+        XCTAssertTrue(source.contains("!viewModel.retryableBranchPendingOperations.isEmpty"))
         XCTAssertTrue(source.contains("NativeTimelineScrollReturnPolicy.returnedToBottom("))
         XCTAssertTrue(source.contains("dispatchFollowEvent(.userDragEnded(isAtBottom: returnedToBottom))"))
         XCTAssertTrue(source.contains("ChatLayout.nearBottomResumeThreshold"))
@@ -2439,7 +2458,7 @@ final class NovelSessionReplayTests: XCTestCase {
         XCTAssertTrue(sessionViewModel.contains("private var polishRetryTask: Task<Void, Never>?"))
         XCTAssertTrue(sessionViewModel.contains("private(set) var polishRetryTransactionID"))
         XCTAssertTrue(sessionView.contains("Text(\"正在检查剧情一致性…\")"))
-        XCTAssertTrue(bubble.contains("Button(\"停止检查\")"))
+        XCTAssertTrue(bubble.contains("Button(localized(\"停止检查\"))"))
     }
 
 }

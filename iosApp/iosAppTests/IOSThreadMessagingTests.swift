@@ -14,8 +14,11 @@ final class IOSThreadMessagingTests: XCTestCase {
     /// 捕获 handoff 的后台调度 fake（照 IOSOrchestrationToolTests 同款）。
     private final class FakeBackgroundScheduler: IOSThreadOrchestrationToolService.BackgroundScheduling {
         var startedHandoff: IOSChatBackgroundHandoff?
+        var startedHandoffs: [IOSChatBackgroundHandoff] = []
         var startedReturn = true
         var activeRunByHex: [String: String] = [:]
+        var markActiveRunOnStart = false
+        var onStart: (() -> Void)?
         var cancelledRunIds: [String] = []
         var cancelReturn = true
         /// P1-e: 后台活跃 job 计数（协议要求；本套件不驱动限额，恒 0）。
@@ -29,6 +32,11 @@ final class IOSThreadMessagingTests: XCTestCase {
             saveMiniAppIfPresent: (@MainActor ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?)?
         ) -> Bool {
             startedHandoff = handoff
+            startedHandoffs.append(handoff)
+            if markActiveRunOnStart {
+                activeRunByHex[handoff.conversationId.toHexDashString()] = handoff.runId
+            }
+            onStart?()
             return startedReturn
         }
 
@@ -78,6 +86,11 @@ final class IOSThreadMessagingTests: XCTestCase {
                 usage: nil
             )
         }
+    }
+
+    private final class CompletionFlag: @unchecked Sendable {
+        private(set) var value = false
+        func markCompleted() { value = true }
     }
 
     /// 固定结果 executor（记录调用次数）。
@@ -159,6 +172,25 @@ final class IOSThreadMessagingTests: XCTestCase {
             customHeaders: [],
             customBody: []
         )
+    }
+
+    private func makeFullToolBridge() -> IosToolExposureBridge {
+        // Mirror the production declaration assembly. Keeping the actual
+        // catalog union here is important: only a heavy (>40) declaration set
+        // enters lazy mode, where wm_type is in the full catalog but hidden
+        // from the initial visible subset.
+        let names =
+            IOSWorkspaceToolCatalog.supportedToolNames
+            .union(IOSAgentTerminalToolCatalog.supportedToolNames)
+            .union(IOSWebMountToolCatalog.supportedToolNames)
+            .union(IOSSkillToolCatalog.toolNames)
+            .union(IOSMcpManagementToolCatalog.toolNames)
+            .union([
+                "search_web", "scrape_web", "memory_tool", "generate_image",
+                "mcp_call", "subagent_dispatch", "model_council_run", "ask_user",
+                "tools_list",
+            ])
+        return IosToolExposureBridge(tools: ToolKt.iosToolDeclarations(names: Array(names).sorted()))
     }
 
     private func makeRuntime() -> ChatToolRuntime {
@@ -345,7 +377,12 @@ final class IOSThreadMessagingTests: XCTestCase {
         let scheduler = FakeBackgroundScheduler()
         let center = IOSMailboxActivityCenter()
         let service = makeService(
-            store: store, db: db, scheduler: scheduler, center: center, currentConversationId: { rootId }
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            center: center,
+            currentConversationId: { rootId },
+            foregroundActiveRunId: { _ in "foreground-root-run" }
         )
         let provider = makeProviderSetting()
         let params = makeParams()
@@ -520,6 +557,321 @@ final class IOSThreadMessagingTests: XCTestCase {
         XCTAssertEqual(pending.count, 1)
     }
 
+    func testUserFollowupToIdleChildPersistsTaskAndStartsBackgroundRun() async throws {
+        let base = makeTempDirectory("UserFollowupIdle")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let childId = KotlinUuid.companion.random()
+        let childHex = childId.toHexDashString()
+        await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childId, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID, messages: [], newConversation: false
+        ))
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/worker")
+
+        let scheduler = FakeBackgroundScheduler()
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, center: center, currentConversationId: { rootId }
+        )
+
+        let result = parseJSON(await service.appendUserTask(
+            to: childId,
+            message: "用户追加一项核查",
+            providerSetting: makeProviderSetting(),
+            params: makeParams()
+        ))
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertEqual(result["status"] as? String, "started")
+        XCTAssertEqual(scheduler.startedHandoff?.conversationId.toHexDashString(), childHex)
+        XCTAssertEqual(result["agent_path"] as? String, "/root/worker")
+        let childMessages = await store.messages(for: childId) ?? []
+        XCTAssertTrue(childMessages.map { $0.toText() }.contains("[mailbox NEW_TASK from /root]\n用户追加一项核查"))
+        let pending = await pendingEnvelopeSnapshots(db.mailboxDao(), recipientHex: childHex)
+        XCTAssertTrue(pending.isEmpty)
+    }
+
+    func testUserFollowupToRunningChildQueuesUntilNextBoundary() async throws {
+        let base = makeTempDirectory("UserFollowupRunning")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let childId = KotlinUuid.companion.random()
+        let childHex = childId.toHexDashString()
+        await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childId, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID, messages: [], newConversation: false
+        ))
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/worker")
+
+        let scheduler = FakeBackgroundScheduler()
+        scheduler.activeRunByHex[childHex] = "child-run"
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, center: center, currentConversationId: { rootId }
+        )
+
+        let result = parseJSON(await service.appendUserTask(
+            to: childId,
+            message: "运行中再补充一项",
+            providerSetting: makeProviderSetting(),
+            params: makeParams()
+        ))
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertEqual(result["status"] as? String, "queued")
+        XCTAssertNil(scheduler.startedHandoff)
+        XCTAssertEqual(result["agent_path"] as? String, "/root/worker")
+        let pending = await pendingEnvelopeSnapshots(db.mailboxDao(), recipientHex: childHex)
+        XCTAssertEqual(pending.count, 1)
+        XCTAssertEqual(pending[0].type, "NEW_TASK")
+        XCTAssertEqual(pending[0].triggerTurn, true)
+        XCTAssertEqual(pending[0].payload, "运行中再补充一项")
+    }
+
+    func testResumePendingTasksUsesSavedScopeWithTheFullToolBridge() async throws {
+        let base = makeTempDirectory("ResumeScope")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let childId = KotlinUuid.companion.random()
+        let childHex = childId.toHexDashString()
+        await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childId, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID, messages: [], newConversation: false
+        ))
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/worker")
+
+        let savedConfiguration = IOSOrchestrationAgentConfiguration(
+            toolScope: ["tools_list", "wm_type"]
+        )
+        let configurationJSON = String(
+            data: try JSONEncoder().encode(savedConfiguration),
+            encoding: .utf8
+        )!
+        _ = await store.save(
+            messages: [UIMessage.companion.system(
+                prompt: "[amber orchestration configuration v1]\n\(configurationJSON)"
+            )],
+            to: childId
+        )
+        try await enqueue(db.mailboxDao(), MailboxEnvelopeEntity(
+            id: "resume-scope-1", authorThreadId: "/root", recipientThreadId: childHex,
+            type: "NEW_TASK", payload: "继续网页核查", triggerTurn: true,
+            parentTurnId: "old-run", createdAt: 100, deliveredAt: nil
+        ))
+
+        let scheduler = FakeBackgroundScheduler()
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, center: center,
+            currentConversationId: { rootId }
+        )
+        let bridge = makeFullToolBridge()
+        XCTAssertFalse(bridge.visibleTools().map(\.name).contains("wm_type"),
+                       "the fixture must model a lazy visible subset")
+
+        let resumed = await service.resumePendingTasks(
+            for: childId,
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            toolExposureBridge: bridge
+        )
+        XCTAssertTrue(resumed)
+        let handoff = try XCTUnwrap(scheduler.startedHandoff)
+        XCTAssertTrue(handoff.fullToolNames.contains("wm_type"),
+                      "saved scope must resolve against the bridge's full catalog")
+        let pendingAfterResume = await pendingEnvelopeSnapshots(db.mailboxDao(), recipientHex: childHex)
+        XCTAssertTrue(pendingAfterResume.isEmpty)
+        let childMessages = await store.messages(for: childId) ?? []
+        XCTAssertEqual(
+            childMessages.filter { $0.toText().contains("继续网页核查") }.count,
+            1,
+            "one delivered envelope must produce one stable transcript message"
+        )
+    }
+
+    func testResumePendingTasksRetainsPendingAndDoesNotDuplicateTranscriptOnStartRetry() async throws {
+        let base = makeTempDirectory("ResumeRetry")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let childId = KotlinUuid.companion.random()
+        let childHex = childId.toHexDashString()
+        await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childId, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID, messages: [], newConversation: false
+        ))
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/retry")
+        try await enqueue(db.mailboxDao(), MailboxEnvelopeEntity(
+            id: "resume-retry-1", authorThreadId: "/root", recipientThreadId: childHex,
+            type: "NEW_TASK", payload: "启动失败后可恢复", triggerTurn: true,
+            parentTurnId: "old-run", createdAt: 100, deliveredAt: nil
+        ))
+
+        let scheduler = FakeBackgroundScheduler()
+        scheduler.startedReturn = false
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, center: center,
+            currentConversationId: { rootId }
+        )
+        let provider = makeProviderSetting()
+        let params = makeParams()
+
+        let firstResume = await service.resumePendingTasks(
+            for: childId, providerSetting: provider, params: params
+        )
+        XCTAssertFalse(firstResume)
+        let secondResume = await service.resumePendingTasks(
+            for: childId, providerSetting: provider, params: params
+        )
+        XCTAssertFalse(secondResume)
+        let pending = await pendingEnvelopeSnapshots(db.mailboxDao(), recipientHex: childHex)
+        XCTAssertEqual(pending.count, 1, "failed start must leave the original envelope recoverable")
+        let childMessages = await store.messages(for: childId) ?? []
+        XCTAssertEqual(
+            childMessages.filter { $0.toText().contains("启动失败后可恢复") }.count,
+            1,
+            "retry must merge the stable envelope message id instead of duplicating it"
+        )
+        XCTAssertEqual(scheduler.startedHandoffs.count, 2, "each explicit retry may attempt one start")
+    }
+
+    func testConcurrentUserAppendAfterTerminalResumeStartsOnlyOneRun() async throws {
+        let base = makeTempDirectory("ResumeConcurrentAppend")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let childId = KotlinUuid.companion.random()
+        let childHex = childId.toHexDashString()
+        await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childId, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID, messages: [], newConversation: false
+        ))
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/concurrent")
+        try await enqueue(db.mailboxDao(), MailboxEnvelopeEntity(
+            id: "resume-concurrent-1", authorThreadId: "/root", recipientThreadId: childHex,
+            type: "NEW_TASK", payload: "终态前已排队", triggerTurn: true,
+            parentTurnId: "old-run", createdAt: 100, deliveredAt: nil
+        ))
+
+        let scheduler = FakeBackgroundScheduler()
+        scheduler.markActiveRunOnStart = true
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, center: center,
+            currentConversationId: { rootId }
+        )
+        let resume = Task { @MainActor in
+            await service.resumePendingTasks(
+                for: childId,
+                providerSetting: self.makeProviderSetting(),
+                params: self.makeParams()
+            )
+        }
+        let started = try await pollUntil {
+            scheduler.startedHandoff != nil
+        }
+        XCTAssertTrue(started, "terminal resume must reach the scheduler")
+
+        let append = parseJSON(await service.appendUserTask(
+            to: childId,
+            message: "启动后再追加",
+            providerSetting: makeProviderSetting(),
+            params: makeParams()
+        ))
+        XCTAssertEqual(append["status"] as? String, "queued")
+        let resumed = await resume.value
+        XCTAssertTrue(resumed)
+        XCTAssertEqual(scheduler.startedHandoffs.count, 1,
+                       "the queued append must join the resumed run")
+        let pending = await pendingEnvelopeSnapshots(db.mailboxDao(), recipientHex: childHex)
+        XCTAssertEqual(pending.count, 1)
+        XCTAssertEqual(pending[0].payload, "启动后再追加")
+    }
+
+    func testCoordinatorFinishBootstrapsMailboxAfterReleasingTerminalOwner() async throws {
+        let base = makeTempDirectory("ResumeTerminalFinish")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let childId = KotlinUuid.companion.random()
+        let childHex = childId.toHexDashString()
+        await store.saveForkedConversation(Conversation.companion.ofId(
+            id: childId, assistantId: AssistantKt.DEFAULT_ASSISTANT_ID, messages: [], newConversation: false
+        ))
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/terminal")
+        try await enqueue(db.mailboxDao(), MailboxEnvelopeEntity(
+            id: "terminal-pending-1", authorThreadId: "/root", recipientThreadId: childHex,
+            type: "NEW_TASK", payload: "终态收口后继续", triggerTurn: true,
+            parentTurnId: "terminal-run", createdAt: 100, deliveredAt: nil
+        ))
+
+        let scheduler = FakeBackgroundScheduler()
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler, center: center,
+            currentConversationId: { rootId }
+        )
+        let provider = makeProviderSetting()
+        let params = makeParams()
+        let handoff = IOSChatBackgroundHandoff(
+            runId: "terminal-finish-\(UUID().uuidString)",
+            startedAt: Int64(Date().timeIntervalSince1970 * 1000),
+            inputDigest: "terminal-finish",
+            conversationId: childId,
+            providerId: provider.id.toHexDashString(),
+            providerSetting: provider,
+            params: params,
+            uploadMessages: [],
+            displayMessages: [],
+            mode: .continueModel,
+            generativeUiRequirement: .none,
+            generativeUiFallbackAttempted: false,
+            fullToolNames: []
+        )
+
+        let coordinator = IOSChatBackgroundGenerationCoordinator.shared
+        let resumeCompleted = CompletionFlag()
+        let previousCallback = coordinator.onRunFinishedWithPendingTasks
+        coordinator.onRunFinishedWithPendingTasks = { [service] conversationId, providerSetting, params, bridge, policy in
+            _ = await service.resumePendingTasks(
+                for: conversationId,
+                providerSetting: providerSetting,
+                params: params,
+                toolExposureBridge: bridge,
+                executionPolicy: policy
+            )
+            resumeCompleted.markCompleted()
+        }
+        defer { coordinator.onRunFinishedWithPendingTasks = previousCallback }
+
+        coordinator.finishForTesting(
+            handoff,
+            conversationStore: store,
+            toolRuntime: makeRuntime()
+        )
+        let didStart = try await pollUntil { resumeCompleted.value }
+        XCTAssertTrue(didStart, "finish must release the old owner and trigger one idle bootstrap")
+        XCTAssertEqual(scheduler.startedHandoffs.count, 1)
+        let pendingAfterFinish = await pendingEnvelopeSnapshots(db.mailboxDao(), recipientHex: childHex)
+        XCTAssertTrue(pendingAfterFinish.isEmpty)
+    }
+
     // MARK: - wait_agent
 
     func testWaitAgentReturnsImmediatelyWhenMailboxHasPending() async throws {
@@ -539,7 +891,12 @@ final class IOSThreadMessagingTests: XCTestCase {
         let scheduler = FakeBackgroundScheduler()
         let center = IOSMailboxActivityCenter()
         let service = makeService(
-            store: store, db: db, scheduler: scheduler, center: center, currentConversationId: { rootId }
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            center: center,
+            currentConversationId: { rootId },
+            foregroundActiveRunId: { _ in "foreground-root-run" }
         )
 
         let result = parseJSON(await service.execute(
@@ -553,6 +910,81 @@ final class IOSThreadMessagingTests: XCTestCase {
         XCTAssertEqual(result["timed_out"] as? Bool, false)
         XCTAssertEqual(result["pending_count"] as? Int, 1)
         XCTAssertEqual(result["message"] as? String, "mailbox already has 1 pending")
+    }
+
+    func testWaitAgentForegroundRootYieldsWithoutLeavingAnActivityListener() async throws {
+        let base = makeTempDirectory("WaitForegroundYield")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            center: center,
+            currentConversationId: { rootId },
+            foregroundActiveRunId: { hex in hex == rootHex ? "foreground-root-run" : nil }
+        )
+
+        let result = parseJSON(await service.execute(
+            toolName: "wait_agent",
+            arguments: #"{"timeout_ms":60000}"#,
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "foreground-root-run",
+            conversationId: rootId
+        ))
+
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertEqual(result["yielded"] as? Bool, true,
+                       "an interactive root wait must release the foreground run immediately")
+        XCTAssertEqual(result["timed_out"] as? Bool, false)
+        XCTAssertEqual(result["pending_count"] as? Int, 0)
+        let listenerCount = await center.listenerCount(for: rootHex)
+        XCTAssertEqual(listenerCount, 0,
+                       "the immediate control result must not leak an unused wait listener")
+    }
+
+    func testWaitAgentForegroundChildKeepsWaitingAndDoesNotYield() async throws {
+        let base = makeTempDirectory("WaitForegroundChild")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let rootId = try XCTUnwrap(store.currentConversation?.id)
+        let rootHex = rootId.toHexDashString()
+        let childHex = "eeee5555-5555-5555-5555-555555555555"
+        let childId = childIdFromHex(childHex)
+        let db = makeDatabase(directory: base)
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/worker")
+        let scheduler = FakeBackgroundScheduler()
+        let center = IOSMailboxActivityCenter()
+        let service = makeService(
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            center: center,
+            currentConversationId: { childId },
+            foregroundActiveRunId: { hex in hex == childHex ? "foreground-child-run" : nil },
+            waitTimeoutMinMs: 1
+        )
+
+        let result = parseJSON(await service.execute(
+            toolName: "wait_agent",
+            arguments: #"{"timeout_ms":1}"#,
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "foreground-child-run",
+            conversationId: childId
+        ))
+
+        XCTAssertNil(result["yielded"], "foreground child must not use the root yield control path")
+        XCTAssertEqual(result["timed_out"] as? Bool, true,
+                       "a foreground child retains the ordinary mailbox wait semantics")
     }
 
     func testWaitAgentReturnsEarlyOnMailboxActivity() async throws {
@@ -874,11 +1306,12 @@ final class IOSThreadMessagingTests: XCTestCase {
         let snapshots = await mailboxStore.drainPending(forConversationId: conversationId)
         guard !snapshots.isEmpty else { return IOSMailboxDrainResult(values: []) }
         let drained = snapshots.map { envelope in
-            UIMessage.companion.user(prompt: MailboxEnvelopeKt.renderMailboxEnvelopeToUserText(
+            amberMailboxMessage(
+                envelopeId: envelope.id,
                 authorThreadId: envelope.authorThreadId,
                 type: envelope.type,
                 payload: envelope.payload
-            ))
+            )
         }
         let current = (try? await store.loadConversationForOrchestration(conversationId))?.currentMessages ?? []
         let baseline = store.writeBaseline(for: conversationId)

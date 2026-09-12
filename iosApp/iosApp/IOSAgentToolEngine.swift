@@ -368,6 +368,10 @@ public struct IOSAgentToolEngineResult: Sendable {
     /// budget ran out" — so callers must not fold it into a normal-completion
     /// terminal (see docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md §W5, I-5).
     public let guardStopped: Bool
+    /// A foreground root's `wait_agent` yielded its run back to the host so
+    /// queued user input can start a fresh turn. Background wait results never
+    /// set this flag.
+    public let yielded: Bool
 
     public init(
         messages: [UIMessage],
@@ -379,7 +383,8 @@ public struct IOSAgentToolEngineResult: Sendable {
         toolOutcomeUnknown: IOSToolOutcomeUnknownSignal? = nil,
         hitOutputLimit: Bool = false,
         wasCancelled: Bool = false,
-        guardStopped: Bool = false
+        guardStopped: Bool = false,
+        yielded: Bool = false
     ) {
         self.messages = messages
         self.stepsExecuted = stepsExecuted
@@ -391,6 +396,7 @@ public struct IOSAgentToolEngineResult: Sendable {
         self.hitOutputLimit = hitOutputLimit
         self.wasCancelled = wasCancelled
         self.guardStopped = guardStopped
+        self.yielded = yielded
     }
 }
 
@@ -1060,6 +1066,40 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         )
     }
 
+    /// A terminal-resume bootstrap can persist a mailbox message before the
+    /// newly accepted run gets its first scheduling slice. If that first slice
+    /// also drains the still-pending envelope, the stable envelope-derived UI
+    /// id lets the engine fold it once into `working`.
+    private static func uniqueMailboxMessages(
+        _ messages: [UIMessage],
+        excluding existing: [UIMessage]
+    ) -> [UIMessage] {
+        var seen = Set(existing.map { $0.id.toHexDashString().lowercased() })
+        return messages.filter { message in
+            seen.insert(message.id.toHexDashString().lowercased()).inserted
+        }
+    }
+
+    /// `wait_agent` uses a strict JSON control marker for the foreground root
+    /// only. Keep this recognition local to the engine: ordinary background
+    /// wait results (timeout/activity/interruption) remain normal tool output
+    /// and continue through the provider loop.
+    private static func isForegroundYield(
+        tool: UIMessagePart.Tool,
+        parts: [UIMessagePart]
+    ) -> Bool {
+        guard tool.toolName == "wait_agent" else { return false }
+        return parts.contains { part in
+            guard let text = (part as? UIMessagePart.Text)?.text,
+                  let data = text.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return false }
+            return object["ok"] as? Bool == true
+                && object["tool"] as? String == "wait_agent"
+                && object["yielded"] as? Bool == true
+        }
+    }
+
     /// Runs the loop to completion (or until approval is required / the step
     /// limit is hit). Pure function over `messages`: returns the new list,
     /// never mutates the caller's array.
@@ -1071,11 +1111,12 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     ///   caller (SubAgent, Novel) on the frozen-params behavior.
     /// - Parameter mailboxDrain: P1-d. When non-nil, after each executed batch
     ///   (same point as the toolExposureBridge refresh, before the next
-    ///   `streamStep`) the engine calls this closure and appends the returned
-    ///   messages (rendered mailbox envelopes) to the working list for the next
-    ///   round's upload; persisting the drained envelopes into the conversation
-    ///   is the closure's job (background runs have no UI, so fold = persist +
-    ///   working copy only). No input parameter: KMP `UIMessage` is
+    ///   `streamStep`) or before a no-tool final return, the engine calls this
+    ///   closure and appends the returned messages (rendered mailbox envelopes)
+    ///   to the working list for the next round's upload; persisting the drained
+    ///   envelopes into the conversation is the closure's job (background runs
+    ///   have no UI, so fold = persist + working copy only). No input parameter:
+    ///   KMP `UIMessage` is
     ///   non-Sendable, so the closure only ever RETURNS messages (wrapped in an
     ///   @unchecked Sendable box, same precedent as
     ///   `IOSChatBackgroundRetryMessages`) and never receives them. Default nil
@@ -1401,6 +1442,22 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     steps += 1
                     continue
                 }
+                // A child can receive a followup while the provider is
+                // producing a plain-text turn. Give the mailbox one final
+                // boundary before returning, while reserving a round to let
+                // the provider consume any newly delivered messages.
+                if let mailboxDrain, steps + 1 < configuration.maxSteps {
+                    let drained = Self.uniqueMailboxMessages(
+                        (await mailboxDrain()).values,
+                        excluding: working
+                    )
+                    if !drained.isEmpty {
+                        working.append(contentsOf: drained)
+                        onMessagesUpdated?(working)
+                        steps += 1
+                        continue
+                    }
+                }
                 // No more tool calls — the model is done.
                 return IOSAgentToolEngineResult(
                     messages: working,
@@ -1489,6 +1546,25 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             working = applyToolOutputs(batchResult.outputs, to: working)
             onMessagesUpdated?(working)
 
+            // All calls in this batch have completed and their outputs have
+            // been applied above. A yielded wait must now release the run
+            // before either exposure refresh or mailbox/steer drain: the host
+            // terminal path owns the queued user input and starts the next
+            // foreground run. This also preserves every later tool result
+            // from the same provider batch.
+            let yielded = !batchResult.guardStopped && batchResult.outputs.contains {
+                Self.isForegroundYield(tool: $0.tool, parts: $0.parts)
+            }
+            if yielded {
+                return IOSAgentToolEngineResult(
+                    messages: working,
+                    stepsExecuted: steps + 1,
+                    pendingApproval: nil,
+                    hitStepLimit: false,
+                    yielded: true
+                )
+            }
+
             // P0-a Fix C: re-derive the request params from the run bridge's
             // CURRENT exposure after every executed batch, so a tool_search
             // hit from THIS round is declared on the NEXT round (background
@@ -1511,8 +1587,18 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             // 追加进 working（下一轮 upload 折入），闭包内完成持久化（后台无 UI
             // 上屏）。SubAgent/Novel 不传 → 零影响；Room drain 的事务加固保证
             // 同会话前后台双 drain 最多折入一次（loser 返回空）。
-            if let mailboxDrain {
-                let drained = (await mailboxDrain()).values
+            // There must be another provider round after a drain.  At the
+            // final allowed tool round, marking a mailbox envelope delivered
+            // would make it disappear from pending without ever reaching the
+            // model.  The coordinator's terminal continuation will retry it
+            // after this run is released.
+            if let mailboxDrain,
+               !batchResult.guardStopped,
+               steps + 1 < configuration.maxSteps {
+                let drained = Self.uniqueMailboxMessages(
+                    (await mailboxDrain()).values,
+                    excluding: working
+                )
                 if !drained.isEmpty {
                     working.append(contentsOf: drained)
                     onMessagesUpdated?(working)
