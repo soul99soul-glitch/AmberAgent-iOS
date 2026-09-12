@@ -243,9 +243,12 @@ private enum WebMountSiteSheet: String, Identifiable, Equatable {
     var id: String { rawValue }
 }
 
-private enum WebMountAddressField: Hashable {
-    case browser
-    case inspector
+private enum WebMountInspectorTab: String, CaseIterable, Identifiable {
+    case overview = "概览"
+    case content = "内容"
+    case login = "登录"
+
+    var id: String { rawValue }
 }
 
 private enum WebMountActionLayout {
@@ -977,7 +980,9 @@ struct WebMountSiteView: View {
     @State private var popupPresentationQueued = false
     @State private var selectedPopupIdentifier: ObjectIdentifier?
     @State private var lastPresentedSheet: WebMountSiteSheet?
-    @FocusState private var focusedAddressField: WebMountAddressField?
+    @FocusState private var isAddressBarFocused: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var inspectorTab: WebMountInspectorTab = .overview
     @State private var rootBrowserHostID = UUID()
     @State private var inspectorBrowserHostID = UUID()
     @State private var popupBrowserHostID = UUID()
@@ -1065,10 +1070,6 @@ struct WebMountSiteView: View {
         return runtime.popupWebViews.last
     }
 
-    private var isAddressBarFocused: Bool {
-        focusedAddressField != nil
-    }
-
     private var displayedBanner: String? {
         if let browserNotice = runtime.browserNotice?.nilIfBlank {
             return browserNotice
@@ -1095,20 +1096,26 @@ struct WebMountSiteView: View {
     }
 
     var body: some View {
-        ZStack {
-            AmberThemePageBackground(surface: .app)
+        VStack(spacing: 0) {
+            header
+            workspaceBrowserBar
 
-            VStack(spacing: 0) {
-                header
-                workspaceBrowserBar
-
-                if let banner = displayedBanner {
-                    WebMountBanner(text: banner)
+            if let banner = displayedBanner {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "info.circle")
+                    Text(banner)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-
-                webViewSection
+                .font(.caption)
+                .foregroundStyle(AmberTheme.foreground2)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(AmberTheme.surface2)
             }
+
+            webViewSection
         }
+        .background(AmberTheme.surface.ignoresSafeArea())
         .overlay {
             if presentedSheet == nil {
                 browserDialogOverlay
@@ -1212,78 +1219,74 @@ struct WebMountSiteView: View {
     }
 
     private var header: some View {
-        ZStack {
-            VStack(spacing: 2) {
-                Text(resolvedSite.displayName)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                Text(resolvedSite.homepageHost)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        HStack(spacing: 0) {
+            workspaceBrowserButton(systemImage: "chevron.left", accessibilityLabel: "返回站点", isEnabled: true) {
+                dismiss()
             }
-            .padding(.horizontal, 88)
 
-            HStack(spacing: 0) {
-                AmberGlassCircleButton(systemImage: "chevron.left", accessibilityLabel: "返回站点", size: 44, symbolSize: 20) {
-                    dismiss()
-                }
+            Text(resolvedSite.displayName)
+                .font(.headline)
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 4)
 
-                Spacer()
+            workspaceBackButton
+            workspaceForwardButton
+            pageMenu
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 4)
+    }
 
-                AmberGlassCircleButton(systemImage: "arrow.clockwise", accessibilityLabel: "重新加载", size: 44, symbolSize: 17) {
-                    dismissAddressBarKeyboard()
+    private var pageMenu: some View {
+        Menu {
+            Section {
+                Button("打开站点首页", systemImage: "house") {
                     Task { await openSite() }
                 }
                 .disabled(isLoading || !canUserMutate)
-                .opacity(isLoading || !canUserMutate ? 0.45 : 1)
-
-                Button {
-                    presentedSheet = .inspector
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                Button(controlActionTitle, systemImage: controlOwnerImage) {
+                    if canUserMutate { handBackToAgent() } else { takeUserControl() }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("打开页面检查器")
+                .disabled(sessionRecord == nil)
             }
+            Section {
+                Button("提取正文", systemImage: "doc.text") {
+                    inspectorTab = .content
+                    presentedSheet = .inspector
+                    Task { await extractReadable() }
+                }
+                .disabled(!canReadPage)
+                Button("登录与站点数据", systemImage: "person.crop.circle") {
+                    inspectorTab = .login
+                    presentedSheet = .inspector
+                }
+                Button("页面检查器", systemImage: "slider.horizontal.3") {
+                    inspectorTab = .overview
+                    presentedSheet = .inspector
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
-        .padding(.bottom, 4)
+        .menuStyle(.borderlessButton)
+        .accessibilityLabel("页面菜单")
+        .accessibilityIdentifier("webmount.pageMenu")
     }
 
     private var workspaceBrowserBar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 4) {
-                workspaceBackButton
-                workspaceForwardButton
-                addressBar(minWidth: 110)
-                workspaceOpenButton
-                workspaceControlButton
-            }
-
-            VStack(alignment: .trailing, spacing: 4) {
-                HStack(spacing: 4) {
-                    workspaceBackButton
-                    workspaceForwardButton
-                    addressBar()
-                    workspaceOpenButton
-                }
-                HStack {
-                    Spacer(minLength: 0)
-                    workspaceControlButton
-                }
-            }
+        HStack(spacing: 8) {
+            addressBar
+            workspaceControlButton
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(AmberTheme.surface)
+        .padding(.horizontal, 16)
+        .padding(.top, 4)
+        .padding(.bottom, 12)
         .overlay(alignment: .bottom) {
             Divider().overlay(AmberTheme.borderSoft)
         }
@@ -1311,35 +1314,33 @@ struct WebMountSiteView: View {
         }
     }
 
-    private var workspaceOpenButton: some View {
-        workspaceBrowserButton(
-            systemImage: "arrow.right",
-            accessibilityLabel: "打开网址",
-            isEnabled: !isLoading && canUserMutate
-        ) {
-            dismissAddressBarKeyboard()
-            Task { await openTypedURL() }
-        }
-    }
+    private var addressBar: some View {
+        HStack(spacing: 0) {
+            TextField("输入网址", text: $openURLText)
+                .font(.subheadline)
+                .textFieldStyle(.plain)
+                .lineLimit(1)
+                .padding(.leading, 14)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 44)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                .submitLabel(.go)
+                .focused($isAddressBarFocused)
+                .onSubmit { Task { await openTypedURL() } }
+                .disabled(!canUserMutate)
+                .accessibilityLabel("网页地址")
+                .accessibilityIdentifier("webmount.address")
 
-    private func addressBar(minWidth: CGFloat = 0) -> some View {
-        TextField("输入网址", text: $openURLText)
-            .font(.footnote)
-            .textFieldStyle(.plain)
-            .lineLimit(1)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .frame(minWidth: minWidth)
-            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .submitLabel(.go)
-            .focused($focusedAddressField, equals: .browser)
-            .onSubmit {
-                dismissAddressBarKeyboard()
+            workspaceBrowserButton(
+                systemImage: isAddressBarFocused ? "arrow.right" : "arrow.clockwise",
+                accessibilityLabel: isAddressBarFocused ? "打开网址" : "重新加载当前页面",
+                isEnabled: !isLoading && canUserMutate
+            ) {
                 Task { await openTypedURL() }
             }
-            .disabled(!canUserMutate)
+        }
+        .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func workspaceBrowserButton(
@@ -1370,34 +1371,17 @@ struct WebMountSiteView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: controlOwnerImage)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(controlOwnerTint)
-                    .frame(width: 22, height: 22)
-                    .background(
-                        controlOwnerTint.opacity(0.12),
-                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    )
-
-                VStack(alignment: .leading, spacing: 0) {
+                    .font(.system(size: 14, weight: .semibold))
+                if !dynamicTypeSize.isAccessibilitySize {
                     Text(workspaceControlOwnerLabel)
-                        .font(.caption2.weight(.bold))
-                    Text(workspaceControlActionLabel)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(controlOwnerTint)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
                 }
-                .lineLimit(1)
             }
-            .foregroundStyle(AmberTheme.foreground2)
-            .padding(.horizontal, 8)
-            .frame(minWidth: 86, minHeight: 44)
-            .background(
-                controlOwnerTint.opacity(0.08),
-                in: RoundedRectangle(cornerRadius: 11, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
-                    .stroke(controlOwnerTint.opacity(0.30), lineWidth: 0.7)
-            }
+            .foregroundStyle(controlOwnerTint)
+            .padding(.horizontal, 12)
+            .frame(minWidth: 44, minHeight: 44)
+            .background(controlOwnerTint.opacity(0.10), in: Capsule())
             .fixedSize(horizontal: true, vertical: false)
         }
         .buttonStyle(.plain)
@@ -1407,202 +1391,108 @@ struct WebMountSiteView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(IOSAppLocalization.string(workspaceControlAccessibilityLabel))
         .accessibilityValue(controlOwnerBadgeText)
+        .accessibilityAddTraits(.isButton)
         .accessibilityHint("切换页面控制权")
+        .accessibilityIdentifier("webmount.control")
     }
 
     private var inspectorSheet: some View {
         NavigationStack {
-            ZStack {
-                AmberThemePageBackground(surface: .app)
+            VStack(spacing: 0) {
+                Picker("检查器分类", selection: $inspectorTab) {
+                    ForEach(WebMountInspectorTab.allCases) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
 
                 ScrollView {
                     VStack(spacing: 0) {
-                        runtimeSection
-                        bridgeSection
-                        cookieSection
+                        if let banner = displayedBanner {
+                            WebMountBanner(text: banner)
+                                .padding(.top, 8)
+                        }
+                        switch inspectorTab {
+                        case .overview: runtimeSection
+                        case .content: bridgeSection
+                        case .login: cookieSection
+                        }
                     }
-                    .padding(.bottom, 32)
+                    .padding(.bottom, 24)
                 }
                 .scrollIndicators(.hidden)
             }
+            .background(AmberTheme.surface2)
             .navigationTitle("页面检查器")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("完成") { presentedSheet = nil }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成", systemImage: "xmark") { presentedSheet = nil }
                 }
             }
         }
-        .overlay {
-            browserDialogOverlay
-        }
+        .overlay { browserDialogOverlay }
         .interactiveDismissDisabled(runtime.browserDialog != nil)
         .browserPresentationHost(runtime: runtime, hostID: inspectorBrowserHostID)
-        .presentationDetents([.height(320), .height(620)])
+        .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
 
     private var runtimeSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "网页状态")
+            AmberSectionLabel(text: "当前页面")
             AmberFormGroup {
                 WebMountInfoRow(
-                    title: statusText,
+                    title: runtime.snapshot.title?.nilIfBlank ?? resolvedSite.displayName,
                     subtitle: statusSubtitle,
-                    systemImage: statusImage,
-                    tint: statusTint,
-                    trailing: runtime.snapshot.title?.nilIfBlank ?? "\(Int(runtime.snapshot.estimatedProgress * 100))%"
+                    systemImage: "globe",
+                    tint: AmberTheme.foreground2,
+                    trailing: statusText
                 )
                 WebMountDivider()
-                browserChromeRow
-                WebMountDivider()
                 controlRow
-                WebMountDivider()
-                AmberGlassGroup(spacing: 12) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 8) {
-                            openURLField
-                            openURLButton
-                        }
-                        VStack(alignment: .trailing, spacing: 8) {
-                            openURLField
-                            openURLButton
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                WebMountDivider()
-                AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
-                            navigationButtons
-                            Spacer(minLength: 0)
-                        }
-                        VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
-                            navigationButtons
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
+            }
+            AmberSectionLabel(text: "会话")
+            AmberFormGroup {
+                browserChromeRow
             }
         }
-    }
-
-    private var openURLField: some View {
-        TextField("https://example.com/path", text: $openURLText)
-            .font(.system(size: 13, design: .monospaced))
-            .textFieldStyle(.plain)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-            .submitLabel(.go)
-            .focused($focusedAddressField, equals: .inspector)
-            .onSubmit {
-                dismissAddressBarKeyboard()
-                Task { await openTypedURL() }
-            }
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .disabled(!canUserMutate)
-    }
-
-    private var openURLButton: some View {
-        Button("打开") {
-            dismissAddressBarKeyboard()
-            Task { await openTypedURL() }
-        }
-            .buttonStyle(.glassProminent)
-            .frame(minHeight: 44)
-            .disabled(isLoading || !canUserMutate)
-    }
-
-    @ViewBuilder
-    private var navigationButtons: some View {
-        Button {
-            Task {
-                guard canUserMutate else {
-                    banner = "Agent 正在控制此页面，请先接管。"
-                    return
-                }
-                _ = await runtime.back()
-            }
-        } label: {
-            Label("后退", systemImage: "chevron.left")
-        }
-        .buttonStyle(.glass)
-        .frame(minHeight: 44)
-        .disabled(!runtime.snapshot.canGoBack || !canUserMutate)
-
-        Button {
-            Task {
-                guard canUserMutate else {
-                    banner = "Agent 正在控制此页面，请先接管。"
-                    return
-                }
-                _ = await runtime.forward()
-            }
-        } label: {
-            Label("前进", systemImage: "chevron.right")
-        }
-        .buttonStyle(.glass)
-        .frame(minHeight: 44)
-        .disabled(!runtime.snapshot.canGoForward || !canUserMutate)
     }
 
     @ViewBuilder
     private var bridgeActionButtons: some View {
-        Button("状态") { Task { await readState() } }
-            .buttonStyle(.glass)
-            .frame(minHeight: 44)
+        Button("读取状态", systemImage: "info.circle") { Task { await readState() } }
             .disabled(!canReadPage)
-        Button("提取正文") { Task { await extractReadable() } }
-            .buttonStyle(.glass)
-            .frame(minHeight: 44)
+        Button("提取正文", systemImage: "doc.text") { Task { await extractReadable() } }
             .disabled(!canReadPage)
-        Button("观察") { Task { await self.observePage() } }
-            .buttonStyle(.glass)
-            .frame(minHeight: 44)
+        Button("观察交互元素", systemImage: "cursorarrow") { Task { await self.observePage() } }
             .disabled(!canReadPage || observationRequestID != nil)
-        Button("视觉快照") { Task { await visualSnapshot() } }
-            .buttonStyle(.glass)
-            .frame(minHeight: 44)
+        Button("视觉快照", systemImage: "camera") { Task { await visualSnapshot() } }
             .disabled(!canReadPage)
     }
 
     private var browserChromeRow: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                if isWatchMode {
-                    WebMountBadge(text: "观看模式", systemImage: "eye", tint: AmberTheme.accentCyan)
-                }
-                WebMountBadge(text: resolvedSite.homepageHost, systemImage: "network", tint: AmberTheme.accentCyan)
-                WebMountBadge(text: loginBadgeText, systemImage: "person.crop.circle", tint: loginBadgeTint)
-                if isWatchMode, registry.site(id: site.siteId) == nil {
-                    WebMountBadge(text: "高风险模式", systemImage: "exclamationmark.shield", tint: AmberTheme.accentAmber)
-                } else {
-                    WebMountBadge(
-                        text: resolvedSite.enabled ? "Agent 已允许" : "Agent 未允许",
-                        systemImage: resolvedSite.enabled ? "checkmark.shield" : "xmark.shield",
-                        tint: resolvedSite.enabled ? AmberTheme.accentGreen : AmberTheme.accentRed
-                    )
-                }
-                WebMountBadge(text: runtime.snapshot.sessionId, systemImage: "rectangle.stack", tint: AmberTheme.accentIndigo)
-                WebMountBadge(text: controlOwnerBadgeText, systemImage: controlOwnerImage, tint: controlOwnerTint)
-                if let sessionRecord, sessionRecord.persistentOptIn {
-                    WebMountBadge(text: "持久会话", systemImage: "pin", tint: AmberTheme.accentAmber)
-                }
-                if let sessionRecord, sessionRecord.needsReopen {
-                    WebMountBadge(text: "需要重新打开", systemImage: "arrow.clockwise", tint: AmberTheme.accentRed)
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            LabeledContent("浏览模式", value: isWatchMode ? "观看模式" : "手动浏览")
+            LabeledContent("登录状态", value: loginBadgeText)
+            LabeledContent("Agent 访问", value: isUnlistedWatchSession ? "高风险模式" : (resolvedSite.enabled ? "已允许" : "未允许"))
+            if let sessionRecord, sessionRecord.persistentOptIn {
+                LabeledContent("保留会话", value: "已开启")
             }
-            .scrollIndicators(.hidden)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            DisclosureGroup("会话标识") {
+                Text(runtime.snapshot.sessionId)
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8)
+            }
         }
-        .scrollIndicators(.hidden)
+        .font(.subheadline)
+        .foregroundStyle(AmberTheme.foreground2)
+        .tint(AmberTheme.muted)
+        .padding(16)
     }
 
     private var webViewSection: some View {
@@ -1791,7 +1681,7 @@ struct WebMountSiteView: View {
     }
 
     private func dismissAddressBarKeyboard() {
-        focusedAddressField = nil
+        isAddressBarFocused = false
     }
 
     private var webViewTakeoverPrompt: some View {
@@ -1860,28 +1750,28 @@ struct WebMountSiteView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "页面内容")
             AmberFormGroup {
-                AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
-                            bridgeActionButtons
-                            Spacer(minLength: 0)
-                        }
-                        VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
-                            bridgeActionButtons
+                HStack {
+                    Picker("页面内容", selection: $selectedResultTab) {
+                        ForEach(WebMountResultTab.allCases) { tab in
+                            Text(tab.title).tag(tab)
                         }
                     }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-
-                Picker("页面内容", selection: $selectedResultTab) {
-                    ForEach(WebMountResultTab.allCases) { tab in
-                        Text(tab.title).tag(tab)
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .tint(AmberTheme.foreground)
+                    Spacer(minLength: 8)
+                    Menu {
+                        bridgeActionButtons
+                    } label: {
+                        Label("读取页面", systemImage: "arrow.down.doc")
+                            .font(.subheadline.weight(.medium))
+                            .frame(minHeight: 44)
                     }
+                    .disabled(!canReadPage)
                 }
-                .pickerStyle(.segmented)
                 .padding(.horizontal, 14)
-                .padding(.bottom, 8)
+                .padding(.vertical, 4)
+                WebMountDivider()
 
                 if let contentHandoff, selectedResultTab == .text {
                     WebMountHandoffActions(
@@ -1897,9 +1787,18 @@ struct WebMountSiteView: View {
                     )
                     WebMountDivider()
                 }
-                WebMountCodeBlock(text: self.selectedResultText)
+                if selectedResultTab == .text {
+                    Text(selectedResultText)
+                        .font(.subheadline)
+                        .foregroundStyle(AmberTheme.foreground2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(16)
+                } else {
+                    WebMountCodeBlock(text: selectedResultText)
+                }
                 WebMountDivider()
-                AmberGlassGroup(spacing: 12) {
+                DisclosureGroup("读取指定元素") {
                     HStack(spacing: 8) {
                         TextField("选择器", text: $getSelector)
                             .font(.system(size: 13, design: .monospaced))
@@ -1937,19 +1836,7 @@ struct WebMountSiteView: View {
                     trailing: cookieSummary.map { "\($0.cookieCount)" } ?? "..."
                 )
                 WebMountDivider()
-                AmberGlassGroup(spacing: WebMountActionLayout.glassInteractionSpacing) {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: WebMountActionLayout.minimumButtonSpacing) {
-                            cookieActionButtons
-                            Spacer(minLength: 0)
-                        }
-                        VStack(alignment: .leading, spacing: WebMountActionLayout.minimumButtonSpacing) {
-                            cookieActionButtons
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                cookieActionButtons
                 WebMountDivider()
                 Button(role: .destructive) {
                     Task { await clearSession() }
@@ -1977,18 +1864,20 @@ struct WebMountSiteView: View {
             Task { await openSite() }
         } label: {
             Label("打开网页登录", systemImage: "person.badge.key")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 16)
         }
-        .buttonStyle(.glass)
-        .frame(minHeight: 44)
+        .buttonStyle(.plain)
         .disabled(!canUserMutate)
-
+        WebMountDivider()
         Button {
             Task { await refreshCookieSummary() }
         } label: {
-            Label("重新检测 Cookie", systemImage: "arrow.clockwise")
+            Label("刷新登录状态", systemImage: "arrow.clockwise")
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.horizontal, 16)
         }
-        .buttonStyle(.glass)
-        .frame(minHeight: 44)
+        .buttonStyle(.plain)
     }
 
     private var controlRow: some View {
@@ -2045,21 +1934,6 @@ struct WebMountSiteView: View {
         }
     }
 
-    private var statusImage: String {
-        if !hasBoundSession || sessionRecord == nil {
-            return "rectangle.slash"
-        }
-        if sessionRecord?.needsReopen == true {
-            return "arrow.clockwise"
-        }
-        switch runtime.snapshot.status {
-        case .idle: return "circle"
-        case .loading: return "arrow.triangle.2.circlepath"
-        case .ready: return "checkmark.circle"
-        case .failed: return "exclamationmark.triangle"
-        }
-    }
-
     private var statusText: String {
         if !hasBoundSession || sessionRecord == nil {
             return "会话已失效"
@@ -2072,21 +1946,6 @@ struct WebMountSiteView: View {
         case .loading: return "正在加载"
         case .ready: return "已就绪"
         case .failed: return "加载失败"
-        }
-    }
-
-    private var statusTint: Color {
-        if !hasBoundSession || sessionRecord == nil {
-            return AmberTheme.accentRed
-        }
-        if sessionRecord?.needsReopen == true {
-            return AmberTheme.accentAmber
-        }
-        switch runtime.snapshot.status {
-        case .idle: return AmberTheme.muted2
-        case .loading: return AmberTheme.accentAmber
-        case .ready: return AmberTheme.accentGreen
-        case .failed: return AmberTheme.accentRed
         }
     }
 
@@ -2127,13 +1986,6 @@ struct WebMountSiteView: View {
         if cookieSummary.hasLoginCookie == true { return "已登录" }
         if cookieSummary.hasLoginCookie == false { return "未登录" }
         return "登录状态未知"
-    }
-
-    private var loginBadgeTint: Color {
-        guard let cookieSummary else { return AmberTheme.muted2 }
-        if cookieSummary.hasLoginCookie == true { return AmberTheme.accentGreen }
-        if cookieSummary.hasLoginCookie == false { return AmberTheme.accentRed }
-        return AmberTheme.accentAmber
     }
 
     private var controlOwnerBadgeText: String {
@@ -2193,9 +2045,9 @@ struct WebMountSiteView: View {
         }
     }
 
-    private var workspaceControlActionLabel: String {
-        guard sessionRecord?.controlOwner == .user else { return "接管" }
-        return sessionRecord?.ownerRunId?.nilIfBlank == nil ? "释放" : "自动"
+    private var controlActionTitle: String {
+        guard canUserMutate else { return "接管页面" }
+        return sessionRecord?.ownerRunId?.nilIfBlank == nil ? "释放控制权" : "恢复 Agent 自动浏览"
     }
 
     private var workspaceControlAccessibilityLabel: String {

@@ -421,6 +421,77 @@ final class IOSWebMountRuntimeEvidenceTests: XCTestCase {
         }
     }
 
+    func testBrowserToolbarStaysCompactWithLongAddressAndControlOwners() async throws {
+        let runtime = try await fixture(html: """
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>WebMount</title>
+            <main style="font:17px -apple-system;padding:24px"><h2>网页内容</h2><p>地址栏与控制权按钮应保持同排。</p></main>
+            """)
+        let webView = try XCTUnwrap(runtime.webView)
+        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/a/long/address/that/must/not/push/the/control/button/onto/another/row'); true")
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let registry = IOSWebMountRegistry(userDefaults: defaults)
+        let site = try registry.addCustomSite(displayName: "WebMount", homepageURL: "https://fixture.example/")
+        let controller = IOSWebMountController(registry: registry,
+            settings: IOSWebMountSettings(userDefaults: defaults), runtime: runtime)
+        controller.sessionStore.tag(sessionId: runtime.snapshot.sessionId, site: site)
+        _ = try controller.sessionStore.acquireAgentControl(sessionId: runtime.snapshot.sessionId,
+            runId: "layout-run", conversationId: "layout-conversation")
+        let route = try XCTUnwrap(WebMountSiteRoute(watching: try XCTUnwrap(
+            controller.sessionStore.record(sessionId: runtime.snapshot.sessionId)), registry: registry))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+        }
+        for (name, width, typeSize, userControl, colorScheme) in [
+            ("browser-agent-320", 320.0, DynamicTypeSize.large, false, ColorScheme.light),
+            ("browser-user-393", 393.0, DynamicTypeSize.large, true, ColorScheme.light),
+            ("browser-user-320-large-text", 320.0, DynamicTypeSize.accessibility3, true, ColorScheme.light),
+            ("browser-user-393-dark", 393.0, DynamicTypeSize.large, true, ColorScheme.dark)
+        ] {
+            if userControl {
+                _ = try controller.sessionStore.acquireUserControl(sessionId: runtime.snapshot.sessionId)
+            }
+            let size = CGSize(width: width, height: 740)
+            let host = UIHostingController(rootView: WebMountSiteView(site: route, controller: controller)
+                .environment(RouterPath())
+                .environment(\.dynamicTypeSize, typeSize)
+                .environment(\.colorScheme, colorScheme))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            window.frame = CGRect(origin: .zero, size: size)
+            host.view.frame = window.bounds
+            try await Task.sleep(nanoseconds: 350_000_000)
+            host.view.layoutIfNeeded()
+            func textField(in view: UIView) -> UITextField? {
+                if let field = view as? UITextField { return field }
+                return view.subviews.lazy.compactMap { textField(in: $0) }.first
+            }
+            let field = try XCTUnwrap(textField(in: host.view), name)
+            let addressFrame = field.convert(field.bounds, to: host.view)
+            let pageFrame = webView.convert(webView.bounds, to: host.view)
+            // A separate control row used to leave more than 44pt below the address field.
+            XCTAssertLessThanOrEqual(pageFrame.minY - addressFrame.maxY, 24, name)
+            XCTAssertGreaterThanOrEqual(addressFrame.width, 100, name)
+            XCTAssertGreaterThanOrEqual(addressFrame.minX, 0, name)
+            XCTAssertLessThanOrEqual(pageFrame.maxX, width + 1, name)
+            XCTAssertEqual(webView.isUserInteractionEnabled, userControl, name)
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
     private func waitForPresentation(_ condition: () -> Bool) async throws {
         for _ in 0..<100 {
             if condition() { return }

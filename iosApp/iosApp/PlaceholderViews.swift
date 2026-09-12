@@ -2271,8 +2271,8 @@ private struct HomeGlassCircleButton: View {
                 .frame(width: size, height: size)
                 .contentShape(Circle())
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
-        .homeGlassControl(cornerRadius: size / 2)
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
+        .homeGlassControl(cornerRadius: size / 2, interactive: false)
         .modifier(HomeOptionalGlassEffectID(id: glassEffectID, namespace: glassNamespace))
         .accessibilityLabel(accessibilityLabel)
     }
@@ -2569,12 +2569,12 @@ struct ConversationsView: View {
     /// E 版 + Liquid Glass skill：
     /// - 玻璃只上控制层（搜索/齿轮 + 展开条 + 右下新建胶囊）
     /// - iOS 26：同一 `GlassEffectContainer` 内用 `glassEffectID("homeSearch")` 做胶囊→全宽条 morph
-    /// - container spacing 8、横向 layout 10 → 静态不永久 blob
+    /// - 关闭相邻玻璃的融合距离；搜索与齿轮留出 18pt，按压不再膨胀黏连
     /// - 展开 0.32s 对齐原型 cubic-bezier(0.2,.8,.2,1)；Reduce Motion 缩短
     private var header: some View {
         Group {
             if #available(iOS 26.0, *) {
-                GlassEffectContainer(spacing: 8) {
+                GlassEffectContainer(spacing: 0) {
                     homeHeaderStack(useGlassEffectID: true)
                 }
             } else {
@@ -2600,6 +2600,7 @@ struct ConversationsView: View {
                             id: useGlassEffectID ? "homeSearch" : nil,
                             namespace: useGlassEffectID ? homeSearchNamespace : nil
                         ))
+                        .padding(.trailing, 8)
                 }
 
                 homeSettingsGlassButton
@@ -2625,10 +2626,6 @@ struct ConversationsView: View {
                 expandedSearchBar
                     .padding(.horizontal, 16)
                     .padding(.top, 15)
-                    .modifier(HomeOptionalGlassEffectID(
-                        id: useGlassEffectID ? "homeSearch" : nil,
-                        namespace: useGlassEffectID ? homeSearchNamespace : nil
-                    ))
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -2648,8 +2645,8 @@ struct ConversationsView: View {
             .frame(width: 78, height: 38)
             .contentShape(Capsule())
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
-        .homeGlassControl(cornerRadius: 19)
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
+        .homeGlassControl(cornerRadius: 19, interactive: false)
         .accessibilityLabel("搜索")
         .accessibilityAddTraits(.isButton)
     }
@@ -2688,7 +2685,7 @@ struct ConversationsView: View {
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity)
         .frame(height: 41)
-        .homeGlassControl(cornerRadius: 14)
+        .homeGlassControl(cornerRadius: 14, interactive: false)
         .homeGlassEffectID("homeSearch", in: homeSearchNamespace)
         .overlay {
             RoundedRectangle(cornerRadius: AmberTheme.controlRadius(14), style: .continuous)

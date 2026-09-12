@@ -67,6 +67,22 @@ extension EnvironmentValues {
     }
 }
 
+/// Parent text/tool updates must not reconstruct every completed tool card.
+/// The callback captures this row's stable State location and the same Tool.
+private struct ChatToolPartRow: View, @MainActor Equatable {
+    let tool: UIMessagePart.Tool
+    let localeIdentifier: String
+    let onTap: () -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.tool === rhs.tool && lhs.localeIdentifier == rhs.localeIdentifier
+    }
+
+    var body: some View {
+        ChatToolTimeline(steps: [ChatToolStepModel(tool: tool)], onTapStep: { _ in onTap() })
+    }
+}
+
 struct MessageBubbleView: View {
 
     let message: UIMessage
@@ -111,6 +127,7 @@ struct MessageBubbleView: View {
 
     @Environment(IOSWorkspaceStore.self) private var workspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
@@ -409,10 +426,9 @@ struct MessageBubbleView: View {
                     }
                 )
             } else if let tool = part as? UIMessagePart.Tool {
-                ChatToolTimeline(
-                    steps: [ChatToolStepModel(tool: tool)],
-                    onTapStep: { _ in toolDetailTarget = ToolDetailTarget(tool: tool) }
-                )
+                ChatToolPartRow(tool: tool, localeIdentifier: locale.identifier,
+                    onTap: { toolDetailTarget = ToolDetailTarget(tool: tool) })
+                    .equatable()
                 if tool.toolName == "generate_image" {
                     let images = tool.output.compactMap { $0 as? UIMessagePart.Image }
                     if !images.isEmpty {

@@ -115,6 +115,77 @@ final class ChatReasoningCardTests: XCTestCase {
 
     // MARK: - 行为契约
 
+    @MainActor
+    private final class TextStorageEditProbe {
+        var count = 0
+    }
+
+    func testReasoningFadeDoesNotEditTextStorageBetweenChunks() throws {
+        let model = StreamingReasoningModel(text: String(repeating: "连续思考内容需要平滑显示。", count: 100))
+        let fixture = mountHarness(model: model)
+        defer { fixture.window.isHidden = true; fixture.window.rootViewController = nil }
+        pump(seconds: 0.65)
+        let textView = try XCTUnwrap(firstSubview(of: UITextView.self, in: fixture.host.view))
+        let edits = TextStorageEditProbe()
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSTextStorage.didProcessEditingNotification, object: textView.textStorage, queue: .main
+        ) { _ in MainActor.assumeIsolated { edits.count += 1 } }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        model.text += "逐字淡入继续。"
+        pump(seconds: 0.05)
+        edits.count = 0
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        pump(seconds: 0.2)
+        let cpuMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
+        print("[PERF-REASONING-FADE] idle animation text-storage edits=\(edits.count) CPU=\(cpuMs)ms")
+        XCTAssertEqual(edits.count, 0, "没有新 chunk 时，淡入动画只能更新绘制，不能反复编辑文本存储")
+    }
+
+    func testReasoningOpacityChangesRenderedGlyphsWithoutChangingStoredColor() throws {
+        let storage = NSTextStorage(string: "思思思思", attributes: [
+            .font: UIFont.systemFont(ofSize: 24), .foregroundColor: UIColor.black
+        ])
+        let manager = ChatReasoningLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: 220, height: 80))
+        storage.addLayoutManager(manager)
+        manager.addTextContainer(container)
+        manager.ensureLayout(for: container)
+        let glyphs = manager.glyphRange(for: container)
+        func renderedAlpha() throws -> Double {
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = false
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 220, height: 80), format: format).image { _ in
+                manager.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+            }
+            let cgImage = try XCTUnwrap(image.cgImage)
+            var bytes = [UInt8](repeating: 0, count: cgImage.width * cgImage.height * 4)
+            try bytes.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: cgImage.width,
+                    height: cgImage.height, bitsPerComponent: 8, bytesPerRow: cgImage.width * 4,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+            }
+            return stride(from: 3, to: bytes.count, by: 4).reduce(0) { $0 + Double(bytes[$1]) }
+        }
+        let full = try renderedAlpha()
+        XCTAssertGreaterThan(full, 0)
+        manager.setOpacityRanges([.init(range: NSRange(location: 0, length: storage.length), alpha: 0.3)])
+        let faded = try renderedAlpha()
+        XCTAssertEqual(faded / full, 0.3, accuracy: 0.03, "淡入必须反映在实际绘制像素，而不只是内部状态")
+        let storedColor = try XCTUnwrap(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+        XCTAssertEqual(storedColor.cgColor.alpha, 1)
+        manager.setOpacityRanges([
+            .init(range: NSRange(location: 0, length: 2), alpha: 0.25),
+            .init(range: NSRange(location: 1, length: 2), alpha: 0.5)
+        ])
+        XCTAssertEqual(try renderedAlpha() / full, 0.5, accuracy: 0.03,
+            "相邻/重叠淡入范围应各自绘制，不得重复绘制或让后续正文继承透明度")
+        manager.setOpacityRanges([])
+        XCTAssertEqual(try renderedAlpha(), full, accuracy: 1)
+    }
+
     func testVisibleTextRecognisesEmptyAndBlankBodies() {
         XCTAssertFalse(ChatReasoningCard.hasVisibleText(""))
         XCTAssertFalse(ChatReasoningCard.hasVisibleText(" "))
@@ -454,6 +525,54 @@ final class ChatReasoningCardTests: XCTestCase {
         )
     }
 
+    func testReasoningDetachAndReattachCannotLeavePausedTransparency() throws {
+        let model = StreamingReasoningModel(text: String(repeating: "保留阅读位置。", count: 100))
+        let fixture = mountHarness(model: model)
+        defer { fixture.window.isHidden = true; fixture.window.rootViewController = nil }
+        pump(seconds: 0.65)
+        let textView = try XCTUnwrap(firstSubview(of: UITextView.self, in: fixture.host.view))
+        let parent = try XCTUnwrap(textView.superview)
+        model.text += "仍在淡入。"
+        pump(seconds: 0.05)
+        let range = NSRange(location: 0, length: textView.textStorage.length)
+        XCTAssertTrue(foregroundAlphas(in: textView, range: range).contains { $0 < 0.95 })
+        textView.delegate?.scrollViewWillBeginDragging?(textView)
+        textView.setContentOffset(CGPoint(x: 0, y: max(0, textView.contentOffset.y - 60)), animated: false)
+        let previousText = textView.text
+        let previousFrame = textView.frame
+        textView.removeFromSuperview()
+        XCTAssertNil(textView.window)
+        pump(seconds: 0.55)
+        parent.addSubview(textView)
+        textView.frame = previousFrame
+        pump(seconds: 0.1)
+        XCTAssertNotNil(textView.window)
+        XCTAssertEqual(textView.text, previousText)
+        XCTAssertGreaterThanOrEqual(foregroundAlphas(in: textView, range: range).min() ?? 1, 0.99,
+            "没有新 chunk 的重新挂载也必须完全可读，不能停在移除时的淡入透明度")
+    }
+
+    func testReasoningStyleChangeUpdatesRetainedTextAndCanShrinkBelowCap() throws {
+        let model = StreamingReasoningModel(text: String(repeating: "核对字体和布局。", count: 100))
+        let fixture = mountHarness(model: model)
+        defer { fixture.window.isHidden = true; fixture.window.rootViewController = nil }
+        pump(seconds: 0.4)
+        let textView = try XCTUnwrap(firstSubview(of: UITextView.self, in: fixture.host.view))
+        textView.traitOverrides.preferredContentSizeCategory = .accessibilityExtraLarge
+        model.text += "字体变大后继续追加。"
+        pump(seconds: 0.25)
+        let expected = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: textView.traitCollection)
+        textView.textStorage.enumerateAttribute(.font, in: NSRange(location: 0, length: textView.textStorage.length)) { value, _, _ in
+            XCTAssertEqual((value as? UIFont)?.pointSize, expected.pointSize,
+                "样式变化与追加同时到达时，保留的前缀不能停在旧字体")
+        }
+        textView.traitOverrides.preferredContentSizeCategory = .large
+        model.text = "短思考。"
+        pump(seconds: 0.3)
+        XCTAssertEqual(textView.text, model.text)
+        XCTAssertLessThan(textView.bounds.height, 80, "替换为短文本时必须解除旧的高度封顶缓存")
+    }
+
     func testCompletedReasoningStartsAtTopOnFirstPresentation() throws {
         let model = StreamingReasoningModel(text: String(
             repeating: "已完成的历史推理应从开头进入阅读。\n",
@@ -543,6 +662,14 @@ final class ChatReasoningCardTests: XCTestCase {
 
     private func foregroundAlphas(in textView: UITextView, range: NSRange) -> [CGFloat] {
         guard range.length > 0, NSMaxRange(range) <= textView.textStorage.length else { return [] }
+        if let manager = textView.layoutManager as? ChatReasoningLayoutManager {
+            return (range.location..<NSMaxRange(range)).map { index in
+                let color = textView.textStorage.attribute(.foregroundColor, at: index, effectiveRange: nil) as? UIColor
+                    ?? textView.textColor ?? .label
+                let opacity = manager.opacityRanges.filter { NSLocationInRange(index, $0.range) }.map(\.alpha).min() ?? 1
+                return color.cgColor.alpha * opacity
+            }
+        }
         var result: [CGFloat] = []
         textView.textStorage.enumerateAttribute(.foregroundColor, in: range) { value, _, _ in
             let color = (value as? UIColor) ?? textView.textColor ?? .label
@@ -562,22 +689,28 @@ final class ChatReasoningCardTests: XCTestCase {
         for index in 0..<(sampleCount - 1) {
             let offsetDelta = probe.contentOffsets[index + 1] - probe.contentOffsets[index]
             let heightDelta = probe.contentHeights[index + 1] - probe.contentHeights[index]
-            let bottomDistanceDelta = abs(
-                probe.bottomDistances[index + 1] - probe.bottomDistances[index]
-            )
-
-            // Removing the head of a capped tail window rebases both the
-            // document height and content offset by the same amount. When
-            // the distance to the bottom is unchanged, no visible scroll
-            // occurred and this coordinate change must not count as a hitch.
-            let isHeadRebase = heightDelta < -0.5 &&
-                abs(offsetDelta - heightDelta) <= 0.5 &&
-                bottomDistanceDelta <= 0.5
-            if !isHeadRebase {
-                maximum = max(maximum, abs(offsetDelta))
-            }
+            let step = Self.followStep(offsetDelta: offsetDelta, heightDelta: heightDelta)
+            maximum = max(maximum, step)
         }
         return maximum
+    }
+
+    /// These probes only append to a capped window at fixed width/font/height.
+    /// A head rebase and a follow tick can occur in the same sampled frame:
+    /// shrinking the extent by 13pt and advancing 2pt gives an offset delta of
+    /// -11pt. The old pure-rebase check incorrectly counted that as an 11pt jump.
+    private static func followStep(offsetDelta: CGFloat, heightDelta: CGFloat) -> CGFloat {
+        abs(offsetDelta - (heightDelta < -0.5 ? heightDelta : 0))
+    }
+
+    func testFollowStepSeparatesHeadRebaseFromConcurrentScroll() {
+        XCTAssertEqual(Self.followStep(offsetDelta: -13, heightDelta: -13), 0)
+        XCTAssertEqual(Self.followStep(offsetDelta: -11, heightDelta: -13), 2)
+        XCTAssertEqual(Self.followStep(offsetDelta: 9, heightDelta: 0), 9)
+        XCTAssertEqual(Self.followStep(offsetDelta: 7, heightDelta: -13), 20,
+            "头部裁切不能掩盖超过门禁的实际跟随步长")
+        XCTAssertEqual(Self.followStep(offsetDelta: 550, heightDelta: 550), 550,
+            "内容高度增长引发的跳动不能被当作头部裁切抵消")
     }
 
     private static func mainThreadCPUNanos() -> UInt64 {
