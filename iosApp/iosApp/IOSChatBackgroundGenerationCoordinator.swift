@@ -3436,7 +3436,8 @@ final class IOSChatBackgroundGenerationCoordinator {
                     persistedParams: payload.params,
                     providerSetting: providerSetting,
                     assistantHeaders: dependencies.sharedSettings.snapshot.getCurrentAssistant().customHeaders,
-                    assistantBodies: dependencies.sharedSettings.snapshot.getCurrentAssistant().customBodies
+                    assistantBodies: dependencies.sharedSettings.snapshot.getCurrentAssistant().customBodies,
+                    conversationId: payload.conversationId.toHexDashString()
                   ) else {
                 NSLog("[AmberChatBG] Missing current background model for \(requestId)")
                 return nil
@@ -3810,7 +3811,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         persistedParams: TextGenerationParams,
         providerSetting: ProviderSetting,
         assistantHeaders: [CustomHeader],
-        assistantBodies: [CustomBody]
+        assistantBodies: [CustomBody],
+        conversationId: String? = nil
     ) -> TextGenerationParams? {
         let persistedModel = persistedParams.model
         let configuredModel = providerSetting.models.first { candidate in
@@ -3819,10 +3821,12 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         guard let configuredModel else { return nil }
 
-        let storedHeaders = IOSProviderRequestHeaderStore.headers(
-            for: providerSetting.id.description()
+        let runtimeHeaders = ChatProviderConfiguration.requestHeaders(
+            for: providerSetting,
+            assistant: assistantHeaders,
+            model: configuredModel.customHeaders,
+            conversationId: conversationId
         )
-        let runtimeHeaders = storedHeaders + assistantHeaders + configuredModel.customHeaders
         let runtimeBodies = assistantBodies + configuredModel.customBodies
         let runtimeModel = Model(
             modelId: configuredModel.modelId,
@@ -3951,13 +3955,15 @@ final class IOSChatBackgroundGenerationCoordinator {
         persistedParams: TextGenerationParams,
         providerSetting: ProviderSetting,
         assistantHeaders: [CustomHeader],
-        assistantBodies: [CustomBody]
+        assistantBodies: [CustomBody],
+        conversationId: String? = nil
     ) -> TextGenerationParams? {
         rehydratedParams(
             persistedParams: persistedParams,
             providerSetting: providerSetting,
             assistantHeaders: assistantHeaders,
-            assistantBodies: assistantBodies
+            assistantBodies: assistantBodies,
+            conversationId: conversationId
         )
     }
 

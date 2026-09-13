@@ -408,7 +408,8 @@ final class IOSContextCompactionCoordinator {
         let rawSummary = try await generateCompactSummary(
             provider: rawProvider,
             model: compressionModel,
-            prompt: prompt
+            prompt: prompt,
+            conversationId: conversationKey
         )
         var normalizedSummary = Self.normalizedPayload(
             rawSummary,
@@ -433,7 +434,8 @@ final class IOSContextCompactionCoordinator {
             let retrySummary = try await generateCompactSummary(
                 provider: rawProvider,
                 model: compressionModel,
-                prompt: retryPrompt
+                prompt: retryPrompt,
+                conversationId: conversationKey
             )
             normalizedSummary = Self.normalizedPayload(
                 retrySummary.isEmpty ? rawSummary : retrySummary,
@@ -478,7 +480,8 @@ final class IOSContextCompactionCoordinator {
     private func generateCompactSummary(
         provider rawProvider: ProviderSetting,
         model: Model,
-        prompt: String
+        prompt: String,
+        conversationId: String
     ) async throws -> String {
         let provider = try await IOSGrokWebProviderResolver.resolved(
             try await IOSCodexProviderResolver.resolved(rawProvider)
@@ -492,7 +495,11 @@ final class IOSContextCompactionCoordinator {
                     maxTokens: nil,
                     tools: [],
                     reasoningLevel: ReasoningLevel.off,
-                    customHeaders: [],
+                    customHeaders: ChatProviderConfiguration.requestHeaders(
+                        for: provider,
+                        model: model.customHeaders,
+                        conversationId: conversationId
+                    ),
                     customBody: []
                 ),
                 provider: provider

@@ -11,9 +11,11 @@ import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.ImageGenerationParams
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
+import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.Provider
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
+import app.amber.ai.provider.OpenCodeRequestHeaders
 import app.amber.ai.provider.shouldDisableClaudeThinking
 import app.amber.ai.provider.providers.PartGroup
 import app.amber.ai.provider.providers.groupPartsByToolBoundary
@@ -76,12 +78,18 @@ private const val ANTHROPIC_VERSION = "2023-06-01"
  *    helper lands.
  *  - Host-specific referer headers (aihubmix/openrouter) are preserved.
  */
-class ClaudeKmpProvider : Provider<ProviderSetting.Claude> {
+class ClaudeKmpProvider internal constructor(
+    private val injectedHttpClient: HttpClient?,
+    private val injectedSseClient: HttpClient?,
+) : Provider<ProviderSetting.Claude> {
+    /** Public no-arg initializer retained for Swift/Kotlin consumers. */
+    constructor() : this(null, null)
+
     private val json = Json { ignoreUnknownKeys = true }
 
     // Engine is resolved per-platform at runtime (Darwin on iOS, JVM default on JVM).
-    private val sseClient by lazy { HttpClient { install(SSE) } }
-    private val httpClient by lazy { HttpClient { } }
+    private val sseClient by lazy { injectedSseClient ?: HttpClient { install(SSE) } }
+    private val httpClient by lazy { injectedHttpClient ?: HttpClient { } }
 
     // Provider.listModels is not @Throws-annotated, so a thrown error would abort
     // the process (SIGABRT) on iOS instead of bridging to Swift. Swallow failures
@@ -129,7 +137,7 @@ class ClaudeKmpProvider : Provider<ProviderSetting.Claude> {
     ): MessageChunk {
         val requestBody = buildMessageRequest(providerSetting, messages, params)
         val response = httpClient.post("${providerSetting.baseUrl}/messages") {
-            params.customHeaders.filter { it.name.isNotBlank() }.forEach {
+            generationHeaders(providerSetting, messages, params.customHeaders).forEach {
                 header(it.name, it.value)
             }
             contentType(ContentType.Application.Json)
@@ -176,7 +184,7 @@ class ClaudeKmpProvider : Provider<ProviderSetting.Claude> {
         val events = sseClient.sseFlow("$baseUrl/messages") {
             method = HttpMethod.Post
             contentType(ContentType.Application.Json)
-            params.customHeaders.filter { it.name.isNotBlank() }.forEach {
+            generationHeaders(providerSetting, messages, params.customHeaders).forEach {
                 header(it.name, it.value)
             }
             header("x-api-key", apiKey)
@@ -318,6 +326,16 @@ class ClaudeKmpProvider : Provider<ProviderSetting.Claude> {
             }
         }
     }
+
+    private fun generationHeaders(
+        providerSetting: ProviderSetting.Claude,
+        messages: List<UIMessage>,
+        customHeaders: List<CustomHeader>,
+    ): List<CustomHeader> = OpenCodeRequestHeaders.forGeneration(
+        baseUrl = providerSetting.baseUrl,
+        messages = messages,
+        customHeaders = customHeaders,
+    )
 
     // ---- request building ----
     // Internal (not private) so JVM tests can assert the JSON shape without HTTP.

@@ -131,7 +131,7 @@ final class IOSMemoryExtractionCoordinator {
                     continue
                 }
                 report("正在从用户发言中提炼记忆…")
-                let request = try makeRequest(settings: snapshot, sources: sources)
+                let request = try makeRequest(settings: snapshot, sources: sources, conversationId: conversationKey)
                 defaults.set(["day": day, "count": runs + 1], forKey: Self.budgetKey)
                 let text = try await Self.generate(request, timeoutMillis: worker.timeoutMs)
                 let output = try Self.decode(text)
@@ -255,7 +255,7 @@ final class IOSMemoryExtractionCoordinator {
         return added.count
     }
 
-    private func makeRequest(settings: Settings, sources: [String: String]) throws -> Request {
+    private func makeRequest(settings: Settings, sources: [String: String], conversationId: String) throws -> Request {
         let worker = settings.agentRuntime.memoryWorker
         let model = worker.followCompressModel
             ? (settings.findModelById(uuid: settings.compressModelId) ?? settings.getCurrentChatModel())
@@ -281,7 +281,12 @@ final class IOSMemoryExtractionCoordinator {
         let params = TextGenerationParams(
             model: model, temperature: nil, topP: nil, maxTokens: KotlinInt(value: 1_600), tools: [],
             reasoningLevel: .off,
-            customHeaders: ChatProviderConfiguration.requestHeaders(for: providerSetting, assistant: assistant.customHeaders, model: model.customHeaders),
+            customHeaders: ChatProviderConfiguration.requestHeaders(
+                for: providerSetting,
+                assistant: assistant.customHeaders,
+                model: model.customHeaders,
+                conversationId: conversationId
+            ),
             customBody: assistant.customBodies + model.customBodies
         )
         return Request(provider: provider, setting: providerSetting, messages: [UIMessage.companion.user(prompt: prompt)], params: params)

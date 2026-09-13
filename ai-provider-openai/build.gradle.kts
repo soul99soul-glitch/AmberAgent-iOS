@@ -28,6 +28,10 @@ kotlin {
             implementation(kotlin("test"))
         }
 
+        jvmTest.dependencies {
+            implementation("io.ktor:ktor-client-mock-jvm:${libs.versions.ktor.get()}")
+        }
+
         jvmMain.dependencies {
             implementation(libs.ktor.client.okhttp)
         }

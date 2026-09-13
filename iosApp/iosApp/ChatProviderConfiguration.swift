@@ -211,10 +211,21 @@ enum ChatProviderConfiguration {
     static func requestHeaders(
         for provider: ProviderSetting,
         assistant: [CustomHeader] = [],
-        model: [CustomHeader] = []
+        model: [CustomHeader] = [],
+        conversationId: String? = nil
     ) -> [CustomHeader] {
         let providerId = provider.id.description() as String
-        return IOSProviderRequestHeaderStore.headers(for: providerId) + assistant + model
+        var headers = IOSProviderRequestHeaderStore.headers(for: providerId) + assistant + model
+        if OpenCodeRequestHeaders.shared.isOpenCodeEndpoint(baseUrl: baseURL(of: provider)),
+           let conversationId,
+           !headers.contains(where: {
+               $0.name.caseInsensitiveCompare("x-opencode-session") == .orderedSame
+                   && !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+           }) {
+            headers.removeAll { $0.name.caseInsensitiveCompare("x-opencode-session") == .orderedSame }
+            headers.append(CustomHeader(name: "x-opencode-session", value: conversationId))
+        }
+        return headers
     }
 
     static func baseURL(of provider: ProviderSetting) -> String {

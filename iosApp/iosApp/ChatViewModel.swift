@@ -2686,7 +2686,8 @@ final class ChatViewModel {
             assistantHeaders: ChatProviderConfiguration.requestHeaders(
                 for: providerSetting,
                 assistant: assistant.customHeaders,
-                model: visionModel.customHeaders
+                model: visionModel.customHeaders,
+                conversationId: currentConversationId?.toHexDashString()
             ),
             assistantBodies: assistant.customBodies
         )
@@ -2791,7 +2792,7 @@ final class ChatViewModel {
     }
 
     /// 用辅助模型跑一次单轮文本生成(OpenAIKmpProviderAdapter 内部按服务商类型分发 OpenAI/Claude)。
-    private func runAuxModel(model: Model, prompt: String) async -> String? {
+    private func runAuxModel(model: Model, prompt: String, conversationId: KotlinUuid?) async -> String? {
         let snapshot = sharedSettings.snapshot
         guard let provider = ChatProviderConfiguration.provider(
             for: model,
@@ -2803,7 +2804,8 @@ final class ChatViewModel {
             assistantHeaders: ChatProviderConfiguration.requestHeaders(
                 for: provider,
                 assistant: assistant.customHeaders,
-                model: model.customHeaders
+                model: model.customHeaders,
+                conversationId: conversationId?.toHexDashString()
             ),
             assistantBodies: assistant.customBodies
         )
@@ -2852,7 +2854,7 @@ final class ChatViewModel {
             + HomeConversationIcon.llmIconInstructionBlock()
         Task { [weak self] in
             guard let self else { return }
-            guard let raw = await self.runAuxModel(model: model, prompt: prompt) else { return }
+            guard let raw = await self.runAuxModel(model: model, prompt: prompt, conversationId: conversationId) else { return }
             guard conversationStore.canApplyAuxiliaryResult(since: baseline) else { return }
             let parsed = Self.parseTitleAndIcon(raw)
             let title = Self.sanitizeTitle(parsed.title)
@@ -2897,7 +2899,7 @@ final class ChatViewModel {
         let requestToken = beginSuggestionRequest()
         suggestionGenerationTask = Task { [weak self] in
             guard let self else { return }
-            guard let raw = await self.runAuxModel(model: model, prompt: prompt) else { return }
+            guard let raw = await self.runAuxModel(model: model, prompt: prompt, conversationId: conversationId) else { return }
             guard !Task.isCancelled else { return }
             let suggestions = raw
                 .split(separator: "\n")
@@ -4461,15 +4463,19 @@ final class ChatViewModel {
         let resolved = snapshot.resolveSessionDefaults(assistant: assistant, model: resolvedModel)
 
         // Merge custom headers/bodies: provider disguise + Assistant + Model.
-        let providerHeaders: [CustomHeader] = {
+        let mergedHeaders: [CustomHeader] = {
             guard let currentModel,
                   let provider = ChatProviderConfiguration.provider(
                     for: currentModel,
                     providers: snapshot.providers
-                  ) else { return [] }
-            return IOSProviderRequestHeaderStore.headers(for: provider.id.description())
+                  ) else { return assistant.customHeaders + (currentModel?.customHeaders ?? []) }
+            return ChatProviderConfiguration.requestHeaders(
+                for: provider,
+                assistant: assistant.customHeaders,
+                model: currentModel.customHeaders,
+                conversationId: currentConversationId?.toHexDashString()
+            )
         }()
-        let mergedHeaders: [CustomHeader] = providerHeaders + assistant.customHeaders + (currentModel?.customHeaders ?? [])
         let mergedBodies: [CustomBody] = assistant.customBodies + (currentModel?.customBodies ?? [])
 
         let model = Model(

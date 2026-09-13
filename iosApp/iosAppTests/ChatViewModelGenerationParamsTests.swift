@@ -8,6 +8,52 @@ import XCTest
 /// that the assistant system prompt is injected into the upload context.
 @MainActor
 final class ChatViewModelGenerationParamsTests: XCTestCase {
+    func testOpenCodeSessionFollowsConversationAcrossTurnsAndBackgroundRestore() async throws {
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        let provider = sharedSettings.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Go", apiKey: "test", baseUrl: "https://opencode.ai/zen/go/v1",
+            modelName: "Test", modelId: "test"
+        ))
+        let model = try XCTUnwrap(provider.models.first)
+        sharedSettings.setCurrentChatModelId(model.id.description())
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = IOSConversationStore(baseDirectory: directory)
+        await store.bootstrap()
+        let conversationA = try XCTUnwrap(store.currentConversation?.id)
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+            sharedSettings: sharedSettings,
+            localToolExecutor: localToolExecutor(),
+            autoGenerateResponses: false
+        )
+        viewModel.conversationStore = store
+        viewModel.messages = [.companion.user(prompt: "first turn")]
+        let first = viewModel.textGenerationParamsForTesting()
+        XCTAssertEqual(first.customHeaders.first { $0.name == "x-opencode-session" }?.value,
+                       conversationA.toHexDashString())
+        viewModel.messages = [.companion.user(prompt: "compacted later turn")]
+        XCTAssertEqual(viewModel.textGenerationParamsForTesting().customHeaders.map(\.value),
+                       first.customHeaders.map(\.value))
+
+        let strippedParams = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [],
+            reasoningLevel: .off, customHeaders: [], customBody: []
+        )
+        let restored = try XCTUnwrap(IOSChatBackgroundGenerationCoordinator.rehydratedParamsForTesting(
+            persistedParams: strippedParams, providerSetting: provider,
+            assistantHeaders: [], assistantBodies: [], conversationId: conversationA.toHexDashString()
+        ))
+        XCTAssertEqual(restored.customHeaders.first { $0.name == "x-opencode-session" }?.value,
+                       conversationA.toHexDashString())
+
+        await store.newConversation()
+        let conversationB = try XCTUnwrap(store.currentConversation?.id)
+        XCTAssertNotEqual(conversationA, conversationB)
+        XCTAssertEqual(viewModel.textGenerationParamsForTesting().customHeaders.first {
+            $0.name == "x-opencode-session"
+        }?.value, conversationB.toHexDashString())
+    }
 
     private func isolatedDefaults() -> UserDefaults {
         let suite = "ChatViewModelGenerationParamsTests-\(UUID().uuidString)"

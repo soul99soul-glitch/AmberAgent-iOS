@@ -60,7 +60,12 @@ enum ConversationListPreviewGenerator {
             maxTokens: nil,
             tools: [],
             reasoningLevel: ReasoningLevel.off,
-            customHeaders: assistant.customHeaders + model.customHeaders,
+            customHeaders: ChatProviderConfiguration.requestHeaders(
+                for: provider,
+                assistant: assistant.customHeaders,
+                model: model.customHeaders,
+                conversationId: conversationId.toHexDashString()
+            ),
             customBody: assistant.customBodies + model.customBodies
         )
 

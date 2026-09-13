@@ -43,6 +43,7 @@ kotlin {
         jvmTest.dependencies {
             implementation(kotlin("test-junit"))
             implementation(libs.junit)
+            implementation("io.ktor:ktor-client-mock-jvm:${libs.versions.ktor.get()}")
         }
     }
 }

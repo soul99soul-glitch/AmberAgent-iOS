@@ -12,6 +12,7 @@ import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.OpenAIAuthMode
+import app.amber.ai.provider.OpenCodeRequestHeaders
 import app.amber.ai.provider.Provider
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
@@ -96,12 +97,18 @@ internal fun usesOpenAIResponsesApi(
     return wireId.startsWith("muse-spark")
 }
 
-class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
+class OpenAIKmpProvider internal constructor(
+    private val injectedHttpClient: HttpClient?,
+    private val injectedSseClient: HttpClient?,
+) : Provider<ProviderSetting.OpenAI> {
+    /** Public no-arg initializer retained for Swift/Kotlin consumers. */
+    constructor() : this(null, null)
+
     private val json = Json { ignoreUnknownKeys = true }
 
     // Engine is resolved per-platform at runtime (Darwin on iOS, JVM default on JVM).
-    private val sseClient by lazy { HttpClient { } }
-    private val httpClient by lazy { HttpClient { } }
+    private val sseClient by lazy { injectedSseClient ?: HttpClient { } }
+    private val httpClient by lazy { injectedHttpClient ?: HttpClient { } }
 
     // The Provider.listModels contract is NOT annotated @Throws, so a thrown error
     // here would NOT bridge to Swift and would abort the process (SIGABRT) on iOS
@@ -165,7 +172,7 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         val url = "${providerSetting.baseUrl}${providerSetting.chatCompletionsPath}"
         val response = httpClient.post(url) {
             contentType(ContentType.Application.Json)
-            configureAuth(providerSetting, params)
+            configureGenerationAuth(providerSetting, messages, params.customHeaders)
             setBody(json.encodeToString(requestBody))
         }
         if (!response.status.isSuccess()) {
@@ -208,7 +215,7 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         val events = sseClient.sseFlow(url) {
             method = HttpMethod.Post
             contentType(ContentType.Application.Json)
-            configureAuth(providerSetting, params)
+            configureGenerationAuth(providerSetting, messages, params.customHeaders)
             setBody(json.encodeToString(requestBody))
         }
         return flow {
@@ -621,11 +628,19 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
             .forEach { header(it.name, it.value) }
     }
 
-    private fun HttpRequestBuilder.configureAuth(
+    private fun HttpRequestBuilder.configureGenerationAuth(
         providerSetting: ProviderSetting.OpenAI,
-        params: TextGenerationParams,
+        messages: List<UIMessage>,
+        extraHeaders: List<CustomHeader>,
     ) {
-        configureAuth(providerSetting, params.customHeaders)
+        configureAuth(
+            providerSetting,
+            OpenCodeRequestHeaders.forGeneration(
+                baseUrl = providerSetting.baseUrl,
+                messages = messages,
+                customHeaders = extraHeaders,
+            ),
+        )
     }
 
     // ---- safe JsonElement accessors ----
@@ -683,7 +698,7 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         val url = "${providerSetting.baseUrl}/responses"
         val response = httpClient.post(url) {
             contentType(ContentType.Application.Json)
-            configureAuth(providerSetting, params)
+            configureGenerationAuth(providerSetting, messages, params.customHeaders)
             setBody(json.encodeToString(requestBody))
         }
         if (!response.status.isSuccess()) {
@@ -704,7 +719,7 @@ class OpenAIKmpProvider : Provider<ProviderSetting.OpenAI> {
         val events = sseClient.sseFlow(url) {
             method = HttpMethod.Post
             contentType(ContentType.Application.Json)
-            configureAuth(providerSetting, params)
+            configureGenerationAuth(providerSetting, messages, params.customHeaders)
             setBody(json.encodeToString(requestBody))
         }
         return flow {

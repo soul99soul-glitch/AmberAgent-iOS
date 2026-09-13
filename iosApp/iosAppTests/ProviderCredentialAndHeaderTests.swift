@@ -4,6 +4,35 @@ import XCTest
 
 @MainActor
 final class ProviderCredentialAndHeaderTests: XCTestCase {
+    func testOpenCodeConversationHeaderHonorsExplicitValueAndIgnoresOtherHosts() {
+        let provider = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Go", apiKey: "test", baseUrl: "https://opencode.ai/zen/go/v1",
+            modelName: "Test", modelId: "test"
+        )
+        let headers = ChatProviderConfiguration.requestHeaders(
+            for: provider,
+            model: [CustomHeader(name: "X-OpenCode-Session", value: "configured-session")],
+            conversationId: "conversation-a"
+        )
+        XCTAssertEqual(headers.map(\.value), ["configured-session"])
+
+        let blank = ChatProviderConfiguration.requestHeaders(
+            for: provider,
+            model: [CustomHeader(name: "X-OpenCode-Session", value: "  ")],
+            conversationId: "conversation-a"
+        )
+        XCTAssertEqual(blank.map(\.name), ["x-opencode-session"])
+        XCTAssertEqual(blank.map(\.value), ["conversation-a"])
+
+        let other = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "OpenCode Go", apiKey: "test", baseUrl: "https://example.com/v1",
+            modelName: "Test", modelId: "test"
+        )
+        XCTAssertTrue(ChatProviderConfiguration.requestHeaders(
+            for: other, conversationId: "conversation-a"
+        ).isEmpty)
+    }
+
     func testOpenCodeUserAgentIsVersioned() {
         let ua = OpenAICompatUserAgents.shared.OPENCODE
         XCTAssertTrue(ua.hasPrefix("opencode/"), ua)
