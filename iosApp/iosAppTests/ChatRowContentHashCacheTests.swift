@@ -2,15 +2,9 @@ import XCTest
 import Shared
 @testable import iosApp
 
-/// `ChatRowContentHashCache` 指纹假设锁定测试。
-///
-/// 这个缓存的正确性建立在两条经过代码走查确认的假设上:
-/// 1. 历史(非 last / 非 streaming)行的内容一旦离开这两个状态就不再原地变化,
-///    所以可以放心记忆化,靠 `parts.count` + tool output 指纹兜底失效检测。
-/// 2. 目前唯一已知的"内容原地变更但 parts.count 不变"路径是 tool output
-///    从空数组回填成非空(后台补全 / 审批恢复完成后),所以指纹里专门编码了
-///    每个 Tool part 的 output 是否非空 + 条数。
-/// 任何人改这个类之前,先确认这三个用例仍然成立。
+/// Cache hits must preserve the complete displayed snapshot, including same-size
+/// tool output replacements and mutable metadata. Completed tool parts should be
+/// reused when a later part of the same assistant message changes.
 final class ChatRowContentHashCacheTests: XCTestCase {
 
     private func makeRow(
@@ -56,12 +50,8 @@ final class ChatRowContentHashCacheTests: XCTestCase {
         )
     }
 
-    /// 契约 1:非 last 行(已"定型"的历史行)缓存生效 —— 同 id、同 parts.count、
-    /// 同 tool 指纹但**文本已变**的第二次求值,必须返回第一次的缓存值,证明第二次
-    /// 没有重新遍历 parts(若只对同一 row 求两次哈希,Hasher 的进程级种子会让断言
-    /// 恒真,测不出记忆化)。这同时把记忆化边界写成文档:纯文本原地变更不会被
-    /// 指纹察觉,其安全性依赖"历史行文本不会原地变化"这一上游不变量。
-    func testNonLastRowReturnsCachedHashWithoutRescanningParts() {
+    /// Historical rows also accept replacement snapshots, including text edits.
+    func testHistoricalReplacementSnapshotInvalidatesCachedHash() {
         let cache = ChatRowContentHashCache()
         let id = KotlinUuid.companion.random()
         let original = makeTextMessage(id: id, text: "原始文本")
@@ -69,12 +59,62 @@ final class ChatRowContentHashCacheTests: XCTestCase {
 
         let first = cache.contentHash(for: makeRow(message: original))
         let second = cache.contentHash(for: makeRow(message: mutated))
-        XCTAssertEqual(first, second, "应命中缓存返回旧值,而不是重扫新文本")
+        XCTAssertNotEqual(first, second, "相同消息 id 的新内容快照必须使缓存失效")
 
-        // 对照组:全新缓存对变更后文本算出的哈希必须不同,证明上面的相等
-        // 只能来自缓存命中,而非两段文本恰好同哈希。
         let fresh = ChatRowContentHashCache().contentHash(for: makeRow(message: mutated))
-        XCTAssertNotEqual(first, fresh)
+        XCTAssertEqual(second, fresh)
+    }
+
+    func testCompletedToolOutputReplacementWithSameCountInvalidatesHistoryAndTail() {
+        let cache = ChatRowContentHashCache()
+        let id = KotlinUuid.companion.random()
+        func message(_ output: String) -> UIMessage {
+            UIMessage(id: id, role: MessageRole.assistant, parts: [UIMessagePart.Tool(
+                toolCallId: "ssh-1", toolName: "terminal_execute", input: "{}",
+                output: [UIMessagePart.Text(text: output, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )], annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: nil,
+            modelId: nil, usage: nil, translation: nil)
+        }
+        let running = message(#"{"status":"running","stdout":"before"}"#)
+        let finished = message(#"{"status":"completed","stdout":"after!"}"#)
+        for isLast in [false, true] {
+            XCTAssertNotEqual(
+                cache.contentHash(for: makeRow(message: running, isLast: isLast)),
+                cache.contentHash(for: makeRow(message: finished, isLast: isLast))
+            )
+        }
+    }
+
+    func testToolDenseTailOnlyRehashesTheChangedPart() {
+        let cache = ChatRowContentHashCache()
+        let id = KotlinUuid.companion.random()
+        let tools: [UIMessagePart] = (0..<120).map { index in
+            UIMessagePart.Tool(toolCallId: "ssh-\(index)", toolName: "terminal_execute", input: "{}",
+                output: [UIMessagePart.Text(text: String(repeating: "output ", count: 1_700), metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        }
+        func row(_ parts: [UIMessagePart]) -> ChatMessageRowModel {
+            makeRow(message: UIMessage(id: id, role: MessageRole.assistant, parts: parts,
+                annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: nil,
+                modelId: nil, usage: nil, translation: nil), isLast: true)
+        }
+        _ = cache.contentHash(for: row(tools))
+        XCTAssertEqual(cache.partHashComputationCount, 120)
+        var parts = tools
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        for index in 0..<30 {
+            parts = tools + [UIMessagePart.Text(text: "继续 \(index)", metadata: nil)]
+            _ = cache.contentHash(for: row(parts))
+        }
+        let milliseconds = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
+        XCTAssertEqual(cache.partHashComputationCount, 150, "120 个历史工具不应随每次尾部更新重新序列化")
+        print("[PERF-TOOLS] 120 tools / 30 tail updates: \(milliseconds)ms CPU; rehashed=30, full-rescan=3630")
+        let output = (tools[40] as! UIMessagePart.Tool).output[0] as! UIMessagePart.Text
+        output.metadata = [:]
+        let beforeMetadata = cache.partHashComputationCount
+        _ = cache.contentHash(for: row(parts))
+        XCTAssertEqual(cache.partHashComputationCount, beforeMetadata + 1, "相同 Tool 实例中的嵌套 metadata 也必须失效")
     }
 
     private func makeTextMessage(id: KotlinUuid, text: String) -> UIMessage {
@@ -112,10 +152,8 @@ final class ChatRowContentHashCacheTests: XCTestCase {
         )
     }
 
-    /// 契约 3:isLast / isStreaming 的行永不入缓存 —— 同一个 messageId 在
-    /// isLast=true 时两次调用,即使底层内容变了,也必须返回新的哈希值
-    /// (不能被"记忆化"卡在第一次算出的旧哈希上)。
-    func testLastRowNeverCaches() {
+    /// Live and terminal replacements must both invalidate the tail hash.
+    func testLastRowReplacementInvalidatesHash() {
         let cache = ChatRowContentHashCache()
         let messageId = KotlinUuid.companion.random()
 
@@ -142,7 +180,7 @@ final class ChatRowContentHashCacheTests: XCTestCase {
         XCTAssertNotEqual(
             hashV1,
             hashV2,
-            "isLast/isStreaming 行必须永不缓存,否则流式增量会被卡在第一次算出的哈希上"
+            "新内容快照必须使尾行缓存失效"
         )
     }
 

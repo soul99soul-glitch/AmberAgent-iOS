@@ -397,11 +397,12 @@ struct ChatToolStepModel: Identifiable {
     init(tool: UIMessagePart.Tool) {
         let stableID = Self.stableID(for: tool)
         let kind = ChatToolVisualKind.resolve(toolName: tool.toolName)
+        let outputAnalysis = ChatToolOutputFormatter.analysis(for: tool)
         // `.contains` (不是 `==`):流式合并偶发把工具名拼成 "subagent_dispatchsubagent_dispatch",
         // 用包含匹配才不会漏判、掉进裸名回退。
         if tool.toolName.contains("subagent_dispatch") {
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             let state = Self.state(executed: executed, failureReason: failureReason)
             self.init(
                 id: stableID,
@@ -412,7 +413,7 @@ struct ChatToolStepModel: Identifiable {
                 isSubAgent: true,
                 subAgentPresentation: Self.subAgentPresentation(
                     input: tool.input,
-                    output: tool.output,
+                    outputAnalysis: outputAnalysis,
                     toolCallId: tool.toolCallId,
                     state: state
                 ),
@@ -422,8 +423,8 @@ struct ChatToolStepModel: Identifiable {
         }
 
         if tool.toolName == "spawn_agent" || tool.toolName == "followup_task" {
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
-            let state = Self.subAgentOrchestrationState(for: tool, failureReason: failureReason)
+            let failureReason = outputAnalysis.failureReason
+            let state = Self.subAgentOrchestrationState(for: tool, outputAnalysis: outputAnalysis, failureReason: failureReason)
             self.init(
                 id: stableID,
                 visualKind: .subagent,
@@ -433,7 +434,7 @@ struct ChatToolStepModel: Identifiable {
                 isSubAgent: true,
                 subAgentPresentation: Self.subAgentPresentation(
                     input: tool.input,
-                    output: tool.output,
+                    outputAnalysis: outputAnalysis,
                     toolCallId: tool.toolCallId,
                     toolName: tool.toolName,
                     state: state
@@ -446,12 +447,12 @@ struct ChatToolStepModel: Identifiable {
         if tool.toolName == "search_web" {
             let query = Self.searchQuery(from: tool.input)
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             self.init(
                 id: stableID,
                 visualKind: .search,
                 title: Self.localized("搜索网页"),
-                detail: executed ? (failureReason ?? Self.searchResultSummary(from: tool.output)) : query.map {
+                detail: executed ? (failureReason ?? Self.searchResultSummary(from: outputAnalysis)) : query.map {
                     IOSAppLocalization.formatted(
                         "关键词：%@",
                         defaultValue: "关键词：%@",
@@ -466,12 +467,12 @@ struct ChatToolStepModel: Identifiable {
         if tool.toolName == "scrape_web" {
             let url = Self.scrapeURL(from: tool.input)
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             self.init(
                 id: stableID,
                 visualKind: .web,
                 title: Self.localized("读取网页"),
-                detail: executed ? (failureReason ?? Self.searchResultSummary(from: tool.output)) : url.map {
+                detail: executed ? (failureReason ?? Self.searchResultSummary(from: outputAnalysis)) : url.map {
                     IOSAppLocalization.formatted(
                         "链接：%@",
                         defaultValue: "链接：%@",
@@ -485,7 +486,7 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "memory_tool" {
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             self.init(
                 id: stableID,
                 visualKind: .memory,
@@ -498,7 +499,7 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "mcp_call" {
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             self.init(
                 id: stableID,
                 visualKind: .mcp,
@@ -511,7 +512,7 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "model_council_run" {
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             self.init(
                 id: stableID,
                 visualKind: .council,
@@ -531,7 +532,7 @@ struct ChatToolStepModel: Identifiable {
                     id: stableID,
                     visualKind: .image,
                     title: Self.localized("生成图片"),
-                    detail: ChatToolOutputFormatter.imageFailureReason(from: tool.output)
+                    detail: outputAnalysis.imageFailureReason
                         ?? Self.localized("没有返回图片"),
                     state: .failed
                 )
@@ -561,12 +562,12 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "ish_handoff" {
             let executed = !tool.output.isEmpty
-            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let failed = executed && outputAnalysis.indicatesFailure
             self.init(
                 id: stableID,
                 visualKind: .terminal,
                 title: Self.localized("iSH 交接"),
-                detail: executed ? Self.ishHandoffResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                detail: executed ? Self.ishHandoffResultSummary(from: outputAnalysis) : Self.ishHandoffInputSummary(from: tool.input),
                 state: failed ? .failed : (executed ? .done : .active)
             )
             return
@@ -574,14 +575,14 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "ios_ish_execute" {
             let executed = !tool.output.isEmpty
-            let object = Self.firstJSONObject(in: tool.output)
+            let object = outputAnalysis.firstJSONObject
             let status = object?["status"] as? String
-            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let failed = executed && outputAnalysis.indicatesFailure
             self.init(
                 id: stableID,
                 visualKind: .terminal,
                 title: Self.localized("内置 iSH 执行"),
-                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                detail: executed ? Self.ishExecuteResultSummary(from: outputAnalysis) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
             return
@@ -589,13 +590,13 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == "terminal_execute" {
             let executed = !tool.output.isEmpty
-            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
-            let status = Self.firstJSONObject(in: tool.output)?["status"] as? String
+            let failed = executed && outputAnalysis.indicatesFailure
+            let status = outputAnalysis.firstJSONObject?["status"] as? String
             self.init(
                 id: stableID,
                 visualKind: .terminal,
                 title: Self.localized("Remote SSH 执行"),
-                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                detail: executed ? Self.ishExecuteResultSummary(from: outputAnalysis) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
             return
@@ -603,13 +604,13 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName == IOSAmberShellToolCatalog.executeToolName {
             let executed = !tool.output.isEmpty
-            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
-            let status = Self.firstJSONObject(in: tool.output)?["status"] as? String
+            let failed = executed && outputAnalysis.indicatesFailure
+            let status = outputAnalysis.firstJSONObject?["status"] as? String
             self.init(
                 id: stableID,
                 visualKind: .terminal,
                 title: Self.localized("AmberShell 执行"),
-                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                detail: executed ? Self.ishExecuteResultSummary(from: outputAnalysis) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
             return
@@ -617,9 +618,9 @@ struct ChatToolStepModel: Identifiable {
 
         if IOSRemoteTerminalToolCatalog.jobToolNames.contains(tool.toolName) {
             let executed = !tool.output.isEmpty
-            let object = Self.firstJSONObject(in: tool.output)
+            let object = outputAnalysis.firstJSONObject
             let status = object?["status"] as? String
-            let failed = executed && Self.ishToolResultIndicatesFailure(tool.output)
+            let failed = executed && outputAnalysis.indicatesFailure
             let action: String
             switch tool.toolName {
             case IOSRemoteTerminalToolCatalog.jobStartToolName:
@@ -635,7 +636,7 @@ struct ChatToolStepModel: Identifiable {
                 id: stableID,
                 visualKind: .terminal,
                 title: action,
-                detail: executed ? Self.ishExecuteResultSummary(from: tool.output) : Self.ishHandoffInputSummary(from: tool.input),
+                detail: executed ? Self.ishExecuteResultSummary(from: outputAnalysis) : Self.ishHandoffInputSummary(from: tool.input),
                 state: Self.terminalState(status: status, executed: executed, failed: failed)
             )
             return
@@ -643,9 +644,9 @@ struct ChatToolStepModel: Identifiable {
 
         if tool.toolName.hasPrefix("wm_") {
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
                 .map(IOSWebMountRedactor.redactedText)
-            let uncertainReason = Self.webMountUncertainReason(from: tool.output)
+            let uncertainReason = Self.webMountUncertainReason(from: outputAnalysis)
             self.init(
                 id: stableID,
                 visualKind: kind,
@@ -654,7 +655,7 @@ struct ChatToolStepModel: Identifiable {
                 // 从而同时做到短标题自适应和 toolCallStarted → result 零宽度抖动。
                 title: Self.webMountActionTitle(for: tool.toolName),
                 detail: executed
-                    ? (failureReason ?? uncertainReason ?? Self.webMountResultSummary(from: tool.output))
+                    ? (failureReason ?? uncertainReason ?? Self.webMountResultSummary(from: outputAnalysis))
                     : Self.webMountInputSummary(for: tool.toolName, from: tool.input),
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
@@ -663,19 +664,19 @@ struct ChatToolStepModel: Identifiable {
 
         if IOSWorkspaceToolCatalog.supportedToolNames.contains(tool.toolName) {
             let executed = !tool.output.isEmpty
-            let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+            let failureReason = outputAnalysis.failureReason
             self.init(
                 id: stableID,
                 visualKind: kind,
                 title: Self.workspaceActionTitle(for: tool.toolName),
-                detail: executed ? (failureReason ?? Self.workspaceResultSummary(from: tool.output)) : Self.workspaceInputSummary(from: tool.input),
+                detail: executed ? (failureReason ?? Self.workspaceResultSummary(from: outputAnalysis)) : Self.workspaceInputSummary(from: tool.input),
                 state: Self.state(executed: executed, failureReason: failureReason)
             )
             return
         }
 
         let executed = !tool.output.isEmpty
-        let failureReason = ChatToolOutputFormatter.failureReason(from: tool.output)
+        let failureReason = outputAnalysis.failureReason
         let detailInput: String?
         if IOSProviderConfigToolCatalog.toolNames.contains(tool.toolName) {
             // Never surface raw api_key material on the tool capsule.
@@ -705,11 +706,12 @@ struct ChatToolStepModel: Identifiable {
 
     private static func subAgentOrchestrationState(
         for tool: UIMessagePart.Tool,
+        outputAnalysis: ChatToolOutputAnalysis,
         failureReason: String?
     ) -> ChatToolStepState {
         guard !tool.output.isEmpty else { return .active }
         if failureReason != nil { return .failed }
-        switch (firstJSONObject(in: tool.output)?["status"] as? String)?.lowercased() {
+        switch (outputAnalysis.firstJSONObject?["status"] as? String)?.lowercased() {
         case "started", "queued", "waiting", "pending":
             return .done
         case "cancelled", "canceled", "interrupted":
@@ -891,8 +893,24 @@ struct ChatToolStepModel: Identifiable {
         toolName: String = "subagent_dispatch",
         state: ChatToolStepState
     ) -> ChatSubAgentCapsulePresentation {
+        subAgentPresentation(
+            input: input,
+            outputAnalysis: ChatToolOutputFormatter.analysis(for: output),
+            toolCallId: toolCallId,
+            toolName: toolName,
+            state: state
+        )
+    }
+
+    private static func subAgentPresentation(
+        input: String,
+        outputAnalysis: ChatToolOutputAnalysis,
+        toolCallId: String,
+        toolName: String = "subagent_dispatch",
+        state: ChatToolStepState
+    ) -> ChatSubAgentCapsulePresentation {
         let args = subAgentArgs(from: input) ?? [:]
-        let result = firstJSONObject(in: output) ?? [:]
+        let result = outputAnalysis.firstJSONObject ?? [:]
         let value: ([String: Any], [String]) -> String? = { object, keys in
             keys.lazy.compactMap { object[$0] as? String }
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -1119,8 +1137,8 @@ struct ChatToolStepModel: Identifiable {
         return String(trimmedInput.prefix(120))
     }
 
-    private static func searchResultSummary(from output: [UIMessagePart]) -> String? {
-        let text = output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+    private static func searchResultSummary(from outputAnalysis: ChatToolOutputAnalysis) -> String? {
+        let text = outputAnalysis.joinedText
         guard !text.isEmpty else { return Self.localized("已返回搜索结果") }
         let firstLine = text.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init)
         return firstLine ?? Self.localized("已返回搜索结果")
@@ -1230,18 +1248,11 @@ struct ChatToolStepModel: Identifiable {
     /// first one that decodes as a JSON object — behavior is unchanged for
     /// the common single-JSON-part case, and robust to "JSON + appended text".
     static func firstJSONObject(in parts: [UIMessagePart]) -> [String: Any]? {
-        for text in parts.compactMap({ ($0 as? UIMessagePart.Text)?.text }) {
-            guard let data = text.data(using: .utf8),
-                  let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-                continue
-            }
-            return object
-        }
-        return nil
+        ChatToolOutputFormatter.analysis(for: parts).firstJSONObject
     }
 
-    private static func ishHandoffResultSummary(from output: [UIMessagePart]) -> String? {
-        guard let object = firstJSONObject(in: output) else { return nil }
+    private static func ishHandoffResultSummary(from outputAnalysis: ChatToolOutputAnalysis) -> String? {
+        guard let object = outputAnalysis.firstJSONObject else { return nil }
         if let ok = object["ok"] as? Bool, !ok {
             return (object["error"] as? String) ?? (object["reason"] as? String) ?? Self.localized("交接失败")
         }
@@ -1256,8 +1267,8 @@ struct ChatToolStepModel: Identifiable {
         )
     }
 
-    private static func ishExecuteResultSummary(from output: [UIMessagePart]) -> String? {
-        guard let object = firstJSONObject(in: output) else { return nil }
+    private static func ishExecuteResultSummary(from outputAnalysis: ChatToolOutputAnalysis) -> String? {
+        guard let object = outputAnalysis.firstJSONObject else { return nil }
         let status = (object["status"] as? String)?.lowercased()
         switch status {
         case IOSTerminalJobStatus.cancelled.rawValue:
@@ -1347,19 +1358,6 @@ struct ChatToolStepModel: Identifiable {
         }
     }
 
-    private static func ishToolResultIndicatesFailure(_ output: [UIMessagePart]) -> Bool {
-        guard let object = firstJSONObject(in: output) else { return false }
-        if let ok = object["ok"] as? Bool { return !ok }
-        if let denied = object["denied"] as? Bool, denied { return true }
-        if let status = object["status"] as? String {
-            return ["failed", "error", "denied", "timed_out", "cancelled"].contains(status.lowercased())
-        }
-        if let exitCode = object["exit_code"] as? Int {
-            return exitCode != 0
-        }
-        return false
-    }
-
     private static func workspaceActionTitle(for toolName: String) -> String {
         switch toolName {
         case "workspace_file_read": Self.localized("读取 Workspace 文件")
@@ -1382,10 +1380,10 @@ struct ChatToolStepModel: Identifiable {
         return String(trimmedInput.prefix(160))
     }
 
-    private static func workspaceResultSummary(from output: [UIMessagePart]) -> String? {
-        let text = output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+    private static func workspaceResultSummary(from outputAnalysis: ChatToolOutputAnalysis) -> String? {
+        let text = outputAnalysis.joinedText
         guard !text.isEmpty else { return Self.localized("已返回 Workspace 结果") }
-        guard let object = firstJSONObject(in: output) else {
+        guard let object = outputAnalysis.firstJSONObject else {
             return String(text.prefix(160))
         }
         if object["denied"] as? Bool == true {
@@ -1412,10 +1410,10 @@ struct ChatToolStepModel: Identifiable {
         return Self.localized("已返回 Workspace 结果")
     }
 
-    private static func webMountResultSummary(from output: [UIMessagePart]) -> String? {
-        let text = output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+    private static func webMountResultSummary(from outputAnalysis: ChatToolOutputAnalysis) -> String? {
+        let text = outputAnalysis.joinedText
         guard !text.isEmpty else { return Self.localized("已返回 WebMount 结果") }
-        guard let object = firstJSONObject(in: output) else {
+        guard let object = outputAnalysis.firstJSONObject else {
             return Self.localized("已返回 WebMount 结果")
         }
         if object["denied"] as? Bool == true {
@@ -1490,8 +1488,8 @@ struct ChatToolStepModel: Identifiable {
         return Self.localized("已返回 WebMount 结果")
     }
 
-    private static func webMountUncertainReason(from output: [UIMessagePart]) -> String? {
-        guard let object = firstJSONObject(in: output),
+    private static func webMountUncertainReason(from outputAnalysis: ChatToolOutputAnalysis) -> String? {
+        guard let object = outputAnalysis.firstJSONObject,
               object["may_have_applied"] as? Bool == true,
               let status = (object["status"] as? String)?.lowercased(),
               ["dispatched_unverified", "ambiguous", "unknown_after_action"].contains(status) else {

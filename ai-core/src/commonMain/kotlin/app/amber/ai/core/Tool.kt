@@ -2235,11 +2235,18 @@ fun createThemePackStatusToolDeclaration(): Tool = Tool(
     description = """
         Read the current Amber theme recipe, any in-progress try-on, installed pack ids,
         and allowed slot/design constraints. Call this before theme_pack_import. Does not change the UI.
-        Builtin ids sit-terracotta, pi-steel, notion-blue are reserved.
+        Optionally pass `id` to inspect a base recipe: omit it or use `current` for the currently
+        visible theme (including try-on), or use an installed/builtin id returned here. Builtin ids
+        sit-terracotta, pi-steel, notion-blue are reserved.
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
-            properties = buildJsonObject {},
+            properties = buildJsonObject {
+                put("id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional base recipe id: `current`, or an installed/builtin id from the status response.")
+                })
+            },
             required = emptyList()
         )
     },
@@ -2252,23 +2259,40 @@ fun createThemePackImportToolDeclaration(): Tool = Tool(
     description = """
         Propose an Amber theme pack. The host immediately tries on the recipe on the real UI
         without saving; the user taps 套用 to persist or 还原 to revert. Use the optional
-        design object to create a complete visual style: separate light and dark palettes,
-        per-mode gradients, a patterns array with up to three composable layers, and optional
-        chrome geometry.
+        `base_id` to modify an existing recipe. `base_id` may be `current` (the currently visible
+        theme, including try-on) or an installed/builtin id from theme_pack_status. With `base_id`,
+        every other field is a patch: omitted fields stay unchanged, and design/light/dark/gradient/
+        components objects merge recursively. Supplying `patterns`, `gradient.colors`, or
+        `gradient.darkColors` replaces that whole array. `null` only clears optional design,
+        light/dark palette overrides, gradient, components, or a component property. A saved custom theme keeps its id and cannot
+        be changed to another id. The first edit of a builtin derives a new custom id; use that
+        returned id or `current` for later edits.
+        Without `base_id`, create a new complete recipe and provide all nine fields: `id`,
+        `display_name`, `paper`, `accent_hex`, `ink_hex`, `canvas_style`, `brand_mark`,
+        `shortcut_icon_style`, and `chrome_typeface`. The `id` must be a new slug and cannot be builtin.
+        Use the optional `design` object for separate light and dark palettes, per-mode gradients,
+        a patterns array with up to three composable layers, and optional chrome geometry; nested
+        design fields may be locally omitted when patching. Component-only patches work on builtin/legacy
+        themes without inventing palettes: absent light/dark palettes inherit the existing paper colors.
+        Newly supplied palette objects need all five color fields; gradients require both full palettes.
+        Do not redesign fields the user did not request.
         Gradient colors and darkColors are separate light/dark ramps with 2...4 hex colors each.
         Palette foreground must keep at least 4.5:1 contrast against background and surface;
         mutedForeground must keep at least 3:1. Allowed paper is paper, neutral, white, pi,
-        notion (no immersive). Default canvas_scope to shell; use appWide when the user asks
+        notion (no immersive). New recipes default canvas_scope to shell; edits keep the existing scope. Use appWide when the user asks
         for the design across the whole app. High-luminance accent_hex needs a dark ink_hex;
-        contrast must be at least 3.0. id must be a new slug, not a builtin. Never claim you
-        changed the theme until the user confirms 套用.
+        contrast must be at least 3.0. Never claim you changed the theme until the user confirms 套用.
     """.trimIndent().replace("\n", " "),
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
+                put("base_id", buildJsonObject {
+                    put("type", "string")
+                    put("description", "Optional patch target: `current`, or an installed/builtin id from theme_pack_status. Omit for a new recipe.")
+                })
                 put("id", buildJsonObject {
                     put("type", "string")
-                    put("description", "New stable slug, e.g. rain-bookstore. Must not be a builtin id.")
+                    put("description", "Create: required new slug, e.g. rain-bookstore, not builtin. Patch: omit to retain the base id; a saved custom base cannot use a different id.")
                 })
                 put("display_name", buildJsonObject {
                     put("type", "string")
@@ -2346,10 +2370,9 @@ fun createThemePackImportToolDeclaration(): Tool = Tool(
                 })
                 put("design", themeDesignSchema())
             },
-            required = listOf(
-                "id", "display_name", "paper", "accent_hex", "ink_hex",
-                "canvas_style", "brand_mark", "shortcut_icon_style", "chrome_typeface",
-            )
+            // New recipes still require the nine fields documented above; the host performs
+            // that conditional validation because patches intentionally omit unchanged fields.
+            required = emptyList()
         )
     },
     needsApproval = true,
@@ -2358,10 +2381,10 @@ fun createThemePackImportToolDeclaration(): Tool = Tool(
 
 /** JSON Schema for the optional user-authored visual design layer. */
 private fun themeDesignSchema(): JsonObject = buildJsonObject {
-    put("type", "object")
+    put("type", buildJsonArray { add("object"); add("null") })
     put(
         "description",
-        "Optional complete visual design. Provide both light and dark palettes and a patterns array (it may be empty); gradient and components are optional."
+        "Optional visual design. For a new recipe, provide complete light/dark palettes and a patterns array (it may be empty). For a patch, any nested field may be omitted and objects merge recursively; null clears the whole design."
     )
     put("properties", buildJsonObject {
         put("light", themeDesignPaletteSchema("Light-mode palette."))
@@ -2370,12 +2393,12 @@ private fun themeDesignSchema(): JsonObject = buildJsonObject {
         put("patterns", themeDesignPatternsSchema())
         put("components", themeDesignComponentsSchema())
     })
-    put("required", buildJsonArray { add("light"); add("dark"); add("patterns") })
+    put("required", buildJsonArray {})
 }
 
 private fun themeDesignPaletteSchema(description: String): JsonObject = buildJsonObject {
-    put("type", "object")
-    put("description", description)
+    put("type", buildJsonArray { add("object"); add("null") })
+    put("description", "$description Omit fields in a patch to retain the base value; null removes this override and inherits the paper palette. A newly added palette needs all five colors.")
     put("properties", buildJsonObject {
         put("background", buildJsonObject {
             put("type", "string")
@@ -2398,31 +2421,25 @@ private fun themeDesignPaletteSchema(description: String): JsonObject = buildJso
             put("description", "Hex color for borders and separators.")
         })
     })
-    put("required", buildJsonArray {
-        add("background")
-        add("surface")
-        add("foreground")
-        add("mutedForeground")
-        add("border")
-    })
+    put("required", buildJsonArray {})
 }
 
 private fun themeDesignGradientSchema(): JsonObject = buildJsonObject {
-    put("type", "object")
-    put("description", "Optional gradient ramps. colors is light mode; darkColors is dark mode.")
+    put("type", buildJsonArray { add("object"); add("null") })
+    put("description", "Optional gradient ramps. colors is light mode; darkColors is dark mode. Omit fields to retain them in a patch; null clears the gradient.")
     put("properties", buildJsonObject {
         put("colors", buildJsonObject {
             put("type", "array")
             put("minItems", 2)
             put("maxItems", 4)
-            put("description", "Light-mode hex colors, 2...4 stops.")
+            put("description", "Light-mode hex colors, 2...4 stops; in a patch this replaces the whole ramp.")
             put("items", buildJsonObject { put("type", "string") })
         })
         put("darkColors", buildJsonObject {
             put("type", "array")
             put("minItems", 2)
             put("maxItems", 4)
-            put("description", "Dark-mode hex colors, 2...4 stops; keep them readable with the dark palette foreground.")
+            put("description", "Dark-mode hex colors, 2...4 stops; in a patch this replaces the whole ramp. Keep them readable with the dark palette foreground.")
             put("items", buildJsonObject { put("type", "string") })
         })
         put("angle", buildJsonObject {
@@ -2430,13 +2447,13 @@ private fun themeDesignGradientSchema(): JsonObject = buildJsonObject {
             put("description", "Gradient angle in degrees.")
         })
     })
-    put("required", buildJsonArray { add("colors"); add("darkColors"); add("angle") })
+    put("required", buildJsonArray {})
 }
 
 private fun themeDesignPatternsSchema(): JsonObject = buildJsonObject {
     put("type", "array")
     put("maxItems", 3)
-    put("description", "Composable texture layers; provide an array (possibly empty) with at most 3 layers.")
+    put("description", "Composable texture layers; provide an array (possibly empty) with at most 3 complete layers. In a patch, the supplied array replaces all layers.")
     put("items", buildJsonObject {
         put("type", "object")
         put("properties", buildJsonObject {
@@ -2476,8 +2493,8 @@ private fun themeDesignPatternsSchema(): JsonObject = buildJsonObject {
 }
 
 private fun themeDesignComponentsSchema(): JsonObject = buildJsonObject {
-    put("type", "object")
-    put("description", "Optional chrome geometry, brand text, and shadow tuning; every field is optional.")
+    put("type", buildJsonArray { add("object"); add("null") })
+    put("description", "Optional chrome geometry, brand text, and shadow tuning; every field is optional. Omit a field to retain it in a patch; null clears the component object or property.")
     put("properties", buildJsonObject {
         put("cardRadius", themeDesignComponentNumberSchema("Card corner radius, 0...32 points.", 0, 32))
         put("bubbleRadius", themeDesignComponentNumberSchema("Chat bubble corner radius, 0...28 points.", 0, 28))
@@ -2486,7 +2503,7 @@ private fun themeDesignComponentsSchema(): JsonObject = buildJsonObject {
         put("shadowOpacity", themeDesignComponentNumberSchema("Shadow opacity, 0...0.35.", 0, 0.35))
         put("shadowRadius", themeDesignComponentNumberSchema("Shadow blur radius, 0...24 points.", 0, 24))
         put("brandText", buildJsonObject {
-            put("type", "string")
+            put("type", buildJsonArray { add("string"); add("null") })
             put("minLength", 1)
             put("maxLength", 16)
             put("description", "Optional custom brand text, 1...16 characters.")
@@ -2497,7 +2514,7 @@ private fun themeDesignComponentsSchema(): JsonObject = buildJsonObject {
 }
 
 private fun themeDesignComponentNumberSchema(description: String, minimum: Number, maximum: Number): JsonObject = buildJsonObject {
-    put("type", "number")
+    put("type", buildJsonArray { add("number"); add("null") })
     put("minimum", minimum)
     put("maximum", maximum)
     put("description", description)

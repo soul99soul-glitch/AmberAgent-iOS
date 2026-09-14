@@ -13,25 +13,30 @@ final class AmberThemeDesignTests: XCTestCase {
     private var runtime: AmberThemeRuntime { .shared }
     private var savedRuntimeDocument: AmberThemePackDocument?
     private var savedDesignData: Data?
+    private var savedThemeID: String?
+    private var savedThemeName: String?
 
-    override func setUp() {
-        super.setUp()
+    override func setUp() async throws {
+        try await super.setUp()
         runtime.discardTryOn()
         savedRuntimeDocument = AmberThemePackTransfer.document(from: runtime)
         savedDesignData = UserDefaults.standard.data(forKey: designDefaultsKey)
+        savedThemeID = runtime.selectedThemeID
+        savedThemeName = runtime.selectedThemeName
     }
 
-    override func tearDown() {
+    override func tearDown() async throws {
         runtime.discardTryOn()
         if let savedRuntimeDocument {
             try? runtime.apply(savedRuntimeDocument)
         }
+        runtime.rememberThemeIdentity(id: savedThemeID, displayName: savedThemeName)
         if let savedDesignData {
             UserDefaults.standard.set(savedDesignData, forKey: designDefaultsKey)
         } else {
             UserDefaults.standard.removeObject(forKey: designDefaultsKey)
         }
-        super.tearDown()
+        try await super.tearDown()
     }
 
     func testToolArgumentsDecodeAndDocumentRoundTripPreserveDesign() throws {
@@ -39,8 +44,8 @@ final class AmberThemeDesignTests: XCTestCase {
         let document = try AmberThemePackTransfer.document(fromToolArguments: arguments)
         let design = try XCTUnwrap(document.design)
 
-        XCTAssertEqual(design.light.background, "#F4F0E8")
-        XCTAssertEqual(design.dark.foreground, "#F4EEE6")
+        XCTAssertEqual(design.light?.background, "#F4F0E8")
+        XCTAssertEqual(design.dark?.foreground, "#F4EEE6")
         XCTAssertEqual(design.gradient?.darkColors, ["#17141A", "#3B2C31"])
         XCTAssertEqual(design.patterns.map(\.kind), ["dots", "waves"])
         XCTAssertEqual(design.patterns.first?.spacing, 18)

@@ -2899,12 +2899,14 @@ final class ChatToolRuntime {
                     serverName: "local",
                     toolName: toolName,
                     argumentsPreview: IOSThemePackToolCatalog.argumentsPreview(for: document),
-                    reason: IOSThemePackToolCatalog.approvalReason(displayName: document.displayName),
+                    reason: IOSThemePackToolCatalog.approvalReason(
+                        displayName: document.displayName,
+                        replacesInstalled: AmberThemePackLibrary.shared.contains(id: document.id)
+                    ),
                     themePackPreview: document
                 )
                 return .waitingForApproval(.mcp(request))
             } catch {
-                themePackToolService.discardPreparedImport()
                 return .completed(messagesByFinishingToolCall(
                     pending.toolCall,
                     outputText: ChatToolOutputFormatter.toolFailureJSON(

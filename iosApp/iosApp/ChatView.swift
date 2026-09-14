@@ -1107,7 +1107,7 @@ struct ChatView: View {
         for message in messages.suffix(3).reversed() {
             let tools = message.parts.compactMap { $0 as? UIMessagePart.Tool }
             if let failed = tools.reversed().first(where: {
-                ChatToolOutputFormatter.failureReason(from: $0.output) != nil
+                ChatToolOutputFormatter.analysis(for: $0).failureReason != nil
             }) {
                 return ChatToolStepModel(tool: failed)
             }

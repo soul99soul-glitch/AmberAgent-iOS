@@ -252,6 +252,11 @@ struct ComposerInputTextView: UIViewRepresentable {
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: ComposerInputTextView
         let controller: ComposerInputController
+        private var lastMeasuredText: String?
+        private var lastMeasuredWidth: CGFloat = 0
+        private var lastMeasuredFont: UIFont?
+        private var lastMeasuredInsets: UIEdgeInsets = .zero
+        private var measurementRevision = 0
 
         init(parent: ComposerInputTextView) {
             self.parent = parent
@@ -289,16 +294,26 @@ struct ComposerInputTextView: UIViewRepresentable {
         func updateHeight(for textView: UITextView) {
             let width = textView.bounds.width
             guard width > 0 else { return }
+            let font = textView.font ?? .preferredFont(forTextStyle: .body)
+            guard lastMeasuredText != textView.text || lastMeasuredWidth != width ||
+                    lastMeasuredFont != font || lastMeasuredInsets != textView.textContainerInset else { return }
+            lastMeasuredText = textView.text
+            lastMeasuredWidth = width
+            lastMeasuredFont = font
+            lastMeasuredInsets = textView.textContainerInset
+            measurementRevision &+= 1
+            let revision = measurementRevision
             let fittingSize = textView.sizeThatFits(
                 CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
             )
-            let font = textView.font ?? .preferredFont(forTextStyle: .body)
             let maxHeight = ceil(font.lineHeight * parent.maxLines)
                 + textView.textContainerInset.top
                 + textView.textContainerInset.bottom
             let nextHeight = min(max(parent.minHeight, ceil(fittingSize.height)), maxHeight)
             let shouldScroll = fittingSize.height > maxHeight + 0.5
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView, self.measurementRevision == revision,
+                      self.controller.textView === textView else { return }
                 if abs(self.parent.height - nextHeight) > 0.5 {
                     self.parent.height = nextHeight
                 }

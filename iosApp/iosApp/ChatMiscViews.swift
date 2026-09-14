@@ -66,6 +66,7 @@ struct ChatUIKitVariableColorSymbol: UIViewRepresentable {
 
 struct ChatReasoningCard: View {
     let bodyText: String
+    private let hasBodyText: Bool
     var isThinking: Bool = false
     var startedAt: Date? = nil
     var finishedSeconds: Double? = nil
@@ -110,6 +111,7 @@ struct ChatReasoningCard: View {
         // Streaming reasoning should be visible: it reassures the user that the agent is working.
         // The body gets a fixed live height below, so visibility does not fight chat scrolling.
         let hasInitialBodyText = Self.hasVisibleText(bodyText)
+        self.hasBodyText = hasInitialBodyText
         self._isExpanded = State(initialValue: hasInitialBodyText && (isThinking ? true : !autoCloseThinking))
     }
 
@@ -118,9 +120,8 @@ struct ChatReasoningCard: View {
     /// 不用 `trimmingCharacters(in:).isEmpty`:它的成本取决于首字符是否为空白。
     /// 首字符非空白时 Foundation 走零拷贝快路径(1M 字符实测 ~2µs);一旦正文以
     /// 空白或换行开头(模型 thinking 很常见),它会真的分配一份全文副本——同规模
-    /// 实测 ~90µs/次。而 `hasBodyText` 经 `showsBody` 在一次 body 求值中被求值
-    /// 约 10 次(圆角/chevron/高度/mask/animation 等处各一次),流式期间每 48ms
-    /// 一轮,叠加后接近 0.9ms,是 120Hz 单帧预算(8.3ms)的一成以上。
+    /// 实测 ~90µs/次。可见性现在只在输入快照初始化时计算一次，
+    /// 圆角、chevron、高度和展开状态观察都复用这个 Bool。
     /// `contains` 在首个非空白字符处返回,与首字符形态无关,恒为亚微秒。
     static func hasVisibleText(_ text: String) -> Bool {
         text.contains { !$0.isWhitespace }
@@ -133,10 +134,6 @@ struct ChatReasoningCard: View {
     private var levelSuffix: String {
         guard let levelLabel, !levelLabel.isEmpty else { return "" }
         return " · \(levelLabel)"
-    }
-
-    private var hasBodyText: Bool {
-        Self.hasVisibleText(bodyText)
     }
 
     private var showsBody: Bool {
@@ -351,9 +348,9 @@ struct ChatReasoningCard: View {
             reduceMotion || suppressesShowsBodyAnimation ? nil : .easeInOut(duration: 0.28),
             value: showsBody
         )
-        .onChange(of: bodyText) { _, newValue in
+        .onChange(of: hasBodyText) { _, newValue in
             guard isThinking, !userToggled else { return }
-            if Self.hasVisibleText(newValue) {
+            if newValue {
                 setExpanded(true, duration: 0.28)
             }
         }
@@ -385,7 +382,14 @@ private struct ChatReasoningBodyTextView: UIViewRepresentable {
     var onClippedChanged: (Bool) -> Void = { _ in }
 
     func makeUIView(context: Context) -> ChatReasoningTextView {
-        let textView = ChatReasoningTextView()
+        let storage = NSTextStorage()
+        let layoutManager = ChatReasoningLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: 0, height: ChatReasoningTextView.unboundedMeasuringHeight))
+        storage.addLayoutManager(layoutManager)
+        layoutManager.addTextContainer(container)
+        let textView = ChatReasoningTextView(frame: .zero, textContainer: container)
+        container.heightTracksTextView = false
+        container.size.height = ChatReasoningTextView.unboundedMeasuringHeight
         textView.onClippedChanged = onClippedChanged
         textView.backgroundColor = .clear
         textView.isEditable = false
@@ -396,10 +400,14 @@ private struct ChatReasoningBodyTextView: UIViewRepresentable {
         textView.showsVerticalScrollIndicator = false
         textView.textContainerInset = UIEdgeInsets(top: 2, left: 12, bottom: 10, right: 12)
         textView.textContainer.lineFragmentPadding = 0
-        textView.font = UIFont.preferredFont(forTextStyle: .caption2)
+        textView.font = UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: textView.traitCollection)
         textView.textColor = UIColor(AmberTheme.muted)
         textView.adjustsFontForContentSizeCategory = true
         textView.alwaysBounceVertical = false
+        // The live window is bounded. Use exact line positions; viewport-only
+        // estimates would move the scroll extent as fading glyphs redraw.
+        layoutManager.allowsNonContiguousLayout = false
+        textView.accessibilityIdentifier = "chat.reasoning.body"
         return textView
     }
 
@@ -407,7 +415,7 @@ private struct ChatReasoningBodyTextView: UIViewRepresentable {
         textView.onClippedChanged = onClippedChanged
         textView.apply(
             text: text,
-            font: UIFont.preferredFont(forTextStyle: .caption2),
+            font: UIFont.preferredFont(forTextStyle: .caption2, compatibleWith: textView.traitCollection),
             color: UIColor(AmberTheme.muted),
             followsBottomOnFirstPresentation: followsBottomOnFirstPresentation,
             animatesNewWords: animatesNewWords
@@ -423,11 +431,62 @@ private struct ChatReasoningBodyTextView: UIViewRepresentable {
         uiView: ChatReasoningTextView,
         context: Context
     ) -> CGSize? {
-        guard let width = proposal.width, width > 0 else { return nil }
+        guard let width = proposal.width, width > 0, width.isFinite else { return nil }
         // Same contract as Chat `ParagraphUIView`: never call UITextView.sizeThatFits
         // with an unbounded height. That path mutates the container and relayouts
         // the whole document on every 48ms thinking beat.
         return uiView.fittingSize(forWidth: width, maxHeight: maxHeight)
+    }
+}
+
+/// Fade glyph drawing without editing attributed text on every display frame.
+/// TextKit keeps the authoritative color, selection and layout; overlapping
+/// character ranges share the lowest alpha when they map to the same glyph.
+final class ChatReasoningLayoutManager: NSLayoutManager {
+    struct OpacityRange {
+        let range: NSRange
+        let alpha: CGFloat
+    }
+
+    private(set) var opacityRanges: [OpacityRange] = []
+
+    func setOpacityRanges(_ ranges: [OpacityRange]) {
+        let dirtyRanges = opacityRanges + ranges
+        opacityRanges = ranges
+        let documentRange = NSRange(location: 0, length: textStorage?.length ?? 0)
+        for item in dirtyRanges {
+            let range = NSIntersectionRange(item.range, documentRange)
+            if range.length > 0 { invalidateDisplay(forCharacterRange: range) }
+        }
+    }
+
+    override func drawGlyphs(forGlyphRange glyphsToShow: NSRange, at origin: CGPoint) {
+        guard !opacityRanges.isEmpty, let context = UIGraphicsGetCurrentContext() else {
+            super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+            return
+        }
+        let documentRange = NSRange(location: 0, length: textStorage?.length ?? 0)
+        let visibleFades = opacityRanges.compactMap { item -> OpacityRange? in
+            let characters = NSIntersectionRange(item.range, documentRange)
+            guard characters.length > 0 else { return nil }
+            let glyphs = NSIntersectionRange(
+                glyphRange(forCharacterRange: characters, actualCharacterRange: nil), glyphsToShow
+            )
+            return glyphs.length > 0 ? OpacityRange(range: glyphs, alpha: item.alpha) : nil
+        }
+        guard !visibleFades.isEmpty else {
+            super.drawGlyphs(forGlyphRange: glyphsToShow, at: origin)
+            return
+        }
+        let boundaries = Set([glyphsToShow.location, NSMaxRange(glyphsToShow)] +
+            visibleFades.flatMap { [$0.range.location, NSMaxRange($0.range)] }).sorted()
+        for (start, end) in zip(boundaries, boundaries.dropFirst()) where end > start {
+            let alpha = visibleFades.filter { NSLocationInRange(start, $0.range) }.map(\.alpha).min() ?? 1
+            context.saveGState()
+            context.setAlpha(alpha)
+            super.drawGlyphs(forGlyphRange: NSRange(location: start, length: end - start), at: origin)
+            context.restoreGState()
+        }
     }
 }
 
@@ -441,7 +500,7 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
 
     /// Finite stand-in for "unbounded". `.greatestFiniteMagnitude` makes
     /// TextKit line-fragment math pathologically slow (Chat `ParagraphUIView`).
-    private static let unboundedMeasuringHeight: CGFloat = 10_000_000
+    static let unboundedMeasuringHeight: CGFloat = 10_000_000
     // Keep the same bounded window during streaming, manual scrolling, and
     // completion. Restoring full text here would reintroduce the layout stall.
 
@@ -479,6 +538,7 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     var onClippedChanged: ((Bool) -> Void)?
 
     override func layoutSubviews() {
+        if bounds.width > 0 { synchronizeTextContainer(forWidth: bounds.width) }
         super.layoutSubviews()
         let clipped = contentSize.height > bounds.height + 1
         if clipped != lastClipped {
@@ -500,6 +560,7 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     override func willMove(toWindow newWindow: UIWindow?) {
         super.willMove(toWindow: newWindow)
         if newWindow == nil {
+            finishWordFades()
             stopDisplayLink()
         }
     }
@@ -513,13 +574,26 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         if abs(width - lastMeasureWidth) < 0.5, lastUnconstrainedHeight >= maxHeight {
             return CGSize(width: width, height: maxHeight)
         }
-        let measured = super.sizeThatFits(
-            CGSize(width: width, height: Self.unboundedMeasuringHeight)
-        )
-        let height = ceil(measured.height)
+        // UITextView.sizeThatFits temporarily changes the TextKit container.
+        // Read its actual laid-out glyphs at a stable width instead, so measuring
+        // a clipped card cannot transiently change the document's scroll extent.
+        synchronizeTextContainer(forWidth: width)
+        _ = layoutManager.glyphRange(for: textContainer)
+        let used = layoutManager.usedRect(for: textContainer)
+        let height = ceil(used.height + textContainerInset.top + textContainerInset.bottom)
         lastUnconstrainedHeight = height
         lastMeasureWidth = width
         return CGSize(width: width, height: min(maxHeight, height))
+    }
+
+    private func synchronizeTextContainer(forWidth width: CGFloat) {
+        let textWidth = max(1, width - textContainerInset.left - textContainerInset.right)
+        guard abs(textContainer.size.width - textWidth) >= 0.5 ||
+                textContainer.size.height != Self.unboundedMeasuringHeight else { return }
+        textContainer.size = CGSize(width: textWidth, height: Self.unboundedMeasuringHeight)
+        layoutManager.invalidateLayout(forCharacterRange: NSRange(location: 0, length: textStorage.length),
+            actualCharacterRange: nil)
+        lastMeasureWidth = 0
     }
 
     func apply(
@@ -542,8 +616,12 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
             renderedColor?.isEqual(resolvedColor) != true
         renderedFont = newFont
         renderedColor = resolvedColor
-        font = newFont
-        textColor = resolvedColor
+        if styleChanged {
+            font = newFont
+            textColor = resolvedColor
+            lastUnconstrainedHeight = 0
+            lastMeasureWidth = 0
+        }
 
         if newText == renderedText, !styleChanged,
            textWindow.omissionNotice == renderedOmissionNotice {
@@ -563,7 +641,7 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
             .font: newFont,
             .foregroundColor: resolvedColor,
         ]
-        if targetStorage.hasPrefix(storageText),
+        if !styleChanged, targetStorage.hasPrefix(storageText),
            (targetStorage as NSString).length > (storageText as NSString).length,
            !storageText.isEmpty {
             let oldLength = (storageText as NSString).length
@@ -699,9 +777,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         startDisplayLink()
     }
 
-    /// 尾段整体淡入（与正文段落同构）：一拍一条 fade，替代逐词 N 条——
-    /// display link 每帧重写的属性范围从「全部词」降到 1 条，思考流式期
-    /// 主线程开销降一个量级。
+    /// 每拍只记录一个尾段淡入范围。Display link 更新绘制透明度，
+    /// 不再通过文本属性编辑触发 TextKit 的处理和重排版。
     private func appendTailFade(in range: NSRange) {
         guard range.length > 0 else { return }
         activeWordFades.append(WordFade(
@@ -714,17 +791,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     }
 
     private func finishWordFades() {
-        guard !activeWordFades.isEmpty, let renderedColor else { return }
-        textStorage.beginEditing()
-        for fade in activeWordFades where NSMaxRange(fade.range) <= textStorage.length {
-            textStorage.addAttribute(
-                .foregroundColor,
-                value: renderedColor,
-                range: fade.range
-            )
-        }
-        textStorage.endEditing()
         activeWordFades.removeAll()
+        (layoutManager as? ChatReasoningLayoutManager)?.setOpacityRanges([])
         stopDisplayLinkIfIdle()
     }
 
@@ -736,28 +804,20 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     }
 
     private func updateWordFades(at currentTime: CFTimeInterval) {
-        guard !activeWordFades.isEmpty, let renderedColor else { return }
-        textStorage.beginEditing()
-        for fade in activeWordFades where NSMaxRange(fade.range) <= textStorage.length {
+        guard !activeWordFades.isEmpty else { return }
+        activeWordFades.removeAll { currentTime - $0.startTime >= $0.duration }
+        let ranges = activeWordFades.compactMap { fade -> ChatReasoningLayoutManager.OpacityRange? in
+            guard NSMaxRange(fade.range) <= textStorage.length else { return nil }
             let elapsed = currentTime - fade.startTime
             let progress = min(max(elapsed / max(fade.duration, 0.001), 0), 1)
-            let eased = Self.easeOut(CGFloat(progress))
-            textStorage.addAttribute(
-                .foregroundColor,
-                value: renderedColor.withAlphaComponent(renderedColor.cgColor.alpha * eased),
-                range: fade.range
-            )
+            return ChatReasoningLayoutManager.OpacityRange(range: fade.range, alpha: Self.easeOut(CGFloat(progress)))
         }
-        textStorage.endEditing()
-        activeWordFades.removeAll {
-            currentTime - $0.startTime >= $0.duration
-        }
+        (layoutManager as? ChatReasoningLayoutManager)?.setOpacityRanges(ranges)
     }
 
     /// 限速连续跟随：内部滚动按 540pt/s 逐帧推进（cadence 门禁契约：
     /// 单帧步进 ≤10pt，不能随 chunk 整行跳）。掉帧/乱跳的根因不在跟随
-    /// 策略，而在每帧开销——尾段整体淡入已把 display-link 属性重写从
-    /// 「全部词」降到 1 条。
+    /// 策略，而在每帧开销——淡入只刷新 glyph 绘制，不编辑文本存储。
     private func updateBottomFollow(displayLink: CADisplayLink, now: CFTimeInterval) {
         guard followsBottom else { return }
         if isTracking || isDragging || isDecelerating {

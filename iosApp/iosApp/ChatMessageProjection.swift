@@ -561,6 +561,66 @@ enum NativeTimelineProjector {
         )
     }
 
+    /// The cache verifies unchanged source shape before entering this path. Every
+    /// changed loaded row is rebuilt through the same row/entry builders as a full
+    /// projection, including non-tail tool backfills and mailbox result cards.
+    static func replacingToolMessages(
+        in previous: NativeTimelineProjection,
+        messages: [UIMessage], event: ChatEvent, startIndex: Int, unchangedMessageIDs: Set<String>,
+        isGenerationActive: Bool, viewportState: ChatViewportState,
+        displaySettingSignature: String, generativeUiSettingSignature: String,
+        renderStateRevision: UInt64, reasoningLevelLabel: String?,
+        streamedMessageIDs: Set<String>, renderStateStore: ChatRenderStateStore,
+        variantInfoProvider: (Int) -> IOSConversationStore.VariantInfo?,
+        contentHashProvider: (ChatMessageRowModel, Bool) -> Int
+    ) -> NativeTimelineProjection? {
+        guard event == .toolCallStarted || event == .toolResultAppended || event == .assistantStreamClosed else {
+            return nil
+        }
+        // Mailbox visibility is metadata-driven; it can change without replacing
+        // a UIMessage object. A new/removed visible row requires the full planner.
+        let visibleIndices = messages.indices.dropFirst(max(0, startIndex)).filter {
+            ChatMessageProjector.isVisibleInTimeline(messages[$0])
+        }
+        guard visibleIndices == previous.entries.compactMap(\.index) else { return nil }
+        let lastVisibleIndex = messages.lastIndex(where: ChatMessageProjector.isVisibleInTimeline)
+        var entries = previous.entries
+        for entryIndex in entries.indices {
+            let old = entries[entryIndex]
+            guard old.kind == .message, let index = old.index, let id = old.messageId else { continue }
+            guard messages.indices.contains(index), ChatMessageProjector.messageId(for: messages[index]) == id else {
+                return nil
+            }
+            // The tail also owns renderer/terminal state even if its payload did
+            // not change. Insertion flags and stream-close state must not linger.
+            if unchangedMessageIDs.contains(id), !old.isLastMessage, !old.isStreaming,
+               !old.canAnimateInsertion, old.hasEverStreamed == streamedMessageIDs.contains(id),
+               old.isAssistantContinuation == ChatMessageProjector.isAssistantContinuation(at: index, in: messages) {
+                continue
+            }
+            guard let row = ChatMessageProjector.row(
+                at: index, in: messages, event: event, streamedMessageIDs: streamedMessageIDs,
+                lastVisibleIndex: lastVisibleIndex
+            ) else { return nil }
+            var entry = nativeEntry(
+                for: .message(ChatTimelinePlanner.messageEntry(for: row)),
+                isGenerationActive: isGenerationActive, viewportState: viewportState,
+                displaySettingSignature: displaySettingSignature,
+                generativeUiSettingSignature: generativeUiSettingSignature,
+                renderStateRevision: renderStateRevision, reasoningLevelLabel: reasoningLevelLabel,
+                renderStateStore: renderStateStore, variantInfoProvider: variantInfoProvider,
+                contentHashProvider: contentHashProvider
+            )
+            entry.isCompactedHistory = old.isCompactedHistory
+            entries[entryIndex] = entry
+        }
+        let messageEntries = entries.filter { $0.kind == .message }
+        let latestToken = messageEntries.last.map {
+            "\(messageEntries.count):\($0.messageId ?? ""):\($0.renderToken):\(entries.contains { $0.kind == .pendingAssistant })"
+        } ?? previous.latestRenderToken
+        return NativeTimelineProjection(entries: entries, latestRenderToken: latestToken)
+    }
+
     private static func nativeEntry(
         for entry: ChatTimelineEntry,
         isGenerationActive: Bool = false,
@@ -771,22 +831,7 @@ enum ChatTimelinePlanner {
             startIndex: startIndex
         )
         var entries = rows.map { row in
-            ChatTimelineEntry.message(
-                ChatTimelineMessageEntry(
-                    id: messageEntryIDPrefix + row.messageId,
-                    messageId: row.messageId,
-                    message: row.message,
-                    role: row.role,
-                    index: row.index,
-                    isLast: row.isLast,
-                    isStreaming: row.isStreaming,
-                    hasEverStreamed: row.hasEverStreamed,
-                    canAnimateInsertion: row.canAnimateInsertion,
-                    renderer: rendererKind(for: row),
-                    renderToken: includeRenderTokens ? renderToken(for: row) : "",
-                    isAssistantContinuation: row.isAssistantContinuation
-                )
-            )
+            ChatTimelineEntry.message(messageEntry(for: row, includeRenderToken: includeRenderTokens))
         }
 
         if includePendingAssistant {
@@ -799,6 +844,17 @@ enum ChatTimelinePlanner {
             latestRenderToken: includeRenderTokens
                 ? latestRenderToken(rows: rows, includePendingAssistant: includePendingAssistant)
                 : ""
+        )
+    }
+
+    static func messageEntry(for row: ChatMessageRowModel, includeRenderToken: Bool = true) -> ChatTimelineMessageEntry {
+        ChatTimelineMessageEntry(
+            id: messageEntryIDPrefix + row.messageId, messageId: row.messageId,
+            message: row.message, role: row.role, index: row.index,
+            isLast: row.isLast, isStreaming: row.isStreaming, hasEverStreamed: row.hasEverStreamed,
+            canAnimateInsertion: row.canAnimateInsertion, renderer: rendererKind(for: row),
+            renderToken: includeRenderToken ? renderToken(for: row) : "",
+            isAssistantContinuation: row.isAssistantContinuation
         )
     }
 
@@ -891,33 +947,33 @@ enum ChatMessageProjector {
     ) -> [ChatMessageRowModel] {
         let lastVisibleIndex = messages.lastIndex(where: isVisibleInTimeline)
         return messages.indices.dropFirst(max(0, startIndex)).compactMap { index in
-            let message = messages[index]
-            guard isVisibleInTimeline(message) else { return nil }
-            let messageId = messageId(for: message)
-            let isResult = isSubAgentResult(message)
-            let isLast = index == lastVisibleIndex
-            let isLastAssistant = isLast && message.role == MessageRole.assistant
-            let isStreaming = event == .assistantStreamDelta && isLastAssistant
-            let hasEverStreamed = !isResult && (isStreaming || streamedMessageIDs.contains(messageId))
-            let canAnimateInsertion = (event == .toolResultAppended && isResult) || (event == .userMessageAppended &&
-                isLast &&
-                message.role == MessageRole.user && !isResult)
-
-            return ChatMessageRowModel(
-                rowId: messageId,
-                messageId: messageId,
-                message: message,
-                role: isResult ? MessageRole.assistant : message.role,
-                parts: message.parts,
-                index: index,
-                isLast: isLast,
-                isStreaming: isStreaming,
-                hasEverStreamed: hasEverStreamed,
-                canAnimateInsertion: canAnimateInsertion,
-                isAssistantContinuation: isAssistantContinuation(at: index, in: messages)
-            )
+            row(at: index, in: messages, event: event, streamedMessageIDs: streamedMessageIDs,
+                lastVisibleIndex: lastVisibleIndex)
         }
     }
+
+    static func row(
+        at index: Int, in messages: [UIMessage], event: ChatEvent,
+        streamedMessageIDs: Set<String>, lastVisibleIndex: Int?
+    ) -> ChatMessageRowModel? {
+        let message = messages[index]
+        guard isVisibleInTimeline(message) else { return nil }
+        let messageId = messageId(for: message)
+        let isResult = isSubAgentResult(message)
+        let isLast = index == lastVisibleIndex
+        let isStreaming = event == .assistantStreamDelta && isLast && message.role == MessageRole.assistant
+        let hasEverStreamed = !isResult && (isStreaming || streamedMessageIDs.contains(messageId))
+        let canAnimateInsertion = (event == .toolResultAppended && isResult) ||
+            (event == .userMessageAppended && isLast && message.role == MessageRole.user && !isResult)
+        return ChatMessageRowModel(
+            rowId: messageId, messageId: messageId, message: message,
+            role: isResult ? MessageRole.assistant : message.role, parts: message.parts, index: index,
+            isLast: isLast, isStreaming: isStreaming, hasEverStreamed: hasEverStreamed,
+            canAnimateInsertion: canAnimateInsertion,
+            isAssistantContinuation: isAssistantContinuation(at: index, in: messages)
+        )
+    }
+
 }
 
 enum ChatInsertionAnimationPolicy {

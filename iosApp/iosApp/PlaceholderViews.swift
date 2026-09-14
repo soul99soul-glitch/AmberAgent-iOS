@@ -119,8 +119,8 @@ enum AmberTheme {
     private static func base(_ key: KeyPath<AmberPalette, UInt32>, alpha: Double = 1) -> Color {
         let paper = AmberThemeRuntime.shared.paper
         let design = AmberThemeRuntime.shared.design
-        let lightHex = (design?.light.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: key]
-        let darkHex = (design?.dark.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: key]
+        let lightHex = (design?.light?.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: key]
+        let darkHex = (design?.dark?.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: key]
         return Color(uiColor: UIColor { trait in
             UIColor(hex: trait.userInterfaceStyle == .dark ? darkHex : lightHex, alpha: alpha)
         })
@@ -340,8 +340,8 @@ enum AmberTheme {
     )
 
     private static func homeTokens(for paper: AmberThemeRuntime.Paper, dark: Bool, design: AmberThemeDesign? = nil) -> AmberHomeTokens {
-        if let design {
-            let palette = dark ? design.dark.resolving(paper.darkPalette) : design.light.resolving(paper.lightPalette)
+        if let source = dark ? design?.dark : design?.light {
+            let palette = source.resolving(dark ? paper.darkPalette : paper.lightPalette)
             let chrome = dark ? homeDark : homeNeutral
             return AmberHomeTokens(
                 sep: palette.foreground, press: palette.foreground,
@@ -519,6 +519,15 @@ final class AmberThemeRuntime {
         }
     }
 
+    /// Identity is independent of visual equality: two named packs may share
+    /// exactly the same recipe and must still remain separate edit targets.
+    private(set) var selectedThemeID: String? {
+        didSet { persistString(Keys.selectedThemeID, selectedThemeID) }
+    }
+    private(set) var selectedThemeName: String? {
+        didSet { persistString(Keys.selectedThemeName, selectedThemeName) }
+    }
+
     var paper: Paper { didSet { persistString(Keys.paper, paper.rawValue) } }
     var accentHex: UInt32 { didSet { persistInt(Keys.accent, Int(accentHex)) } }
     var accentInkHex: UInt32 { didSet { persistInt(Keys.accentInk, Int(accentInkHex)) } }
@@ -572,6 +581,8 @@ final class AmberThemeRuntime {
     private var persistEnabled = true
 
     private enum Keys {
+        static let selectedThemeID = "app.amber.ios.theme.selectedThemeID"
+        static let selectedThemeName = "app.amber.ios.theme.selectedThemeName"
         static let design = "app.amber.ios.theme.design"
         static let paper = "app.amber.ios.theme.paper"
         static let accent = "app.amber.ios.theme.accentHex"
@@ -592,6 +603,8 @@ final class AmberThemeRuntime {
 
     private init() {
         let d = UserDefaults.standard
+        selectedThemeID = d.string(forKey: Keys.selectedThemeID)
+        selectedThemeName = d.string(forKey: Keys.selectedThemeName)
         let savedDesign = d.data(forKey: Keys.design).flatMap { try? JSONDecoder().decode(AmberThemeDesign.self, from: $0) }
         if let savedDesign, (try? savedDesign.validate()) != nil {
             design = savedDesign
@@ -624,13 +637,40 @@ final class AmberThemeRuntime {
     }
 
     func apply(_ paper: Paper) {
+        if design != nil || self.paper != paper {
+            rememberThemeIdentity(id: nil, displayName: nil)
+        }
         design = nil
         self.paper = paper
     }
 
     func apply(_ option: AmberAccentOption) {
+        if accentHex != option.accentHex || accentInkHex != option.inkHex {
+            rememberThemeIdentity(id: nil, displayName: nil)
+        }
         accentHex = option.accentHex
         accentInkHex = option.inkHex
+    }
+
+    func rememberThemeIdentity(id: String?, displayName: String?) {
+        selectedThemeID = id
+        selectedThemeName = displayName
+    }
+
+    /// Library deletion detaches identity even while preference writes are
+    /// suspended for try-on. Reverting may restore colors, never a deleted id.
+    func forgetThemeIdentity(id: String) {
+        if selectedThemeID == id {
+            rememberThemeIdentity(id: nil, displayName: nil)
+        }
+        if tryOnSession?.baseline.id == id {
+            tryOnSession?.baseline.id = "custom"
+            tryOnSession?.baseline.displayName = "自定义"
+        }
+        if UserDefaults.standard.string(forKey: Keys.selectedThemeID) == id {
+            UserDefaults.standard.removeObject(forKey: Keys.selectedThemeID)
+            UserDefaults.standard.removeObject(forKey: Keys.selectedThemeName)
+        }
     }
 
     /// Wear `candidate` on screen without writing UserDefaults. A second call
@@ -684,7 +724,7 @@ final class AmberThemeRuntime {
         tryOnSession = nil
     }
 
-    private func persistString(_ key: String, _ value: String) {
+    private func persistString(_ key: String, _ value: String?) {
         guard persistEnabled else { return }
         UserDefaults.standard.set(value, forKey: key)
     }
@@ -707,7 +747,7 @@ struct AmberThemeTryOnApproval: Equatable {
 
 struct AmberThemeTryOnSession: Equatable {
     let id = UUID()
-    let baseline: AmberThemePackDocument
+    var baseline: AmberThemePackDocument
     let candidate: AmberThemePackDocument
     let approval: AmberThemeTryOnApproval?
 }
@@ -2254,8 +2294,8 @@ private struct HomeGlassCircleButton: View {
                 .frame(width: size, height: size)
                 .contentShape(Circle())
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
-        .homeGlassControl(cornerRadius: size / 2)
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
+        .homeGlassControl(cornerRadius: size / 2, interactive: false)
         .modifier(HomeOptionalGlassEffectID(id: glassEffectID, namespace: glassNamespace))
         .accessibilityLabel(accessibilityLabel)
     }
@@ -2552,12 +2592,12 @@ struct ConversationsView: View {
     /// E 版 + Liquid Glass skill：
     /// - 玻璃只上控制层（搜索/齿轮 + 展开条 + 右下新建胶囊）
     /// - iOS 26：同一 `GlassEffectContainer` 内用 `glassEffectID("homeSearch")` 做胶囊→全宽条 morph
-    /// - container spacing 8、横向 layout 10 → 静态不永久 blob
+    /// - 关闭相邻玻璃的融合距离；搜索与齿轮留出 18pt，按压不再膨胀黏连
     /// - 展开 0.32s 对齐原型 cubic-bezier(0.2,.8,.2,1)；Reduce Motion 缩短
     private var header: some View {
         Group {
             if #available(iOS 26.0, *) {
-                GlassEffectContainer(spacing: 8) {
+                GlassEffectContainer(spacing: 0) {
                     homeHeaderStack(useGlassEffectID: true)
                 }
             } else {
@@ -2583,6 +2623,7 @@ struct ConversationsView: View {
                             id: useGlassEffectID ? "homeSearch" : nil,
                             namespace: useGlassEffectID ? homeSearchNamespace : nil
                         ))
+                        .padding(.trailing, 8)
                 }
 
                 homeSettingsGlassButton
@@ -2608,10 +2649,6 @@ struct ConversationsView: View {
                 expandedSearchBar
                     .padding(.horizontal, 16)
                     .padding(.top, 15)
-                    .modifier(HomeOptionalGlassEffectID(
-                        id: useGlassEffectID ? "homeSearch" : nil,
-                        namespace: useGlassEffectID ? homeSearchNamespace : nil
-                    ))
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -2631,8 +2668,8 @@ struct ConversationsView: View {
             .frame(width: 78, height: 38)
             .contentShape(Capsule())
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
-        .homeGlassControl(cornerRadius: 19)
+        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
+        .homeGlassControl(cornerRadius: 19, interactive: false)
         .accessibilityLabel("搜索")
         .accessibilityAddTraits(.isButton)
     }
@@ -2671,7 +2708,7 @@ struct ConversationsView: View {
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity)
         .frame(height: 41)
-        .homeGlassControl(cornerRadius: 14)
+        .homeGlassControl(cornerRadius: 14, interactive: false)
         .homeGlassEffectID("homeSearch", in: homeSearchNamespace)
         .overlay {
             RoundedRectangle(cornerRadius: AmberTheme.controlRadius(14), style: .continuous)

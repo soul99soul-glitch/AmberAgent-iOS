@@ -100,8 +100,10 @@ struct AmberThemeDesign: Codable, Equatable, Hashable, Sendable {
         var brandTracking: Double? = nil
     }
 
-    var light: Palette
-    var dark: Palette
+    /// Omitted palettes inherit the existing paper tokens, including secondary
+    /// colors and home chrome. Component-only edits must not recolor the app.
+    var light: Palette?
+    var dark: Palette?
     var gradient: Gradient?
     var patterns: [Pattern]
     var components: Components? = nil
@@ -112,10 +114,15 @@ struct AmberThemeDesign: Codable, Equatable, Hashable, Sendable {
 
     /// Validates colors, readability, gradient stops, texture density, and optional controls.
     func validate() throws {
-        let lightForeground = try Self.validatePalette(light, prefix: "light")
-        let darkForeground = try Self.validatePalette(dark, prefix: "dark")
+        let lightForeground = try light.map { try Self.validatePalette($0, prefix: "light") }
+        let darkForeground = try dark.map { try Self.validatePalette($0, prefix: "dark") }
 
         if let gradient {
+            guard let lightForeground, let darkForeground else {
+                throw AmberThemeDesignValidationError.invalidValue(
+                    field: "gradient", value: "缺少配色", expected: "渐变需要完整的浅色和深色配色以校验对比度"
+                )
+            }
             try Self.validateGradientColors(
                 gradient.colors,
                 field: "gradient.colors",
@@ -320,16 +327,17 @@ struct AmberThemeDesign: Codable, Equatable, Hashable, Sendable {
 /// Renders a design recipe as a static, non-interactive canvas layer.
 struct AmberThemeDesignBackground: View {
     let design: AmberThemeDesign
+    var basePalette: AmberPalette? = nil
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let isDark = colorScheme == .dark
         let sourcePalette = isDark ? design.dark : design.light
-        let runtimePalette = isDark
+        let runtimePalette = basePalette ?? (isDark
             ? AmberThemeRuntime.shared.paper.darkPalette
-            : AmberThemeRuntime.shared.paper.lightPalette
-        let palette = sourcePalette.resolving(runtimePalette)
+            : AmberThemeRuntime.shared.paper.lightPalette)
+        let palette = sourcePalette?.resolving(runtimePalette) ?? runtimePalette
 
         ZStack {
             Color(hex: palette.background)

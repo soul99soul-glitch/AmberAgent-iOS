@@ -967,6 +967,85 @@ final class ChatToolGlyphMappingTests: XCTestCase {
         XCTAssertTrue(step.visualKind.isImageTool == false)
     }
 
+    func testTerminalOutputAnalysisInvalidatesSameIDAndPartCountWhenResultChanges() {
+        func tool(output: String, approvalState: ToolApprovalState = ToolApprovalState.Auto.shared) -> UIMessagePart.Tool {
+            UIMessagePart.Tool(
+                toolCallId: "ssh-same-id",
+                toolName: "terminal_execute",
+                input: "{}",
+                output: output.isEmpty ? [] : [UIMessagePart.Text(text: output, metadata: nil)],
+                approvalState: approvalState,
+                streamIndex: nil,
+                metadata: nil
+            )
+        }
+
+        let runningOutput = #"{"status":"running","stdout":"still working"}"#
+        let completedOutput = #"{"status":"completed","stdout":"done"}"#
+        let running = ChatToolOutputFormatter.analysis(for: tool(output: runningOutput).output)
+        let completed = ChatToolOutputFormatter.analysis(for: tool(output: completedOutput).output)
+
+        XCTAssertNil(running.failureReason)
+        XCTAssertEqual(running.firstJSONObject?["status"] as? String, "running")
+        XCTAssertEqual(completed.firstJSONObject?["status"] as? String, "completed")
+        XCTAssertNotEqual(running.joinedText, completed.joinedText)
+        XCTAssertEqual(ChatToolStepModel(tool: tool(output: runningOutput)).state, .active)
+        XCTAssertEqual(ChatToolStepModel(tool: tool(output: completedOutput)).state, .done)
+
+        // Approval is part of the KMP Tool snapshot, but this output analysis
+        // intentionally does not cache a whole step model. A pending tool keeps
+        // its current active state while a later replacement can still update
+        // the output projection independently.
+        XCTAssertEqual(
+            ChatToolStepModel(tool: tool(output: "", approvalState: ToolApprovalState.Pending.shared)).state,
+            .active
+        )
+    }
+
+    func testToolOutputAnalysisReusesParsedResultWithoutChangingFailureContract() {
+        let output: [UIMessagePart] = [
+            UIMessagePart.Text(
+                text: #"{"ok":false,"error":"ssh failed","status":"failed"}"#,
+                metadata: nil
+            ),
+            UIMessagePart.Text(text: "retry reminder", metadata: nil)
+        ]
+
+        let first = ChatToolOutputFormatter.analysis(for: output)
+        let second = ChatToolOutputFormatter.analysis(for: output)
+        XCTAssertTrue(first === second, "重复读取相同输出必须复用已解析对象")
+        XCTAssertEqual(first.failureReason, "ssh failed")
+        XCTAssertEqual(second.failureReason, first.failureReason)
+        XCTAssertEqual(second.firstJSONObject?["status"] as? String, "failed")
+        XCTAssertEqual(ChatToolOutputFormatter.failureReason(from: output), "ssh failed")
+    }
+
+    func testToolOutputAnalysisKeepsLargeToolWorkingSetWarm() {
+        let tools = (0..<384).map { index in
+            UIMessagePart.Tool(
+                toolCallId: "ssh-batch-\(index)",
+                toolName: "terminal_execute",
+                input: "{}",
+                output: [UIMessagePart.Text(
+                    text: #"{"status":"completed","stdout":"done-\#(index)"}"#,
+                    metadata: nil
+                )],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+        }
+
+        let firstPass = tools.map { ChatToolOutputFormatter.analysis(for: $0) }
+        let secondPass = tools.map { ChatToolOutputFormatter.analysis(for: $0) }
+        XCTAssertEqual(firstPass.count, 384)
+        XCTAssertEqual(secondPass.count, firstPass.count)
+        XCTAssertTrue(zip(firstPass, secondPass).allSatisfy { $0 === $1 },
+            "整个工具工作集必须命中缓存，逐个重新解析会让此断言失败")
+        XCTAssertTrue(secondPass.allSatisfy { $0.firstJSONObject?["status"] as? String == "completed" })
+        XCTAssertTrue(secondPass.allSatisfy { $0.failureReason == nil })
+    }
+
     func testImageToolVisualKindFlagsIslandImageKind() {
         XCTAssertTrue(ChatToolVisualKind.image.isImageTool)
         XCTAssertEqual(ChatToolVisualKind.image.activeIslandTint, .green)

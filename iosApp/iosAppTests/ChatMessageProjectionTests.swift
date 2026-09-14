@@ -8,6 +8,170 @@ import Shared
 
 @MainActor
 final class ChatMessageProjectionTests: XCTestCase {
+    func testToolProjectionReusesHistoryAndRefreshesNonTailBackfills() throws {
+        let cache = NativeTimelineProjectionCache()
+        let hashes = ChatRowContentHashCache()
+        let renderStore = ChatRenderStateStore()
+        var messages = (0..<60).map { UIMessage.companion.assistant(prompt: "历史 \($0)") }
+        var revision = 0
+        var requested: [Int] = []
+        let streamed = Set([ChatMessageProjector.messageId(for: messages.last!)])
+        var boundary = ChatContextCompactBoundary(id: "tools-compact",
+            afterMessageId: ChatMessageProjector.messageId(for: messages[20]),
+            coveredMessageIds: [ChatMessageProjector.messageId(for: messages[0])],
+            state: ChatContextCompactState(status: .completed, summary: "摘要", updatedAt: Date()))
+        func project(_ event: ChatEvent, display: String = "") -> NativeTimelineProjection {
+            revision += 1
+            requested = []
+            return cache.projection(messages: messages, event: event, sourceRevision: revision,
+                startIndex: 0, configurationIssue: nil, isGenerationActive: true,
+                isLoading: false, isRecognizingImages: false, contextCompactState: .idle,
+                contextCompactBoundaries: [boundary], viewportState: ChatViewportState(),
+                displaySettingSignature: display, generativeUiSettingSignature: "",
+                renderStateRevision: 0, reasoningLevelLabel: nil, streamedMessageIDs: streamed,
+                renderStateStore: renderStore, variantInfoProvider: { index in
+                    requested.append(index); return nil
+                }, contentHashProvider: { row, streaming in
+                    streaming ? hashes.streamingTailLayoutToken(for: row) : hashes.contentHash(for: row)
+                })
+        }
+        let before = project(.toolResultAppended)
+        XCTAssertEqual(requested.count, 60)
+        let old = messages[40]
+        let output = UIMessagePart.Text(text: #"{"status":"completed","stdout":"late"}"#, metadata: nil)
+        let tool = UIMessagePart.Tool(toolCallId: "late-ssh", toolName: "terminal_execute", input: "{}",
+            output: [output], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        messages[40] = UIMessage(id: old.id, role: old.role, parts: [tool], annotations: [],
+            createdAt: old.createdAt, finishedAt: old.finishedAt, modelId: nil, usage: nil, translation: nil)
+        let after = project(.toolResultAppended)
+        XCTAssertEqual(requested, [40, 59], "只重建变化的历史行与承载运行状态的尾行")
+        let full = NativeTimelineProjector.build(messages: messages, event: .toolResultAppended,
+            isGenerationActive: true, contextCompactBoundaries: [boundary],
+            streamedMessageIDs: streamed, renderStateStore: renderStore,
+            contentHashProvider: { row, streaming in
+                streaming ? hashes.streamingTailLayoutToken(for: row) : hashes.contentHash(for: row)
+            })
+        XCTAssertEqual(after, full, "增量结果必须与全量投影完全一致，包括压缩标记与行操作索引")
+        XCTAssertEqual(before.entries.first, after.entries.first)
+        output.metadata = [:]
+        _ = project(.toolResultAppended)
+        XCTAssertEqual(requested, [40, 59], "同一消息对象内的 metadata 修改不能被 identity 短路")
+        boundary = ChatContextCompactBoundary(id: boundary.id, afterMessageId: boundary.afterMessageId,
+            coveredMessageIds: boundary.coveredMessageIds,
+            state: ChatContextCompactState(status: .completed, summary: "更新后的摘要", updatedAt: Date()))
+        let newBoundary = project(.toolResultAppended)
+        XCTAssertEqual(requested.count, 60, "同 id 压缩边界内容变化必须使结构缓存失效")
+        XCTAssertEqual(newBoundary.entries.first { $0.kind == .contextMarker }?.compactState?.summary, "更新后的摘要")
+        _ = project(.toolResultAppended, display: "changed-font")
+        XCTAssertEqual(requested.count, 60, "显示设置变化必须全量重建")
+        messages.insert(UIMessage.companion.user(prompt: "新输入"), at: 0)
+        _ = project(.toolResultAppended)
+        XCTAssertEqual(requested.count, 61, "消息结构变化必须重新计算全部操作索引")
+        cache.reset()
+        _ = project(.conversationSwitched)
+        XCTAssertEqual(requested.count, 61, "切换会话不得复用旧快照")
+        let backfilled = messages[20]
+        messages[20] = UIMessage(id: backfilled.id, role: backfilled.role, parts: [tool],
+            annotations: [], createdAt: backfilled.createdAt, finishedAt: backfilled.finishedAt,
+            modelId: nil, usage: nil, translation: nil)
+        let tail = messages.last!
+        messages[messages.count - 1] = UIMessage(id: tail.id, role: tail.role,
+            parts: [UIMessagePart.Text(text: "回填后继续流式输出", metadata: nil)],
+            annotations: [], createdAt: tail.createdAt, finishedAt: nil,
+            modelId: nil, usage: nil, translation: nil)
+        let coalesced = project(.assistantStreamDelta)
+        XCTAssertEqual(requested.count, 61, "历史回填与尾行 delta 合并时必须退出仅尾行快路径")
+        XCTAssertTrue(coalesced.messageEntry(for: ChatMessageProjector.messageId(for: backfilled))?.message === messages[20])
+        let hidden = IosMailboxMessageBridge.shared.makeMessage(
+            authorThreadId: "/root/reviewer", type: "MESSAGE", payload: "内部进展")
+        messages.insert(hidden, at: 40)
+        let withHiddenMessage = project(.toolResultAppended)
+        XCTAssertNil(withHiddenMessage.messageEntry(for: ChatMessageProjector.messageId(for: hidden)))
+        (hidden.parts[0] as! UIMessagePart.Text).metadata = nil
+        let withVisibleMessage = project(.toolResultAppended)
+        XCTAssertNotNil(withVisibleMessage.messageEntry(for: ChatMessageProjector.messageId(for: hidden)),
+            "metadata 改变可见性时，不能因 UIMessage 身份未变而漏掉新行")
+        XCTAssertEqual(requested.count, 62)
+    }
+
+    private final class MeasuredComposerTextView: UITextView {
+        var measurements = 0
+        var fittedHeight: CGFloat = 80
+        override func sizeThatFits(_ size: CGSize) -> CGSize {
+            measurements += 1
+            return CGSize(width: size.width, height: fittedHeight)
+        }
+    }
+    func testComposerSkipsUnchangedLayoutAndDiscardsStaleHeightAfterSend() async {
+        var text = "第一行\n第二行"
+        var height: CGFloat = 40
+        var publishedHeights: [CGFloat] = []
+        let controller = ComposerInputController()
+        let composer = ComposerInputTextView(
+            text: Binding(get: { text }, set: { text = $0 }),
+            height: Binding(get: { height }, set: { height = $0; publishedHeights.append($0) }),
+            isFocused: .constant(false), isEnabled: true, sendOnEnter: true,
+            controller: controller, onSubmit: {})
+        let coordinator = composer.makeCoordinator()
+        let view = MeasuredComposerTextView(frame: CGRect(x: 0, y: 0, width: 300, height: 40))
+        view.font = .systemFont(ofSize: 17)
+        view.text = text
+        controller.textView = view
+        coordinator.updateHeight(for: view)
+        for _ in 0..<20 { coordinator.updateHeight(for: view) }
+        XCTAssertEqual(view.measurements, 1, "工具消息更新不能反复测量未变化的输入框")
+        view.text = ""
+        view.fittedHeight = 40
+        coordinator.updateHeight(for: view)
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(publishedHeights.isEmpty, "发送清空后，排队的旧多行高度不能再发布")
+        XCTAssertEqual(height, 40)
+        view.frame.size.width = 260
+        coordinator.updateHeight(for: view)
+        view.font = .systemFont(ofSize: 24)
+        coordinator.updateHeight(for: view)
+        XCTAssertEqual(view.measurements, 4, "宽度和字体变化仍要重新测量")
+    }
+
+    private final class VisibilityProbeModel: ObservableObject {
+        @Published var active = true
+        var creations = 0
+    }
+    private struct VisibilityProbe: UIViewRepresentable {
+        let model: VisibilityProbeModel
+        func makeUIView(context: Context) -> UIView {
+            model.creations += 1
+            return UIView()
+        }
+        func updateUIView(_ view: UIView, context: Context) {}
+    }
+    private struct VisibilityProbeHarness: View {
+        @ObservedObject var model: VisibilityProbeModel
+        var body: some View {
+            VisibilityProbe(model: model)
+                .frame(height: 40)
+                .modifier(ChatSwiftUIStreamingTailVisibilityModifier(
+                    active: model.active, assumeVisible: true, onVisibilityChanged: { _ in }))
+        }
+    }
+    func testAssistantBecomingHistoryPreservesItsHostedView() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first { $0.isKeyWindow }
+        let model = VisibilityProbeModel()
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = UIHostingController(rootView: VisibilityProbeHarness(model: model))
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previous?.makeKey() }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(model.creations, 1)
+        for active in [false, true, false] {
+            withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) { model.active = active }
+            try await Task.sleep(for: .milliseconds(100))
+            window.layoutIfNeeded()
+            XCTAssertEqual(model.creations, 1, "发送新消息或尾行恢复不能重建历史工具和 Markdown 子树")
+        }
+    }
+
     func testAgentResultsUseStaticAgentCardsWhileInternalProgressStaysOutOfTimeline() throws {
         let user = UIMessage.companion.user(prompt: "继续当前任务")
         let answer = UIMessage.companion.assistant(prompt: "正在整理")

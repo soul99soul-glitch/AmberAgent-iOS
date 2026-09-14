@@ -380,13 +380,23 @@ extension AmberThemeRuntime {
     /// 匹配到的导入库配方（`AmberThemePackLibrary.shared`）。
     @MainActor
     var matchingInstalledDocument: AmberThemePackDocument? {
-        AmberThemePackLibrary.shared.installed.first { $0.matches(runtime: self) }
+        if let selected = AmberThemePackLibrary.shared.installed.first(where: { $0.id == selectedThemeID }),
+           selected.matches(runtime: self) { return selected }
+        return AmberThemePackLibrary.shared.installed.first { $0.matches(runtime: self) }
     }
 
     /// 内置或导入库命中的稳定 id；皆无则为自定义组合。
     @MainActor
     var matchingThemeId: String? {
-        matchingPack?.id ?? matchingInstalledDocument?.id
+        if let selectedThemeID {
+            if let pack = AmberThemePack.builtins.first(where: { $0.id == selectedThemeID }), pack.matches(runtime: self) {
+                return selectedThemeID
+            }
+            if let document = matchingInstalledDocument, document.id == selectedThemeID {
+                return selectedThemeID
+            }
+        }
+        return matchingPack?.id ?? matchingInstalledDocument?.id
     }
 
     @MainActor
@@ -410,6 +420,7 @@ extension AmberThemeRuntime {
         launchBrand = pack.launchBrand
         assetMode = pack.assetMode
         immersivePolicy = pack.immersivePolicy
+        rememberThemeIdentity(id: pack.id, displayName: pack.displayName)
     }
 
     /// Apply a portable document (import). Never touches appearance mode or chat fonts.
@@ -547,8 +558,8 @@ enum AmberThemePackTransfer {
         return AmberThemePackDocument(
             format: AmberThemePackDocument.formatID,
             version: AmberThemePackDocument.currentVersion,
-            id: builtin?.id ?? installed?.id ?? "custom",
-            displayName: builtin?.displayName ?? installed?.displayName ?? "自定义",
+            id: runtime.selectedThemeID ?? builtin?.id ?? installed?.id ?? "custom",
+            displayName: runtime.selectedThemeName ?? builtin?.displayName ?? installed?.displayName ?? "自定义",
             paper: runtime.paper.rawValue,
             accentHex: hexString(runtime.accentHex),
             inkHex: hexString(runtime.accentInkHex),
@@ -613,6 +624,9 @@ enum AmberThemePackTransfer {
         if let raw = args["design"], !(raw is NSNull) {
             do {
                 design = try JSONDecoder().decode(AmberThemeDesign.self, from: JSONSerialization.data(withJSONObject: raw))
+                guard design?.light != nil, design?.dark != nil else {
+                    throw AmberThemePackTransferError.invalidJSON
+                }
             } catch {
                 throw AmberThemePackTransferError.invalidJSON
             }
@@ -731,6 +745,7 @@ enum AmberThemePackTransfer {
         runtime.launchBrand = optional(document.launchBrand, AmberLaunchBrandStyle.self, default: .none)
         runtime.assetMode = optional(document.assetMode, AmberThemeAssetMode.self, default: .builtinOnly)
         runtime.immersivePolicy = optional(document.immersivePolicy, AmberImmersivePolicy.self, default: .hidden)
+        runtime.rememberThemeIdentity(id: document.id, displayName: document.displayName)
     }
 
     private static func validateOptionalEnum<T: RawRepresentable>(
@@ -860,7 +875,7 @@ struct AmberThemePackMiniPreview: View {
         .background {
             ZStack {
                 if let design {
-                    AmberThemeDesignBackground(design: design)
+                    AmberThemeDesignBackground(design: design, basePalette: palette)
                 } else {
                     Color(hex: palette.background)
                 }

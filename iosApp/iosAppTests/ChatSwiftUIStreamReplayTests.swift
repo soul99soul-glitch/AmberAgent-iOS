@@ -550,6 +550,74 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         }
     }
 
+    func testToolDenseSessionUpdatesAndUserSendThroughNativeTimeline() throws {
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let assistantID = KotlinUuid.companion.random()
+        let output = String(repeating: "remote command output ", count: 550)
+        func tool(_ index: Int, status: String = "completed", revision: Int = 0) -> UIMessagePart.Tool {
+            UIMessagePart.Tool(toolCallId: "ssh-\(index)", toolName: "terminal_execute", input: "{}",
+                output: [UIMessagePart.Text(
+                    text: "{\"ok\":true,\"status\":\"\(status)\",\"exit_code\":0,\"stdout\":\"\(revision) \(output)\"}", metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        }
+        let completedTools: [UIMessagePart] = (0..<40).map { tool($0) }
+        func assistant(_ revision: Int, finished: Bool = false) -> UIMessage {
+            UIMessage(id: assistantID, role: MessageRole.assistant,
+                parts: completedTools + [tool(40, status: finished ? "completed" : "running", revision: revision),
+                    UIMessagePart.Text(text: "连续正文开始。远端检查结果已经同步。", metadata: nil)],
+                annotations: [], createdAt: chatNowLocalDateTime(),
+                finishedAt: finished ? chatNowLocalDateTime() : nil, modelId: nil, usage: nil, translation: nil)
+        }
+        fixture.model.messages = longConversation(turns: 4) + [makeUserMessage("检查远端状态"), assistant(0)]
+        fixture.model.isGenerationActive = true
+        fixture.model.send(.toolCallStarted)
+        XCTAssertTrue(pumpUntil(timeout: 5) { fixture.model.latestViewport.isAtBottom })
+        pump(seconds: 0.3)
+        let probe = DisplayLinkGapProbe()
+        probe.start()
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        for index in 1...12 {
+            fixture.model.messages[fixture.model.messages.count - 1] = assistant(index)
+            fixture.model.send(.toolResultAppended)
+            pump(seconds: 0.05)
+        }
+        let cpuMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
+        probe.stop()
+        let metrics = "[PERF-TOOLS-NATIVE] tools=41 updates=12 CPU=\(cpuMs)ms per-update=\(cpuMs / 12)ms max-frame-gap=\((probe.gaps.max() ?? 0) * 1000)ms"
+        print(metrics)
+        let metricsAttachment = XCTAttachment(string: metrics)
+        metricsAttachment.name = "native-tool-dense-metrics"
+        metricsAttachment.lifetime = .keepAlways
+        add(metricsAttachment)
+        XCTAssertLessThan(cpuMs / 12, 200, "工具结果更新不能让主线程持续阻塞")
+        fixture.model.messages[fixture.model.messages.count - 1] = assistant(12, finished: true)
+        fixture.model.isGenerationActive = false
+        fixture.model.send(.generationCompleted)
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom })
+        XCTAssertTrue(pumpUntil(timeout: 3) {
+            ScrollFrameProbe.streamingParagraph(in: fixture.host.view) != nil
+        })
+        let paragraph = try XCTUnwrap(ScrollFrameProbe.streamingParagraph(in: fixture.host.view))
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+            fixture.model.messages.append(makeUserMessage("继续检查下一项"))
+            fixture.model.send(.userAppend)
+        }
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom })
+        pump(seconds: 0.5)
+        XCTAssertEqual(fixture.model.messages.last?.toText(), "继续检查下一项")
+        XCTAssertTrue(ScrollFrameProbe.streamingParagraph(in: fixture.host.view) === paragraph,
+            "工具密集助手消息变成历史后必须保留原 Markdown UIView，防止发送时重建闪烁")
+        XCTAssertEqual(try XCTUnwrap(fixture.scrollView).contentOffset.x, 0, accuracy: 0.5)
+        let image = UIGraphicsImageRenderer(size: fixture.host.view.bounds.size).image { _ in
+            fixture.host.view.drawHierarchy(in: fixture.host.view.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "native-tool-dense-user-send"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testFixedGrowingTableFixtureReplaysThroughNativeTimeline() throws {
         let fixture = makeFixture()
         defer { fixture.tearDown() }
@@ -2161,6 +2229,64 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
     /// `.assistantStreamClosed` 当轮开始采样（旧用例在 stream-closed 后 0.6s 才取
     /// baseline，恰好漏掉终态重建那一轮）。断言：视口只朝新底部单调收敛——
     /// 不允许「先向旧目标挪、再纠正」的两段式运动（用户感知的完成后跳变）。
+    func testLongReasoningStreamThroughNativeTimelineKeepsLatestTextAndCompletes() throws {
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let id = KotlinUuid.companion.random()
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        var reasoning = String(repeating: "先检查上下文与工具结果，再逐步推演下一步。", count: 600)
+        func message(finished: Bool = false) -> UIMessage {
+            var parts: [UIMessagePart] = [UIMessagePart.Reasoning(reasoning: reasoning,
+                createdAt: instant, finishedAt: finished ? instant : nil, metadata: nil)]
+            if finished { parts.append(UIMessagePart.Text(text: "连续正文开始。思考已完成。", metadata: nil)) }
+            return UIMessage(id: id, role: MessageRole.assistant, parts: parts, annotations: [],
+                createdAt: chatNowLocalDateTime(), finishedAt: finished ? chatNowLocalDateTime() : nil,
+                modelId: nil, usage: nil, translation: nil)
+        }
+        func reasoningView(in view: UIView) -> UITextView? {
+            if let textView = view as? UITextView, textView.accessibilityIdentifier == "chat.reasoning.body" { return textView }
+            for child in view.subviews {
+                if let found = reasoningView(in: child) { return found }
+            }
+            return nil
+        }
+        fixture.model.messages = longConversation(turns: 8) + [makeUserMessage("请详细思考。"), message()]
+        fixture.model.isGenerationActive = true
+        fixture.model.send(.streamDelta)
+        XCTAssertTrue(pumpUntil(timeout: 4) { fixture.model.latestViewport.isAtBottom && reasoningView(in: fixture.host.view) != nil })
+        pump(seconds: 0.6)
+        let textView = try XCTUnwrap(reasoningView(in: fixture.host.view))
+        let probe = DisplayLinkGapProbe()
+        probe.start()
+        let start = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+        for _ in 0..<30 {
+            reasoning += "继续核对推理中的每一步。"
+            fixture.model.messages[fixture.model.messages.count - 1] = message()
+            fixture.model.send(.streamDelta)
+            pump(seconds: 0.048)
+        }
+        let cpuMs = Double(clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - start) / 1_000_000
+        pump(seconds: 0.55)
+        probe.stop()
+        XCTAssertTrue(reasoningView(in: fixture.host.view) === textView)
+        XCTAssertEqual(textView.text, ChatTextWindow(reasoning).displayText)
+        XCTAssertEqual(textView.bounds.height, 180, accuracy: 0.5)
+        let metrics = "[PERF-REASONING-NATIVE] updates=30 CPU=\(cpuMs)ms per-update=\(cpuMs / 30)ms max-frame-gap=\((probe.gaps.max() ?? 0) * 1000)ms"
+        print(metrics)
+        let attachment = XCTAttachment(string: metrics)
+        attachment.name = "native-reasoning-stream-metrics"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        fixture.model.messages[fixture.model.messages.count - 1] = message(finished: true)
+        fixture.model.isGenerationActive = false
+        fixture.model.send(.generationCompleted)
+        XCTAssertTrue(pumpUntil(timeout: 4) {
+            reasoningView(in: fixture.host.view) == nil && fixture.model.latestViewport.isAtBottom
+        })
+        XCTAssertTrue(try XCTUnwrap(fixture.model.messages.last?.parts.first as? UIMessagePart.Reasoning).reasoning == reasoning,
+            "绘制尾窗不能截断持久化/上下文中的完整思考内容")
+    }
+
     func testTerminalWithReasoningCollapseSettlesMonotonically() {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

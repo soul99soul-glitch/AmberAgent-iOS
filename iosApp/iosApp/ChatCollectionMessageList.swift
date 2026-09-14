@@ -87,7 +87,7 @@ enum NativeStaticTimelineRendererMemory {
 }
 
 @MainActor
-private final class NativeTimelineProjectionCache {
+final class NativeTimelineProjectionCache {
     private var cachedProjection: NativeTimelineProjection?
     private var structuralKey = ""
     private var messageCount = 0
@@ -95,6 +95,9 @@ private final class NativeTimelineProjectionCache {
     private var sourceRevision: Int?
     private var renderRevision: UInt64 = 0
     private var startIndex = 0
+    private var sourceMessages: [UIMessage] = []
+    private var contentIdentities: [String: ChatMessageContentIdentity] = [:]
+    private var compactBoundaries: [ChatContextCompactBoundary] = []
 
     func projection(
         messages: [UIMessage],
@@ -132,11 +135,13 @@ private final class NativeTimelineProjectionCache {
 
         let canReuseStructure = key == structuralKey &&
             messageCount == messages.count && lastMessageID == lastID &&
-            self.startIndex == startIndex
+            self.startIndex == startIndex && compactBoundaries == contextCompactBoundaries
         defer {
             self.sourceRevision = sourceRevision
             self.renderRevision = renderStateRevision
             self.startIndex = startIndex
+            self.sourceMessages = messages
+            self.compactBoundaries = contextCompactBoundaries
         }
         if canReuseStructure,
            self.sourceRevision == sourceRevision,
@@ -146,7 +151,9 @@ private final class NativeTimelineProjectionCache {
         }
 
         if canReuseStructure,
+           event == .assistantStreamDelta,
            let cachedProjection,
+           streamingHistoryIsUnchanged(messages: messages, startIndex: startIndex, projection: cachedProjection),
            let increment = NativeTimelineProjector.replacingStreamingTail(
             in: cachedProjection,
             messages: messages,
@@ -163,6 +170,38 @@ private final class NativeTimelineProjectionCache {
             contentHashProvider: contentHashProvider
            ) {
             self.cachedProjection = increment
+            if let last = increment.entries.last(where: { $0.kind == .message }),
+               let message = last.message, let id = last.messageId {
+                contentIdentities[id] = ChatMessageContentIdentity(message, index: last.index)
+            }
+            return increment
+        }
+
+        // Tool callbacks may replace any assistant message, including a historical
+        // one. Reuse only after checking the complete source shape and the loaded
+        // rows' mutable metadata; never assume that a tool result belongs to the tail.
+        if canReuseStructure, renderRevision == renderStateRevision,
+           sourceMessages.count == messages.count,
+           zip(sourceMessages, messages).allSatisfy({ old, new in
+               old === new || (old.id == new.id && old.role == MessageRole.assistant && new.role == old.role)
+           }),
+           let cachedProjection,
+           let increment = NativeTimelineProjector.replacingToolMessages(
+               in: cachedProjection, messages: messages, event: event, startIndex: startIndex,
+               unchangedMessageIDs: Set(contentIdentities.compactMap { id, snapshot in
+                   guard let index = snapshot.index, messages.indices.contains(index),
+                         snapshot.matches(messages[index]) else { return nil }
+                   return id
+               }),
+               isGenerationActive: isGenerationActive, viewportState: viewportState,
+               displaySettingSignature: displaySettingSignature,
+               generativeUiSettingSignature: generativeUiSettingSignature,
+               renderStateRevision: renderStateRevision, reasoningLevelLabel: reasoningLevelLabel,
+               streamedMessageIDs: streamedMessageIDs, renderStateStore: renderStateStore,
+               variantInfoProvider: variantInfoProvider, contentHashProvider: contentHashProvider
+           ) {
+            self.cachedProjection = increment
+            rememberContentIdentities(in: increment)
             return increment
         }
 
@@ -190,7 +229,33 @@ private final class NativeTimelineProjectionCache {
         structuralKey = key
         messageCount = messages.count
         lastMessageID = lastID
+        rememberContentIdentities(in: projection)
         return projection
+    }
+
+    private func rememberContentIdentities(in projection: NativeTimelineProjection) {
+        contentIdentities = Dictionary(uniqueKeysWithValues: projection.entries.compactMap { entry in
+            guard let message = entry.message, let id = entry.messageId else { return nil }
+            return (id, ChatMessageContentIdentity(message, index: entry.index))
+        })
+    }
+
+    private func streamingHistoryIsUnchanged(
+        messages: [UIMessage], startIndex: Int, projection: NativeTimelineProjection
+    ) -> Bool {
+        // SwiftUI can coalesce tool-result and text-delta notifications into one
+        // render. A final stream event does not prove that only the tail changed.
+        guard sourceMessages.count == messages.count,
+              sourceMessages.dropLast().elementsEqual(messages.dropLast(), by: { $0 === $1 }) else { return false }
+        let visibleIndices = messages.indices.dropFirst(max(0, startIndex)).filter {
+            ChatMessageProjector.isVisibleInTimeline(messages[$0])
+        }
+        guard visibleIndices == projection.entries.compactMap(\.index) else { return false }
+        return projection.entries.allSatisfy { entry in
+            guard let index = entry.index, let id = entry.messageId, index != messages.count - 1 else { return true }
+            return contentIdentities[id]?.matches(messages[index]) == true &&
+                entry.isAssistantContinuation == ChatMessageProjector.isAssistantContinuation(at: index, in: messages)
+        }
     }
 
     func reset() {
@@ -199,6 +264,9 @@ private final class NativeTimelineProjectionCache {
         messageCount = 0
         lastMessageID = nil
         sourceRevision = nil
+        sourceMessages = []
+        contentIdentities.removeAll()
+        compactBoundaries = []
     }
 
     private static func structuralKey(
@@ -974,6 +1042,11 @@ struct NativeChatTimelineView: View {
         row: ChatMessageRowModel,
         renderState: ChatRenderState
     ) -> ChatLiveTailModel? {
+        // Keep the same hosted subtree after a send turns the old tail into
+        // history. Historical rendering consumes the row snapshot below.
+        if let existing = renderStateStore.existingLiveTailModel(messageID: row.messageId) {
+            return existing
+        }
         guard renderState.liveRenderingEnabled else { return nil }
         return renderStateStore.liveTailModel(
             for: row,
@@ -1678,16 +1751,15 @@ private struct ChatUserMessageInsertionModifier: ViewModifier {
     }
 }
 
-private struct ChatSwiftUIStreamingTailVisibilityModifier: ViewModifier {
+struct ChatSwiftUIStreamingTailVisibilityModifier: ViewModifier {
     let active: Bool
     var assumeVisible: Bool = false
     let onVisibilityChanged: (Bool) -> Void
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        if active {
-            content
+        content
                 .onGeometryChange(for: Bool?.self) { proxy in
+                    guard active else { return nil }
                     if assumeVisible { return true }
                     guard let viewportBounds = proxy.bounds(of: .scrollView) else { return nil }
                     return proxy.frame(in: .local).intersects(viewportBounds)
@@ -1696,11 +1768,8 @@ private struct ChatSwiftUIStreamingTailVisibilityModifier: ViewModifier {
                     onVisibilityChanged(isVisible)
                 }
                 .onDisappear {
-                    onVisibilityChanged(false)
+                    if active { onVisibilityChanged(false) }
                 }
-        } else {
-            content
-        }
     }
 }
 
@@ -3041,9 +3110,9 @@ private struct ChatLiveTailBubble: View {
             onAction: onAction
         )
         .messageBubble(
-            message: liveTailModel.message,
-            isGenerationActive: liveTailModel.isGenerationActive,
-            renderState: liveTailModel.renderState
+            message: model.row.isLast ? liveTailModel.message : model.row.message,
+            isGenerationActive: model.row.isLast ? liveTailModel.isGenerationActive : model.isGenerationActive,
+            renderState: model.row.isLast ? liveTailModel.renderState : model.renderState
         )
     }
 }
@@ -3108,6 +3177,10 @@ final class ChatRenderStateStore {
     private var frozenMessageIDs: Set<String> = []
     private var frozenMarkdownByMessageID: [String: String] = [:]
     private var liveTailModelsByMessageID: [String: ChatLiveTailModel] = [:]
+
+    func existingLiveTailModel(messageID: String) -> ChatLiveTailModel? {
+        liveTailModelsByMessageID[messageID]
+    }
 
     func stateForRow(_ row: ChatMessageRowModel, isLiveRenderingFarFromBottom: Bool) -> ChatRenderState {
         let renderer: ChatTimelineRendererKind = row.role == MessageRole.assistant && (row.hasEverStreamed || row.isStreaming)
@@ -3213,45 +3286,81 @@ final class ChatRenderStateStore {
     }
 }
 
-/// 消息内容哈希缓存:全量 build 对每行做 toText() + 逐 part describing 的
-/// O(全文) 哈希(跨 KMP 桥接)是长 session 卡顿主源,历史消息基本不可变,按行记忆化。
-/// 已核实的原地变更路径只有 tool output 空→非空回填(后台补全/审批恢复),
-/// 用 parts.count + tool output 计数指纹捕获;最后一条/流式行永不缓存。
-/// internal(非 private)是有意的:契约由 `ChatRowContentHashCacheTests` 通过
-/// `@testable import` 直接覆盖,`private`/`fileprivate` 会让测试文件完全看不到
-/// 这个类型。
-final class ChatRowContentHashCache {
-    private struct Entry {
-        let partsCount: Int
-        let toolOutputFingerprint: Int
-        let hash: Int
+/// UIMessage payloads are replaced by the Swift/KMP update paths, but part metadata
+/// is mutable. Capture its dictionary values separately from the message so an
+/// in-place metadata update cannot make an old snapshot appear unchanged.
+struct ChatMessageContentIdentity {
+    let message: UIMessage
+    let index: Int?
+    typealias Metadata = [String: Kotlinx_serialization_jsonJsonElement]
+    private let metadata: [Metadata?]
+
+    init(_ message: UIMessage, index: Int? = nil) {
+        self.message = message
+        self.index = index
+        metadata = Self.metadata(in: message.parts)
     }
 
-    private var entries: [String: Entry] = [:]
+    func matches(_ message: UIMessage) -> Bool {
+        self.message === message && Self.sameMetadata(metadata, Self.metadata(in: message.parts))
+    }
 
-    func contentHash(for row: ChatMessageRowModel) -> Int {
-        let fingerprint = Self.toolOutputFingerprint(row.parts)
-        if let entry = entries[row.messageId],
-           entry.partsCount == row.parts.count,
-           entry.toolOutputFingerprint == fingerprint {
-            return entry.hash
+    static func metadata(in parts: [UIMessagePart]) -> [Metadata?] {
+        var result: [Metadata?] = []
+        for part in parts {
+            result.append(part.metadata)
+            if let tool = part as? UIMessagePart.Tool {
+                result.append(contentsOf: metadata(in: tool.output))
+            }
+        }
+        return result
+    }
+
+    static func sameMetadata(_ lhs: [Metadata?], _ rhs: [Metadata?]) -> Bool {
+        lhs == rhs
+    }
+}
+
+/// Hash unchanged parts once, even when they belong to a growing assistant row.
+/// Replacement text/output/approval snapshots and in-place metadata updates all
+/// invalidate their part. Row identity or output counts alone are insufficient.
+final class ChatRowContentHashCache {
+    private struct PartEntry {
+        let part: UIMessagePart
+        let metadata: [ChatMessageContentIdentity.Metadata?]
+        let hash: Int
+    }
+    private var entries: [String: [PartEntry?]] = [:]
+    private(set) var partHashComputationCount = 0
+
+    private func partEntry(_ part: UIMessagePart, cached: PartEntry?) -> PartEntry {
+        let metadata = ChatMessageContentIdentity.metadata(in: [part])
+        if let cached, cached.part === part,
+           ChatMessageContentIdentity.sameMetadata(cached.metadata, metadata) {
+            return cached
         }
         var hasher = Hasher()
-        hasher.combine(row.message.toText())
+        hasher.combine(String(describing: part))
+        partHashComputationCount &+= 1
+        return PartEntry(part: part, metadata: metadata, hash: hasher.finalize())
+    }
+
+    func contentHash(for row: ChatMessageRowModel) -> Int {
+        let previous = entries[row.messageId] ?? []
+        var next: [PartEntry?] = []
+        next.reserveCapacity(row.parts.count)
+        var hasher = Hasher()
         hasher.combine(row.parts.count)
-        for part in row.parts {
-            hasher.combine(String(describing: type(of: part)))
-            hasher.combine(String(describing: part))
+        for (index, part) in row.parts.enumerated() {
+            let entry = partEntry(part, cached: index < previous.count ? previous[index] : nil)
+            next.append(entry)
+            hasher.combine(entry.hash)
         }
-        let hash = hasher.finalize()
-        if !row.isLast && !row.isStreaming {
-            entries[row.messageId] = Entry(
-                partsCount: row.parts.count,
-                toolOutputFingerprint: fingerprint,
-                hash: hash
-            )
+        for annotation in row.message.annotations {
+            hasher.combine(String(describing: annotation))
         }
-        return hash
+        entries[row.messageId] = next
+        return hasher.finalize()
     }
 
     /// Streaming tail rows are re-laid out by the live-tail invalidation bridge on
@@ -3260,6 +3369,8 @@ final class ChatRowContentHashCache {
     /// is enough to mark tail growth without doing O(total text) string joins on the
     /// main actor for every provider chunk.
     func streamingTailLayoutToken(for row: ChatMessageRowModel) -> Int {
+        let previous = entries[row.messageId] ?? []
+        var next = Array<PartEntry?>(repeating: nil, count: row.parts.count)
         var hasher = Hasher()
         hasher.combine(row.messageId)
         hasher.combine(row.parts.count)
@@ -3267,7 +3378,7 @@ final class ChatRowContentHashCache {
         for annotation in row.message.annotations {
             hasher.combine(String(describing: annotation))
         }
-        for part in row.parts {
+        for (index, part) in row.parts.enumerated() {
             switch part {
             case let text as UIMessagePart.Text:
                 hasher.combine("text")
@@ -3279,17 +3390,9 @@ final class ChatRowContentHashCache {
                 hasher.combine(String(reasoning.reasoning.suffix(24)))
                 hasher.combine(reasoning.finishedAt != nil)
             case let tool as UIMessagePart.Tool:
-                hasher.combine("tool")
-                hasher.combine(tool.toolCallId)
-                hasher.combine(tool.toolName)
-                hasher.combine(tool.input.utf16.count)
-                hasher.combine(String(tool.input.suffix(48)))
-                hasher.combine(tool.output.count)
-                hasher.combine(tool.isExecuted)
-                hasher.combine(String(describing: tool.approvalState))
-                for output in tool.output {
-                    Self.combineCompactPart(output, into: &hasher)
-                }
+                let entry = partEntry(tool, cached: index < previous.count ? previous[index] : nil)
+                next[index] = entry
+                hasher.combine(entry.hash)
             case let image as UIMessagePart.Image:
                 hasher.combine("image")
                 hasher.combine(image.url)
@@ -3307,6 +3410,7 @@ final class ChatRowContentHashCache {
                 hasher.combine(String(describing: type(of: part)))
             }
         }
+        entries[row.messageId] = next
         return hasher.finalize()
     }
 
@@ -3318,32 +3422,6 @@ final class ChatRowContentHashCache {
         hasher.combine("suspended-streaming-tail")
         hasher.combine(row.messageId)
         return hasher.finalize()
-    }
-
-    private static func combineCompactPart(_ part: UIMessagePart, into hasher: inout Hasher) {
-        hasher.combine(String(describing: type(of: part)))
-        switch part {
-        case let text as UIMessagePart.Text:
-            hasher.combine(text.text.utf16.count)
-            hasher.combine(String(text.text.suffix(48)))
-        case let image as UIMessagePart.Image:
-            hasher.combine(image.url)
-        case let document as UIMessagePart.Document:
-            hasher.combine(document.fileName)
-            hasher.combine(document.url)
-        default:
-            hasher.combine(String(describing: part))
-        }
-    }
-
-    /// 每个 Tool part 记 (非空标志 + output 条数),空→非空回填必然改变指纹。
-    private static func toolOutputFingerprint(_ parts: [UIMessagePart]) -> Int {
-        var fingerprint = 0
-        for part in parts {
-            guard let tool = part as? UIMessagePart.Tool else { continue }
-            fingerprint = fingerprint &* 31 &+ (tool.output.isEmpty ? 1 : 2 &+ tool.output.count)
-        }
-        return fingerprint
     }
 
     func retain(ids: Set<String>) {
