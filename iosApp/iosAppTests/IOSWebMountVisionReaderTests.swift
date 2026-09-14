@@ -24,6 +24,30 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
         XCTAssertEqual(provider.params?.tools.count, 0)
     }
 
+    func testReadCarriesConversationIdToOpenCodeSessionHeader() async throws {
+        let provider = RecordingProvider(result: "视觉读取完成。")
+        let reader = IOSWebMountVisionReader(textProvider: provider)
+
+        _ = try await reader.read(
+            capture: capture(),
+            question: "检查页面",
+            settings: makeSettings(
+                modelId: "gpt-4o",
+                configureOCR: true,
+                supportsImageInput: true,
+                baseUrl: "https://opencode.ai/zen/go/v1"
+            ),
+            conversationId: "conversation-a"
+        )
+
+        XCTAssertEqual(
+            provider.params?.customHeaders.first(where: {
+                $0.name.caseInsensitiveCompare("x-opencode-session") == .orderedSame
+            })?.value,
+            "conversation-a"
+        )
+    }
+
     func testReadUsesImageCapableCurrentChatModelWhenOCRIsUnset() async throws {
         let provider = RecordingProvider(result: "视觉确认完成。")
         let reader = IOSWebMountVisionReader(textProvider: provider)
@@ -279,7 +303,8 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
     private func makeSettings(
         modelId: String,
         configureOCR: Bool,
-        supportsImageInput: Bool = false
+        supportsImageInput: Bool = false,
+        baseUrl: String = "https://example.test/v1"
     ) -> Settings {
         let suite = "WebMountVision-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -288,7 +313,7 @@ final class IOSWebMountVisionReaderTests: XCTestCase {
         let provider = makeOpenAIProvider(
             name: "Vision Test",
             apiKey: "sk-test",
-            baseUrl: "https://example.test/v1",
+            baseUrl: baseUrl,
             modelName: modelId,
             modelId: modelId,
             supportsImageInput: supportsImageInput

@@ -5341,11 +5341,12 @@ final class ChatToolRuntime {
             runId: runId,
             conversationId: conversationId?.toHexDashString() ?? "",
             executionPolicy: executionPolicy ?? IOSExecutionPolicyContext.snapshot
-        ), visualRead: { [sharedSettings] capture, question in
+        ), visualRead: { [sharedSettings, conversationId] capture, question in
             try await IOSWebMountVisionReader().read(
                 capture: capture,
                 question: question,
-                settings: sharedSettings.snapshot
+                settings: sharedSettings.snapshot,
+                conversationId: conversationId?.toHexDashString()
             )
         })
     }
@@ -5628,7 +5629,8 @@ final class ChatToolRuntime {
                     conversationId: conversationId?.description() ?? "",
                     additionalToolNames: Set(mcpDeclarations.map(\.name))
                 ),
-                toolCallId: toolCall.toolCallId
+                toolCallId: toolCall.toolCallId,
+                sourceConversationId: conversationId?.toHexDashString()
             )
         case "model_council_run":
             let args = ChatToolCallParsing.jsonObject(toolCall.input)

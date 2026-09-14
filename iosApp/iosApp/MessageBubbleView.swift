@@ -1008,26 +1008,18 @@ private enum ChatStreamingMarkdownTypography {
     }
 
     private static func applyingChatFont(_ chatFont: IOSChatFont, to font: UIFont) -> UIFont {
-        let design: UIFontDescriptor.SystemDesign
-        switch chatFont {
-        case .default:
-            return font
-        case .serif:
-            design = .serif
-        case .monospace:
-            design = .monospaced
-        }
-        guard let descriptor = font.fontDescriptor.withDesign(design) else {
-            return font
-        }
-        return UIFont(descriptor: descriptor, size: font.pointSize)
+        chatFont.applying(to: font)
     }
 }
 
 #if DEBUG
 enum ChatStreamingMarkdownTypographyTestSupport {
     static func bodyFontName(chatFont: IOSChatFont) -> String {
-        ChatStreamingMarkdownTypography.bodyFonts(chatFont: chatFont, pointSize: 17).normal.fontName
+        bodyFonts(chatFont: chatFont).normal.fontName
+    }
+
+    static func bodyFonts(chatFont: IOSChatFont) -> SwiftStreamingMarkdown.TextFonts {
+        ChatStreamingMarkdownTypography.bodyFonts(chatFont: chatFont, pointSize: 17)
     }
 }
 #endif

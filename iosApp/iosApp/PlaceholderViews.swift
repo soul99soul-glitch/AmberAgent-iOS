@@ -836,12 +836,35 @@ enum IOSChatFont: String, CaseIterable, Identifiable {
         }
     }
 
-    var design: Font.Design {
+    private var bundledFontName: String? {
         switch self {
-        case .default: .default
-        case .serif: .serif
-        case .monospace: .monospaced
+        case .default: nil
+        case .serif: "NotoSerifSC-Regular"
+        case .monospace: "JetBrainsMono-Regular"
         }
+    }
+
+    func font(size: CGFloat) -> Font {
+        guard let bundledFontName else { return .system(size: size) }
+        // Callers already apply Dynamic Type through @ScaledMetric.
+        return .custom(bundledFontName, fixedSize: size)
+    }
+
+    func applying(to font: UIFont) -> UIFont {
+        guard let bundledFontName else { return font }
+        let base = UIFont(descriptor: UIFontDescriptor(name: bundledFontName, size: font.pointSize), size: font.pointSize)
+        let traits = font.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any]
+        // Copying the system design trait forces a fallback to SF. Match by family
+        // and weight so the bundled variable fonts can select their bold instances.
+        var descriptor = UIFontDescriptor(fontAttributes: [
+            .family: base.familyName,
+            .traits: [UIFontDescriptor.TraitKey.weight: traits?[.weight] ?? UIFont.Weight.regular.rawValue]
+        ])
+        if font.fontDescriptor.symbolicTraits.contains(.traitItalic) {
+            // Neither bundled family includes italic faces; preserve Markdown emphasis.
+            descriptor = descriptor.withMatrix(CGAffineTransform(a: 1, b: 0, c: 0.2, d: 1, tx: 0, ty: 0))
+        }
+        return UIFont(descriptor: descriptor, size: font.pointSize)
     }
 }
 

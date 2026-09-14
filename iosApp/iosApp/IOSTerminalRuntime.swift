@@ -252,7 +252,7 @@ enum IOSAdvancedTaskKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum IOSAdvancedTaskStatus: String, Codable, CaseIterable, Identifiable {
+enum IOSAdvancedTaskStatus: String, Codable, CaseIterable, Identifiable, Sendable {
     case queued
     case running
     case approvalRequired = "approval_required"
@@ -343,7 +343,12 @@ final class IOSAdvancedTaskStore {
     ) {
         self.userDefaults = userDefaults
         self.storageKey = storageKey
-        self.tasks = Self.load(from: userDefaults, key: storageKey, decoder: decoder)
+        let loadedTasks = Self.load(from: userDefaults, key: storageKey, decoder: decoder)
+        self.tasks = loadedTasks
+        // Establish the process boundary at the moment this store hydrates.
+        // AppShell may be created after a new dispatch has already started;
+        // sweeping there would incorrectly interrupt that live execution.
+        markInterruptedSubAgentTasks(now: Date())
     }
 
     @discardableResult
@@ -504,6 +509,33 @@ final class IOSAdvancedTaskStore {
             tasks[index].cancelCapability = false
             tasks[index].metadata["interruption_reason"] = "process_terminated"
             tasks[index].metadata["outcome"] = "unknown"
+            tasks[index].updatedAt = now
+        }
+        persist()
+        return ids
+    }
+
+    /// SubAgent provider streams are process-local and have no cursor that can
+    /// be reattached after relaunch. Sweep every non-terminal row (including a
+    /// leaked approval/queued row) before the cross-conversation activity
+    /// projection starts, so an old execution cannot appear alive forever.
+    @discardableResult
+    private func markInterruptedSubAgentTasks(now: Date = Date()) -> [String] {
+        let ids = tasks
+            .filter {
+                $0.kind == .subAgent
+                    && !$0.status.isTerminal
+            }
+            .map(\.id)
+        guard !ids.isEmpty else { return [] }
+
+        let idSet = Set(ids)
+        for index in tasks.indices where idSet.contains(tasks[index].id) {
+            tasks[index].status = .interrupted
+            tasks[index].retryable = false
+            tasks[index].cancelCapability = false
+            tasks[index].metadata["interruption_reason"] = "process_terminated"
+            tasks[index].metadata["execution_finished_at"] = String(now.timeIntervalSince1970)
             tasks[index].updatedAt = now
         }
         persist()

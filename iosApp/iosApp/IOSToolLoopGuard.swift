@@ -18,9 +18,7 @@ struct IOSToolLoopGuard {
         case stop(reason: String)
     }
 
-    /// Grok 用 8/16 次才提醒/停止,是因为它的轮次预算本身宽裕。amber 前台
-    /// maxToolResumeCount=6、引擎 maxSteps=8——预算里重复到第 3 次已经烧掉
-    /// 大半,没有"慢慢提醒几次"的空间,所以阈值直接定在 2/3。
+    /// 普通动作第二次提醒、第三次停止；等待工具仍由本轮总工具预算限制。
     private static let remindAtCount = 2
 
     static let reminderText =
@@ -40,6 +38,15 @@ struct IOSToolLoopGuard {
     /// 这里再用 sortedKeys 消除空格和键顺序差异，避免同一调用仅换一种序列化
     /// 形式就绕过重复检测。单元测试直接传入的非 JSON 夹具保留原文摘要语义。
     mutating func check(toolName: String, input: String) -> Verdict {
+        switch toolName {
+        case "wait", "terminal_job_wait", "wait_agent", "wm_wait":
+            // 等待同一个句柄或条件时参数无需变化，观察超时也不表示空转。
+            lastSignature = nil
+            consecutiveCount = 0
+            return .proceed
+        default:
+            break
+        }
         let signature = toolName + "\u{0}" + chatInputDigest(for: Self.canonicalInput(input))
         if signature == lastSignature {
             consecutiveCount += 1

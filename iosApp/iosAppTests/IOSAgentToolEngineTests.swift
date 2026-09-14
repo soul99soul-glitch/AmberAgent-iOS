@@ -861,7 +861,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
         XCTAssertTrue(approvalOutput?.isEmpty == true)
     }
 
-    func testDeniedAndFailedToolsProduceHonestOutputNotApproval() async {
+    func testDeniedAndFailedToolsProduceHonestOutputNotApproval() async throws {
         let twoToolMessage = makeMessage(
             role: MessageRole.assistant,
             parts: [
@@ -887,10 +887,15 @@ final class IOSAgentToolEngineTests: XCTestCase {
         XCTAssertNil(result.pendingApproval, "denial/failure must not pause the loop")
         let toolMessage = result.messages[1]
         let toolParts = toolMessage.parts.compactMap { $0 as? UIMessagePart.Tool }
-        let deniedText = toolParts.first { $0.toolCallId == "d" }?.output.compactMap { $0 as? UIMessagePart.Text }.first?.text
-        let failedText = toolParts.first { $0.toolCallId == "f" }?.output.compactMap { $0 as? UIMessagePart.Text }.first?.text
-        XCTAssertEqual(deniedText, "{\"denied\":\"policy blocks this\"}")
-        XCTAssertEqual(failedText, "{\"error\":\"network down\"}")
+        for (id, reason, status) in [("d", "policy blocks this", "denied"), ("f", "network down", "failed")] {
+            let tool = try XCTUnwrap(toolParts.first { $0.toolCallId == id })
+            let text = try XCTUnwrap((tool.output.first as? UIMessagePart.Text)?.text)
+            let data = try XCTUnwrap(text.data(using: .utf8))
+            let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            XCTAssertEqual(payload["ok"] as? Bool, false)
+            XCTAssertEqual(payload["status"] as? String, status)
+            XCTAssertEqual(ChatToolOutputFormatter.failureReason(from: tool.output), reason)
+        }
     }
 
     func testUnregisteredToolProducesFailureOutput() async {
@@ -913,8 +918,10 @@ final class IOSAgentToolEngineTests: XCTestCase {
 
         let toolPart = result.messages[1].parts.compactMap { $0 as? UIMessagePart.Tool }.first
         XCTAssertNotNil(toolPart)
-        let output = toolPart?.output.compactMap { $0 as? UIMessagePart.Text }.first?.text
-        XCTAssertEqual(output, "{\"error\":\"[engine] no executor registered for tool `ghost`\"}")
+        XCTAssertEqual(
+            ChatToolOutputFormatter.failureReason(from: toolPart?.output ?? []),
+            "[engine] no executor registered for tool `ghost`"
+        )
     }
 
     func testToolSearchHitIsDeclaredOnNextEngineRoundViaRunBridge() async {
@@ -1744,7 +1751,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             ])
 
             let round1Text = #"Your favorite color is blue. <amber-mem-cite>{"ids":[1]}</amber-mem-cite> And green too."#
-            let round2Text = #"<amber-mem-cite>{"ids":[2],"note":"fav"}</amber-mem-cite> Done."#
+            let round2Text = #"<amber-mem-cite>{"ids":[2,3],"note":"fav"}</amber-mem-cite> Done."#
             let engine = IOSAgentToolEngine(
                 provider: TwoRoundScriptedStreamingProvider(
                     round1: [
@@ -1756,8 +1763,8 @@ final class IOSAgentToolEngineTests: XCTestCase {
                                 UIMessagePart.Text(text: round1Text, metadata: nil),
                                 UIMessagePart.Tool(
                                     toolCallId: "tc-1",
-                                    toolName: "echo",
-                                    input: "{}",
+                                    toolName: "memory_tool",
+                                    input: #"{"action":"read","id":2}"#,
                                     output: [],
                                     approvalState: ToolApprovalState.Auto.shared,
                                     streamIndex: nil,
@@ -1768,18 +1775,21 @@ final class IOSAgentToolEngineTests: XCTestCase {
                     ],
                     round2: [
                         streamingDelta(#"<amber-mem-cite>{"id"#),
-                        streamingDelta(#"s":[2],"note":"fav"}</amber-mem-cite> Done."#),
+                        streamingDelta(#"s":[2,3],"note":"fav"}</amber-mem-cite> Done."#),
                         streamingFinal(assistantText(round2Text)),
                     ]
                 ),
-                executors: ["echo": RecordingExecutor(.filled("{\"ok\":true}"))],
+                executors: ["memory_tool": RecordingExecutor(.filled(
+                    #"{"ok":true,"tool":"memory_tool","action":"read","memory":{"id":2,"content":"green project"}}"#
+                ))],
                 configuration: .init(maxSteps: 4)
             )
-            let tracker = IOSMemoryCitationTracker()
+            let tracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
+            tracker.allowCitationIds([1])
             let result = await engine.run(
                 providerSetting: makeProviderSetting(),
                 messages: [userMessage("ask")],
-                params: makeParams(tools: ["echo"]),
+                params: makeParams(tools: ["memory_tool"]),
                 citationTracker: tracker
             )
 
@@ -1799,7 +1809,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             XCTAssertTrue(assistantTexts.contains("And green too."))
             XCTAssertTrue(assistantTexts.contains(" Done."))
 
-            // 引用 id 收集齐全 → 与前台同款 markUsed（bg 接线 force: true）落盘读回。
+            // 后续读取的 id=2 自动准入；未提供给模型的 id=3 不得被引用落盘。
             XCTAssertEqual(tracker.citationIds, Set<Int32>([1, 2]))
             XCTAssertTrue(persistence.markUsed(ids: tracker.citationIds, now: 999, force: true))
             let reader = IOSMemoryPersistence(fileURL: fileURL)

@@ -756,7 +756,7 @@ private fun execParameters(): InputSchema = InputSchema.Obj(
         })
         put("timeout_ms", buildJsonObject {
             put("type", "integer")
-            put("description", "Optional. Maximum evaluation time in milliseconds, clamped to [1000, 30000]; defaults to 10000. A timed-out script is abandoned: its result is discarded and its engine context is never reused.")
+            put("description", "Optional. Maximum evaluation time in milliseconds, clamped to [1000, 30000]; defaults to 10000. When this deadline elapses, exec yields status=running with a cell_id; call wait with that cell_id to retrieve the eventual result. A later wait with terminate=true abandons the cell and discards its result, but JavaScriptCore may keep the evaluation running until it returns; its context is never reused.")
         })
         put("max_output_chars", buildJsonObject {
             put("type", "integer")
@@ -1402,8 +1402,12 @@ fun createSpawnAgentToolDeclaration(): Tool = Tool(
         to yield the foreground turn. Reports arrive automatically. Use role_id for a built-in role
         (explorer, historian, oracle, designer, writer, fixer, or browser).
         When dynamic subagents are enabled, system_prompt, context, tool_scope and
-        skill_names define a one-off role. Tool scope is enforced by the child
-        execution and background recovery, not only described in the prompt.
+        skill_names define a one-off role. For each new child, let the current
+        parent model choose a short lowercase English first name, inspect
+        list_agents when sibling names may already exist, avoid reusing a sibling
+        name, and never add a numeric suffix yourself. Keep the returned
+        agent_path for followups. Tool scope is enforced by the child execution
+        and background recovery, not only described in the prompt.
     """.trimIndent(),
     parameters = { spawnAgentParameters() },
     needsApproval = false,
@@ -1580,7 +1584,7 @@ private fun spawnAgentParameters(): InputSchema = InputSchema.Obj(
         put("task_name", buildJsonObject {
             put("type", "string")
             put("pattern", "^[a-z0-9_]+$")
-            put("description", "Required. Lowercase letters, digits and underscores only; used for the canonical agent path. For a dynamic agent, choose a familiar English first name from: $subAgentEnglishNames. Lowercase it here (e.g. alex, emma, leo). Prefer a different name for each sibling; keep it stable for followups and use the returned agent_path. Avoid test labels, arbitrary role codes and task descriptions as names. Put the work in message. Preserve an explicitly user-requested name when it fits the path format; built-in role ids stay unchanged.")
+            put("description", "Required. Lowercase letters, digits and underscores only; used for the canonical agent path. For each dynamic agent, the current parent model should choose a short familiar English first name (examples: $subAgentEnglishNames), inspect list_agents when sibling names may already exist, avoid reusing a sibling name, and never add a numeric suffix itself. Keep the name stable for followups and use the returned agent_path. Avoid test labels, arbitrary role codes and task descriptions as names. Put the work in message. Preserve an explicitly user-requested name when it fits the path format; built-in role ids stay unchanged.")
         })
         put("message", buildJsonObject {
             put("type", "string")

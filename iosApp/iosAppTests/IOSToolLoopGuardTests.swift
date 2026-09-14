@@ -261,13 +261,72 @@ final class IOSToolLoopGuardTests: XCTestCase {
     /// reached on the 3rd identical call.
     private final class RecordingExecutor: IOSToolExecutor {
         private(set) var calls: [(name: String, arguments: String)] = []
-        private let result: IOSAgentToolOutcome
-        init(_ result: IOSAgentToolOutcome = .filled("{\"ok\":true}")) { self.result = result }
+        private var results: [IOSAgentToolOutcome]
+        init(_ result: IOSAgentToolOutcome = .filled("{\"ok\":true}")) { self.results = [result] }
+        init(results: [IOSAgentToolOutcome]) { self.results = results }
 
         func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
             calls.append((name, arguments))
-            return result
+            return results.count > 1 ? results.removeFirst() : results[0]
         }
+    }
+
+    func testEngineAllowsRepeatedWaitsUntilCompletion() async {
+        for (toolName, input) in [
+            ("wait", #"{"cell_id":"cell-1","timeout_ms":1000}"#),
+            ("terminal_job_wait", #"{"job_id":"job-1","wait_timeout_seconds":1}"#)
+        ] {
+            let provider = ScriptedProvider((1...4).map {
+                toolCallMessage(toolCallId: "wait-\($0)", toolName: toolName, input: input)
+            } + [message(role: .assistant, parts: [UIMessagePart.Text(text: "done", metadata: nil)])])
+            let executor = RecordingExecutor(results: [
+                .filled(#"{"status":"running"}"#),
+                .filled(#"{"status":"running"}"#),
+                .filled(#"{"status":"running"}"#),
+                .filled(#"{"status":"completed","result":"42"}"#)
+            ])
+            let engine = IOSAgentToolEngine(
+                provider: provider,
+                executors: [toolName: executor],
+                configuration: .init(maxSteps: 5)
+            )
+            let result = await engine.run(
+                providerSetting: makeProviderSetting(),
+                messages: [userMessage("wait for the result")],
+                params: makeParams()
+            )
+
+            XCTAssertEqual(executor.calls.count, 4, toolName)
+            XCTAssertFalse(result.guardStopped, toolName)
+            XCTAssertFalse(result.hitStepLimit, toolName)
+            let finalTool = result.messages.flatMap(\.parts)
+                .compactMap { $0 as? UIMessagePart.Tool }.last
+            XCTAssertEqual(
+                finalTool?.output.compactMap { ($0 as? UIMessagePart.Text)?.text },
+                [#"{"status":"completed","result":"42"}"#]
+            )
+        }
+    }
+
+    func testRepeatedWaitsStillRespectStepBudget() async {
+        let provider = ScriptedProvider((1...4).map {
+            toolCallMessage(toolCallId: "wait-\($0)", toolName: "wait", input: #"{"cell_id":"cell-1"}"#)
+        })
+        let executor = RecordingExecutor(.filled(#"{"status":"running"}"#))
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["wait": executor],
+            configuration: .init(maxSteps: 3)
+        )
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(),
+            messages: [userMessage("wait for the result")],
+            params: makeParams()
+        )
+
+        XCTAssertEqual(executor.calls.count, 3)
+        XCTAssertTrue(result.hitStepLimit)
+        XCTAssertFalse(result.guardStopped)
     }
 
     /// The model calls `search` with the exact same arguments 3 times in a

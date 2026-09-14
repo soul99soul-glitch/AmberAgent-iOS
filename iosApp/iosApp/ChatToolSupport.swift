@@ -1112,7 +1112,7 @@ enum ChatToolOutputFormatter {
         }
     }
 
-    static func toolFailureJSON(
+    nonisolated static func toolFailureJSON(
         toolName: String,
         reason: String,
         denied: Bool = false,
@@ -1551,6 +1551,11 @@ enum ChatToolOutputFormatter {
             }
             if let exitCode = object["exit_code"] as? Int, exitCode != 0 {
                 return stringValue(in: object, keys: ["stderr", "error", "reason", "message"]) ?? "exit \(exitCode)"
+            }
+            // 兼容已持久化的旧 engine 错误结果，不覆盖明确的成功结果。
+            if object["ok"] == nil, object["status"] == nil {
+                if let denied = stringValue(in: object, keys: ["denied"]) { return denied }
+                if let error = stringValue(in: object, keys: ["error"]) { return error }
             }
         }
         return nil

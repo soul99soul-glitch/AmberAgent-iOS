@@ -48,6 +48,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonArrayBuilder
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -359,9 +360,12 @@ class ClaudeKmpProvider internal constructor(
 
             put("stream", stream)
 
-            // system prompt
-            val systemMessage = messages.firstOrNull { it.role == MessageRole.SYSTEM }
-            val systemTextParts = systemMessage?.parts?.filterIsInstance<UIMessagePart.Text>().orEmpty()
+            // Anthropic has one top-level system array, so flatten every system
+            // message in source order. Keep the per-text-part metadata below so
+            // prompt-cache markers retain their existing behavior.
+            val systemTextParts = messages
+                .filter { it.role == MessageRole.SYSTEM }
+                .flatMap { message -> message.parts.filterIsInstance<UIMessagePart.Text>() }
             if (systemTextParts.isNotEmpty()) {
                 val cacheDisabled = systemTextParts.any { part ->
                     part.metadata?.get(SYSTEM_PROMPT_CACHE_CONTROL_METADATA)?.jsonPrimitive?.contentOrNull == SYSTEM_PROMPT_CACHE_DISABLED
@@ -599,6 +603,53 @@ class ClaudeKmpProvider internal constructor(
         putJsonArray("content") {
             output.mapNotNull { it.toContentBlock() }.forEach { add(it) }
         }
+        if (output.indicatesExecutionError()) put("is_error", true)
+    }
+
+    /**
+     * Amber's tool layer returns structured failure/approval receipts as JSON
+     * text. Map only explicit execution-state markers to Anthropic's
+     * `tool_result.is_error`; a plain `ok:false` is intentionally left alone
+     * because some tools use it for a normal negative business result.
+     */
+    private fun List<UIMessagePart>.indicatesExecutionError(): Boolean =
+        asSequence()
+            .filterIsInstance<UIMessagePart.Text>()
+            .mapNotNull { text -> runCatching { json.parseToJsonElement(text.text).jsonObject }.getOrNull() }
+            .any { jsonObject ->
+                val denied = (jsonObject["denied"] as? JsonPrimitive)?.let { primitive ->
+                    primitive.booleanOrNull == true || (primitive.isString && primitive.content.isNotBlank())
+                } == true
+                val cancelled = (jsonObject["cancelled"] as? JsonPrimitive)?.booleanOrNull == true
+                val explicitErrorField = listOf("error", "error_code").any { key ->
+                    (jsonObject[key] as? JsonPrimitive)?.let { primitive ->
+                        primitive.isString && primitive.content.isNotBlank()
+                    } == true
+                }
+                val status = jsonObject["status"]
+                val statuslessExplicitReason = status == null &&
+                    (jsonObject["reason"] as? JsonPrimitive)?.let { primitive ->
+                        primitive.isString && primitive.content.isNotBlank()
+                    } == true
+                val okFalse = (jsonObject["ok"] as? JsonPrimitive)?.booleanOrNull == false
+                denied ||
+                    cancelled ||
+                    (jsonObject["needs_user_action"] as? JsonPrimitive)?.booleanOrNull == true ||
+                    (jsonObject["is_error"] as? JsonPrimitive)?.booleanOrNull == true ||
+                    (jsonObject["isError"] as? JsonPrimitive)?.booleanOrNull == true ||
+                    (okFalse && (explicitErrorField || statuslessExplicitReason)) ||
+                    (okFalse && (status as? JsonPrimitive)?.contentOrNull in anthropicExecutionErrorStatuses)
+            }
+
+    private companion object {
+        private val anthropicExecutionErrorStatuses = setOf(
+            "failed",
+            "denied",
+            "error",
+            "timeout",
+            "timed_out",
+            "cancelled",
+        )
     }
 
     // ---- response parsing ----

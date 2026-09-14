@@ -254,6 +254,7 @@ final class SubAgentRunner {
         additionalToolDeclarations: [Tool] = [],
         parentToolExecutors: [String: any IOSToolExecutor],
         toolCallId: String = "",
+        sourceConversationId: String? = nil,
         timeoutSeconds: TimeInterval? = nil,
         provider: any IOSAgentTextProvider = OpenAIKmpProviderAdapter()
     ) async -> String {
@@ -313,6 +314,26 @@ final class SubAgentRunner {
         })
         let removedTools = requested.filter { !tools.contains($0) }
 
+        // The task row is the cross-conversation owner. Keep the execution
+        // identity stable from the first persisted .running snapshot through
+        // the terminal update; the in-memory cancellation UUID used to be
+        // created later in runEngine and could not be projected globally.
+        let executionId = UUID()
+        let executionStartedAt = Date()
+        var taskMetadata: [String: String] = [
+            "provider_mode": "engine_real_provider",
+            "role_name": role.name,
+            "engine": "true",
+            "execution_id": executionId.uuidString,
+            "execution_started_at": String(executionStartedAt.timeIntervalSince1970)
+        ]
+        if let sourceConversationId,
+           !sourceConversationId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            taskMetadata["source_conversation_id"] = sourceConversationId
+        }
+        if !toolCallId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            taskMetadata["tool_call_id"] = toolCallId
+        }
         let task = taskStore.startTask(
             kind: .subAgent,
             title: "\(role.name) · \(objective.prefix(36))",
@@ -321,11 +342,8 @@ final class SubAgentRunner {
             toolScope: tools,
             budgetSummary: "turns \(role.maxTurns) · timeout \(role.timeoutSeconds)s · output \(role.outputBudgetChars) chars (engine)",
             sourceToolName: "subagent_dispatch",
-            metadata: [
-                "provider_mode": "engine_real_provider",
-                "role_name": role.name,
-                "engine": "true"
-            ]
+            metadata: taskMetadata,
+            now: executionStartedAt
         )
         lastTask = task
         activeEngineRunCount += 1
@@ -358,6 +376,7 @@ final class SubAgentRunner {
         systemPromptSections.append("""
         You are subagent \(role.name). Work toward the objective using only the allowed tools.
         When done, call `subagent_report` with a concise summary and findings.
+        \(IOSSubAgentOutputProjection.progressReportingInstruction)
         Do not ask the user follow-up questions.
         """)
         let systemPrompt = systemPromptSections.joined(separator: "\n\n")
@@ -415,13 +434,16 @@ final class SubAgentRunner {
         // Live stream: register a model keyed by the dispatch tool call so the
         // chat detail sheet can show the subagent generating token-by-token, then
         // feed the engine's accumulating assistant text into it.
-        let liveModel = await MainActor.run { SubAgentLiveModel() }
+        let liveModel = await MainActor.run {
+            SubAgentLiveModel(executionId: executionId.uuidString)
+        }
         await MainActor.run { SubAgentLiveRegistry.shared.register(toolCallId: toolCallId, liveModel) }
         let execution = await runEngine(
             engine,
             providerSetting: providerSetting,
             messages: messages,
             params: params,
+            executionId: executionId,
             timeoutSeconds: timeoutSeconds ?? TimeInterval(role.timeoutSeconds),
             liveModel: liveModel
         )
@@ -436,6 +458,18 @@ final class SubAgentRunner {
             if value.wasCancelled {
                 mappedStatus = .cancelled
                 terminalError = nil
+            } else if let durabilityFailure = value.durabilityFailureMessage {
+                mappedStatus = .failed
+                terminalError = "SubAgent stopped because its durable result could not be recorded: \(durabilityFailure)"
+            } else if value.toolOutcomeUnknown != nil {
+                mappedStatus = .failed
+                terminalError = "SubAgent stopped because a tool result is still unknown and needs reconciliation."
+            } else if let pendingApproval = value.pendingApproval {
+                // SubAgent engines deliberately disable approval pauses. If a
+                // custom executor nevertheless leaks one through, ending as
+                // completed would leave a permanently unfinished tool call.
+                mappedStatus = .failed
+                terminalError = "SubAgent stopped because foreground approval is required for \(pendingApproval.toolName)."
             } else if let providerFailure = value.providerFailureMessage {
                 mappedStatus = .failed
                 terminalError = providerFailure
@@ -484,6 +518,46 @@ final class SubAgentRunner {
                 : String(displayText.prefix(role.outputBudgetChars))
         }
 
+        let executionFinishedAt = Date()
+        var terminalMetadata: [String: String] = [
+            "steps_executed": "\(result?.stepsExecuted ?? 0)",
+            "report_captured": "\(reportCapture.captured != nil)",
+            "hit_step_limit": "\(result?.hitStepLimit ?? false)",
+            "guard_stopped": "\(result?.guardStopped ?? false)",
+            "was_cancelled": "\(result?.wasCancelled ?? (mappedStatus == .cancelled))"
+        ]
+        if mappedStatus.isTerminal {
+            terminalMetadata["execution_finished_at"] = String(executionFinishedAt.timeIntervalSince1970)
+        }
+        if result?.durabilityFailureMessage != nil {
+            terminalMetadata["durability_failure"] = "true"
+        }
+        if result?.toolOutcomeUnknown != nil {
+            terminalMetadata["outcome_unknown"] = "true"
+        }
+        if result?.pendingApproval != nil {
+            terminalMetadata["approval_required"] = "true"
+        }
+        if mappedStatus.isTerminal {
+            let reportSummary = IOSSubAgentOutputProjection.summaryFromStoredResult(summary)
+            let projected = IOSSubAgentOutputProjection.snapshot(
+                messages: result?.messages ?? [],
+                isFinal: true,
+                fallbackSummary: reportSummary
+            )
+            if let projected {
+                let publicOutput = IOSSubAgentOutputSnapshot(
+                    summary: reportSummary ?? projected.summary,
+                    steps: projected.steps,
+                    isFinal: true
+                )
+                if let data = try? JSONEncoder().encode(publicOutput),
+                   let encoded = String(data: data, encoding: .utf8) {
+                    terminalMetadata["public_output"] = encoded
+                }
+            }
+        }
+
         lastTask = taskStore.updateTask(
             id: task.id,
             status: mappedStatus,
@@ -492,13 +566,8 @@ final class SubAgentRunner {
             error: terminalError ?? "",
             retryable: mappedStatus != .completed,
             cancelCapability: false,
-            metadata: [
-                "steps_executed": "\(result?.stepsExecuted ?? 0)",
-                "report_captured": "\(reportCapture.captured != nil)",
-                "hit_step_limit": "\(result?.hitStepLimit ?? false)",
-                "guard_stopped": "\(result?.guardStopped ?? false)",
-                "was_cancelled": "\(result?.wasCancelled ?? (mappedStatus == .cancelled))"
-            ]
+            metadata: terminalMetadata,
+            now: executionFinishedAt
         )
         lastRunResult = summary
         return Self.json([
@@ -528,6 +597,7 @@ final class SubAgentRunner {
         providerSetting: ProviderSetting,
         messages: [UIMessage],
         params: TextGenerationParams,
+        executionId: UUID,
         timeoutSeconds: TimeInterval,
         liveModel: SubAgentLiveModel
     ) async -> EngineExecution {
@@ -545,10 +615,16 @@ final class SubAgentRunner {
                 params: input.params,
                 onAssistantText: { text in
                     liveModel.ingest(text)
+                },
+                onMessagesUpdated: { messages in
+                    guard let snapshot = IOSSubAgentOutputProjection.snapshot(
+                        messages: messages,
+                        isFinal: false
+                    ) else { return }
+                    liveModel.replacePublicOutput(snapshot)
                 }
             )
         }
-        let executionId = UUID()
         currentEngineExecutionId = executionId
         currentEngineRunTasks[executionId] = runTask
         currentEngineRunOrder.append(executionId)

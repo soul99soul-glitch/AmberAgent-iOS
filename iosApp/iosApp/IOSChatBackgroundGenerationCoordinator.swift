@@ -1027,6 +1027,64 @@ final class IOSChatBackgroundGenerationCoordinator {
         return result
     }
 
+    /// Exact in-memory owner projection for the cross-conversation activity
+    /// surface. The observer has already read the durable run row; this method
+    /// only refines a durable `running` row when this coordinator owns the same
+    /// run. It never hydrates a payload or invents an owner for an unknown id.
+    func subAgentExecutionState(runId: String) -> String? {
+        guard !runId.isEmpty,
+              let active = activeJobs.first(where: { $0.value.runId == runId }) else {
+            return nil
+        }
+        let requestId = active.key
+        if outcomeUnknownRequestIds.contains(requestId) || toolRecoveryInFlightRequestIds.contains(requestId) {
+            return "outcome_unknown"
+        }
+        if backgroundInterruptedRequestIds.contains(requestId)
+            || foregroundResumeInFlightRequestIds.contains(requestId) {
+            return "resumable"
+        }
+        if activeBackgroundTasks[requestId] != nil
+            || activeDetachedResponseTasks[requestId] != nil
+            || activeDetachedResponseJobs[requestId] != nil {
+            return "running"
+        }
+        // The retained payload/system request exists, but no callback or
+        // detached transport is executing it at this instant.
+        return "created"
+    }
+
+    /// Public, run-bound output for the detail sheet. The returned messages are
+    /// only the current execution suffix after the handoff/display baseline;
+    /// prompts, fork history and reasoning parts are never returned here.
+    func subAgentPublicOutput(runId: String) -> IOSSubAgentOutputSnapshot? {
+        guard let active = activeJobs.first(where: { $0.value.runId == runId }) else {
+            return nil
+        }
+        let job = active.value
+        let current = job.messagesSnapshot.messages
+        let messages: [UIMessage]
+        switch job.mode {
+        case .continueModel:
+            messages = Self.reconciledMessages(
+                resultMessages: current,
+                uploadMessageCount: job.uploadMessages.count,
+                displayMessages: job.displayMessages
+            )
+        case .resumeResponse, .singleToolOnly:
+            // Durable Responses already accumulate displayMessages as their
+            // prefix. Their upload baseline may be shorter after compaction;
+            // remapping through uploadMessages would turn old display content
+            // into a false current-run suffix.
+            messages = current
+        }
+        let generated = IOSSubAgentOutputProjection.generatedMessages(
+            finalMessages: messages,
+            displayMessages: job.displayMessages
+        )
+        return IOSSubAgentOutputProjection.snapshot(messages: generated, isFinal: false)
+    }
+
     @discardableResult
     func cancelActiveJob(conversationId: KotlinUuid) -> Bool {
         if let runId = activeRunId(conversationId: conversationId) {
@@ -1137,7 +1195,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 return
             }
             if didPersistTerminal {
-                self.notifyRunTerminal(job: job, runId: job.runId, finalMessages: cancelledMessages)
+                await self.notifyRunTerminal(job: job, runId: job.runId, finalMessages: cancelledMessages)
             }
             _ = job.liveActivityController.adoptExistingActivity(
                 runId: job.runId,
@@ -1732,7 +1790,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         }
         guard runState.finalizeTerminal() else { return }
         if didSave {
-            notifyRunTerminal(job: job, runId: job.runId, finalMessages: stamped)
+            await notifyRunTerminal(job: job, runId: job.runId, finalMessages: stamped)
             IOSMemoryExtractionCoordinator.shared.enqueue(
                 conversationId: job.conversationId, baseline: job.displayMessages, completed: stamped
             )
@@ -1998,8 +2056,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         // 下一 run）。引擎终结处已把剩余可见文本并入终态消息；run 结束后这里在
         // MainActor 上把收集到的引用 id 落 markUsed——引用是模型显式信号 →
         // force（不受 P2-b 召回同集去抖影响）。
-        let initialCitationTracker = IOSMemoryCitationTracker()
-        let retryCitationTracker = IOSMemoryCitationTracker()
+        let initialCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
+        let retryCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         let operationTask = Task { () -> IOSAgentToolEngineResult in
             switch job.mode {
             case .continueModel, .resumeResponse:
@@ -2395,7 +2453,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                 finalMessages: finalMessages
             )
         }
-        notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
+        await notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         if succeeded {
             IOSMemoryExtractionCoordinator.shared.enqueue(
                 conversationId: job.conversationId, baseline: job.displayMessages, completed: finalMessages
@@ -2482,6 +2540,12 @@ final class IOSChatBackgroundGenerationCoordinator {
                     status: recordedStatus,
                     finalMessages: finalMessages
                 )
+                await archiveTerminalOutput(
+                    runId: job.runId,
+                    conversationId: job.conversationId,
+                    displayMessages: job.displayMessages,
+                    finalMessages: finalMessages
+                )
                 _ = await publishTruncatedTerminal(
                     job: job,
                     requestId: backgroundTask.identifier,
@@ -2513,6 +2577,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             status: recordedStatus,
             finalMessages: finalMessages
         )
+        await notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         guard await publishTruncatedTerminal(
             job: job,
             requestId: backgroundTask.identifier,
@@ -2520,7 +2585,6 @@ final class IOSChatBackgroundGenerationCoordinator {
             summary: Self.backgroundSummary(from: finalMessages),
             presentation: failurePresentation
         ) else { return }
-        notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         backgroundTask.updateTitle(
             IOSAppLocalization.string("Amber 后台生成", defaultValue: "Amber 后台生成"),
             subtitle: IOSAppLocalization.string("回复达到输出上限", defaultValue: "回复达到输出上限")
@@ -2691,7 +2755,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             status: recordedStatus,
             finalMessages: finalMessages
         )
-        notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
+        await notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         WatchTaskCoordinator.shared.publish(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
@@ -2931,7 +2995,7 @@ final class IOSChatBackgroundGenerationCoordinator {
             status: recordedStatus,
             finalMessages: finalMessages
         )
-        notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
+        await notifyRunTerminal(job: job, runId: job.runId, finalMessages: finalMessages)
         WatchTaskCoordinator.shared.publish(
             runId: job.runId,
             conversationId: job.conversationId.toHexDashString(),
@@ -3147,7 +3211,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         if didSave {
             removePayload(requestId: requestId)
         }
-        notifyRunTerminal(job: job, runId: job.runId, finalMessages: completedMessages)
+        await notifyRunTerminal(job: job, runId: job.runId, finalMessages: completedMessages)
         if succeeded {
             WatchTaskCoordinator.shared.publishCompleted(
                 runId: job.runId,
@@ -3611,12 +3675,45 @@ final class IOSChatBackgroundGenerationCoordinator {
         job: IOSChatBackgroundRuntimeJob,
         runId: String,
         finalMessages: [UIMessage]
-    ) {
-        guard let onRunTerminal else { return }
+    ) async {
+        await archiveTerminalOutput(
+            runId: runId,
+            conversationId: job.conversationId,
+            displayMessages: job.displayMessages,
+            finalMessages: finalMessages
+        )
         let conversationId = job.conversationId
+        guard let onRunTerminal else { return }
         Task { @MainActor [onRunTerminal, conversationId, runId, finalMessages] in
             await onRunTerminal(conversationId, runId, finalMessages)
         }
+    }
+
+    private func archiveTerminalOutput(
+        runId: String,
+        conversationId: KotlinUuid,
+        displayMessages: [UIMessage],
+        finalMessages: [UIMessage]
+    ) async {
+        let generated = IOSSubAgentOutputProjection.generatedMessages(
+            finalMessages: finalMessages,
+            displayMessages: displayMessages
+        )
+        guard let output = IOSSubAgentOutputProjection.snapshot(
+            messages: generated,
+            isFinal: true
+        ) else {
+            return
+        }
+        // The archive is part of the terminal result, so finish the durable
+        // write before the caller releases the BGTask/runtime owner. The
+        // parent callback remains fire-and-forget in notifyRunTerminal to
+        // preserve its existing mailbox delivery semantics.
+        await IOSSubAgentOutputArchive.archive(
+            runId: runId,
+            conversationId: conversationId,
+            snapshot: output
+        )
     }
 
     /// P1-d: 后台 job 的 mailbox drain（引擎每轮批量执行后调用）。Room drain

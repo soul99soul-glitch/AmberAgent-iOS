@@ -245,7 +245,7 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(params.tools.isEmpty, "tool declarations must be populated")
     }
 
-    func testAuxiliaryGenerationParamsPreserveSelectedModelOverrides() {
+    func testAuxiliaryGenerationParamsPreserveProviderMergedModelOverrides() {
         let json = Kotlinx_serialization_jsonJson.companion
         let model = Model(
             modelId: "aux-model",
@@ -269,7 +269,14 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
 
         let params = ChatViewModel.auxiliaryTextGenerationParamsForTesting(
             model: model,
-            assistantHeaders: [CustomHeader(name: "X-Assistant", value: "assistant")],
+            assistantHeaders: ChatProviderConfiguration.requestHeaders(
+                for: IosSettingsMutations.shared.buildOpenAIProvider(
+                    name: "Aux", apiKey: "test", baseUrl: "https://example.test/v1",
+                    modelName: "Aux", modelId: "aux-model"
+                ),
+                assistant: [CustomHeader(name: "X-Assistant", value: "assistant")],
+                model: model.customHeaders
+            ),
             assistantBodies: [
                 CustomBody(
                     key: "assistant_flag",
@@ -284,11 +291,10 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertEqual(params.customBody.map { $0.value.description }, ["true", "\"priority\""])
     }
 
-    /// The tool-declaration names must still include the expected core tools
-    /// after the params refactor (regression guard). P0-a: the default config
-    /// declares >40 tools, so lazy mode hides the deferred set (wm_*, iSH,
-    /// skill management) behind tool_search on the first round; the resident
-    /// iOS core tools stay declared.
+    /// The visible resident declarations and full catalog must stay aligned
+    /// after the params refactor. P0-a: the default config declares >40 tools,
+    /// so the new orchestration tools are discoverable in the full catalog and
+    /// exposed through tool_search instead of being first-round declarations.
     func testToolDeclarationsStillIncludeCoreTools() {
         let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
         let viewModel = ChatViewModel(
@@ -298,7 +304,6 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
             autoGenerateResponses: false
         )
         let names = Set(viewModel.currentToolDeclarationNames())
-        XCTAssertTrue(names.contains("subagent_dispatch"))
         XCTAssertTrue(names.contains("model_council_run"))
         XCTAssertTrue(names.contains("ask_user"))
         // P0-a: the discovery tool itself is always resident.
@@ -318,6 +323,11 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(names.contains("ish_handoff"))
         XCTAssertTrue(names.isDisjoint(with: IOSEmbeddedIshToolCatalog.supportedToolNames))
         XCTAssertTrue(names.isDisjoint(with: IOSWebMountToolCatalog.supportedToolNames))
+
+        let fullNames = Set(viewModel.toolExposureBridgeForTesting()?.fullToolDeclarations().map(\.name) ?? [])
+        XCTAssertTrue(fullNames.contains("spawn_agent"), "orchestration uses spawn_agent in the full catalog")
+        XCTAssertTrue(fullNames.contains("session_search"), "session tools belong to the full catalog")
+        XCTAssertFalse(fullNames.contains("subagent_dispatch"), "the retired dispatch tool must not be reintroduced")
     }
 
     /// P0-a: iSH tools are no longer first-round declarations in the default

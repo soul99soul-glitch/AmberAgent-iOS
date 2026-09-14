@@ -91,6 +91,20 @@ struct DisplayFontSettingsView: View {
                             .font(.title3.weight(.semibold))
                             .foregroundStyle(AmberTheme.muted)
                     }
+
+                    Button {
+                        fontScale = 1.0
+                    } label: {
+                        Label("重置为默认", systemImage: "arrow.counterclockwise")
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .font(.caption)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(fontScale == 1.0 ? AmberTheme.muted2 : AmberTheme.accent)
+                    .disabled(fontScale == 1.0)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityIdentifier("chat-font-size-reset")
                 }
                 .padding(.horizontal, 15)
                 .padding(.vertical, 13)
@@ -111,7 +125,13 @@ struct DisplayFontSettingsView: View {
             FontPreviewCard(font: selectedFont, scale: fontScale)
                 .padding(.top, 10)
 
-            Text("预览展示当前字号与字体在聊天正文中的效果。")
+            Group {
+                if selectedFont == .monospace {
+                    Text("等宽字体用于英文与数字，中文使用系统字体。")
+                } else {
+                    Text("预览展示当前字号与字体在聊天正文中的效果。")
+                }
+            }
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -177,11 +197,15 @@ private struct DisplayDivider: View {
 private struct FontPreviewCard: View {
     let font: IOSChatFont
     let scale: Double
-    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 16
+    @ScaledMetric(relativeTo: .body) private var scaledBodyPointSize: CGFloat = 17
 
     var body: some View {
-        Text("凌晨四点钟，看到海棠花未眠。我常常这样，在无人的夜里独自醒着，想，若有人此刻也在想我，那就好了。")
-            .font(.system(size: scaledBodyPointSize * scale, design: font.design))
+        VStack(alignment: .leading, spacing: 10) {
+            Text("多年以后，面对行刑队，奥雷里亚诺·布恩迪亚上校将会回想起父亲带他去见识冰块的那个遥远的下午。")
+            Text(verbatim: "Aa Bb Cc · 0123456789")
+                .foregroundStyle(AmberTheme.muted)
+        }
+            .font(font.font(size: scaledBodyPointSize * scale))
             .foregroundStyle(AmberTheme.foreground2)
             .lineSpacing(3 * scale)
             .frame(maxWidth: .infinity, alignment: .leading)

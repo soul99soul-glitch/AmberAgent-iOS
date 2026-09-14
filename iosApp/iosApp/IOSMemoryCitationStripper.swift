@@ -147,8 +147,14 @@ final class IOSMemoryCitationStripper {
 public final class IOSMemoryCitationTracker: @unchecked Sendable {
     private let lock = NSLock()
     private let stripper = IOSMemoryCitationStripper()
+    private let enforcesCitationAllowlist: Bool
+    private var allowedCitationIds: Set<Int32> = []
     private var capturedIds: Set<Int32> = []
     private var absorbedCitationCount = 0
+
+    init(enforceCitationAllowlist: Bool = false) {
+        self.enforcesCitationAllowlist = enforceCitationAllowlist
+    }
 
     /// 剥离 chunk 中 assistant 文本 delta 的隐藏标记；无标记时原样返回同一 chunk。
     func stripped(_ chunk: MessageChunk) -> MessageChunk {
@@ -176,15 +182,83 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
         return capturedIds
     }
 
+    /// Adds memory ids that were actually included in a provider request. The
+    /// production chat path enables the allowlist; the default remains open for
+    /// parser-only callers and legacy non-chat consumers.
+    func allowCitationIds(_ ids: Set<Int32>) {
+        guard !ids.isEmpty else { return }
+        lock.lock()
+        allowedCitationIds.formUnion(ids)
+        lock.unlock()
+    }
+
+    /// Reads only the two model-visible memory sources: metadata attached to the
+    /// controlled memory projection and successful `memory_tool` result JSON.
+    /// Ordinary system/user text is deliberately ignored so an arbitrary prompt
+    /// or webpage cannot grant itself citation ids.
+    func allowCitationIds(from messages: [UIMessage]) {
+        var ids = Set<Int32>()
+        for message in messages {
+            if message.role == MessageRole.system {
+                for part in message.parts {
+                    guard let text = part as? UIMessagePart.Text else { continue }
+                    ids.formUnion(ChatRuntimeContextBuilder.memoryCitationIds(in: text))
+                }
+            }
+            for part in message.parts {
+                guard let tool = part as? UIMessagePart.Tool,
+                      tool.toolName == "memory_tool" else { continue }
+                for text in tool.output.compactMap({ ($0 as? UIMessagePart.Text)?.text }) {
+                    ids.formUnion(Self.memoryToolResultIds(in: text))
+                }
+            }
+        }
+        allowCitationIds(ids)
+    }
+
     /// `stripped` runs for every streamed chunk. Rebuilding a Set from every
     /// citation seen so far on each call needlessly scans and allocates for
     /// ordinary chunks; only the newly completed tags can change the result.
     private func absorbNewCitations() {
         guard absorbedCitationCount < stripper.citations.count else { return }
         for citation in stripper.citations[absorbedCitationCount...] {
-            capturedIds.formUnion(citation.ids)
+            let ids = enforcesCitationAllowlist
+                ? citation.ids.filter { allowedCitationIds.contains($0) }
+                : citation.ids
+            capturedIds.formUnion(ids)
         }
         absorbedCitationCount = stripper.citations.count
+    }
+
+    private static func memoryToolResultIds(in text: String) -> Set<Int32> {
+        guard let data = text.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["ok"] as? Bool == true,
+              let action = object["action"] as? String else {
+            return []
+        }
+
+        switch action.lowercased() {
+        case "list", "search", "query":
+            guard let memories = object["memories"] as? [[String: Any]] else { return [] }
+            return memories.compactMap { memoryId(from: $0["id"]) }.reduce(into: Set<Int32>()) { $0.insert($1) }
+        case "read", "create", "add", "write", "edit", "update":
+            guard let memory = object["memory"] as? [String: Any],
+                  let id = memoryId(from: memory["id"]) else { return [] }
+            return [id]
+        default:
+            return []
+        }
+    }
+
+    private static func memoryId(from value: Any?) -> Int32? {
+        if let number = value as? NSNumber,
+           CFGetTypeID(number) != CFBooleanGetTypeID() {
+            return Int32(exactly: number.int64Value)
+        }
+        if let value = value as? Int { return Int32(exactly: value) }
+        if let value = value as? String { return Int32(value) }
+        return nil
     }
 
     /// 把 `finish()` 返回的剩余可见文本并入消息快照：追加到最后一条 assistant

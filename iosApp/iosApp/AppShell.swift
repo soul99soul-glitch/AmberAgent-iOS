@@ -44,6 +44,9 @@ struct AppShell: View {
     private var appLanguage = IOSAppLanguage.system.rawValue
 
     init(settingsStore: SettingsStore) {
+        // Capture the process-session boundary before any new child can run.
+        // Observation itself starts only after durable startup recovery below.
+        _ = IOSSubAgentActivityStore.shared
         let headlessComposition = IOSChatBackgroundGenerationCoordinator.shared
             .headlessCompositionForWatch
         let effectiveSettingsStore = headlessComposition?.settingsStore ?? settingsStore
@@ -353,6 +356,7 @@ struct AppShell: View {
                 didBootstrapConversations = true
             }
             sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
+            IOSSubAgentActivityStore.shared.start()
             await openPendingAgentActivityIfReady()
             await openPendingAppDeepLinkIfReady()
         }

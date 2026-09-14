@@ -97,6 +97,24 @@ final class IOSToolRuntimeTests: XCTestCase {
         }
     }
 
+    func testLegacyEngineFailuresRemainFailedInTimeline() {
+        for text in [#"{"error":"network down"}"#, #"{"denied":"policy blocks this"}"#] {
+            let tool = UIMessagePart.Tool(
+                toolCallId: "legacy-failure",
+                toolName: "search_web",
+                input: "{}",
+                output: [UIMessagePart.Text(text: text, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            )
+            XCTAssertEqual(ChatToolStepModel(tool: tool).state, .failed)
+        }
+        XCTAssertNil(ChatToolOutputFormatter.failureReason(from: [
+            UIMessagePart.Text(text: #"{"ok":true,"error":"reported field"}"#, metadata: nil)
+        ]))
+    }
+
     func testDisabledPolicyDeniesFileRead() throws {
         let defaults = isolatedDefaults()
         let permissionStore = IOSPermissionStore(userDefaults: defaults)

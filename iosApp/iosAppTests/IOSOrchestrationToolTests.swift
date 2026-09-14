@@ -517,7 +517,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         )
     }
 
-    func testSpawnValidatesTaskNameAndSuffixesConflicts() async throws {
+    func testSpawnValidatesTaskNameAndUsesStableNamesForConflicts() async throws {
         let base = makeTempDirectory("SpawnValidation")
         defer { try? FileManager.default.removeItem(at: base) }
         let store = makeStore(directory: base)
@@ -550,7 +550,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         ))
         XCTAssertEqual(missing["error"] as? String, "invalid_arguments")
 
-        // 同名冲突 → _2 后缀。
+        // 同名冲突优先分配稳定的英文别名，保留唯一的 agentPath。
         let first = parseJSON(await service.execute(
             toolName: "spawn_agent",
             arguments: spawnArguments(taskName: "research"),
@@ -566,8 +566,17 @@ final class IOSOrchestrationToolTests: XCTestCase {
             params: makeParams(),
             runId: "r2"
         ))
-        XCTAssertEqual(second["task_name"] as? String, "research_2")
-        XCTAssertEqual(second["agent_path"] as? String, "/root/research_2")
+        XCTAssertEqual(second["task_name"] as? String, "nova")
+        XCTAssertEqual(second["agent_path"] as? String, "/root/nova")
+        let third = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "research"),
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "r3"
+        ))
+        XCTAssertEqual(third["task_name"] as? String, "leo")
+        XCTAssertEqual(third["agent_path"] as? String, "/root/leo")
     }
 
     func testSpawnRejectsDepthThreeChain() async throws {

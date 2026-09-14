@@ -90,6 +90,11 @@ final class IOSDurableRunStore: @unchecked Sendable {
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
+                    if started?.boolValue == true {
+                        Task { @MainActor in
+                            NotificationCenter.default.post(name: .amberSubAgentRunsDidChange, object: nil)
+                        }
+                    }
                     continuation.resume(returning: started?.boolValue ?? false)
                 }
             }
@@ -191,6 +196,11 @@ final class IOSDurableRunStore: @unchecked Sendable {
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
+                    if transitioned?.boolValue == true {
+                        Task { @MainActor in
+                            NotificationCenter.default.post(name: .amberSubAgentRunsDidChange, object: nil)
+                        }
+                    }
                     continuation.resume(returning: transitioned?.boolValue ?? false)
                 }
             }

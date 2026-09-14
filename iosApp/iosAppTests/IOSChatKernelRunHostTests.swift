@@ -776,8 +776,36 @@ final class IOSChatKernelRunHostTests: XCTestCase {
 
     /// citation(B1 已接线,这里钉 Host 路径端到端):隐藏标记在入累加器前
     /// 剥离,可见文本无残留;终态把引用 id 以 force 记为已使用。
-    func testStreamingCitationStrippedAndUsageRecorded() async {
+    func testStreamingCitationStrippedAndUsageRecorded() async throws {
         let harness = makeHarness()
+        let memoryPrompt = """
+        <memory-context>
+        - memory_id=7 [core/user] favorite color blue
+        </memory-context>
+        """
+        let memoryData = try JSONSerialization.data(withJSONObject: [[
+            "type": "text",
+            "text": memoryPrompt,
+            "metadata": [ChatRuntimeContextBuilder.memoryCitationMetadataKey: [7]]
+        ]])
+        let memoryParts = try IosToolOutputJsonBridge.shared.decode(
+            json: String(decoding: memoryData, as: UTF8.self)
+        )
+        let memoryBase = UIMessage.companion.system(prompt: memoryPrompt)
+        let memoryContext = memoryBase.doCopy(
+            id: memoryBase.id,
+            role: memoryBase.role,
+            parts: memoryParts,
+            annotations: memoryBase.annotations,
+            createdAt: memoryBase.createdAt,
+            finishedAt: memoryBase.finishedAt,
+            modelId: memoryBase.modelId,
+            usage: memoryBase.usage,
+            translation: memoryBase.translation
+        )
+        harness.runtimeContextInjector = { messages in
+            [memoryContext] + messages
+        }
         var usageRecords: [(ids: [Int32], force: Bool)] = []
         harness.bindings.recordMemoryUsage = { ids, force in
             usageRecords.append((ids, force))

@@ -23,6 +23,7 @@ import app.amber.core.model.withChatModelReasoningMemory
 import app.amber.core.model.withReasoningLevelForModel
 import app.amber.core.settings.DEFAULT_AUTO_MODEL_ID
 import app.amber.core.settings.DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT
+import app.amber.core.settings.DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT_20260901
 import app.amber.core.settings.DEFAULT_PROVIDERS
 import app.amber.core.settings.PREVIOUS_DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT
 import app.amber.core.model.InjectionPosition
@@ -812,8 +813,20 @@ object IosSettingsMutations {
             .replace("an agent-only Android assistant", "an agent-only iOS assistant")
             .replace("Android System WebView", "the system WebView")
 
-        val previousDefaultPrompt = PREVIOUS_DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT.rebranded()
-        val nextDefaultPrompt = DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT.rebranded()
+        val previousDefaultPrompt = PREVIOUS_DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT
+        val previousIosDefaultPrompt = previousDefaultPrompt.rebranded()
+        val septemberDefaultPrompt = DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT_20260901
+        val septemberIosDefaultPrompt = septemberDefaultPrompt.rebranded()
+        val nextDefaultPrompt = DEFAULT_AMBER_ASSISTANT_SYSTEM_PROMPT
+        val nextIosDefaultPrompt = nextDefaultPrompt.rebranded()
+        val factoryAssistantPrompts = setOf(
+            previousDefaultPrompt,
+            previousIosDefaultPrompt,
+            septemberDefaultPrompt,
+            septemberIosDefaultPrompt,
+            nextDefaultPrompt,
+            nextIosDefaultPrompt,
+        )
         return settings.copy(
             agentRuntime = settings.agentRuntime.copy(
                 agentSoulMarkdown = migratedAgentSoulMarkdown(
@@ -821,15 +834,14 @@ object IosSettingsMutations {
                 )
             ),
             assistants = settings.assistants.map { assistant ->
+                val isFactoryAssistant = assistant.systemPrompt in factoryAssistantPrompts
                 assistant.copy(
                     name = if (assistant.name == "AmberAgent" || assistant.name == "Amberagent") {
                         "Amber"
                     } else {
                         assistant.name
                     },
-                    systemPrompt = assistant.systemPrompt.rebranded().let { prompt ->
-                        if (prompt == previousDefaultPrompt) nextDefaultPrompt else prompt
-                    },
+                    systemPrompt = if (isFactoryAssistant) nextIosDefaultPrompt else assistant.systemPrompt,
                 )
             },
         )

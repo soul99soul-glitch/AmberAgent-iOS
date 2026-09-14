@@ -120,6 +120,7 @@ struct ChatView: View {
     let sharedSettings: IOSSharedSettingsStore
     let documentStore: DocumentAccessStore?
     let workspaceStore: IOSWorkspaceStore
+    let activityStore: IOSSubAgentActivityStore
     let initialMessageAnchor: ChatMessageAnchor?
     @State private var viewModel: ChatViewModel
     @State private var activeComposerPanel: ComposerPanel?
@@ -149,6 +150,7 @@ struct ChatView: View {
     @State private var islandHoldToken = 0
     @State private var composerInputHeight: CGFloat = 40
     @State private var composerBarHeight: CGFloat = 0
+    @State private var isSubAgentBarVisible = false
     @State private var composerInputController = ComposerInputController()
     @State private var chatListSummary = ChatListSummarySnapshot()
     @State private var messageEditDraft: ChatMessageEditDraft?
@@ -164,12 +166,14 @@ struct ChatView: View {
         documentStore: DocumentAccessStore? = nil,
         workspaceStore: IOSWorkspaceStore = .shared,
         viewModel: ChatViewModel? = nil,
-        initialMessageAnchor: ChatMessageAnchor? = nil
+        initialMessageAnchor: ChatMessageAnchor? = nil,
+        activityStore: IOSSubAgentActivityStore = .shared
     ) {
         self.settingsStore = settingsStore
         self.sharedSettings = sharedSettings
         self.documentStore = documentStore
         self.workspaceStore = workspaceStore
+        self.activityStore = activityStore
         self.initialMessageAnchor = initialMessageAnchor
         let resolvedViewModel = viewModel ?? ChatViewModel(
             settingsStore: settingsStore,
@@ -255,16 +259,30 @@ struct ChatView: View {
         // moment it gained it — hiding those controls. safeAreaInset keeps the composer correctly
         // sized on its own crisp surfaces and does not overlap the scroll content.
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            // 不再强制 light:原生 `.glassEffect` 本就按系统外观渲染(深色模式下渲染为深色玻璃),
-            // 若把内容强制成 light,前景图标/文字会按浅色调色板解析成深灰,贴在深色玻璃上发暗。
-            // 让 composer 跟随真实外观(与顶栏一致),图标与玻璃明暗才匹配。
-            inputBar
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear
-                            .preference(key: ChatComposerHeightPreferenceKey.self, value: proxy.size.height)
+            VStack(spacing: 0) {
+                ChatSubAgentActivityBar(
+                    currentConversationId: currentConversationIdString,
+                    isInputFocused: isInputFocused,
+                    activityStore: activityStore,
+                    onOpenSource: { sourceConversationId in
+                        await openSubAgentSourceConversation(sourceConversationId)
                     }
+                )
+                .onGeometryChange(for: Bool.self) { $0.size.height > 0 } action: { visible in
+                    isSubAgentBarVisible = visible
                 }
+
+                // 不再强制 light:原生 `.glassEffect` 本就按系统外观渲染(深色模式下渲染为深色玻璃),
+                // 若把内容强制成 light,前景图标/文字会按浅色调色板解析成深灰,贴在深色玻璃上发暗。
+                // 让 composer 跟随真实外观(与顶栏一致),图标与玻璃明暗才匹配。
+                inputBar
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear
+                                .preference(key: ChatComposerHeightPreferenceKey.self, value: proxy.size.height)
+                        }
+                    }
+            }
         }
         .onPreferenceChange(ChatComposerHeightPreferenceKey.self) { height in
             guard abs(composerBarHeight - height) > 0.5 else { return }
@@ -732,6 +750,53 @@ struct ChatView: View {
 
     private var currentConversationIdString: String? {
         viewModel.currentConversationId?.toHexDashString()
+    }
+
+    @MainActor
+    private func openSubAgentSourceConversation(_ sourceConversationId: String) async -> Bool {
+        guard let uuid = UUID(uuidString: sourceConversationId) else { return false }
+        let conversationId = KotlinUuid.companion.parse(
+            uuidString: uuid.uuidString.lowercased()
+        )
+        guard let summary = conversationStore.allSummaries.first(where: {
+            $0.id.toHexDashString().caseInsensitiveCompare(sourceConversationId) == .orderedSame
+        }) else {
+            return false
+        }
+        if conversationStore.currentConversation?.id == summary.id {
+            return true
+        }
+        let selectionRevision = conversationStore.conversationSwitchedRevision
+
+        // Child transcripts are not promoted into the main chat selection. Load
+        // once to prove the target still exists, then route to the read-only
+        // child transcript just like the app-level conversation deep link.
+        let isChildConversation = !conversationStore.summaries.contains(where: {
+            $0.id == summary.id
+        })
+        guard (try? await conversationStore.loadConversationForOrchestration(conversationId)) != nil,
+              !Task.isCancelled,
+              conversationStore.conversationSwitchedRevision == selectionRevision else {
+            return false
+        }
+        if isChildConversation {
+            router.navigate(to: .subAgentConversation(id: summary.id.toHexDashString()))
+            return true
+        }
+
+        guard viewModel.prepareForConversationChange(to: conversationId) else { return false }
+        if conversationStore.currentConversation?.id != conversationId {
+            guard await conversationStore.selectConversationIfAvailable(
+                id: conversationId,
+                commitIf: {
+                    !Task.isCancelled &&
+                    conversationStore.conversationSwitchedRevision == selectionRevision
+                }
+            ) else {
+                return false
+            }
+        }
+        return !Task.isCancelled && conversationStore.currentConversation?.id == conversationId
     }
 
     private var activeWebMountSession: IOSWebMountSessionRecord? {
@@ -1555,7 +1620,7 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal, ChatLayout.contentHorizontalInset)
-        .padding(.top, 8)
+        .padding(.top, isSubAgentBarVisible ? 4 : 8)
         .padding(.bottom, 8)
         .animation(.spring(response: 0.26, dampingFraction: 0.86), value: showsComposerMeta)
         // 完成瞬间建议条插入会让 composer 长高一截：旧实现里转场动画只管建议条

@@ -272,7 +272,7 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         didReportFirstDeltaThisRound = false
         streamClock = ChatGenerationSpeedClock()
-        let tracker = IOSMemoryCitationTracker()
+        let tracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         citationTracker = tracker
 
         bindings.startLiveActivity(

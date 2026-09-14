@@ -80,7 +80,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             metadata: nil
         )
         let typeStep = ChatToolStepModel(tool: typeTool)
-        XCTAssertEqual(typeStep.title, "输入网页字段")
+        XCTAssertEqual(typeStep.title, IOSAppLocalization.string("输入网页字段", defaultValue: "输入网页字段"))
         XCTAssertFalse(typeStep.title.contains(typedSecret))
         XCTAssertFalse(typeStep.detail?.contains(typedSecret) == true)
 
@@ -100,7 +100,7 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
         let openStep = ChatToolStepModel(tool: openTool)
         XCTAssertFalse(openStep.title.contains(URLSecret))
         XCTAssertFalse(openStep.detail?.contains(URLSecret) == true)
-        XCTAssertEqual(openStep.title, "打开网页")
+        XCTAssertEqual(openStep.title, IOSAppLocalization.string("打开网页", defaultValue: "打开网页"))
     }
 
     /// cell 自 sizing 用无界提案询问理想宽度：胶囊理想宽必须自身就在列宽预算内，
@@ -436,9 +436,9 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
                 output: [UIMessagePart.Text(text: #"{"error":"failed"}"#, metadata: nil)]
             )
 
-            XCTAssertEqual(active.title, expectedTitle)
-            XCTAssertEqual(completed.title, expectedTitle)
-            XCTAssertEqual(failed.title, expectedTitle)
+            XCTAssertEqual(active.title, IOSAppLocalization.string(expectedTitle, defaultValue: expectedTitle))
+            XCTAssertEqual(completed.title, IOSAppLocalization.string(expectedTitle, defaultValue: expectedTitle))
+            XCTAssertEqual(failed.title, IOSAppLocalization.string(expectedTitle, defaultValue: expectedTitle))
             let host = UIHostingController(
                 rootView: ChatToolTimeline(steps: [active], onTapStep: { _ in })
             )
@@ -500,9 +500,9 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             let failed = model(item, output: [
                 UIMessagePart.Text(text: #"{"ok":false,"status":"failed","error":"failed"}"#, metadata: nil)
             ])
-            XCTAssertEqual(active.title, item.title, item.name)
-            XCTAssertEqual(completed.title, item.title, item.name)
-            XCTAssertEqual(failed.title, item.title, item.name)
+            XCTAssertEqual(active.title, IOSAppLocalization.string(item.title, defaultValue: item.title), item.name)
+            XCTAssertEqual(completed.title, IOSAppLocalization.string(item.title, defaultValue: item.title), item.name)
+            XCTAssertEqual(failed.title, IOSAppLocalization.string(item.title, defaultValue: item.title), item.name)
             XCTAssertEqual(idealWidth(completed), idealWidth(active), item.name)
             XCTAssertEqual(idealWidth(failed), idealWidth(active), item.name)
             XCTAssertLessThanOrEqual(idealWidth(active), columnWidth + 1, item.name)
@@ -812,6 +812,24 @@ final class ChatToolGlyphMappingTests: XCTestCase {
             completed.workSummary,
             IOSAppLocalization.string("核对来源", defaultValue: "核对来源")
         )
+    }
+
+    func testSubAgentPixelSpritesHaveTwentyDistinctRPGCharacters() {
+        XCTAssertEqual(ChatSubAgentPixelSpriteLibrary.spriteCount, 20)
+        XCTAssertEqual(
+            ChatSubAgentPixelSpriteLibrary.spriteNames,
+            ["勇者", "魔王", "鸟人", "猪头人", "巫师", "骑士", "骷髅", "史莱姆", "蘑菇怪", "外星人",
+             "龙", "猫妖", "狐狸", "南瓜怪", "独眼巨人", "机器人", "树精", "幽灵", "石头人", "章鱼"]
+        )
+        let signatures = Set((0..<ChatSubAgentPixelSpriteLibrary.spriteCount).map {
+            ChatSubAgentPixelSpriteLibrary.spriteSignature(for: $0)
+        })
+        XCTAssertEqual(signatures.count, 20, "20 款 RPG 像素角色必须是实际不同的行数据")
+
+        let sam = ChatSubAgentPixelSpriteLibrary.spriteIndex(for: "dynamic:sam")
+        let nora = ChatSubAgentPixelSpriteLibrary.spriteIndex(for: "dynamic:nora_4")
+        let leo = ChatSubAgentPixelSpriteLibrary.spriteIndex(for: "dynamic:leo_4")
+        XCTAssertEqual(Set([sam, nora, leo]).count, 3, "sam、nora_4、leo_4 应映射到不同 RPG 角色")
     }
 
     func testSpawnCapsuleUsesResolvedNameAfterSiblingCollision() throws {

@@ -829,4 +829,72 @@ final class IOSSubAgentEngineRunnerTests: XCTestCase {
         XCTAssertTrue(provider.seenToolNames.contains("workspace_file_list"))
         XCTAssertFalse(provider.seenToolNames.contains("nonsense_tool"))
     }
+
+    func testRunViaEnginePersistsExecutionMetadataForShortCompletion() async throws {
+        let suiteName = "subagent-metadata-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
+        let runner = SubAgentRunner(taskStore: store)
+        let provider = ScriptedProvider([
+            makeMessage(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: "Done.", metadata: nil)])
+        ])
+
+        _ = await runner.runViaEngine(
+            objective: "Short metadata run",
+            providerSetting: makeProviderSetting(),
+            modelId: "test-model",
+            parentToolExecutors: [:],
+            sourceConversationId: "conversation-1",
+            provider: provider
+        )
+
+        let task = try XCTUnwrap(store.recent(kind: .subAgent, limit: 1).first)
+        XCTAssertEqual(task.status, .completed)
+        XCTAssertEqual(task.metadata["source_conversation_id"], "conversation-1")
+        let executionID = try XCTUnwrap(task.metadata["execution_id"])
+        XCTAssertFalse(executionID.isEmpty)
+        let started = try XCTUnwrap(task.metadata["execution_started_at"].flatMap(Double.init))
+        let finished = try XCTUnwrap(task.metadata["execution_finished_at"].flatMap(Double.init))
+        XCTAssertGreaterThanOrEqual(finished, started)
+        let data = try XCTUnwrap(task.metadata["public_output"]?.data(using: .utf8))
+        let output = try JSONDecoder().decode(IOSSubAgentOutputSnapshot.self, from: data)
+        XCTAssertEqual(output.summary, "Done.")
+        XCTAssertTrue(output.isFinal)
+    }
+
+    func testReloadMarksOnlyPersistedNonTerminalSubAgentInterrupted() throws {
+        let suiteName = "subagent-recovery-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let first = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
+        let running = first.startTask(
+            kind: .subAgent,
+            title: "running",
+            objective: "keep the old row",
+            roleId: "explorer",
+            now: Date(timeIntervalSince1970: 100)
+        )
+        first.appendLog(id: running.id, chunk: "partial output", now: Date(timeIntervalSince1970: 101))
+        let completed = first.startTask(
+            kind: .subAgent,
+            title: "completed",
+            objective: "already done",
+            roleId: "explorer",
+            now: Date(timeIntervalSince1970: 100)
+        )
+        _ = first.updateTask(
+            id: completed.id,
+            status: .completed,
+            resultSummary: "done",
+            cancelCapability: false,
+            now: Date(timeIntervalSince1970: 102)
+        )
+
+        let reloaded = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
+        let restoredRunning = try XCTUnwrap(reloaded.task(id: running.id))
+        XCTAssertEqual(restoredRunning.status, .interrupted)
+        XCTAssertEqual(restoredRunning.logTail, "partial output")
+        XCTAssertEqual(reloaded.task(id: completed.id)?.status, .completed)
+    }
 }

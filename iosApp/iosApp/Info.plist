@@ -72,6 +72,11 @@
     <false/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>UIAppFonts</key>
+    <array>
+        <string>noto_serif_sc_vf.otf</string>
+        <string>jetbrains_mono.ttf</string>
+    </array>
     <key>CADisableMinimumFrameDurationOnPhone</key>
     <true/>
     <key>NSSupportsLiveActivities</key>

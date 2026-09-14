@@ -217,6 +217,10 @@ targets:
         product: NIOCore
       - package: swift-nio
         product: NIOPosix
+      - package: swift-nio
+        product: NIOHTTP1
+      - package: swift-nio
+        product: NIOEmbedded
       - package: swift-nio-ssh
         product: NIOSSH
       - package: SwiftStreamingMarkdown
@@ -519,6 +523,10 @@ targets:
         product: NIOCore
       - package: swift-nio
         product: NIOPosix
+      - package: swift-nio
+        product: NIOHTTP1
+      - package: swift-nio
+        product: NIOEmbedded
       - package: swift-nio-ssh
         product: NIOSSH
       - package: SwiftStreamingMarkdown

@@ -431,6 +431,255 @@ final class IOSSearchExecutorTests: XCTestCase {
         }
     }
 
+    func testSharedPublicTransportRejectsHTTPSFakeIP() async {
+        CountingSearchURLProtocol.reset()
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CountingSearchURLProtocol.self]
+        let transport = IOSURLSessionSearchHTTPTransport(
+            session: URLSession(configuration: configuration),
+            resolveHost: { _ in ["198.18.0.8"] }
+        )
+        let request = URLRequest(url: URL(string: "https://public.example/page")!)
+
+        do {
+            _ = try await transport.sendPublic(request, maximumResponseBytes: 1_024)
+            XCTFail("Shared public transport must not route to a Fake-IP address")
+        } catch {
+            XCTAssertEqual(
+                error as? IOSSearchExecutorError,
+                .disallowedURL("host resolves to a non-public address")
+            )
+        }
+        XCTAssertEqual(CountingSearchURLProtocol.startLoadingCount, 0)
+    }
+
+    func testVerifiedScrapeResolverUsesPublicDNSAddressForFakeIP() async throws {
+        let addresses = try await IOSVerifiedHTTPScrapeAddressResolver.initialFakeIPAddresses(
+            ["198.18.0.8"],
+            host: "public.example",
+            resolvePublicHost: { _ in ["93.184.216.34"] }
+        )
+        XCTAssertEqual(try XCTUnwrap(addresses), ["93.184.216.34"])
+    }
+
+    func testVerifiedScrapeResolverRejectsFakeIPWhenPublicDNSReturnsPrivateAddress() async {
+        do {
+            _ = try await IOSVerifiedHTTPScrapeAddressResolver.initialFakeIPAddresses(
+                ["198.18.0.8"],
+                host: "public.example",
+                resolvePublicHost: { _ in ["10.0.0.8"] }
+            )
+            XCTFail("Expected an untrusted public-DNS answer to be rejected")
+        } catch {
+            XCTAssertEqual(
+                error as? IOSSearchExecutorError,
+                .disallowedURL("fake-IP host could not be verified by public DNS")
+            )
+        }
+    }
+
+    func testVerifiedScrapeResolverRejectsMixedFakeAndPrivateDNSAnswers() async {
+        do {
+            _ = try await IOSVerifiedHTTPScrapeAddressResolver.initialFakeIPAddresses(
+                ["198.18.0.8", "10.0.0.8"],
+                host: "public.example",
+                resolvePublicHost: { _ in ["93.184.216.34"] }
+            )
+            XCTFail("Mixed Fake-IP/private answers must remain blocked")
+        } catch {
+            XCTAssertEqual(
+                error as? IOSSearchExecutorError,
+                .disallowedURL("host resolves to a non-public address")
+            )
+        }
+    }
+
+    func testVerifiedScrapePreservesCancellationDuringPublicDNS() async throws {
+        let resolverStarted = TestAsyncGate()
+        let transport = IOSURLSessionSearchHTTPTransport(
+            resolveHost: { _ in ["198.18.0.8"] },
+            resolvePublicHostForVerifiedScrape: { _ in
+                await resolverStarted.wait()
+                return ["93.184.216.34"]
+            }
+        )
+        let request = URLRequest(url: URL(string: "https://public.example/cancel")!)
+        let task = Task { @MainActor in
+            try await transport.sendVerifiedHTTPSGET(request, maximumResponseBytes: 1_024)
+        }
+
+        await resolverStarted.waitUntilEntered()
+        task.cancel()
+        await resolverStarted.release()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation to propagate from public DNS")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+    }
+
+    func testVerifiedScrapeDeadlineStopsBeforeSystemDNS() async {
+        let calls = LockedInvocationCounter()
+        do {
+            _ = try await IOSVerifiedHTTPScrapeAddressResolver.resolveSystemAddresses(
+                "public.example",
+                resolveHost: { _ in
+                    calls.increment()
+                    return ["198.18.0.8"]
+                },
+                deadline: Date(timeIntervalSinceNow: -1)
+            )
+            XCTFail("Expired scrape deadline must stop before DNS")
+        } catch {
+            XCTAssertTrue(error is URLError)
+        }
+        XCTAssertEqual(calls.value, 0)
+    }
+
+    func testSystemDNSWaiterCancelAndTimeoutDoNotWaitForLibcWorker() async {
+        for shouldCancel in [true, false] {
+            let entered = DispatchSemaphore(value: 0)
+            let release = DispatchSemaphore(value: 0)
+            defer { release.signal() }
+            let task = Task { () -> [String] in
+                try await IOSVerifiedHTTPScrapeAddressResolver.resolveSystemAddresses(
+                    "public.example",
+                    resolveHost: { _ in
+                        entered.signal()
+                        release.wait()
+                        return ["198.18.0.8"]
+                    },
+                    deadline: Date(timeIntervalSinceNow: shouldCancel ? 30 : 0.2)
+                )
+            }
+
+            let waitForEntry: @Sendable () -> Bool = { entered.wait(timeout: .now() + 1) == .success }
+            let didEnter = await Task.detached { waitForEntry() }.value
+            XCTAssertTrue(didEnter)
+            if shouldCancel { task.cancel() }
+            do {
+                _ = try await task.value
+                XCTFail("Waiter must finish while the libc worker is still blocked")
+            } catch {
+                if shouldCancel { XCTAssertTrue(error is CancellationError) }
+                else { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+            }
+        }
+    }
+
+    func testVerifiedScrapePublicDNSUsesRemainingDeadline() async {
+        let started = Date()
+        do {
+            _ = try await IOSVerifiedHTTPScrapeAddressResolver.verifiedConnectionAddresses(
+                ["198.18.0.8"], host: "public.example",
+                resolvePublicHost: { _ in
+                    try await Task.sleep(for: .seconds(30))
+                    return ["93.184.216.34"]
+                },
+                deadline: started.addingTimeInterval(0.05)
+            )
+            XCTFail("Expected the shared scrape deadline to cancel public DNS")
+        } catch {
+            XCTAssertEqual((error as? URLError)?.code, .timedOut)
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1)
+    }
+
+    func testPreCancelledVerifiedScrapeDoesNotStartSystemResolution() async {
+        let gate = TestAsyncGate()
+        let calls = LockedInvocationCounter()
+        let task = Task {
+            await gate.wait()
+            return try await IOSVerifiedHTTPScrapeAddressResolver.resolveSystemAddresses(
+                "public.example",
+                resolveHost: { _ in
+                    calls.increment()
+                    return ["198.18.0.8"]
+                }
+            )
+        }
+
+        await gate.waitUntilEntered()
+        task.cancel()
+        await gate.release()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected the pre-cancelled resolver task to stop before resolution")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(calls.value, 0)
+    }
+
+    func testVerifiedScrapeHTTPDecoderHandlesSplitChunkedBody() async throws {
+        let decoder = try await IOSVerifiedHTTPScrapeHTTPResponseDecoder(maximumResponseBytes: 128)
+        try await decoder.append(Data("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nWi".utf8))
+        try await decoder.append(Data("ki\r\n5\r\npedia\r\n0\r\n\r\n".utf8))
+        let (response, body) = try await decoder.finish(url: URL(string: "https://public.example/chunked")!)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(String(decoding: body, as: UTF8.self), "Wikipedia")
+    }
+
+    func testVerifiedScrapeHTTPDecoderDropsEarlyHintsBeforeFinalResponse() async throws {
+        let decoder = try await IOSVerifiedHTTPScrapeHTTPResponseDecoder(maximumResponseBytes: 128)
+        let rawResponse = "HTTP/1.1 103 Early Hints\r\n"
+            + "Link: </app.css>; rel=preload\r\n\r\n"
+            + "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"
+        try await decoder.append(Data(rawResponse.utf8))
+        let (response, body) = try await decoder.finish(url: URL(string: "https://public.example/hints")!)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(String(decoding: body, as: UTF8.self), "OK")
+    }
+
+    func testVerifiedScrapeHTTPDecoderRejectsOversizedBodyBeforeReadingIt() async throws {
+        let decoder = try await IOSVerifiedHTTPScrapeHTTPResponseDecoder(maximumResponseBytes: 8)
+        do {
+            try await decoder.append(Data("HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\n".utf8))
+            XCTFail("Expected the declared response body to exceed the cap")
+        } catch {}
+    }
+
+    func testVerifiedScrapeHTTPDecoderRejectsConnectionCloseBeforeFramedBodyEnds() async throws {
+        let decoder = try await IOSVerifiedHTTPScrapeHTTPResponseDecoder(maximumResponseBytes: 128)
+        try await decoder.append(Data("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nhi".utf8))
+        do {
+            _ = try await decoder.finish(url: URL(string: "https://public.example/cancelled")!)
+            XCTFail("Expected an incomplete framed response to fail on close")
+        } catch {}
+    }
+
+    func testScrapeWebUsesVerifiedTransportWhenAvailable() async throws {
+        let transport = VerifiedMockSearchTransport(body: """
+        <html><head><title>Verified Route</title></head><body><p>Verified body.</p></body></html>
+        """)
+        let output = try await IOSSearchExecutor.execute(
+            toolName: "scrape_web",
+            toolInput: #"{"url":"https://example.com/verified","max_chars":2000}"#,
+            transport: transport
+        )
+        XCTAssertEqual(transport.verifiedRequests.count, 1)
+        XCTAssertTrue(transport.publicRequests.isEmpty)
+        XCTAssertTrue(output.contains("Verified body."))
+    }
+
+    func testLivePublicScrapeUsesProductionTransportWhenEnabled() async throws {
+        guard ProcessInfo.processInfo.environment["AMBER_LIVE_PUBLIC_SCRAPE"] == "1" else {
+            throw XCTSkip("Set AMBER_LIVE_PUBLIC_SCRAPE=1 to run the real public scrape check.")
+        }
+        let output = try await IOSSearchExecutor.execute(
+            toolName: "scrape_web",
+            toolInput: #"{"url":"https://example.com","max_chars":4000}"#,
+            transport: IOSURLSessionSearchHTTPTransport()
+        )
+        let payload = try XCTUnwrap(jsonObject(output))
+        XCTAssertEqual(payload["status"] as? String, "ok")
+        let content = (payload["content"] as? String) ?? ""
+        XCTAssertTrue(content.contains("Example Domain"))
+    }
+
     func testPublicTransportRechecksEveryRedirectTarget() async {
         RedirectingSearchURLProtocol.reset()
         let configuration = URLSessionConfiguration.ephemeral
@@ -710,6 +959,97 @@ private final class UncheckedToolExecutorBox: @unchecked Sendable {
             arguments: arguments,
             isUserInitiated: isUserInitiated
         )
+    }
+}
+
+private actor TestAsyncGate {
+    private var waitContinuation: CheckedContinuation<Void, Never>?
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var entered = false
+    private var released = false
+
+    func wait() async {
+        entered = true
+        enteredContinuation?.resume()
+        enteredContinuation = nil
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            if released {
+                continuation.resume()
+            } else {
+                waitContinuation = continuation
+            }
+        }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { continuation in
+            enteredContinuation = continuation
+        }
+    }
+
+    func release() {
+        released = true
+        waitContinuation?.resume()
+        waitContinuation = nil
+    }
+}
+
+private final class LockedInvocationCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func increment() {
+        lock.lock()
+        count += 1
+        lock.unlock()
+    }
+}
+
+@MainActor
+private final class VerifiedMockSearchTransport: IOSSearchHTTPTransport, IOSVerifiedHTTPScrapeTransport {
+    private let body: Data
+    private(set) var publicRequests: [URLRequest] = []
+    private(set) var verifiedRequests: [URLRequest] = []
+
+    init(body: String) {
+        self.body = Data(body.utf8)
+    }
+
+    func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+        publicRequests.append(request)
+        return try response(for: request)
+    }
+
+    func sendPublic(_ request: URLRequest, maximumResponseBytes: Int) async throws -> (HTTPURLResponse, Data) {
+        publicRequests.append(request)
+        return try response(for: request)
+    }
+
+    func sendVerifiedHTTPSGET(
+        _ request: URLRequest,
+        maximumResponseBytes: Int
+    ) async throws -> (HTTPURLResponse, Data) {
+        verifiedRequests.append(request)
+        return try response(for: request)
+    }
+
+    private func response(for request: URLRequest) throws -> (HTTPURLResponse, Data) {
+        let url = try XCTUnwrap(request.url)
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url,
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/html; charset=utf-8"]
+        ))
+        return (response, body)
     }
 }
 

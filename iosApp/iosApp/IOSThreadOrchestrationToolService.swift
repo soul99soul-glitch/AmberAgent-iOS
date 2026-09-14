@@ -449,7 +449,8 @@ final class IOSThreadOrchestrationToolService {
         defer { inFlightBootstrapCount -= 1 }
 
         let parentAgentPath = await agentPath(of: parentHex, threadEdgeDao: threadEdgeDao)
-        // (a) task_name 冲突自动 _2 后缀（同父下，按已有 agentPath 判定）。
+        // (a) 同父 task_name 冲突时优先换稳定英文名；仅当兜底名池耗尽
+        // 才追加数字后缀（按已有直接子 agentPath 判定）。
         let resolvedTaskName = await Self.uniqueTaskName(
             taskName,
             parentAgentPath: parentAgentPath,
@@ -960,6 +961,8 @@ final class IOSThreadOrchestrationToolService {
     You are a child agent thread in a thread-orchestration tree.
     - Your task arrives as a `[mailbox NEW_TASK from /root/...]` message; `[mailbox MESSAGE|FINAL_ANSWER from /root/...]` are inter-agent mail, not user input.
     - Your final answer is delivered to the parent thread automatically when this run ends — no need to contact the user.
+    - When you spawn a child, choose a short lowercase English first name dynamically. Check `list_agents` when sibling names may already exist, avoid reusing a sibling name, never append numeric suffixes yourself, and keep the returned `agent_path` for followups. The iOS runtime has a local collision fallback; it does not make another model request.
+    - \(IOSSubAgentOutputProjection.progressReportingInstruction)
     """
 
     /// 子线程 run 的输出 token 地板（真机回归：子线程曾继承聊天的几千 token
@@ -1999,21 +2002,47 @@ final class IOSThreadOrchestrationToolService {
         ])
     }
 
-    /// 同父下 task_name 冲突自动追加 `_2`、`_3`…（按父路径 + 已占用路径判定）。
+    /// Stable English aliases used when the model reuses a sibling task name.
+    /// These are route segments, so they stay lowercase and satisfy the same
+    /// task-name grammar as the caller supplied name. The primary name comes
+    /// from the current parent model; this table is a local no-network fallback.
+    private static let collisionTaskNames = [
+        "nova", "leo", "nora", "sam", "milo", "iris", "theo", "luna",
+        "sage", "aria", "orion", "atlas", "ember", "quinn", "riley", "hazel",
+        "sora", "kai", "ivy", "remy", "zane", "cleo", "juno", "piper",
+        "wren", "finn", "skye", "mira", "evan", "rhea", "odin", "maven",
+        "echo", "kira", "vera", "axel", "lina", "miko", "tess", "niko",
+        "yuki", "zora", "cora", "navi", "elio", "nina", "otto", "ravi",
+        "uma", "yara", "basil", "cato", "dara", "elara", "faye", "gala",
+        "hugo", "jace", "kian", "lyra", "maia", "nate", "pax", "rory",
+        "selene", "talia", "una", "vito", "willa", "xena", "yves"
+    ]
+
+    /// Resolve a sibling task name without renaming existing edges. A repeated
+    /// model name first receives an unused stable English alias; numeric
+    /// suffixes are only the last fallback after the alias pool is exhausted.
     private static func uniqueTaskName(
         _ taskName: String,
         parentAgentPath: String,
         threadEdgeDao: ThreadEdgeDao
     ) async -> String {
         let children = await Self.children(of: parentAgentPath, threadEdgeDao: threadEdgeDao)
-        let existingPaths = Set(children.map(\.agentPath))
-        var candidate = taskName
+        let existingNames = Set<String>(children.compactMap { edge in
+            guard edge.agentPath.hasPrefix(parentAgentPath + "/") else { return nil }
+            return edge.agentPath.dropFirst(parentAgentPath.count + 1)
+                .split(separator: "/").first.map(String.init)
+        })
+        guard existingNames.contains(taskName) else { return taskName }
+
+        if let alias = Self.collisionTaskNames.first(where: { !existingNames.contains($0) }) {
+            return alias
+        }
+
         var suffix = 2
-        while existingPaths.contains("\(parentAgentPath)/\(candidate)") {
-            candidate = "\(taskName)_\(suffix)"
+        while existingNames.contains("\(taskName)_\(suffix)") {
             suffix += 1
         }
-        return candidate
+        return "\(taskName)_\(suffix)"
     }
 
     /// 沿 edge 链向上数父深度：root 深度 0，其子深度 1，孙深度 2。

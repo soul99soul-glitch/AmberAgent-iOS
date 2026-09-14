@@ -2,9 +2,19 @@ import SwiftUI
 
 struct SubAgentsView: View {
     let sharedSettings: IOSSharedSettingsStore
+    @State private var activityStore: IOSSubAgentActivityStore
 
     @Environment(RouterPath.self) private var router
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(
+        sharedSettings: IOSSharedSettingsStore,
+        activityStore: IOSSubAgentActivityStore = .shared
+    ) {
+        self.sharedSettings = sharedSettings
+        _activityStore = State(initialValue: activityStore)
+    }
 
     private var roles: [IOSSubAgentRoleDescriptor] {
         IOSSubAgentRoleCatalog.builtIns.filter { $0.id == "browser" }
@@ -56,6 +66,40 @@ struct SubAgentsView: View {
                             .accessibilityIdentifier("subagents.allowDynamic")
                         }
 
+                        AmberSectionLabel(text: "悬浮子代理")
+                        AmberFormGroup {
+                            Toggle(isOn: Binding(
+                                get: { activityStore.isEnabled },
+                                set: { activityStore.isEnabled = $0 }
+                            )) {
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text("显示悬浮子代理")
+                                        .font(.body.weight(.medium))
+                                    Text("在聊天输入区上方显示所有会话的子代理。")
+                                        .font(.caption)
+                                        .foregroundStyle(AmberTheme.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .tint(AmberTheme.accent)
+                            .padding(14)
+                            .accessibilityIdentifier("subagents.activity.enabled")
+
+                            Divider()
+                                .overlay(AmberTheme.borderSoft)
+                                .padding(.leading, 14)
+
+                            autoDismissSetting
+                        }
+                        .id("subagents.activity")
+                        Text("任务结束后开始计时，阅读详情时暂缓收起。收起不会删除记录，也不影响结果返回。")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 30)
+                            .padding(.top, 8)
+
                         AmberSectionLabel(text: "角色")
                         AmberFormGroup {
                             ForEach(Array(roles.enumerated()), id: \.element.id) { index, role in
@@ -84,6 +128,33 @@ struct SubAgentsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+    }
+
+    private var autoDismissSetting: some View {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            Text("完成后自动收起")
+                .font(.body.weight(.medium))
+                .foregroundStyle(AmberTheme.foreground)
+                .fixedSize(horizontal: false, vertical: true)
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
+            Picker("完成后自动收起", selection: Binding(
+                get: { activityStore.autoDismissDelay },
+                set: { activityStore.autoDismissDelay = $0 }
+            )) {
+                ForEach(IOSSubAgentAutoDismissDelay.allCases) { delay in
+                    Text(delay.title).tag(delay)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .tint(AmberTheme.accent)
+            .accessibilityIdentifier("subagents.activity.autoDismissDelay")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
     }
 
     private func roleRow(_ role: IOSSubAgentRoleDescriptor) -> some View {

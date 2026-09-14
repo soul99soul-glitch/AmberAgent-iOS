@@ -24408,43 +24408,43 @@
         }
       }
     },
-    "凌晨四点钟，看到海棠花未眠。我常常这样，在无人的夜里独自醒着，想，若有人此刻也在想我，那就好了。": {
+    "多年以后，面对行刑队，奥雷里亚诺·布恩迪亚上校将会回想起父亲带他去见识冰块的那个遥远的下午。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "At four in the morning, the begonia blossoms were still awake. I often wake alone in the quiet night and think: I wish someone were thinking of me at this very moment."
+            "value": "Years later, facing the firing squad, Colonel Aureliano Buendía would recall that distant afternoon when his father took him to discover ice."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "午前4時、眠らない海棠の花を見た。私はよくこうして、人のいない夜にひとり目を覚まし、思う。もし今この瞬間、誰かも私を想っていたら、それでいいのに。"
+            "value": "何年も後、銃殺隊を前にしたアウレリャノ・ブエンディア大佐は、父に連れられて氷を見に行った、あの遠い午後を思い出すことになる。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "새벽 네 시, 잠들지 않은 해당화를 보았다. 나는 자주 이렇게 아무도 없는 밤에 홀로 깨어, 이 순간 누군가도 나를 생각하고 있다면 좋겠다고 생각한다."
+            "value": "여러 해가 지난 뒤, 총살대 앞에 선 아우렐리아노 부엔디아 대령은 아버지가 얼음을 구경시켜 주러 데려갔던 그 아득한 오후를 떠올리게 될 것이다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Четыре часа утра — и я вижу, что бегония не спит. Со мной такое часто случается: в безлюдную ночь я просыпаюсь один и думаю: как хорошо было бы, если бы кто-то сейчас тоже думал обо мне."
+            "value": "Много лет спустя, стоя перед расстрельной командой, полковник Аурелиано Буэндиа вспомнит тот далёкий день, когда отец повёл его посмотреть на лёд."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "凌晨四点钟，看到海棠花未眠。我常常这样，在无人的夜里独自醒着，想，若有人此刻也在想我，那就好了。"
+            "value": "多年以后，面对行刑队，奥雷里亚诺·布恩迪亚上校将会回想起父亲带他去见识冰块的那个遥远的下午。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "凌晨四點鐘，看到海棠花未眠。我常常這樣，在無人的夜裡獨自醒著，想，若有人此刻也在想我，那就好了。"
+            "value": "多年以後，面對行刑隊，奧雷里亞諾·布恩迪亞上校將會回想起父親帶他去見識冰塊的那個遙遠的下午。"
           }
         }
       }
@@ -91070,6 +91070,47 @@
           "stringUnit": {
             "state": "translated",
             "value": "預覽匯入"
+          }
+        }
+      }
+    },
+    "等宽字体用于英文与数字，中文使用系统字体。": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Monospaced type applies to letters and numbers; Chinese uses the system font."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等幅フォントは英字と数字に適用され、中国語にはシステムフォントを使用します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "고정폭 글꼴은 영문과 숫자에 적용되며, 중국어는 시스템 글꼴을 사용합니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Моноширинный шрифт применяется к латинским буквам и цифрам; для китайского используется системный шрифт."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等宽字体用于英文与数字，中文使用系统字体。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "等寬字體用於英文與數字，中文使用系統字體。"
           }
         }
       }

@@ -113,6 +113,10 @@ object IosChatBackgroundPayloadJsonBridge {
 object IosToolOutputJsonBridge {
     fun encode(parts: List<UIMessagePart>): String = JsonInstant.encodeToString(parts)
 
+    // Keep JsonObject/JsonArray access in Kotlin; Foundation collection bridges
+    // do not preserve their JSON-specific type when Swift reconstructs them.
+    fun metadataJson(part: UIMessagePart): String? = part.metadata?.toString()
+
     @Throws(Throwable::class)
     fun decode(json: String): List<UIMessagePart> = JsonInstant.decodeFromString(json)
 }

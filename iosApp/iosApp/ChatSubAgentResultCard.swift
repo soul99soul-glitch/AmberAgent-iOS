@@ -44,7 +44,7 @@ struct ChatSubAgentResultCard: View {
     }
 
     var body: some View {
-        ChatSubAgentResultCardLayout {
+        ChatSubAgentResultCardLayout(isExpanded: isExpanded) {
             VStack(alignment: .leading, spacing: 0) {
                 header
 
@@ -174,12 +174,20 @@ struct ChatSubAgentResultCard: View {
     }
 }
 
-/// Measure natural content first, then wrap it within a compact chat column.
-/// Unlike a fixed frame, short results and the collapsed header can hug content.
+/// Keep the collapsed capsule compact while letting an expanded report use the
+/// same proposed chat-column width as ordinary assistant content. Unlike a
+/// fixed frame, short collapsed results can still hug their content.
 private struct ChatSubAgentResultCardLayout: Layout {
+    let isExpanded: Bool
+
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         guard let content = subviews.first else { return .zero }
         let available = proposal.width.flatMap { $0.isFinite ? $0 : nil } ?? 340
+        if isExpanded {
+            return content.sizeThatFits(
+                ProposedViewSize(width: max(0, available), height: nil)
+            )
+        }
         let limit = min(300, max(0, available * 0.88))
         let width = min(limit, content.sizeThatFits(.unspecified).width)
         return content.sizeThatFits(ProposedViewSize(width: width, height: nil))

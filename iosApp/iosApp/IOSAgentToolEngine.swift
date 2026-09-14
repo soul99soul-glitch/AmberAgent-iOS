@@ -782,6 +782,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         onAssistantReasoning: (@Sendable (String) -> Void)?,
         onAssistantMessageSnapshot: (@Sendable (UIMessage) -> Void)?
     ) async throws -> MessageChunk {
+        // Register only memory ids carried by this exact provider request. The
+        // tracker reads request metadata and successful memory_tool outputs;
+        // ordinary system/user text is never treated as an authorization source.
+        citationTracker?.allowCitationIds(from: messages)
         switch request.mode {
         case .grokWeb:
             guard let openAI = request.providerSetting as? ProviderSetting.OpenAI else {
@@ -2164,10 +2168,14 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )
             case .denied(let reason):
                 outcome = "denied"
-                resultParts = [UIMessagePart.Text(text: "{\"denied\":\"\(sanitized(reason))\"}", metadata: nil)]
+                resultParts = [UIMessagePart.Text(text: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: tool.toolName, reason: reason, denied: true, status: "denied"
+                ), metadata: nil)]
             case .failed(let reason):
                 outcome = "failed"
-                resultParts = [UIMessagePart.Text(text: "{\"error\":\"\(sanitized(reason))\"}", metadata: nil)]
+                resultParts = [UIMessagePart.Text(text: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: tool.toolName, reason: reason, status: "failed"
+                ), metadata: nil)]
             case .durabilityFailure(let reason):
                 return BatchExecutionResult(
                     outputs: outputs,

@@ -143,7 +143,8 @@ struct IOSWebMountVisionReader {
     func read(
         capture: IOSWebMountScreenshotCapture,
         question: String,
-        settings: Settings
+        settings: Settings,
+        conversationId: String? = nil
     ) async throws -> String {
         try Task.checkCancellation()
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -171,7 +172,8 @@ struct IOSWebMountVisionReader {
             customHeaders: ChatProviderConfiguration.requestHeaders(
                 for: provider,
                 assistant: assistant.customHeaders,
-                model: model.customHeaders
+                model: model.customHeaders,
+                conversationId: conversationId
             ),
             customBody: assistant.customBodies + model.customBodies
         )

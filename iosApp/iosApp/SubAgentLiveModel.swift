@@ -11,9 +11,27 @@ import SwiftUI
 @MainActor
 @Observable
 final class SubAgentLiveModel {
+    let executionId: String?
     private(set) var text: String = ""
     private(set) var isRunning: Bool = true
     @ObservationIgnored private let pendingText = SubAgentLiveTextBuffer()
+    @ObservationIgnored private let publicOutputBox = SubAgentLiveOutputSnapshotBox()
+
+    init(executionId: String? = nil) {
+        self.executionId = executionId
+    }
+
+    /// Latest public-only projection for the detail sheet. This is a locked
+    /// value snapshot rather than an Observation property: tool/message
+    /// boundaries may arrive off the main actor and the detail sheet polls it
+    /// at a bounded rate.
+    var publicOutputSnapshot: IOSSubAgentOutputSnapshot? {
+        publicOutputBox.value
+    }
+
+    nonisolated func replacePublicOutput(_ snapshot: IOSSubAgentOutputSnapshot) {
+        publicOutputBox.replace(snapshot)
+    }
 
     /// The provider publishes the full accumulated text for every token. Keep
     /// only the newest snapshot and schedule at most one main-actor publisher,
@@ -85,6 +103,23 @@ private final class SubAgentLiveTextBuffer: @unchecked Sendable {
     }
 }
 
+private final class SubAgentLiveOutputSnapshotBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshot: IOSSubAgentOutputSnapshot?
+
+    var value: IOSSubAgentOutputSnapshot? {
+        lock.lock()
+        defer { lock.unlock() }
+        return snapshot
+    }
+
+    func replace(_ snapshot: IOSSubAgentOutputSnapshot) {
+        lock.lock()
+        self.snapshot = snapshot
+        lock.unlock()
+    }
+}
+
 /// Process-wide registry linking a subagent dispatch tool call (by `toolCallId`)
 /// to its live model, so the chat detail sheet can find the live stream for the
 /// capsule the user tapped. The engine path (SubAgentRunner) registers a model
@@ -116,5 +151,11 @@ final class SubAgentLiveRegistry {
 
     func model(forToolCallId id: String) -> SubAgentLiveModel? {
         models[id]
+    }
+
+    func model(forToolCallId id: String, executionId: String?) -> SubAgentLiveModel? {
+        guard let model = models[id] else { return nil }
+        guard let executionId, !executionId.isEmpty else { return model }
+        return model.executionId == executionId ? model : nil
     }
 }

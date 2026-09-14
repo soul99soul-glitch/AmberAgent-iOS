@@ -68,13 +68,20 @@ extension IOSSearchHTTPTransport {
 struct IOSURLSessionSearchHTTPTransport: IOSSearchHTTPTransport {
     var session: URLSession
     var resolveHost: @Sendable (String) throws -> [String]
+    /// Used only by the scrape-only direct Fake-IP transport. `sendPublic`
+    /// itself remains strictly bound to system-public answers.
+    var resolvePublicHostForVerifiedScrape: @Sendable (String) async throws -> [String]
 
     init(
         session: URLSession = .shared,
-        resolveHost: @escaping @Sendable (String) throws -> [String] = IOSSearchExecutor.resolveIPAddresses
+        resolveHost: @escaping @Sendable (String) throws -> [String] = IOSSearchExecutor.resolveIPAddresses,
+        resolvePublicHostForVerifiedScrape: @escaping @Sendable (String) async throws -> [String] = {
+            try await IOSWebMountPublicDNS.resolve($0)
+        }
     ) {
         self.session = session
         self.resolveHost = resolveHost
+        self.resolvePublicHostForVerifiedScrape = resolvePublicHostForVerifiedScrape
     }
 
     func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
@@ -191,9 +198,8 @@ final class IOSBoundedPublicURLSessionLoader: NSObject, URLSessionDataDelegate, 
         _ session: URLSession,
         task: URLSessionTask,
         willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest,
-        completionHandler: @escaping @Sendable (URLRequest?) -> Void
-    ) {
+        newRequest request: URLRequest
+    ) async -> URLRequest? {
         do {
             guard let url = request.url else { throw IOSSearchExecutorError.invalidURL }
             let validated = try IOSSearchExecutor.allowedPublicHTTPURL(from: url.absoluteString)
@@ -209,10 +215,10 @@ final class IOSBoundedPublicURLSessionLoader: NSObject, URLSessionDataDelegate, 
             guard !addresses.isEmpty, addresses.allSatisfy(IOSSearchExecutor.publicHostAllowed) else {
                 throw IOSSearchExecutorError.disallowedURL("host resolves to a non-public address")
             }
-            completionHandler(request)
+            return request
         } catch {
-            completionHandler(nil)
             finish(.failure(error))
+            return nil
         }
     }
 
@@ -922,10 +928,19 @@ struct IOSSearchExecutor {
         urlRequest.setValue("text/html,text/plain,application/xhtml+xml,application/json;q=0.8,*/*;q=0.3", forHTTPHeaderField: "Accept")
         urlRequest.timeoutInterval = 10
 
-        let (response, data) = try await transport.sendPublic(
-            urlRequest,
-            maximumResponseBytes: 512 * 1_024
-        )
+        let responseAndData: (HTTPURLResponse, Data)
+        if let verifiedTransport = transport as? any IOSVerifiedHTTPScrapeTransport {
+            responseAndData = try await verifiedTransport.sendVerifiedHTTPSGET(
+                urlRequest,
+                maximumResponseBytes: 512 * 1_024
+            )
+        } else {
+            responseAndData = try await transport.sendPublic(
+                urlRequest,
+                maximumResponseBytes: 512 * 1_024
+            )
+        }
+        let (response, data) = responseAndData
         guard (200...299).contains(response.statusCode) else {
             throw IOSSearchExecutorError.httpStatus("scrape_web", response.statusCode)
         }

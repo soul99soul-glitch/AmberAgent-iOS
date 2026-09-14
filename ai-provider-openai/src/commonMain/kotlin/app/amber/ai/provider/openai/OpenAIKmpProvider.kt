@@ -820,13 +820,17 @@ class OpenAIKmpProvider internal constructor(
             }
             if (params.maxTokens != null) put("max_output_tokens", params.maxTokens)
 
-            // system instructions
-            val systemMessage = messages.firstOrNull { it.role == MessageRole.SYSTEM }
-            if (systemMessage != null) {
+            // System messages are kept as separate UI messages so callers can
+            // attach independent runtime fragments. Responses has one
+            // top-level `instructions` string, so preserve every fragment in
+            // its original order when flattening the wire request.
+            val systemTextParts = messages
+                .filter { it.role == MessageRole.SYSTEM }
+                .flatMap { message -> message.parts.filterIsInstance<UIMessagePart.Text>() }
+            if (systemTextParts.isNotEmpty()) {
                 put(
                     "instructions",
-                    systemMessage.parts.filterIsInstance<UIMessagePart.Text>()
-                        .joinToString("\n\n") { it.text },
+                    systemTextParts.joinToString("\n\n") { it.text },
                 )
             }
 

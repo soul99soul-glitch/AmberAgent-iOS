@@ -55,6 +55,37 @@ class OpenAIKmpProviderRequestTest {
     }
 
     @Test
+    fun responsesInstructionsPreserveAllSystemMessagesInOrder() {
+        val body = provider.buildResponsesRequestBody(
+            providerSetting = setting,
+            messages = listOf(
+                UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("base rules"))),
+                UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("turn rules"))),
+                UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hello"))),
+            ),
+            params = TextGenerationParams(model = Model(modelId = "gpt-5", displayName = "GPT-5")),
+            stream = false,
+        )
+
+        assertEquals("base rules\n\nturn rules", body.getValue("instructions").jsonPrimitive.content)
+    }
+
+    @Test
+    fun responsesSingleSystemMessageKeepsItsOriginalInstructions() {
+        val body = provider.buildResponsesRequestBody(
+            providerSetting = setting,
+            messages = listOf(
+                UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("one system"))),
+                UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hello"))),
+            ),
+            params = TextGenerationParams(model = Model(modelId = "gpt-5", displayName = "GPT-5")),
+            stream = false,
+        )
+
+        assertEquals("one system", body.getValue("instructions").jsonPrimitive.content)
+    }
+
+    @Test
     fun siliconFlowThinkingModelWithoutAbilityStillReceivesDisableThinking() {
         val body = provider.buildChatCompletionRequest(
             providerSetting = setting.copy(baseUrl = "https://api.siliconflow.cn/v1"),

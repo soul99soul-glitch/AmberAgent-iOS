@@ -1,6 +1,7 @@
 import XCTest
 import Combine
 import SwiftUI
+import CoreText
 import Shared
 @testable import SwiftStreamingMarkdown
 @testable import iosApp
@@ -71,8 +72,23 @@ final class ChatMessageProjectionTests: XCTestCase {
                 ScrollView {
                     Group {
                         if expanded {
-                            ChatSubAgentResultCard(sender: "/root/test_alpha", displayText: report, initiallyExpanded: true)
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("普通助手正文")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(AmberTheme.muted)
+                                MessageBubbleView(
+                                    message: UIMessage.companion.assistant(prompt: report)
+                                )
+                                Text("展开子代理结果")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(AmberTheme.muted)
+                                ChatSubAgentResultCard(
+                                    sender: "/root/test_alpha",
+                                    displayText: report,
+                                    initiallyExpanded: true
+                                )
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         } else {
                             MessageBubbleView(message: message)
                         }
@@ -120,9 +136,9 @@ final class ChatMessageProjectionTests: XCTestCase {
         let long = measured(longText, width: 361)
         let narrow = measured(longText, width: 288)
         let collapsed = measured(longText, width: 361, expanded: false)
-        XCTAssertLessThan(short.width, long.width, "短结果必须随内容收窄")
-        XCTAssertLessThanOrEqual(long.width, 300.5)
-        XCTAssertLessThanOrEqual(narrow.width, 288 * 0.88 + 0.5)
+        XCTAssertEqual(short.width, 361, accuracy: 0.5, "展开短结果使用聊天正文的可用全宽")
+        XCTAssertEqual(long.width, 361, accuracy: 0.5, "展开结果使用聊天正文的可用全宽")
+        XCTAssertEqual(narrow.width, 288, accuracy: 0.5, "窄屏展开结果仍使用父级可用宽度")
         XCTAssertLessThan(collapsed.width, long.width, "收起后只保留紧凑标题宽度")
         XCTAssertEqual(collapsed.height, 44, accuracy: 0.5)
         XCTAssertGreaterThan(long.height, short.height)
@@ -143,7 +159,7 @@ final class ChatMessageProjectionTests: XCTestCase {
                         sender: "/root/" + token, displayText: text, initiallyExpanded: true
                     ).environment(\.dynamicTypeSize, type))
                     let size = host.sizeThatFits(in: CGSize(width: width, height: 10_000))
-                    XCTAssertLessThanOrEqual(size.width, min(300, width * 0.88) + 0.5,
+                    XCTAssertLessThanOrEqual(size.width, width + 0.5,
                         "case \(index), width \(width), type \(type)")
                     XCTAssertTrue(size.height.isFinite)
                 }
@@ -418,12 +434,12 @@ final class ChatMessageProjectionTests: XCTestCase {
 
         let timedOut = model(status: IOSTerminalJobStatus.timedOut.rawValue)
         XCTAssertEqual(timedOut.title, "Remote SSH 执行")
-        XCTAssertEqual(timedOut.detail, "已超时")
+        XCTAssertEqual(timedOut.detail, IOSAppLocalization.string("已超时", defaultValue: "已超时"))
         XCTAssertEqual(timedOut.state, .failed)
 
         let cancelled = model(status: IOSTerminalJobStatus.cancelled.rawValue)
         XCTAssertEqual(cancelled.title, "Remote SSH 执行")
-        XCTAssertEqual(cancelled.detail, "已取消")
+        XCTAssertEqual(cancelled.detail, IOSAppLocalization.string("已取消", defaultValue: "已取消"))
         XCTAssertEqual(cancelled.state, .cancelled)
     }
 
@@ -444,7 +460,7 @@ final class ChatMessageProjectionTests: XCTestCase {
         ))
 
         XCTAssertEqual(model.title, "内置 iSH 执行")
-        XCTAssertEqual(model.detail, "运行中")
+        XCTAssertEqual(model.detail, IOSAppLocalization.string("运行中", defaultValue: "运行中"))
         XCTAssertEqual(model.state, .active)
     }
 
@@ -465,7 +481,7 @@ final class ChatMessageProjectionTests: XCTestCase {
         ))
 
         XCTAssertEqual(model.title, "内置 iSH 执行")
-        XCTAssertEqual(model.detail, "已取消")
+        XCTAssertEqual(model.detail, IOSAppLocalization.string("已取消", defaultValue: "已取消"))
         XCTAssertEqual(model.state, .cancelled)
     }
 
@@ -1062,7 +1078,7 @@ final class ChatMessageProjectionTests: XCTestCase {
         )
     }
 
-    func testStreamingMarkdownTypographyFollowsChatFont() {
+    func testStreamingMarkdownTypographyFollowsChatFont() throws {
         let defaultFont = ChatStreamingMarkdownTypographyTestSupport.bodyFontName(chatFont: .default)
         let serifFont = ChatStreamingMarkdownTypographyTestSupport.bodyFontName(chatFont: .serif)
         let monospaceFont = ChatStreamingMarkdownTypographyTestSupport.bodyFontName(chatFont: .monospace)
@@ -1070,6 +1086,28 @@ final class ChatMessageProjectionTests: XCTestCase {
         XCTAssertNotEqual(defaultFont, serifFont)
         XCTAssertNotEqual(defaultFont, monospaceFont)
         XCTAssertNotEqual(serifFont, monospaceFont)
+        XCTAssertEqual(serifFont, "NotoSerifSC-Regular")
+        XCTAssertEqual(monospaceFont, "JetBrainsMono-Regular")
+
+        let serif = ChatStreamingMarkdownTypographyTestSupport.bodyFonts(chatFont: .serif).normal
+        let text = "海棠花与冰块" as CFString
+        let resolved = CTFontCreateForString(serif as CTFont, text, CFRange(location: 0, length: 1))
+        XCTAssertTrue((CTFontCopyPostScriptName(resolved) as String).hasPrefix("NotoSerifSC"),
+                      "中文必须使用包内衬线字体，不能回退到系统字体")
+
+        let mono = ChatStreamingMarkdownTypographyTestSupport.bodyFonts(chatFont: .monospace).normal
+        XCTAssertEqual(("iii" as NSString).size(withAttributes: [.font: mono]).width,
+                       ("WWW" as NSString).size(withAttributes: [.font: mono]).width, accuracy: 0.01)
+
+        for font in [IOSChatFont.serif, .monospace] {
+            let fonts = ChatStreamingMarkdownTypographyTestSupport.bodyFonts(chatFont: font)
+            let bold = try XCTUnwrap(fonts.bold)
+            let italic = try XCTUnwrap(fonts.italic)
+            XCTAssertEqual(bold.familyName, fonts.normal.familyName)
+            XCTAssertEqual(bold.pointSize, fonts.normal.pointSize)
+            XCTAssertTrue(bold.fontDescriptor.symbolicTraits.contains(.traitBold))
+            XCTAssertNotEqual(CTFontGetMatrix(italic as CTFont).c, 0)
+        }
     }
 
     func testStreamingParagraphAnimationUsesPromotionFrameRateRange() throws {

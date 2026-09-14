@@ -332,54 +332,15 @@ struct ChatSubAgentPixelAvatar: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: max(4, size * 0.24), style: .continuous)
-                .fill(ChatSubAgentPixelAvatarPalette.background(for: identity))
-            HomePixelSitShape(bits: ChatSubAgentPixelAvatarPalette.bits(for: identity))
-                .fill(ChatSubAgentPixelAvatarPalette.foreground(for: identity))
-                .padding(size * 0.17)
+                .fill(ChatSubAgentPixelSpriteLibrary.background(for: identity))
+            ForEach(ChatSubAgentPixelSpriteLibrary.layers(for: identity)) { layer in
+                HomePixelSitShape(bits: layer.bits)
+                    .fill(layer.color)
+            }
+            .padding(size * 0.10)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
-    }
-}
-
-private enum ChatSubAgentPixelAvatarPalette {
-    private static let facePatterns: [[UInt8]] = [
-        [0b00111100, 0b01111110, 0b11111111, 0b11011011,
-         0b11111111, 0b11100111, 0b01111110, 0b00111100],
-        [0b01111110, 0b11111111, 0b11111111, 0b11011011,
-         0b11011011, 0b11000011, 0b11111111, 0b01111110],
-        [0b10000001, 0b01111110, 0b11111111, 0b11011011,
-         0b11111111, 0b11000011, 0b01111110, 0b00111100]
-    ]
-
-    private static func seed(for identity: String) -> UInt64 {
-        identity.utf8.reduce(UInt64(14695981039346656037)) { hash, byte in
-            (hash ^ UInt64(byte)) &* 1099511628211
-        }
-    }
-
-    static func bits(for identity: String) -> [UInt16] {
-        let pattern = facePatterns[Int(seed(for: identity) % UInt64(facePatterns.count))]
-        return pattern.flatMap { logicalRow in
-            var row: UInt16 = 0
-            for column in 0..<8 where logicalRow & (1 << (7 - column)) != 0 {
-                row |= 1 << (15 - column * 2)
-                row |= 1 << (14 - column * 2)
-            }
-            return [row, row]
-        }
-    }
-
-    static func foreground(for identity: String) -> Color {
-        let hash = seed(for: identity)
-        let hue = Double(hash % 360) / 360
-        return Color(hue: hue, saturation: 0.68, brightness: 0.68)
-    }
-
-    static func background(for identity: String) -> Color {
-        let hash = seed(for: identity)
-        let hue = Double(hash % 360) / 360
-        return Color(hue: hue, saturation: 0.26, brightness: 0.96)
     }
 }
 

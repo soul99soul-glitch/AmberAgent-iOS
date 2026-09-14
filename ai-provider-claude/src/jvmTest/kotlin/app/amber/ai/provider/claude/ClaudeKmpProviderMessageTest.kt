@@ -75,6 +75,7 @@ class ClaudeKmpProviderMessageTest {
         )
         val messages = listOf(
             UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("you are helpful"))),
+            UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("follow the user's format"))),
             UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hello"))),
         )
 
@@ -85,11 +86,140 @@ class ClaudeKmpProviderMessageTest {
         assertTrue(body["stream"]!!.jsonPrimitive.boolean)
         // system extracted out of messages into top-level "system" array
         assertNotNull(body["system"])
-        assertEquals(1, body["system"]!!.jsonArray.size)
+        assertEquals(2, body["system"]!!.jsonArray.size)
+        assertEquals("you are helpful", body["system"]!!.jsonArray[0].jsonObject["text"]!!.jsonPrimitive.content)
+        assertEquals("follow the user's format", body["system"]!!.jsonArray[1].jsonObject["text"]!!.jsonPrimitive.content)
         // messages array excludes the SYSTEM role entry
         val msgs = body["messages"]!!.jsonArray
         assertEquals(1, msgs.size)
         assertEquals("user", msgs[0].jsonObject["role"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `single system message keeps its original shape`() {
+        val params = TextGenerationParams(
+            model = Model(modelId = "claude-sonnet-4-5", displayName = "Sonnet"),
+            maxTokens = 1024,
+        )
+        val body = provider.callBuildMessageRequest(
+            claudeSetting,
+            listOf(
+                UIMessage(role = MessageRole.SYSTEM, parts = listOf(UIMessagePart.Text("one system"))),
+                UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hello"))),
+            ),
+            params,
+        )
+
+        assertEquals(1, body["system"]!!.jsonArray.size)
+        assertEquals("one system", body["system"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `explicit execution failures become Anthropic is_error results`() {
+        val params = TextGenerationParams(model = reasoningModel())
+        val assistant = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "failed",
+                    toolName = "workspace_file_read",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"status":"failed"}""")),
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "denied",
+                    toolName = "workspace_file_write",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"denied":true}""")),
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "timeout",
+                    toolName = "terminal_execute",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"status":"timed_out"}""")),
+                ),
+            ),
+        )
+
+        val body = provider.callBuildMessageRequest(
+            claudeSetting,
+            listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("run tools"))), assistant),
+            params,
+        )
+        val results = body["messages"]!!.jsonArray[2].jsonObject["content"]!!.jsonArray
+
+        assertEquals(3, results.size)
+        results.forEach { result ->
+            assertTrue(result.jsonObject["is_error"]!!.jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `statusless explicit error fields become Anthropic is_error results`() {
+        val params = TextGenerationParams(model = reasoningModel())
+        val assistant = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "memory-error",
+                    toolName = "memory_tool",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"error":"memory not found"}""")),
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "vision-error",
+                    toolName = "wm_visual_read",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"error_code":"vision_unavailable","reason":"no model"}""")),
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "notification-error",
+                    toolName = "notification_schedule",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"reason":"permission unavailable"}""")),
+                ),
+            ),
+        )
+
+        val body = provider.callBuildMessageRequest(
+            claudeSetting,
+            listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("run tools"))), assistant),
+            params,
+        )
+        val results = body["messages"]!!.jsonArray[2].jsonObject["content"]!!.jsonArray
+
+        results.forEach { result ->
+            assertTrue(result.jsonObject["is_error"]!!.jsonPrimitive.boolean)
+        }
+    }
+
+    @Test
+    fun `plain negative business result does not become Anthropic is_error`() {
+        val assistant = UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Tool(
+                    toolCallId = "no-match",
+                    toolName = "search_web",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":false,"status":{"kind":"no_match"},"reason":"no matches"}""")),
+                ),
+                UIMessagePart.Tool(
+                    toolCallId = "job-state",
+                    toolName = "terminal_job_read",
+                    input = "{}",
+                    output = listOf(UIMessagePart.Text("""{"ok":true,"status":"failed","job_id":"job-1"}""")),
+                ),
+            ),
+        )
+
+        val body = provider.callBuildMessageRequest(
+            claudeSetting,
+            listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("search"))), assistant),
+            TextGenerationParams(model = reasoningModel()),
+        )
+        val results = body["messages"]!!.jsonArray[2].jsonObject["content"]!!.jsonArray
+        results.forEach { result -> assertNull(result.jsonObject["is_error"]) }
     }
 
     @Test

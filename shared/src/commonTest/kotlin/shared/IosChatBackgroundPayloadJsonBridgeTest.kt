@@ -25,6 +25,18 @@ import kotlin.uuid.Uuid
 @OptIn(ExperimentalUuidApi::class)
 class IosChatBackgroundPayloadJsonBridgeTest {
     @Test
+    fun textMetadataSurvivesPartSerialization() {
+        val parts = IosToolOutputJsonBridge.decode(
+            """[{"type":"text","text":"memory 7","metadata":{"amber_memory_record_ids":[7]}}]""",
+        )
+        assertEquals(
+            Json.parseToJsonElement("""{"amber_memory_record_ids":[7]}"""),
+            Json.parseToJsonElement(IosToolOutputJsonBridge.metadataJson(parts.single())!!),
+        )
+        assertEquals(parts, IosToolOutputJsonBridge.decode(IosToolOutputJsonBridge.encode(parts)))
+    }
+
+    @Test
     fun requestSnapshotParamsEncodeRealExecutableToolWithoutSerializingClosures() {
         val params = TextGenerationParams(
             model = Model(modelId = "gpt-tool", displayName = "GPT Tool"),

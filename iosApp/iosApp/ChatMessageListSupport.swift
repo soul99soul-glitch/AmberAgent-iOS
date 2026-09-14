@@ -95,7 +95,7 @@ struct ChatUserBubble: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: scaledBodyPointSize * boundedScale, design: selectedFont.design))
+            .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.accentInk)
             .lineSpacing(3 * boundedScale)
             // cell self-sizing 测量会传入受限的垂直 proposal,普通 Text 会按 proposal
@@ -136,7 +136,7 @@ struct ChatAssistantText<Content: View>: View {
 
     var body: some View {
         content
-            .font(.system(size: scaledBodyPointSize * boundedScale, design: selectedFont.design))
+            .font(selectedFont.font(size: scaledBodyPointSize * boundedScale))
             .foregroundStyle(AmberTheme.foreground)
             .lineSpacing(4 * boundedScale)
             .fixedSize(horizontal: false, vertical: true)
