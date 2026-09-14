@@ -828,10 +828,36 @@ final class IOSWorkspaceStore {
         guard var record = fileRecord(idOrPath: raw) else {
             throw IOSWorkspaceStoreError.missingFile
         }
+        let hasLineRange = args["start_line"] != nil || args["end_line"] != nil
+        let maxChars = ((args["max_chars"] as? Int) ?? 20_000).workspaceClamped(to: 1...80_000)
+        if hasLineRange {
+            let fileURL = fileURL(for: record)
+            let source = try Self.readWorkspaceFileLines(
+                from: fileURL,
+                startLine: args["start_line"],
+                endLine: args["end_line"],
+                maxChars: maxChars
+            )
+            return Self.json([
+                "ok": true,
+                "id": record.id,
+                "path": "/workspace/\(record.workspacePath)",
+                "name": record.displayName,
+                "mime_type": record.mimeType,
+                "size_bytes": record.sizeBytes,
+                "status": record.status.rawValue,
+                "message": record.statusMessage,
+                "text": source.text,
+                "text_chars": source.selectedCharacterCount,
+                "truncated": source.truncated,
+                "start_line": source.startLine,
+                "end_line": source.endLine,
+                "total_lines": source.totalLines
+            ])
+        }
         if record.status != .ready || record.preview.isEmpty {
             record = try await reparseFile(id: record.id)
         }
-        let maxChars = ((args["max_chars"] as? Int) ?? 20_000).workspaceClamped(to: 1...80_000)
         return Self.json([
             "ok": record.status == .ready,
             "id": record.id,
@@ -845,6 +871,84 @@ final class IOSWorkspaceStore {
             "text_chars": record.characterCount,
             "truncated": record.isTruncated || record.preview.count > maxChars
         ])
+    }
+
+    private struct WorkspaceFileLineRead {
+        let text: String
+        let selectedCharacterCount: Int
+        let truncated: Bool
+        let startLine: Int
+        let endLine: Int
+        let totalLines: Int
+    }
+
+    private static func readWorkspaceFileLines(
+        from url: URL,
+        startLine rawStartLine: Any?,
+        endLine rawEndLine: Any?,
+        maxChars: Int
+    ) throws -> WorkspaceFileLineRead {
+        let source = try String(contentsOf: url, encoding: .utf8)
+        let bytes = Array(source.utf8)
+        var lineStarts = [0]
+        var index = 0
+        while index < bytes.count {
+            switch bytes[index] {
+            case 0x0A: // LF
+                lineStarts.append(index + 1)
+            case 0x0D: // CR or CRLF
+                lineStarts.append(index + (index + 1 < bytes.count && bytes[index + 1] == 0x0A ? 2 : 1))
+                if index + 1 < bytes.count && bytes[index + 1] == 0x0A {
+                    index += 1
+                }
+            default:
+                break
+            }
+            index += 1
+        }
+
+        let totalLines = bytes.isEmpty
+            ? 0
+            : (lineStarts.last == bytes.count ? lineStarts.count - 1 : lineStarts.count)
+        let startLine = try Self.workspaceLineNumber(rawStartLine, name: "start_line", defaultValue: 1)
+        let endLine = try Self.workspaceLineNumber(rawEndLine, name: "end_line", defaultValue: totalLines)
+        guard totalLines > 0, startLine <= totalLines, endLine <= totalLines, startLine <= endLine else {
+            throw IOSWorkspaceStoreError.invalidPath(
+                "start_line/end_line must select an existing 1-based inclusive line range (total_lines=\(totalLines))."
+            )
+        }
+
+        let startByte = lineStarts[startLine - 1]
+        let endByte = endLine < lineStarts.count ? lineStarts[endLine] : bytes.count
+        let selected = String(decoding: bytes[startByte..<endByte], as: UTF8.self)
+        let returned = String(selected.prefix(maxChars))
+        let selectedCharacterCount = selected.count
+        let returnedEndByte = startByte + returned.utf8.count
+        var returnedEndLine = startLine
+        while returnedEndLine < endLine,
+              lineStarts[returnedEndLine] < returnedEndByte {
+            returnedEndLine += 1
+        }
+        return WorkspaceFileLineRead(
+            text: returned,
+            selectedCharacterCount: selectedCharacterCount,
+            truncated: selectedCharacterCount > maxChars,
+            startLine: startLine,
+            endLine: returnedEndLine,
+            totalLines: totalLines
+        )
+    }
+
+    private static func workspaceLineNumber(
+        _ rawValue: Any?,
+        name: String,
+        defaultValue: Int
+    ) throws -> Int {
+        guard let rawValue else { return defaultValue }
+        guard let value = rawValue as? Int, value >= 1 else {
+            throw IOSWorkspaceStoreError.invalidPath("\(name) must be a positive integer.")
+        }
+        return value
     }
 
     private func workspaceFileWriteJSON(_ args: [String: Any]) async throws -> String {
@@ -890,8 +994,8 @@ final class IOSWorkspaceStore {
         ])
     }
 
-    /// file_edit: in-place string replacement in an existing workspace file
-    /// (Android WorkspaceTools.file_edit parity).
+    /// Exact replacement follows the unique-match contract of Claude's text editor;
+    /// a global replacement must be explicitly requested by the caller.
     private func workspaceFileEditJSON(_ args: [String: Any]) async throws -> String {
         let raw = (args["file_id"] as? String)?.workspaceNilIfBlank
             ?? (args["path"] as? String)?.workspaceNilIfBlank
@@ -899,18 +1003,49 @@ final class IOSWorkspaceStore {
         guard let record = fileRecord(idOrPath: raw) else {
             throw IOSWorkspaceStoreError.missingFile
         }
-        let find = (args["find"] as? String) ?? ""
-        let replace = (args["replace"] as? String) ?? ""
-        guard !find.isEmpty else {
-            return Self.json(["ok": false, "error": "file_edit requires a non-empty 'find'."])
+        guard let find = args["find"] as? String, !find.isEmpty,
+              let replace = args["replace"] as? String else {
+            return Self.json(["ok": false, "changed": false, "error": "file_edit requires non-empty 'find' and a 'replace' string (which may be empty)."])
         }
+        let replaceAll = (args["replace_all"] as? Bool) ?? false
         let url = fileURL(for: record)
-        let original = (try? String(contentsOf: url, encoding: .utf8)) ?? record.preview
-        let edited = original.replacingOccurrences(of: find, with: replace)
-        guard edited != original else {
-            return Self.json(["ok": true, "id": record.id, "path": "/workspace/\(record.workspacePath)", "replacements": 0, "message": "No occurrences of 'find' matched; file unchanged."])
+        // Extracted/truncated previews are never a valid source for overwriting a file.
+        let original = try String(contentsOf: url, encoding: .utf8)
+        let originalBytes = Data(original.utf8)
+        let findBytes = Data(find.utf8)
+        var cursor = originalBytes.startIndex
+        var occurrences = 0
+        var matchedLines: [Int] = []
+        var line = 1
+        while let match = originalBytes.range(of: findBytes, in: cursor..<originalBytes.endIndex) {
+            line += originalBytes[cursor..<match.lowerBound].filter { $0 == 10 }.count
+            occurrences += 1
+            if matchedLines.count < 20, matchedLines.last != line { matchedLines.append(line) }
+            line += originalBytes[match].filter { $0 == 10 }.count
+            cursor = match.upperBound
         }
-        let occurrences = original.components(separatedBy: find).count - 1
+        if occurrences == 0 {
+            return Self.json([
+                "ok": false, "changed": false, "replacements": 0, "match_count": 0,
+                "error": "No exact match found. Read the current file and copy the original text, including whitespace and newlines, before retrying."
+            ])
+        }
+        if occurrences > 1, !replaceAll {
+            return Self.json([
+                "ok": false, "changed": false, "replacements": 0, "match_count": occurrences,
+                "matched_lines": matchedLines,
+                "error": "Found \(occurrences) exact matches; file unchanged. Include more surrounding context in 'find' to identify one location, or set replace_all=true for an intentional global replacement."
+            ])
+        }
+        let edited = original.replacingOccurrences(of: find, with: replace, options: .literal)
+        guard !original.utf8.elementsEqual(edited.utf8) else {
+            return Self.json([
+                "ok": true, "changed": false, "id": record.id,
+                "path": "/workspace/\(record.workspacePath)", "replacements": 0,
+                "match_count": occurrences, "message": "Replacement is identical to the original text; file unchanged."
+            ])
+        }
+        let diff = Self.workspaceEditDiffPreview(original: original, edited: edited, path: record.workspacePath)
         try Data(edited.utf8).write(to: url, options: [.atomic])
         let now = Date()
         var updated = record
@@ -925,9 +1060,77 @@ final class IOSWorkspaceStore {
             "ok": true,
             "id": updated.id,
             "path": "/workspace/\(updated.workspacePath)",
+            "changed": true,
             "replacements": occurrences,
-            "size_bytes": updated.sizeBytes
+            "size_bytes": updated.sizeBytes,
+            "matched_lines": matchedLines,
+            "diff_preview": diff.text,
+            "diff_truncated": diff.truncated
         ])
+    }
+
+    /// Use the standard library's line diff on a bounded window around the changes.
+    /// This is review output, not a patch protocol; large edits report truncation.
+    private static func workspaceEditDiffPreview(
+        original: String, edited: String, path: String
+    ) -> (text: String, truncated: Bool) {
+        let before = original.components(separatedBy: "\n")
+        let after = edited.components(separatedBy: "\n")
+        var first = 0
+        while first < min(before.count, after.count), before[first].utf8.elementsEqual(after[first].utf8) {
+            first += 1
+        }
+        var oldEnd = before.count
+        var newEnd = after.count
+        while oldEnd > first, newEnd > first,
+              before[oldEnd - 1].utf8.elementsEqual(after[newEnd - 1].utf8) {
+            oldEnd -= 1
+            newEnd -= 1
+        }
+        let start = max(0, first - 2)
+        let oldLimit = min(before.count, oldEnd + 2)
+        let newLimit = min(after.count, newEnd + 2)
+        guard oldLimit - start <= 120, newLimit - start <= 120 else {
+            return ("Diff preview omitted: changes span more than 120 lines. Read the edited file by line range to verify the result.", true)
+        }
+        let oldLines = Array(before[start..<oldLimit])
+        let newLines = Array(after[start..<newLimit])
+        var truncated = false
+        // Data equality preserves exact UTF-8 differences, including Unicode normalization.
+        let difference = newLines.map { Data($0.utf8) }.difference(from: oldLines.map { Data($0.utf8) })
+        var removed: Set<Int> = []
+        var inserted: Set<Int> = []
+        for change in difference {
+            switch change {
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        var text = "--- /workspace/\(path)\n+++ /workspace/\(path)\n@@ -\(start + 1),\(oldLines.count) +\(start + 1),\(newLines.count) @@\n"
+        var oldIndex = 0
+        var newIndex = 0
+        while oldIndex < oldLines.count || newIndex < newLines.count {
+            let row: String
+            if removed.contains(oldIndex), oldIndex < oldLines.count {
+                row = "-" + oldLines[oldIndex]
+                oldIndex += 1
+            } else if inserted.contains(newIndex), newIndex < newLines.count {
+                row = "+" + newLines[newIndex]
+                newIndex += 1
+            } else {
+                row = " " + oldLines[oldIndex]
+                oldIndex += 1
+                newIndex += 1
+            }
+            let remaining = 8_000 - text.count
+            guard remaining > row.count else {
+                text += String(row.prefix(max(0, remaining)))
+                truncated = true
+                break
+            }
+            text += row + "\n"
+        }
+        return (text, truncated)
     }
 
     /// file_list: lists workspace files (optionally under a sub-path) with

@@ -50,6 +50,7 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
     weak var presentationAnchor: UIView?
 
     private let speechSynthesizer = AVSpeechSynthesizer()
+    private var speechAudioKeepAliveOwner: String?
     private var isClosed = false
     private var lifecycleObservers: [NSObjectProtocol] = []
     private var hapticTimes: [TimeInterval] = []
@@ -109,6 +110,11 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
     isolated deinit {
         for observer in lifecycleObservers {
             NotificationCenter.default.removeObserver(observer)
+        }
+        if let owner = speechAudioKeepAliveOwner {
+            Task { @MainActor in
+                BackgroundAudioKeepAlive.shared.resume(for: owner)
+            }
         }
     }
 
@@ -190,7 +196,9 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
             return .object(["speaking": .bool(true)])
 
         case "speech.stop":
-            return .object(["stopped": .bool(speechSynthesizer.stopSpeaking(at: .immediate))])
+            let stopped = speechSynthesizer.stopSpeaking(at: .immediate)
+            releaseSpeechAudioKeepAlive()
+            return .object(["stopped": .bool(stopped)])
 
         case "speech.pause":
             return .object(["paused": .bool(speechSynthesizer.pauseSpeaking(at: .word))])
@@ -556,6 +564,10 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
         utterance.pitchMultiplier = Float(pitch)
         utterance.volume = Float(volume)
         speechSynthesizer.stopSpeaking(at: .immediate)
+        releaseSpeechAudioKeepAlive()
+        let owner = "miniapp-speech-\(UUID().uuidString)"
+        speechAudioKeepAliveOwner = owner
+        BackgroundAudioKeepAlive.shared.suspend(for: owner)
         speechSynthesizer.speak(utterance)
     }
 
@@ -770,6 +782,7 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
 
     private func handleWillResignActive() {
         speechSynthesizer.stopSpeaking(at: .immediate)
+        releaseSpeechAudioKeepAlive()
         finishShare(completed: false)
         if Self.transientResourceOwner === self {
             restoreBrightnessIfOwned()
@@ -777,6 +790,12 @@ final class IOSMiniAppDeviceCapabilities: ObservableObject {
             Self.transientResourceOwner = nil
         }
         hapticTimes.removeAll()
+    }
+
+    private func releaseSpeechAudioKeepAlive() {
+        guard let owner = speechAudioKeepAliveOwner else { return }
+        speechAudioKeepAliveOwner = nil
+        BackgroundAudioKeepAlive.shared.resume(for: owner)
     }
 
     private func claimTransientResourceOwnership() {

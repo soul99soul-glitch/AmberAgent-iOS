@@ -245,6 +245,87 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         XCTAssertFalse(params.tools.isEmpty, "tool declarations must be populated")
     }
 
+    func testRuntimeGenerationPreservesCustomImageModalityAndUploadsImage() async throws {
+        let defaults = isolatedDefaults()
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let model = Model(
+            modelId: "amber-custom-vision-unknown-\(UUID().uuidString)",
+            displayName: "Custom Vision",
+            id: KotlinUuid.companion.random(),
+            type: ModelType.chat,
+            customHeaders: [],
+            customBodies: [],
+            inputModalities: [.text, .image],
+            outputModalities: [.text],
+            abilities: [],
+            tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil,
+            providerOverwrite: nil
+        )
+        let provider = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(),
+            enabled: true,
+            name: "Custom Vision Provider",
+            models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false,
+            descriptionText: nil,
+            shortDescriptionText: nil,
+            apiKey: "test-key",
+            baseUrl: "https://example.test/v1",
+            chatCompletionsPath: "/chat/completions",
+            useResponseApi: false,
+            authMode: OpenAIAuthMode.apiKey,
+            brand: OpenAIBrand.generic
+        )
+        _ = sharedSettings.addProvider(provider)
+        sharedSettings.setCurrentChatModelId(model.id.description())
+        sharedSettings.setCurrentAssistantChatModelId(model.id.description())
+
+        let registryModalities = ModelRegistry.shared.MODEL_INPUT_MODALITIES
+            .getData(modelId: model.modelId) as? [Modality] ?? []
+        XCTAssertFalse(registryModalities.contains(.image), "fixture must be unknown to the model registry")
+
+        let recordingProvider = RuntimeImageRecordingProvider()
+        let auxiliaryProvider = RuntimeImageRecordingProvider()
+        let databaseDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatViewModelGenerationParamsTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: databaseDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: databaseDirectory) }
+        let database = IosDatabaseFactory.shared.createDatabase(
+            atFilePath: databaseDirectory.appendingPathComponent("agent-runtime.sqlite").path
+        )
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: defaults),
+            sharedSettings: sharedSettings,
+            autoGenerateResponses: true,
+            auxiliaryTextProvider: auxiliaryProvider,
+            agentRuntimeDao: database.agentRuntimeDao()
+        )
+        viewModel.kernelTextProviderOverrideForTesting = recordingProvider
+        let dataUrl = "data:image/jpeg;base64,AAAA"
+        viewModel.addPendingImage(dataUrl: dataUrl, previewData: Data("thumb".utf8))
+        viewModel.inputText = "请描述这张图片"
+
+        XCTAssertTrue(viewModel.sendMessage())
+        let uploadDeadline = Date().addingTimeInterval(5)
+        while recordingProvider.lastUpload == nil, Date() < uploadDeadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let upload = try XCTUnwrap(recordingProvider.lastUpload)
+        XCTAssertTrue(upload.contains { message in
+            message.parts.contains { part in
+                (part as? UIMessagePart.Image)?.url == dataUrl
+            }
+        }, "the real ChatKernelRunHost upload must retain the image part")
+
+        let terminalDeadline = Date().addingTimeInterval(5)
+        while viewModel.isLoading, Date() < terminalDeadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertFalse(viewModel.isLoading, "the real ChatKernelRunHost run must reach a terminal state")
+    }
+
     func testAuxiliaryGenerationParamsPreserveProviderMergedModelOverrides() {
         let json = Kotlinx_serialization_jsonJson.companion
         let model = Model(
@@ -583,5 +664,33 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         skillViewModel.sendMessage()
         let skillWriteNames = Set(skillViewModel.currentToolDeclarationNames())
         XCTAssertEqual(skillWriteNames.intersection(workspaceNames), workspaceNames)
+    }
+}
+
+private final class RuntimeImageRecordingProvider: IOSAgentTextProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private var uploads: [[UIMessage]] = []
+
+    var lastUpload: [UIMessage]? {
+        lock.withLock { uploads.last }
+    }
+
+    func generateText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams
+    ) async throws -> MessageChunk {
+        lock.withLock { uploads.append(messages) }
+        return MessageChunk(
+            id: "custom-vision-upload-test",
+            model: params.model.modelId,
+            choices: [UIMessageChoice(
+                index: 0,
+                delta: nil,
+                message: UIMessage.companion.assistant(prompt: "收到图片"),
+                finishReason: "stop"
+            )],
+            usage: nil
+        )
     }
 }

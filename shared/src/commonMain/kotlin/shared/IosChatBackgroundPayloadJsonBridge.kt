@@ -46,6 +46,7 @@ data class IosChatBackgroundPayload(
     // static/dynamic declarations before resuming the background run.
     val visibleToolNames: List<String> = emptyList(),
     val executionPolicyJson: String? = null,
+    val subAgentTimeoutSeconds: Double? = null,
 )
 
 /** Swift-facing bridge for persisted iOS chat background generation payloads. */
@@ -69,6 +70,7 @@ object IosChatBackgroundPayloadJsonBridge {
         generativeUiFallbackAttempted: Boolean = false,
         fullToolNames: List<String> = emptyList(),
         executionPolicyJson: String? = null,
+        subAgentTimeoutSeconds: Double? = null,
     ): String = JsonInstant.encodeToString(
         IosChatBackgroundPayload(
             runId = runId,
@@ -89,6 +91,7 @@ object IosChatBackgroundPayloadJsonBridge {
             fullToolNames = fullToolNames,
             visibleToolNames = params.tools.map { it.name },
             executionPolicyJson = executionPolicyJson,
+            subAgentTimeoutSeconds = subAgentTimeoutSeconds,
         )
     )
 

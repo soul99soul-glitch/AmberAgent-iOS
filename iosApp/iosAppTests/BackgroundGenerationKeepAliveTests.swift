@@ -530,11 +530,11 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         let spy = SystemSpy()
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
-        XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0")
+        XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0 location=0")
         keepAlive.begin("run-1", title: "t", subtitle: "s")
-        XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=1 adopted=0 audio=1")
+        XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=1 adopted=0 audio=1 location=0")
         keepAlive.end("run-1")
-        XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0")
+        XCTAssertEqual(keepAlive.snapshotDetail, "keepAlive=0 adopted=0 audio=0 location=0")
     }
 
     // MARK: - 音频腿
@@ -666,12 +666,6 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertTrue(spy.submittedRequests.isEmpty)
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
         XCTAssertTrue(keepAlive.holdsLease("run-1"))
-    }
-
-    func testNearSilentToneIsNotAllZeros() {
-        let data = NearSilentKeepAliveTone.wavData()
-        XCTAssertGreaterThan(data.count, 44)
-        XCTAssertTrue(NearSilentKeepAliveTone.containsAudibleEnergy(data))
     }
 
     func testAudioKeepAlivePreferenceHonorsBuildDefaultOverrideAndRequiresBackgroundMode() {

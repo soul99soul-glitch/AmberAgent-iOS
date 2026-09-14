@@ -75,9 +75,9 @@ final class IOSThreadOrchestrationToolService {
     /// 父深度 >= 2（将产生第 3 代）时拒绝。
     static let maxThreadDepth = 2
 
-    /// 并发上限：活注册表占用（前台 run 0/1 + 后台 activeJobs + 在途 bootstrap）
-    /// >= 该值时拒绝 spawn。保留默认常量，不做设置 UI（P1-e 计划：不加 UI）。
-    static let defaultMaxConcurrentRuns = 4
+    /// 默认并发上限。运行时优先读取 shared settings，测试/旧调用点可通过
+    /// initializer 显式覆盖；占用只统计子代理，不把父线程算进来。
+    static let defaultMaxConcurrentRuns = 2
 
     /// FINAL_ANSWER payload 截断长度。
     static let finalAnswerMaxChars = 2_000
@@ -100,6 +100,13 @@ final class IOSThreadOrchestrationToolService {
         /// P1-e: 后台活跃 job 计数（并发限额的活注册表来源之一；生产 =
         /// activeJobs.count）。
         var activeJobCount: Int { get }
+
+        /// Child-only occupancy and configured model/provider counts. Production
+        /// supplies these from its active child registry; defaults keep existing
+        /// test fakes source-compatible during migration.
+        var activeSubAgentJobCount: Int { get }
+        var activeModelCounts: [String: Int] { get }
+        var activeProviderCounts: [String: Int] { get }
 
         @discardableResult
         func cancelJob(runId: String) -> Bool
@@ -143,6 +150,7 @@ final class IOSThreadOrchestrationToolService {
         let configuration: IOSOrchestrationAgentConfiguration?
         let providerSetting: ProviderSetting
         let params: TextGenerationParams
+        let modelReservation: IOSSubAgentModelPool.Reservation?
     }
 
     private struct AgentLaunchError: Error {
@@ -179,7 +187,7 @@ final class IOSThreadOrchestrationToolService {
     /// P1-e: 全局前台活跃 run 判定（0/1）。生产 = `generationCoordinator.isRunning`
     /// （P1-c `activeForegroundRunId` 的同一来源，任意会话都算 1 个活跃槽）。
     private let foregroundRunCount: () -> Int
-    private let maxConcurrentRuns: Int
+    private let maxConcurrentRunsOverride: Int?
     /// P1-e: spawn bootstrap 在途计数（服务内跟踪）。限额检查与占槽之间无
     /// await（全部 MainActor 同步读），两个并发 spawn 不会同时通过检查。
     private var inFlightBootstrapCount = 0
@@ -197,6 +205,7 @@ final class IOSThreadOrchestrationToolService {
     /// Read settings at launch time. The effective values are copied into the
     /// child marker; followups do not read the parent's current settings again.
     private let sharedSettingsProvider: () -> IOSSharedSettingsStore?
+    private let modelPool = IOSSubAgentModelPool()
     /// P1-d: wait_agent 超时 clamp 区间与默认值（测试注入小下限避免真实等待）。
     private let waitTimeoutMinMs: Int64
     private let waitTimeoutMaxMs: Int64
@@ -236,7 +245,7 @@ final class IOSThreadOrchestrationToolService {
         foregroundActiveRunId: @escaping (String) -> String?,
         cancelForegroundRun: @escaping (String) -> Bool,
         foregroundRunCount: @escaping () -> Int = { 0 },
-        maxConcurrentRuns: Int = IOSThreadOrchestrationToolService.defaultMaxConcurrentRuns,
+        maxConcurrentRuns: Int? = nil,
         activityCenter: IOSMailboxActivityCenter = .shared,
         waitTimeoutMinMs: Int64 = 5_000,
         waitTimeoutMaxMs: Int64 = 300_000,
@@ -255,7 +264,7 @@ final class IOSThreadOrchestrationToolService {
         self.foregroundActiveRunId = foregroundActiveRunId
         self.cancelForegroundRun = cancelForegroundRun
         self.foregroundRunCount = foregroundRunCount
-        self.maxConcurrentRuns = maxConcurrentRuns
+        self.maxConcurrentRunsOverride = maxConcurrentRuns
         self.activityCenter = activityCenter
         self.waitTimeoutMinMs = waitTimeoutMinMs
         self.waitTimeoutMaxMs = waitTimeoutMaxMs
@@ -318,8 +327,14 @@ final class IOSThreadOrchestrationToolService {
     /// 并发槽（恢复扫描前的窗口期不误伤 spawn）。
     private var occupiedRunSlotCount: Int {
         inFlightBootstrapCount
-            + foregroundRunCount()
-            + backgroundCoordinator.activeJobCount
+            + backgroundCoordinator.activeSubAgentJobCount
+    }
+
+    private var configuredMaxConcurrentRuns: Int {
+        let value = maxConcurrentRunsOverride
+            ?? sharedSettingsProvider()?.subAgentMaxConcurrentRuns
+            ?? Self.defaultMaxConcurrentRuns
+        return min(10, max(1, value))
     }
 
     private func spawnAgent(
@@ -386,25 +401,6 @@ final class IOSThreadOrchestrationToolService {
             resolvedRoleAssistantId = roleUuid
         }
 
-        let initialLaunchResult = resolveAgentLaunch(
-            arguments: args,
-            providerSetting: providerSetting,
-            params: params,
-            toolExposureBridge: toolExposureBridge,
-            inherited: nil
-        )
-        let initialLaunch: ResolvedAgentLaunch
-        switch initialLaunchResult {
-        case .success(let value):
-            initialLaunch = value
-        case .failure(let error):
-            return Self.errorJSON(
-                toolName: "spawn_agent",
-                code: ErrorCode.invalidArguments,
-                reason: error.reason
-            )
-        }
-
         guard let store = conversationStoreProvider() else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -438,11 +434,11 @@ final class IOSThreadOrchestrationToolService {
         // bootstrap 槽，含 spawner 自身——与旧全局账本计数「含父自身」同语义）。
         // 检查与占槽之间无 await（三个计数源全部 MainActor 同步），并发 spawn
         // 不会双双通过；defer 在 spawn 收口（成功入后台注册表或失败回收）时释放。
-        guard occupiedRunSlotCount < maxConcurrentRuns else {
+        guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
                 code: ErrorCode.agentLimitReached,
-                reason: "并发运行数已达上限（\(maxConcurrentRuns) 个，含本线程）。请先等待或 interrupt 一个子线程再 spawn。"
+                reason: "并发运行数已达上限（\(configuredMaxConcurrentRuns) 个子代理）。请先等待或 interrupt 一个子线程再 spawn。"
             )
         }
         inFlightBootstrapCount += 1
@@ -476,33 +472,26 @@ final class IOSThreadOrchestrationToolService {
             )
         }
         let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
+        let launchResult = resolveAgentLaunch(
+            arguments: args,
+            providerSetting: providerSetting,
+            params: params,
+            toolExposureBridge: toolExposureBridge,
+            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
+            allowPoolForInheritedModel: true
+        )
         let launch: ResolvedAgentLaunch
-        if !Self.hasAgentConfigurationArguments(args), let inheritedConfiguration {
-            let inheritedLaunchResult = resolveAgentLaunch(
-                arguments: args,
-                providerSetting: providerSetting,
-                params: params,
-                toolExposureBridge: toolExposureBridge,
-                inherited: inheritedConfiguration
+        switch launchResult {
+        case .success(let value):
+            launch = value
+        case .failure(let error):
+            return Self.errorJSON(
+                toolName: "spawn_agent",
+                code: ErrorCode.invalidArguments,
+                reason: error.reason
             )
-            guard case .success(let inheritedLaunch) = inheritedLaunchResult else {
-                if case .failure(let error) = inheritedLaunchResult {
-                    return Self.errorJSON(
-                        toolName: "spawn_agent",
-                        code: ErrorCode.invalidArguments,
-                        reason: error.reason
-                    )
-                }
-                return Self.errorJSON(
-                    toolName: "spawn_agent",
-                    code: ErrorCode.invalidArguments,
-                    reason: "子代理配置无效。"
-                )
-            }
-            launch = inheritedLaunch
-        } else {
-            launch = initialLaunch
         }
+        defer { modelPool.release(launch.modelReservation) }
         let forked = ConversationForkKt.forkConversation(
             source: sourceConversation,
             newId: childConversationId,
@@ -591,7 +580,8 @@ final class IOSThreadOrchestrationToolService {
             store: store,
             toolExposureBridge: toolExposureBridge,
             executionPolicy: executionPolicy,
-            configuration: launch.configuration
+            configuration: launch.configuration,
+            modelReservation: launch.modelReservation
         ) else {
             return Self.errorJSON(
                 toolName: "spawn_agent",
@@ -641,7 +631,8 @@ final class IOSThreadOrchestrationToolService {
         providerSetting: ProviderSetting,
         params: TextGenerationParams,
         toolExposureBridge: IosToolExposureBridge?,
-        inherited: IOSOrchestrationAgentConfiguration?
+        inherited: IOSOrchestrationAgentConfiguration?,
+        allowPoolForInheritedModel: Bool = false
     ) -> Result<ResolvedAgentLaunch, AgentLaunchError> {
         let settings = sharedSettingsProvider()?.snapshot
         let allowDynamic = settings?.agentRuntime.subAgent.allowDynamicSubAgents ?? true
@@ -752,14 +743,55 @@ final class IOSThreadOrchestrationToolService {
         var childModel = params.model
         var switchedModel = false
         let configuredModelId = inheritedBase?.modelId ?? savedOverride?.modelId?.description()
-        if let configuredModelId,
-           let parsed = Self.parseKotlinUuid(configuredModelId),
-           let settings,
-           let configuredModel = settings.findModelById(uuid: parsed),
-           let configuredProvider = ChatProviderConfiguration.provider(
-               for: configuredModel,
-               providers: settings.providers
-            ) {
+        let explicitModelId = Self.optionalTrimmedString(arguments["model_id"])
+        let explicitReasoningRaw = Self.optionalTrimmedString(arguments["reasoning_level"])
+        var modelReservation: IOSSubAgentModelPool.Reservation?
+        var selectedPoolCandidate: IOSSubAgentModelPool.Candidate?
+        let poolCandidates = settings.flatMap { settings in
+            sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
+        } ?? []
+
+        if let explicitModelId {
+            guard let parsed = Self.parseKotlinUuid(explicitModelId),
+                  let candidate = modelPool.candidate(
+                    for: parsed.toHexDashString(),
+                    from: poolCandidates
+                  ) else {
+                return .failure(AgentLaunchError(
+                    reason: "显式 model_id 必须是当前用户模型池中的可用模型：\(explicitModelId)"
+                ))
+            }
+            selectedPoolCandidate = candidate
+        } else {
+            let shouldSelectFromPool = configuredModelId == nil
+                || (allowPoolForInheritedModel && inheritedBase != nil)
+            if shouldSelectFromPool, !poolCandidates.isEmpty {
+                guard let selected = modelPool.select(
+                    from: poolCandidates,
+                    activeModelCounts: backgroundCoordinator.activeModelCounts,
+                    activeProviderCounts: backgroundCoordinator.activeProviderCounts
+                ) else {
+                    return .failure(AgentLaunchError(reason: "模型池中没有可用模型，请在子代理设置中重新选择。"))
+                }
+                selectedPoolCandidate = selected
+            } else if shouldSelectFromPool,
+                      settings?.agentRuntime.subAgent.modelPool.isEmpty == false {
+                return .failure(AgentLaunchError(reason: "模型池中的模型均已停用、移除或配置不可用。"))
+            }
+        }
+
+        if let selectedPoolCandidate {
+            childProvider = selectedPoolCandidate.provider
+            childModel = selectedPoolCandidate.model
+            switchedModel = childModel.id != params.model.id
+        } else if let configuredModelId,
+                  let parsed = Self.parseKotlinUuid(configuredModelId),
+                  let settings,
+                  let configuredModel = settings.findModelById(uuid: parsed),
+                  let configuredProvider = ChatProviderConfiguration.provider(
+                      for: configuredModel,
+                      providers: settings.providers
+                  ) {
             if let issue = ChatProviderConfiguration.issue(for: configuredModel, provider: configuredProvider) {
                 return .failure(AgentLaunchError(reason: "子代理模型不可用：\(issue.message)"))
             }
@@ -770,14 +802,32 @@ final class IOSThreadOrchestrationToolService {
             return .failure(AgentLaunchError(reason: "子代理配置的模型已不存在，请重新选择模型。"))
         }
 
+        let supportedReasoning = sharedSettingsProvider()?.subAgentReasoningLevels(
+            modelId: childModel.id.toHexDashString()
+        ) ?? []
         let reasoning: ReasoningLevel
-        if let inheritedReasoning = inheritedBase?.reasoningLevel,
-           let parsed = Self.reasoningLevel(named: inheritedReasoning) {
+        if let explicitReasoningRaw {
+            guard let parsed = Self.reasoningLevel(named: explicitReasoningRaw) else {
+                return .failure(AgentLaunchError(reason: "reasoning_level 无效：\(explicitReasoningRaw)"))
+            }
+            guard supportedReasoning.contains(parsed) else {
+                return .failure(AgentLaunchError(reason: "模型不支持 reasoning_level=\(explicitReasoningRaw)。"))
+            }
+            reasoning = parsed
+        } else if let selectedPoolCandidate {
+            let configured = selectedPoolCandidate.configuredReasoning
+            reasoning = configured.flatMap { supportedReasoning.contains($0) ? $0 : nil }
+                ?? modelPool.defaultReasoning(for: selectedPoolCandidate)
+        } else if let inheritedReasoning = inheritedBase?.reasoningLevel,
+                  let parsed = Self.reasoningLevel(named: inheritedReasoning) {
             reasoning = parsed
         } else if let savedReasoning = savedOverride?.reasoningLevel {
             reasoning = savedReasoning
         } else {
             reasoning = params.reasoningLevel
+        }
+        if let selectedPoolCandidate {
+            modelReservation = modelPool.reserve(selectedPoolCandidate)
         }
 
         let configuration = IOSOrchestrationAgentConfiguration(
@@ -815,7 +865,8 @@ final class IOSThreadOrchestrationToolService {
         return .success(ResolvedAgentLaunch(
             configuration: configuration,
             providerSetting: childProvider,
-            params: childParams
+            params: childParams,
+            modelReservation: modelReservation
         ))
     }
 
@@ -840,7 +891,8 @@ final class IOSThreadOrchestrationToolService {
 
     private static func hasAgentConfigurationArguments(_ arguments: [String: Any]) -> Bool {
         arguments.keys.contains { key in
-            ["role_id", "system_prompt", "context", "tool_scope", "tools", "skill_names", "skills"].contains(key)
+            ["role_id", "system_prompt", "context", "tool_scope", "tools", "skill_names", "skills",
+             "model_id", "reasoning_level"].contains(key)
         }
     }
 
@@ -861,6 +913,20 @@ final class IOSThreadOrchestrationToolService {
         case "max": return .max
         default: return nil
         }
+    }
+
+    private func subAgentTimeoutSeconds(
+        for configuration: IOSOrchestrationAgentConfiguration?
+    ) -> TimeInterval {
+        let settings = sharedSettingsProvider()?.snapshot
+        let globalMilliseconds = settings?.agentRuntime.subAgent.timeoutMs ?? 300_000
+        let global = min(3_600, max(1, Double(globalMilliseconds) / 1_000))
+        guard let roleId = configuration?.roleId,
+              let override = settings?.agentRuntime.subAgent.overrides[roleId]?.timeoutMsOverride else {
+            return global
+        }
+        let roleSeconds = min(3_600, max(1, Double(truncating: override) / 1_000))
+        return min(global, roleSeconds)
     }
 
     private static func orchestrationConfigurationMessage(
@@ -1006,7 +1072,50 @@ final class IOSThreadOrchestrationToolService {
             "tool": "list_agents",
             "threads": items,
             "count": items.count,
+            "model_pool": modelPoolSnapshot(),
+            "max_concurrent_runs": configuredMaxConcurrentRuns,
+            "occupied_runs": occupiedRunSlotCount,
+            "timeout_minutes": sharedSettingsProvider()?.subAgentTimeoutMinutes ?? 5,
+            "active_model_counts": backgroundCoordinator.activeModelCounts,
+            "active_provider_counts": backgroundCoordinator.activeProviderCounts,
         ])
+    }
+
+    private func modelPoolSnapshot() -> [[String: Any]] {
+        guard let sharedSettings = sharedSettingsProvider() else { return [] }
+        let settings = sharedSettings.snapshot
+        let candidates = modelPool.candidates(settings: settings, sharedSettings: sharedSettings)
+        let candidatesById = Dictionary(uniqueKeysWithValues: candidates.map { ($0.modelId, $0) })
+        return settings.agentRuntime.subAgent.modelPool.map { entry in
+            let modelId = entry.modelId.toHexDashString()
+            guard let candidate = candidatesById[modelId] else {
+                return [
+                    "model_id": modelId,
+                    "name": "",
+                    "provider": "",
+                    "available": false,
+                    "supported_reasoning": [],
+                    "default_reasoning": NSNull(),
+                    "active_model_runs": 0,
+                    "active_provider_runs": 0,
+                ]
+            }
+            let supported = candidate.supportedReasoning.map(\.name)
+            let defaultReasoning = (entry.reasoningLevel.flatMap {
+                candidate.supportedReasoning.contains($0) ? $0.name : nil
+            })
+                ?? modelPool.defaultReasoning(for: candidate).name
+            return [
+                "model_id": candidate.modelId,
+                "name": candidate.model.displayName,
+                "provider": candidate.provider.name,
+                "available": true,
+                "supported_reasoning": supported,
+                "default_reasoning": defaultReasoning,
+                "active_model_runs": backgroundCoordinator.activeModelCounts[candidate.modelId, default: 0],
+                "active_provider_runs": backgroundCoordinator.activeProviderCounts[candidate.providerId, default: 0],
+            ]
+        }
     }
 
     // MARK: - interrupt_agent
@@ -1161,6 +1270,11 @@ final class IOSThreadOrchestrationToolService {
               let targetId = Self.parseKotlinUuid(targetHex) else {
             return false
         }
+        guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
+            return false
+        }
+        inFlightBootstrapCount += 1
+        defer { inFlightBootstrapCount -= 1 }
 
         let currentMessages: [UIMessage]
         if store.currentConversation?.id == targetId {
@@ -1178,7 +1292,8 @@ final class IOSThreadOrchestrationToolService {
             providerSetting: providerSetting,
             params: params,
             toolExposureBridge: toolExposureBridge,
-            inherited: inheritedConfiguration
+            inherited: inheritedConfiguration,
+            allowPoolForInheritedModel: false
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -1189,6 +1304,7 @@ final class IOSThreadOrchestrationToolService {
             // retry can repair the child settings and try again.
             return false
         }
+        defer { modelPool.release(launch.modelReservation) }
 
         let taskMessages = pending.map { envelope in
             amberMailboxMessage(
@@ -1232,7 +1348,8 @@ final class IOSThreadOrchestrationToolService {
             store: store,
             toolExposureBridge: toolExposureBridge,
             executionPolicy: executionPolicy,
-            configuration: launch.configuration
+            configuration: launch.configuration,
+            modelReservation: launch.modelReservation
         ) != nil else {
             // The task messages are already durable, but the original Room
             // envelopes remain pending and can drive a later retry.
@@ -1421,6 +1538,16 @@ final class IOSThreadOrchestrationToolService {
         }
 
         // idle：bootstrap（信封渲染直写目标会话 + 标 delivered + durable 后台 run）。
+        guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
+            return Self.errorJSON(
+                toolName: "followup_task",
+                code: ErrorCode.agentLimitReached,
+                reason: "并发运行数已达上限（\(configuredMaxConcurrentRuns) 个子代理）。请先等待或 interrupt 一个子线程再 followup_task。"
+            )
+        }
+        inFlightBootstrapCount += 1
+        defer { inFlightBootstrapCount -= 1 }
+
         guard let store = conversationStoreProvider() else {
             return Self.errorJSON(
                 toolName: "followup_task",
@@ -1457,7 +1584,8 @@ final class IOSThreadOrchestrationToolService {
             providerSetting: providerSetting,
             params: params,
             toolExposureBridge: toolExposureBridge,
-            inherited: inheritedConfiguration
+            inherited: inheritedConfiguration,
+            allowPoolForInheritedModel: false
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -1470,6 +1598,7 @@ final class IOSThreadOrchestrationToolService {
                 reason: error.reason
             )
         }
+        defer { modelPool.release(launch.modelReservation) }
         let newTaskMessage = IosMailboxMessageBridge.shared.makeMessage(
             authorThreadId: senderAgentPath,
             type: MailboxEnvelopeType.theNewTask.name,
@@ -1501,7 +1630,8 @@ final class IOSThreadOrchestrationToolService {
             store: store,
             toolExposureBridge: toolExposureBridge,
             executionPolicy: executionPolicy,
-            configuration: launch.configuration
+            configuration: launch.configuration,
+            modelReservation: launch.modelReservation
         ) else {
             return Self.errorJSON(
                 toolName: "followup_task",
@@ -1732,8 +1862,10 @@ final class IOSThreadOrchestrationToolService {
         store: IOSConversationStore,
         toolExposureBridge: IosToolExposureBridge?,
         executionPolicy: IOSExecutionPolicySnapshot?,
-        configuration: IOSOrchestrationAgentConfiguration? = nil
+        configuration: IOSOrchestrationAgentConfiguration? = nil,
+        modelReservation: IOSSubAgentModelPool.Reservation? = nil
     ) async -> IOSChatBackgroundHandoff? {
+        defer { modelPool.release(modelReservation) }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let inputDigest = chatInputDigest(for: renderedText)
         guard await Self.recordRunningRun(
@@ -1795,7 +1927,8 @@ final class IOSThreadOrchestrationToolService {
             generativeUiRequirement: .none,
             generativeUiFallbackAttempted: false,
             fullToolNames: fullToolNames,
-            executionPolicy: executionPolicy
+            executionPolicy: executionPolicy,
+            subAgentTimeoutSeconds: subAgentTimeoutSeconds(for: configuration)
         )
         let didStart = !Task.isCancelled && backgroundCoordinator.start(
             handoff: handoff,
@@ -2183,6 +2316,12 @@ final class IOSThreadOrchestrationToolService {
             at: now
         )
     }
+}
+
+extension IOSThreadOrchestrationToolService.BackgroundScheduling {
+    var activeSubAgentJobCount: Int { 0 }
+    var activeModelCounts: [String: Int] { [:] }
+    var activeProviderCounts: [String: Int] { [:] }
 }
 
 private extension String {

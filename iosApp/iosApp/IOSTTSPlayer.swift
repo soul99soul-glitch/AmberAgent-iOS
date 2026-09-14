@@ -12,6 +12,7 @@ import Observation
 final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
     @ObservationIgnored private let synthesizer = AVSpeechSynthesizer()
     @ObservationIgnored private var currentUtterance: AVSpeechUtterance?
+    @ObservationIgnored private var currentAudioKeepAliveOwner: String?
     var isSpeaking = false
     var lastError: String?
 
@@ -67,6 +68,9 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
         }
         utterance.rate = rate
         currentUtterance = utterance
+        let owner = "tts-\(UUID().uuidString)"
+        currentAudioKeepAliveOwner = owner
+        BackgroundAudioKeepAlive.shared.suspend(for: owner)
         isSpeaking = true
         lastError = nil
         synthesizer.speak(utterance)
@@ -76,7 +80,21 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
         currentUtterance = nil
+        releaseAudioKeepAlive()
         isSpeaking = false
+    }
+
+    private func releaseAudioKeepAlive() {
+        guard let owner = currentAudioKeepAliveOwner else { return }
+        currentAudioKeepAliveOwner = nil
+        BackgroundAudioKeepAlive.shared.resume(for: owner)
+    }
+
+    deinit {
+        guard let owner = currentAudioKeepAliveOwner else { return }
+        Task { @MainActor in
+            BackgroundAudioKeepAlive.shared.resume(for: owner)
+        }
     }
 
     // MARK: - AVSpeechSynthesizerDelegate
@@ -87,6 +105,7 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
             guard let currentUtterance = self.currentUtterance,
                   ObjectIdentifier(currentUtterance) == utteranceID else { return }
             self.currentUtterance = nil
+            self.releaseAudioKeepAlive()
             self.isSpeaking = false
         }
     }
@@ -97,6 +116,7 @@ final class IOSTTSPlayer: NSObject, AVSpeechSynthesizerDelegate {
             guard let currentUtterance = self.currentUtterance,
                   ObjectIdentifier(currentUtterance) == utteranceID else { return }
             self.currentUtterance = nil
+            self.releaseAudioKeepAlive()
             self.isSpeaking = false
         }
     }

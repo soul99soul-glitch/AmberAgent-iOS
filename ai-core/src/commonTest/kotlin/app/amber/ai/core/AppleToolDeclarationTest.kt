@@ -4,8 +4,25 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class AppleToolDeclarationTest {
+    @Test
+    fun workspaceToolsExposeLineReadsAndExplicitGlobalEdits() {
+        val read = iosToolDeclaration("workspace_file_read")!!.parameters() as InputSchema.Obj
+        for (name in listOf("start_line", "end_line")) {
+            assertEquals("integer", read.properties[name]!!.jsonObject["type"]!!.jsonPrimitive.content)
+            assertFalse(name in read.required.orEmpty())
+        }
+        val editTool = iosToolDeclaration("workspace_file_edit")!!
+        val edit = editTool.parameters() as InputSchema.Obj
+        assertEquals(listOf("find", "replace"), edit.required)
+        assertEquals("boolean", edit.properties["replace_all"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("false", edit.properties["replace_all"]!!.jsonObject["default"]!!.jsonPrimitive.content)
+        assertTrue(editTool.needsApproval)
+    }
+
     @Test
     fun eventKitMutationsAreDeclaredAndAlwaysRequireApproval() {
         val names = listOf(

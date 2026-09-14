@@ -494,6 +494,8 @@ final class IOSGeminiProviderTests: XCTestCase {
         let apiKeyProvider = makeGoogleProvider()
         XCTAssertTrue(IOSGeminiProviderResolver.supportsChat(apiKeyProvider))
         XCTAssertFalse(IOSGeminiProviderResolver.isAntigravityOAuth(apiKeyProvider))
+        XCTAssertFalse(IOSChatBackgroundProvider().supportsStreaming(providerSetting: apiKeyProvider))
+        XCTAssertFalse(OpenAIKmpProviderAdapter().supportsStreaming(providerSetting: apiKeyProvider))
 
         let oauthProvider = makeGoogleProvider(authMode: .antigravityOauth, apiKey: "", baseUrl: "https://cloudcode-pa.googleapis.com")
         XCTAssertTrue(IOSGeminiProviderResolver.supportsChat(oauthProvider))

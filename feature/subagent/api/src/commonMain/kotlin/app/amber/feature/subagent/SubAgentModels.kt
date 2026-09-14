@@ -13,12 +13,19 @@ const val EXTENDED_SUB_AGENT_TIMEOUT_MS = 20 * 60_000L
 const val EXTENDED_SUB_AGENT_OUTPUT_BUDGET_CHARS = 200_000
 
 @Serializable
+data class SubAgentPoolModel(
+    val modelId: Uuid,
+    val reasoningLevel: ReasoningLevel? = null,
+)
+
+@Serializable
 data class SubAgentRuntimeSetting(
     val enabled: Boolean = false,
     val mode: SubAgentMode = SubAgentMode.ROSTER,
     val allowDynamicSubAgents: Boolean = true,
     val maxConcurrentRuns: Int = DEFAULT_SUB_AGENT_MAX_CONCURRENT_RUNS,
     val timeoutMs: Long = DEFAULT_SUB_AGENT_TIMEOUT_MS,
+    val modelPool: List<SubAgentPoolModel> = emptyList(),
     val maxTurns: Int = DEFAULT_SUB_AGENT_MAX_TURNS,
     val outputBudgetChars: Int = DEFAULT_SUB_AGENT_OUTPUT_BUDGET_CHARS,
     /** Per built-in id user override: prompt / model / temperature / reasoning / budgets. */

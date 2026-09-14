@@ -103,6 +103,7 @@ class IosChatBackgroundPayloadJsonBridgeTest {
             responseId = "resp_123",
             responseSequenceNumber = 7L,
             executionPolicyJson = "{\"policy\":\"frozen\"}",
+            subAgentTimeoutSeconds = 600.0,
         )
 
         assertFalse(json.contains("sk-persisted-secret"))
@@ -123,6 +124,7 @@ class IosChatBackgroundPayloadJsonBridgeTest {
         assertEquals("resp_123", decoded.responseId)
         assertEquals(7L, decoded.responseSequenceNumber)
         assertEquals("{\"policy\":\"frozen\"}", decoded.executionPolicyJson)
+        assertEquals(600.0, decoded.subAgentTimeoutSeconds)
     }
 
     @Test

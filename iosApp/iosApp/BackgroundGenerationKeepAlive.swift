@@ -32,6 +32,7 @@ final class BackgroundGenerationKeepAlive {
         case adopted
         /// UIKit 短窗已还，系统任务也没接管，进程只靠音频后台模式撑着。
         case audio
+        case location
     }
 
     typealias BeginBackgroundTask = (String, @escaping () -> Void) -> UIBackgroundTaskIdentifier
@@ -46,7 +47,7 @@ final class BackgroundGenerationKeepAlive {
     private struct Lease {
         var uiTaskId: UIBackgroundTaskIdentifier
         var systemTask: BGContinuedProcessingTask?
-        let systemTaskCompletion: SystemTaskCompletion
+        var systemTaskCompletion: SystemTaskCompletion
         var title: String
         var subtitle: String
         /// Whether a system continued-processing fallback is allowed.
@@ -93,6 +94,7 @@ final class BackgroundGenerationKeepAlive {
     private var systemSubmitRetryScheduled: Set<String> = []
     private var systemSubmitRetryTasks: [String: Task<Void, Never>] = [:]
     private var didInstallForegroundObserver = false
+    private var idleReleaseTask: Task<Void, Never>?
 
     private let beginBackgroundTask: BeginBackgroundTask
     private let endBackgroundTask: EndBackgroundTask
@@ -104,6 +106,7 @@ final class BackgroundGenerationKeepAlive {
     /// Continued-processing requests may only originate while the App is foregrounded.
     private let isApplicationForeground: () -> Bool
     private let audioKeepAlive: BackgroundAudioKeepAliveControlling
+    private let locationKeepAlive: BackgroundLocationKeepAliveControlling
     private let isAudioKeepAliveEnabled: () -> Bool
 
     init(
@@ -127,6 +130,7 @@ final class BackgroundGenerationKeepAlive {
             UIApplication.shared.applicationState != .background
         },
         audioKeepAlive: BackgroundAudioKeepAliveControlling = BackgroundAudioKeepAlive.shared,
+        locationKeepAlive: BackgroundLocationKeepAliveControlling = BackgroundLocationKeepAlive.shared,
         isAudioKeepAliveEnabled: @escaping () -> Bool = {
             BackgroundGenerationKeepAlive.isAudioKeepAlivePreferenceEnabled()
         }
@@ -139,6 +143,7 @@ final class BackgroundGenerationKeepAlive {
         self.systemSubmitRetryDelayNanoseconds = systemSubmitRetryDelayNanoseconds
         self.isApplicationForeground = isApplicationForeground
         self.audioKeepAlive = audioKeepAlive
+        self.locationKeepAlive = locationKeepAlive
         self.isAudioKeepAliveEnabled = isAudioKeepAliveEnabled
     }
 
@@ -194,14 +199,16 @@ final class BackgroundGenerationKeepAlive {
         if lease.systemTask != nil { return .adopted }
         if lease.didSubmitSystemTask { return .submitted }
         if lease.uiTaskId != .invalid { return .uiOnly }
-        return lease.heldByAudio ? .audio : .none
+        guard lease.heldByAudio else { return .none }
+        if audioKeepAlive.isActive { return .audio }
+        return locationKeepAlive.isActive ? .location : .none
     }
 
     /// 供生命周期日志读取：当前有几轮生成占着执行权、其中几轮已被系统接管。
     var snapshotDetail: String {
         let adopted = leases.values.filter { $0.systemTask != nil }.count
         let audio = audioKeepAlive.isActive ? 1 : 0
-        return "keepAlive=\(leases.count) adopted=\(adopted) audio=\(audio)"
+        return "keepAlive=\(leases.count) adopted=\(adopted) audio=\(audio) location=\(locationKeepAlive.isActive ? 1 : 0)"
     }
 
     // MARK: - 调用方接口
@@ -250,9 +257,9 @@ final class BackgroundGenerationKeepAlive {
 
         syncAudioKeepAlive()
         if submitSystemTask {
-            if audioKeepAlive.isActive {
+            if audioKeepAlive.isActive || locationKeepAlive.isActive {
                 IOSBackgroundLifecycleLog.record(
-                    "keepAliveSystemSuppressedByAudio(\(leaseId))",
+                    "keepAliveSystemSuppressedByBackgroundMode(\(leaseId))",
                     detail: snapshotDetail
                 )
             } else {
@@ -284,13 +291,15 @@ final class BackgroundGenerationKeepAlive {
     ///
     /// Used when business cancel ends the run asynchronously: without this, a
     /// deferred submit retry can re-post a progress card after the run is already dead.
-    func abandonSystemAssertion(_ leaseId: String) {
+    /// Durable callers preserve an adopted task until `end`, after their
+    /// terminal write; pending requests and retries are still cancelled now.
+    func abandonSystemAssertion(_ leaseId: String, preservingAdoptedTask: Bool = false) {
         guard var lease = leases[leaseId] else { return }
         cancelSystemSubmitRetry(for: leaseId)
         let taskIdentifier = identifier(for: leaseId)
         leaseIdsByIdentifier.removeValue(forKey: taskIdentifier)
         cancelTaskRequest(taskIdentifier)
-        if let systemTask = lease.systemTask {
+        if !preservingAdoptedTask, let systemTask = lease.systemTask {
             lease.systemTaskCompletion.complete(systemTask, success: true)
             lease.systemTask = nil
             lease.waiter?.resume()
@@ -308,12 +317,13 @@ final class BackgroundGenerationKeepAlive {
     /// 设置开关变化后立刻对齐音频腿：关掉就停，开着且还有租约就拉起来。
     /// 若关掉时某些租约只靠音频撑着，按短窗到期同样通知上层收口。
     func refreshAudioKeepAlive() {
-        if isAudioKeepAliveEnabled(), !leases.isEmpty {
-            audioKeepAlive.start()
-            return
+        if !isAudioKeepAliveEnabled() {
+            idleReleaseTask?.cancel()
+            idleReleaseTask = nil
+            audioKeepAlive.stop()
         }
-        audioKeepAlive.stop()
-        expireAudioOnlyLeases()
+        syncAudioKeepAlive()
+        if !isAudioKeepAliveEnabled() { expireAudioOnlyLeases() }
     }
 
     /// 首 token 后允许升级系统 continued-processing 进度卡。
@@ -333,7 +343,7 @@ final class BackgroundGenerationKeepAlive {
         if let subtitle { lease.subtitle = subtitle }
         lease.submitSystemTask = true
         leases[leaseId] = lease
-        if audioKeepAlive.isActive {
+        if audioKeepAlive.isActive || locationKeepAlive.isActive {
             IOSBackgroundLifecycleLog.record(
                 "keepAlivePromoteHeldByAudio(\(leaseId))",
                 detail: snapshotDetail
@@ -464,11 +474,43 @@ final class BackgroundGenerationKeepAlive {
 
     // MARK: - 内部
 
+    /// A durable caller registers its persisted leases at launch. A live lease
+    /// adopts the assertion without restarting work; after process loss the
+    /// caller restores its own payload and tool ledger before running again.
+    @discardableResult
+    func registerRestorationHandler(
+        for leaseId: String,
+        restore: @escaping @MainActor (BGContinuedProcessingTask) -> Void
+    ) -> Bool {
+        let taskIdentifier = identifier(for: leaseId)
+        guard !registeredIdentifiers.contains(taskIdentifier) else { return true }
+        let registered = registerLaunchHandler(taskIdentifier) { [weak self] task in
+            guard let task = task as? BGContinuedProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            Task { @MainActor in
+                guard let self else { task.setTaskCompleted(success: false); return }
+                if let lease = self.leases[leaseId] {
+                    guard lease.submitSystemTask else {
+                        task.setTaskCompleted(success: false)
+                        return
+                    }
+                    await self.adopt(task, leaseId: leaseId)
+                } else {
+                    restore(task)
+                }
+            }
+        }
+        if registered { registeredIdentifiers.insert(taskIdentifier) }
+        return registered
+    }
+
     private func submitContinuedTask(_ leaseId: String, title: String, subtitle: String) {
-        guard !audioKeepAlive.isActive else {
+        guard !audioKeepAlive.isActive, !locationKeepAlive.isActive else {
             cancelSystemSubmitRetry(for: leaseId)
             IOSBackgroundLifecycleLog.record(
-                "keepAliveSystemSuppressedByAudio(\(leaseId))",
+                "keepAliveSystemSuppressedByBackgroundMode(\(leaseId))",
                 detail: snapshotDetail
             )
             return
@@ -579,10 +621,11 @@ final class BackgroundGenerationKeepAlive {
 
         // 系统要求在到期回调里当场报完成，跳一次 actor 再报就晚了，会被判超时。
         // 所以先同步收口，清理再回主 actor 做。
-        let systemTaskCompletion = leases[leaseId]?.systemTaskCompletion
+        let systemTaskCompletion = SystemTaskCompletion()
+        leases[leaseId]?.systemTaskCompletion = systemTaskCompletion
         task.expirationHandler = { [weak self, systemTaskCompletion] in
-            systemTaskCompletion?.complete(task, success: false)
-            Task { @MainActor in self?.handleSystemExpiration(leaseId) }
+            systemTaskCompletion.complete(task, success: false)
+            Task { @MainActor in self?.handleSystemExpiration(leaseId, task: task) }
         }
         leases[leaseId]?.systemTask = task
         if let lease = leases[leaseId] {
@@ -628,7 +671,7 @@ final class BackgroundGenerationKeepAlive {
         if isAudioKeepAliveEnabled(), !audioKeepAlive.isActive {
             audioKeepAlive.start()
         }
-        if audioKeepAlive.isActive {
+        if audioKeepAlive.isActive || locationKeepAlive.isActive {
             if lease.uiTaskId != .invalid {
                 endBackgroundTask(lease.uiTaskId)
                 lease.uiTaskId = .invalid
@@ -657,7 +700,8 @@ final class BackgroundGenerationKeepAlive {
     /// 上层各自的中断/恢复逻辑负责收口。
     ///
     /// 只由 `expirationHandler` 调用，`setTaskCompleted` 已经在那里同步报过了。
-    private func handleSystemExpiration(_ leaseId: String) {
+    private func handleSystemExpiration(_ leaseId: String, task: BGContinuedProcessingTask) {
+        guard leases[leaseId]?.systemTask === task else { return }
         guard let lease = removeLease(leaseId) else { return }
         if lease.uiTaskId != .invalid {
             endBackgroundTask(lease.uiTaskId)
@@ -689,14 +733,39 @@ final class BackgroundGenerationKeepAlive {
     }
 
     private func syncAudioKeepAlive() {
-        if isAudioKeepAliveEnabled(), !leases.isEmpty {
-            audioKeepAlive.start()
-        } else {
+        if !leases.isEmpty {
+            idleReleaseTask?.cancel()
+            idleReleaseTask = nil
+            locationKeepAlive.setNeeded(true)
+            if isAudioKeepAliveEnabled() { audioKeepAlive.start() }
+            else { audioKeepAlive.stop() }
+            preferActiveBackgroundMode()
+            return
+        }
+        guard !isApplicationForeground(),
+              audioKeepAlive.isActive || locationKeepAlive.isActive else {
+            idleReleaseTask?.cancel()
+            idleReleaseTask = nil
             audioKeepAlive.stop()
+            locationKeepAlive.setNeeded(false)
+            return
+        }
+        // A follow-up may become ready just after its parent/last sibling
+        // finished. Keep one bounded gap instead of cycling the audio session
+        // while already backgrounded. Repeated empty updates do not reset it.
+        guard idleReleaseTask == nil else { return }
+        idleReleaseTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            guard let self, self.leases.isEmpty else { return }
+            self.idleReleaseTask = nil
+            self.audioKeepAlive.stop()
+            self.locationKeepAlive.setNeeded(false)
+            IOSBackgroundLifecycleLog.record("keepAliveIdleGraceEnded")
         }
     }
 
     private func expireAudioOnlyLeases() {
+        guard !locationKeepAlive.isActive else { return }
         let audioOnlyIds = leases.compactMap { leaseId, lease -> String? in
             lease.heldByAudio && lease.systemTask == nil && !lease.didSubmitSystemTask
                 ? leaseId
@@ -714,6 +783,23 @@ final class BackgroundGenerationKeepAlive {
         syncAudioKeepAlive()
     }
 
+    /// Once a real audio/location assertion is available, retire the secondary
+    /// system card. A late expiration for that retired card cannot cancel the
+    /// independently-owned run. Preserve eligibility for a later foreground
+    /// fallback if the background mode becomes unavailable.
+    private func preferActiveBackgroundMode() {
+        guard audioKeepAlive.isActive || locationKeepAlive.isActive else { return }
+        for leaseId in Array(leases.keys) {
+            guard let lease = leases[leaseId] else { continue }
+            if lease.systemTask != nil || lease.didSubmitSystemTask {
+                let allowsFallback = lease.submitSystemTask
+                abandonSystemAssertion(leaseId)
+                leases[leaseId]?.submitSystemTask = allowsFallback
+            }
+            if leases[leaseId]?.uiTaskId == .invalid { leases[leaseId]?.heldByAudio = true }
+        }
+    }
+
     private func installForegroundObserverIfNeeded() {
         guard !didInstallForegroundObserver else { return }
         didInstallForegroundObserver = true
@@ -722,13 +808,22 @@ final class BackgroundGenerationKeepAlive {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.resubmitSystemTasksAfterForeground() }
+            Task { @MainActor in
+                self?.syncAudioKeepAlive()
+                self?.resubmitSystemTasksAfterForeground()
+            }
+        }
+        for name in [Notification.Name.amberBackgroundAudioKeepAliveChanged,
+                     .amberBackgroundLocationKeepAliveChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.preferActiveBackgroundMode() }
+            }
         }
     }
 
     /// 音频腿失效但进程已回到前台时，再补交系统长窗。
     private func resubmitSystemTasksAfterForeground() {
-        guard !audioKeepAlive.isActive else { return }
+        guard !audioKeepAlive.isActive, !locationKeepAlive.isActive else { return }
         let pending = leases.compactMap { leaseId, lease -> (String, String, String)? in
             guard lease.heldByAudio,
                   lease.submitSystemTask,

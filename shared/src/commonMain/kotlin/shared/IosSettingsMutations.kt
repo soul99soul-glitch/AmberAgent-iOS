@@ -44,6 +44,7 @@ import app.amber.feature.board.TodayBoardReadingFontMode
 import app.amber.feature.modelcouncil.ModelCouncilSeat
 import app.amber.feature.modelcouncil.ModelCouncilSeatRunner
 import app.amber.feature.subagent.SubAgentOverride
+import app.amber.feature.subagent.SubAgentPoolModel
 import app.amber.search.SearchServiceOptions
 import app.amber.tts.provider.TTSProviderSetting
 
@@ -1337,6 +1338,69 @@ object IosSettingsMutations {
         settings.copy(agentRuntime = settings.agentRuntime.copy(
             subAgent = settings.agentRuntime.subAgent.copy(allowDynamicSubAgents = allowed)
         ))
+
+    /** Persist the bounded execution controls used by the sub-agent scheduler. */
+    fun setSubAgentExecutionLimits(
+        settings: Settings,
+        maxConcurrentRuns: Int,
+        timeoutMinutes: Int,
+    ): Settings {
+        val sub = settings.agentRuntime.subAgent
+        return settings.copy(
+            agentRuntime = settings.agentRuntime.copy(
+                subAgent = sub.copy(
+                    maxConcurrentRuns = maxConcurrentRuns.coerceIn(1, 10),
+                    timeoutMs = timeoutMinutes.coerceIn(1, 60).toLong() * 60_000L,
+                )
+            )
+        )
+    }
+
+    /**
+     * Replace the explicitly selected ids, preserving each retained model's
+     * reasoning override. Other settings mutations leave this list untouched.
+     */
+    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+    fun setSubAgentModelPool(settings: Settings, modelIds: List<String>): Settings {
+        val sub = settings.agentRuntime.subAgent
+        val existingById = sub.modelPool.associateBy { it.modelId }
+        val selectedIds = modelIds.mapNotNull { raw ->
+            runCatching { kotlin.uuid.Uuid.parse(raw) }.getOrNull()
+        }.distinct()
+        val selected = selectedIds.map { modelId ->
+            existingById[modelId] ?: SubAgentPoolModel(modelId = modelId)
+        }
+        return settings.copy(
+            agentRuntime = settings.agentRuntime.copy(
+                subAgent = sub.copy(modelPool = selected)
+            )
+        )
+    }
+
+    /** Set one selected model's reasoning override only when the model supports it. */
+    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+    fun setSubAgentPoolReasoning(
+        settings: Settings,
+        modelId: String,
+        reasoningLevel: ReasoningLevel?,
+    ): Settings {
+        val parsed = runCatching { kotlin.uuid.Uuid.parse(modelId) }.getOrNull() ?: return settings
+        val model = settings.findModelById(parsed) ?: return settings
+        val provider = model.findProvider(settings.providers)
+        val supported = model.reasoningOptions(provider).map { it.level }
+        if (reasoningLevel != null && reasoningLevel !in supported) return settings
+
+        val sub = settings.agentRuntime.subAgent
+        if (sub.modelPool.none { it.modelId == parsed }) return settings
+        val updatedPool = sub.modelPool.map { entry ->
+            if (entry.modelId == parsed) entry.copy(reasoningLevel = reasoningLevel) else entry
+        }
+        return settings.copy(
+            agentRuntime = settings.agentRuntime.copy(
+                subAgent = sub.copy(modelPool = updatedPool)
+            )
+        )
+    }
 
     fun subAgentReasoningLevels(settings: Settings, modelId: String?): List<ReasoningLevel> {
         val model = modelId?.let { id -> settings.providers.flatMap { it.models }

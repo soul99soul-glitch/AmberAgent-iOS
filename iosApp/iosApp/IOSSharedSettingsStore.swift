@@ -1179,8 +1179,43 @@ final class IOSSharedSettingsStore {
         snapshot.agentRuntime.subAgent.allowDynamicSubAgents
     }
 
+    var subAgentMaxConcurrentRuns: Int {
+        min(10, max(1, Int(snapshot.agentRuntime.subAgent.maxConcurrentRuns)))
+    }
+
+    var subAgentTimeoutMinutes: Int {
+        min(60, max(1, Int(snapshot.agentRuntime.subAgent.timeoutMs / 60_000)))
+    }
+
+    var subAgentModelPool: [ApiSubAgentPoolModel] {
+        snapshot.agentRuntime.subAgent.modelPool
+    }
+
     func setDynamicSubAgentsAllowed(_ allowed: Bool) {
         restoreSnapshot(IosSettingsMutations.shared.setDynamicSubAgentsAllowed(settings: snapshot, allowed: allowed))
+    }
+
+    func setSubAgentExecutionLimits(maxConcurrentRuns: Int, timeoutMinutes: Int) {
+        restoreSnapshot(IosSettingsMutations.shared.setSubAgentExecutionLimits(
+            settings: snapshot,
+            maxConcurrentRuns: Int32(maxConcurrentRuns),
+            timeoutMinutes: Int32(timeoutMinutes)
+        ))
+    }
+
+    func setSubAgentModelPool(modelIds: [String]) {
+        restoreSnapshot(IosSettingsMutations.shared.setSubAgentModelPool(
+            settings: snapshot,
+            modelIds: modelIds
+        ))
+    }
+
+    func setSubAgentPoolReasoning(modelId: String, reasoningLevel: ReasoningLevel?) {
+        restoreSnapshot(IosSettingsMutations.shared.setSubAgentPoolReasoning(
+            settings: snapshot,
+            modelId: modelId,
+            reasoningLevel: reasoningLevel
+        ))
     }
 
     func configureSubAgentRole(

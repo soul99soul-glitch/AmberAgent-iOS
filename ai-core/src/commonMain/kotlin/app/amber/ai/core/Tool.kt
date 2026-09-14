@@ -365,8 +365,13 @@ fun createMemoryToolDeclaration(): Tool = Tool(
 fun createWorkspaceFileReadToolDeclaration(): Tool = workspaceTool(
     name = "workspace_file_read",
     description = """
-        Read text preview from an AmberAgent iOS Workspace file previously imported by the user.
+        Read text from an AmberAgent iOS Workspace file previously imported by the user.
         Use `file_id` from Workspace UI/tool output or a `/workspace/...` path. This cannot read arbitrary device files.
+        Without `start_line`/`end_line`, returns the normal bounded preview (including supported PDF previews).
+        With either line parameter, reads the original UTF-8 file by a 1-based inclusive line range;
+        omitted `start_line` defaults to 1 and omitted `end_line` defaults to the end of the file.
+        `max_chars` still bounds the returned text; the response reports the actual returned line range and total lines.
+        On truncation, continue from `end_line + 1` without skipping content.
     """.trimIndent(),
     parameters = workspaceFileReadParameters()
 )
@@ -382,7 +387,13 @@ fun createWorkspaceFileWriteToolDeclaration(): Tool = workspaceTool(
 
 fun createWorkspaceFileEditToolDeclaration(): Tool = workspaceTool(
     name = "workspace_file_edit",
-    description = "Replace text inside an existing AmberAgent iOS Workspace file. Requires foreground approval.",
+    description = """
+        Precisely replace text in an existing UTF-8 Workspace file. Read the relevant original lines first.
+        `find` must match exactly, including whitespace and newlines, and must identify one occurrence by default.
+        If multiple occurrences match, include more surrounding context in `find`; use `replace_all=true` only for an intentional global replacement.
+        Missing or ambiguous matches fail without writing. Returns the replacement count and a bounded diff preview.
+        Requires foreground approval.
+    """.trimIndent(),
     parameters = workspaceFileEditParameters()
 )
 
@@ -1408,6 +1419,16 @@ fun createSpawnAgentToolDeclaration(): Tool = Tool(
         name, and never add a numeric suffix yourself. Keep the returned
         agent_path for followups. Tool scope is enforced by the child execution
         and background recovery, not only described in the prompt.
+        The user's subagent settings enforce the concurrent-child limit (up to
+        10, excluding the parent) and each child's runtime timeout. list_agents
+        reports the current limits and available model_pool. With a configured
+        pool, omit model_id for automatic distribution across available providers
+        and models, or select an exact pool model id. reasoning_level must be
+        supported by that model; omission uses its configured pool default.
+        Saved role model overrides and existing child followups retain their
+        selected model unless an allowed explicit selection changes it. An empty
+        pool follows the parent model. Do not invent model ids or retry a failed
+        task blindly when a tool's side-effect outcome is unknown.
     """.trimIndent(),
     parameters = { spawnAgentParameters() },
     needsApproval = false,
@@ -1422,6 +1443,9 @@ fun createListAgentsToolDeclaration(): Tool = Tool(
         children: canonical agent path, child thread id, nickname, role assistant,
         thread status (Open/Closed) and the latest run status of each child.
         Optionally filter by a path prefix.
+        Also reports subagent concurrency and timeout settings, current model
+        and provider occupancy, and the user's available model_pool with model
+        ids and supported/default reasoning levels for spawn_agent.
     """.trimIndent(),
     parameters = { listAgentsParameters() },
     needsApproval = false,
@@ -1479,6 +1503,10 @@ fun createFollowupTaskToolDeclaration(): Tool = Tool(
         if it is running, the message is queued in its mailbox and folded in at
         its next tool-loop boundary. You cannot send to your own thread;
         targets outside your thread tree are rejected.
+        Optional model_id and reasoning_level select a model from the user's
+        subagent model_pool for the next run. Omitting them retains the child's
+        current configuration. A running provider request is not restarted by
+        a follow-up; the updated configuration applies to a later run.
     """.trimIndent(),
     parameters = { followupTaskParameters() },
     needsApproval = false,
@@ -1581,6 +1609,15 @@ private const val subAgentChineseNames =
 
 private fun spawnAgentParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
+        put("model_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional exact configured model UUID from list_agents.model_pool. Omit to let the runtime distribute new child runs across the pool. Do not use a provider's wire model name here.")
+        })
+        put("reasoning_level", buildJsonObject {
+            put("type", "string")
+            put("enum", JsonArray(ReasoningLevel.entries.map { JsonPrimitive(it.name.lowercase()) }))
+            put("description", "Optional reasoning level supported by the selected pool model; see list_agents.model_pool. Omission uses its configured default, not an unsupported level inherited from another model.")
+        })
         put("task_name", buildJsonObject {
             put("type", "string")
             put("pattern", "^[a-z0-9_]+$")
@@ -1659,6 +1696,15 @@ private fun sendMessageParameters(): InputSchema = InputSchema.Obj(
 
 private fun followupTaskParameters(): InputSchema = InputSchema.Obj(
     properties = buildJsonObject {
+        put("model_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional exact configured model UUID from list_agents.model_pool for the child's next run. Omission retains the child's selected model.")
+        })
+        put("reasoning_level", buildJsonObject {
+            put("type", "string")
+            put("enum", JsonArray(ReasoningLevel.entries.map { JsonPrimitive(it.name.lowercase()) }))
+            put("description", "Optional supported reasoning level for the child's next run; omission retains its current configuration.")
+        })
         put("target", buildJsonObject {
             put("type", "string")
             put("description", "Required. child_thread_id (uuid) or canonical agent path of the target thread.")
@@ -3155,6 +3201,14 @@ private fun workspaceFileReadParameters(): InputSchema = InputSchema.Obj(
             put("type", "integer")
             put("description", "maximum text characters to return")
         })
+        put("start_line", buildJsonObject {
+            put("type", "integer")
+            put("description", "optional 1-based inclusive first line; when set, reads the original UTF-8 file")
+        })
+        put("end_line", buildJsonObject {
+            put("type", "integer")
+            put("description", "optional 1-based inclusive last line; defaults to the end of the file when omitted")
+        })
     }
 )
 
@@ -3188,11 +3242,17 @@ private fun workspaceFileEditParameters(): InputSchema = InputSchema.Obj(
         })
         put("find", buildJsonObject {
             put("type", "string")
-            put("description", "Text to replace")
+            put("minLength", 1)
+            put("description", "Exact original text, including whitespace and newlines. Include enough context to match uniquely.")
         })
         put("replace", buildJsonObject {
             put("type", "string")
-            put("description", "Replacement text")
+            put("description", "Replacement text; an empty string deletes the matched text.")
+        })
+        put("replace_all", buildJsonObject {
+            put("type", "boolean")
+            put("default", false)
+            put("description", "Default false requires exactly one match. Set true only to replace every exact occurrence intentionally.")
         })
     },
     required = listOf("find", "replace")

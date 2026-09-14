@@ -374,6 +374,13 @@ final class ChatToolRuntime {
     private var ishAutoApprovedRunCapabilities: Set<String> = []
     private var ishAutoApprovedRunIds: Set<String> = []
     private lazy var subAgentRunner = SubAgentRunner()
+    /// Legacy `subagent_dispatch` shares the same pool selection and
+    /// reservation semantics as thread orchestration. Its provider/model count
+    /// view is process-local because the runner predates BackgroundScheduling.
+    private let subAgentModelPool = IOSSubAgentModelPool()
+    private var activeLegacySubAgentRuns = 0
+    private var activeLegacyModelCounts: [String: Int] = [:]
+    private var activeLegacyProviderCounts: [String: Int] = [:]
     private lazy var councilRunner = CouncilRunner()
     /// Agent 自配置 provider/model（SharedSettings 真源；密钥永不进 tool result）。
     private lazy var providerConfigToolService = IOSProviderConfigToolService(
@@ -5511,6 +5518,16 @@ final class ChatToolRuntime {
             return await IOSWorkoutAgentToolExecutor.execute(toolName: name, input: toolCall.input)
         case "subagent_dispatch":
             let args = ChatToolCallParsing.jsonObject(toolCall.input)
+            let maxLegacySubAgents = min(10, max(1, sharedSettings.subAgentMaxConcurrentRuns))
+            guard activeLegacySubAgentRuns < maxLegacySubAgents else {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName,
+                    reason: "并发运行数已达上限（\(maxLegacySubAgents) 个子代理）。",
+                    status: "agent_limit_reached"
+                )
+            }
+            activeLegacySubAgentRuns += 1
+            defer { activeLegacySubAgentRuns -= 1 }
             let customRolePrompt = args?["custom_role_prompt"] as? String
             let isCustomRole = customRolePrompt?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -5572,11 +5589,52 @@ final class ChatToolRuntime {
             } else {
                 skillContext = nil
             }
-            let selectedModel = roleOverride?.modelId.flatMap { settingsSnapshot.findModelById(uuid: $0) }
-            let selectedProvider = selectedModel.flatMap {
+            let poolCandidates = subAgentModelPool.candidates(
+                settings: settingsSnapshot,
+                sharedSettings: sharedSettings
+            )
+            let explicitModelId = (args?["model_id"] as? String).flatMap { raw -> String? in
+                let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+            let explicitReasoningRaw = (args?["reasoning_level"] as? String).flatMap { raw -> String? in
+                let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+            let selectedPoolCandidate: IOSSubAgentModelPool.Candidate?
+            if let explicitModelId {
+                guard let parsed = Self.parseSubAgentModelUUID(explicitModelId),
+                      let candidate = subAgentModelPool.candidate(
+                        for: parsed.toHexDashString(),
+                        from: poolCandidates
+                      ) else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName,
+                        reason: "显式 model_id 必须是当前用户模型池中的可用模型：\(explicitModelId)"
+                    )
+                }
+                selectedPoolCandidate = candidate
+            } else if roleOverride?.modelId == nil, !poolCandidates.isEmpty {
+                selectedPoolCandidate = subAgentModelPool.select(
+                    from: poolCandidates,
+                    activeModelCounts: activeLegacyModelCounts,
+                    activeProviderCounts: activeLegacyProviderCounts
+                )
+            } else if roleOverride?.modelId == nil,
+                      settingsSnapshot.agentRuntime.subAgent.modelPool.isEmpty == false {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName,
+                    reason: "模型池中的模型均已停用、移除或配置不可用。"
+                )
+            } else {
+                selectedPoolCandidate = nil
+            }
+            let selectedModel = selectedPoolCandidate?.model
+                ?? roleOverride?.modelId.flatMap { settingsSnapshot.findModelById(uuid: $0) }
+            let selectedProvider = selectedPoolCandidate?.provider ?? selectedModel.flatMap {
                 ChatProviderConfiguration.provider(for: $0, providers: settingsSnapshot.providers)
             }
-            if roleOverride?.modelId != nil {
+            if roleOverride?.modelId != nil, selectedPoolCandidate == nil {
                 guard let selectedModel else {
                     return ChatToolOutputFormatter.toolFailureJSON(
                         toolName: toolCall.toolName, reason: "子代理配置的模型已不存在，请重新选择模型。"
@@ -5586,8 +5644,33 @@ final class ChatToolRuntime {
                     return ChatToolOutputFormatter.toolFailureJSON(toolName: toolCall.toolName, reason: issue.message)
                 }
             }
+            let effectiveReasoningOverride: ReasoningLevel?
+            if let explicitReasoningRaw {
+                guard let parsed = Self.reasoningLevel(named: explicitReasoningRaw) else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName,
+                        reason: "reasoning_level 无效：\(explicitReasoningRaw)"
+                    )
+                }
+                let reasoningModelId = selectedModel?.id.toHexDashString() ?? params.model.id.toHexDashString()
+                let supported = sharedSettings.subAgentReasoningLevels(modelId: reasoningModelId)
+                guard supported.contains(parsed) else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName,
+                        reason: "模型不支持 reasoning_level=\(explicitReasoningRaw)。"
+                    )
+                }
+                effectiveReasoningOverride = parsed
+            } else if let selectedPoolCandidate {
+                effectiveReasoningOverride = selectedPoolCandidate.configuredReasoning
+                    .flatMap { selectedPoolCandidate.supportedReasoning.contains($0) ? $0 : nil }
+                    ?? subAgentModelPool.defaultReasoning(for: selectedPoolCandidate)
+            } else {
+                effectiveReasoningOverride = roleOverride?.reasoningLevel
+            }
             let runParams: TextGenerationParams
-            if let selectedModel, let selectedProvider, selectedModel.id != params.model.id {
+            if let selectedModel, let selectedProvider,
+               selectedModel.id != params.model.id || effectiveReasoningOverride != nil {
                 let assistant = settingsSnapshot.getCurrentAssistant()
                 runParams = TextGenerationParams(
                     model: selectedModel,
@@ -5595,7 +5678,7 @@ final class ChatToolRuntime {
                     topP: params.topP,
                     maxTokens: params.maxTokens,
                     tools: params.tools,
-                    reasoningLevel: params.reasoningLevel,
+                    reasoningLevel: effectiveReasoningOverride ?? params.reasoningLevel,
                     customHeaders: IOSProviderRequestHeaderStore.headers(for: selectedProvider.id.description())
                         + assistant.customHeaders + selectedModel.customHeaders,
                     customBody: assistant.customBodies + selectedModel.customBodies
@@ -5603,6 +5686,26 @@ final class ChatToolRuntime {
             } else {
                 runParams = params
             }
+            let modelReservation = selectedPoolCandidate.map { subAgentModelPool.reserve($0) }
+            if let selectedPoolCandidate {
+                activeLegacyModelCounts[selectedPoolCandidate.modelId, default: 0] += 1
+                activeLegacyProviderCounts[selectedPoolCandidate.providerId, default: 0] += 1
+            }
+            defer {
+                subAgentModelPool.release(modelReservation)
+                if let selectedPoolCandidate {
+                    decrementLegacyCount(&activeLegacyModelCounts, key: selectedPoolCandidate.modelId)
+                    decrementLegacyCount(&activeLegacyProviderCounts, key: selectedPoolCandidate.providerId)
+                }
+            }
+            let globalTimeoutSeconds = min(
+                3_600,
+                max(1, Double(settingsSnapshot.agentRuntime.subAgent.timeoutMs) / 1_000)
+            )
+            let roleTimeoutSeconds = roleOverride?.timeoutMsOverride.map {
+                min(3_600, max(1, Double(truncating: $0) / 1_000))
+            } ?? TimeInterval(IOSSubAgentRoleCatalog.resolve(roleId: roleId)?.timeoutSeconds ?? 300)
+            let timeoutSeconds = min(globalTimeoutSeconds, roleTimeoutSeconds)
             return await subAgentRunner.runViaEngine(
                 objective: objective,
                 roleId: roleId,
@@ -5622,7 +5725,7 @@ final class ChatToolRuntime {
                 baseParams: runParams,
                 modelOverride: selectedModel,
                 temperatureOverride: roleOverride?.temperature.map { Float(truncating: $0) },
-                reasoningLevelOverride: roleOverride?.reasoningLevel,
+                reasoningLevelOverride: effectiveReasoningOverride,
                 additionalToolDeclarations: mcpDeclarations,
                 parentToolExecutors: subAgentParentToolExecutors(
                     runId: runId,
@@ -5630,7 +5733,8 @@ final class ChatToolRuntime {
                     additionalToolNames: Set(mcpDeclarations.map(\.name))
                 ),
                 toolCallId: toolCall.toolCallId,
-                sourceConversationId: conversationId?.toHexDashString()
+                sourceConversationId: conversationId?.toHexDashString(),
+                timeoutSeconds: timeoutSeconds
             )
         case "model_council_run":
             let args = ChatToolCallParsing.jsonObject(toolCall.input)
@@ -6258,6 +6362,34 @@ final class ChatToolRuntime {
         let masterEnabled = IOSExecutionPolicyContext.snapshot?.mcpEnabled
             ?? sharedSettings.isCapabilityGateEnabled(.mcp)
         return masterEnabled && isCapabilityPolicyEnabled("ios.mcp.tool_call")
+    }
+
+    private static func parseSubAgentModelUUID(_ value: String) -> KotlinUuid? {
+        let normalized = value.lowercased()
+        guard UUID(uuidString: normalized) != nil else { return nil }
+        return KotlinUuid.companion.parse(uuidString: normalized)
+    }
+
+    private static func reasoningLevel(named raw: String) -> ReasoningLevel? {
+        switch raw.lowercased() {
+        case "off": return .off
+        case "auto": return .auto_
+        case "low": return .low
+        case "medium": return .medium
+        case "high": return .high
+        case "xhigh": return .xhigh
+        case "max": return .max
+        default: return nil
+        }
+    }
+
+    private func decrementLegacyCount(_ values: inout [String: Int], key: String) {
+        guard let count = values[key] else { return }
+        if count <= 1 {
+            values.removeValue(forKey: key)
+        } else {
+            values[key] = count - 1
+        }
     }
 
     private static func isHostPublishTool(_ toolName: String) -> Bool {

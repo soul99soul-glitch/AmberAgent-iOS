@@ -347,6 +347,9 @@ struct ChatGenerationBindings {
     let saveMiniAppIfPresent: ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?
     let messagesByInjectingRuntimeContext: ([UIMessage]) -> [UIMessage]
     var messagesByInjectingRuntimeContextForRun: (([UIMessage], Bool) -> [UIMessage])? = nil
+    var prepareImageAttachments: @MainActor ([UIMessage], Model, Settings, KotlinUuid?) async throws -> [UIMessage] = {
+        messages, _, _, _ in messages
+    }
     let userFacingGenerationError: (String, String?) -> String
     var memoryRecordIdsForRuntimeContext: ([UIMessage]) -> [Int32] = { _ in [] }
     /// 第二个 Bool 为 P2-c 修复 2 的 force 标记：模型显式引用（citation flush）

@@ -384,7 +384,8 @@ targets:
           set -euo pipefail
           experimental_info="${DERIVED_FILE_DIR}/AmberExperimental-Info.plist"
           /bin/cp "${SRCROOT}/iosApp/Info.plist" "${experimental_info}"
-          /usr/bin/plutil -replace UIBackgroundModes -json '["audio","processing"]' "${experimental_info}"
+          /usr/bin/plutil -replace UIBackgroundModes -json '["audio","processing","location"]' "${experimental_info}"
+          /usr/bin/plutil -replace NSLocationWhenInUseUsageDescription -string 'Location supports features you request and optional background task support. Background keep-alive discards all location data without saving or uploading it.' "${experimental_info}"
       - name: Validate CPython artifact
         basedOnDependencyAnalysis: false
         script: |

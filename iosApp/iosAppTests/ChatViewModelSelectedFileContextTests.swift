@@ -260,6 +260,110 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertEqual(key.count, "vision:".count + 32)
     }
 
+    func testRegenerateRestoredImageRecognizesBeforeUpload() async throws {
+        let vision = ImageUploadRecordingProvider()
+        let chat = ImageUploadRecordingProvider()
+        let (viewModel, store, directory) = try await makeImageUploadRun(vision: vision, chat: chat)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = "data:image/png;base64,QUJD"
+        let original = IOSChatForegroundFixtures.makeMessage(role: .user, parts: [
+            UIMessagePart.Text(text: "这是什么意思？", metadata: nil),
+            UIMessagePart.Image(url: imageURL, metadata: nil)
+        ])
+        let conversationId = try XCTUnwrap(store.currentConversation?.id)
+        let saved = await store.save(messages: [original], to: conversationId)
+        XCTAssertTrue(saved)
+        viewModel.reloadFromStore()
+
+        // The restored message has no recognition cache in this ViewModel.
+        viewModel.regenerate(atMessageIndex: 0)
+        try await waitForImageUpload { chat.lastUpload != nil && !viewModel.isGenerationActive }
+
+        let upload = try XCTUnwrap(chat.lastUpload)
+        XCTAssertEqual(vision.uploadedImageURLs, [imageURL])
+        XCTAssertTrue(upload.contains { $0.toText().contains("<image_context>\nrecognized image") })
+        XCTAssertFalse(upload.flatMap(\.parts).contains { $0 is UIMessagePart.Image })
+        XCTAssertEqual(
+            viewModel.messages.flatMap(\.parts).compactMap { ($0 as? UIMessagePart.Image)?.url },
+            [imageURL]
+        )
+    }
+
+    func testQueuedImageRecognizesBeforeAutomaticNextRun() async throws {
+        let vision = ImageUploadRecordingProvider()
+        let chat = ImageUploadRecordingProvider()
+        let (viewModel, store, directory) = try await makeImageUploadRun(vision: vision, chat: chat)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = "data:image/png;base64,REVG"
+        viewModel.generationActiveOverrideForTesting = { _ in true }
+        viewModel.addPendingImage(dataUrl: imageURL, previewData: Data())
+        viewModel.inputText = "再看这张图片"
+        XCTAssertTrue(viewModel.sendMessage())
+        viewModel.generationActiveOverrideForTesting = nil
+
+        viewModel.handleSteerQueueAtRunTerminal(for: store.currentConversation?.id, autoContinue: true)
+        try await waitForImageUpload { chat.lastUpload != nil && !viewModel.isGenerationActive }
+
+        XCTAssertTrue(viewModel.steerQueue.isEmpty)
+        XCTAssertEqual(vision.uploadedImageURLs, [imageURL])
+        let upload = try XCTUnwrap(chat.lastUpload)
+        XCTAssertTrue(upload.contains { $0.toText().contains("<image_context>\nrecognized image") })
+        XCTAssertFalse(upload.contains { $0.toText().contains("[图片未能识别]") })
+    }
+
+    func testMissingRecognitionFailureStopsUploadAndPreservesImage() async throws {
+        let vision = ImageUploadRecordingProvider(fails: true)
+        let chat = ImageUploadRecordingProvider()
+        let (viewModel, store, directory) = try await makeImageUploadRun(vision: vision, chat: chat)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let imageURL = "data:image/png;base64,R0hJ"
+        viewModel.messages = [IOSChatForegroundFixtures.makeMessage(role: .user, parts: [
+            UIMessagePart.Image(url: imageURL, metadata: nil)
+        ])]
+
+        viewModel.generateResponseForTesting(inputDigest: "image retry", conversationId: store.currentConversation?.id)
+        try await waitForImageUpload { !vision.uploadedImageURLs.isEmpty && !viewModel.isGenerationActive }
+
+        XCTAssertNil(chat.lastUpload, "recognition failure must stop the main provider request")
+        XCTAssertTrue(viewModel.messages.contains { $0.toText().contains("vision test failure") })
+        XCTAssertEqual(
+            viewModel.messages.flatMap(\.parts).compactMap { ($0 as? UIMessagePart.Image)?.url },
+            [imageURL]
+        )
+    }
+
+    private func makeImageUploadRun(
+        vision: any IOSAgentTextProvider,
+        chat: any IOSAgentTextProvider
+    ) async throws -> (ChatViewModel, IOSConversationStore, URL) {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ImageUploadTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let store = IOSConversationStore(baseDirectory: directory.appendingPathComponent("conversations"))
+        await store.bootstrap()
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+            sharedSettings: visionFallbackSettings(),
+            auxiliaryTextProvider: vision,
+            steerQueueStore: IOSSteerQueueStore(directoryURL: directory.appendingPathComponent("queue")),
+            agentRuntimeDao: IosDatabaseFactory.shared.createDatabase(
+                atFilePath: directory.appendingPathComponent("runtime.db").path
+            ).agentRuntimeDao()
+        )
+        viewModel.kernelTextProviderOverrideForTesting = chat
+        viewModel.conversationStore = store
+        viewModel.reloadFromStore()
+        return (viewModel, store, directory)
+    }
+
+    private func waitForImageUpload(_ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(10)
+        while !condition(), Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTAssertTrue(condition(), "image upload run did not reach its expected terminal state")
+    }
+
     func testPreparedUploadExcludesLocalGenerationErrorBubble() {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
@@ -2038,6 +2142,37 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         return defaults
     }
 
+}
+
+private final class ImageUploadRecordingProvider: IOSAgentTextProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private let fails: Bool
+    private var uploads: [[UIMessage]] = []
+
+    init(fails: Bool = false) { self.fails = fails }
+
+    var lastUpload: [UIMessage]? { lock.withLock { uploads.last } }
+    var uploadedImageURLs: [String] {
+        lock.withLock {
+            uploads.flatMap { $0 }.flatMap(\.parts).compactMap { ($0 as? UIMessagePart.Image)?.url }
+        }
+    }
+
+    func generateText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams
+    ) async throws -> MessageChunk {
+        lock.withLock { uploads.append(messages) }
+        if fails {
+            throw NSError(domain: "ImageUploadTest", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "vision test failure"
+            ])
+        }
+        return IOSChatForegroundFixtures.chunk(
+            with: IOSChatForegroundFixtures.assistantText("recognized image")
+        )
+    }
 }
 
 private final class BlockingVisionProvider: IOSAgentTextProvider, @unchecked Sendable {

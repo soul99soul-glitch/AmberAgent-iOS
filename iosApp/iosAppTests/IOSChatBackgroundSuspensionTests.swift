@@ -86,7 +86,7 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
     }
 
     @MainActor
-    func testForegroundAutoResumeOnlyRestartsSafeOrdinaryStream() {
+    func testForegroundAutoResumeUsesLedgerGateInsteadOfToolDeclarations() {
         XCTAssertTrue(
             IOSChatBackgroundGenerationCoordinator
                 .canAutomaticallyResumeOrdinaryJobForTesting(
@@ -94,12 +94,30 @@ final class IOSChatBackgroundStaleSweepTests: XCTestCase {
                     hasDeclaredTools: false
                 )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             IOSChatBackgroundGenerationCoordinator
                 .canAutomaticallyResumeOrdinaryJobForTesting(
                     mode: .continueModel,
                     hasDeclaredTools: true
                 )
+        )
+        XCTAssertTrue(
+            IOSChatBackgroundGenerationCoordinator.ordinaryRecoveryAllowsResumeForTesting(
+                actions: [.markRetryable, .replayResult("{}")]
+            )
+        )
+        XCTAssertFalse(
+            IOSChatBackgroundGenerationCoordinator.ordinaryRecoveryAllowsResumeForTesting(
+                actions: [.markUnknown]
+            )
+        )
+        XCTAssertEqual(
+            IOSChatBackgroundGenerationCoordinator.ordinaryRecoveryActionForTesting(
+                state: .finished,
+                outcome: "cancelled_before_execution",
+                planned: .markResultLost
+            ),
+            .markRetryable
         )
         XCTAssertFalse(
             IOSChatBackgroundGenerationCoordinator

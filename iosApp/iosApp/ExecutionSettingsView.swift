@@ -11,6 +11,8 @@ struct ExecutionSettingsView: View {
     @AppStorage(IOSExecutionPreferenceKeys.liveActivity) private var liveActivity = true
 #if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
     @AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive) private var audioKeepAlive = true
+    @AppStorage(IOSExecutionPreferenceKeys.backgroundLocationKeepAlive)
+    private var backgroundLocationKeepAlive = false
 #endif
     @AppStorage(IOSExecutionPreferenceKeys.chatMaxToolResumeCount)
     private var chatMaxToolResumeCount = SettingsStore.defaultChatMaxToolResumeCount
@@ -18,6 +20,7 @@ struct ExecutionSettingsView: View {
     private var execJavaScriptEnabled = false
     @State private var taskStore = IOSAdvancedTaskStore.shared
     @State private var isToolLoopPickerPresented = false
+    @State private var locationStatusRevision = 0
     @Namespace private var toolLoopTransition
     @ScaledMetric(relativeTo: .body) private var toolLoopValueWidth: CGFloat = 44
 
@@ -41,7 +44,7 @@ struct ExecutionSettingsView: View {
                         }
                         liveActivitySection
 #if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
-                        audioKeepAliveSection
+                        backgroundKeepAliveSection
 #endif
                     }
                     .padding(.bottom, 36)
@@ -56,6 +59,9 @@ struct ExecutionSettingsView: View {
                 .presentationDetents([.height(480), .large])
                 .presentationDragIndicator(.visible)
                 .navigationTransition(.zoom(sourceID: "toolLoopPicker", in: toolLoopTransition))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .amberBackgroundLocationKeepAliveChanged)) { _ in
+            locationStatusRevision &+= 1
         }
     }
 
@@ -238,7 +244,7 @@ struct ExecutionSettingsView: View {
     }
 
 #if ENABLE_EXPERIMENTAL_TERMINAL_RUNTIMES
-    private var audioKeepAliveSection: some View {
+    private var backgroundKeepAliveSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "后台续跑")
             AmberFormGroup {
@@ -249,14 +255,55 @@ struct ExecutionSettingsView: View {
                         defaultValue: "音频保活"
                     ),
                     subtitle: IOSAppLocalization.string(
-                        "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。",
-                        defaultValue: "在支持的任务运行时用近静音音频争取更长后台时间。iOS 仍可能暂停任务；锁屏时可能暂停其它音乐，控制中心也可能显示播放。"
+                        "静音播放；任务结束后后台最多保留 60 秒衔接；系统播报期间让出音频。",
+                        defaultValue: "静音播放；任务结束后后台最多保留 60 秒衔接；系统播报期间让出音频。"
                     ),
                     isOn: audioKeepAlive
                 ) {
                     audioKeepAlive.toggle()
                     BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()
                 }
+
+                Divider()
+                    .overlay(AmberTheme.borderSoft)
+                    .padding(.leading, 58)
+
+                let locationKeepAlive = BackgroundLocationKeepAlive.shared
+                ExecutionToggleRow(
+                    systemImage: "location.fill",
+                    title: IOSAppLocalization.string(
+                        "定位保活",
+                        defaultValue: "定位保活"
+                    ),
+                    subtitle: locationKeepAlive.statusText,
+                    isOn: backgroundLocationKeepAlive
+                ) {
+                    backgroundLocationKeepAlive.toggle()
+                    if backgroundLocationKeepAlive {
+                        locationKeepAlive.requestEnable()
+                    } else {
+                        locationKeepAlive.refreshPreference()
+                    }
+                }
+                .id(locationStatusRevision)
+            }
+            Text("定位保活需主动授权；不记录或上传位置。任务期间会显示系统定位标志，并可能增加耗电。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 30)
+                .padding(.top, 8)
+            if backgroundLocationKeepAlive,
+               BackgroundLocationKeepAlive.shared.authorizationStatus == .denied {
+                Button("打开系统设置") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+                .font(.subheadline)
+                .foregroundStyle(AmberTheme.accent)
+                .frame(minHeight: 44)
             }
         }
     }

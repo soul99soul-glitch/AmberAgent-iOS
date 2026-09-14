@@ -43,7 +43,7 @@ class OrchestrationToolDeclarationsTest {
         assertTrue("Defaults to \"all\"" in forkDescription, "fork_turns 必须写明默认 all")
 
         assertTrue("role_assistant_id" in params.properties)
-        listOf("role_id", "system_prompt", "context", "tool_scope", "skill_names").forEach { name ->
+        listOf("role_id", "system_prompt", "context", "tool_scope", "skill_names", "model_id", "reasoning_level").forEach { name ->
             assertTrue(name in params.properties, "spawn_agent 缺少动态角色字段: $name")
         }
         assertEquals(

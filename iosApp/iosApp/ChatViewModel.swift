@@ -1407,6 +1407,15 @@ final class ChatViewModel {
                         state: state
                     ) ?? messages
                 },
+                prepareImageAttachments: { [weak self] messages, model, settings, conversationId in
+                    guard let self else { throw CancellationError() }
+                    return try await self.prepareImageAttachments(
+                        messages,
+                        model: model,
+                        settings: settings,
+                        conversationId: conversationId
+                    )
+                },
                 userFacingGenerationError: { rawMessage, modelId in
                     ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
                 },
@@ -1960,8 +1969,8 @@ final class ChatViewModel {
             }
             return false
         }
-        // 生成中：图/附件整包入队，OCR/能力校验延到折入后再走正常发送路径
-        // （不走 fallback 直发抢跑）。仅硬拦超张数，避免无模型时误杀入队。
+        // 生成中：图/附件整包入队，OCR 在下一轮上传前统一补齐。
+        // 仅硬拦超张数，避免无模型时误杀入队。
         if isGenerationActive {
             if hasImages, pendingImages.count > Self.maxImagesPerMessage {
                 selectedFileContextError = IOSAppLocalization.formatted(
@@ -2139,8 +2148,8 @@ final class ChatViewModel {
     }
 
     /// Sends the user message and kicks off generation. For non-vision models the image
-    /// parts are swapped for the cached recognition text inside
-    /// `messagesByInjectingRuntimeContext` before the request leaves for the provider.
+    /// parts are recognized and replaced in upload preparation before the request
+    /// leaves for the provider.
     private func sendUserMessage(text: String, images: [PendingChatImage]) {
         let (digest, conversationId, _) = appendUserMessage(text: text, images: images)
         guard autoGenerateResponses else { return }
@@ -2504,9 +2513,14 @@ final class ChatViewModel {
         visionRecognitionConversationId = conversationId
         isRecognizingImages = true
         visionRecognitionImageCount = images.count
+        let snapshot = sharedSettings.snapshot
         visionRecognitionTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let result = await self.performVisionRecognition(images: images)
+            let result = await self.performVisionRecognition(
+                imageURLs: images.map(\.dataUrl),
+                settings: snapshot,
+                conversationId: conversationId
+            )
             guard self.visionRecognitionRequestId == requestId else { return }
             self.clearVisionRecognitionOperation()
             self.clearVisionRecognitionPendingPrompt()
@@ -2661,9 +2675,16 @@ final class ChatViewModel {
     /// Calls the configured vision model once per image and returns the wrapped
     /// recognition text keyed by the image's `data:` URL (Android OcrTransformer parity).
     private func performVisionRecognition(
-        images: [PendingChatImage]
+        imageURLs: [String],
+        settings snapshot: Settings,
+        conversationId: KotlinUuid?
     ) async -> Result<[String: String], VisionRecognitionError> {
-        let snapshot = sharedSettings.snapshot
+        var results: [String: String] = [:]
+        for url in imageURLs {
+            results[url] = cachedVisionRecognitionText(for: url)
+        }
+        let missingURLs = imageURLs.filter { results[$0] == nil }
+        guard !missingURLs.isEmpty else { return .success(results) }
         guard let visionModel = snapshot.findModelById(uuid: snapshot.ocrModelId) else {
             return .failure(VisionRecognitionError(message: IOSAppLocalization.string(
                 "请先在「默认模型 → 辅助任务」配置视觉识别模型",
@@ -2687,21 +2708,18 @@ final class ChatViewModel {
                 for: providerSetting,
                 assistant: assistant.customHeaders,
                 model: visionModel.customHeaders,
-                conversationId: currentConversationId?.toHexDashString()
+                conversationId: conversationId?.toHexDashString()
             ),
             assistantBodies: assistant.customBodies
         )
-        var results: [String: String] = [:]
-        for image in images {
-            if let cached = cachedVisionRecognitionText(for: image.dataUrl) {
-                results[image.dataUrl] = cached
-                continue
-            }
+        for url in missingURLs {
+            if results[url] != nil { continue }
             let requestMessages = [
                 UIMessage.companion.system(prompt: prompt),
-                makeImageOnlyUserMessage(dataUrl: image.dataUrl)
+                makeImageOnlyUserMessage(dataUrl: url)
             ]
             do {
+                try Task.checkCancellation()
                 let chunk = try await auxiliaryTextProvider.generateText(
                     providerSetting: providerSetting,
                     messages: requestMessages,
@@ -2715,7 +2733,7 @@ final class ChatViewModel {
                         defaultValue: "视觉识别模型没有返回可用内容"
                     )))
                 }
-                results[image.dataUrl] = """
+                results[url] = """
                 <image_context>
                 \(text)
                 </image_context>
@@ -3868,7 +3886,7 @@ final class ChatViewModel {
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
         ).injectingRuntimeContext(into: uploadableWithGuidance, coalesceSystemMessages: false)
-        return replacingImagesForNonVisionModel(withContext, model: state.generationConfiguration?.params.model)
+        return withContext
     }
 
     private func memoryRecordIdsForRuntimeContext(_ messages: [UIMessage]) -> [Int32] {
@@ -3913,23 +3931,34 @@ final class ChatViewModel {
         }
     }
 
-    /// The stored/displayed messages keep their image parts (so the user sees the photo in
-    /// the bubble), but a text-only chat model cannot receive image blocks. When the current
-    /// model has no image input, swap each image part for its cached vision-recognition text
-    /// before the request leaves for the provider.
-    private func replacingImagesForNonVisionModel(_ messages: [UIMessage], model: Model? = nil) -> [UIMessage] {
-        guard let model = model ?? sharedSettings.snapshot.getCurrentChatModel(),
-              !Self.modelSupportsImageInput(model) else {
-            return messages
-        }
-        guard messages.contains(where: { $0.parts.contains { $0 is UIMessagePart.Image } }) else {
-            return messages
-        }
-        return messages.map { message in
+    /// Stored messages retain their images. Every upload, including regeneration and
+    /// queued input, resolves missing recognition before a text-only model receives it.
+    private func prepareImageAttachments(
+        _ messages: [UIMessage],
+        model: Model,
+        settings: Settings,
+        conversationId: KotlinUuid?
+    ) async throws -> [UIMessage] {
+        guard !Self.modelSupportsImageInput(model) else { return messages }
+        let imageURLs = messages.flatMap(\.parts).compactMap { ($0 as? UIMessagePart.Image)?.url }
+        guard !imageURLs.isEmpty else { return messages }
+        let texts = try await performVisionRecognition(
+            imageURLs: imageURLs,
+            settings: settings,
+            conversationId: conversationId
+        ).get()
+        try Task.checkCancellation()
+        cacheVisionRecognitionTexts(texts)
+        return try messages.map { message in
             guard message.parts.contains(where: { $0 is UIMessagePart.Image }) else { return message }
-            let newParts: [UIMessagePart] = message.parts.map { part in
+            let newParts: [UIMessagePart] = try message.parts.map { part in
                 guard let image = part as? UIMessagePart.Image else { return part }
-                let recognized = cachedVisionRecognitionText(for: image.url) ?? "[图片未能识别]"
+                guard let recognized = texts[image.url] else {
+                    throw VisionRecognitionError(message: IOSAppLocalization.string(
+                        "视觉识别模型没有返回可用内容",
+                        defaultValue: "视觉识别模型没有返回可用内容"
+                    ))
+                }
                 return UIMessagePart.Text(text: recognized, metadata: nil)
             }
             return UIMessage(
@@ -4485,8 +4514,8 @@ final class ChatViewModel {
             type: ModelType.chat,
             customHeaders: mergedHeaders,
             customBodies: mergedBodies,
-            inputModalities: [],
-            outputModalities: [],
+            inputModalities: resolvedModel.inputModalities,
+            outputModalities: resolvedModel.outputModalities,
             abilities: modelAbilities,
             tools: Set(builtInTools),
             contextWindowTokens: contextWindow,

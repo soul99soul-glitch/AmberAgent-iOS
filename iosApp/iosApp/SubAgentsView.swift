@@ -7,6 +7,7 @@ struct SubAgentsView: View {
     @Environment(RouterPath.self) private var router
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var isModelPoolPresented = false
 
     init(
         sharedSettings: IOSSharedSettingsStore,
@@ -22,6 +23,8 @@ struct SubAgentsView: View {
     }
 
     var body: some View {
+        // The KMP snapshot is ObservationIgnored; its revision drives redraws.
+        let _ = sharedSettings.revision
         ZStack {
             AmberTheme.background.ignoresSafeArea()
             VStack(spacing: 0) {
@@ -65,6 +68,8 @@ struct SubAgentsView: View {
                             .padding(14)
                             .accessibilityIdentifier("subagents.allowDynamic")
                         }
+
+                        executionSection
 
                         AmberSectionLabel(text: "悬浮子代理")
                         AmberFormGroup {
@@ -128,6 +133,122 @@ struct SubAgentsView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $isModelPoolPresented) {
+            SubAgentModelPoolView(sharedSettings: sharedSettings)
+        }
+    }
+
+    private var executionSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "执行")
+            AmberFormGroup {
+                Stepper(value: Binding(
+                    get: { sharedSettings.subAgentMaxConcurrentRuns },
+                    set: { value in
+                        sharedSettings.setSubAgentExecutionLimits(
+                            maxConcurrentRuns: value,
+                            timeoutMinutes: sharedSettings.subAgentTimeoutMinutes
+                        )
+                    }
+                ), in: 1...10) {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("最大并发")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text("同时运行的子代理数量")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                        Spacer(minLength: 12)
+                        Text("\(sharedSettings.subAgentMaxConcurrentRuns)")
+                            .font(.body.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(AmberTheme.accent)
+                            .frame(minWidth: 28, alignment: .trailing)
+                    }
+                }
+                .padding(14)
+                .accessibilityIdentifier("subagents.execution.maxConcurrent")
+
+                Divider()
+                    .overlay(AmberTheme.borderSoft)
+                    .padding(.leading, 14)
+
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("单任务超时")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                        Text("达到时间后结束该子代理")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                    Spacer(minLength: 12)
+                    Picker("单任务超时", selection: Binding(
+                        get: { sharedSettings.subAgentTimeoutMinutes },
+                        set: { value in
+                            sharedSettings.setSubAgentExecutionLimits(
+                                maxConcurrentRuns: sharedSettings.subAgentMaxConcurrentRuns,
+                                timeoutMinutes: value
+                            )
+                        }
+                    )) {
+                        ForEach(timeoutOptions, id: \.self) { minutes in
+                            Text("\(minutes) 分钟").tag(minutes)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .tint(AmberTheme.accent)
+                }
+                .padding(14)
+                .accessibilityIdentifier("subagents.execution.timeout")
+
+                Divider()
+                    .overlay(AmberTheme.borderSoft)
+                    .padding(.leading, 14)
+
+                Button {
+                    isModelPoolPresented = true
+                } label: {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("模型池")
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(modelPoolSummary)
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                    .padding(14)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("subagents.execution.modelPool")
+            }
+            Text("模型池为空时沿用当前聊天模型；选择模型池后，动态子代理会在可用模型之间分散运行。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 30)
+                .padding(.top, 8)
+        }
+    }
+
+    private var timeoutOptions: [Int] {
+        Array(Set([1, 3, 5, 10, 15, 20, 30, 45, 60, sharedSettings.subAgentTimeoutMinutes])).sorted()
+    }
+
+    private var modelPoolSummary: String {
+        let count = sharedSettings.subAgentModelPool.count
+        return count == 0 ? "未选择，跟随当前模型" : "已选择 \(count) 个模型"
     }
 
     private var autoDismissSetting: some View {

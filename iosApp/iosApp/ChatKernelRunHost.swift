@@ -1145,7 +1145,7 @@ final class ChatKernelRunHost {
         if detachDurableResponse(runId: runId) { return true }
         if honorKeepAliveLease {
             switch backgroundExecution.executionAssertion(for: runId) {
-            case .uiOnly, .submitted, .adopted, .audio:
+            case .uiOnly, .submitted, .adopted, .audio, .location:
                 pendingBackgroundConversationStore = conversationStore
                 return false
             case .none:
@@ -1854,7 +1854,14 @@ final class ChatKernelRunHost {
         )
         // 每轮组装前刷新编排链接缓存(CG-C :2022-2024)。
         await bindings.refreshOrchestrationLinks()
-        let runtimePreparedMessages = messagesByInjectingRuntimeContext(promptedUploadMessages)
+        let runtimePreparedMessages = try await bindings.prepareImageAttachments(
+            messagesByInjectingRuntimeContext(promptedUploadMessages),
+            effectiveParams.model,
+            settings,
+            conversationId
+        )
+        try Task.checkCancellation()
+        guard currentRunId == runId else { throw CancellationError() }
         let selectedMemoryIds = bindings.memoryRecordIdsForRuntimeContext(promptedUploadMessages)
         let finalizedUploadMessages: [UIMessage]
         do {

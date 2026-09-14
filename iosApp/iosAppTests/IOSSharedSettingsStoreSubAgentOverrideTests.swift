@@ -116,6 +116,38 @@ final class IOSSharedSettingsStoreSubAgentOverrideTests: XCTestCase {
         UserDefaults.standard.removePersistentDomain(forName: suiteName)
     }
 
+    func testExecutionLimitsAndModelPoolPersistAcrossRestart() {
+        let suiteName = "SubAgent-Execution-\(UUID().uuidString)"
+        let first = UUID().uuidString.lowercased()
+        let second = UUID().uuidString.lowercased()
+        let store = makeIsolatedStore(suiteName: suiteName)
+
+        XCTAssertEqual(store.subAgentMaxConcurrentRuns, 2)
+        XCTAssertEqual(store.subAgentTimeoutMinutes, 5)
+        store.setSubAgentExecutionLimits(maxConcurrentRuns: 99, timeoutMinutes: 0)
+        XCTAssertEqual(store.subAgentMaxConcurrentRuns, 10)
+        XCTAssertEqual(store.subAgentTimeoutMinutes, 1)
+        store.setSubAgentExecutionLimits(maxConcurrentRuns: 0, timeoutMinutes: 99)
+        store.setSubAgentModelPool(modelIds: [first, first, second])
+        store.setSubAgentPoolReasoning(modelId: first, reasoningLevel: nil)
+
+        XCTAssertEqual(store.subAgentMaxConcurrentRuns, 1)
+        XCTAssertEqual(store.subAgentTimeoutMinutes, 60)
+        XCTAssertEqual(
+            store.subAgentModelPool.map { $0.modelId.description() as String },
+            [first, second]
+        )
+
+        let restored = makeIsolatedStore(suiteName: suiteName)
+        XCTAssertEqual(restored.subAgentMaxConcurrentRuns, 1)
+        XCTAssertEqual(restored.subAgentTimeoutMinutes, 60)
+        XCTAssertEqual(
+            restored.subAgentModelPool.map { $0.modelId.description() as String },
+            [first, second]
+        )
+        UserDefaults.standard.removePersistentDomain(forName: suiteName)
+    }
+
     private func makeIsolatedStore(suiteName: String = "Slice4-SubAgent-\(UUID().uuidString)") -> IOSSharedSettingsStore {
         IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: suiteName)!)
     }

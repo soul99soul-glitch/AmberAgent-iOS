@@ -252,6 +252,7 @@ public struct OpenAIKmpProviderAdapter: IOSAgentTextProvider, IOSAgentStreamingP
     }
 
     public func supportsStreaming(providerSetting: ProviderSetting) -> Bool {
+        if providerSetting is ProviderSetting.Google { return false }
         guard let openAI = providerSetting as? ProviderSetting.OpenAI else { return true }
         return !IOSGrokWebProviderResolver.isGrokWebConfiguration(openAI)
     }

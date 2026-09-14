@@ -15,12 +15,16 @@ final class IOSOrchestrationToolTests: XCTestCase {
     /// 捕获 handoff 的后台调度 fake（生产 = IOSChatBackgroundGenerationCoordinator.shared）。
     private final class FakeBackgroundScheduler: IOSThreadOrchestrationToolService.BackgroundScheduling {
         var startedHandoff: IOSChatBackgroundHandoff?
+        var startedHandoffs: [IOSChatBackgroundHandoff] = []
         var startedReturn = true
         var activeRunByHex: [String: String] = [:]
         var cancelledRunIds: [String] = []
         var cancelReturn = true
-        /// P1-e: 后台活跃 job 计数（生产 = activeJobs.count；测试手动驱动）。
+        /// P1-e: 子代理活跃 job 计数（生产 = activeSubAgentJobCount；测试手动驱动）。
         var activeJobCount = 0
+        var activeSubAgentJobCount = 0
+        var activeModelCounts: [String: Int] = [:]
+        var activeProviderCounts: [String: Int] = [:]
 
         func start(
             handoff: IOSChatBackgroundHandoff,
@@ -30,6 +34,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
             saveMiniAppIfPresent: (@MainActor ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?)?
         ) -> Bool {
             startedHandoff = handoff
+            startedHandoffs.append(handoff)
             return startedReturn
         }
 
@@ -87,6 +92,46 @@ final class IOSOrchestrationToolTests: XCTestCase {
         )
     }
 
+    private func makePoolModel(
+        id: KotlinUuid,
+        modelId: String,
+        displayName: String
+    ) -> Model {
+        Model(
+            modelId: modelId,
+            displayName: displayName,
+            id: id,
+            type: ModelType.chat,
+            customHeaders: [],
+            customBodies: [],
+            inputModalities: [],
+            outputModalities: [],
+            abilities: [],
+            tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil,
+            providerOverwrite: nil
+        )
+    }
+
+    private func makePoolClaudeProvider(
+        id: KotlinUuid,
+        model: Model
+    ) -> ProviderSetting.Claude {
+        ProviderSetting.Claude(
+            id: id,
+            enabled: true,
+            name: "Pool Claude",
+            models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false,
+            descriptionText: nil,
+            shortDescriptionText: nil,
+            apiKey: "test-key",
+            baseUrl: "https://api.anthropic.com/v1",
+            promptCaching: false
+        )
+    }
+
     private func makeParams(maxTokens: Int32? = nil) -> TextGenerationParams {
         let model = Model(
             modelId: "test-model",
@@ -112,6 +157,23 @@ final class IOSOrchestrationToolTests: XCTestCase {
             customHeaders: [],
             customBody: []
         )
+    }
+
+    private func makePoolSettings(
+        modelA: Model,
+        providerA: ProviderSetting,
+        modelB: Model,
+        providerB: ProviderSetting,
+        timeoutMinutes: Int = 10
+    ) -> IOSSharedSettingsStore {
+        let settings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        settings.addProvider(providerA)
+        settings.addProvider(providerB)
+        settings.setSubAgentExecutionLimits(maxConcurrentRuns: 10, timeoutMinutes: timeoutMinutes)
+        settings.setSubAgentModelPool(modelIds: [modelA.id.toHexDashString(), modelB.id.toHexDashString()])
+        settings.setSubAgentPoolReasoning(modelId: modelA.id.toHexDashString(), reasoningLevel: .low)
+        settings.setSubAgentPoolReasoning(modelId: modelB.id.toHexDashString(), reasoningLevel: .high)
+        return settings
     }
 
     /// 全量 iOS 声明目录（>40 → lazy 模式；M3 测试需要含 deferred wm_* 的目录）。
@@ -152,7 +214,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         foregroundActiveRunId: @escaping (String) -> String? = { _ in nil },
         cancelForegroundRun: @escaping (String) -> Bool = { _ in false },
         foregroundRunCount: @escaping () -> Int = { 0 },
-        maxConcurrentRuns: Int = IOSThreadOrchestrationToolService.defaultMaxConcurrentRuns,
+        maxConcurrentRuns: Int? = nil,
         roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true },
         sharedSettings: IOSSharedSettingsStore? = nil
     ) -> IOSThreadOrchestrationToolService {
@@ -188,7 +250,9 @@ final class IOSOrchestrationToolTests: XCTestCase {
         systemPrompt: String? = nil,
         context: String? = nil,
         toolScope: [String]? = nil,
-        skillNames: [String]? = nil
+        skillNames: [String]? = nil,
+        modelId: String? = nil,
+        reasoningLevel: String? = nil
     ) -> String {
         var object: [String: Any] = ["task_name": taskName, "message": message]
         if let forkTurns { object["fork_turns"] = forkTurns }
@@ -198,6 +262,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
         if let context { object["context"] = context }
         if let toolScope { object["tool_scope"] = toolScope }
         if let skillNames { object["skill_names"] = skillNames }
+        if let modelId { object["model_id"] = modelId }
+        if let reasoningLevel { object["reasoning_level"] = reasoningLevel }
         let data = try! JSONSerialization.data(withJSONObject: object)
         return String(data: data, encoding: .utf8)!
     }
@@ -686,8 +752,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertNotNil(scheduler.startedHandoff)
     }
 
-    /// P1-e：活注册表满额（1 前台 run + 3 后台 job = 4 槽满）→ spawn 拒绝；
-    /// 降为 2 个后台 job（3 槽占用）→ 放行。不再读 Room 账本行。
+    /// P1-e：子代理活注册表满额（2 个子代理 = 默认 2 槽满）→ spawn 拒绝；
+    /// 降为 1 个子代理 → 放行。父线程不计入子代理并发。
     func testSpawnRejectsWhenActiveRegistrationsAtCapacity() async throws {
         let base = makeTempDirectory("SpawnLimit")
         defer { try? FileManager.default.removeItem(at: base) }
@@ -696,10 +762,9 @@ final class IOSOrchestrationToolTests: XCTestCase {
         let parentId = try XCTUnwrap(store.currentConversation?.id)
         let db = makeDatabase(directory: base)
         let scheduler = FakeBackgroundScheduler()
-        scheduler.activeJobCount = 3
+        scheduler.activeSubAgentJobCount = 2
         let service = makeService(
-            store: store, db: db, scheduler: scheduler, currentConversationId: { parentId },
-            foregroundRunCount: { 1 }
+            store: store, db: db, scheduler: scheduler, currentConversationId: { parentId }
         )
         let result = parseJSON(await service.execute(
             toolName: "spawn_agent",
@@ -711,8 +776,8 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertEqual(result["error"] as? String, "agent_limit_reached")
         XCTAssertNil(scheduler.startedHandoff)
 
-        // 边界：2 个后台 job（1 前台 + 2 后台 = 3 槽占用 < 4）→ 放行。
-        scheduler.activeJobCount = 2
+        // 边界：1 个子代理 < 默认上限 2 → 放行。
+        scheduler.activeSubAgentJobCount = 1
         let retry = parseJSON(await service.execute(
             toolName: "spawn_agent",
             arguments: spawnArguments(taskName: "busy"),
@@ -775,6 +840,202 @@ final class IOSOrchestrationToolTests: XCTestCase {
             runId: "r3"
         ))
         XCTAssertEqual(third["ok"] as? Bool, true)
+    }
+
+    func testSettingsConcurrencyLimitSupportsTenChildRuns() async throws {
+        let base = makeTempDirectory("SpawnLimitTen")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let db = makeDatabase(directory: base)
+        let scheduler = FakeBackgroundScheduler()
+        scheduler.activeSubAgentJobCount = 9
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        sharedSettings.setSubAgentExecutionLimits(maxConcurrentRuns: 10, timeoutMinutes: 5)
+        let service = makeService(
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            currentConversationId: { parentId },
+            sharedSettings: sharedSettings
+        )
+
+        let result = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "limit_ten"),
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "limit-ten"
+        ))
+        XCTAssertEqual(result["ok"] as? Bool, true)
+        XCTAssertNotNil(scheduler.startedHandoff)
+
+        scheduler.activeSubAgentJobCount = 10
+        let rejected = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "limit_ten_rejected"),
+            providerSetting: makeProviderSetting(),
+            params: makeParams(),
+            runId: "limit-ten-rejected"
+        ))
+        XCTAssertEqual(rejected["error"] as? String, "agent_limit_reached")
+    }
+
+    func testSpawnUsesConfiguredPoolModelsReasoningAndTimeout() async throws {
+        let base = makeTempDirectory("SpawnModelPool")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let db = makeDatabase(directory: base)
+        let modelA = makePoolModel(
+            id: KotlinUuid.companion.random(),
+            modelId: "gpt-5.6-sol",
+            displayName: "Pool OpenAI"
+        )
+        let modelB = makePoolModel(
+            id: KotlinUuid.companion.random(),
+            modelId: "claude-3-5-sonnet",
+            displayName: "Pool Claude"
+        )
+        let providerA = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Pool OpenAI",
+            models: [modelA], balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false, descriptionText: nil, shortDescriptionText: nil, apiKey: "test-key",
+            baseUrl: "https://api.openai.com/v1", chatCompletionsPath: "/chat/completions",
+            useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let providerB = makePoolClaudeProvider(id: KotlinUuid.companion.random(), model: modelB)
+        let sharedSettings = makePoolSettings(
+            modelA: modelA, providerA: providerA,
+            modelB: modelB, providerB: providerB
+        )
+        let scheduler = FakeBackgroundScheduler()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler,
+            currentConversationId: { parentId }, sharedSettings: sharedSettings
+        )
+
+        let first = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "pool_a"),
+            providerSetting: providerA,
+            params: makeParams(),
+            runId: "pool-parent-a"
+        ))
+        let second = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "pool_b"),
+            providerSetting: providerA,
+            params: makeParams(),
+            runId: "pool-parent-b"
+        ))
+        XCTAssertEqual(first["ok"] as? Bool, true)
+        XCTAssertEqual(second["ok"] as? Bool, true)
+        XCTAssertEqual(scheduler.startedHandoffs.count, 2)
+
+        let handoffs = scheduler.startedHandoffs
+        XCTAssertEqual(
+            Set(handoffs.map { $0.params.model.id.toHexDashString() }),
+            Set([modelA.id.toHexDashString(), modelB.id.toHexDashString()])
+        )
+        XCTAssertEqual(
+            Set(handoffs.map { $0.providerSetting.id.toHexDashString() }),
+            Set([providerA.id.toHexDashString(), providerB.id.toHexDashString()])
+        )
+        XCTAssertEqual(Set(handoffs.map { $0.params.reasoningLevel }), Set([.low, .high]))
+        XCTAssertTrue(handoffs.allSatisfy { $0.subAgentTimeoutSeconds == 600 })
+
+        let listed = parseJSON(await service.execute(
+            toolName: "list_agents", arguments: "{}",
+            providerSetting: providerA, params: makeParams(), runId: "pool-list",
+            conversationId: parentId
+        ))
+        XCTAssertEqual(listed["timeout_minutes"] as? Int, 10)
+        let pool = try XCTUnwrap(listed["model_pool"] as? [[String: Any]])
+        XCTAssertEqual(pool.count, 2)
+        let defaults = Dictionary(uniqueKeysWithValues: pool.compactMap { entry -> (String, String)? in
+            guard let id = entry["model_id"] as? String,
+                  let reasoning = entry["default_reasoning"] as? String else { return nil }
+            return (id, reasoning)
+        })
+        XCTAssertEqual(defaults[modelA.id.toHexDashString()], "low")
+        XCTAssertEqual(defaults[modelB.id.toHexDashString()], "high")
+    }
+
+    func testExplicitPoolModelAndReasoningRejectInvalidRequests() async throws {
+        let base = makeTempDirectory("SpawnModelPoolExplicit")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        let db = makeDatabase(directory: base)
+        let modelA = makePoolModel(
+            id: KotlinUuid.companion.random(), modelId: "gpt-5.6-sol", displayName: "Pool OpenAI"
+        )
+        let modelB = makePoolModel(
+            id: KotlinUuid.companion.random(), modelId: "claude-3-5-sonnet", displayName: "Pool Claude"
+        )
+        let providerA = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Pool OpenAI",
+            models: [modelA], balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false, descriptionText: nil, shortDescriptionText: nil, apiKey: "test-key",
+            baseUrl: "https://api.openai.com/v1", chatCompletionsPath: "/chat/completions",
+            useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let providerB = makePoolClaudeProvider(id: KotlinUuid.companion.random(), model: modelB)
+        let sharedSettings = makePoolSettings(
+            modelA: modelA, providerA: providerA,
+            modelB: modelB, providerB: providerB,
+            timeoutMinutes: 5
+        )
+        let scheduler = FakeBackgroundScheduler()
+        let service = makeService(
+            store: store, db: db, scheduler: scheduler,
+            currentConversationId: { parentId }, sharedSettings: sharedSettings
+        )
+
+        let valid = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "explicit_valid",
+                modelId: modelB.id.toHexDashString(),
+                reasoningLevel: "high"
+            ),
+            providerSetting: providerA, params: makeParams(), runId: "explicit-valid"
+        ))
+        XCTAssertEqual(valid["ok"] as? Bool, true)
+        XCTAssertEqual(
+            scheduler.startedHandoffs.last?.params.model.id.toHexDashString(),
+            modelB.id.toHexDashString()
+        )
+        XCTAssertEqual(scheduler.startedHandoffs.last?.params.reasoningLevel, .high)
+        let handoffCount = scheduler.startedHandoffs.count
+
+        let outside = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "explicit_outside",
+                modelId: KotlinUuid.companion.random().toHexDashString(),
+                reasoningLevel: "low"
+            ),
+            providerSetting: providerA, params: makeParams(), runId: "explicit-outside"
+        ))
+        XCTAssertEqual(outside["error"] as? String, "invalid_arguments")
+        XCTAssertEqual(scheduler.startedHandoffs.count, handoffCount)
+
+        let unsupported = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "explicit_unsupported",
+                modelId: modelB.id.toHexDashString(),
+                reasoningLevel: "max"
+            ),
+            providerSetting: providerA, params: makeParams(), runId: "explicit-unsupported"
+        ))
+        XCTAssertEqual(unsupported["error"] as? String, "invalid_arguments")
+        XCTAssertEqual(scheduler.startedHandoffs.count, handoffCount)
     }
 
     // MARK: - list_agents
