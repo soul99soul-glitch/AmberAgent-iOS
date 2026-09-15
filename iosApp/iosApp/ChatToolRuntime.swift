@@ -313,7 +313,7 @@ enum ChatToolRuntimeResult {
 }
 
 private enum ChatCodexImageConfig {
-    case signedIn(providerId: String)
+    case signedIn(providerId: String, modelId: String, preferredRoutingModelID: String?)
     case notSignedIn
     case notSelected
 }
@@ -2227,9 +2227,7 @@ final class ChatToolRuntime {
         return (model.modelId, apiKey, baseURL)
     }
 
-    /// Resolve a codex (ChatGPT OAuth) image target. The actual request uses
-    /// Android's fixed Codex image routing model, so only the provider id is
-    /// needed here for OAuth token lookup.
+    /// Keep the chosen image model separate from the account's chat router.
     private func codexImageConfig() -> ChatCodexImageConfig {
         let snap = sharedSettings.snapshot
         guard let model = snap.findModelById(uuid: snap.imageGenerationModelId),
@@ -2239,7 +2237,12 @@ final class ChatToolRuntime {
         }
         let providerId = provider.id.description()
         guard IOSCodexAuthStore.load(providerId: providerId) != nil else { return .notSignedIn }
-        return .signedIn(providerId: providerId)
+        let chatModel = snap.getCurrentChatModel()
+        let preferred = chatModel.flatMap { chat in
+            ChatProviderConfiguration.provider(for: chat, providers: snap.providers)?.id == provider.id
+                ? chat.modelId : nil
+        }
+        return .signedIn(providerId: providerId, modelId: model.modelId, preferredRoutingModelID: preferred)
     }
 
     private func pendingAskUserToolCall(
@@ -5601,14 +5604,15 @@ final class ChatToolRuntime {
 
         do {
             switch codexImageConfig() {
-            case .signedIn(let codex):
+            case let .signedIn(codex, imageModelID, preferredRoutingModelID):
                 let request = try IOSImageGenerationRepository.shared.toolRequest(
                     from: resolvedToolCall.input,
-                    modelId: IOSCodexOAuthConstants.imageModelId
+                    modelId: imageModelID
                 )
                 let record = try await IOSImageGenerationRepository.shared.generateViaCodex(
                     request: request,
-                    providerId: codex
+                    providerId: codex,
+                    preferredRoutingModelID: preferredRoutingModelID
                 )
                 var parts: [UIMessagePart] = record.files.map { file in
                     UIMessagePart.Image(

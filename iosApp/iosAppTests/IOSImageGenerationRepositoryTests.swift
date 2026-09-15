@@ -149,9 +149,9 @@ final class IOSImageGenerationRepositoryTests: XCTestCase {
             count: 4,
             style: "ink",
             source: "test"
-        ))
+        ), routingModel: "gpt-6-astra")
 
-        XCTAssertEqual(body["model"] as? String, "gpt-5.4")
+        XCTAssertEqual(body["model"] as? String, "gpt-6-astra")
         let instructions = try XCTUnwrap(body["instructions"] as? String)
         XCTAssertTrue(instructions.contains("image_generation"))
         XCTAssertTrue(instructions.contains("fan art"))
@@ -184,7 +184,7 @@ final class IOSImageGenerationRepositoryTests: XCTestCase {
             style: "",
             source: "test",
             sourceImageURL: "data:image/png;base64,QUJD"
-        ))
+        ), routingModel: "gpt-6-astra")
 
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         let firstInput = try XCTUnwrap(input.first)
@@ -205,7 +205,7 @@ final class IOSImageGenerationRepositoryTests: XCTestCase {
             count: 1,
             style: "",
             source: "test"
-        ))
+        ), routingModel: "gpt-6-astra")
 
         let input = try XCTUnwrap(body["input"] as? [[String: Any]])
         let firstInput = try XCTUnwrap(input.first)
@@ -216,6 +216,18 @@ final class IOSImageGenerationRepositoryTests: XCTestCase {
         XCTAssertFalse(text.contains("Link"))
         XCTAssertFalse(text.contains("The Legend of Zelda"))
         XCTAssertFalse(text.contains("Breath of the Wild"))
+    }
+
+    func testCodexRequestPreservesExplicitGPTImageChoice() throws {
+        for model in ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"] {
+            let request = IOSImageGenerationRequest(prompt: "A blue circle", model: model,
+                aspectRatio: .square, count: 1, style: "", source: "test")
+            let body = IOSImageGenerationRepository.codexResponsesRequestBody(for: request, routingModel: "gpt-5.6-sol")
+            XCTAssertEqual(body["model"] as? String, "gpt-5.6-sol")
+            let tool = try XCTUnwrap((body["tools"] as? [[String: Any]])?.first)
+            XCTAssertEqual(tool["model"] as? String, model)
+            XCTAssertEqual(tool["type"] as? String, "image_generation")
+        }
     }
 
     func testCodexImageExtractionParsesSSEOutputItemDone() {

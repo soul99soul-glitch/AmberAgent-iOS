@@ -7,6 +7,86 @@ import SwiftUI
 /// seeded records live in a temporary suite; no provider or remote tool runs.
 @MainActor
 final class IOSSubAgentActivityLayoutTests: XCTestCase {
+    func testExpandedTenAgentsFitContentAndRespectAvailableSpace() async throws {
+        let suite = "SubAgentExpandedLayout.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let tasks = IOSAdvancedTaskStore(userDefaults: defaults)
+        let activity = IOSSubAgentActivityStore(tasks: tasks, defaults: defaults, loadRuns: { [] })
+        activity.autoDismissDelay = .never
+        for name in ["lina", "alice", "anna", "miko", "chloe", "claire", "daniel", "david", "ella", "tess"] {
+            tasks.startTask(kind: .subAgent, title: name, objective: "layout fixture", metadata: ["role_name": name])
+        }
+        await activity.refresh()
+        XCTAssertEqual(activity.items.count, 10)
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.overrideUserInterfaceStyle = .light
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKey()
+        }
+        func scrollViews(in view: UIView) -> [UIScrollView] {
+            (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap { scrollViews(in: $0) }
+        }
+        for (width, height, type, name) in [
+            (CGFloat(393), CGFloat(852), DynamicTypeSize.large, "ten-agents-expanded"),
+            (320, 568, .large, "ten-agents-expanded-small"),
+            (320, 568, .accessibility3, "ten-agents-expanded-accessibility")
+        ] {
+            let content = AmberTheme.background
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    Text("对话").frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension)
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    VStack(spacing: 0) {
+                        ChatSubAgentActivityBar(currentConversationId: nil, isInputFocused: false,
+                            activityStore: activity, initiallyExpanded: true, onOpenSource: { _ in false })
+                        Text("发消息给 Amber…")
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 64)
+                            .background(AmberTheme.surface, in: Capsule())
+                    }
+                }
+                .environment(\.locale, Locale(identifier: "zh_Hans"))
+                .environment(\.dynamicTypeSize, type)
+            window.frame = CGRect(x: 0, y: 0, width: width, height: height)
+            window.rootViewController = UIHostingController(rootView: content)
+            window.makeKeyAndVisible()
+            try await Task.sleep(for: .milliseconds(650))
+            window.layoutIfNeeded()
+            let scroll = try XCTUnwrap(scrollViews(in: window).first)
+            XCTAssertGreaterThan(scroll.contentSize.height, 250, name)
+            if !type.isAccessibilitySize {
+                XCTAssertEqual(scroll.bounds.height, scroll.contentSize.height, accuracy: 1,
+                    "\(name): 展开后应一次显示全部十张卡片")
+            } else {
+                XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height,
+                    "辅助功能大字超出可用空间时仍能滚动查看全部任务")
+            }
+            // A tall ScrollView can extend under system chrome; UIKit keeps
+            // its readable content below that chrome with adjusted insets.
+            let viewport = scroll.convert(scroll.bounds.inset(by: scroll.adjustedContentInset), to: window)
+            XCTAssertGreaterThanOrEqual(viewport.minY,
+                window.safeAreaInsets.top + ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension - 1, name)
+            XCTAssertLessThanOrEqual(viewport.maxY, height - window.safeAreaInsets.bottom - 64 + 1, name)
+            print("SUBAGENT_ACTIVITY_LAYOUT \(name) content=\(scroll.contentSize.height) viewport=\(viewport)")
+            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            let path = FileManager.default.temporaryDirectory.appendingPathComponent("\(name).png")
+            try XCTUnwrap(image.pngData()).write(to: path)
+            print("SUBAGENT_ACTIVITY_EVIDENCE \(path.path)")
+        }
+    }
+
     func testNativeSubAgentAvatarGallery() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previous = scene.windows.first(where: \.isKeyWindow)

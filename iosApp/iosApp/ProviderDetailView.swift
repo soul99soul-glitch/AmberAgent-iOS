@@ -1,6 +1,11 @@
 import SwiftUI
 import Shared
 
+private func providerModelIDLooksLikeImage(_ modelId: String) -> Bool {
+    let normalized = modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return normalized == "gpt-image" || IOSCodexModelCatalog.isImageModelID(normalized)
+}
+
 struct ProviderDetailView: View {
     @Bindable var settingsStore: SettingsStore
     let providerRegistry: ProviderRegistryStore
@@ -31,6 +36,16 @@ struct ProviderDetailView: View {
     @State private var showCodexLogin = false
     @State private var showGrokLogin = false
     @State private var showAntigravityLogin = false
+
+    init(settingsStore: SettingsStore, providerRegistry: ProviderRegistryStore,
+         sharedSettings: IOSSharedSettingsStore, providerId: String,
+         initiallyShowsModels: Bool = false) {
+        self.settingsStore = settingsStore
+        self.providerRegistry = providerRegistry
+        self.sharedSettings = sharedSettings
+        self.providerId = providerId
+        _selectedTab = State(initialValue: initiallyShowsModels ? .models : .config)
+    }
 
     var body: some View {
         ZStack {
@@ -76,12 +91,7 @@ struct ProviderDetailView: View {
                     }
                 },
                 persistModels: { models in
-                    _ = sharedSettings.mergeProviderChatModels(providerId: providerId, models: models)
-                    _ = sharedSettings.upsertProviderImageModel(
-                        providerId: providerId,
-                        modelId: IOSCodexOAuthConstants.imageModelId,
-                        displayName: "Codex 生图 (ChatGPT)"
-                    )
+                    _ = sharedSettings.mergeCodexModels(providerId: providerId, discovered: models)
                     if isCurrentProvider {
                         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
                     }
@@ -202,6 +212,18 @@ struct ProviderDetailView: View {
 
     private var chatModels: [Model] {
         provider?.models.filter { $0.type == ModelType.chat } ?? []
+    }
+
+    private var enabledModels: [Model] {
+        provider?.models ?? []
+    }
+
+    private var imageGenerationModel: Model? {
+        _ = sharedSettings.revision
+        let selectedId = sharedSettings.snapshot.imageGenerationModelId
+        return provider?.models.first {
+            $0.type == ModelType.image && $0.id == selectedId
+        }
     }
 
     private var chrome: some View {
@@ -795,21 +817,23 @@ struct ProviderDetailView: View {
             VStack(spacing: 0) {
                 AmberSectionLabel(text: "已启用模型")
                 AmberFormGroup {
-                    if chatModels.isEmpty {
+                    if enabledModels.isEmpty {
                         ProviderStaticRow(
                             title: "没有模型",
                             subtitle: "可自动获取模型，也可手动添加服务商文档中的 Model ID。",
                             value: "空"
                         )
                     } else {
-                        ForEach(Array(chatModels.enumerated()), id: \.offset) { index, model in
-                            let isCurrent = model.id == currentModel?.id
+                        ForEach(Array(enabledModels.enumerated()), id: \.offset) { index, model in
+                            let selection = modelDefaultSelection(for: model)
                             ProviderModelRow(
-                                systemImage: isCurrent ? "checkmark.circle.fill" : "cpu",
+                                systemImage: selection == nil ? modelSystemImage(for: model) : "checkmark.circle.fill",
                                 name: displayName(for: model),
-                                badge: isCurrent ? "当前" : model.modelId,
+                                badge: selection ?? modelTypeTitle(for: model),
                                 summary: modelSummary(model),
-                                isCurrent: isCurrent,
+                                isCurrent: selection != nil,
+                                canSetCurrent: model.type == ModelType.chat || model.type == ModelType.image,
+                                setCurrentTitle: model.type == ModelType.image ? "设为生图默认" : "设为聊天默认",
                                 onEdit: {
                                     modelDraft = ProviderModelDraft(model: model)
                                 },
@@ -820,7 +844,8 @@ struct ProviderDetailView: View {
                                     deleteModel(model)
                                 }
                             )
-                            if index < chatModels.count - 1 {
+                            .accessibilityIdentifier("provider.model.\(model.modelId)")
+                            if index < enabledModels.count - 1 {
                                 ProviderDetailDivider()
                             }
                         }
@@ -833,16 +858,16 @@ struct ProviderDetailView: View {
                     AmberSectionLabel(text: "可用模型")
                     AmberFormGroup {
                         ForEach(Array(availableModels.enumerated()), id: \.offset) { index, model in
-                            let enabledModel = chatModels.first { $0.modelId == model.modelId }
-                            // Only "current" when the model is actually enabled AND is the
-                            // current one. Guard the nil==nil trap: an un-enabled model
-                            // (enabledModel == nil) with no current model (currentModel == nil)
-                            // would otherwise compare nil == nil → true, mislabel every row
-                            // "当前" and disable it, making models impossible to add.
-                            let isCurrent = enabledModel != nil && enabledModel?.id == currentModel?.id
+                            let enabledModel = enabledModels.first {
+                                $0.modelId == model.modelId && $0.type == model.type
+                            }
+                            let selection = enabledModel.flatMap { modelDefaultSelection(for: $0) }
+                            let isEmbedding = model.type == ModelType.embedding
                             Button {
                                 if let enabledModel {
-                                    setCurrent(enabledModel)
+                                    if !isEmbedding {
+                                        setCurrent(enabledModel)
+                                    }
                                 } else {
                                     addFetchedModel(model)
                                 }
@@ -853,13 +878,13 @@ struct ProviderDetailView: View {
                                     // already shows it; printing it twice is pure clutter.
                                     title: displayName(for: model),
                                     subtitle: displayName(for: model) == model.modelId ? "" : model.modelId,
-                                    value: isCurrent ? "当前" : (enabledModel == nil ? "添加" : "使用"),
-                                    valueStyle: isCurrent ? .body : .accent,
+                                    value: selection ?? (enabledModel == nil ? "添加" : (isEmbedding ? "已添加" : "使用")),
+                                    valueStyle: selection == nil && enabledModel == nil ? .accent : .body,
                                     showsChevron: false
                                 )
                             }
                             .buttonStyle(.plain)
-                            .disabled(isCurrent)
+                            .disabled(selection != nil || (isEmbedding && enabledModel != nil))
 
                             if index < availableModels.count - 1 {
                                 ProviderDetailDivider()
@@ -1094,23 +1119,9 @@ struct ProviderDetailView: View {
                     let discovered = try await IOSCodexOAuthClient(
                         providerId: IOSCodexProviderResolver.providerKey(openAI)
                     ).fetchCodexModelsOrThrow()
-                    models = discovered.map { item in
-                        Model(
-                            modelId: item.modelId,
-                            displayName: item.displayName,
-                            id: KotlinUuid.companion.random(),
-                            type: ModelType.chat,
-                            customHeaders: [],
-                            customBodies: [],
-                            inputModalities: [],
-                            outputModalities: [],
-                            abilities: [],
-                            tools: Set<BuiltInTools>(),
-                            contextWindowTokens: nil,
-                            providerOverwrite: nil
-                        )
-                    }
-                    successMessage = nil
+                    models = IOSCodexModelCatalog.models(discovered: discovered)
+                    _ = sharedSettings.mergeCodexModels(providerId: providerId, discovered: discovered)
+                    successMessage = "已获取 Codex 聊天模型，并补充 GPT Image 2.5 / 2 生图预设。"
                 } else if IOSGrokWebProviderResolver.isGrokWebProvider(provider),
                           let openAI = provider as? ProviderSetting.OpenAI,
                           IOSGrokOAuthAuthStore.load(providerId: IOSGrokWebProviderResolver.providerKey(openAI)) != nil {
@@ -1187,19 +1198,27 @@ struct ProviderDetailView: View {
 
     private func addFetchedModel(_ model: Model) {
         guard saveConfig(showSuccess: false, forceEnabled: true) else { return }
-        let displayName = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? model.modelId : model.displayName
+        let existing = enabledModels.first(where: { $0.modelId == model.modelId })
+        let fetchedDisplayName = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let existingDisplayName = existing?.displayName.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let displayName = existingDisplayName.isEmpty
+            ? (fetchedDisplayName.isEmpty ? model.modelId : fetchedDisplayName)
+            : existingDisplayName
+        let existingUuid = existing?.id.description()
         guard let updatedProvider = sharedSettings.upsertProviderChatModel(
             providerId: providerId,
-            modelUuid: nil,
+            modelUuid: existingUuid,
             modelId: model.modelId,
             displayName: displayName,
-            contextWindowTokens: intValue(model.contextWindowTokens),
+            contextWindowTokens: intValue(existing?.contextWindowTokens ?? model.contextWindowTokens),
             modelType: model.type,
-            inputModalities: model.inputModalities,
-            headers: model.customHeaders.map { ($0.name, $0.value) }
+            inputModalities: existing?.inputModalities ?? model.inputModalities,
+            headers: (existing?.customHeaders ?? model.customHeaders).map { ($0.name, $0.value) }
         ) else { return }
-        guard let savedModel = updatedProvider.models.first(where: { $0.type == .chat && $0.modelId == model.modelId }) else { return }
-        selectCurrent(savedModel, showAlert: true)
+        guard let savedModel = updatedProvider.models.first(where: {
+            $0.type == model.type && $0.modelId == model.modelId
+        }) else { return }
+        setDefault(for: savedModel, showAlert: true)
     }
 
     @discardableResult
@@ -1209,31 +1228,90 @@ struct ProviderDetailView: View {
             alert = .modelRequired
             return false
         }
-        let wasCurrent = currentModel?.id.description() == draft.modelUuid
-        let shouldSelect = draft.modelUuid == nil || wasCurrent
-        guard saveConfig(showSuccess: false, forceEnabled: shouldSelect) else { return false }
+        let modelType = draft.type == ModelType.chat && providerModelIDLooksLikeImage(modelId)
+            ? ModelType.image
+            : draft.type
+        // A manual add with an existing wire ID should update that model in place.
+        // This also repairs an older gpt-image-* entry that was mistakenly saved as CHAT.
+        let targetModelUuid = draft.modelUuid ?? provider?.models.first {
+            $0.modelId == modelId
+        }?.id.description()
+        let isManualAdd = draft.modelUuid == nil
+        let wasCurrentChat = targetModelUuid != nil && currentModel?.id.description() == targetModelUuid
+        let wasDefaultImage = targetModelUuid != nil && imageGenerationModel?.id.description() == targetModelUuid
+
+        if wasCurrentChat,
+           modelType != ModelType.chat,
+           !chatModels.contains(where: { $0.id.description() != targetModelUuid }) {
+            alert = .chatModelRequired
+            return false
+        }
+
+        let shouldSelectChat = modelType == ModelType.chat && (isManualAdd || wasCurrentChat)
+        let shouldSelectImage = modelType == ModelType.image && (isManualAdd || wasDefaultImage || wasCurrentChat)
+        guard saveConfig(
+            showSuccess: false,
+            forceEnabled: isManualAdd || wasCurrentChat || wasDefaultImage
+        ) else { return false }
         let displayName = draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? modelId : draft.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let updatedProvider = sharedSettings.upsertProviderChatModel(
             providerId: providerId,
-            modelUuid: draft.modelUuid,
+            modelUuid: targetModelUuid,
             modelId: modelId,
             displayName: displayName,
             contextWindowTokens: draft.contextWindowTokens,
-            modelType: draft.type,
+            modelType: modelType,
             inputModalities: draft.inputModalities,
             headers: draft.headers.map { ($0.name, $0.value) }
         ) else { return false }
-        if shouldSelect,
-           let savedModel = updatedProvider.models.first(where: { $0.type == .chat && $0.modelId == modelId }) {
-            selectCurrent(savedModel, showAlert: draft.modelUuid == nil)
+
+        guard let savedModel = updatedProvider.models.first(where: {
+            if let targetModelUuid {
+                return $0.id.description() == targetModelUuid
+            }
+            return $0.type == modelType && $0.modelId == modelId
+        }) else { return false }
+
+        if wasCurrentChat && modelType != ModelType.chat,
+           let fallback = updatedProvider.models.first(where: { $0.type == ModelType.chat }) {
+            selectCurrent(fallback, showAlert: false)
+        }
+        if modelType == ModelType.chat {
+            if wasDefaultImage {
+                sharedSettings.setImageGenerationModelId("")
+            }
+            if shouldSelectChat {
+                selectCurrent(savedModel, showAlert: isManualAdd)
+            }
+        } else if modelType == ModelType.image {
+            if shouldSelectImage {
+                selectImageGenerationModel(savedModel, showAlert: true)
+            }
+        } else if wasDefaultImage {
+            sharedSettings.setImageGenerationModelId("")
         }
         modelDraft = nil
         return true
     }
 
     private func setCurrent(_ model: Model) {
+        guard model.type == ModelType.chat || model.type == ModelType.image else {
+            notice = IOSAppLocalization.string(
+                "嵌入模型不能作为聊天或生图默认模型。",
+                defaultValue: "嵌入模型不能作为聊天或生图默认模型。"
+            )
+            return
+        }
         guard saveConfig(showSuccess: false, forceEnabled: true) else { return }
-        selectCurrent(model, showAlert: true)
+        setDefault(for: model, showAlert: true)
+    }
+
+    private func setDefault(for model: Model, showAlert: Bool) {
+        if model.type == ModelType.image {
+            selectImageGenerationModel(model, showAlert: showAlert)
+        } else if model.type == ModelType.chat {
+            selectCurrent(model, showAlert: showAlert)
+        }
     }
 
     private func selectCurrent(_ model: Model, showAlert: Bool) {
@@ -1248,9 +1326,25 @@ struct ProviderDetailView: View {
         }
     }
 
+    private func selectImageGenerationModel(_ model: Model, showAlert: Bool) {
+        sharedSettings.setImageGenerationModelId(model.id.description())
+        if showAlert {
+            notice = IOSAppLocalization.formatted(
+                "对话生图会默认使用 %@。",
+                defaultValue: "对话生图会默认使用 %@。",
+                arguments: [model.modelId]
+            )
+        }
+    }
+
     private func deleteModel(_ model: Model) {
+        let wasCurrentChat = currentModel?.id == model.id
+        let wasDefaultImage = imageGenerationModel?.id == model.id
         _ = sharedSettings.removeProviderChatModel(providerId: providerId, modelUuid: model.id.description())
-        if currentModel?.id == model.id {
+        if wasDefaultImage {
+            sharedSettings.setImageGenerationModelId("")
+        }
+        if wasCurrentChat {
             alert = .currentModelDeleted
         }
     }
@@ -1277,6 +1371,28 @@ struct ProviderDetailView: View {
     private func displayName(for model: Model) -> String {
         let name = model.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? model.modelId : name
+    }
+
+    private func modelDefaultSelection(for model: Model) -> String? {
+        if model.type == ModelType.chat, model.id == currentModel?.id {
+            return "聊天默认"
+        }
+        if model.type == ModelType.image, model.id == imageGenerationModel?.id {
+            return "生图默认"
+        }
+        return nil
+    }
+
+    private func modelTypeTitle(for model: Model) -> String {
+        if model.type == ModelType.image { return "生图" }
+        if model.type == ModelType.embedding { return "嵌入" }
+        return "聊天"
+    }
+
+    private func modelSystemImage(for model: Model) -> String {
+        if model.type == ModelType.image { return "photo" }
+        if model.type == ModelType.embedding { return "function" }
+        return "cpu"
     }
 
     private func modelSummary(_ model: Model) -> String {
@@ -1403,6 +1519,7 @@ private enum ProviderDetailAlert: Identifiable {
     case protocolSwitchFailed
     case unsupportedProtocol
     case modelRequired
+    case chatModelRequired
     case currentModelSet(String)
     case currentModelDeleted
     case legacyKeyImported
@@ -1416,6 +1533,7 @@ private enum ProviderDetailAlert: Identifiable {
         case .protocolSwitchFailed: "protocol-switch-failed"
         case .unsupportedProtocol: "unsupported-protocol"
         case .modelRequired: "model-required"
+        case .chatModelRequired: "chat-model-required"
         case .currentModelSet(let model): "current-model-\(model)"
         case .currentModelDeleted: "current-model-deleted"
         case .legacyKeyImported: "legacy-key-imported"
@@ -1436,6 +1554,8 @@ private enum ProviderDetailAlert: Identifiable {
             IOSAppLocalization.string("暂不支持", defaultValue: "暂不支持")
         case .modelRequired:
             IOSAppLocalization.string("需要 Model ID", defaultValue: "需要 Model ID")
+        case .chatModelRequired:
+            IOSAppLocalization.string("需要聊天模型", defaultValue: "需要聊天模型")
         case .currentModelSet:
             IOSAppLocalization.string("已设为当前", defaultValue: "已设为当前")
         case .currentModelDeleted:
@@ -1475,6 +1595,11 @@ private enum ProviderDetailAlert: Identifiable {
             IOSAppLocalization.string(
                 "请填写服务商文档中的 Model ID。",
                 defaultValue: "请填写服务商文档中的 Model ID。"
+            )
+        case .chatModelRequired:
+            IOSAppLocalization.string(
+                "当前聊天模型不能改成生图或嵌入模型；请先添加或保留一个聊天模型。",
+                defaultValue: "当前聊天模型不能改成生图或嵌入模型；请先添加或保留一个聊天模型。"
             )
         case .currentModelSet(let model):
             IOSAppLocalization.formatted(
@@ -1800,6 +1925,11 @@ private struct ProviderModelEditorSheet: View {
                     }
                 }
             }
+            .onChange(of: draft.modelId) { _, modelId in
+                if draft.modelUuid == nil, providerModelIDLooksLikeImage(modelId) {
+                    draft.type = .image
+                }
+            }
         }
     }
 }
@@ -2031,6 +2161,8 @@ private struct ProviderModelRow: View {
     let badge: String
     let summary: String
     let isCurrent: Bool
+    let canSetCurrent: Bool
+    let setCurrentTitle: String
     let onEdit: () -> Void
     let onSetCurrent: () -> Void
     let onDelete: () -> Void
@@ -2066,8 +2198,8 @@ private struct ProviderModelRow: View {
 
             Menu {
                 Button("编辑", action: onEdit)
-                if !isCurrent {
-                    Button("设为当前", action: onSetCurrent)
+                if canSetCurrent && !isCurrent {
+                    Button(setCurrentTitle, action: onSetCurrent)
                 }
                 Button("删除", role: .destructive, action: onDelete)
             } label: {

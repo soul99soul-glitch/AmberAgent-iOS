@@ -611,9 +611,10 @@ object IosSettingsMutations {
 
     /**
      * Upserts a single IMAGE-typed model on an OpenAI provider (used for the
-     * synthetic codex image model `codex-oauth-image`). Replaces any existing
-     * model with the same modelId; preserves all other models. No-op for non-
-     * OpenAI providers.
+     * synthetic codex image model `codex-oauth-image`). An existing model with
+     * the same modelId is promoted in place, preserving its UUID and all
+     * user-owned metadata (including headers, bodies, display name, and
+     * references). No-op for non-OpenAI providers.
      */
     @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
     fun upsertProviderImageModel(
@@ -628,14 +629,21 @@ object IosSettingsMutations {
                 if (provider.id != parsed || provider !is ProviderSetting.OpenAI) {
                     provider
                 } else {
-                    val others = provider.models.filter { it.modelId != modelId }
-                    val imageModel = Model(
+                    val existing = provider.models.firstOrNull { it.modelId == modelId }
+                    val imageModel = existing?.copy(type = ModelType.IMAGE) ?: Model(
                         modelId = modelId,
                         displayName = displayName,
                         id = kotlin.uuid.Uuid.random(),
                         type = ModelType.IMAGE,
                     )
-                    provider.copy(models = others + imageModel)
+                    val models = if (existing == null) {
+                        provider.models + imageModel
+                    } else {
+                        provider.models.map { model ->
+                            if (model.id == existing.id) imageModel else model
+                        }
+                    }
+                    provider.copy(models = models)
                 }
             }
         )

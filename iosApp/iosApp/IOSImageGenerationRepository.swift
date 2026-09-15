@@ -415,6 +415,7 @@ final class IOSImageGenerationRepository {
     func generateViaCodex(
         request: IOSImageGenerationRequest,
         providerId: String,
+        preferredRoutingModelID: String? = nil,
         transport: any IOSImageGenerationHTTPTransport = IOSURLSessionImageGenerationHTTPTransport()
     ) async throws -> IOSImageGenerationRecord {
         let trimmedPrompt = request.prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -427,6 +428,8 @@ final class IOSImageGenerationRepository {
             id: diagnosticId,
             "start provider=\(diagnosticTokenSummary(providerId)) promptChars=\(trimmedPrompt.count) count=\(targetCount) aspect=\(request.aspectRatio.rawValue) sourceImage=\(request.sourceImageURL != nil)"
         )
+        let routingModel = try await client.fetchImageRoutingModel(preferredModelID: preferredRoutingModelID)
+        writeCodexImageDiagnostic(id: diagnosticId, "routing model=\(routingModel) imageModel=\(request.model)")
         var base64Images: [String] = []
         var noImageReasons: [String] = []
         for attempt in 0..<targetCount {
@@ -435,6 +438,7 @@ final class IOSImageGenerationRepository {
                     request: request,
                     providerId: providerId,
                     client: client,
+                    routingModel: routingModel,
                     transport: transport,
                     diagnosticId: diagnosticId,
                     attempt: attempt + 1
@@ -480,7 +484,7 @@ final class IOSImageGenerationRepository {
         let record = IOSImageGenerationRecord(
             id: recordId,
             prompt: trimmedPrompt,
-            model: IOSCodexOAuthConstants.imageModelId,
+            model: request.model,
             aspectRatio: request.aspectRatio,
             count: files.count,
             style: request.style,
@@ -498,6 +502,7 @@ final class IOSImageGenerationRepository {
         request: IOSImageGenerationRequest,
         providerId: String,
         client: IOSCodexOAuthClient,
+        routingModel: String,
         transport: any IOSImageGenerationHTTPTransport,
         diagnosticId: String,
         attempt: Int
@@ -508,6 +513,7 @@ final class IOSImageGenerationRepository {
             writeCodexImageDiagnostic(id: diagnosticId, "attempt \(attempt) token ok account=\(accountId?.isEmpty == false)")
             return try await sendCodexImageRequest(
                 request: request,
+                routingModel: routingModel,
                 token: token,
                 accountId: accountId,
                 transport: transport,
@@ -520,6 +526,7 @@ final class IOSImageGenerationRepository {
             let accountId = IOSCodexAuthStore.load(providerId: providerId)?.accountId
             return try await sendCodexImageRequest(
                 request: request,
+                routingModel: routingModel,
                 token: token,
                 accountId: accountId,
                 transport: transport,
@@ -531,6 +538,7 @@ final class IOSImageGenerationRepository {
 
     private func sendCodexImageRequest(
         request: IOSImageGenerationRequest,
+        routingModel: String,
         token: String,
         accountId: String?,
         transport: any IOSImageGenerationHTTPTransport,
@@ -552,7 +560,7 @@ final class IOSImageGenerationRepository {
             urlRequest.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
         urlRequest.httpBody = try JSONSerialization.data(
-            withJSONObject: Self.codexResponsesRequestBody(for: request),
+            withJSONObject: Self.codexResponsesRequestBody(for: request, routingModel: routingModel),
             options: [.sortedKeys]
         )
         writeCodexImageDiagnostic(
@@ -810,19 +818,23 @@ final class IOSImageGenerationRepository {
         throw IOSImageGenerationError.noImages(latestReason ?? "response status=in_progress")
     }
 
-    static func codexResponsesRequestBody(for request: IOSImageGenerationRequest) -> [String: Any] {
-        [
-            "model": IOSCodexOAuthConstants.imageRoutingModel,
+    static func codexResponsesRequestBody(for request: IOSImageGenerationRequest, routingModel: String) -> [String: Any] {
+        var imageTool: [String: Any] = [
+            "type": "image_generation", "size": request.aspectRatio.apiSize,
+            "quality": "high", "moderation": "low"
+        ]
+        // The legacy automatic entry delegates image-model choice to Codex.
+        // Explicit GPT Image choices must survive all the way to the wire.
+        if request.model != IOSCodexOAuthConstants.imageModelId {
+            imageTool["model"] = request.model
+        }
+        return [
+            "model": routingModel,
             "instructions": codexImageRouterInstructions,
             "store": false,
             "stream": true,
             "tool_choice": "required",
-            "tools": [[
-                "type": "image_generation",
-                "size": request.aspectRatio.apiSize,
-                "quality": "high",
-                "moderation": "low",
-            ]],
+            "tools": [imageTool],
             "input": [[
                 "role": "user",
                 "content": codexInputContent(for: request),

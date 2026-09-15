@@ -683,8 +683,18 @@ final class IOSSharedSettingsStore {
         return merged.providers.first { ($0.id.description() as String) == providerId }
     }
 
-    /// Upserts the synthetic codex IMAGE model on a provider (replaces the entry
-    /// with the same modelId, preserves the rest). Persists to snapshot.
+    @discardableResult
+    func mergeCodexModels(providerId: String, discovered: [(modelId: String, displayName: String)]) -> ProviderSetting? {
+        _ = mergeProviderChatModels(providerId: providerId, models: discovered.filter {
+            !IOSCodexModelCatalog.isImageModelID($0.modelId)
+        })
+        for model in IOSCodexModelCatalog.models(discovered: discovered) where model.type == .image {
+            _ = upsertProviderImageModel(providerId: providerId, modelId: model.modelId, displayName: model.displayName)
+        }
+        return snapshot.providers.first { $0.id.description() == providerId }
+    }
+
+    /// Upserts an IMAGE model while preserving existing UUIDs and user metadata.
     @discardableResult
     func upsertProviderImageModel(providerId: String, modelId: String, displayName: String) -> ProviderSetting? {
         let merged = IosSettingsMutations.shared.upsertProviderImageModel(

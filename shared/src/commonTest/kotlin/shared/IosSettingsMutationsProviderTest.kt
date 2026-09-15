@@ -1,6 +1,8 @@
 package shared
 
 import app.amber.ai.provider.CustomHeader
+import app.amber.ai.provider.CustomBody
+import app.amber.ai.provider.BuiltInTools
 import app.amber.ai.provider.GoogleAuthMode
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
@@ -13,6 +15,7 @@ import app.amber.ai.provider.hasUsableAuth
 import app.amber.core.model.Assistant
 import app.amber.core.settings.DEFAULT_AUTO_MODEL_ID
 import app.amber.core.settings.Settings
+import kotlinx.serialization.json.JsonPrimitive
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -318,5 +321,59 @@ class IosSettingsMutationsProviderTest {
         val grok46 = updated.models.single { it.modelId == "grok-4.6" }
         assertEquals(listOf(ModelAbility.TOOL, ModelAbility.REASONING), grok46.abilities)
         assertTrue(updated.models.single { it.modelId == "custom-keep" }.abilities.isEmpty())
+    }
+
+    @Test
+    fun imageModelRefreshPromotesExistingChatModelWithoutLosingIdentityOrMetadata() {
+        val modelId = "gpt-image-2.5"
+        val existingId = Uuid.random()
+        val existing = Model(
+            id = existingId,
+            modelId = modelId,
+            displayName = "我的生图模型",
+            type = ModelType.CHAT,
+            customHeaders = listOf(CustomHeader("X-Image-Key", "keep-me")),
+            customBodies = listOf(CustomBody("quality", JsonPrimitive("high"))),
+            inputModalities = listOf(Modality.TEXT),
+            outputModalities = listOf(Modality.IMAGE),
+            abilities = listOf(ModelAbility.TOOL),
+            tools = setOf(BuiltInTools.ImageGeneration),
+            contextWindowTokens = 8_192,
+        )
+        val provider = ProviderSetting.OpenAI(models = listOf(existing))
+        val settings = Settings(
+            providers = listOf(provider),
+            imageGenerationModelId = existingId,
+        )
+
+        val first = IosSettingsMutations.upsertProviderImageModel(
+            settings = settings,
+            providerId = provider.id.toString(),
+            modelId = modelId,
+            displayName = "自动发现名称",
+        )
+        val firstModel = first.providers.single().models.single()
+
+        assertEquals(ModelType.IMAGE, firstModel.type)
+        assertEquals(existingId, firstModel.id)
+        assertEquals(existing.displayName, firstModel.displayName)
+        assertEquals(existing.customHeaders, firstModel.customHeaders)
+        assertEquals(existing.customBodies, firstModel.customBodies)
+        assertEquals(existing.outputModalities, firstModel.outputModalities)
+        assertEquals(existing.abilities, firstModel.abilities)
+        assertEquals(existing.tools, firstModel.tools)
+        assertEquals(existing.contextWindowTokens, firstModel.contextWindowTokens)
+        assertEquals(existingId, first.imageGenerationModelId)
+
+        val second = IosSettingsMutations.upsertProviderImageModel(
+            settings = first,
+            providerId = provider.id.toString(),
+            modelId = modelId,
+            displayName = "再次刷新名称",
+        )
+        val secondModels = second.providers.single().models.filter { it.modelId == modelId }
+        assertEquals(1, secondModels.size)
+        assertEquals(existingId, secondModels.single().id)
+        assertEquals(existingId, second.imageGenerationModelId)
     }
 }

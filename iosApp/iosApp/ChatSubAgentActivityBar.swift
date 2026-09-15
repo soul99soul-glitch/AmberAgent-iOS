@@ -26,12 +26,14 @@ struct ChatSubAgentActivityBar: View {
         currentConversationId: String?,
         isInputFocused: Bool,
         activityStore: IOSSubAgentActivityStore = .shared,
+        initiallyExpanded: Bool = false,
         onOpenSource: @escaping @MainActor (String) async -> Bool
     ) {
         self.currentConversationId = currentConversationId
         self.isInputFocused = isInputFocused
         self.onOpenSource = onOpenSource
         _activityStore = State(initialValue: activityStore)
+        _isExpanded = State(initialValue: initiallyExpanded)
     }
 
     private var items: [IOSSubAgentActivity] {
@@ -263,19 +265,10 @@ struct ChatSubAgentActivityBar: View {
                 if abs(gridContentHeight - height) > 0.5 { gridContentHeight = height }
             }
         }
-        .frame(height: min(gridContentHeight, dynamicTypeSize.isAccessibilitySize ? 310 : 176))
-        .scrollClipDisabled()
-        .scrollBounceBehavior(.always, axes: .vertical)
-        .mask {
-            VStack(spacing: 0) {
-                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 6)
-                Color.black
-                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 16)
-            }
-            .padding(.horizontal, -16)
-        }
+        // Show every row when it fits; let the composer container constrain
+        // the viewport on small screens or with larger accessibility text.
+        .frame(idealHeight: gridContentHeight, maxHeight: gridContentHeight)
+        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
         .contentShape(Rectangle())
         .gesture(SubAgentCollapseGesture { setExpanded(false) })
         .accessibilityIdentifier("chat.subagentActivity.expandedList")

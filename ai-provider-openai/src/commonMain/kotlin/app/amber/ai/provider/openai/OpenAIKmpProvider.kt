@@ -10,6 +10,7 @@ import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.ImageGenerationParams
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
+import app.amber.ai.provider.ModelType
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.OpenCodeRequestHeaders
@@ -148,11 +149,16 @@ class OpenAIKmpProvider internal constructor(
             Model(
                 modelId = id,
                 displayName = id,
+                type = if (isOpenAIImageModelId(id)) ModelType.IMAGE else ModelType.CHAT,
                 inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(id),
                 abilities = ModelRegistry.MODEL_ABILITIES.getData(id),
             )
         }
     }
+
+    private fun isOpenAIImageModelId(modelId: String): Boolean =
+        modelId.startsWith("gpt-image-", ignoreCase = true) ||
+            modelId.startsWith("chatgpt-image-", ignoreCase = true)
 
     // @Throws is REQUIRED for the Swift-facing suspend boundary: without it, a
     // thrown exception (HTTP error, parse failure) is treated by Kotlin/Native as

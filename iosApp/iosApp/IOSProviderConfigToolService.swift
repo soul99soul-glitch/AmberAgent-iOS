@@ -333,22 +333,7 @@ final class IOSProviderConfigToolService {
                 let discovered = try await IOSCodexOAuthClient(
                     providerId: IOSCodexProviderResolver.providerKey(openAI)
                 ).fetchCodexModelsOrThrow()
-                models = discovered.map { item in
-                    Model(
-                        modelId: item.modelId,
-                        displayName: item.displayName,
-                        id: KotlinUuid.companion.random(),
-                        type: ModelType.chat,
-                        customHeaders: [],
-                        customBodies: [],
-                        inputModalities: [],
-                        outputModalities: [],
-                        abilities: [],
-                        tools: Set<BuiltInTools>(),
-                        contextWindowTokens: nil,
-                        providerOverwrite: nil
-                    )
-                }
+                models = IOSCodexModelCatalog.models(discovered: discovered)
             } else if IOSGrokWebProviderResolver.isGrokWebProvider(provider),
                       let openAI = provider as? ProviderSetting.OpenAI {
                 let providerKey = IOSGrokWebProviderResolver.providerKey(openAI)
@@ -405,6 +390,14 @@ final class IOSProviderConfigToolService {
         } else {
             _ = sharedSettings.mergeProviderChatModels(providerId: providerId, models: chatPairs)
         }
+        let imageModels = models.filter { $0.type == .image }
+        if provider is ProviderSetting.OpenAI {
+            for model in imageModels {
+                _ = sharedSettings.upsertProviderImageModel(
+                    providerId: providerId, modelId: model.modelId, displayName: model.displayName
+                )
+            }
+        }
         let after = sharedSettings.snapshot.providers.first {
             ($0.id.description() as String) == providerId
         }
@@ -422,6 +415,8 @@ final class IOSProviderConfigToolService {
             "provider_name": after?.name ?? provider.name,
             "mode": mode == "replace_chat" ? "replace_chat" : "merge",
             "fetched_chat_models": chatPairs.count,
+            "image_model_choices": imageModels.map(\.modelId),
+            "includes_documented_image_presets": IOSCodexProviderResolver.isCodexProvider(provider),
             "chat_model_count_before": beforeCount,
             "chat_model_count_after": afterCount,
             "sample_labels": Array(sample),

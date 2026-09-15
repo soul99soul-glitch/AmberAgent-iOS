@@ -30,10 +30,6 @@ enum IOSCodexOAuthConstants {
     /// `CODEX_OAUTH_IMAGE_MODEL_ID`); generation runs via the Responses
     /// `image_generation` tool, not a real `/images/generations` endpoint.
     static let imageModelId = "codex-oauth-image"
-    /// Routing model sent in Codex Responses image-generation requests
-    /// (matches Android `CODEX_IMAGE_ROUTING_MODEL` and the previously working
-    /// iOS Codex image path).
-    static let imageRoutingModel = "gpt-5.4"
 
     static let refreshSkewMillis: Int64 = 2 * 60 * 1000
     static let deviceLoginTimeoutMillis: Int64 = 15 * 60 * 1000
@@ -315,6 +311,25 @@ actor IOSCodexOAuthClient {
         return models
     }
 
+    /// Resolve against this account's current catalog, never a pinned fallback.
+    func fetchImageRoutingModel(preferredModelID: String? = nil) async throws -> String {
+        let models = try await fetchCodexModelsOrThrow()
+        return try Self.imageRoutingModel(availableModelIDs: models.map(\.modelId), preferredModelID: preferredModelID)
+    }
+
+    static func imageRoutingModel(availableModelIDs: [String], preferredModelID: String?) throws -> String {
+        let candidates = availableModelIDs.filter {
+            $0.hasPrefix("gpt-") && !$0.hasPrefix("gpt-image-")
+                && !$0.localizedCaseInsensitiveContains("review")
+                && !$0.localizedCaseInsensitiveContains("spark")
+        }
+        if let preferredModelID, candidates.contains(preferredModelID) { return preferredModelID }
+        guard let model = candidates.first else {
+            throw IOSCodexOAuthError(message: "当前 Codex 账号没有返回可用于生图调度的模型。请刷新模型列表后重试。")
+        }
+        return model
+    }
+
     private func modelsRequest(bearer: String) async throws -> (data: Data, status: Int) {
         guard let url = URL(string: IOSCodexOAuthConstants.codexBackendBaseUrl
             + "/models?client_version=" + IOSCodexOAuthConstants.clientVersion) else {
@@ -349,6 +364,7 @@ actor IOSCodexOAuthClient {
         }
         return array.compactMap { item in
             guard let model = item as? [String: Any],
+                  (model["visibility"] as? String) != "hide",
                   let rawId = (model["slug"] ?? model["id"]) as? String else { return nil }
             let id = rawId.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !id.isEmpty else { return nil }

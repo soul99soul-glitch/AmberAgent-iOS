@@ -14,6 +14,8 @@ final class CodexLoginModel: ObservableObject {
     }
 
     @Published private(set) var phase: Phase = .idle
+    @Published private(set) var isRefreshingModels = false
+    @Published private(set) var modelRefreshMessage: String?
 
     let providerId: String
     private let client: IOSCodexOAuthClient
@@ -77,8 +79,17 @@ final class CodexLoginModel: ObservableObject {
     }
 
     private func applyModels() async {
-        let models = await client.fetchCodexModels()
-        persistModels(models)
+        guard !isRefreshingModels else { return }
+        isRefreshingModels = true
+        modelRefreshMessage = nil
+        defer { isRefreshingModels = false }
+        do {
+            let models = try await client.fetchCodexModelsOrThrow()
+            persistModels(models)
+            modelRefreshMessage = "已刷新 Codex 模型，并补充 GPT Image 生图预设。"
+        } catch {
+            modelRefreshMessage = "模型刷新失败：\(error.localizedDescription)"
+        }
     }
 
     func logout(onLoggedOut: () -> Void) {
@@ -247,10 +258,14 @@ struct CodexLoginView: View {
             Button {
                 model.refreshModels()
             } label: {
-                Text("刷新模型列表")
+                Text(model.isRefreshingModels ? "正在刷新模型…" : "刷新模型列表")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
+            .disabled(model.isRefreshingModels)
+            if let message = model.modelRefreshMessage {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+            }
 
             Button(role: .destructive) {
                 model.logout(onLoggedOut: { onAuthModeChange(OpenAIAuthMode.apiKey) })
