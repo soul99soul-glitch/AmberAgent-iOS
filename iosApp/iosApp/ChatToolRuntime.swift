@@ -2312,6 +2312,10 @@ final class ChatToolRuntime {
     static let sessionReadMessageTextLimit = 2_000
     /// 总输出截断上限（消息投影合计，JSON 编码前）。
     static let sessionReadTotalOutputLimit = 12_000
+    /// 单条全文分页的默认字符数与请求上限。分页结果还会按实际 JSON
+    /// 序列化长度再收窄，避免下面的工具输出收口改写 text 而跳过游标。
+    static let sessionReadPageDefaultMaxChars = 2_000
+    static let sessionReadPageMaxChars = 8_000
 
     /// 执行体：无 store 注入时结构化「不可用」；会话不存在给
     /// `{status:error, reason:"conversation not found"}`；非法 conversation_id
@@ -2416,15 +2420,94 @@ final class ChatToolRuntime {
             ])
         }
         let messages = Self.searchableMessages(of: conversation)
-        return IOSWorkspaceStore.json([
-            "ok": true,
-            "tool": toolCall.toolName,
-            "status": "ok",
-            "conversation_id": conversation.id.toHexDashString(),
-            "title": conversation.title,
-            "message_count": messages.count,
-            "messages": Self.projectLatestMessages(messages, maxMessages: maxMessages),
-        ])
+
+        // `message_id` selects a single persisted message for lossless paging.
+        // It is deliberately matched as the stored string; unlike the
+        // conversation id above, it must not pass through KotlinUuid.parse.
+        if let rawMessageId = args["message_id"] {
+            guard let requestedMessageId = (rawMessageId as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !requestedMessageId.isEmpty else {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName,
+                    reason: "session_read 参数无效：message_id 必须是非空字符串。",
+                    status: "failed"
+                )
+            }
+
+            let normalizedMessageId = requestedMessageId.lowercased()
+            guard let message = messages.first(where: {
+                Self.sessionMessageId($0).lowercased() == normalizedMessageId
+            }) else {
+                return IOSWorkspaceStore.json([
+                    "ok": false,
+                    "tool": toolCall.toolName,
+                    "status": "error",
+                    "error": "message_not_found",
+                    "reason": "message not found",
+                    "message_id": requestedMessageId,
+                ])
+            }
+
+            let fullText = Self.projectMessageText(message)
+            let totalChars = fullText.count
+            let offset: Int
+            if let rawOffset = args["offset"] {
+                guard let value = rawOffset as? Int else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName,
+                        reason: "session_read 参数无效：offset 必须是非负整数。",
+                        status: "failed"
+                    )
+                }
+                offset = value
+            } else {
+                offset = 0
+            }
+            guard offset >= 0, offset <= totalChars else {
+                return ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: toolCall.toolName,
+                    reason: "session_read 参数无效：offset 必须在 0 到 \(totalChars) 之间。",
+                    status: "failed"
+                )
+            }
+
+            let maxChars: Int
+            if let rawMaxChars = args["max_chars"] {
+                guard let value = rawMaxChars as? Int, value > 0 else {
+                    return ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: toolCall.toolName,
+                        reason: "session_read 参数无效：max_chars 必须是正整数。",
+                        status: "failed"
+                    )
+                }
+                maxChars = min(value, sessionReadPageMaxChars)
+            } else {
+                maxChars = sessionReadPageDefaultMaxChars
+            }
+
+            return Self.projectSessionMessagePage(
+                message: message,
+                conversationId: conversation.id.toHexDashString(),
+                fullText: fullText,
+                offset: offset,
+                maxChars: maxChars
+            )
+        }
+
+        guard args["offset"] == nil, args["max_chars"] == nil else {
+            return ChatToolOutputFormatter.toolFailureJSON(
+                toolName: toolCall.toolName,
+                reason: "session_read 分页需要 message_id；请使用结果中的消息引用和 next_offset。",
+                status: "failed"
+            )
+        }
+        let rows = Self.projectLatestMessages(messages, maxMessages: maxMessages)
+        return Self.boundedSessionReadJSON(
+            conversationId: conversation.id.toHexDashString(),
+            title: conversation.title,
+            messageCount: messages.count,
+            rows: rows
+        )
     }
 
     /// 与 IOSConversationStore.searchableMessages 同源：分支节点优先，兜底 currentMessages。
@@ -2446,21 +2529,27 @@ final class ChatToolRuntime {
         var remainingBudget = sessionReadTotalOutputLimit
         var rows: [[String: Any]] = []
         for message in latest {
-            let projected = String(projectMessage(message).prefix(remainingBudget))
+            let fullText = projectMessageText(message)
+            let projected = String(fullText.prefix(min(sessionReadMessageTextLimit, remainingBudget)))
             guard !projected.isEmpty else { break }
+            let truncated = projected.count < fullText.count
             rows.append([
+                "message_id": sessionMessageId(message),
                 "role": roleName(message.role),
                 "text": projected,
+                "total_chars": fullText.count,
+                "truncated": truncated,
+                "next_offset": truncated ? projected.count as Any : NSNull(),
             ])
             remainingBudget -= projected.count
         }
         return rows
     }
 
-    /// 单条消息投影：Text parts 拼接、Tool parts 摘要为 `[tool: 名称 状态]` 一行、
-    /// 每条文本截断 [sessionReadMessageTextLimit] 字符。
-    private static func projectMessage(_ message: UIMessage) -> String {
-        let text = message.parts.map { part -> String in
+    /// 单条消息完整投影：Text parts 拼接、Tool parts 摘要为 `[tool: 名称 状态]` 一行。
+    /// 默认读取和分页必须共用这份全文，保证分页 offset 与默认结果一致。
+    private static func projectMessageText(_ message: UIMessage) -> String {
+        message.parts.map { part -> String in
             if let textPart = part as? UIMessagePart.Text {
                 return textPart.text
             }
@@ -2469,7 +2558,109 @@ final class ChatToolRuntime {
             }
             return ""
         }.joined(separator: "\n")
-        return String(text.prefix(sessionReadMessageTextLimit))
+    }
+
+    private static func sessionMessageId(_ message: UIMessage) -> String {
+        message.id.toHexDashString()
+    }
+
+    /// 分页结果的 JSON 也受统一工具输出 12k 收口约束。按实际序列化长度
+    /// 二分可返回字符数，next_offset 始终对应真正返回的 text 尾部。
+    private static func projectSessionMessagePage(
+        message: UIMessage,
+        conversationId: String,
+        fullText: String,
+        offset: Int,
+        maxChars: Int
+    ) -> String {
+        let totalChars = fullText.count
+        let requestedLength = min(maxChars, totalChars - offset)
+        let messageId = sessionMessageId(message)
+        let remainingText = fullText.dropFirst(offset)
+
+        func serializedPage(length: Int) -> String {
+            let text = String(remainingText.prefix(length))
+            let reachedEnd = offset + length >= totalChars
+            return IOSWorkspaceStore.json([
+                "ok": true,
+                "tool": "session_read",
+                "status": "ok",
+                "conversation_id": conversationId,
+                "message_id": messageId,
+                "role": roleName(message.role),
+                "text": text,
+                "offset": offset,
+                "next_offset": reachedEnd ? NSNull() : (offset + length) as Any,
+                "total_chars": totalChars,
+                "truncated": !reachedEnd,
+            ])
+        }
+
+        let hardLimit = IOSToolOutputLimits.maxOutputChars
+        let requestedOutput = serializedPage(length: requestedLength)
+        if requestedOutput.count <= hardLimit { return requestedOutput }
+        // A page's fixed UUID/offset metadata plus one character fits the
+        // budget. Search only when JSON escaping makes the requested page larger.
+        var lower = 1
+        var upper = requestedLength - 1
+        var bestOutput = serializedPage(length: 1)
+        while lower <= upper {
+            let candidate = (lower + upper) / 2
+            let output = serializedPage(length: candidate)
+            if output.count <= hardLimit {
+                bestOutput = output
+                lower = candidate + 1
+            } else {
+                upper = candidate - 1
+            }
+        }
+
+        return bestOutput
+    }
+
+    /// Default recent-message mode keeps its existing text and total budgets,
+    /// then shrinks only text fields if metadata would push serialized JSON over
+    /// the same 12k output cap. Metadata remains truthful after each shrink.
+    private static func boundedSessionReadJSON(
+        conversationId: String,
+        title: String,
+        messageCount: Int,
+        rows: [[String: Any]]
+    ) -> String {
+        var workingRows = rows
+
+        func serialized() -> String {
+            IOSWorkspaceStore.json([
+                "ok": true,
+                "tool": "session_read",
+                "status": "ok",
+                "conversation_id": conversationId,
+                "title": title,
+                "message_count": messageCount,
+                "messages": workingRows,
+            ])
+        }
+
+        var output = serialized()
+        while output.count > IOSToolOutputLimits.maxOutputChars {
+            guard let index = workingRows.indices.max(by: {
+                ((workingRows[$0]["text"] as? String)?.count ?? 0)
+                    < ((workingRows[$1]["text"] as? String)?.count ?? 0)
+            }),
+            let text = workingRows[index]["text"] as? String,
+            !text.isEmpty else {
+                break
+            }
+
+            let keepCount = text.count == 1 ? 0 : text.count / 2
+            workingRows[index]["text"] = String(text.prefix(keepCount))
+            let totalChars = workingRows[index]["total_chars"] as? Int ?? text.count
+            let truncated = keepCount < totalChars
+            workingRows[index]["truncated"] = truncated
+            workingRows[index]["next_offset"] = truncated ? keepCount as Any : NSNull()
+            output = serialized()
+        }
+        return output
     }
 
     private static func toolPartSummary(_ tool: UIMessagePart.Tool) -> String {

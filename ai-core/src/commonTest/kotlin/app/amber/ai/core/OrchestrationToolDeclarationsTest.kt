@@ -366,6 +366,11 @@ class OrchestrationToolDeclarationsTest {
         val maxDescription = maxMessages["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
         assertTrue("[1, 50]" in maxDescription, "max_messages 描述必须写明范围 [1, 50]")
         assertTrue("20" in maxDescription, "max_messages 描述必须写明默认 20")
+        assertEquals("string", params.properties["message_id"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        for (name in listOf("offset", "max_chars")) {
+            assertEquals("integer", params.properties[name]!!.jsonObject["type"]!!.jsonPrimitive.content)
+            assertFalse(name in params.required.orEmpty())
+        }
 
         val description = tool.description
         assertTrue("Read-only" in description, "必须声明只读")

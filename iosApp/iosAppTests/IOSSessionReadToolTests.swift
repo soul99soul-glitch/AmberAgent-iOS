@@ -376,9 +376,12 @@ final class IOSSessionReadToolTests: XCTestCase {
         let store = makeStore(directory: base)
         await store.newConversation()
         let targetId = try XCTUnwrap(store.currentConversation?.id)
-        let longText = String(repeating: "很长的消息内容", count: 300) // 1800 字
+        // Escaped report/code text makes JSON larger than the text itself.
+        let longText = String(repeating: "报告\"\\\\\n", count: 1_500)
+        let persistedText = "开头：\(longText)"
+        let persistedMessage = UIMessage.companion.user(prompt: persistedText)
         _ = await store.save(messages: [
-            UIMessage.companion.user(prompt: "开头：\(longText)"),
+            persistedMessage,
         ], to: targetId)
         let runtime = makeRuntime(store: store)
 
@@ -395,6 +398,44 @@ final class IOSSessionReadToolTests: XCTestCase {
         let text = messages.first?["text"] as? String ?? ""
         XCTAssertEqual(text.count, 2000, "单条消息文本必须截断到 2000 字符，实际: \(text.count)")
         XCTAssertTrue(text.hasPrefix("开头："), "截断必须保留开头")
+        XCTAssertEqual(messages.first?["message_id"] as? String, persistedMessage.id.toHexDashString())
+        XCTAssertEqual(messages.first?["total_chars"] as? Int, persistedText.count)
+        XCTAssertEqual(messages.first?["truncated"] as? Bool, true)
+        XCTAssertEqual(messages.first?["next_offset"] as? Int, 2000)
+
+        // The page mode must read the same full projection losslessly. Read the
+        // first page, then continue exactly from its returned next_offset.
+        let firstPageOutput = await executeSessionTool(
+            runtime: runtime,
+            toolCall: makeToolCall(
+                name: "session_read",
+                input: #"{"conversation_id":"\#(targetId.toHexDashString())","message_id":"\#(persistedMessage.id.toHexDashString())","offset":0,"max_chars":8000}"#
+            )
+        )
+        let firstPage = parseJSON(firstPageOutput)
+        XCTAssertEqual(firstPage["total_chars"] as? Int, persistedText.count)
+        XCTAssertEqual(firstPage["offset"] as? Int, 0)
+        let firstPageText = try XCTUnwrap(firstPage["text"] as? String)
+        XCTAssertGreaterThan(firstPageText.count, 2000)
+        XCTAssertLessThan(firstPageText.count, 8000)
+        XCTAssertLessThanOrEqual(firstPageOutput.count, IOSToolOutputLimits.maxOutputChars)
+        let nextOffset = try XCTUnwrap(firstPage["next_offset"] as? Int)
+        XCTAssertEqual(nextOffset, firstPageText.count)
+
+        let secondPageOutput = await executeSessionTool(
+            runtime: runtime,
+            toolCall: makeToolCall(
+                name: "session_read",
+                input: #"{"conversation_id":"\#(targetId.toHexDashString())","message_id":"\#(persistedMessage.id.toHexDashString())","offset":\#(nextOffset),"max_chars":8000}"#
+            )
+        )
+        let secondPage = parseJSON(secondPageOutput)
+        XCTAssertEqual(secondPage["offset"] as? Int, nextOffset)
+        XCTAssertTrue(secondPage["next_offset"] is NSNull, "读到 EOF 时 next_offset 必须为 null")
+        XCTAssertEqual(secondPage["truncated"] as? Bool, false)
+        let secondPageText = try XCTUnwrap(secondPage["text"] as? String)
+        XCTAssertFalse(secondPageText.isEmpty, "超过 2000 字符的消息必须能读回尾部")
+        XCTAssertEqual(firstPageText + secondPageText, persistedText)
     }
 
     func testSessionReadTruncatesTotalOutput() async throws {

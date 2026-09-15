@@ -1253,9 +1253,10 @@ final class IOSOrchestrationToolTests: XCTestCase {
         let parentId = try XCTUnwrap(store.currentConversation?.id)
         await store.newConversation()
         let childId = try XCTUnwrap(store.currentConversation?.id)
+        let finalText = String(repeating: "子线程最终回答。", count: 350) + "报告最后一条"
         await store.saveCurrent(messages: [
             UIMessage.companion.user(prompt: "子线程任务"),
-            UIMessage.companion.assistant(prompt: "子线程最终回答"),
+            UIMessage.companion.assistant(prompt: finalText),
         ])
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         try await db.threadEdgeDao().insertEdge(edge: ThreadEdgeEntity(
@@ -1295,7 +1296,18 @@ final class IOSOrchestrationToolTests: XCTestCase {
             recipient: parentId,
             runId: "child-run-1"
         )
-        XCTAssertEqual(finalEnvelope?.payload, "子线程最终回答")
+        let payload = try XCTUnwrap(finalEnvelope?.payload)
+        XCTAssertTrue(payload.hasPrefix(String(finalText.prefix(IOSThreadOrchestrationToolService.finalAnswerMaxChars))))
+        let metadataLine = try XCTUnwrap(payload.components(separatedBy: "\n").first {
+            $0.hasPrefix("{") && $0.contains("\"session_read\"")
+        })
+        let metadata = parseJSON(metadataLine)
+        XCTAssertEqual(metadata["truncated"] as? Bool, true)
+        XCTAssertEqual(metadata["run_ended"] as? Bool, true)
+        let reference = try XCTUnwrap(metadata["session_read"] as? [String: Any])
+        XCTAssertEqual(reference["conversation_id"] as? String, childId.toHexDashString())
+        XCTAssertEqual(reference["message_id"] as? String, viewModel.messages.last?.id.toHexDashString())
+        XCTAssertEqual(reference["offset"] as? Int, 0)
         XCTAssertEqual(finalEnvelope?.author, "/root/sub")
 
         // 父线程在其下一边界折入（复用 P1-b 机制：渲染为带结构头的 user 消息）。
@@ -1306,7 +1318,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         )
         let uploadUserTexts = upload.filter { $0.role == MessageRole.user }.map { $0.toText() }
         XCTAssertEqual(uploadUserTexts, [
-            "[mailbox FINAL_ANSWER from /root/sub]\n子线程最终回答",
+            "[mailbox FINAL_ANSWER from /root/sub]\n\(payload)",
         ])
 
         var affectedIDs: [KotlinUuid] = []
@@ -1316,7 +1328,7 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertTrue(store.allSummaries.contains { $0.id == childId })
         XCTAssertFalse(store.summaries.contains { $0.id == childId })
         let retainedMessages = await store.messages(for: childId)
-        XCTAssertEqual(retainedMessages?.last?.toText(), "子线程最终回答")
+        XCTAssertEqual(retainedMessages?.last?.toText(), finalText)
         await service.notifyRunTerminal(
             conversationId: childId, runId: "after-parent-deletion",
             finalMessages: [UIMessage.companion.assistant(prompt: "late result")]

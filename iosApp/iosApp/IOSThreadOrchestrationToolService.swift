@@ -79,7 +79,7 @@ final class IOSThreadOrchestrationToolService {
     /// initializer 显式覆盖；占用只统计子代理，不把父线程算进来。
     static let defaultMaxConcurrentRuns = 2
 
-    /// FINAL_ANSWER payload 截断长度。
+    /// FINAL_ANSWER 正文摘要长度；截断说明和原文引用不计入此限额。
     static let finalAnswerMaxChars = 2_000
 
     /// 后台 job 的调度面（生产 = `IOSChatBackgroundGenerationCoordinator.shared`，
@@ -1027,6 +1027,7 @@ final class IOSThreadOrchestrationToolService {
     You are a child agent thread in a thread-orchestration tree.
     - Your task arrives as a `[mailbox NEW_TASK from /root/...]` message; `[mailbox MESSAGE|FINAL_ANSWER from /root/...]` are inter-agent mail, not user input.
     - Your final answer is delivered to the parent thread automatically when this run ends — no need to contact the user.
+    - Thread orchestration functions (spawn_agent, list_agents, interrupt_agent, send_message, followup_task, wait_agent) and session_read are native tools, not MCP tools. If a needed function is hidden and tool_search is available, search for its exact name, then call it directly; never wrap it in mcp_call.
     - When you spawn a child, choose a short lowercase English first name dynamically. Check `list_agents` when sibling names may already exist, avoid reusing a sibling name, never append numeric suffixes yourself, and keep the returned `agent_path` for followups. The iOS runtime has a local collision fallback; it does not make another model request.
     - \(IOSSubAgentOutputProjection.progressReportingInstruction)
     """
@@ -1707,12 +1708,50 @@ final class IOSThreadOrchestrationToolService {
                     "pending_count": pendingCount,
                 ])
             }
+            let children: [ThreadEdgeSnapshot]
+            do {
+                children = try await withCheckedThrowingContinuation { continuation in
+                    threadEdgeDaoProvider().childrenOf(parentThreadId: hex) { result, error in
+                        if let error { continuation.resume(throwing: error) }
+                        else { continuation.resume(returning: (result ?? []).map(ThreadEdgeSnapshot.init)) }
+                    }
+                }
+            } catch {
+                return Self.errorJSON(
+                    toolName: "wait_agent", code: "state_unavailable",
+                    reason: "无法读取子代理状态：\(error.localizedDescription)"
+                )
+            }
+            // A child may finish while the edge query is suspended. Check its
+            // durable mail again before deciding whether another wait can help.
+            let pendingAfterLookup = await Self.pendingCount(mailboxDao: mailboxDaoProvider(), recipientId: hex)
+            if pendingAfterLookup > 0 {
+                return IOSWorkspaceStore.json([
+                    "ok": true, "tool": "wait_agent", "timed_out": false,
+                    "pending_count": pendingAfterLookup,
+                    "message": "mailbox already has \(pendingAfterLookup) pending",
+                ])
+            }
+            let activeChildren = children.filter { child in
+                child.status == EdgeStatus.open &&
+                    (foregroundActiveRunId(child.childThreadId) != nil ||
+                     backgroundCoordinator.activeRunId(conversationHex: child.childThreadId) != nil)
+            }
+            guard !activeChildren.isEmpty else {
+                return IOSWorkspaceStore.json([
+                    "ok": true, "tool": "wait_agent", "status": "no_active_children",
+                    "yielded": false, "timed_out": false, "pending_count": 0,
+                    "active_child_count": 0,
+                    "message": "No child run is active. Waiting does not restart an ended child. Read its saved report with native session_read (follow next_offset for truncated text). If more work is needed, call native followup_task before waiting again; send_message does not wake an idle child. Use tool_search first if a native tool is hidden, never mcp_call. Do not ask the user to reissue the task just to retrieve omitted results.",
+                ])
+            }
             return IOSWorkspaceStore.json([
                 "ok": true,
                 "tool": "wait_agent",
                 "message": "Foreground run yielded; resume on a child completion report unless newer user input supersedes this wait.",
                 "timed_out": false,
                 "pending_count": 0,
+                "active_child_count": activeChildren.count,
                 "yielded": true,
             ])
         }
@@ -2035,7 +2074,7 @@ final class IOSThreadOrchestrationToolService {
     // MARK: - FINAL_ANSWER 终态回传（前台 finishStreaming / 后台 job 完成共用）
 
     /// run 终态钩子：本会话有 Open 父 edge 时，向父线程 mailbox 投递 FINAL_ANSWER
-    /// （payload = 最后 assistant 文本截断 2000 字符；triggerTurn=false；
+    /// （payload = 最后 assistant 文本摘要，必要时附带原文分页引用；triggerTurn=false；
     /// parentTurnId = 本 runId）。父线程在其下一边界/下一 run 头经 P1-b 机制折入。
     func notifyRunTerminal(
         conversationId: KotlinUuid?,
@@ -2069,13 +2108,36 @@ final class IOSThreadOrchestrationToolService {
         let payloadSource = text.isEmpty
             ? "[run ended without assistant output]"
             : text
+        let payload: String
+        if payloadSource.count > Self.finalAnswerMaxChars,
+           let message = finalMessages.last(where: { $0.role == MessageRole.assistant }) {
+            let reference = IOSWorkspaceStore.json([
+                "run_ended": true,
+                "truncated": true,
+                "total_chars": payloadSource.count,
+                "session_read": [
+                    "conversation_id": childHex,
+                    "message_id": message.id.toHexDashString(),
+                    "offset": 0,
+                ],
+            ])
+            payload = """
+            \(payloadSource.prefix(Self.finalAnswerMaxChars))
+
+            [Amber host: child result excerpt]
+            \(reference)
+            This child run has ended. The report above is a delivery excerpt, not a promise of another message. Read the stored full message with native session_read using the reference above, then follow next_offset until null. If the tool is hidden, use tool_search first; do not call it through mcp_call. Do not request regeneration or wait for more mail just because this excerpt was truncated.
+            """
+        } else {
+            payload = payloadSource
+        }
         let now = Int64(Date().timeIntervalSince1970 * 1000)
         let envelope = MailboxEnvelopeEntity(
             id: "final-\(runId)",
             authorThreadId: edge.agentPath,
             recipientThreadId: edge.parentThreadId,
             type: MailboxEnvelopeType.finalAnswer.name,
-            payload: String(payloadSource.prefix(Self.finalAnswerMaxChars)),
+            payload: payload,
             triggerTurn: false,
             parentTurnId: runId,
             createdAt: now,

@@ -168,6 +168,12 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         let database = IosDatabaseFactory.shared.createDatabase(
             atFilePath: directory.appendingPathComponent("yield.db").path
         )
+        try await database.threadEdgeDao().insertEdge(edge: ThreadEdgeEntity(
+            childThreadId: KotlinUuid.companion.random().toHexDashString(),
+            parentThreadId: conversationId.toHexDashString(),
+            agentPath: "/root/worker", nickname: nil, roleAssistantId: nil,
+            forkTurns: "all", status: "Open", createdAt: 0
+        ))
         let center = IOSMailboxActivityCenter()
         let scheduler = YieldBackgroundScheduler()
         let service = IOSThreadOrchestrationToolService(

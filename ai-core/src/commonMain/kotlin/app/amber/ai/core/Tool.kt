@@ -1522,8 +1522,12 @@ fun createWaitAgentToolDeclaration(): Tool = Tool(
     name = "wait_agent",
     description = """
         Returns immediately when the mailbox already has pending activity.
+        A foreground root with no active child runs returns status=no_active_children
+        instead of yielding. Read existing reports with session_read, or start a
+        followup_task if more work is needed; do not wait for an ended child to
+        send a continuation on its own. These are native functions, not mcp_call tools.
         In an interactive foreground conversation, an empty mailbox yields the
-        current turn immediately so the user can keep chatting. Child agents
+        current turn immediately only while child runs remain active. Child agents
         continue running and their reports arrive automatically. Do not loop
         on wait_agent or keep the user waiting for background work.
         In a background run, suspend this tool call until mailbox activity,
@@ -1561,8 +1565,11 @@ fun createSessionSearchToolDeclaration(): Tool = Tool(
 fun createSessionReadToolDeclaration(): Tool = Tool(
     name = "session_read",
     description = """
-        Read recent messages of a conversation by id (from session_search results).
-        Returns the latest messages as text. Read-only.
+        Read messages of a conversation by id (from session_search or a child report reference). Read-only.
+        This is a native iOS tool; call it as `session_read`, never through `mcp_call`. If hidden, call
+        `tool_search` first. Without `message_id`, returns recent messages with `message_id`,
+        `total_chars`, `truncated`, and `next_offset` metadata. With `message_id`, returns the
+        full projected text in pages: pass the returned `next_offset` as `offset` until it is null.
     """.trimIndent().replace("\n", " "),
     parameters = { sessionReadParameters() },
     needsApproval = false,
@@ -1592,6 +1599,21 @@ private fun sessionReadParameters(): InputSchema = InputSchema.Obj(
         put("max_messages", buildJsonObject {
             put("type", "integer")
             put("description", "Optional. Maximum number of latest messages to return, clamped to [1, 50]; defaults to 20.")
+        })
+        put("message_id", buildJsonObject {
+            put("type", "string")
+            put("description", "Optional. A message_id from a recent-message result or child report reference; selects that persisted message for full-text paging.")
+        })
+        put("offset", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 0)
+            put("description", "Optional with message_id. Non-negative 0-based Swift character offset; defaults to 0. Continue from next_offset.")
+        })
+        put("max_chars", buildJsonObject {
+            put("type", "integer")
+            put("minimum", 1)
+            put("maximum", 8_000)
+            put("description", "Optional with message_id. Maximum page characters, clamped to [1, 8000]; defaults to 2000. The returned page may be shorter to stay below the tool output limit.")
         })
     },
     required = listOf("conversation_id"),

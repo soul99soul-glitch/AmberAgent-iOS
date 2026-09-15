@@ -176,8 +176,8 @@ final class IOSToolSearchExposureTests: XCTestCase {
         XCTAssertTrue(nextRound.contains("followup_task"))
         XCTAssertTrue(nextRound.contains("wait_agent"))
 
-        // ChatToolRuntime 分类可路由：命中后的 send_message 调用被 nextPendingToolCall
-        // 识别为 advanced（编排执行路径），不会落「未知名硬失败」。
+        // A discovered followup_task must route directly to native orchestration,
+        // including when the parent needs to restart an already finished child.
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
             sharedSettings: IOSSharedSettingsStore(userDefaults: isolatedDefaults()),
@@ -186,8 +186,8 @@ final class IOSToolSearchExposureTests: XCTestCase {
             mcpManager: IOSMcpManager(serverProvider: { [] })
         )
         let toolCall = UIMessagePart.Tool(
-            toolCallId: "sm-1",
-            toolName: "send_message",
+            toolCallId: "followup-1",
+            toolName: "followup_task",
             input: #"{"target":"child","message":"hi"}"#,
             output: [],
             approvalState: ToolApprovalState.Auto.shared,
@@ -211,10 +211,10 @@ final class IOSToolSearchExposureTests: XCTestCase {
             availableToolNames: nextRound
         )
         guard let pending else {
-            return XCTFail("命中后的 send_message 必须被 ChatToolRuntime 分类为可路由工具调用")
+            return XCTFail("命中后的 followup_task 必须被 ChatToolRuntime 分类为可路由工具调用")
         }
         guard case .advanced = pending.kind else {
-            return XCTFail("send_message 必须路由为 advanced 编排路径，实际: \(pending.kind)")
+            return XCTFail("followup_task 必须路由为 advanced 编排路径，实际: \(pending.kind)")
         }
     }
 

@@ -921,6 +921,9 @@ final class IOSThreadMessagingTests: XCTestCase {
         let rootHex = rootId.toHexDashString()
         let db = makeDatabase(directory: base)
         let scheduler = FakeBackgroundScheduler()
+        let childHex = "dddd5555-5555-5555-5555-555555555555"
+        try await insertEdge(db: db, childHex: childHex, parentHex: rootHex, agentPath: "/root/worker")
+        scheduler.activeRunByHex[childHex] = "child-run"
         let center = IOSMailboxActivityCenter()
         let service = makeService(
             store: store,
@@ -948,6 +951,18 @@ final class IOSThreadMessagingTests: XCTestCase {
         let listenerCount = await center.listenerCount(for: rootHex)
         XCTAssertEqual(listenerCount, 0,
                        "the immediate control result must not leak an unused wait listener")
+
+        // An Open thread is addressable after completion, but it is no longer a
+        // producer. Waiting on its missing continuation must not suspend the root.
+        scheduler.activeRunByHex.removeValue(forKey: childHex)
+        let idle = parseJSON(await service.execute(
+            toolName: "wait_agent", arguments: "{}",
+            providerSetting: makeProviderSetting(), params: makeParams(),
+            runId: "foreground-root-run", conversationId: rootId
+        ))
+        XCTAssertEqual(idle["status"] as? String, "no_active_children")
+        XCTAssertEqual(idle["yielded"] as? Bool, false)
+        XCTAssertEqual(idle["active_child_count"] as? Int, 0)
     }
 
     func testWaitAgentForegroundChildKeepsWaitingAndDoesNotYield() async throws {
