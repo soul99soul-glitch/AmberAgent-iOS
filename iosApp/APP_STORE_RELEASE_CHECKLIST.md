@@ -5,12 +5,50 @@
 
 ## 账号与签名
 
-- [ ] 在 Xcode 登录已付费的 Apple Developer Program 个人账号。
-- [ ] 为 `app.amber.ios`、`app.amber.ios.activity`、`app.amber.ios.watchkitapp`
-  创建并确认 App ID；实验 GPL target 不进入 App Store 构建。
-- [ ] 在 Signing & Capabilities 中选择同一个 Team，确认真机安装和 Archive 均使用
-  Distribution profile，而不是 Personal Team。
-- [ ] 在 App Store Connect 创建 Amber App 记录并匹配主 bundle ID。
+- [x] 在 Xcode 登录有付费 Apple Developer Program 团队权限的账号（2026-09-15 已验证）。
+- [ ] 为 `app.amber.ios`、`app.amber.ios.activity`、`app.amber.ios.watchkitapp`、
+  `app.amber.ios.watchkitapp.widgets` 创建并确认 App ID；实验 GPL target 不进入
+  App Store 构建。
+- [ ] 四个稳定版 target 使用同一个付费 Team。开发装机使用 Development 签名；
+  TestFlight 导出/上传使用 App Store Connect 分发签名，不使用 Personal Team。
+- [x] 主 App、Watch App 和 Watch Widgets 的 App ID 均关联
+  `group.app.amber.ios.watchkit`（2026-09-16 已补齐主 App 绑定）。
+- [ ] 刷新 provisioning profile，确认包含对应 App Group entitlement。
+- [x] 在 App Store Connect 创建 `AmberAgent` App 记录并匹配 `app.amber.ios`。
+  App ID 为 `6812412419`，见 [TestFlight](https://appstoreconnect.apple.com/teams/68ed2ac5-9fb2-4b47-96c3-108768e0b08c/apps/6812412419/testflight)。
+
+## TestFlight 首次上传
+
+1. 在 Xcode > Settings > Apple Accounts 登录已加入 Apple Developer Program 的账号，
+   确认有目标 Team 的上传权限；在 App Store Connect 创建或找到 `app.amber.ios`。
+2. 以 `project.yml` 为配置来源，运行 `xcodegen generate --spec iosApp/project.yml`
+   （以下命令均从仓库根目录执行）。使用稳定版 `iosApp` scheme，Archive 配置为 Release。
+3. 确认主 App 的现有 entitlements 在开发者后台可用，包括 HealthKit、CloudKit、
+   Push Notifications、Sign in with Apple、App Attest、Journaling Suggestions 和
+   WeatherKit。CloudKit container 为 `iCloud.app.amber.ios`。
+4. 设置实际 Team ID 和未上传过的构建号后归档；命令行参数会统一主 App 和扩展的签名
+   Team、构建号，避免只修改生成的 Xcode 工程后被下次生成覆盖。
+
+   ```bash
+   # 先设置 AMBER_TEAM_ID 和 AMBER_BUILD_NUMBER，再运行以下命令。
+   xcodebuild -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
+     -configuration Release -destination 'generic/platform=iOS' \
+     -archivePath build/testflight/AmberAgent.xcarchive \
+     -allowProvisioningUpdates CODE_SIGN_STYLE=Automatic \
+     DEVELOPMENT_TEAM="${AMBER_TEAM_ID:?set the paid developer Team ID}" \
+     CURRENT_PROJECT_VERSION="${AMBER_BUILD_NUMBER:?set an unused build number}" archive
+   ```
+
+5. 在 Xcode Organizer 打开归档，选择 Distribute App > App Store Connect，完成验证和
+   上传。Apple 处理完成后，在 App Store Connect 的 TestFlight 页面完成出口合规并
+   分配测试组。外部测试的首个构建需要 Beta App Review；内部测试者必须是有访问权限的
+   App Store Connect 用户。
+
+`CODE_SIGNING_ALLOWED=NO` 的归档仅验证编译和包结构，不能作为已经完成 TestFlight
+签名或上传的证据。初次上传前核对所有嵌入 App/扩展的版本号和构建号一致。
+
+Apple 官方说明：[上传构建](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/)、
+[TestFlight 流程](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/)。
 
 ## 能力开通（按路线图阶段）
 

@@ -6,19 +6,35 @@ privacy_manifest_path="${2:?missing PrivacyInfo.xcprivacy path}"
 project_yml_path="${3:?missing project.yml path}"
 
 /usr/bin/python3 - "$info_plist_path" "$privacy_manifest_path" "$project_yml_path" <<'PY'
+import os
 import plistlib
 import sys
 
-info_path, privacy_path, project_path = sys.argv[1], sys.argv[2], sys.argv[3]
+info_path, privacy_path, project_path = sys.argv[1:]
+project_root = os.path.dirname(project_path)
 
 with open(info_path, "rb") as handle:
     info = plistlib.load(handle)
-with open(privacy_path, "rb") as handle:
-    privacy = plistlib.load(handle)
 with open(project_path, "r", encoding="utf-8") as handle:
     project = handle.read()
 
 errors = []
+
+
+def declared_privacy(path, label):
+    try:
+        with open(path, "rb") as handle:
+            privacy = plistlib.load(handle)
+    except (OSError, plistlib.InvalidFileException, ValueError) as error:
+        errors.append(f"{label} could not be read: {error}")
+        return {}
+    if privacy.get("NSPrivacyTracking") is not False:
+        errors.append(f"{label} must set NSPrivacyTracking to false")
+    return {
+        item.get("NSPrivacyAccessedAPIType"): set(item.get("NSPrivacyAccessedAPITypeReasons", []))
+        for item in privacy.get("NSPrivacyAccessedAPITypes", [])
+    }
+
 
 background_modes = info.get("UIBackgroundModes", [])
 if "audio" in background_modes:
@@ -32,26 +48,39 @@ if ats.get("NSAllowsArbitraryLoads") is True:
 if ats.get("NSExceptionDomains"):
     errors.append("broad ATS exception domains are not allowed in the stable release plist")
 
-if privacy.get("NSPrivacyTracking") is not False:
-    errors.append("NSPrivacyTracking must be false")
-
-declared = {
-    item.get("NSPrivacyAccessedAPIType"): set(item.get("NSPrivacyAccessedAPITypeReasons", []))
-    for item in privacy.get("NSPrivacyAccessedAPITypes", [])
+privacy_requirements = {
+    "main PrivacyInfo.xcprivacy": (
+        privacy_path,
+        {
+            "NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1", "1C8F.1"},
+            "NSPrivacyAccessedAPICategoryFileTimestamp": {"C617.1", "3B52.1"},
+            "NSPrivacyAccessedAPICategorySystemBootTime": {"35F9.1"},
+        },
+    ),
+    "ActivityWidget PrivacyInfo.xcprivacy": (
+        os.path.join(project_root, "ActivityWidget", "PrivacyInfo.xcprivacy"),
+        {"NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1"}},
+    ),
+    "WatchApp PrivacyInfo.xcprivacy": (
+        os.path.join(project_root, "WatchApp", "PrivacyInfo.xcprivacy"),
+        {"NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1", "1C8F.1"}},
+    ),
+    "WatchWidgets PrivacyInfo.xcprivacy": (
+        os.path.join(project_root, "WatchWidgets", "PrivacyInfo.xcprivacy"),
+        {"NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1", "1C8F.1"}},
+    ),
 }
-required = {
-    "NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1"},
-    "NSPrivacyAccessedAPICategoryFileTimestamp": {"C617.1", "3B52.1"},
-    "NSPrivacyAccessedAPICategorySystemBootTime": {"35F9.1"},
-}
-for category, reasons in required.items():
-    if not reasons.issubset(declared.get(category, set())):
-        errors.append(f"privacy manifest is missing {category}: {sorted(reasons)}")
+for label, (path, required) in privacy_requirements.items():
+    declared = declared_privacy(path, label)
+    for category, reasons in required.items():
+        if not reasons.issubset(declared.get(category, set())):
+            errors.append(f"{label} is missing {category}: {sorted(reasons)}")
 
 for bundle_id in (
     "app.amber.ios",
     "app.amber.ios.activity",
     "app.amber.ios.watchkitapp",
+    "app.amber.ios.watchkitapp.widgets",
 ):
     if f"PRODUCT_BUNDLE_IDENTIFIER: {bundle_id}" not in project:
         errors.append(f"stable target bundle identifier is missing: {bundle_id}")

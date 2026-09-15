@@ -120,7 +120,7 @@ targets:
       - name: Validate Release Readiness
         basedOnDependencyAnalysis: false
         script: |
-          /bin/sh "${SRCROOT}/scripts/validate-release-readiness.sh" "${SRCROOT}/iosApp/Info.plist" "${SRCROOT}/iosApp/PrivacyInfo.xcprivacy" "${SRCROOT}/project.yml"
+          /bin/sh "${SRCROOT}/scripts/validate-release-readiness.sh" "${SRCROOT}/iosApp/Info.plist" "${SRCROOT}/iosApp/PrivacyInfo.xcprivacy" "${SRCROOT}/project.yml" "${SRCROOT}/ActivityWidget/PrivacyInfo.xcprivacy" "${SRCROOT}/WatchApp/PrivacyInfo.xcprivacy" "${SRCROOT}/WatchWidgets/PrivacyInfo.xcprivacy"
     postBuildScripts:
       - name: Embed Shared KMP Framework
         basedOnDependencyAnalysis: false
@@ -282,6 +282,8 @@ targets:
         buildPhase: resources
       - path: iosApp/AgentActivity.strings
         buildPhase: resources
+      - path: ActivityWidget/PrivacyInfo.xcprivacy
+        buildPhase: resources
       - path: AlarmKitResources
       - path: iosApp/en.lproj
         buildPhase: resources
@@ -319,6 +321,8 @@ targets:
       - path: iosApp/Localizable.xcstrings
         buildPhase: resources
       - path: iosApp/AgentActivity.strings
+        buildPhase: resources
+      - path: ActivityWidget/PrivacyInfo.xcprivacy
         buildPhase: resources
       - path: AlarmKitResources
       - path: iosApp/en.lproj
@@ -426,7 +430,7 @@ targets:
       - name: Validate Release Readiness
         basedOnDependencyAnalysis: false
         script: |
-          /bin/sh "${SRCROOT}/scripts/validate-release-readiness.sh" "${SRCROOT}/iosApp/Info.plist" "${SRCROOT}/iosApp/PrivacyInfo.xcprivacy" "${SRCROOT}/project.yml"
+          /bin/sh "${SRCROOT}/scripts/validate-release-readiness.sh" "${SRCROOT}/iosApp/Info.plist" "${SRCROOT}/iosApp/PrivacyInfo.xcprivacy" "${SRCROOT}/project.yml" "${SRCROOT}/ActivityWidget/PrivacyInfo.xcprivacy" "${SRCROOT}/WatchApp/PrivacyInfo.xcprivacy" "${SRCROOT}/WatchWidgets/PrivacyInfo.xcprivacy"
     postBuildScripts:
       - name: Embed Shared KMP Framework
         basedOnDependencyAnalysis: false
@@ -618,6 +622,8 @@ targets:
       - path: iosApp/IOSAppLanguage.swift
       - path: WatchWidgets/Localizable.xcstrings
         buildPhase: resources
+      - path: WatchWidgets/PrivacyInfo.xcprivacy
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.amber.ios.watchkitapp.widgets
@@ -648,6 +654,8 @@ targets:
       - path: SharedWatch/WatchWidgetCache.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: WatchWidgets/Localizable.xcstrings
+        buildPhase: resources
+      - path: WatchWidgets/PrivacyInfo.xcprivacy
         buildPhase: resources
     settings:
       base:
