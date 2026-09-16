@@ -73,6 +73,13 @@ enum ChatMemoryContextBuilder {
     }
 
     private static func memoryPromptLine(for record: MemoryRecord) -> String {
+        // Topic rows are aggregation records: surface title + summary + member
+        // count so the model can drill into members via memory_tool.
+        if record.kind == .topic {
+            let title = record.topicTitle ?? record.content
+            let count = record.memberIds.count
+            return "- memory_id=\(record.id) [topic] \(title)：\(truncatedMemoryContent(record.content))（含 \(count) 条）"
+        }
         let pinned = record.pinned ? ", pinned" : ""
         // Keep the identifier beside the exact projected record so the model can
         // emit a valid citation. The identifier is also carried in Text.metadata;
@@ -82,12 +89,22 @@ enum ChatMemoryContextBuilder {
     }
 
     private static func hasRecallOverlap(_ record: MemoryRecord, _ tokens: Set<String>) -> Bool {
-        !tokens.isDisjoint(with: Set(recallTokens(from: record.content)))
+        !tokens.isDisjoint(with: Set(recallTokens(from: recallMatchText(record))))
     }
 
-    private static func isAlwaysEligible(_ record: MemoryRecord) -> Bool {
-        record.pinned || record.scope == .core || record.kind == .feedback ||
-            (record.scope == .longTerm && record.kind == .user && record.confidence >= 0.70)
+    /// The text a record is matched against. Topic titles carry the grouping
+    /// signal, so topics match on title + summary; shared with memory_tool
+    /// search so both paths can never diverge.
+    static func recallMatchText(_ record: MemoryRecord) -> String {
+        record.kind == .topic
+            ? "\(record.topicTitle ?? "") \(record.content)"
+            : record.content
+    }
+
+    static func isAlwaysEligible(_ record: MemoryRecord) -> Bool {
+        record.kind != .topic &&
+            (record.pinned || record.scope == .core || record.kind == .feedback ||
+            (record.scope == .longTerm && record.kind == .user && record.confidence >= 0.70))
     }
 
     static func scoredByRelevance(
@@ -98,6 +115,11 @@ enum ChatMemoryContextBuilder {
         let queryTokens = recallTokens(from: queryText)
         let halfLifeMs: Int64 = 30 * 24 * 60 * 60 * 1_000 // ~30 days
         return records.map { record in
+            // Aggregation rows sit at a fixed mid-tier score: eligible through
+            // normal token overlap, never pinned-resident.
+            if record.kind == .topic {
+                return (record, 30)
+            }
             let pinnedBoost: Double = record.pinned ? 100 : 0
             let overlap: Double
             if queryTokens.isEmpty {

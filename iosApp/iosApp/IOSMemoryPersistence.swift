@@ -206,8 +206,8 @@ enum IOSMemoryToolExecutor {
         let ranked = scored
             .filter { record, _ in
                 queryTokens.isEmpty
-                    || !Set(ChatMemoryContextBuilder.recallTokens(from: record.content)).isDisjoint(with: queryTokens)
-                    || isAlwaysEligibleForSearch(record)
+                    || !Set(ChatMemoryContextBuilder.recallTokens(from: ChatMemoryContextBuilder.recallMatchText(record))).isDisjoint(with: queryTokens)
+                    || ChatMemoryContextBuilder.isAlwaysEligible(record)
             }
             .sorted { lhs, rhs in
                 if lhs.record.pinned != rhs.record.pinned { return lhs.record.pinned && !rhs.record.pinned }
@@ -227,12 +227,6 @@ enum IOSMemoryToolExecutor {
         ]
         if let query { payload["query"] = query }
         return json(payload)
-    }
-
-    /// 与 ChatMemoryContextBuilder.isAlwaysEligible 等价的最小实现。
-    private static func isAlwaysEligibleForSearch(_ record: MemoryRecord) -> Bool {
-        record.pinned || record.scope == .core || record.kind == .feedback ||
-            (record.scope == .longTerm && record.kind == .user && record.confidence >= 0.70)
     }
 
     /// `status`：返回可用性摘要（各 scope 是否启用、可见/archived 记录数、
@@ -374,6 +368,10 @@ enum IOSMemoryToolExecutor {
             IOSMemoryWriteAuditStore.shared.record(action: "edit", status: "failed", reason: "memory not found", memoryId: id)
             return json(["ok": false, "tool": "memory_tool", "action": "edit", "error": "memory not found", "id": id])
         }
+        guard existing.kind != .topic else {
+            IOSMemoryWriteAuditStore.shared.record(action: "edit", status: "failed", reason: "topic records are managed automatically", memoryId: id)
+            return json(["ok": false, "tool": "memory_tool", "action": "edit", "error": "topic records are managed automatically", "id": id])
+        }
         guard expectedUpdatedAt == nil || existing.updatedAt == expectedUpdatedAt else {
             IOSMemoryWriteAuditStore.shared.record(
                 action: "edit",
@@ -459,7 +457,9 @@ enum IOSMemoryToolExecutor {
             archived: existing.archived,
             createdAt: existing.createdAt,
             updatedAt: updatedAt,
-            lastUsedAt: existing.lastUsedAt
+            lastUsedAt: existing.lastUsedAt,
+            topicTitle: existing.topicTitle,
+            memberIds: existing.memberIds
         )
 
         guard let saved = IosMemoryFactory.shared.updateRecord(record: updated) else {
@@ -508,6 +508,10 @@ enum IOSMemoryToolExecutor {
         guard existed else {
             IOSMemoryWriteAuditStore.shared.record(action: "delete", status: "failed", reason: "memory not found", memoryId: id)
             return json(["ok": false, "tool": "memory_tool", "action": "delete", "error": "memory not found", "id": id])
+        }
+        guard existing?.kind != .topic else {
+            IOSMemoryWriteAuditStore.shared.record(action: "delete", status: "failed", reason: "topic records are managed automatically", memoryId: id)
+            return json(["ok": false, "tool": "memory_tool", "action": "delete", "error": "topic records are managed automatically", "id": id])
         }
         guard expectedUpdatedAt == nil || existing?.updatedAt == expectedUpdatedAt else {
             IOSMemoryWriteAuditStore.shared.record(
@@ -695,6 +699,13 @@ enum IOSMemoryToolExecutor {
         if let lastUsedAt = record.lastUsedAt?.int64Value {
             payload["lastUsedAt"] = lastUsedAt
         }
+        if let topicTitle = record.topicTitle {
+            payload["topicTitle"] = topicTitle
+        }
+        let memberIds = record.memberIds.map { Int(truncating: $0) }
+        if !memberIds.isEmpty {
+            payload["memberIds"] = memberIds
+        }
         return payload
     }
 
@@ -843,6 +854,8 @@ final class IOSMemoryPersistence {
     private let fileURL: URL
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
+    /// Derived Markdown documents (index.md + topics/) next to memories.json.
+    private let markdownStore: IOSMemoryMarkdownStore
     private(set) var records: [MemoryRecord] = []
     private(set) var revision: Int = 0
     private(set) var loadState: LoadState = .notLoaded
@@ -854,6 +867,7 @@ final class IOSMemoryPersistence {
         self.fileURL = fileURL
         self.encoder = encoder
         self.decoder = decoder
+        self.markdownStore = IOSMemoryMarkdownStore(directory: fileURL.deletingLastPathComponent())
         records = IosMemoryFactory.shared.getAllRecords()
     }
 
@@ -864,6 +878,7 @@ final class IOSMemoryPersistence {
             .appendingPathComponent("memories.json", isDirectory: false)
         encoder = JSONEncoder()
         decoder = JSONDecoder()
+        markdownStore = IOSMemoryMarkdownStore(directory: fileURL.deletingLastPathComponent())
         records = IosMemoryFactory.shared.getAllRecords()
     }
 
@@ -876,6 +891,8 @@ final class IOSMemoryPersistence {
             loadState = .missing
             lastErrorMessage = nil
             refresh()
+            // An externally deleted store also retires its derived documents.
+            markdownStore.syncIfChanged(records: [])
             return
         }
         do {
@@ -887,6 +904,7 @@ final class IOSMemoryPersistence {
             revision += 1
             loadState = .loaded
             lastErrorMessage = nil
+            markdownStore.syncIfChanged(records: kmpRecords)
         } catch {
             loadState = .unreadable
             lastErrorMessage = "无法读取现有记忆，已停止写入以保护原文件。"
@@ -925,6 +943,7 @@ final class IOSMemoryPersistence {
             revision += 1
             loadState = .loaded
             lastErrorMessage = nil
+            markdownStore.syncIfChanged(records: snapshot)
             return true
         } catch {
             print("[IOSMemoryPersistence] persist failed: \(error.localizedDescription)")
@@ -992,6 +1011,8 @@ private struct PersistedMemoryRecord: Codable {
     var createdAt: Int64
     var updatedAt: Int64
     var lastUsedAt: Int64?
+    var topicTitle: String?
+    var memberIds: [Int]
 
     init(
         id: Int,
@@ -1008,7 +1029,9 @@ private struct PersistedMemoryRecord: Codable {
         archived: Bool,
         createdAt: Int64,
         updatedAt: Int64,
-        lastUsedAt: Int64?
+        lastUsedAt: Int64?,
+        topicTitle: String?,
+        memberIds: [Int]
     ) {
         self.id = id
         self.content = content
@@ -1025,11 +1048,14 @@ private struct PersistedMemoryRecord: Codable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastUsedAt = lastUsedAt
+        self.topicTitle = topicTitle
+        self.memberIds = memberIds
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, content, scope, kind, assistantId, sourceConversationId, sourceMessageIds
         case supersedesIds, expiresAt, confidence, pinned, archived, createdAt, updatedAt, lastUsedAt
+        case topicTitle, memberIds
     }
 
     init(from decoder: Decoder) throws {
@@ -1055,6 +1081,8 @@ private struct PersistedMemoryRecord: Codable {
         createdAt = try c.decodeIfPresent(Int64.self, forKey: .createdAt) ?? 0
         updatedAt = try c.decodeIfPresent(Int64.self, forKey: .updatedAt) ?? createdAt
         lastUsedAt = try c.decodeIfPresent(Int64.self, forKey: .lastUsedAt)
+        topicTitle = try c.decodeIfPresent(String.self, forKey: .topicTitle)
+        memberIds = try c.decodeIfPresent([Int].self, forKey: .memberIds) ?? []
     }
 
     static func from(_ record: MemoryRecord) -> PersistedMemoryRecord {
@@ -1077,7 +1105,9 @@ private struct PersistedMemoryRecord: Codable {
             archived: record.archived,
             createdAt: record.createdAt,
             updatedAt: record.updatedAt,
-            lastUsedAt: record.lastUsedAt?.int64Value
+            lastUsedAt: record.lastUsedAt?.int64Value,
+            topicTitle: record.topicTitle,
+            memberIds: record.memberIds.map { Int(truncating: $0) }
         )
     }
 
@@ -1093,6 +1123,15 @@ private struct PersistedMemoryRecord: Codable {
                 throw DecodingError.dataCorrupted(.init(
                     codingPath: [],
                     debugDescription: "Memory supersedesIds contains a value outside the 32-bit signed integer range"
+                ))
+            }
+            return KotlinInt(value: exactValue)
+        }
+        let exactMemberIds = try memberIds.map { value -> KotlinInt in
+            guard let exactValue = Int32(exactly: value) else {
+                throw DecodingError.dataCorrupted(.init(
+                    codingPath: [],
+                    debugDescription: "Memory memberIds contains a value outside the 32-bit signed integer range"
                 ))
             }
             return KotlinInt(value: exactValue)
@@ -1114,7 +1153,9 @@ private struct PersistedMemoryRecord: Codable {
             archived: archived,
             createdAt: createdAt,
             updatedAt: updatedAt,
-            lastUsedAt: lastUsedAt.map { KotlinLong(value: $0) }
+            lastUsedAt: lastUsedAt.map { KotlinLong(value: $0) },
+            topicTitle: topicTitle,
+            memberIds: exactMemberIds
         )
     }
 }

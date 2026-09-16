@@ -98,6 +98,85 @@ final class IOSMemoryExtractionTests: XCTestCase {
         }
     }
 
+    func testUpdateActionRewritesInjectedRecordInPlace() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我后来改成只喝冰美式了。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let prior = IosMemoryFactory.shared.snapshotRecords()
+            let existing = IosMemoryFactory.shared.addDetailedMemory(
+                scope: .longTerm, kind: .routine, content: "喜欢热美式。",
+                assistantId: IosMemoryFactory.shared.LONG_TERM_MEMORY_ID,
+                sourceConversationId: nil, sourceMessageIds: [], supersedesIds: [],
+                expiresAt: nil, confidence: 1, pinned: false, archived: false
+            )
+            XCTAssertTrue(f.persistence.persist(previousRecords: prior))
+            let provider = StubProvider { prompt, _ in
+                XCTAssertTrue(prompt.contains("existing_memories"))
+                XCTAssertTrue(prompt.contains("\"id\":\(Int(existing.id))"))
+                return Self.update(content: "我后来改成只喝冰美式了。", target: Int(existing.id), source: user)
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
+            await coordinator.processPending()
+
+            let records = f.persistence.records
+            XCTAssertEqual(records.count, 1, "更新必须原地生效，不新增条目")
+            XCTAssertEqual(records.first?.id, existing.id)
+            XCTAssertEqual(records.first?.content, "我后来改成只喝冰美式了。")
+            XCTAssertEqual(records.first?.sourceMessageIds, [user.id.toHexDashString()])
+            XCTAssertEqual(f.audit.records.first?.action, "edit")
+            XCTAssertEqual(f.audit.records.first?.status, "auto_saved")
+            XCTAssertTrue(coordinator.statusMessage.contains("更新 1 条"))
+        }
+    }
+
+    func testStaleUpdateTargetFallsBackToAdd() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我后来改成只喝冰美式了。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let prior = IosMemoryFactory.shared.snapshotRecords()
+            let existing = IosMemoryFactory.shared.addDetailedMemory(
+                scope: .longTerm, kind: .routine, content: "喜欢热美式。",
+                assistantId: IosMemoryFactory.shared.LONG_TERM_MEMORY_ID,
+                sourceConversationId: nil, sourceMessageIds: [], supersedesIds: [],
+                expiresAt: nil, confidence: 1, pinned: false, archived: false
+            )
+            XCTAssertTrue(f.persistence.persist(previousRecords: prior))
+            let provider = StubProvider { _, _ in
+                // 模型调用期间目标被并发修改：updatedAt 变化使 CAS 失败。
+                _ = IosMemoryFactory.shared.updateContent(id: existing.id, content: "喜欢热美式，少糖。")
+                return Self.update(content: "我后来改成只喝冰美式了。", target: Int(existing.id), source: user)
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
+            await coordinator.processPending()
+
+            let records = f.persistence.records
+            XCTAssertEqual(records.count, 2)
+            XCTAssertEqual(records.first(where: { $0.id == existing.id })?.content, "喜欢热美式，少糖。")
+            XCTAssertTrue(records.contains { $0.content == "我后来改成只喝冰美式了。" && $0.id != existing.id })
+        }
+    }
+
+    func testHallucinatedUpdateTargetFallsBackToAdd() async throws {
+        try await withFixture { f in
+            let user = UIMessage.companion.user(prompt: "我习惯用中文交流。")
+            _ = await f.store.saveCurrent(messages: [user])
+            let id = try XCTUnwrap(f.store.currentConversation?.id)
+            let provider = StubProvider { _, _ in
+                Self.update(content: "我习惯用中文交流。", target: 999_999, source: user)
+            }
+            let coordinator = f.coordinator(provider: provider)
+            coordinator.enqueue(conversationId: id, baseline: [user], completed: [user])
+            await coordinator.processPending()
+
+            XCTAssertEqual(f.persistence.records.map(\.content), ["我习惯用中文交流。"])
+            XCTAssertEqual(f.audit.records.first?.action, "create")
+        }
+    }
+
     @MainActor
     private struct Fixture {
         let defaults: UserDefaults
@@ -153,6 +232,14 @@ final class IOSMemoryExtractionTests: XCTestCase {
         settings.setMemoryExtractionSettings(enabled: true, runOnlyOnCharging: false)
         try await body(Fixture(defaults: defaults, settings: settings, store: store, persistence: persistence,
                                audit: IOSMemoryWriteAuditStore(userDefaults: defaults), memoryURL: memoryURL))
+    }
+
+    private static func update(content: String, target: Int, source: UIMessage) -> String {
+        let item: [String: Any] = ["action": "update", "updateMemoryId": target, "content": content,
+                                   "scope": "long_term", "kind": "user",
+                                   "sourceMessageId": source.id.toHexDashString(), "sensitive": false]
+        let data = try! JSONSerialization.data(withJSONObject: ["memories": [item]])
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func output(content: String, source: UIMessage, duplicate: Bool = false) -> String {

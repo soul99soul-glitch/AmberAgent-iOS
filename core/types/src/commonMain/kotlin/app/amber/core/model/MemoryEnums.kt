@@ -71,7 +71,15 @@ enum class MemoryKind(val wireName: String) {
     ROUTINE("routine"),
 
     @SerialName("note")
-    NOTE("note");
+    NOTE("note"),
+
+    /**
+     * Aggregation record produced by memory consolidation: `content` holds the
+     * topic summary, `topicTitle`/`memberIds` carry the grouping. Never
+     * writable through extraction, memory_tool, or the edit page.
+     */
+    @SerialName("topic")
+    TOPIC("topic");
 
     companion object {
         fun fromWireName(value: String?): MemoryKind =

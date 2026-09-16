@@ -148,6 +148,13 @@ struct AppShell: View {
                 return policy != .disabled
             }
         )
+        IOSMemoryConsolidationCoordinator.shared.configure(
+            settings: sharedSettingsStore,
+            writesEnabled: {
+                guard let policy = localToolExecutor.permissionPolicy(capabilityId: "ios.agent.memory_write") else { return false }
+                return policy != .disabled
+            }
+        )
     }
 
     var body: some View {
@@ -217,9 +224,11 @@ struct AppShell: View {
         .task {
             await storeCoordinator.start()
             IOSMemoryExtractionCoordinator.shared.resume()
+            IOSMemoryConsolidationCoordinator.shared.resume()
         }
         .onChange(of: chatViewModel.isLoading) { _, isLoading in
             if !isLoading { IOSMemoryExtractionCoordinator.shared.resume() }
+            if !isLoading { IOSMemoryConsolidationCoordinator.shared.resume() }
             guard !isLoading, pendingAppDeepLinkDestination != nil else { return }
             Task { await openPendingAppDeepLinkIfReady() }
         }
@@ -241,6 +250,7 @@ struct AppShell: View {
             if phase == .active {
                 Task { await storeCoordinator.refresh() }
                 IOSMemoryExtractionCoordinator.shared.resume()
+                IOSMemoryConsolidationCoordinator.shared.resume()
             }
         }
         .onChange(of: sharedSettings.revision) { _, _ in

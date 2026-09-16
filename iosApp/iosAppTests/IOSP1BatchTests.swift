@@ -68,7 +68,9 @@ final class IOSP1BatchTests: XCTestCase {
             archived: false,
             createdAt: updatedAt,
             updatedAt: updatedAt,
-            lastUsedAt: KotlinLong(value: updatedAt)
+            lastUsedAt: KotlinLong(value: updatedAt),
+            topicTitle: nil,
+            memberIds: []
         )
     }
 }

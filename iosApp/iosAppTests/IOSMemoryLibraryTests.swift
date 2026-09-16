@@ -171,7 +171,9 @@ final class IOSMemoryLibraryTests: XCTestCase {
             archived: archived,
             createdAt: 1,
             updatedAt: updatedAt,
-            lastUsedAt: nil
+            lastUsedAt: nil,
+            topicTitle: nil,
+            memberIds: []
         )
     }
 }

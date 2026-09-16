@@ -398,6 +398,16 @@ final class IOSSharedSettingsStore {
         )
     }
 
+    func setMemoryDreamSettings(maintenanceEnabled: Bool? = nil, modelEnabled: Bool? = nil) {
+        restoreSnapshot(
+            IosSettingsMutations.shared.setMemoryDreamSettings(
+                settings: snapshot,
+                maintenanceEnabled: maintenanceEnabled.map { KotlinBoolean(value: $0) },
+                modelEnabled: modelEnabled.map { KotlinBoolean(value: $0) }
+            )
+        )
+    }
+
     func setAgentSoulMarkdown(_ markdown: String) {
         restoreSnapshot(
             IosSettingsMutations.shared.setAgentSoulMarkdown(settings: snapshot, markdown: markdown)

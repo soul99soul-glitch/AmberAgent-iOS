@@ -148,6 +148,28 @@ final class IOSMemoryPersistenceTests: XCTestCase {
         }
     }
 
+    func testTopicFieldsSurviveRoundTrip() throws {
+        try withIsolatedPersistence { persistence, _ in
+            persistence.load()
+            let previousRecords = IosMemoryFactory.shared.snapshotRecords()
+            IosMemoryFactory.shared.upsertTopicRecord(
+                title: "咖啡偏好",
+                summary: "手冲为主",
+                memberIds: [3, 7].map { KotlinInt(value: Int32($0)) }
+            )
+            XCTAssertTrue(persistence.persist(previousRecords: previousRecords))
+            IosMemoryFactory.shared.replaceAll(records: [])
+
+            persistence.load()
+
+            let topic = try XCTUnwrap(persistence.records.first)
+            XCTAssertEqual(topic.kind, .topic)
+            XCTAssertEqual(topic.topicTitle, "咖啡偏好")
+            XCTAssertEqual(topic.memberIds.map { Int(truncating: $0) }, [3, 7])
+            XCTAssertEqual(topic.content, "手冲为主")
+        }
+    }
+
     private func withIsolatedPersistence(
         initialData: Data? = nil,
         _ body: (IOSMemoryPersistence, URL) throws -> Void
@@ -184,7 +206,9 @@ final class IOSMemoryPersistenceTests: XCTestCase {
             archived: false,
             createdAt: 1,
             updatedAt: 1,
-            lastUsedAt: nil
+            lastUsedAt: nil,
+            topicTitle: nil,
+            memberIds: []
         )
     }
 }

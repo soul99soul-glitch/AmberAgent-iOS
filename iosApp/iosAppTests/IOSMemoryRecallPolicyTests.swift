@@ -213,6 +213,87 @@ final class IOSMemoryRecallPolicyTests: XCTestCase {
         XCTAssertEqual(IosMemoryFactory.shared.getAllRecords().first?.confidence, 1)
     }
 
+    func testTopicRecordsRankMidTierAndMatchOnTitle() {
+        let records = [
+            record(id: 1, content: "unrelated note", scope: .longTerm, kind: .note, updatedAt: 5),
+            record(id: 2, content: "pinned 咖啡机", scope: .longTerm, kind: .note, pinned: true, updatedAt: 5),
+            record(id: 3, content: "咖啡豆只买浅烘。", scope: .longTerm, kind: .note, updatedAt: 5),
+            topicRecord(id: 9, title: "咖啡冲煮偏好", summary: "手冲为主，浅烘。", memberIds: [2, 3]),
+        ]
+        let runtime = runtime(maxItems: 10, maxPromptChars: 2_000)
+
+        let matched = ChatMemoryContextBuilder.contextPromptResult(
+            records: records,
+            runtime: runtime,
+            queryText: "咖啡",
+            now: 100
+        )
+        // pinned(≥100) > 命中普通记录 > topic 固定中档(30)；id=1 无重叠被过滤。
+        XCTAssertEqual(matched.records.map(\.id), [2, 3, 9])
+        XCTAssertTrue(matched.prompt?.contains("[topic] 咖啡冲煮偏好") == true)
+
+        let unmatched = ChatMemoryContextBuilder.contextPromptResult(
+            records: records,
+            runtime: runtime,
+            queryText: "completely different",
+            now: 100
+        )
+        XCTAssertEqual(unmatched.records.map(\.id), [2], "主题记录不参与 always-eligible 常驻")
+    }
+
+    @MainActor
+    func testToolWritesRejectTopicRecords() throws {
+        let previousRecords = IosMemoryFactory.shared.snapshotRecords()
+        defer { IosMemoryFactory.shared.replaceAll(records: previousRecords) }
+        IosMemoryFactory.shared.replaceAll(records: [
+            topicRecord(id: 20, title: "主题", summary: "s", memberIds: [1]),
+        ])
+        let runtime = runtime()
+
+        let editOutput = IOSMemoryToolExecutor.execute(
+            input: #"{"action":"edit","id":20,"content":"改写"}"#,
+            runtime: runtime,
+            writePolicy: .allow
+        )
+        let deleteOutput = IOSMemoryToolExecutor.execute(
+            input: #"{"action":"delete","id":20}"#,
+            runtime: runtime,
+            writePolicy: .allow
+        )
+        let createOutput = IOSMemoryToolExecutor.execute(
+            input: #"{"action":"create","scope":"long_term","kind":"topic","content":"手动主题"}"#,
+            runtime: runtime,
+            writePolicy: .allow
+        )
+
+        XCTAssertTrue(editOutput.contains("managed automatically"), editOutput)
+        XCTAssertTrue(deleteOutput.contains("managed automatically"), deleteOutput)
+        XCTAssertTrue(createOutput.contains("invalid memory kind"), createOutput)
+        XCTAssertEqual(IosMemoryFactory.shared.getAllRecords().first?.content, "s")
+    }
+
+    private func topicRecord(id: Int32, title: String, summary: String, memberIds: [Int32]) -> MemoryRecord {
+        MemoryRecord(
+            id: id,
+            content: summary,
+            scope: .longTerm,
+            kind: .topic,
+            assistantId: "__long_term__",
+            sourceConversationId: nil,
+            sourceMessageIds: [],
+            supersedesIds: [],
+            expiresAt: nil,
+            confidence: 1,
+            pinned: false,
+            archived: false,
+            createdAt: 1,
+            updatedAt: 1,
+            lastUsedAt: nil,
+            topicTitle: title,
+            memberIds: memberIds.map { KotlinInt(value: $0) }
+        )
+    }
+
     private func runtime(
         maxItems: Int32 = 12,
         maxPromptChars: Int32 = 2_000
@@ -262,6 +343,7 @@ final class IOSMemoryRecallPolicyTests: XCTestCase {
         content: String,
         scope: MemoryScope,
         kind: MemoryKind,
+        pinned: Bool = false,
         createdAt: Int64? = nil,
         updatedAt: Int64 = 0,
         lastUsedAt: Int64? = nil
@@ -277,11 +359,13 @@ final class IOSMemoryRecallPolicyTests: XCTestCase {
             supersedesIds: [],
             expiresAt: nil,
             confidence: 1,
-            pinned: false,
+            pinned: pinned,
             archived: false,
             createdAt: createdAt ?? updatedAt,
             updatedAt: updatedAt,
-            lastUsedAt: lastUsedAt.map { KotlinLong(value: $0) }
+            lastUsedAt: lastUsedAt.map { KotlinLong(value: $0) },
+            topicTitle: nil,
+            memberIds: []
         )
     }
 }

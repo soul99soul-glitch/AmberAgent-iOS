@@ -41,10 +41,13 @@ enum IOSMemoryLibrary {
     ) -> [MemoryRecord] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         return records
+            // 已归档记录只保留审计与溯源，不出现在用户可见的活跃列表。
+            .filter { !$0.archived }
             .filter { scopeFilter.includes($0.scope) }
             .filter { record in
                 guard !trimmedQuery.isEmpty else { return true }
                 if record.content.localizedCaseInsensitiveContains(trimmedQuery) { return true }
+                if record.topicTitle?.localizedCaseInsensitiveContains(trimmedQuery) == true { return true }
                 if record.scope.wireName.localizedCaseInsensitiveContains(trimmedQuery) { return true }
                 if record.kind.wireName.localizedCaseInsensitiveContains(trimmedQuery) { return true }
                 if record.sourceConversationId?.localizedCaseInsensitiveContains(trimmedQuery) == true { return true }
@@ -103,6 +106,7 @@ enum IOSMemoryLibrary {
         case "project": "项目"
         case "reference": "资料"
         case "routine": "习惯"
+        case "topic": "主题"
         default: "笔记"
         }
     }
@@ -124,6 +128,7 @@ enum IOSMemoryLibrary {
         case "reference": "资料"
         case "routine": "习惯"
         case "note": "笔记"
+        case "topic": "主题"
         default: raw
         }
     }
@@ -134,6 +139,8 @@ enum IOSMemoryLibrary {
         case "edit", "update": "修改"
         case "delete", "remove": "删除"
         case "extract": "自动提炼"
+        case "consolidate": "自动整理"
+        case "topic": "主题聚合"
         default: raw
         }
     }

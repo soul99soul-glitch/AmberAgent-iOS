@@ -1127,7 +1127,9 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             archived: false,
             createdAt: 1,
             updatedAt: 1,
-            lastUsedAt: nil
+            lastUsedAt: nil,
+            topicTitle: nil,
+            memberIds: []
         )
         IosMemoryFactory.shared.replaceAll(records: [record])
 
@@ -1331,7 +1333,9 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             archived: true,
             createdAt: 1,
             updatedAt: 1,
-            lastUsedAt: nil
+            lastUsedAt: nil,
+            topicTitle: nil,
+            memberIds: []
         )
         IosMemoryFactory.shared.replaceAll(records: IosMemoryFactory.shared.getAllRecords() + [archived])
 

@@ -92,6 +92,9 @@ data class MemoryRecord(
     val createdAt: Long = 0L,
     val updatedAt: Long = 0L,
     val lastUsedAt: Long? = null,
+    /** Set only on [MemoryKind.TOPIC] aggregation records. */
+    val topicTitle: String? = null,
+    val memberIds: List<Int> = emptyList(),
 )
 
 @Serializable

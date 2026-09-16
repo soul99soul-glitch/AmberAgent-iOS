@@ -19,6 +19,7 @@ struct MemoryOverviewView: View {
     @State private var soulPreviousStore = IOSSoulPreviousStore()
     @State private var auditStore = IOSMemoryWriteAuditStore.shared
     @State private var extraction = IOSMemoryExtractionCoordinator.shared
+    @State private var consolidation = IOSMemoryConsolidationCoordinator.shared
     @State private var pendingDeleteRecord: MemoryRecord?
     @State private var operationError: String?
     @State private var showClearAuditConfirmation = false
@@ -44,6 +45,7 @@ struct MemoryOverviewView: View {
                         loadStatusSection
                         runtimeSection
                         extractionSection
+                        consolidationSection
                         pollutionSection
                         recordsSection
                         auditSection
@@ -109,7 +111,7 @@ struct MemoryOverviewView: View {
                     Text("灵魂与记忆")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(AmberTheme.foreground)
-                    Text(selectedTab == .soul ? "Amber 的核心指令" : "\(persistence.records.count) 条本地记忆")
+                    Text(selectedTab == .soul ? "Amber 的核心指令" : "\(persistence.records.filter { !$0.archived }.count) 条本地记忆")
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(AmberTheme.muted)
                 }
@@ -357,6 +359,61 @@ struct MemoryOverviewView: View {
                 .padding(.vertical, 10)
             }
         }
+    }
+
+    private var consolidationSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "记忆整理")
+            AmberFormGroup {
+                MemoryPresetRow(
+                    title: "自动整理记忆",
+                    subtitle: "合并重复、归档过期记录，并把长期保留的短期记忆升级。",
+                    isOn: Binding(
+                        get: { sharedSettings.agentRuntime.memoryWorker.dreamMaintenanceEnabled },
+                        set: {
+                            sharedSettings.setMemoryDreamSettings(maintenanceEnabled: $0)
+                            if $0 { consolidation.resume() }
+                        }
+                    )
+                )
+                MemoryDivider()
+                MemoryPresetRow(
+                    title: "主题聚合",
+                    subtitle: "整理时让模型把相关记忆归入主题，并同步生成 Markdown 文档。",
+                    isOn: Binding(
+                        get: { sharedSettings.agentRuntime.memoryWorker.dreamModelEnabled },
+                        set: {
+                            sharedSettings.setMemoryDreamSettings(modelEnabled: $0)
+                            if $0 { consolidation.resume() }
+                        }
+                    )
+                )
+                MemoryDivider()
+                HStack(spacing: 12) {
+                    Text(consolidation.statusMessage)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("立即整理") { consolidation.runNow() }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(consolidationCanRun ? AmberTheme.accent : AmberTheme.muted2)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .disabled(!consolidationCanRun)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+        }
+    }
+
+    /// 立即整理可用条件：不在运行中、持久化已就绪（.missing 也是可写的空库）、
+    /// 且至少一个整理开关打开——与 coordinator 的 isAnyDreamEnabled 门禁一致。
+    private var consolidationCanRun: Bool {
+        let worker = sharedSettings.agentRuntime.memoryWorker
+        return !consolidation.isRunning
+            && (persistence.loadState == .loaded || persistence.loadState == .missing)
+            && (worker.dreamMaintenanceEnabled || worker.dreamModelEnabled)
     }
 
     private var runtimeSection: some View {
@@ -644,31 +701,61 @@ private struct MemoryRecordRow: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
 
+    private var isTopic: Bool { record.kind == .topic }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(record.content)
-                        .font(.body)
-                        .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(4)
-                    Text(IOSMemoryLibrary.sourceSummary(record))
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 10) {
+                if isTopic {
+                    // 主题记录由整理流程维护：点按进入只读详情，不提供编辑入口。
                     Button(action: onEdit) {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accent)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(record.topicTitle ?? record.content)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                                .lineLimit(2)
+                            if record.topicTitle != nil, !record.content.isEmpty {
+                                Text(record.content)
+                                    .font(.subheadline)
+                                    .foregroundStyle(AmberTheme.foreground2)
+                                    .lineLimit(3)
+                            }
+                            Text("由记忆整理自动维护")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                                .lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("编辑记忆")
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+                    .accessibilityLabel("查看主题")
+                } else {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(record.content)
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(4)
+                        Text(IOSMemoryLibrary.sourceSummary(record))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                HStack(spacing: 10) {
+                    if !isTopic {
+                        Button(action: onEdit) {
+                            Image(systemName: "pencil")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(AmberTheme.accent)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("编辑记忆")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                    }
 
                     Button(role: .destructive, action: onDelete) {
                         Image(systemName: "trash")
@@ -686,6 +773,9 @@ private struct MemoryRecordRow: View {
                 // 不对用户暴露内部 id / 召回候选等控制台语义。
                 MemoryTag(text: IOSMemoryLibrary.scopeTitle(record.scope))
                 MemoryTag(text: IOSMemoryLibrary.kindTitle(record.kind))
+                if isTopic, !record.memberIds.isEmpty {
+                    MemoryTag(text: "含 \(record.memberIds.count) 条", tint: AmberTheme.accent)
+                }
                 if record.pinned {
                     MemoryTag(text: "置顶", tint: AmberTheme.accentAmber)
                 }

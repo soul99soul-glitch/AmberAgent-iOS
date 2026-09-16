@@ -30,6 +30,7 @@ struct MemoryEditView: View {
                     header
                     sourceSection
                     contentSection
+                    membersSection
                     classificationSection
                     actionsSection
                 }
@@ -59,7 +60,7 @@ struct MemoryEditView: View {
             Spacer()
 
             VStack(spacing: 2) {
-                Text(recordId == nil ? "新增记忆" : "编辑记忆")
+                Text(isTopicRecord ? "主题" : (recordId == nil ? "新增记忆" : "编辑记忆"))
                     .font(.title2.weight(.bold))
                     .foregroundStyle(AmberTheme.foreground)
                 Text(recordId.map { "#\($0)" } ?? "本地保存")
@@ -84,7 +85,13 @@ struct MemoryEditView: View {
             VStack(spacing: 0) {
                 AmberSectionLabel(text: "来源")
                 AmberFormGroup {
-                    MemoryPreviewLine(label: "来源", value: IOSMemoryLibrary.sourceSummary(existingRecord))
+                    if isTopicRecord {
+                        MemoryPreviewLine(label: "来源", value: "由记忆整理自动维护")
+                        MemoryEditDivider()
+                        MemoryPreviewLine(label: "成员", value: "\(topicMembers.count) 条")
+                    } else {
+                        MemoryPreviewLine(label: "来源", value: IOSMemoryLibrary.sourceSummary(existingRecord))
+                    }
                     MemoryEditDivider()
                     MemoryPreviewLine(
                         label: "置信度",
@@ -105,6 +112,44 @@ struct MemoryEditView: View {
         }
     }
 
+    /// 主题详情：列出成员记忆的正文，只读；与来源行的计数共用同一解析结果，
+    /// 只统计仍能解析且未归档的成员。
+    private var topicMembers: [MemoryRecord] {
+        guard let topic = existingRecord, isTopicRecord else { return [] }
+        let memberIds = Set(topic.memberIds.map { Int(truncating: $0) })
+        return persistence.records.filter { memberIds.contains(Int($0.id)) && !$0.archived }
+    }
+
+    @ViewBuilder
+    private var membersSection: some View {
+        if isTopicRecord, !topicMembers.isEmpty {
+            VStack(spacing: 0) {
+                AmberSectionLabel(text: "成员记忆")
+                AmberFormGroup {
+                    ForEach(Array(topicMembers.enumerated()), id: \.element.id) { index, member in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(member.content)
+                                .font(.subheadline)
+                                .foregroundStyle(AmberTheme.foreground)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text("\(IOSMemoryLibrary.scopeTitle(member.scope)) · \(IOSMemoryLibrary.kindTitle(member.kind))")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        if index < topicMembers.count - 1 {
+                            MemoryEditDivider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var isTopicRecord: Bool { existingRecord?.kind == .topic }
+
     private var contentSection: some View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "内容")
@@ -117,6 +162,7 @@ struct MemoryEditView: View {
                     .scrollContentBackground(.hidden)
                     .padding(12)
                     .frame(minHeight: 176)
+                    .disabled(isTopicRecord)
 
                 if text.isEmpty {
                     Text("写一条偏好、事实或项目上下文")
@@ -134,6 +180,15 @@ struct MemoryEditView: View {
                     .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
             }
             .padding(.horizontal, 16)
+
+            if isTopicRecord {
+                Text("主题由记忆整理自动维护，仅支持查看与删除。")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 6)
+            }
 
             if let saveError {
                 Text(saveError)
@@ -163,6 +218,7 @@ struct MemoryEditView: View {
                         value: scope.title
                     )
                 }
+                .disabled(isTopicRecord)
 
                 MemoryEditDivider()
 
@@ -189,6 +245,7 @@ struct MemoryEditView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .disabled(isTopicRecord)
                 .accessibilityLabel("置顶")
                 .accessibilityValue(pinned ? "已置顶" : "未置顶")
                 .accessibilityAddTraits(.isButton)
@@ -242,6 +299,7 @@ struct MemoryEditView: View {
 
     private var canSave: Bool {
         persistence.loadState != .unreadable &&
+            !isTopicRecord &&
             (recordId == nil || existingRecord != nil) &&
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -289,6 +347,10 @@ struct MemoryEditView: View {
                 saveError = "保存失败：这条记忆已在其他地方更新，请返回后重新打开。"
                 return
             }
+            guard current.kind != .topic else {
+                saveError = "主题由记忆整理自动维护，不支持编辑。"
+                return
+            }
             let updatedAt = nowMillis()
             let updated = MemoryRecord(
                 id: existingRecord.id,
@@ -305,7 +367,9 @@ struct MemoryEditView: View {
                 archived: current.archived,
                 createdAt: current.createdAt,
                 updatedAt: updatedAt,
-                lastUsedAt: current.lastUsedAt
+                lastUsedAt: current.lastUsedAt,
+                topicTitle: current.topicTitle,
+                memberIds: current.memberIds
             )
             let previousRecords = persistence.records
             guard let saved = IosMemoryFactory.shared.updateRecord(record: updated) else {

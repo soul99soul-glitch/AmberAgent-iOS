@@ -1923,7 +1923,9 @@ final class IOSAgentToolEngineTests: XCTestCase {
             archived: false,
             createdAt: updatedAt,
             updatedAt: updatedAt,
-            lastUsedAt: nil
+            lastUsedAt: nil,
+            topicTitle: nil,
+            memberIds: []
         )
     }
 }

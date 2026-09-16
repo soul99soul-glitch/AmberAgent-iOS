@@ -1462,6 +1462,22 @@ object IosSettingsMutations {
         )
     }
 
+    fun setMemoryDreamSettings(
+        settings: Settings,
+        maintenanceEnabled: Boolean?,
+        modelEnabled: Boolean?,
+    ): Settings {
+        val worker = settings.agentRuntime.memoryWorker
+        return settings.copy(
+            agentRuntime = settings.agentRuntime.copy(
+                memoryWorker = worker.copy(
+                    dreamMaintenanceEnabled = maintenanceEnabled ?: worker.dreamMaintenanceEnabled,
+                    dreamModelEnabled = modelEnabled ?: worker.dreamModelEnabled,
+                )
+            )
+        )
+    }
+
     fun setAgentSoulMarkdown(settings: Settings, markdown: String): Settings {
         return settings.copy(
             agentRuntime = settings.agentRuntime.copy(

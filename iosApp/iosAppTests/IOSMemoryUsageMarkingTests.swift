@@ -117,7 +117,9 @@ final class IOSMemoryUsageMarkingTests: XCTestCase {
                 archived: record.archived,
                 createdAt: record.createdAt,
                 updatedAt: record.updatedAt,
-                lastUsedAt: KotlinLong(value: 999)
+                lastUsedAt: KotlinLong(value: 999),
+                topicTitle: record.topicTitle,
+                memberIds: record.memberIds
             )
         }
 
@@ -223,7 +225,9 @@ final class IOSMemoryUsageMarkingTests: XCTestCase {
             archived: false,
             createdAt: updatedAt,
             updatedAt: updatedAt,
-            lastUsedAt: nil
+            lastUsedAt: nil,
+            topicTitle: nil,
+            memberIds: []
         )
     }
 }

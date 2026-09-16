@@ -47,6 +47,48 @@ class IosSettingsMutationsMemoryTest {
     }
 
     @Test
+    fun memoryDreamSettingsChangeOnlyDreamSwitches() {
+        val originalWorker = MemoryWorkerSetting(
+            enabled = true,
+            dreamMaintenanceEnabled = true,
+            dreamModelEnabled = false,
+            runOnlyOnCharging = true,
+        )
+        val settings = Settings(
+            agentRuntime = Settings().agentRuntime.copy(memoryWorker = originalWorker)
+        )
+
+        val updated = IosSettingsMutations.setMemoryDreamSettings(
+            settings = settings,
+            maintenanceEnabled = false,
+            modelEnabled = true,
+        )
+
+        assertEquals(
+            originalWorker.copy(dreamMaintenanceEnabled = false, dreamModelEnabled = true),
+            updated.agentRuntime.memoryWorker
+        )
+    }
+
+    @Test
+    fun memoryDreamSettingsKeepUnsetSide() {
+        val settings = Settings(
+            agentRuntime = Settings().agentRuntime.copy(
+                memoryWorker = MemoryWorkerSetting(dreamMaintenanceEnabled = false, dreamModelEnabled = false)
+            )
+        )
+
+        val updated = IosSettingsMutations.setMemoryDreamSettings(
+            settings = settings,
+            maintenanceEnabled = null,
+            modelEnabled = true,
+        )
+
+        assertEquals(false, updated.agentRuntime.memoryWorker.dreamMaintenanceEnabled)
+        assertEquals(true, updated.agentRuntime.memoryWorker.dreamModelEnabled)
+    }
+
+    @Test
     fun changingChargingSettingKeepsIndependentExtractionSwitches() {
         val originalWorker = MemoryWorkerSetting(enabled = true, extractionEnabled = false)
         val settings = Settings(
