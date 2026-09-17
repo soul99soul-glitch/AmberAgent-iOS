@@ -23,7 +23,6 @@ final class IOSJevContextSelectionService {
 
     struct RunIdentity: Sendable {
         var runId: String?
-        var turnBudgetKey: String
     }
 
     struct Block: Equatable {
@@ -33,23 +32,25 @@ final class IOSJevContextSelectionService {
         var keepReason: String?
     }
 
-    /// 可安全重读的只读检索类工具前缀（写入/提交类输出一律不筛）。
+    /// 可安全重读的只读检索类工具（写入/提交类与 MCP/http 通用调用一律不筛：
+    /// 其副作用语义无法静态判定，重读引用可能诱导副作用重放）。
     private static let rereadableToolPrefixes: Set<String> = [
         "workspace_file_read", "file_read", "workspace_artifact_read",
         "scrape_web", "search_web", "wm_extract", "wm_observe",
-        "session_read", "session_search", "conversation_search", "conversation_expand",
+        "session_read", "session_search",
         "workspace_file_search", "file_search", "workspace_file_list", "file_list",
-        "mcp_call", "http_request",
     ]
 
-    /// 用户明确要求全文的标记（出现即整轮不筛）。
+    /// 用户明确要求全文的标记（出现即整轮不筛；中英文覆盖）。
     private static let fullTextDemandMarkers: [String] = [
-        "全文", "逐字", "原文", "完整地", "完整的", "完整的输出", "逐段", "不要省略", "不要删减",
+        "全文", "逐字", "原文", "完整地", "完整的", "逐段", "不要省略", "不要删减",
+        "verbatim", "full text", "word for word", "don't truncate", "do not truncate",
     ]
 
-    /// 分页/续取 token 的保守信号（出现则该块必须保留）。
+    /// 分页/续取 token 的保守信号（出现则该块必须保留；含 JSON 形态）。
     private static let continuationTokenMarkers: [String] = [
-        "next_offset", "next_page", "page_token", "continuation", "cursor=", "has_more",
+        "next_offset", "next_page", "nextpage", "page_token", "pagetoken",
+        "continuation", "cursor", "has_more", "next_token",
     ]
 
     struct Dependencies {
@@ -58,7 +59,8 @@ final class IOSJevContextSelectionService {
     }
 
     private let deps: Dependencies
-    private var currentTurnHash: String?
+    /// shadow 已观测记录：(turnBudgetKey, 投影输入哈希)。turnBudgetKey 即 runId。
+    private var shadowObservedByTurn: [String: String] = [:]
 
     init(deps: Dependencies) {
         self.deps = deps
@@ -87,8 +89,7 @@ final class IOSJevContextSelectionService {
 
         guard let (targetMessageIndex, toolPart, blocks) = candidateBlocks(
             in: messages,
-            taskText: taskText,
-            policy: settings.policy
+            taskText: taskText
         ) else { return messages }
 
         let requiredScopes: Set<IOSJevDataScope> = [.selectedTaskText, .toolOutput]
@@ -107,15 +108,20 @@ final class IOSJevContextSelectionService {
         }
         let context = IOSJevRunContext(
             runId: identity.runId,
-            turnBudgetKey: identity.turnBudgetKey,
+            turnBudgetKey: identity.runId ?? "run",
             inputHash: IOSJevToolDiscoveryService.stableHash(state)
         )
 
-        // shadow：只观测，不改请求。同一轮不重复发起（工具循环逐轮复用）。
+        // shadow：只观测，不改请求。同一轮内同内容不重复发起。
         if mode == .shadow {
-            let turnHash = context.inputHash
-            guard currentTurnHash != turnHash else { return messages }
-            currentTurnHash = turnHash
+            let turnKey = identity.runId ?? "run"
+            if let observed = shadowObservedByTurn[turnKey], observed == context.inputHash {
+                return messages
+            }
+            shadowObservedByTurn[turnKey] = context.inputHash
+            if shadowObservedByTurn.count > 16 {
+                shadowObservedByTurn.removeAll(keepingCapacity: true)
+            }
             let coordinator = deps.coordinator
             Task(priority: .utility) {
                 _ = await coordinator.decide(
@@ -162,7 +168,6 @@ final class IOSJevContextSelectionService {
     func candidateBlocks(
         in messages: [UIMessage],
         taskText: String,
-        policy: IOSJevPolicy,
         minOutputChars: Int = 8_000
     ) -> (messageIndex: Int, toolPart: UIMessagePart.Tool, blocks: [Block])? {
         for messageIndex in messages.indices.reversed() {
@@ -172,7 +177,11 @@ final class IOSJevContextSelectionService {
                 guard let tool = message.parts[partIndex] as? UIMessagePart.Tool else { continue }
                 guard tool.isExecuted, !tool.output.isEmpty else { continue } // 已完成
                 guard Self.isRereadableTool(tool.toolName) else { continue }
-                let text = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+                // 多 Text part（如追加的 loop-guard 提醒）索引无法与投影侧对齐，
+                // v1 保守跳过。
+                let textParts = tool.output.compactMap { $0 as? UIMessagePart.Text }
+                guard textParts.count == 1, let onlyText = textParts.first else { continue }
+                let text = onlyText.text
                 guard text.count > minOutputChars else { continue }
                 // 已投影过（含 marker）→ 幂等跳过。
                 guard !Self.containsOmissionMarker(text) else { continue }
@@ -189,7 +198,7 @@ final class IOSJevContextSelectionService {
     }
 
     static func isRereadableTool(_ name: String) -> Bool {
-        rereadableToolPrefixes.contains(name) || name.hasPrefix("mcp__") // mcp 直调输出按可重读对待（只读语义由权限层保证）
+        rereadableToolPrefixes.contains(name)
     }
 
     // MARK: Splitting（结构块不拆坏）
@@ -232,9 +241,17 @@ final class IOSJevContextSelectionService {
 
     static func mustKeepSignal(toolName: String, text: String) -> (Bool, String?) {
         let lower = text.lowercased()
-        // 错误/失败输出。
-        if lower.contains("\"ok\": false") || lower.contains("\"ok\":false") || lower.contains("\"status\": \"error\"") || lower.contains("\"status\":\"error\"") {
+        // 错误/失败输出（覆盖常见 JSON 与文本形态，含 MCP isError 约定）。
+        if lower.contains("\"ok\": false") || lower.contains("\"ok\":false")
+            || lower.contains("\"status\": \"error\"") || lower.contains("\"status\":\"error\"")
+            || lower.contains("\"iserror\": true") || lower.contains("\"iserror\":true")
+            || lower.contains("\"success\": false") || lower.contains("\"success\":false")
+            || lower.contains("error:") || lower.contains("traceback") || lower.contains("失败：") {
             return (true, "error_output")
+        }
+        // 未解决待办。
+        if lower.contains("todo") || lower.contains("待办") || lower.contains("未完成") {
+            return (true, "unresolved_todo")
         }
         // 未知执行状态（WebMount 等）。
         if lower.contains("unknown_after_action") || lower.contains("may_have_applied") {
@@ -281,7 +298,8 @@ final class IOSJevContextSelectionService {
     }
 
     static func containsOmissionMarker(_ text: String) -> Bool {
-        text.contains("[AmberAgent 上下文筛选：")
+        // 完整形状匹配，降低合法文本误判为"已投影"的概率（方向保守：宁可重判）。
+        text.contains("[AmberAgent 上下文筛选：") && text.contains("重新调用该工具。]")
     }
 
     static func projecting(

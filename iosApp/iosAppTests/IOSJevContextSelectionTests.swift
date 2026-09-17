@@ -53,7 +53,7 @@ final class IOSJevContextSelectionTests: XCTestCase {
     }
 
     private func identity() -> IOSJevContextSelectionService.RunIdentity {
-        .init(runId: "run", turnBudgetKey: "turn")
+        .init(runId: "run")
     }
 
     // MARK: Long output fixtures（20 组代表性场景，覆盖多页网页/代码表格/日志/
@@ -170,19 +170,84 @@ final class IOSJevContextSelectionTests: XCTestCase {
         XCTAssertEqual(reason, "continuation_token")
     }
 
+    func testMcpErrorShapesAreMustKeep() {
+        for text in ["{\"isError\": true, \"message\": \"denied\"}", "{\"success\": false}", "Traceback (most recent call last): ..."] {
+            let (keep, reason) = IOSJevContextSelectionService.mustKeepSignal(toolName: "session_read", text: text)
+            XCTAssertTrue(keep, "shape must be hard-keep: \(text)")
+            XCTAssertEqual(reason, "error_output")
+        }
+    }
+
+    func testMcpAndHttpRequestOutputsAreNotSelectable() {
+        let service = makeService(settings: makeSettings(mode: .active), transport: JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) })
+        for toolName in ["mcp_call", "mcp__github__get_file", "http_request"] {
+            let messages = toolMessage(toolName: toolName, text: LongOutputFactory.paragraphs(count: 14))
+            XCTAssertNil(service.candidateBlocks(in: messages, taskText: "研究"), "\(toolName) must not be selected (side-effect replay risk)")
+        }
+    }
+
+    func testMultiTextPartOutputIsNotSelectable() {
+        let service = makeService(settings: makeSettings(mode: .active), transport: JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) })
+        var messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        let message = messages[2]
+        var parts = message.parts
+        let tool = parts[0] as! UIMessagePart.Tool
+        let appended = UIMessagePart.Tool(
+            toolCallId: tool.toolCallId, toolName: tool.toolName, input: tool.input,
+            output: tool.output + [UIMessagePart.Text(text: "重复提醒：请勿重复调用。", metadata: nil)],
+            approvalState: tool.approvalState, streamIndex: tool.streamIndex, metadata: tool.metadata
+        )
+        parts[0] = appended
+        messages[2] = UIMessage(
+            id: message.id, role: message.role, parts: parts, annotations: message.annotations,
+            createdAt: message.createdAt, finishedAt: message.finishedAt, modelId: message.modelId,
+            usage: message.usage, translation: message.translation
+        )
+        XCTAssertNil(service.candidateBlocks(in: messages, taskText: "研究"), "multi-text-part outputs are skipped (index alignment)")
+    }
+
+    /// 真实恢复回路（stub 级）：投影产生 marker → 解析 marker 拿到来源 → 用来源
+    /// 定位原 toolCallId 重新读原文 → 内容一致。
+    func testRecoveryRoundTripFromMarkerToOriginalText() async {
+        let transport = JevStubTransport { _ in (self.scorePayload(["b0": 0.1, "b1": 0.1, "b2": 0.1, "b3": 2.8]), self.httpResponse(status: 200)) }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let originalText = LongOutputFactory.paragraphs(count: 14)
+        let messages = toolMessage(toolCallId: "call-recover", text: originalText)
+        let projected = await service.projectedMessages(messages, identity: identity())
+
+        let projectedTool = projected[2].parts.first as! UIMessagePart.Tool
+        let projectedText = (projectedTool.output.first as! UIMessagePart.Text).text
+        XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(projectedText))
+
+        // 从 marker 解析恢复引用。
+        let marker = projectedText
+            .split(separator: "\n")
+            .first { $0.contains("[AmberAgent 上下文筛选：") }!
+        let labelRange = marker.range(of: "toolCallId=")!
+        let extractedCallId = marker[labelRange.upperBound...].prefix(while: { $0.isLetter || $0.isNumber || $0 == "-" })
+        XCTAssertEqual(String(extractedCallId), "call-recover", "marker must reference the original tool call")
+        XCTAssertTrue(projectedText.contains("重新调用该工具"))
+
+        // 恢复 = 用相同参数重读：模拟工具重跑返回完整原文，内容与 canonical 一致。
+        let originalTool = messages[2].parts.first as! UIMessagePart.Tool
+        XCTAssertEqual(String(originalTool.toolCallId), String(extractedCallId))
+        let rereadText = (originalTool.output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(rereadText, originalText, "re-invoking the original tool returns the complete text")
+    }
+
     // MARK: Candidate discovery
 
     func testShortOutputsAreNotProcessed() {
         let service = makeService(settings: makeSettings(mode: .active), transport: JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) })
         let messages = toolMessage(text: "短输出")
-        let candidate = service.candidateBlocks(in: messages, taskText: "研究", policy: IOSJevPolicy())
+        let candidate = service.candidateBlocks(in: messages, taskText: "研究")
         XCTAssertNil(candidate, "outputs <= 8,000 chars are not selected")
     }
 
     func testWriteToolsAreNotProcessed() {
         let service = makeService(settings: makeSettings(mode: .active), transport: JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) })
         let messages = toolMessage(toolName: "workspace_file_write", text: LongOutputFactory.paragraphs(count: 14))
-        XCTAssertNil(service.candidateBlocks(in: messages, taskText: "研究", policy: IOSJevPolicy()))
+        XCTAssertNil(service.candidateBlocks(in: messages, taskText: "研究"))
     }
 
     func testFullTextDemandSkipsEntireTurn() async {
@@ -237,7 +302,7 @@ final class IOSJevContextSelectionTests: XCTestCase {
         let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
         let projected = await service.projectedMessages(messages, identity: identity())
         // 已含 marker 的输出不再被选中（candidateBlocks 幂等跳过）。
-        let candidate = service.candidateBlocks(in: projected, taskText: "研究", policy: IOSJevPolicy())
+        let candidate = service.candidateBlocks(in: projected, taskText: "研究")
         XCTAssertNil(candidate, "projected output must not be re-selected")
     }
 

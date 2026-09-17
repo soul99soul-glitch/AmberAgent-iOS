@@ -34,7 +34,8 @@
 | 命令 | 结果 |
 |---|---|
 | `IOSJevContextSelectionTests` 单独运行 | **17/17 通过**（/tmp/jev_phase2.xcresult） |
-| 组合回归：ContextCompaction / AgentToolEngineKernelHook / RunSnapshot / ChatBackgroundExecution / MemoryCitation / ChatContextSnapshot + Phase 1 全部 5 套件 | **141/141 通过**（/tmp/jev_phase2_regression.xcresult） |
+| `IOSJevContextSelectionTests`（含审查新增用例） | **21/21 通过** |
+| 组合回归：ContextCompaction / AgentToolEngineKernelHook / RunSnapshot / ChatBackgroundExecution / MemoryCitation / ChatContextSnapshot + Phase 1 全部 5 套件 | **145/145 通过**（/tmp/jev_phase2_regression.xcresult） |
 | `xcodegen generate` | 已执行 |
 
 关键行为断言（测试覆盖）：
@@ -51,6 +52,17 @@
 - 模型/问题/策略版本：`jev-latest` 口径；`IOSJevPolicy(policyVersion=1)` 新增 `contextSelectionMinScore=1.0`（0-3 分量表）。
 - **无法给出真实任务输入 token 中位数降幅（目标 ≥20%）与费用对比**：无 API Key，active 流量未发生。机制级证据（结构块完整性、硬保留、幂等、恢复引用、失败回退）已由测试锁定。
 - 压缩摘要来源完整性：投影只发生在请求副本，压缩输入（compactConversation 读 historyMessages）仍为 canonical 消息——由接线位置与测试共同保证。
+
+## 独立审查与修复记录
+
+subagent 对抗审查（P0×1 / P1×4 / P2 多项）后已修复：
+- **P0 压缩摘要源污染**：投影原在压缩前执行，压缩（含持久化 compact）会把 marker 副本当摘要输入。已改为**投影移到压缩之后**——压缩输入回到 canonical 原文，预算截断也不再伤及 marker；代价是投影 savings 不参与压缩预算估算（保守方向）。
+- **P1 注入开销分母**：随投影后移自然消除（overhead 估算回到 canonical 口径）。
+- **P1 多 Text part 块索引错位**：loop-guard 追加提醒等多 part 输出会使块索引在投影时错位——v1 保守跳过多 Text part 输出（测试锁定）。
+- **P1 MCP/http 副作用重放**：mcp_call / mcp__* / http_request 移出可重读白名单（marker 会指示重调原工具，副作用语义无法静态判定即不启用隐藏；测试锁定）。
+- **P1 硬保留信号覆盖**：错误形态补 isError/success:false/Traceback/失败：；分页补 cursor/nextPageToken/next_token 等 JSON 形态；新增未解决待办（todo/待办/未完成）；全文需求补英文（verbatim/full text/word for word/don't truncate）。
+- **P2**：shadow 观测按轮去重（每 turnKey 记录输入哈希）；marker 识别改为完整形状（前缀+重读指示）降低合法文本误判；RunIdentity 精简；压缩截断 marker 的风险随投影后移消除。
+- **v1 边界（如实声明）**：只投影**最近一个**合格长输出——更早的长输出保持全文；有更新长输出出现时，旧输出回到全文（模型视角可能振荡，不影响正确性）。后台续轮与子任务引擎不重新投影（handoff 首请求带投影副本）。
 
 ## 阻塞、回退与下一步
 

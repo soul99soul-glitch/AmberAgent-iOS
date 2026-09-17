@@ -1814,25 +1814,9 @@ final class ChatKernelRunHost {
             requestMessages = plan.uploadMessages
         }
 
-        // Jev Phase 2（上下文筛选）：在压缩前对请求副本做长工具输出的筛选投影。
-        // 只影响本轮上传；canonical 历史、持久化与压缩摘要来源不受影响。
-        // off/shadow/失败返回原数组。随后 Phase 1 的记忆准备基于同一份投影结果。
-        let projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
-            requestMessages,
-            identity: IOSJevContextSelectionService.RunIdentity(
-                runId: runId,
-                turnBudgetKey: runId
-            )
-        )
-
-        // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
-        // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
-        // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(projectedMessages)
-        let runtimeBaseline = messagesByInjectingRuntimeContext(
-            projectedMessages,
-            memoryRecallOverride: memoryRecallOverride
-        )
+        // 注入开销估算基于 canonical 输入（无投影），保证压缩预算口径与
+        // 原行为一致（等价于 Phase 1 之前 Host 的估算方式）。
+        let runtimeBaseline = messagesByInjectingRuntimeContext(requestMessages)
         let runtimeOverheadTokens = max(
             IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimeBaseline) -
                 IOSContextCompactionCoordinator.estimatedTokensForRequest(requestMessages),
@@ -1842,7 +1826,7 @@ final class ChatKernelRunHost {
         let preparedUploadMessages: [UIMessage]
         do {
             preparedUploadMessages = try await IOSContextCompactionCoordinator.shared.prepareMessagesForRequest(
-                uploadMessages: projectedMessages,
+                uploadMessages: requestMessages,
                 conversationId: conversationId,
                 settings: settings,
                 params: effectiveParams,
@@ -1873,10 +1857,27 @@ final class ChatKernelRunHost {
             preparedUploadMessages,
             params: effectiveParams
         )
+
+        // Jev Phase 2（上下文筛选）：投影放在压缩之后——压缩摘要的来源始终是
+        // canonical 原文（P0），且压缩的预算截断不会伤及省略 marker；同时投影
+        // 只作用于请求副本，canonical 历史/持久化不受影响。off/shadow/失败
+        // 返回原数组。
+        let projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
+            promptedUploadMessages,
+            identity: IOSJevContextSelectionService.RunIdentity(
+                runId: runId
+            )
+        )
+
         // 每轮组装前刷新编排链接缓存(CG-C :2022-2024)。
         await bindings.refreshOrchestrationLinks()
+
+        // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
+        // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
+        // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
+        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(projectedMessages)
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
-            messagesByInjectingRuntimeContext(promptedUploadMessages, memoryRecallOverride: memoryRecallOverride),
+            messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
             effectiveParams.model,
             settings,
             conversationId
