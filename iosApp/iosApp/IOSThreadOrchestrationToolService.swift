@@ -472,13 +472,20 @@ final class IOSThreadOrchestrationToolService {
             )
         }
         let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
+        // Jev Phase 3: 异步判断在 resolve 前完成（等待期间不占模型名额）。
+        let jevPreferredModelIds = await jevPreferredModelIds(
+            arguments: args,
+            allowPoolForInheritedModel: true,
+            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration
+        )
         let launchResult = resolveAgentLaunch(
             arguments: args,
             providerSetting: providerSetting,
             params: params,
             toolExposureBridge: toolExposureBridge,
             inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
-            allowPoolForInheritedModel: true
+            allowPoolForInheritedModel: true,
+            jevPreferredModelIds: jevPreferredModelIds
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -626,13 +633,38 @@ final class IOSThreadOrchestrationToolService {
     /// not request a role/configuration and should inherit the parent's params.
     /// An empty `tool_scope` is intentionally preserved as an empty set: it is
     /// different from an omitted scope, which inherits the parent catalog.
+    /// Jev Phase 3（模型调度）：spawn/followup 的异步判断预计算。
+    /// 在占用任何名额之前 await；返回首选模型 id（空 = 走现有负载/轮转选择）。
+    /// 显式 model_id 的调用不判断（不覆盖用户的明确选择）。
+    private func jevPreferredModelIds(
+        arguments: [String: Any],
+        allowPoolForInheritedModel: Bool,
+        inherited: IOSOrchestrationAgentConfiguration?
+    ) async -> [String] {
+        guard Self.optionalTrimmedString(arguments["model_id"]) == nil else { return [] }
+        guard let settings = sharedSettingsProvider()?.snapshot else { return [] }
+        let configuredModelId = inherited?.modelId
+        let shouldSelectFromPool = configuredModelId == nil
+            || (allowPoolForInheritedModel && inherited != nil)
+        guard shouldSelectFromPool else { return [] }
+        let poolCandidates = sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) } ?? []
+        guard !poolCandidates.isEmpty else { return [] }
+        let taskName = Self.optionalTrimmedString(arguments["task_name"]) ?? ""
+        let message = Self.optionalTrimmedString(arguments["message"]) ?? ""
+        return await IOSJevModelRoutingService.shared.rankedPreferredModelIds(
+            taskText: "\(taskName)\n\(message)",
+            candidates: poolCandidates
+        )
+    }
+
     private func resolveAgentLaunch(
         arguments: [String: Any],
         providerSetting: ProviderSetting,
         params: TextGenerationParams,
         toolExposureBridge: IosToolExposureBridge?,
         inherited: IOSOrchestrationAgentConfiguration?,
-        allowPoolForInheritedModel: Bool = false
+        allowPoolForInheritedModel: Bool = false,
+        jevPreferredModelIds: [String] = []
     ) -> Result<ResolvedAgentLaunch, AgentLaunchError> {
         let settings = sharedSettingsProvider()?.snapshot
         let allowDynamic = settings?.agentRuntime.subAgent.allowDynamicSubAgents ?? true
@@ -766,8 +798,20 @@ final class IOSThreadOrchestrationToolService {
             let shouldSelectFromPool = configuredModelId == nil
                 || (allowPoolForInheritedModel && inheritedBase != nil)
             if shouldSelectFromPool, !poolCandidates.isEmpty {
+                // Jev Phase 3（模型调度）：异步判断在 resolveAgentLaunch 之前完成
+                //（见 jevPreferredModelIds 预计算参数），不占用任何名额；这里的
+                // select 仍在无 await 的同步临界段内。off/shadow/失败 → 空首选集，
+                // 走现有负载/轮转选择。
+                let refreshedPoolCandidates = settings.flatMap { settings in
+                    sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
+                } ?? []
+                let selectionPool = IOSJevModelRoutingService.preferredCandidates(
+                    from: refreshedPoolCandidates,
+                    rankedIds: jevPreferredModelIds
+                )
+                let rankedPool = selectionPool.isEmpty ? refreshedPoolCandidates : selectionPool
                 guard let selected = modelPool.select(
-                    from: poolCandidates,
+                    from: rankedPool,
                     activeModelCounts: backgroundCoordinator.activeModelCounts,
                     activeProviderCounts: backgroundCoordinator.activeProviderCounts
                 ) else {
@@ -1295,7 +1339,7 @@ final class IOSThreadOrchestrationToolService {
             toolExposureBridge: toolExposureBridge,
             inherited: inheritedConfiguration,
             allowPoolForInheritedModel: false
-        )
+        )  // 邮箱恢复路径无 task 文本，模型调度走现有选择
         let launch: ResolvedAgentLaunch
         switch launchResult {
         case .success(let value):
@@ -1580,13 +1624,20 @@ final class IOSThreadOrchestrationToolService {
             currentMessages = conversation.currentMessages
         }
         let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
+        // Jev Phase 3: 异步判断在 resolve 前完成（等待期间不占模型名额）。
+        let jevPreferredModelIds = await jevPreferredModelIds(
+            arguments: args,
+            allowPoolForInheritedModel: false,
+            inherited: inheritedConfiguration
+        )
         let launchResult = resolveAgentLaunch(
             arguments: args,
             providerSetting: providerSetting,
             params: params,
             toolExposureBridge: toolExposureBridge,
             inherited: inheritedConfiguration,
-            allowPoolForInheritedModel: false
+            allowPoolForInheritedModel: false,
+            jevPreferredModelIds: jevPreferredModelIds
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {

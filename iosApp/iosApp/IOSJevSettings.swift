@@ -111,6 +111,7 @@ struct IOSJevPolicy: Codable, Equatable {
         toolDiscoveryMinScore = try container.decodeIfPresent(Double.self, forKey: .toolDiscoveryMinScore) ?? 1.0
         memoryRecallMinScore = try container.decodeIfPresent(Double.self, forKey: .memoryRecallMinScore) ?? 1.0
         contextSelectionMinScore = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinScore) ?? 1.0
+        modelRoutingMinScore = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinScore) ?? 2.0
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
         cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 300
         cooldownFailureThreshold = try container.decodeIfPresent(Int.self, forKey: .cooldownFailureThreshold) ?? 3
@@ -121,7 +122,7 @@ struct IOSJevPolicy: Codable, Equatable {
         case policyVersion, deadlineMs, maxQuestions, maxCandidates, maxStateBytes
         case maxRequestBytes, maxResponseBytes, perTurnRequestBudget, perTurnStateBudgetBytes
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
-        case memoryRecallMinScore, contextSelectionMinScore
+        case memoryRecallMinScore, contextSelectionMinScore, modelRoutingMinScore
         case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
     }
 
@@ -152,6 +153,8 @@ struct IOSJevPolicy: Codable, Equatable {
     var memoryRecallMinScore: Double = 1.0
     /// 上下文筛选：内容块 Score 低于该值且无保留信号时隐藏。
     var contextSelectionMinScore: Double = 1.0
+    /// 模型调度：Score 达到该值（0-3 适配量表）才进入 Jev 首选集合。
+    var modelRoutingMinScore: Double = 2.0
     /// 缓存条目上限（内存）。
     var cacheMaxEntries: Int = 128
     /// 缓存 TTL（秒）。
