@@ -1,6 +1,21 @@
 import Foundation
 @preconcurrency import Shared
 
+/// One generated Markdown file as shown in the memory documents list.
+struct IOSMemoryMarkdownDocument: Equatable, Identifiable {
+    /// Path relative to the memories directory ("index.md", "topics/3-习惯.md").
+    let relativePath: String
+    let fileName: String
+    /// First `# ` heading text; falls back to the file name.
+    let title: String
+    /// First meaningful line after the title (blockquote summary, stats line…).
+    let preview: String
+    let sizeBytes: Int
+    let modifiedAt: Date
+
+    var id: String { relativePath }
+}
+
 /// Derives human-readable Markdown documents from the memory store:
 /// `index.md` (small, recall-friendly) plus one `topics/<id>-<slug>.md` per
 /// non-archived topic record. Regeneration is signature-gated — nothing is
@@ -40,13 +55,105 @@ final class IOSMemoryMarkdownStore {
         }
     }
 
+    // MARK: - Listing
+
+    /// Snapshot of the generated documents: index.md first, then topic files
+    /// sorted by their numeric id prefix. Missing directories simply yield [].
+    func listDocuments() -> [IOSMemoryMarkdownDocument] {
+        let topicsDir = directory.appendingPathComponent("topics", isDirectory: true)
+        var docs: [IOSMemoryMarkdownDocument] = []
+        if let doc = describe(at: directory.appendingPathComponent("index.md"), relativePath: "index.md") {
+            docs.append(doc)
+        }
+        let topicFiles = (try? FileManager.default.contentsOfDirectory(atPath: topicsDir.path)) ?? []
+        let topicDocs = topicFiles
+            .filter { $0.hasSuffix(".md") }
+            .compactMap { describe(at: topicsDir.appendingPathComponent($0), relativePath: "topics/\($0)") }
+            .sorted { $0.fileName.localizedStandardCompare($1.fileName) == .orderedAscending }
+        docs.append(contentsOf: topicDocs)
+        return docs
+    }
+
+    /// Full text of one generated document. `relativePath` is validated to
+    /// stay inside the memories directory so callers can't escape it.
+    func readDocument(relativePath: String) -> String? {
+        let url = directory.appendingPathComponent(relativePath)
+        let root = directory.standardizedFileURL.path + "/"
+        guard url.standardizedFileURL.path.hasPrefix(root),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return text
+    }
+
+    private func describe(at url: URL, relativePath: String) -> IOSMemoryMarkdownDocument? {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let data = try? Data(contentsOf: url),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        var title = url.lastPathComponent
+        var preview = ""
+        for rawLine in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("<!--") { continue }
+            if line.hasPrefix("# ") {
+                title = String(line.dropFirst(2))
+                continue
+            }
+            if line.hasPrefix("#") { continue }
+            preview = Self.previewText(for: line)
+            break
+        }
+        return IOSMemoryMarkdownDocument(
+            relativePath: relativePath,
+            fileName: url.lastPathComponent,
+            title: title,
+            preview: preview,
+            sizeBytes: values.fileSize ?? data.count,
+            modifiedAt: values.contentModificationDate ?? .distantPast
+        )
+    }
+
     // MARK: - Rendering
+
+    /// Strip list/quote/link decorations so the row preview reads as prose.
+    private static func previewText(for line: String) -> String {
+        var text = line
+        if text.hasPrefix("> ") { text = String(text.dropFirst(2)) }
+        if text.hasPrefix("- ") { text = String(text.dropFirst(2)) }
+        if text.hasPrefix("["),
+           let close = text.firstIndex(of: "]"),
+           let parenClose = text[close...].firstIndex(of: ")") {
+            text = "\(text[text.index(after: text.startIndex)..<close])\(text[text.index(after: parenClose)...])"
+        }
+        return text
+    }
+
+    /// `内容（作用域 · 类型 · 日期）` — internal ids stay in the JSON store.
+    private static func memberLine(_ record: MemoryRecord) -> String {
+        "- \(record.content)（\(IOSMemoryLibrary.scopeTitle(record.scope)) · \(IOSMemoryLibrary.kindTitle(record.kind)) · \(day(record.updatedAt))）\n"
+    }
+
+    /// Rewrite only when the bytes differ so each document's mtime stays the
+    /// moment its content last changed, not the last sync.
+    private func writeIfChanged(_ body: String, to url: URL) throws {
+        if (try? String(contentsOf: url, encoding: .utf8)) != body {
+            try body.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
 
     private func write(records: [MemoryRecord]) throws {
         let topicsDir = directory.appendingPathComponent("topics", isDirectory: true)
         try FileManager.default.createDirectory(at: topicsDir, withIntermediateDirectories: true)
 
         let live = records.filter { !$0.archived }
+        if live.isEmpty {
+            // An empty store gets no documents at all so the UI can show its
+            // empty state instead of a stub index.
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent("index.md"))
+            for file in (try? FileManager.default.contentsOfDirectory(atPath: topicsDir.path)) ?? []
+            where file.hasSuffix(".md") {
+                try? FileManager.default.removeItem(at: topicsDir.appendingPathComponent(file))
+            }
+            return
+        }
         let topics = live
             .filter { $0.kind == .topic }
             .sorted { $0.id < $1.id }
@@ -65,9 +172,9 @@ final class IOSMemoryMarkdownStore {
                 body += "> \(topic.content)\n\n"
             }
             for member in members {
-                body += "- (memory:\(member.id), \(member.scope.wireName)/\(member.kind.wireName), \(Self.day(member.updatedAt))) \(member.content)\n"
+                body += Self.memberLine(member)
             }
-            try body.write(to: topicsDir.appendingPathComponent(fileName), atomically: true, encoding: .utf8)
+            try writeIfChanged(body, to: topicsDir.appendingPathComponent(fileName))
         }
 
         // Stale topic documents are removed so the folder always mirrors the
@@ -77,7 +184,14 @@ final class IOSMemoryMarkdownStore {
             try? FileManager.default.removeItem(at: topicsDir.appendingPathComponent(file))
         }
 
-        let groupedIds = Set(topics.flatMap { $0.memberIds.map { Int(truncating: $0) } })
+        // Coverage counts resolved members only — dangling or archived
+        // memberIds must not inflate the index summary.
+        let groupedIds = Set(topics.flatMap { topic in
+            topic.memberIds.map { Int(truncating: $0) }.filter { id in
+                guard let member = byId[id] else { return false }
+                return !member.archived && member.kind != .topic
+            }
+        })
         let ungrouped = live.filter { $0.kind != .topic && !groupedIds.contains(Int($0.id)) }
         var index = "# Amber 记忆索引\n\n<!-- generated \(ISO8601DateFormatter().string(from: now())); do not edit -->\n\n"
         index += "## 主题\n\n"
@@ -90,8 +204,17 @@ final class IOSMemoryMarkdownStore {
             }
             index += "\n"
         }
+        index += "## 未归类\n\n"
+        if ungrouped.isEmpty {
+            index += "暂无。\n\n"
+        } else {
+            for record in ungrouped.sorted(by: { $0.id < $1.id }) {
+                index += Self.memberLine(record)
+            }
+            index += "\n"
+        }
         index += "未归档 \(live.count) 条 · 主题 \(topics.count) 个覆盖 \(groupedIds.count) 条 · 未归类 \(ungrouped.count) 条\n"
-        try index.write(to: directory.appendingPathComponent("index.md"), atomically: true, encoding: .utf8)
+        try writeIfChanged(index, to: directory.appendingPathComponent("index.md"))
     }
 
     private static func signature(of records: [MemoryRecord]) -> String {

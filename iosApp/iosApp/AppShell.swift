@@ -878,6 +878,9 @@ enum Route: Hashable {
     case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)
+    case memoryDocument(relativePath: String, title: String)
+    case memoryRecords
+    case memoryPollutedConversations
     case skills
     case skillAdd
     case mcpServers
@@ -1027,6 +1030,12 @@ private extension View {
                 )
             case .memoryEdit(let recordId, let text, let scope, let pinned):
                 MemoryEditView(recordId: recordId, initialText: text, initialScope: scope, initialPinned: pinned)
+            case .memoryDocument(let relativePath, let title):
+                MemoryDocumentView(relativePath: relativePath, displayTitle: title)
+            case .memoryRecords:
+                MemoryRecordsListView()
+            case .memoryPollutedConversations:
+                MemoryPollutedConversationsView()
             case .skills:
                 if sharedSettings.isCapabilityGateEnabled(.skills) {
                     SkillsView(sharedSettings: sharedSettings)

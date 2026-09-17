@@ -5,31 +5,38 @@ import XCTest
 @MainActor
 final class IOSMemoryLibraryTests: XCTestCase {
     func testMemoryOverviewKeepsLibraryToolsUserFacing() throws {
-        // 用户页：搜索贴着记忆库、四标签等分；不挂召回解释 / 本次候选等控制台语义。
+        // 用户页：搜索贴着记录管理页、四标签等分；不挂召回解释 / 本次候选等控制台语义。
         let testsDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let appDirectory = testsDirectory.deletingLastPathComponent().appendingPathComponent("iosApp")
         let source = try String(
-            contentsOf: testsDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("iosApp/MemoryOverviewView.swift"),
+            contentsOf: appDirectory.appendingPathComponent("MemoryOverviewView.swift"),
             encoding: .utf8
         )
-        XCTAssertFalse(source.contains("召回解释"))
-        XCTAssertFalse(source.contains("本次候选"))
-        XCTAssertFalse(source.contains("搜索与过滤"))
-        XCTAssertNil(source.range(of: "recallSection"))
-
-        let recordsStart = try XCTUnwrap(source.range(of: "private var recordsSection:"))
-        let auditStart = try XCTUnwrap(source.range(of: "private var auditSection:", range: recordsStart.upperBound..<source.endIndex))
-        let recordsBlock = String(source[recordsStart.lowerBound..<auditStart.lowerBound])
-        XCTAssertTrue(
-            recordsBlock.contains("libraryToolbar"),
-            "libraryToolbar 必须挂在 recordsSection 内，不能只是文件里另有定义"
+        let recordsSource = try String(
+            contentsOf: appDirectory.appendingPathComponent("MemoryRecordsListView.swift"),
+            encoding: .utf8
         )
-        XCTAssertTrue(recordsBlock.contains("AmberSectionLabel(text: \"记忆库\")"))
+        for text in [source, recordsSource] {
+            XCTAssertFalse(text.contains("召回解释"))
+            XCTAssertFalse(text.contains("本次候选"))
+            XCTAssertFalse(text.contains("搜索与过滤"))
+            XCTAssertNil(text.range(of: "recallSection"))
+            XCTAssertFalse(
+                text.contains("parts.append(\"#\\(memoryId)\")") || text.contains("#\\(record.id)"),
+                "用户面不得再拼内部 memory id"
+            )
+        }
 
-        let toolbarStart = try XCTUnwrap(source.range(of: "private var libraryToolbar:"))
-        let toolbarEnd = try XCTUnwrap(source.range(of: "private var recordsSection:", range: toolbarStart.upperBound..<source.endIndex))
-        let toolbarBlock = String(source[toolbarStart.lowerBound..<toolbarEnd.lowerBound])
+        let bodyStart = try XCTUnwrap(recordsSource.range(of: "var body: some View"))
+        let toolbarStart = try XCTUnwrap(recordsSource.range(of: "private var libraryToolbar:"))
+        let bodyBlock = recordsSource[bodyStart.lowerBound..<toolbarStart.lowerBound]
+        XCTAssertTrue(
+            bodyBlock.contains("libraryToolbar"),
+            "libraryToolbar 必须挂在记录管理页 body 内，不能只是文件里另有定义"
+        )
+        XCTAssertTrue(bodyBlock.contains("filteredRecords"))
+
+        let toolbarBlock = String(recordsSource[toolbarStart.lowerBound...])
         XCTAssertTrue(
             toolbarBlock.contains(".frame(maxWidth: .infinity)"),
             "四标签须等分铺开"
@@ -37,10 +44,6 @@ final class IOSMemoryLibraryTests: XCTestCase {
         XCTAssertFalse(
             toolbarBlock.contains("ScrollView(.horizontal)"),
             "四枚固定短标签应等分铺开，不再横滑左簇拥"
-        )
-        XCTAssertFalse(
-            source.contains("parts.append(\"#\\(memoryId)\")") || source.contains("#\\(record.id)"),
-            "用户面不得再拼内部 memory id"
         )
     }
 

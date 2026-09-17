@@ -9,10 +9,8 @@ struct MemoryOverviewView: View {
     @Environment(IOSConversationStore.self) private var conversationStore
 
     @State private var persistence = IOSMemoryPersistence.shared
-    @State private var query = ""
     @State private var selectedTab: MemorySettingsTab = .soul
     @Namespace private var tabSelection
-    @State private var scopeFilter: IOSMemoryScopeFilter = .all
     @State private var showSoulEditor = false
     @State private var soulDraft = ""
     @State private var showSoulRollbackConfirmation = false
@@ -20,15 +18,13 @@ struct MemoryOverviewView: View {
     @State private var auditStore = IOSMemoryWriteAuditStore.shared
     @State private var extraction = IOSMemoryExtractionCoordinator.shared
     @State private var consolidation = IOSMemoryConsolidationCoordinator.shared
-    @State private var pendingDeleteRecord: MemoryRecord?
     @State private var operationError: String?
     @State private var showClearAuditConfirmation = false
-    /// P2-a: 受外部内容影响（POLLUTED）的会话列表；空态时整节不显示。
+    /// P2-a: 受外部内容影响（POLLUTED）的会话数；空态时整节不显示。
     @State private var pollutedConversations: [ConversationSummary] = []
-
-    private var filteredRecords: [MemoryRecord] {
-        IOSMemoryLibrary.filteredRecords(records: persistence.records, query: query, scopeFilter: scopeFilter)
-    }
+    /// 派生的记忆文档列表（index.md + topics/）；随 persistence.revision 刷新。
+    /// 初始值同步读取，避免首帧先渲染"光杆管理行"再闪现出文档。
+    @State private var documents = IOSMemoryPersistence.shared.memoryDocuments()
 
     var body: some View {
         ZStack {
@@ -47,7 +43,7 @@ struct MemoryOverviewView: View {
                         extractionSection
                         consolidationSection
                         pollutionSection
-                        recordsSection
+                        documentsSection
                         auditSection
                     }
                 }
@@ -58,6 +54,9 @@ struct MemoryOverviewView: View {
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onAppear(perform: refresh)
+        .onChange(of: persistence.revision) { _, _ in
+            documents = persistence.memoryDocuments()
+        }
         .alert("无法保存", isPresented: Binding(
             get: { operationError != nil },
             set: { if !$0 { operationError = nil } }
@@ -65,24 +64,6 @@ struct MemoryOverviewView: View {
             Button("好") { operationError = nil }
         } message: {
             Text(operationError ?? "未知错误")
-        }
-        .confirmationDialog(
-            "删除这条记忆？",
-            isPresented: Binding(
-                get: { pendingDeleteRecord != nil },
-                set: { if !$0 { pendingDeleteRecord = nil } }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("删除", role: .destructive) {
-                if let record = pendingDeleteRecord {
-                    delete(record)
-                }
-                pendingDeleteRecord = nil
-            }
-            Button("取消", role: .cancel) { pendingDeleteRecord = nil }
-        } message: {
-            Text("删除后不可恢复。")
         }
         .confirmationDialog(
             "清除写入审批记录？",
@@ -450,18 +431,17 @@ struct MemoryOverviewView: View {
         }
     }
 
-    /// P2-a：受外部内容影响的会话（memoryMode == POLLUTED）。这些会话作为记忆
-    /// 抽取源的资格已被暂停；每项可手动「恢复」回 ENABLED。空态不显示本小节。
+    /// P2-a：受外部内容影响的会话（memoryMode == POLLUTED）压缩为一行汇总，
+    /// 点按进入列表页逐个或全部恢复。空态不显示本小节。
     @ViewBuilder
     private var pollutionSection: some View {
         if !pollutedConversations.isEmpty {
             VStack(spacing: 0) {
                 AmberSectionLabel(text: "受外部内容影响的会话")
                 AmberFormGroup {
-                    ForEach(Array(pollutedConversations.enumerated()), id: \.element.id) { index, summary in
-                        let title = summary.title.isEmpty
-                            ? IOSAppLocalization.string("未命名会话", defaultValue: "未命名会话")
-                            : summary.title
+                    Button {
+                        router.navigate(to: .memoryPollutedConversations)
+                    } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "globe")
                                 .accessibilityHidden(true)
@@ -470,148 +450,90 @@ struct MemoryOverviewView: View {
                                 .frame(width: 28, height: 28)
 
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(title)
+                                Text("\(pollutedConversations.count) 个会话已暂停记忆提炼")
                                     .font(.subheadline.weight(.semibold))
                                     .foregroundStyle(AmberTheme.foreground)
-                                    .lineLimit(1)
-                                Text(IOSAppLocalization.formatted(
-                                    "%@ 曾接触外部内容，已暂停记忆抽取",
-                                    defaultValue: "%@ 曾接触外部内容，已暂停记忆抽取",
-                                    arguments: [pollutedTime(summary.updateAt)]
-                                ))
+                                Text("曾调用联网搜索、网页抓取或 MCP 工具")
                                     .font(.caption)
                                     .foregroundStyle(AmberTheme.muted)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Button("恢复") {
-                                restorePollutedConversation(summary.id)
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AmberTheme.accent)
-                            .frame(minWidth: 44, minHeight: 44)
-                            .contentShape(Rectangle())
-                            .accessibilityLabel(IOSAppLocalization.formatted(
-                                "恢复「%@」的记忆抽取",
-                                defaultValue: "恢复「%@」的记忆抽取",
-                                arguments: [title]
-                            ))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(AmberTheme.muted2)
+                                .accessibilityHidden(true)
                         }
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("查看 \(pollutedConversations.count) 个已暂停记忆提炼的会话")
+                }
+            }
+        }
+    }
 
-                        if index < pollutedConversations.count - 1 {
+    /// 记忆文档：index.md 与各主题文档的文件式列表，点按进入只读详情。
+    /// 单条记录的搜索/编辑/删除收进「管理全部记忆」二级页。
+    private var documentsSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "记忆文档")
+            let liveCount = persistence.records.filter { !$0.archived }.count
+            if documents.isEmpty && liveCount == 0 {
+                AmberFormGroup {
+                    MemoryEmptyState(isSearching: false)
+                }
+            } else {
+                AmberFormGroup {
+                    ForEach(Array(documents.enumerated()), id: \.element.id) { index, doc in
+                        Button {
+                            router.navigate(to: .memoryDocument(relativePath: doc.relativePath, title: doc.title))
+                        } label: {
+                            MemoryDocumentRow(document: doc)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("打开 \(doc.title)")
+
+                        if index < documents.count - 1 {
                             MemoryDivider(leading: 52)
                         }
                     }
-                }
-            }
-        }
-    }
 
-    private func pollutedTime(_ updateAt: KotlinInstant) -> String {
-        let seconds = TimeInterval(updateAt.toEpochMilliseconds()) / 1000.0
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
-        formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: Date(timeIntervalSince1970: seconds), relativeTo: Date())
-    }
-
-    private func restorePollutedConversation(_ id: KotlinUuid) {
-        Task { @MainActor in
-            if await conversationStore.resetConversationMemoryPollution(id) {
-                pollutedConversations = await conversationStore.pollutedConversationSummaries()
-            } else {
-                operationError = "恢复失败，请重试。"
-            }
-        }
-    }
-
-    /// 记忆库工具条：搜索 + 四枚范围过滤（等分铺开，不做横滑簇拥）。
-    private var libraryToolbar: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(AmberTheme.muted)
-                    .accessibilityHidden(true)
-                TextField("搜索内容、来源或标签", text: $query)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                if !query.isEmpty {
-                    Button {
-                        query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(AmberTheme.muted2)
+                    if !documents.isEmpty {
+                        MemoryDivider(leading: 52)
                     }
-                    .buttonStyle(.plain)
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityLabel("清除搜索")
-                }
-            }
-            .font(.body)
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .amberGlass(cornerRadius: AmberTheme.radiusLarge)
-            .overlay {
-                RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
-                    .stroke(AmberTheme.borderSoft, lineWidth: 0.5)
-            }
 
-            HStack(spacing: 8) {
-                ForEach(IOSMemoryScopeFilter.allCases) { filter in
                     Button {
-                        scopeFilter = filter
+                        router.navigate(to: .memoryRecords)
                     } label: {
-                        MemoryScopeFilterChip(
-                            title: filter.title,
-                            isSelected: scopeFilter == filter
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                    .accessibilityAddTraits(scopeFilter == filter ? .isSelected : [])
-                }
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 12)
-    }
-
-    private var recordsSection: some View {
-        VStack(spacing: 0) {
-            AmberSectionLabel(text: "记忆库")
-            libraryToolbar
-            if filteredRecords.isEmpty {
-                AmberFormGroup {
-                    MemoryEmptyState(isSearching: !persistence.records.isEmpty)
-                }
-            } else {
-                AmberFormGroup {
-                    ForEach(Array(filteredRecords.enumerated()), id: \.element.id) { index, record in
-                        MemoryRecordRow(
-                            record: record,
-                            onEdit: {
-                                router.navigate(to: .memoryEdit(
-                                    recordId: Int(record.id),
-                                    text: record.content,
-                                    scope: IOSMemoryLibrary.scopeTitle(record.scope),
-                                    pinned: record.pinned
-                                ))
-                            },
-                            onDelete: {
-                                pendingDeleteRecord = record
-                            }
-                        )
-
-                        if index < filteredRecords.count - 1 {
-                            MemoryDivider(leading: 14)
+                        HStack(spacing: 10) {
+                            Image(systemName: "tray.full")
+                                .accessibilityHidden(true)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(AmberTheme.muted)
+                                .frame(width: 28, height: 28)
+                            Text("管理全部记忆")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AmberTheme.foreground)
+                            Spacer()
+                            Text("\(liveCount) 条")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(AmberTheme.muted2)
+                                .accessibilityHidden(true)
                         }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("管理全部记忆，共 \(liveCount) 条")
                 }
             }
         }
@@ -631,7 +553,7 @@ struct MemoryOverviewView: View {
                 } else {
                     ForEach(Array(auditStore.records.prefix(5))) { record in
                         MemoryAuditRow(record: record)
-                        MemoryDivider(leading: 14)
+                        MemoryDivider(leading: 52)
                     }
 
                     Button(role: .destructive) {
@@ -653,32 +575,10 @@ struct MemoryOverviewView: View {
 
     private func refresh() {
         persistence.refresh()
+        documents = persistence.memoryDocuments()
         Task { @MainActor in
             pollutedConversations = await conversationStore.pollutedConversationSummaries()
         }
-    }
-
-    private func delete(_ record: MemoryRecord) {
-        guard persistence.records.contains(where: { $0.id == record.id && $0.updatedAt == record.updatedAt }) else {
-            operationError = "这条记忆已在其他地方更新或删除，请重试。"
-            persistence.refresh()
-            return
-        }
-        let previousRecords = persistence.records
-        IosMemoryFactory.shared.deleteMemory(id: record.id)
-        guard persistence.persist(previousRecords: previousRecords) else {
-            operationError = persistence.lastErrorMessage ?? "无法写入记忆。"
-            return
-        }
-        IOSMemoryWriteAuditStore.shared.record(
-            action: "delete",
-            status: "user_deleted",
-            memoryId: Int(record.id),
-            scope: record.scope.wireName,
-            kind: record.kind.wireName,
-            contentPreview: IOSMemoryLibrary.preview(record.content)
-        )
-        refresh()
     }
 }
 
@@ -696,95 +596,58 @@ private enum MemorySettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
-private struct MemoryRecordRow: View {
-    let record: MemoryRecord
-    let onEdit: () -> Void
-    let onDelete: () -> Void
-
-    private var isTopic: Bool { record.kind == .topic }
+/// 记忆文档行：文件名式标题 + 预览行 + 右侧大小/日期，对齐文件列表观感。
+private struct MemoryDocumentRow: View {
+    let document: IOSMemoryMarkdownDocument
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 10) {
-                if isTopic {
-                    // 主题记录由整理流程维护：点按进入只读详情，不提供编辑入口。
-                    Button(action: onEdit) {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(record.topicTitle ?? record.content)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(AmberTheme.foreground)
-                                .lineLimit(2)
-                            if record.topicTitle != nil, !record.content.isEmpty {
-                                Text(record.content)
-                                    .font(.subheadline)
-                                    .foregroundStyle(AmberTheme.foreground2)
-                                    .lineLimit(3)
-                            }
-                            Text("由记忆整理自动维护")
-                                .font(.caption)
-                                .foregroundStyle(AmberTheme.muted)
-                                .lineLimit(2)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("查看主题")
-                } else {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(record.content)
-                            .font(.body)
-                            .foregroundStyle(AmberTheme.foreground)
-                            .lineLimit(4)
-                        Text(IOSMemoryLibrary.sourceSummary(record))
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                            .lineLimit(2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
+        HStack(spacing: 10) {
+            Image(systemName: document.relativePath == "index.md" ? "list.bullet.rectangle" : "doc.text")
+                .accessibilityHidden(true)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(AmberTheme.accent)
+                .frame(width: 28, height: 28)
 
-                HStack(spacing: 10) {
-                    if !isTopic {
-                        Button(action: onEdit) {
-                            Image(systemName: "pencil")
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(AmberTheme.accent)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("编辑记忆")
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                    }
-
-                    Button(role: .destructive, action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(AmberTheme.accentRed)
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("删除记忆")
-                    .frame(width: 44, height: 44)
-                    .contentShape(Rectangle())
+            VStack(alignment: .leading, spacing: 3) {
+                Text(document.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+                if !document.preview.isEmpty {
+                    Text(document.preview)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            HStack(spacing: 6) {
-                // 不对用户暴露内部 id / 召回候选等控制台语义。
-                MemoryTag(text: IOSMemoryLibrary.scopeTitle(record.scope))
-                MemoryTag(text: IOSMemoryLibrary.kindTitle(record.kind))
-                if isTopic, !record.memberIds.isEmpty {
-                    MemoryTag(text: "含 \(record.memberIds.count) 条", tint: AmberTheme.accent)
-                }
-                if record.pinned {
-                    MemoryTag(text: "置顶", tint: AmberTheme.accentAmber)
-                }
-                Spacer(minLength: 0)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(ByteCountFormatter.string(fromByteCount: Int64(document.sizeBytes), countStyle: .file))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AmberTheme.muted)
+                Text(Self.dateFormatter.string(from: document.modifiedAt))
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(AmberTheme.muted2)
             }
+            .fixedSize()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AmberTheme.muted2)
+                .accessibilityHidden(true)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
     }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = IOSAppLanguagePreference.selected().resolvedLocale()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
 }
 
 private struct MemoryAuditRow: View {
@@ -855,90 +718,6 @@ private struct MemoryAuditRow: View {
     }
 }
 
-private struct MemoryTag: View {
-    let text: String
-    var tint: Color = AmberTheme.muted
-
-    var body: some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(tint)
-            .lineLimit(1)
-            .padding(.horizontal, 7)
-            .frame(height: 22)
-            .background(tint.opacity(0.12), in: Capsule())
-    }
-}
-
-private struct MemoryScopeFilterChip: View {
-    let title: String
-    let isSelected: Bool
-
-    var body: some View {
-        Text(title)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(isSelected ? AmberTheme.accentInk : AmberTheme.foreground2)
-            .lineLimit(1)
-            .frame(maxWidth: .infinity)
-            .frame(height: 32)
-            .background(
-                isSelected ? AmberTheme.accent : AmberTheme.surface,
-                in: Capsule()
-            )
-            .overlay {
-                Capsule()
-                    .stroke(
-                        isSelected ? AmberTheme.accent.opacity(0.16) : AmberTheme.borderSoft,
-                        lineWidth: 0.5
-                    )
-            }
-    }
-}
-
-private struct MemoryEmptyState: View {
-    let isSearching: Bool
-
-    private var title: String {
-        isSearching ? "没有匹配结果" : "暂无记忆"
-    }
-
-    private var message: String {
-        isSearching ? "换个关键词或范围再试。" : "点右上角新增，或在聊天中批准模型写入。"
-    }
-
-    private var systemImage: String {
-        isSearching ? "magnifyingglass" : "tray"
-    }
-
-    var body: some View {
-        VStack(spacing: 13) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(AmberTheme.surface2.opacity(0.82))
-                Image(systemName: systemImage)
-                    .font(.system(size: 30, weight: .medium))
-                    .foregroundStyle(AmberTheme.muted2)
-                    .accessibilityHidden(true)
-            }
-            .frame(width: 58, height: 58)
-
-            VStack(spacing: 5) {
-                Text(title)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                Text(message)
-                    .font(.subheadline)
-                    .foregroundStyle(AmberTheme.muted)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 34)
-    }
-}
-
 private struct MemoryPresetRow: View {
     let title: String
     let subtitle: String
@@ -965,16 +744,5 @@ private struct MemoryPresetRow: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
         .accessibilityLabel(title)
-    }
-}
-
-private struct MemoryDivider: View {
-    var leading: CGFloat = 14
-
-    var body: some View {
-        Rectangle()
-            .fill(AmberTheme.borderSoft.opacity(0.82))
-            .frame(height: 0.5)
-            .padding(.leading, leading)
     }
 }

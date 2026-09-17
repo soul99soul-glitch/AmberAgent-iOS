@@ -916,6 +916,22 @@ final class IOSMemoryPersistence {
         revision += 1
     }
 
+    /// Derived Markdown documents (index.md + topics/) for the overview list.
+    /// Read after every persist — regeneration is signature-gated so the list
+    /// always mirrors the latest store snapshot.
+    func memoryDocuments() -> [IOSMemoryMarkdownDocument] {
+        markdownStore.listDocuments()
+    }
+
+    /// Document text for display — generated `<!-- -->` marker lines are
+    /// stripped since the Markdown renderer shows them as literal text.
+    func memoryDocumentText(relativePath: String) -> String? {
+        markdownStore.readDocument(relativePath: relativePath)?
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.hasPrefix("<!--") }
+            .joined(separator: "\n")
+    }
+
     /// Write the current KMP records to disk. Call after each mutation.
     @discardableResult
     func persist(previousRecords: [MemoryRecord]) -> Bool {

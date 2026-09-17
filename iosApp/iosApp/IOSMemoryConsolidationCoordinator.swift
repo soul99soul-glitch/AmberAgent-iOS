@@ -459,8 +459,11 @@ final class IOSMemoryConsolidationCoordinator {
         \(topicsJSON)
         """
         let assistant = settings.getCurrentAssistant()
+        // maxTokens 置 nil：请求体不带 max_tokens，服务端用模型自身的输出上限。
+        // 与压缩路径同约定——部分网关会校验 max_tokens 范围（如 [1,131072]），
+        // 写死的数值既可能太小（推理烧光预算产出空 content）也可能超校验上限。
         let params = TextGenerationParams(
-            model: model, temperature: nil, topP: nil, maxTokens: KotlinInt(value: 2_000), tools: [],
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [],
             reasoningLevel: worker.daydreamReasoningLevel,
             customHeaders: ChatProviderConfiguration.requestHeaders(
                 for: providerSetting,
