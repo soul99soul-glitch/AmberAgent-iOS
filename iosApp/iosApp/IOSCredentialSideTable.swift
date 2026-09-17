@@ -22,6 +22,9 @@ enum IOSCredentialSideTable {
     // MARK: - store / load
 
     /// Stores a credential value for a key. Returns true on success.
+    ///
+    /// 原位更新优先（SecItemUpdate）：写失败时不丢旧可用值。旧的
+    /// delete-then-add 语义会先删后写，SecItemAdd 一旦失败旧 Key 即丢失。
     @discardableResult
     static func store(key: String, value: String) -> Bool {
         guard let data = value.data(using: .utf8), !value.isEmpty else { return false }
@@ -30,12 +33,13 @@ enum IOSCredentialSideTable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
         ]
-        SecItemDelete(query as CFDictionary)
+        let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
         var addQuery = query
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        return status == errSecSuccess
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
     /// Loads a credential value for a key, or nil if absent.

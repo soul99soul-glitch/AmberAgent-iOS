@@ -20,6 +20,7 @@ struct ExecutionSettingsView: View {
     private var execJavaScriptEnabled = false
     @State private var taskStore = IOSAdvancedTaskStore.shared
     @State private var isToolLoopPickerPresented = false
+    @State private var isJevSettingsPresented = false
     @State private var locationStatusRevision = 0
     @Namespace private var toolLoopTransition
     @ScaledMetric(relativeTo: .body) private var toolLoopValueWidth: CGFloat = 44
@@ -39,6 +40,7 @@ struct ExecutionSettingsView: View {
                         runSection
                         toolLoopSection
                         execJavaScriptSection
+                        jevSection
                         if focusedTaskID == nil {
                             recentTasksSection
                         }
@@ -59,6 +61,11 @@ struct ExecutionSettingsView: View {
                 .presentationDetents([.height(480), .large])
                 .presentationDragIndicator(.visible)
                 .navigationTransition(.zoom(sourceID: "toolLoopPicker", in: toolLoopTransition))
+        }
+        .sheet(isPresented: $isJevSettingsPresented) {
+            IOSJevSettingsView(sharedSettings: sharedSettings)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
         }
         .onReceive(NotificationCenter.default.publisher(for: .amberBackgroundLocationKeepAliveChanged)) { _ in
             locationStatusRevision &+= 1
@@ -215,6 +222,48 @@ struct ExecutionSettingsView: View {
                 ) {
                     execJavaScriptEnabled.toggle()
                 }
+            }
+        }
+    }
+
+    private var jevSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "快速判断")
+            AmberFormGroup {
+                Button {
+                    isJevSettingsPresented = true
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "bolt.badge.clock")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .frame(width: 28, height: 28)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(IOSAppLocalization.string("Jev 快速判断", defaultValue: "Jev 快速判断"))
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.foreground)
+                            Text(IOSAppLocalization.string(
+                                "工具发现与记忆召回的语义评分（默认关闭）",
+                                defaultValue: "工具发现与记忆召回的语义评分（默认关闭）"
+                            ))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+                .accessibilityLabel("Jev 快速判断设置")
             }
         }
     }

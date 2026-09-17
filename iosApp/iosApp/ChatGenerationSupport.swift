@@ -346,12 +346,18 @@ struct ChatGenerationBindings {
     let startLiveActivity: (String, KotlinUuid?, AgentActivityPresentation) -> Void
     let saveMiniAppIfPresent: ([UIMessage], KotlinUuid?) -> ChatMiniAppOutputApplication?
     let messagesByInjectingRuntimeContext: ([UIMessage]) -> [UIMessage]
-    var messagesByInjectingRuntimeContextForRun: (([UIMessage], Bool) -> [UIMessage])? = nil
+    /// 第三个参数为 Jev 统一选中集合（本轮一次计算），注入与 usage marking 共用。
+    var messagesByInjectingRuntimeContextForRun: (([UIMessage], Bool, ChatMemoryContextBuilder.RecallResult?) -> [UIMessage])? = nil
     var prepareImageAttachments: @MainActor ([UIMessage], Model, Settings, KotlinUuid?) async throws -> [UIMessage] = {
         messages, _, _, _ in messages
     }
     let userFacingGenerationError: (String, String?) -> String
-    var memoryRecordIdsForRuntimeContext: ([UIMessage]) -> [Int32] = { _ in [] }
+    /// 第二个参数为 Jev 统一选中集合（本轮一次计算），与注入共用同一份。
+    var memoryRecordIdsForRuntimeContext: ([UIMessage], ChatMemoryContextBuilder.RecallResult?) -> [Int32] = { _, _ in [] }
+    /// Jev Phase 1: 每轮上传准备时计算记忆统一选中集合（active 应用 / shadow
+    /// 后台观测 / off 零操作）。返回值由调用方显式传给注入与 usage marking，
+    /// 禁止各自再算一次。
+    var prepareJevMemoryRecall: @MainActor ([UIMessage]) async -> ChatMemoryContextBuilder.RecallResult? = { _ in nil }
     /// 第二个 Bool 为 P2-c 修复 2 的 force 标记：模型显式引用（citation flush）
     /// 传 true 绕过 P2-b 同集去抖；召回标记传 false。
     var recordMemoryUsage: @MainActor ([Int32], Bool) -> Void = { _, _ in }

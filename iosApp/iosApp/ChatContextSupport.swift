@@ -12,6 +12,20 @@ enum ChatMemoryContextBuilder {
         records.filter { isMemoryScopeEnabled($0.scope, runtime: runtime) }
     }
 
+    /// 硬筛选单一入口：归档与过期记忆无论本地注入还是 Jev 外发候选都不得出现。
+    /// 注入（contextPromptResult）与外发（IOSJevMemoryRecallService）共用。
+    static func hardEligible(
+        _ records: [MemoryRecord],
+        now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000)
+    ) -> [MemoryRecord] {
+        records
+            .filter { !$0.archived }
+            .filter { record in
+                guard let expiresAt = record.expiresAt?.int64Value else { return true }
+                return expiresAt > now
+            }
+    }
+
     static func contextPrompt(records: [MemoryRecord], queryText: String = "") -> String? {
         contextPromptResult(records: records, runtime: nil, queryText: queryText).prompt
     }
@@ -22,32 +36,50 @@ enum ChatMemoryContextBuilder {
         queryText: String = "",
         now: Int64 = Int64(Date().timeIntervalSince1970 * 1000)
     ) -> RecallResult {
-        let eligible = records
-            .filter { !$0.archived }
-            .filter { record in
-                guard let expiresAt = record.expiresAt?.int64Value else { return true }
-                return expiresAt > now
-            }
+        contextPromptResult(records: records, runtime: runtime, queryText: queryText, now: now, orderedSelection: nil)
+    }
+
+    /// Jev Phase 1: consumes an externally ordered, already-filtered selection
+    /// (hard filters + always-eligible retention applied by the caller) and
+    /// assembles the same prompt contract, ending with the original item/char
+    /// budgets. No re-scoring, no token-overlap re-filtering — the caller's
+    /// ordering IS the selection, so prompt, metadata and usage marking all
+    /// share one computation.
+    static func contextPromptResult(
+        records: [MemoryRecord],
+        runtime: AgentRuntimeSetting?,
+        queryText: String = "",
+        now: Int64 = Int64(Date().timeIntervalSince1970 * 1000),
+        orderedSelection: [MemoryRecord]?
+    ) -> RecallResult {
+        let eligible = hardEligible(records, now: now)
 
         let setting = runtime?.memoryRecall
         let maxItems = min(max(setting.map { Int($0.maxItems) } ?? 24, 1), 40)
         let maxChars = min(max(setting.map { Int($0.maxPromptChars) } ?? 6_000, 256), 12_000)
-        let scored = scoredByRelevance(eligible, queryText: queryText, now: now)
-        let tokens = Set(recallTokens(from: queryText))
-        let hasNonEmptyQuery = !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let selected = scored
-            .filter {
-                (!hasNonEmptyQuery && tokens.isEmpty) ||
-                    hasRecallOverlap($0.record, tokens) ||
-                    isAlwaysEligible($0.record)
-            }
-            .sorted { lhs, rhs in
-                if lhs.record.pinned != rhs.record.pinned { return lhs.record.pinned && !rhs.record.pinned }
-                if lhs.score != rhs.score { return lhs.score > rhs.score }
-                if lhs.record.updatedAt != rhs.record.updatedAt { return lhs.record.updatedAt > rhs.record.updatedAt }
-                return lhs.record.id < rhs.record.id
-            }
-            .map(\.record)
+        let eligibleIds = Set(eligible.map(\.id))
+        let selected: [MemoryRecord]
+        if let orderedSelection {
+            // 外部排序集合只保留仍在合法集合内的记录（防御快照期间记录被归档）。
+            selected = orderedSelection.filter { eligibleIds.contains($0.id) }
+        } else {
+            let scored = scoredByRelevance(eligible, queryText: queryText, now: now)
+            let tokens = Set(recallTokens(from: queryText))
+            let hasNonEmptyQuery = !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            selected = scored
+                .filter {
+                    (!hasNonEmptyQuery && tokens.isEmpty) ||
+                        hasRecallOverlap($0.record, tokens) ||
+                        isAlwaysEligible($0.record)
+                }
+                .sorted { lhs, rhs in
+                    if lhs.record.pinned != rhs.record.pinned { return lhs.record.pinned && !rhs.record.pinned }
+                    if lhs.score != rhs.score { return lhs.score > rhs.score }
+                    if lhs.record.updatedAt != rhs.record.updatedAt { return lhs.record.updatedAt > rhs.record.updatedAt }
+                    return lhs.record.id < rhs.record.id
+                }
+                .map(\.record)
+        }
         var activeRecords: [MemoryRecord] = []
         var usedChars = 0
         for record in selected {
@@ -228,12 +260,13 @@ struct ChatRuntimeContextBuilder {
     @MainActor
     func injectingRuntimeContext(
         into messages: [UIMessage],
-        coalesceSystemMessages: Bool = true
+        coalesceSystemMessages: Bool = true,
+        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
     ) -> [UIMessage] {
         var prepared = messagesByInjectingSoul(messages)
         prepared = messagesByInjectingMiniAppInstruction(prepared)
         prepared = messagesByInjectingMcpContext(prepared)
-        prepared = messagesByInjectingMemoryContext(prepared)
+        prepared = messagesByInjectingMemoryContext(prepared, memoryRecallOverride: memoryRecallOverride)
         prepared = messagesByInjectingSkillContext(prepared)
         prepared = messagesByInjectingWorkspaceToolPolicy(prepared)
         prepared = messagesByInjectingSystemPrompt(prepared)
@@ -392,8 +425,12 @@ struct ChatRuntimeContextBuilder {
         return [UIMessage.companion.system(prompt: prompt)] + messages
     }
 
-    private func messagesByInjectingMemoryContext(_ messages: [UIMessage]) -> [UIMessage] {
-        let result = memoryRecallResult(for: messages)
+    @MainActor
+    private func messagesByInjectingMemoryContext(
+        _ messages: [UIMessage],
+        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult?
+    ) -> [UIMessage] {
+        let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
         guard let prompt = result.prompt else { return messages }
         return [Self.systemMessageWithMemoryMetadata(prompt, ids: result.ids)] + messages
     }
@@ -432,18 +469,25 @@ struct ChatRuntimeContextBuilder {
         return (try? JSONDecoder().decode([Int32].self, from: idsData)) ?? []
     }
 
-    func memoryRecallResult(for messages: [UIMessage]) -> ChatMemoryContextBuilder.RecallResult {
+    /// Jev Phase 1：override 是本轮唯一一次计算得到的统一选中集合（prompt /
+    /// metadata / usage marking / citation allowlist 共用）。nil = off / shadow /
+    /// 失败回退，走同步原行为。禁止各消费点自行再算一次。
+    @MainActor
+    func memoryRecallResult(
+        for messages: [UIMessage],
+        override: ChatMemoryContextBuilder.RecallResult? = nil
+    ) -> ChatMemoryContextBuilder.RecallResult {
+        if let override { return override }
         let records = ChatMemoryContextBuilder.recordsForPrompt(
             records: IosMemoryFactory.shared.getAllRecords(),
             runtime: sharedSettings.agentRuntime
         )
         let queryText = messages.reversed().first { $0.role == MessageRole.user }?.toText() ?? ""
-        let result = ChatMemoryContextBuilder.contextPromptResult(
+        return ChatMemoryContextBuilder.contextPromptResult(
             records: records,
             runtime: sharedSettings.agentRuntime,
             queryText: queryText
         )
-        return result
     }
 
     @MainActor

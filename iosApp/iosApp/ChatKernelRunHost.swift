@@ -1770,8 +1770,11 @@ final class ChatKernelRunHost {
         return policy.policy(for: capability) != .disabled
     }
 
-    private func messagesByInjectingRuntimeContext(_ messages: [UIMessage]) -> [UIMessage] {
-        bindings.messagesByInjectingRuntimeContextForRun?(messages, mcpEnabledForRun)
+    private func messagesByInjectingRuntimeContext(
+        _ messages: [UIMessage],
+        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
+    ) -> [UIMessage] {
+        bindings.messagesByInjectingRuntimeContextForRun?(messages, mcpEnabledForRun, memoryRecallOverride)
             ?? bindings.messagesByInjectingRuntimeContext(messages)
     }
 
@@ -1811,7 +1814,14 @@ final class ChatKernelRunHost {
             requestMessages = plan.uploadMessages
         }
 
-        let runtimeBaseline = messagesByInjectingRuntimeContext(requestMessages)
+        // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
+        // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
+        // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
+        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(requestMessages)
+        let runtimeBaseline = messagesByInjectingRuntimeContext(
+            requestMessages,
+            memoryRecallOverride: memoryRecallOverride
+        )
         let runtimeOverheadTokens = max(
             IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimeBaseline) -
                 IOSContextCompactionCoordinator.estimatedTokensForRequest(requestMessages),
@@ -1855,14 +1865,17 @@ final class ChatKernelRunHost {
         // 每轮组装前刷新编排链接缓存(CG-C :2022-2024)。
         await bindings.refreshOrchestrationLinks()
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
-            messagesByInjectingRuntimeContext(promptedUploadMessages),
+            messagesByInjectingRuntimeContext(promptedUploadMessages, memoryRecallOverride: memoryRecallOverride),
             effectiveParams.model,
             settings,
             conversationId
         )
         try Task.checkCancellation()
         guard currentRunId == runId else { throw CancellationError() }
-        let selectedMemoryIds = bindings.memoryRecordIdsForRuntimeContext(promptedUploadMessages)
+        let selectedMemoryIds = bindings.memoryRecordIdsForRuntimeContext(
+            promptedUploadMessages,
+            memoryRecallOverride
+        )
         let finalizedUploadMessages: [UIMessage]
         do {
             finalizedUploadMessages = try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(

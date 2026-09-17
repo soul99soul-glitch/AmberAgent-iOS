@@ -1400,11 +1400,12 @@ final class ChatViewModel {
                 messagesByInjectingRuntimeContext: { [weak self] messages in
                     self?.messagesByInjectingRuntimeContext(messages, state: state) ?? messages
                 },
-                messagesByInjectingRuntimeContextForRun: { [weak self] messages, mcpEnabled in
+                messagesByInjectingRuntimeContextForRun: { [weak self] messages, mcpEnabled, memoryRecallOverride in
                     self?.messagesByInjectingRuntimeContext(
                         messages,
                         mcpEnabledOverride: mcpEnabled,
-                        state: state
+                        state: state,
+                        memoryRecallOverride: memoryRecallOverride
                     ) ?? messages
                 },
                 prepareImageAttachments: { [weak self] messages, model, settings, conversationId in
@@ -1419,8 +1420,12 @@ final class ChatViewModel {
                 userFacingGenerationError: { rawMessage, modelId in
                     ChatViewModel.userFacingGenerationError(rawMessage, modelId: modelId)
                 },
-                memoryRecordIdsForRuntimeContext: { [weak self] messages in
-                    self?.memoryRecordIdsForRuntimeContext(messages) ?? []
+                memoryRecordIdsForRuntimeContext: { [weak self] messages, override in
+                    self?.memoryRecordIdsForRuntimeContext(messages, override: override) ?? []
+                },
+                prepareJevMemoryRecall: { [weak self] messages in
+                    guard let self else { return nil }
+                    return await self.prepareJevMemoryRecallSelection(messages, conversationId: state.conversationId)
                 },
                 recordMemoryUsage: { [weak self] ids, force in
                     self?.recordMemoryUsage(ids, force: force)
@@ -3858,7 +3863,8 @@ final class ChatViewModel {
     private func messagesByInjectingRuntimeContext(
         _ messages: [UIMessage],
         mcpEnabledOverride: Bool? = nil,
-        state: ChatConversationRunState? = nil
+        state: ChatConversationRunState? = nil,
+        memoryRecallOverride: ChatMemoryContextBuilder.RecallResult? = nil
     ) -> [UIMessage] {
         let state = state ?? currentRun.state
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
@@ -3887,18 +3893,47 @@ final class ChatViewModel {
                 : [],
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
-        ).injectingRuntimeContext(into: uploadableWithGuidance, coalesceSystemMessages: false)
+        ).injectingRuntimeContext(
+            into: uploadableWithGuidance,
+            coalesceSystemMessages: false,
+            memoryRecallOverride: memoryRecallOverride
+        )
         return withContext
     }
 
-    private func memoryRecordIdsForRuntimeContext(_ messages: [UIMessage]) -> [Int32] {
+    private func memoryRecordIdsForRuntimeContext(
+        _ messages: [UIMessage],
+        override: ChatMemoryContextBuilder.RecallResult? = nil
+    ) -> [Int32] {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
         return ChatRuntimeContextBuilder(
             sharedSettings: sharedSettings,
             mcpTools: mcpManager.tools,
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
-        ).memoryRecallResult(for: uploadableMessages).ids
+        ).memoryRecallResult(for: uploadableMessages, override: override).ids
+    }
+
+    /// Jev Phase 1（记忆召回）：每轮上传准备时计算统一选中集合。turnBudgetKey =
+    /// 会话 + 最后一条 user 消息 id——同一轮的工具循环复用，steer（新增 user
+    /// 消息）自然换轮；记录内容/范围/配置变化由服务端 turnKey 指纹覆盖。
+    /// 返回本轮的统一选中集合（nil = off/shadow/失败回退）。
+    private func prepareJevMemoryRecallSelection(
+        _ messages: [UIMessage],
+        conversationId: KotlinUuid?
+    ) async -> ChatMemoryContextBuilder.RecallResult? {
+        let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
+        let lastUserId = uploadableMessages.reversed()
+            .first { $0.role == MessageRole.user }?.id.description() ?? "none"
+        return await IOSJevMemoryRecallService.shared.prepareTurnSelection(
+            messages: uploadableMessages,
+            records: IosMemoryFactory.shared.getAllRecords(),
+            runtime: sharedSettings.agentRuntime,
+            identity: IOSJevMemoryRecallService.RunIdentity(
+                runId: nil,
+                turnBudgetKey: "\(conversationId?.description() ?? "conv"):#\(lastUserId)"
+            )
+        )
     }
 
     private func recordMemoryUsage(_ ids: [Int32], force: Bool = false) {

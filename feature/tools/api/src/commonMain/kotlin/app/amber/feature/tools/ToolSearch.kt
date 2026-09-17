@@ -102,10 +102,29 @@ class ToolSearchIndex(
         query: String,
         category: String?,
         limit: Int,
+    ): JsonObject = searchPayload(query, category, limit, rankingOverride = null)
+
+    /**
+     * Jev Phase 1: same payload contract as [searchPayload], with an optional
+     * externally computed ranking. Every override name is re-validated against
+     * the CURRENT run registry (tools dropped mid-flight fall out; no stale or
+     * out-of-run tool can be exposed), the explicit category filter still
+     * applies, and keyword scores stay in the payload as honest signals.
+     * `null` ranking keeps the plain keyword order.
+     */
+    fun searchPayload(
+        query: String,
+        category: String?,
+        limit: Int,
+        rankingOverride: List<String>?,
     ): JsonObject {
         val normalizedCategory = category?.trim()?.lowercase()?.ifBlank { null }
         val boundedLimit = limit.coerceIn(1, 20)
-        val matches = search(query, normalizedCategory, boundedLimit)
+        val matches = if (rankingOverride != null) {
+            searchByRanking(rankingOverride, query, normalizedCategory, boundedLimit)
+        } else {
+            search(query, normalizedCategory, boundedLimit)
+        }
         val expandedTools = matches.map { it.metadata.name }
         val fullSchemaChars = registry.tools().sumOf { it.schemaFootprintChars() }
         val residentSchemaChars = registry.tools()
@@ -126,6 +145,7 @@ class ToolSearchIndex(
             put("callability_note", "Only tools in expanded_tools are newly callable on the next model step. tools_list is catalog/debug only and does not expose hidden schemas.")
             put("trace", buildJsonObject {
                 put("mode", if (registry.metadata.size > TOOL_SEARCH_AUTO_THRESHOLD) "lazy" else "bypass")
+                if (rankingOverride != null) put("ranked", true)
                 put("query", query)
                 profile?.let {
                     put("profile", it.name.lowercase())
@@ -180,6 +200,96 @@ class ToolSearchIndex(
             .sortedWith(compareByDescending<ScoredTool> { it.score }.thenBy { it.metadata.name })
             .take(limit)
             .toList()
+    }
+
+    /**
+     * Jev Phase 1: resolves an externally ranked name list against the current
+     * registry, preserving the caller's order. Unknown names and the discovery
+     * utility itself are dropped; the explicit category filter still applies.
+     * Keyword scores are recomputed (informational in the payload) so the JSON
+     * contract for the model stays identical to the plain search path.
+     */
+    private fun searchByRanking(
+        ranking: List<String>,
+        query: String,
+        category: String?,
+        limit: Int,
+    ): List<ScoredTool> {
+        val normalizedQuery = query.trim().lowercase()
+        val tokens = normalizedQuery
+            .split(Regex("""\s+"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        return ranking
+            .asSequence()
+            .filter { it != TOOL_SEARCH_TOOL_NAME }
+            .mapNotNull { toolsByName[it] }
+            .mapNotNull { tool ->
+                val metadata = registry.metadataFor(tool.name) ?: return@mapNotNull null
+                if (category != null && metadata.category.lowercase() != category) return@mapNotNull null
+                ScoredTool(metadata, tool, scoreTool(metadata, tool, normalizedQuery, tokens, category))
+            }
+            .take(limit)
+            .toList()
+    }
+
+    /**
+     * Jev Phase 1 candidate pool payload for semantic re-ranking: keyword
+     * matches plus a category supplement, deduped and bounded. Read-only —
+     * never touches the exposure state. The pool only contains tools declared
+     * in the CURRENT run registry, so no out-of-run tool can leak to the
+     * evaluator. Exposed as JSON so the private ScoredTool type stays inside
+     * the index.
+     */
+    fun candidatePoolPayload(
+        query: String,
+        category: String?,
+        poolLimit: Int = 32,
+    ): JsonObject {
+        val pool = candidatePool(query, category, poolLimit)
+        return buildJsonObject {
+            put("pool_size", pool.size)
+            put("candidates", buildJsonArray { pool.forEach { add(it.toJson()) } })
+        }
+    }
+
+    private fun candidatePool(
+        query: String,
+        category: String?,
+        poolLimit: Int,
+    ): List<ScoredTool> {
+        val normalizedQuery = query.trim().lowercase()
+        val tokens = normalizedQuery
+            .split(Regex("""\s+"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        val keywordMatches = registry.metadata
+            .asSequence()
+            .filter { it.name != TOOL_SEARCH_TOOL_NAME }
+            .filter { category == null || it.category.lowercase() == category }
+            .mapNotNull { metadata ->
+                val tool = toolsByName[metadata.name] ?: return@mapNotNull null
+                val score = scoreTool(metadata, tool, normalizedQuery, tokens, category)
+                if (score <= 0) null else ScoredTool(metadata, tool, score)
+            }
+            .sortedWith(compareByDescending<ScoredTool> { it.score }.thenBy { it.metadata.name })
+            .take(poolLimit)
+            .toList()
+        val pool = LinkedHashMap<String, ScoredTool>()
+        keywordMatches.forEach { pool[it.metadata.name] = it }
+        if (pool.size < poolLimit) {
+            registry.metadata
+                .asSequence()
+                .filter { it.name != TOOL_SEARCH_TOOL_NAME && it.name !in pool }
+                .filter { category == null || it.category.lowercase() == category }
+                .mapNotNull { metadata ->
+                    val tool = toolsByName[metadata.name] ?: return@mapNotNull null
+                    ScoredTool(metadata, tool, 0)
+                }
+                .take(poolLimit - pool.size)
+                .forEach { pool[it.metadata.name] = it }
+        }
+        return pool.values.toList()
     }
 
     private fun scoreTool(

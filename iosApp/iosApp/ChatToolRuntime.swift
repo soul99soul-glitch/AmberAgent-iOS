@@ -735,7 +735,20 @@ final class ChatToolRuntime {
                 guard let bridge = toolExposureBridge else {
                     return .failed("tool_search is unavailable in this run.")
                 }
-                return .filled(bridge.executeToolSearch(argumentsJson: arguments))
+                // Jev Phase 1：后台与前台共用语义发现服务（off 零网络）。
+                let output = await IOSJevToolDiscoveryService.execute(
+                    argumentsJson: arguments,
+                    bridge: bridge,
+                    identity: IOSJevToolDiscoveryService.RunIdentity(
+                        runId: runId,
+                        turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(
+                            conversationId: conversationId?.description(),
+                            lastUserMessageId: messages.reversed()
+                                .first { $0.role == MessageRole.user }?.id.description()
+                        )
+                    )
+                )
+                return .filled(output)
             }
         }
         // M5: tools_list 与 tool_search 同属本地目录调用（discovery 引导引用它）——
@@ -1396,7 +1409,7 @@ final class ChatToolRuntime {
         }
         switch pendingToolCall.kind {
         case .toolSearch:
-            return executeToolSearchToolCall(context, toolExposureBridge: toolExposureBridge)
+            return await executeToolSearchToolCall(context, toolExposureBridge: toolExposureBridge)
         case .search:
             return await executeSearchToolCall(context)
         case .workspace:
@@ -2729,30 +2742,43 @@ final class ChatToolRuntime {
     }
 
     /// P0-a: `tool_search`/`tools_list` are pure local discovery calls — no
-    /// approval, no network. `tool_search` runs through the KMP bridge
-    /// (parses query/category/limit, searches the full declaration catalog,
-    /// feeds `expanded_tools` back into the run exposure state so hits become
-    /// callable on the NEXT round); `tools_list` returns the full catalog
-    /// {name, description} list from the same bridge (M5).
+    /// approval; `tools_list` has no network either. `tool_search` runs through
+    /// the KMP bridge (parses query/category/limit, searches the full
+    /// declaration catalog, feeds `expanded_tools` back into the run exposure
+    /// state so hits become callable on the NEXT round); `tools_list` returns
+    /// the full catalog {name, description} list from the same bridge (M5).
+    /// Jev Phase 1: tool_search 可选走语义发现服务（off 零网络；shadow 只观测；
+    /// active 应用排序，失败回退原搜索）。tools_list 永远直连 bridge。
     private func executeToolSearchToolCall(
         _ pending: ChatPendingToolApproval,
         toolExposureBridge: IosToolExposureBridge?
-    ) -> ChatToolRuntimeResult {
-        guard let bridge = toolExposureBridge else {
-            return .completed(messagesByFinishingToolCall(
-                pending.toolCall,
-                outputText: ChatToolOutputFormatter.toolFailureJSON(
-                    toolName: pending.toolCall.toolName,
-                    reason: "tool_search 当前不可用。"
-                ),
-                in: pending.baseMessages
-            ))
-        }
+    ) async -> ChatToolRuntimeResult {
         let resultText: String
         if pending.toolCall.toolName == "tools_list" {
+            guard let bridge = toolExposureBridge else {
+                return .completed(messagesByFinishingToolCall(
+                    pending.toolCall,
+                    outputText: ChatToolOutputFormatter.toolFailureJSON(
+                        toolName: pending.toolCall.toolName,
+                        reason: "tools_list 当前不可用。"
+                    ),
+                    in: pending.baseMessages
+                ))
+            }
             resultText = bridge.executeToolsList()
         } else {
-            resultText = bridge.executeToolSearch(argumentsJson: pending.toolCall.input)
+            resultText = await IOSJevToolDiscoveryService.execute(
+                argumentsJson: pending.toolCall.input,
+                bridge: toolExposureBridge,
+                identity: IOSJevToolDiscoveryService.RunIdentity(
+                    runId: pending.runId,
+                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(
+                        conversationId: pending.conversationId?.description(),
+                        lastUserMessageId: pending.baseMessages.reversed()
+                            .first { $0.role == MessageRole.user }?.id.description()
+                    )
+                )
+            )
         }
         return .completed(messagesByFinishingToolCall(
             pending.toolCall,
@@ -4910,9 +4936,22 @@ final class ChatToolRuntime {
             guard let bridge else {
                 return .failure("\(tool) 当前不可用（缺少工具目录）。")
             }
-            let result = tool == "tools_list"
-                ? bridge.executeToolsList()
-                : bridge.executeToolSearch(argumentsJson: argsJSON)
+            if tool == "tools_list" {
+                return recipePrimitiveResult(bridge.executeToolsList())
+            }
+            // Jev Phase 1：Recipe discovery 与前台/后台共用语义发现服务。
+            let result = await IOSJevToolDiscoveryService.execute(
+                argumentsJson: argsJSON,
+                bridge: bridge,
+                identity: IOSJevToolDiscoveryService.RunIdentity(
+                    runId: context.runId,
+                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(
+                        conversationId: context.conversationId?.description(),
+                        lastUserMessageId: context.baseMessages.reversed()
+                            .first { $0.role == MessageRole.user }?.id.description()
+                    )
+                )
+            )
             return recipePrimitiveResult(result)
         case .skill:
             let result = await skillMcpToolService.execute(

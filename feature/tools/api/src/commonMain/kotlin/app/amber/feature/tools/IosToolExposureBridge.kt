@@ -156,13 +156,25 @@ class IosToolExposureBridge private constructor(
      * the payload JSON. Never throws — malformed arguments yield an error
      * payload instead.
      */
-    fun executeToolSearch(argumentsJson: String): String {
+    fun executeToolSearch(argumentsJson: String): String =
+        executeToolSearch(argumentsJson, rankingOverride = null)
+
+    /**
+     * Jev Phase 1: same contract as [executeToolSearch], with an optional
+     * externally computed ranking (validated against the current registry by
+     * [ToolSearchIndex.searchPayload]). `null` keeps the keyword order. All
+     * downstream behavior is shared: recipe enrichment, related-tool expansion
+     * and the exposure update run exactly as in the plain path.
+     */
+    fun executeToolSearch(argumentsJson: String, rankingOverride: List<String>?): String {
         return runCatching {
-            val input = bridgeJson.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject
-            val query = input["query"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            val category = input["category"]?.jsonPrimitive?.contentOrNull?.ifBlank { null }
-            val limit = input["limit"]?.jsonPrimitive?.intOrNull ?: TOOL_SEARCH_DEFAULT_LIMIT
-            val payload = ToolSearchIndex(registry).searchPayload(query, category, limit)
+            val input = parseSearchArguments(argumentsJson)
+            val payload = ToolSearchIndex(registry).searchPayload(
+                query = input.query,
+                category = input.category,
+                limit = input.limit,
+                rankingOverride = rankingOverride,
+            )
             // Wave B1 (§16.3): recipe hits additionally carry version,
             // permission summary and source=custom.recipe. The manifest body is
             // never included — the model only gets the schema at call time.
@@ -174,6 +186,67 @@ class IosToolExposureBridge private constructor(
             exposureState.exposeToolNames(expanded)
             payloadWithRelatedExposure(enriched, searchHits, expanded).toString()
         }.getOrElse { toolSearchErrorPayload(it.message) }
+    }
+
+    /**
+     * Jev Phase 1: read-only candidate snapshot for semantic re-ranking.
+     * Returns the query plus the bounded candidate pool (keyword matches +
+     * category supplement) with metadata the evaluator may consume, and flags
+     * an exact tool-name hit so the caller can bypass Jev entirely. NEVER
+     * mutates the exposure state — only [executeToolSearch] (or the ranked
+     * overload) may expose tools.
+     */
+    fun candidateSnapshot(argumentsJson: String): String {
+        return runCatching {
+            val input = parseSearchArguments(argumentsJson)
+            val index = ToolSearchIndex(registry)
+            val pool = index.candidatePoolPayload(input.query, input.category)
+            val exactMatch = registry.metadata
+                .map { it.name }
+                .filter { it != TOOL_SEARCH_TOOL_NAME }
+                .firstOrNull { it.lowercase() == input.query.trim().lowercase() }
+            buildJsonObject {
+                put("status", "ok")
+                put("query", input.query)
+                input.category?.let { put("category", it) }
+                put("limit", input.limit)
+                put("total_tools", registry.metadata.size)
+                val candidates = pool["candidates"] as? JsonArray
+                put("pool_size", candidates?.size ?: 0)
+                put(
+                    "pool_coverage",
+                    if (registry.metadata.isEmpty()) 0.0
+                    else (candidates?.size ?: 0).toDouble() / registry.metadata.size,
+                )
+                exactMatch?.let { put("exact_match", it) }
+                put("categories", buildJsonArray {
+                    index.categoryCounts().entries
+                        .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
+                        .forEach { (name, count) ->
+                            add(buildJsonObject {
+                                put("category", name)
+                                put("count", count)
+                            })
+                        }
+                })
+                put("candidates", candidates ?: buildJsonArray { })
+            }.toString()
+        }.getOrElse { toolSearchErrorPayload(it.message) }
+    }
+
+    private data class SearchArguments(
+        val query: String,
+        val category: String?,
+        val limit: Int,
+    )
+
+    private fun parseSearchArguments(argumentsJson: String): SearchArguments {
+        val input = bridgeJson.parseToJsonElement(argumentsJson.ifBlank { "{}" }).jsonObject
+        return SearchArguments(
+            query = input["query"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            category = input["category"]?.jsonPrimitive?.contentOrNull?.ifBlank { null },
+            limit = input["limit"]?.jsonPrimitive?.intOrNull ?: TOOL_SEARCH_DEFAULT_LIMIT,
+        )
     }
 
     private fun relatedExpandedToolNames(searchHits: List<String>): List<String> {

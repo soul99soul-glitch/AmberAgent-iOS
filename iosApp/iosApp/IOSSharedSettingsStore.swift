@@ -121,8 +121,11 @@ final class IOSSharedSettingsStore {
     private let seatsKey = "app.amber.ios.councilSeats"
     private let remoteSyncStatusKey = "app.amber.ios.remoteSyncStatus"
     private let capabilityGatesKey = "app.amber.ios.capabilityGates.v1"
+    private let jevSettingsKey = "app.amber.ios.jevSettings.v1"
 
     private(set) var capabilityGates: IOSCapabilityGateSettings
+    /// Jev 快速判断设置（独立版本化；API Key 在 Keychain side-table，不在此持久化）。
+    private(set) var jevSettings: IOSJevSettings
 
     init(userDefaults: UserDefaults = .standard) {
         self.defaults = userDefaults
@@ -131,6 +134,12 @@ final class IOSSharedSettingsStore {
             self.capabilityGates = decoded
         } else {
             self.capabilityGates = IOSCapabilityGateSettings()
+        }
+        if let data = defaults.data(forKey: jevSettingsKey),
+           let decoded = try? JSONDecoder().decode(IOSJevSettings.self, from: data) {
+            self.jevSettings = decoded
+        } else {
+            self.jevSettings = IOSJevSettings()
         }
         if let json = defaults.string(forKey: fullSettingsJsonKey),
            let decoded = try? Self.decodeSettings(json) {
@@ -319,6 +328,64 @@ final class IOSSharedSettingsStore {
         if let data = try? JSONEncoder().encode(capabilityGates) {
             defaults.set(data, forKey: capabilityGatesKey)
         }
+    }
+
+    // MARK: - Jev 快速判断（Phase 1：设置/凭据/模式/范围）
+
+    /// 更新并持久化 Jev 设置。revision 递增使在途判断的返回值失效、缓存失效。
+    func updateJevSettings(_ settings: IOSJevSettings) {
+        jevSettings = settings
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: jevSettingsKey)
+        }
+        IOSJevDecisionCoordinator.shared.invalidateCaches()
+    }
+
+    /// 保存 API Key。Keychain 写入成功才更新 UI 状态；失败时保持原可用 Key。
+    /// 成功后解除协调器的认证暂停（凭据已变化）。
+    @discardableResult
+    func storeJevApiKey(_ key: String) -> Bool {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        guard IOSCredentialSideTable.store(key: IOSCredentialSideTable.jevApiKey, value: trimmed) else {
+            return false
+        }
+        IOSJevDecisionCoordinator.shared.resetAuthState()
+        IOSJevDecisionCoordinator.shared.invalidateCaches()
+        var settings = jevSettings
+        settings.bumpRevision()
+        jevSettings = settings
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: jevSettingsKey)
+        }
+        return true
+    }
+
+    /// 清除 API Key（Keychain + 缓存失效 + revision 递增使在途结果不可应用）。
+    func clearJevApiKey() {
+        IOSCredentialSideTable.delete(key: IOSCredentialSideTable.jevApiKey)
+        IOSJevDecisionCoordinator.shared.resetAuthState()
+        IOSJevDecisionCoordinator.shared.invalidateCaches()
+        var settings = jevSettings
+        settings.bumpRevision()
+        jevSettings = settings
+        if let data = try? JSONEncoder().encode(settings) {
+            defaults.set(data, forKey: jevSettingsKey)
+        }
+    }
+
+    func hasJevApiKey() -> Bool {
+        let key = IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey)
+        return key?.isEmpty == false
+    }
+
+    /// 协调器的轻量读取入口：不走完整 store 初始化（rehydrate 等重活）。
+    static func loadPersistedJevSettings(defaults: UserDefaults = .standard) -> IOSJevSettings {
+        guard let data = defaults.data(forKey: "app.amber.ios.jevSettings.v1"),
+              let decoded = try? JSONDecoder().decode(IOSJevSettings.self, from: data) else {
+            return IOSJevSettings()
+        }
+        return decoded
     }
 
     var remoteSyncStatus: IOSRemoteSyncStatus {
