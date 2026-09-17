@@ -110,6 +110,7 @@ struct IOSJevPolicy: Codable, Equatable {
         dailyRequestBodyBudgetBytes = try container.decodeIfPresent(Int.self, forKey: .dailyRequestBodyBudgetBytes) ?? 16 * 1_024 * 1_024
         toolDiscoveryMinScore = try container.decodeIfPresent(Double.self, forKey: .toolDiscoveryMinScore) ?? 1.0
         memoryRecallMinScore = try container.decodeIfPresent(Double.self, forKey: .memoryRecallMinScore) ?? 1.0
+        contextSelectionMinScore = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinScore) ?? 1.0
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
         cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 300
         cooldownFailureThreshold = try container.decodeIfPresent(Int.self, forKey: .cooldownFailureThreshold) ?? 3
@@ -120,7 +121,8 @@ struct IOSJevPolicy: Codable, Equatable {
         case policyVersion, deadlineMs, maxQuestions, maxCandidates, maxStateBytes
         case maxRequestBytes, maxResponseBytes, perTurnRequestBudget, perTurnStateBudgetBytes
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
-        case memoryRecallMinScore, cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
+        case memoryRecallMinScore, contextSelectionMinScore
+        case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
     }
 
     var policyVersion: Int = 1
@@ -148,6 +150,8 @@ struct IOSJevPolicy: Codable, Equatable {
     var toolDiscoveryMinScore: Double = 1.0
     /// 记忆召回：单条候选 Noul/Score 低于该值不进入注入集合。
     var memoryRecallMinScore: Double = 1.0
+    /// 上下文筛选：内容块 Score 低于该值且无保留信号时隐藏。
+    var contextSelectionMinScore: Double = 1.0
     /// 缓存条目上限（内存）。
     var cacheMaxEntries: Int = 128
     /// 缓存 TTL（秒）。

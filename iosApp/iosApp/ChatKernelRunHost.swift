@@ -1814,12 +1814,23 @@ final class ChatKernelRunHost {
             requestMessages = plan.uploadMessages
         }
 
+        // Jev Phase 2（上下文筛选）：在压缩前对请求副本做长工具输出的筛选投影。
+        // 只影响本轮上传；canonical 历史、持久化与压缩摘要来源不受影响。
+        // off/shadow/失败返回原数组。随后 Phase 1 的记忆准备基于同一份投影结果。
+        let projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
+            requestMessages,
+            identity: IOSJevContextSelectionService.RunIdentity(
+                runId: runId,
+                turnBudgetKey: runId
+            )
+        )
+
         // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
         // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
         // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(requestMessages)
+        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(projectedMessages)
         let runtimeBaseline = messagesByInjectingRuntimeContext(
-            requestMessages,
+            projectedMessages,
             memoryRecallOverride: memoryRecallOverride
         )
         let runtimeOverheadTokens = max(
@@ -1831,7 +1842,7 @@ final class ChatKernelRunHost {
         let preparedUploadMessages: [UIMessage]
         do {
             preparedUploadMessages = try await IOSContextCompactionCoordinator.shared.prepareMessagesForRequest(
-                uploadMessages: requestMessages,
+                uploadMessages: projectedMessages,
                 conversationId: conversationId,
                 settings: settings,
                 params: effectiveParams,
