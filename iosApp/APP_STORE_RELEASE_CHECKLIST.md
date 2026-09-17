@@ -13,7 +13,8 @@
   TestFlight 导出/上传使用 App Store Connect 分发签名，不使用 Personal Team。
 - [x] 主 App、Watch App 和 Watch Widgets 的 App ID 均关联
   `group.app.amber.ios.watchkit`（2026-09-16 已补齐主 App 绑定）。
-- [ ] 刷新 provisioning profile，确认包含对应 App Group entitlement。
+- [x] 本次分发已刷新 provisioning profile，并验证主 App、Watch 和 Widget 的签名
+  包含对应 App Group entitlement。
 - [x] 在 App Store Connect 创建 `AmberAgent` App 记录并匹配 `app.amber.ios`。
   App ID 为 `6812412419`，见 [TestFlight](https://appstoreconnect.apple.com/teams/68ed2ac5-9fb2-4b47-96c3-108768e0b08c/apps/6812412419/testflight)。
 
@@ -49,6 +50,18 @@
 
 Apple 官方说明：[上传构建](https://developer.apple.com/help/app-store-connect/manage-builds/upload-builds/)、
 [TestFlight 流程](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/)。
+
+### 2026-09-16 首次上传记录
+
+- `AmberAgent 1.0.0 (1)` 已上传，Apple 处理及出口合规已完成；个人内测组状态为“正在测试”。
+- 首次外部测试已填写 Beta 描述、审核联系信息和测试重点并提交，当前“正在等待审核”。
+- 已补齐 `NSHealthUpdateUsageDescription` 和小说文档类型的 `LSHandlerRank`；两项对应
+  发布检查包含失败反例验证。
+- 已核对四个分发签名 bundle 的完整 Release entitlements、生产环境、版本、描述文件
+  和嵌套签名，并补入匹配 UUID 的 Shared.framework dSYM。
+- CPython/stdlib 原制品缺少可恢复的 dSYM，Apple 返回非阻塞符号化警告。
+- 使用未签名归档导出时，必须先保留源码 entitlements 再让 Xcode 分发重签；直接导出
+  会丢失 App Group、HealthKit、CloudKit 等能力。优先使用正常签名 Archive 流程。
 
 ## 能力开通（按路线图阶段）
 

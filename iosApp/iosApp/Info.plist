@@ -40,6 +40,8 @@
             <string>Amber Novel Project</string>
             <key>CFBundleTypeRole</key>
             <string>Editor</string>
+            <key>LSHandlerRank</key>
+            <string>Owner</string>
             <key>LSItemContentTypes</key>
             <array>
                 <string>app.amber.ios.novel-project</string>
@@ -111,6 +113,8 @@
     <string>AmberAgent can request Game Center friend list access when you choose to enable Game Center capabilities.</string>
     <key>NSHealthShareUsageDescription</key>
     <string>Amber reads activity, workout, and sleep summaries only after you approve access, so its agent can help analyze your health and fitness trends.</string>
+    <key>NSHealthUpdateUsageDescription</key>
+    <string>Amber currently reads only the health data you choose to share. It does not request permission to save or change records in Apple Health.</string>
     <key>NSHomeKitUsageDescription</key>
     <string>AmberAgent can request HomeKit access when you choose to enable home capabilities.</string>
     <key>NSIdentityUsageDescription</key>

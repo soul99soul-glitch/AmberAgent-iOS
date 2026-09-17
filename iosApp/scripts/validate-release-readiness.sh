@@ -20,6 +20,16 @@ with open(project_path, "r", encoding="utf-8") as handle:
 
 errors = []
 
+if "com.apple.developer.healthkit" in info.get("AmberAgentConfiguredEntitlements", []):
+    for key in ("NSHealthShareUsageDescription", "NSHealthUpdateUsageDescription"):
+        purpose = info.get(key)
+        if not isinstance(purpose, str) or not purpose.strip():
+            errors.append(f"HealthKit requires a non-empty {key}")
+
+for document_type in info.get("CFBundleDocumentTypes", []):
+    if document_type.get("LSHandlerRank") not in {"Owner", "Default", "Alternate", "None"}:
+        errors.append(f"document type needs LSHandlerRank: {document_type.get('CFBundleTypeName')}")
+
 
 def declared_privacy(path, label):
     try:
