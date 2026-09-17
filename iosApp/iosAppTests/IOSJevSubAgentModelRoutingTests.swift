@@ -97,7 +97,11 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
         let service = makeService(settings: makeSettings(mode: .off), transport: transport)
         let candidates = ["model-a", "model-b"].map(makeCandidate)
-        let ranked = await service.rankedPreferredModelIds(taskText: "整理这段文本", candidates: candidates)
+        let ranked = await service.rankedPreferredModelIds(
+            taskText: "整理这段文本",
+            candidates: candidates,
+            turnBudgetKey: "run-test"
+)
         XCTAssertEqual(transport.calls, 0)
         XCTAssertTrue(ranked.isEmpty)
     }
@@ -108,7 +112,11 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
         let service = makeService(settings: settings, transport: transport)
         let candidates = ["model-a"].map(makeCandidate)
-        let ranked = await service.rankedPreferredModelIds(taskText: "任务", candidates: candidates)
+        let ranked = await service.rankedPreferredModelIds(
+            taskText: "任务",
+            candidates: candidates,
+            turnBudgetKey: "run-test"
+)
         XCTAssertEqual(transport.calls, 0)
         XCTAssertTrue(ranked.isEmpty)
     }
@@ -117,7 +125,11 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         let transport = JevStubTransport { _ in (self.scorePayload(["model-a": 2.5, "model-b": 1.0, "model-c": 2.8]), self.httpResponse(status: 200)) }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let candidates = ["model-a", "model-b", "model-c"].map(makeCandidate)
-        let ranked = await service.rankedPreferredModelIds(taskText: "修复这段代码的空指针", candidates: candidates)
+        let ranked = await service.rankedPreferredModelIds(
+            taskText: "修复这段代码的空指针",
+            candidates: candidates,
+            turnBudgetKey: "run-test"
+)
         XCTAssertEqual(ranked, ["model-c", "model-a"], "ranked by fit, below-threshold dropped")
     }
 
@@ -125,7 +137,11 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         let transport = JevStubTransport { _ in (self.scorePayload(["model-a": 2.5]), self.httpResponse(status: 200)) }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let candidates = ["model-a", "model-b"].map(makeCandidate)
-        let ranked = await service.rankedPreferredModelIds(taskText: "任务", candidates: candidates)
+        let ranked = await service.rankedPreferredModelIds(
+            taskText: "任务",
+            candidates: candidates,
+            turnBudgetKey: "run-test"
+)
         XCTAssertEqual(ranked, ["model-a"], "missing score = uncertain = not preferred")
     }
 
@@ -133,7 +149,11 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 500)) }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let candidates = ["model-a"].map(makeCandidate)
-        let ranked = await service.rankedPreferredModelIds(taskText: "任务", candidates: candidates)
+        let ranked = await service.rankedPreferredModelIds(
+            taskText: "任务",
+            candidates: candidates,
+            turnBudgetKey: "run-test"
+)
         XCTAssertTrue(ranked.isEmpty, "failure falls back to existing selection")
     }
 

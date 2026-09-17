@@ -151,6 +151,11 @@ final class IOSJevWebMountLoopService {
                 return .cancelled(steps: steps)
             }
             if Date().timeIntervalSince(startedAt) > TimeInterval(maxSeconds) {
+                // 预算边界退出前仍做一次完成核验（最后一次动作可能已达成目标）。
+                if let finalObservation = await deps.observe(input.sessionId),
+                   deps.isComplete(input.sessionId, finalObservation) {
+                    return .completed(steps: steps, finalObservation: finalObservation)
+                }
                 return .handback(reason: "快速循环时间预算（\(maxSeconds)s）耗尽。", steps: steps, latestObservation: nil)
             }
 
@@ -213,6 +218,11 @@ final class IOSJevWebMountLoopService {
                 return .handback(reason: "连续 \(noProgressCount) 次无进展。", steps: steps, latestObservation: observation)
             }
         }
+        // 决策次数耗尽：最后一次动作可能已达成目标，做边界完成核验。
+        if let finalObservation = await deps.observe(input.sessionId),
+           deps.isComplete(input.sessionId, finalObservation) {
+            return .completed(steps: steps, finalObservation: finalObservation)
+        }
         return .handback(reason: "动作决策次数（\(maxDecisions)）耗尽。", steps: steps, latestObservation: nil)
     }
 
@@ -229,11 +239,6 @@ final class IOSJevWebMountLoopService {
             // 控件角色契约：动作语义来自快照中已验证的控件类型，不凭按钮文案推断。
             let role = element.role.lowercased()
             if allowed.contains(ActionKind.clickNav.rawValue), role == "link" {
-                // 导航链接：进入新页面后（urlChanged）任何 link 都重新可选；
-                // 同页内仅在输入允许时保留。
-                candidates.append(PlannedAction(kind: .clickNav, elementId: element.id, value: nil))
-            } else if urlChanged && role == "link" {
-                // 新页面上读取型导航仍然合法（读取/导航准入）。
                 candidates.append(PlannedAction(kind: .clickNav, elementId: element.id, value: nil))
             }
             if allowed.contains(ActionKind.select.rawValue),
@@ -273,10 +278,10 @@ final class IOSJevWebMountLoopService {
         let questions = [IOSJevQuestion.choice(
             id: "next_action",
             options: Dictionary(
-                uniqueKeysWithValues: bounded.map { candidate -> (String, String?) in
-                    let label = Self.optionLabel(candidate)
-                    return (label, nil)
-                }
+                bounded.map { candidate -> (String, String?) in
+                    (Self.optionLabel(candidate), nil)
+                },
+                uniquingKeysWith: { first, _ in first }
             ),
             instructions: "选择下一步动作。只依据当前快照与目标；不确定时选择 scroll。禁止推断白名单之外的语义。"
         )]

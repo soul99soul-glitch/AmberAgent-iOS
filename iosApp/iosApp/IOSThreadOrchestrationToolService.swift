@@ -475,6 +475,7 @@ final class IOSThreadOrchestrationToolService {
         // Jev Phase 3: 异步判断在 resolve 前完成（等待期间不占模型名额）。
         let jevPreferredModelIds = await jevPreferredModelIds(
             arguments: args,
+            parentRunId: parentRunId,
             allowPoolForInheritedModel: true,
             inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration
         )
@@ -638,6 +639,7 @@ final class IOSThreadOrchestrationToolService {
     /// 显式 model_id 的调用不判断（不覆盖用户的明确选择）。
     private func jevPreferredModelIds(
         arguments: [String: Any],
+        parentRunId: String,
         allowPoolForInheritedModel: Bool,
         inherited: IOSOrchestrationAgentConfiguration?
     ) async -> [String] {
@@ -653,7 +655,8 @@ final class IOSThreadOrchestrationToolService {
         let message = Self.optionalTrimmedString(arguments["message"]) ?? ""
         return await IOSJevModelRoutingService.shared.rankedPreferredModelIds(
             taskText: "\(taskName)\n\(message)",
-            candidates: poolCandidates
+            candidates: poolCandidates,
+            turnBudgetKey: parentRunId
         )
     }
 
@@ -1627,6 +1630,7 @@ final class IOSThreadOrchestrationToolService {
         // Jev Phase 3: 异步判断在 resolve 前完成（等待期间不占模型名额）。
         let jevPreferredModelIds = await jevPreferredModelIds(
             arguments: args,
+            parentRunId: runId,
             allowPoolForInheritedModel: false,
             inherited: inheritedConfiguration
         )

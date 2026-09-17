@@ -23,8 +23,8 @@ struct IOSJevSettingsView: View {
         var text: String
     }
 
-    /// Phase 1 已接线的用途（其余用途后续 phase 开放）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall]
+    /// 已接线的用途（网页操作随 wm_run_goal 工具接线后开放）。
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .modelRouting]
 
     var body: some View {
         NavigationStack {
@@ -263,7 +263,13 @@ struct IOSJevSettingsView: View {
         let effectiveMode = settings.effectiveMode(for: useCase)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                Image(systemName: useCase == .toolDiscovery ? "magnifyingglass" : "brain")
+                Image(systemName: {
+                    switch useCase {
+                    case .toolDiscovery: "magnifyingglass"
+                    case .memoryRecall: "brain"
+                    default: "arrow.triangle.branch"
+                    }
+                }())
                     .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(AmberTheme.foreground2)
                     .frame(width: 28, height: 28)

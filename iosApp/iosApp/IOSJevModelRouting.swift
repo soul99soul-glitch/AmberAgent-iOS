@@ -33,9 +33,12 @@ final class IOSJevModelRoutingService {
 
     /// 返回 Jev 判定为"适配当前任务"的模型 id（按适配度降序）。空 = 走现有选择。
     /// 每个候选一个 Score 题（0-3 适配度）；缺题/无效分数 = 不确定 = 不进入首选集。
+    /// turnBudgetKey：调用方的 runId——模型调度预算按 run 记账，而非 App 全局。
+    /// shadow：后台观测只记指标，不阻塞主路径（立即返回空）。
     func rankedPreferredModelIds(
         taskText: String,
-        candidates: [IOSSubAgentModelPool.Candidate]
+        candidates: [IOSSubAgentModelPool.Candidate],
+        turnBudgetKey: String
     ) async -> [String] {
         guard !candidates.isEmpty else { return [] }
         let settings = deps.settingsProvider()
@@ -46,12 +49,12 @@ final class IOSJevModelRoutingService {
         let trimmedTask = String(taskText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1_500))
         guard !trimmedTask.isEmpty else { return [] }
 
+        // state/questions 构建一次，active 与 shadow 共用。
         let entries = candidates.map { candidate -> (id: String, description: String) in
             let contextWindow = Self.intValue(candidate.model.contextWindowTokens)
                 .map { "context=\($0) tokens" } ?? "context=unknown"
             return (candidate.model.modelId, "\(candidate.model.modelId) (\(contextWindow))")
         }
-
         var lines: [String] = []
         lines.append("子任务文本：\(trimmedTask)")
         lines.append("候选模型（id = 模型标识）：")
@@ -68,9 +71,28 @@ final class IOSJevModelRoutingService {
         }
         let context = IOSJevRunContext(
             runId: nil,
-            turnBudgetKey: "model-routing",
+            turnBudgetKey: turnBudgetKey,
             inputHash: IOSJevToolDiscoveryService.stableHash(state)
         )
+
+        // shadow：后台观测只记指标，不阻塞主路径（契约表：shadow 不阻塞原主路径）。
+        if settings.effectiveMode(for: .modelRouting) == .shadow {
+            let coordinator = deps.coordinator
+            Task(priority: .utility) { [weak self] in
+                guard let self else { return }
+                _ = await coordinator.decide(
+                    useCase: .modelRouting,
+                    requiredScopes: requiredScopes,
+                    state: state,
+                    questions: questions,
+                    context: context,
+                    cacheKey: "model_routing_shadow"
+                )
+                _ = self
+            }
+            return []
+        }
+
         let outcome = await deps.coordinator.decide(
             useCase: .modelRouting,
             requiredScopes: requiredScopes,
