@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.int
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -489,6 +490,49 @@ class IosToolExposureBridgeTest {
         assertEquals("true", test["mutates"]?.jsonPrimitive?.content)
         assertEquals("true", test["needs_approval"]?.jsonPrimitive?.content)
         assertEquals("false", test["allows_auto_approval"]?.jsonPrimitive?.content)
+    }
+
+    // MARK: Jev Phase 1 — 纯候选快照与排序覆盖
+
+    @Test
+    fun candidateSnapshotIsReadOnlyAndCarriesCandidateMetadata() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+        val beforeVisible = bridge.visibleTools().map { it.name }.toSet()
+
+        val snapshot = parseObject(bridge.candidateSnapshot("""{"query":"workspace file edit","limit":5}"""))
+        assertEquals("ok", snapshot["status"]?.jsonPrimitive?.content)
+        assertTrue((snapshot["pool_size"]!!.jsonPrimitive.int) > 0, "semantic pool must include keyword supplements")
+        val candidates = snapshot["candidates"]!!.jsonArray
+        assertTrue(candidates.isNotEmpty())
+        val first = candidates.first().jsonObject
+        assertTrue(first.containsKey("name") && first.containsKey("category") && first.containsKey("score"))
+
+        // 快照只读：暴露集合保持不变。
+        assertEquals(beforeVisible, bridge.visibleTools().map { it.name }.toSet())
+    }
+
+    @Test
+    fun candidateSnapshotFlagsExactNameMatchWithoutExposing() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+
+        val snapshot = parseObject(bridge.candidateSnapshot("""{"query":"search_web","limit":5}"""))
+        assertEquals("search_web", snapshot["exact_match"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun executeToolSearchRankingOverrideDropsUnknownNamesAndKeepsKeywordScores() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+        // Jev 排序：把 memory_tool 排到最前；未知名与目录外工具必须被丢弃。
+        val payload = parseObject(
+            bridge.executeToolSearch(
+                """{"query":"remember this note","limit":3}""",
+                rankingOverride = listOf("memory_tool", "not_a_real_tool", "tool_search"),
+            )
+        )
+        val expanded = payload["expanded_tools"]!!.jsonArray.map { it.jsonPrimitive.content }
+        assertEquals("memory_tool", expanded.first(), "ranking override must lead the result order")
+        assertFalse("not_a_real_tool" in expanded, "unknown names must not leak into exposure")
+        assertFalse("tool_search" in expanded, "tool_search itself can never be exposed via ranking")
     }
 
     private fun tool(

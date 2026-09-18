@@ -280,3 +280,99 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         guard case .needsUserAction = outcome else { return XCTFail("expected needsUserAction, got \(outcome)") }
     }
 }
+
+// MARK: - wm_run_goal 工具入口绑定（纯函数层）
+
+extension IOSJevWebMountLoopTests {
+
+    private func observePayload(
+        snapshotId: String = "snap-1",
+        revision: Int = 3,
+        url: String = "https://example.com/list?filter=done",
+        nodes: [[String: Any]] = [["ref": "e1", "role": "link", "text": "Done items"]]
+    ) -> [String: Any] {
+        [
+            "snapshot_id": snapshotId,
+            "page_revision": revision,
+            "page": ["url": url],
+            "interactive_elements": nodes,
+        ]
+    }
+
+    func testLoopInputParsingNarrowsWhitelistAndRequiresCoreFields() {
+        // 缺 session/goal → nil。
+        XCTAssertNil(IOSJevWebMountLoopService.loopInput(fromArguments: ["goal": "x"]))
+        XCTAssertNil(IOSJevWebMountLoopService.loopInput(fromArguments: ["session_id": "s"]))
+
+        // 白名单外的名字被丢弃；缺省 = 全白名单。
+        let full = IOSJevWebMountLoopService.loopInput(fromArguments: [
+            "session_id": "s", "goal": "筛选出已完成条目",
+        ])
+        XCTAssertEqual(full?.allowedActions, IOSJevWebMountLoopService.actionWhitelist)
+
+        let narrowed = IOSJevWebMountLoopService.loopInput(fromArguments: [
+            "session_id": "s", "goal": "g",
+            "allowed_actions": ["scroll", "type_draft", "submit_form", "pay"],
+            "draft_value": "done",
+            "max_action_decisions": 2,
+        ])
+        XCTAssertEqual(narrowed?.allowedActions, ["scroll", "type_draft"])
+        XCTAssertEqual(narrowed?.draftValue, "done")
+        XCTAssertEqual(narrowed?.maxActionDecisions, 2)
+    }
+
+    func testCompletionCheckRequiresMarkerInURLOrElementLabel() {
+        let observation = IOSJevWebMountLoopService.PageObservation(
+            snapshotId: "snap", revision: 1,
+            url: "https://example.com/list?filter=done",
+            elements: [IOSJevWebMountLoopService.PageElement(id: "e1", role: "link", label: "已完成 12 条")]
+        )
+        // 空标记永不完成（安全侧：只能走预算/handback 边界）。
+        XCTAssertFalse(IOSJevWebMountLoopService.isComplete(marker: "  ", observation: observation))
+        XCTAssertTrue(IOSJevWebMountLoopService.isComplete(marker: "filter=done", observation: observation))
+        XCTAssertTrue(IOSJevWebMountLoopService.isComplete(marker: "已完成", observation: observation))
+        XCTAssertFalse(IOSJevWebMountLoopService.isComplete(marker: "payment confirmation", observation: observation))
+    }
+
+    func testObservationMappingFromObservePayload() {
+        let observation = IOSJevWebMountLoopService.observation(fromObservePayload: observePayload())
+        XCTAssertEqual(observation?.snapshotId, "snap-1")
+        XCTAssertEqual(observation?.revision, 3)
+        XCTAssertEqual(observation?.url, "https://example.com/list?filter=done")
+        XCTAssertEqual(observation?.elements.first?.id, "e1")
+        XCTAssertEqual(observation?.elements.first?.role, "link")
+
+        // 缺 snapshot_id = 观察失败；无 ref 的节点被跳过。
+        XCTAssertNil(IOSJevWebMountLoopService.observation(fromObservePayload: ["page_revision": 1]))
+        let skipped = IOSJevWebMountLoopService.observation(fromObservePayload: observePayload(
+            nodes: [["role": "link"], ["ref": "e2", "role": "textbox", "text": "搜索"]]
+        ))
+        XCTAssertEqual(skipped?.elements.map(\.id), ["e2"])
+    }
+
+    func testOutcomeOutputShapeMatchesWebMountUnknownContract() throws {
+        let observation = IOSJevWebMountLoopService.PageObservation(
+            snapshotId: "snap", revision: 2, url: "https://example.com", elements: []
+        )
+        let completed = IOSJevWebMountLoopService.outputText(
+            for: .completed(steps: ["click_nav e1 @r2"], finalObservation: observation), goal: "g"
+        )
+        let completedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(completed.utf8)) as? [String: Any])
+        XCTAssertEqual(completedObject["status"] as? String, "completed")
+        XCTAssertEqual(completedObject["final_url"] as? String, "https://example.com")
+
+        let unknown = IOSJevWebMountLoopService.outputText(
+            for: .outcomeUnknown(action: "click_nav e1", steps: ["click_nav e1"]), goal: "g"
+        )
+        // 与 WebMount 既有 unknown 契约对齐：外层把它识别为 outcome-unknown。
+        let unknownObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(unknown.utf8)) as? [String: Any])
+        XCTAssertEqual(unknownObject["status"] as? String, "unknown_after_action")
+        XCTAssertEqual(unknownObject["may_have_applied"] as? Bool, true)
+
+        let handback = IOSJevWebMountLoopService.outputText(
+            for: .handback(reason: "预算耗尽。", steps: [], latestObservation: nil), goal: "g"
+        )
+        let handbackObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(handback.utf8)) as? [String: Any])
+        XCTAssertEqual(handbackObject["status"] as? String, "handback")
+    }
+}

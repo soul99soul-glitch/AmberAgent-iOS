@@ -607,6 +607,52 @@ fun createWebMountWaitToolDeclaration(): Tool = webMountTool(
     parameters = webMountWaitParameters()
 )
 
+/**
+ * Jev Phase 3: bounded fast web loop. The main model explicitly calls this to
+ * enter the loop; runtime budgets (6 decisions / 15s / 3 no-progress) always
+ * cap the caller-provided values, the action whitelist can only be narrowed by
+ * the input, and every executed action still goes through the existing
+ * per-action approval and ledger path. Completion is verified from page state
+ * via completion_text — a successful click alone never proves the goal.
+ */
+fun createWebMountRunGoalToolDeclaration(): Tool = webMountTool(
+    name = "wm_run_goal",
+    description = "Run a bounded fast action loop toward one goal on an open WebMount session. Provide the session_id, a single concrete goal, the allowed_actions whitelist (subset of scroll/select/click_nav/type_draft/submit_readonly_search), an optional draft_value for text entry, and completion_text that proves completion from page state. The loop observes, picks whitelisted actions, and hands back with structured status and steps; it never submits forms, deletes, pays, or logs in.",
+    parameters = InputSchema.Obj(
+        properties = buildJsonObject {
+            put("session_id", buildJsonObject {
+                put("type", "string")
+                put("description", "Open WebMount session to operate on.")
+            })
+            put("goal", buildJsonObject {
+                put("type", "string")
+                put("description", "One concrete, verifiable goal for this loop.")
+            })
+            put("allowed_actions", buildJsonObject {
+                put("type", "array")
+                put("items", buildJsonObject { put("type", "string") })
+                put("description", "Allowed action names; must be a subset of scroll, select, click_nav, type_draft, submit_readonly_search. Values beyond the whitelist are dropped.")
+            })
+            put("draft_value", buildJsonObject {
+                put("type", "string")
+                put("description", "Draft text for type_draft actions; missing value removes type_draft candidates.")
+            })
+            put("completion_text", buildJsonObject {
+                put("type", "string")
+                put("description", "Text that must appear in the page URL or visible element labels for the goal to count as completed.")
+            })
+            put("max_action_decisions", buildJsonObject {
+                put("type", "number")
+                put("description", "Optional smaller action-decision budget (hard cap 6).")
+            })
+            put("max_seconds", buildJsonObject {
+                put("type", "number")
+                put("description", "Optional smaller time budget in seconds (hard cap 15).")
+            })
+        }
+    )
+)
+
 fun createSelectedFileReadToolDeclaration(): Tool = Tool(
     name = "file_read_selected",
     description = "Read the text preview of the file the user explicitly selected in AmberAgent iOS.",
@@ -1796,6 +1842,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "wm_select" to ::createWebMountSelectToolDeclaration,
     "wm_find" to ::createWebMountFindToolDeclaration,
     "wm_wait" to ::createWebMountWaitToolDeclaration,
+    "wm_run_goal" to ::createWebMountRunGoalToolDeclaration,
     "mcp_call" to ::createMcpCallToolDeclaration,
     "mcp_list" to ::createMcpListToolDeclaration,
     "mcp_test" to ::createMcpTestToolDeclaration,

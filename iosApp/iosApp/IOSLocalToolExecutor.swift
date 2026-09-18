@@ -4940,7 +4940,8 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_scroll", description: "Scroll the page or an element into view.", requiresUserAction: false),
         .init(name: "wm_select", description: "Select an option value using an observed semantic target.", requiresUserAction: false),
         .init(name: "wm_find", description: "Read-only selector or visible-text search that returns stable element refs without input values.", requiresUserAction: false),
-        .init(name: "wm_wait", description: "Wait up to 30 seconds for a target, text, URL, document change, DOM stability, readiness, or delay; readiness alone does not verify the task goal.", requiresUserAction: false)
+        .init(name: "wm_wait", description: "Wait up to 30 seconds for a target, text, URL, document change, DOM stability, readiness, or delay; readiness alone does not verify the task goal.", requiresUserAction: false),
+        .init(name: "wm_run_goal", description: "Run a bounded Jev fast action loop toward one verifiable goal on an open session; every executed action still passes its own approval and the ledger, and it never submits, deletes, pays, or logs in.", requiresUserAction: false)
     ]
 
     static let supportedToolNames = Set(descriptors.map(\.name))
