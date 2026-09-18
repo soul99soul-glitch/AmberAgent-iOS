@@ -34,9 +34,10 @@ final class IOSJevContextSelectionService {
 
     /// 可安全重读的只读检索类工具（写入/提交类与 MCP/http 通用调用一律不筛：
     /// 其副作用语义无法静态判定，重读引用可能诱导副作用重放）。
+    /// search_web 同参重调是活网非确定性结果，"重读恢复原文"承诺不成立，v1 不筛。
     private static let rereadableToolPrefixes: Set<String> = [
         "workspace_file_read", "file_read", "workspace_artifact_read",
-        "scrape_web", "search_web", "wm_extract", "wm_observe",
+        "scrape_web", "wm_extract", "wm_observe",
         "session_read", "session_search",
         "workspace_file_search", "file_search", "workspace_file_list", "file_list",
     ]

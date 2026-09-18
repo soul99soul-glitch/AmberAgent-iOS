@@ -24,7 +24,6 @@ final class IOSJevMemoryRecallService {
 
     struct RunIdentity: Sendable {
         var runId: String?
-        var turnBudgetKey: String
     }
 
     struct TurnSelection {
@@ -293,7 +292,7 @@ final class IOSJevMemoryRecallService {
     private func makeContext(identity: RunIdentity, settings: IOSJevSettings, inputHash: String) -> IOSJevRunContext {
         IOSJevRunContext(
             runId: identity.runId,
-            turnBudgetKey: identity.turnBudgetKey,
+            turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(runId: identity.runId),
             inputHash: inputHash
         )
     }

@@ -46,11 +46,24 @@ final class IOSJevModelRoutingService {
         let requiredScopes: Set<IOSJevDataScope> = [.selectedTaskText]
         guard settings.canSend(useCase: .modelRouting, required: requiredScopes) else { return [] }
 
+        // 契约 3.3 步骤 2：已知能力硬过滤先于 Jev 排序。子任务运行始终带工具，
+        // 声明了能力且不含 TOOL 的候选直接淘汰；未声明能力 = unknown，保留。
+        let toolCapable = candidates.filter { candidate in
+            var hasDeclarations = false
+            var declaresTool = false
+            for ability in candidate.model.abilities {
+                hasDeclarations = true
+                if ability.name == "TOOL" { declaresTool = true }
+            }
+            return !hasDeclarations || declaresTool
+        }
+        guard !toolCapable.isEmpty else { return [] }
+
         let trimmedTask = String(taskText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1_500))
         guard !trimmedTask.isEmpty else { return [] }
 
         // state/questions 构建一次，active 与 shadow 共用。
-        let entries = candidates.map { candidate -> (id: String, description: String) in
+        let entries = toolCapable.map { candidate -> (id: String, description: String) in
             let contextWindow = Self.intValue(candidate.model.contextWindowTokens)
                 .map { "context=\($0) tokens" } ?? "context=unknown"
             return (candidate.model.modelId, "\(candidate.model.modelId) (\(contextWindow))")
@@ -70,7 +83,7 @@ final class IOSJevModelRoutingService {
             )
         }
         let context = IOSJevRunContext(
-            runId: nil,
+            runId: turnBudgetKey,
             turnBudgetKey: turnBudgetKey,
             inputHash: IOSJevToolDiscoveryService.stableHash(state)
         )

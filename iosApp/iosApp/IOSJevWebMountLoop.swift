@@ -73,6 +73,9 @@ final class IOSJevWebMountLoopService {
         var kind: ActionKind
         var elementId: String?
         var value: String?
+        /// 决策所依据的快照 revision：执行端口据此重验，防 decide→execute
+        /// 窗口内页面变化导致旧目标被执行。
+        var snapshotRevision: Int = 0
     }
 
     // MARK: Outcome
@@ -92,10 +95,105 @@ final class IOSJevWebMountLoopService {
 
     enum ExecutorResult {
         case applied(newRevision: Int)
+        /// 快照已失效（决策后页面变化）——循环回到顶部重新观察，不计失败。
+        case stale
         /// 语义未知（例如点击后页面状态无法确认）——禁止重放。
         case unknown
         case failed(reason: String)
         case denied(reason: String)
+    }
+
+    // MARK: Tool-entry binding helpers（wm_run_goal 分支使用；纯函数便于单测）
+
+    /// 从 wm_run_goal 工具入参解析 LoopInput。allowed_actions 缺省 = 全白名单；
+    /// 出现时只能收窄（越界名直接丢弃，不报错、不放大）。
+    static func loopInput(fromArguments object: [String: Any]) -> LoopInput? {
+        guard let sessionId = (object["session_id"] as? String)?.nilIfBlank,
+              let goal = (object["goal"] as? String)?.nilIfBlank else { return nil }
+        let rawAllowed = ((object["allowed_actions"] as? [String]) ?? []).compactMap { $0.nilIfBlank }
+        let allowed = rawAllowed.isEmpty ? actionWhitelist : Set(rawAllowed).intersection(actionWhitelist)
+        func boundedCount(_ key: String) -> Int? {
+            (object[key] as? NSNumber).flatMap { Int($0.doubleValue) }
+        }
+        return LoopInput(
+            sessionId: sessionId,
+            goal: goal,
+            draftValue: (object["draft_value"] as? String)?.nilIfBlank,
+            allowedActions: allowed,
+            maxActionDecisions: boundedCount("max_action_decisions"),
+            maxSeconds: boundedCount("max_seconds"),
+            maxNoProgress: boundedCount("max_no_progress")
+        )
+    }
+
+    /// 完成核验：completion_text 出现在 URL 或任一可见元素 label 中。缺省标记
+    /// 永不完成 → 循环只能以预算/handback 边界退出（安全侧）。
+    static func isComplete(marker: String, observation: PageObservation) -> Bool {
+        let needle = marker.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return false }
+        if observation.url.localizedCaseInsensitiveContains(needle) { return true }
+        return observation.elements.contains { $0.label.localizedCaseInsensitiveContains(needle) }
+    }
+
+    /// wm_observe 输出 JSON → PageObservation。缺 snapshot_id 视为观察失败。
+    static func observation(fromObservePayload object: [String: Any]) -> PageObservation? {
+        guard let snapshotId = (object["snapshot_id"] as? String)?.nilIfBlank else { return nil }
+        let revision = (object["page_revision"] as? NSNumber).flatMap { Int($0.doubleValue) } ?? 0
+        let page = object["page"] as? [String: Any]
+        let url = ((page?["url"] as? String) ?? (object["url"] as? String)) ?? ""
+        let nodes = object["interactive_elements"] as? [[String: Any]] ?? []
+        let elements = nodes.compactMap { node -> PageElement? in
+            guard let ref = (node["ref"] as? String)?.nilIfBlank else { return nil }
+            return PageElement(
+                id: ref,
+                role: (node["role"] as? String) ?? "",
+                label: ((node["text"] as? String) ?? (node["name"] as? String)) ?? ""
+            )
+        }
+        return PageObservation(snapshotId: snapshotId, revision: revision, url: url, elements: elements)
+    }
+
+    /// LoopOutcome → wm_run_goal 工具输出 JSON（bounded）。
+    static func outputText(for outcome: LoopOutcome, goal: String) -> String {
+        var object: [String: Any] = ["goal": String(goal.prefix(200))]
+        func boundedSteps(_ values: [String]) -> [String] { Array(values.prefix(12)) }
+        switch outcome {
+        case .completed(let steps, let observation):
+            object["status"] = "completed"
+            object["steps"] = boundedSteps(steps)
+            if let observation {
+                object["final_url"] = String(observation.url.prefix(300))
+                object["snapshot_id"] = observation.snapshotId
+            }
+        case .handback(let reason, let steps, let observation):
+            object["status"] = "handback"
+            object["reason"] = reason
+            object["steps"] = boundedSteps(steps)
+            if let observation {
+                object["latest_url"] = String(observation.url.prefix(300))
+                object["snapshot_id"] = observation.snapshotId
+                object["next_step_hint"] = "由主模型按现有 WebMount 工具流程继续，或向用户说明。"
+            }
+        case .needsUserAction(let reason, let steps):
+            object["status"] = "needs_user_action"
+            object["reason"] = reason
+            object["steps"] = boundedSteps(steps)
+        case .cancelled(let steps):
+            object["status"] = "cancelled"
+            object["steps"] = boundedSteps(steps)
+        case .outcomeUnknown(let action, let steps):
+            // 与 WebMount 既有语义对齐：未知结果禁止重放同一副作用动作。
+            object["status"] = "unknown_after_action"
+            object["may_have_applied"] = true
+            object["action"] = action
+            object["steps"] = boundedSteps(steps)
+            object["next_step_hint"] = "不要重放该动作；先只读核验页面状态。"
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
+           let text = String(data: data, encoding: .utf8) {
+            return text
+        }
+        return #"{"status":"handback","reason":"循环输出序列化失败。"}"#
     }
 
     struct Dependencies {
@@ -125,6 +223,7 @@ final class IOSJevWebMountLoopService {
         _ input: LoopInput,
         runId: String?
     ) async -> LoopOutcome {
+        let loopTurnBudgetKey = IOSJevToolDiscoveryService.turnBudgetKey(runId: runId)
         let settings = deps.settingsProvider()
         let mode = settings.effectiveMode(for: .webActions)
         guard mode != .off else {
@@ -182,12 +281,19 @@ final class IOSJevWebMountLoopService {
             }
 
             // Jev Choice：从候选中选一个（低置信 → handback）。
-            guard let chosen = await chooseAction(
+            let chosen: IOSJevWebMountLoopService.PlannedAction
+            switch await chooseAction(
                 input: input,
                 observation: observation,
                 candidates: candidates,
-                settings: settings
-            ) else {
+                settings: settings,
+                turnBudgetKey: loopTurnBudgetKey
+            ) {
+            case .chose(let action):
+                chosen = action
+            case .cancelled:
+                return .cancelled(steps: steps)
+            case .indeterminate:
                 return .handback(reason: "Jev 无法确定下一步动作（低置信/失败/不确定）。", steps: steps, latestObservation: observation)
             }
 
@@ -204,6 +310,9 @@ final class IOSJevWebMountLoopService {
                 steps.append("\(chosen.kind.rawValue) \(chosen.elementId ?? "-") @r\(newRevision)")
                 // 无进展判定：revision 未变视为原地等待（同样计步/时间）。
                 noProgressCount = newRevision == observation.revision ? noProgressCount + 1 : 0
+            case .stale:
+                // decide→execute 窗口内页面已变：不执行、不计步，回到顶部重观察。
+                continue
             case .unknown:
                 // 未知执行结果：保持 unknown，禁止重放同一动作。
                 steps.append("unknown: \(chosen.kind.rawValue) \(chosen.elementId ?? "-")")
@@ -233,26 +342,33 @@ final class IOSJevWebMountLoopService {
         observation: PageObservation,
         urlChanged: Bool
     ) -> [PlannedAction] {
-        var candidates: [PlannedAction] = [PlannedAction(kind: .scroll, elementId: nil, value: nil)]
+        // 基线观察权：滚动始终可用（只读、无目标语义）；allowedActions 只能
+        // 再收窄目标类动作，不能放大白名单。
+        var candidates: [PlannedAction] = [
+            PlannedAction(kind: .scroll, elementId: nil, value: nil, snapshotRevision: observation.revision)
+        ]
         let allowed = input.allowedActions.intersection(actionWhitelist)
         for element in observation.elements {
             // 控件角色契约：动作语义来自快照中已验证的控件类型，不凭按钮文案推断。
             let role = element.role.lowercased()
             if allowed.contains(ActionKind.clickNav.rawValue), role == "link" {
-                candidates.append(PlannedAction(kind: .clickNav, elementId: element.id, value: nil))
+                candidates.append(PlannedAction(kind: .clickNav, elementId: element.id, value: nil, snapshotRevision: observation.revision))
             }
             if allowed.contains(ActionKind.select.rawValue),
                ["combobox", "listbox", "checkbox", "radio"].contains(role) {
-                candidates.append(PlannedAction(kind: .select, elementId: element.id, value: nil))
+                candidates.append(PlannedAction(kind: .select, elementId: element.id, value: nil, snapshotRevision: observation.revision))
             }
             if allowed.contains(ActionKind.typeDraft.rawValue), role == "textbox" {
                 // 缺草稿值 → 该类动作不作为候选（交回主模型补值）。
                 if let value = input.draftValue, !value.isEmpty {
-                    candidates.append(PlannedAction(kind: .typeDraft, elementId: element.id, value: value))
+                    candidates.append(PlannedAction(kind: .typeDraft, elementId: element.id, value: value, snapshotRevision: observation.revision))
                 }
             }
             if allowed.contains(ActionKind.submitReadonlySearch.rawValue), role == "searchbox" {
-                candidates.append(PlannedAction(kind: .submitReadonlySearch, elementId: element.id, value: input.draftValue))
+                // 与 type_draft 口径一致：缺值不出候选（提交空查询无意义）。
+                if let value = input.draftValue, !value.isEmpty {
+                    candidates.append(PlannedAction(kind: .submitReadonlySearch, elementId: element.id, value: value, snapshotRevision: observation.revision))
+                }
             }
         }
         return candidates
@@ -260,12 +376,20 @@ final class IOSJevWebMountLoopService {
 
     // MARK: Choice
 
+    /// 决策结果：chose = 可执行；cancelled = 任务已取消（终态）；其余 = 不确定。
+    enum ChooseOutcome {
+        case chose(PlannedAction)
+        case cancelled
+        case indeterminate
+    }
+
     private func chooseAction(
         input: LoopInput,
         observation: PageObservation,
         candidates: [PlannedAction],
-        settings: IOSJevSettings
-    ) async -> PlannedAction? {
+        settings: IOSJevSettings,
+        turnBudgetKey: String
+    ) async -> ChooseOutcome {
         let bounded = candidates.prefix(64) // 单请求 ≤64 候选
         var lines: [String] = []
         lines.append("用户目标：\(String(input.goal.prefix(1_000)))")
@@ -286,8 +410,8 @@ final class IOSJevWebMountLoopService {
             instructions: "选择下一步动作。只依据当前快照与目标；不确定时选择 scroll。禁止推断白名单之外的语义。"
         )]
         let context = IOSJevRunContext(
-            runId: nil,
-            turnBudgetKey: "web-loop",
+            runId: turnBudgetKey,
+            turnBudgetKey: turnBudgetKey,
             inputHash: IOSJevToolDiscoveryService.stableHash(state + "|" + bounded.map(\.kind.rawValue).joined(separator: ","))
         )
         let outcome = await deps.coordinator.decide(
@@ -303,15 +427,20 @@ final class IOSJevWebMountLoopService {
         switch outcome {
         case .applied(let value), .observed(let value):
             decision = value
-        case .skipped, .failed:
-            return nil
+        case .skipped:
+            return .indeterminate
+        case .failed(let reason) where reason == "cancelled":
+            return .cancelled
+        case .failed:
+            return .indeterminate
         }
         guard let answer = decision.answers.first(where: { $0.id == "next_action" }),
               answer.type == "choice",
-              let chosenLabel = answer.choice else {
-            return nil
+              let chosenLabel = answer.choice,
+              let chosen = bounded.first(where: { Self.optionLabel($0) == chosenLabel }) else {
+            return .indeterminate
         }
-        return bounded.first { Self.optionLabel($0) == chosenLabel }
+        return .chose(chosen)
     }
 
     static func optionLabel(_ action: PlannedAction) -> String {

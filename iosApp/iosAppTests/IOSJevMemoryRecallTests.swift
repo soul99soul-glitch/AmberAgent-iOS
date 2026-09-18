@@ -103,7 +103,7 @@ final class IOSJevMemoryRecallTests: XCTestCase {
     }
 
     private func identity(turn: String = "t1") -> IOSJevMemoryRecallService.RunIdentity {
-        .init(runId: "run", turnBudgetKey: turn)
+        .init(runId: "run-\(turn)")
     }
 
     // MARK: orderedSelection

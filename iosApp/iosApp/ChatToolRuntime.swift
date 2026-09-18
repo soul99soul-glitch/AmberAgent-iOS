@@ -741,11 +741,7 @@ final class ChatToolRuntime {
                     bridge: bridge,
                     identity: IOSJevToolDiscoveryService.RunIdentity(
                         runId: runId,
-                        turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(
-                            conversationId: conversationId?.description(),
-                            lastUserMessageId: messages.reversed()
-                                .first { $0.role == MessageRole.user }?.id.description()
-                        )
+                        turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(runId: runId)
                     )
                 )
                 return .filled(output)
@@ -2772,11 +2768,7 @@ final class ChatToolRuntime {
                 bridge: toolExposureBridge,
                 identity: IOSJevToolDiscoveryService.RunIdentity(
                     runId: pending.runId,
-                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(
-                        conversationId: pending.conversationId?.description(),
-                        lastUserMessageId: pending.baseMessages.reversed()
-                            .first { $0.role == MessageRole.user }?.id.description()
-                    )
+                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(runId: pending.runId)
                 )
             )
         }
@@ -4945,11 +4937,7 @@ final class ChatToolRuntime {
                 bridge: bridge,
                 identity: IOSJevToolDiscoveryService.RunIdentity(
                     runId: context.runId,
-                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(
-                        conversationId: context.conversationId?.description(),
-                        lastUserMessageId: context.baseMessages.reversed()
-                            .first { $0.role == MessageRole.user }?.id.description()
-                    )
+                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(runId: context.runId)
                 )
             )
             return recipePrimitiveResult(result)
@@ -5573,6 +5561,16 @@ final class ChatToolRuntime {
         runId: String = "",
         conversationId: KotlinUuid? = nil
     ) async -> IOSLocalToolExecutionOutput {
+        // Jev Phase 3：wm_run_goal 是本地编排工具（不是远端后端操作），
+        // 先于后端映射分支；每个内层动作仍走下方既有 WebMount 执行链。
+        if toolCall.toolName == "wm_run_goal" {
+            return await runJevWebGoalLoopOutput(
+                toolCall,
+                isUserInitiated: isUserInitiated,
+                runId: runId,
+                conversationId: conversationId
+            )
+        }
         guard let localToolExecutor else {
             return .failed("Local iOS tool executor is unavailable.")
         }
@@ -5591,6 +5589,144 @@ final class ChatToolRuntime {
                 conversationId: conversationId?.toHexDashString()
             )
         })
+    }
+
+    // MARK: - wm_run_goal（Jev Phase 3 有界网页快速循环）
+
+    /// 工具入口绑定：循环的观察/执行都经既有 WebMount 工具路径，内层审批与
+    /// 账本免费继承。off / 无 Key / 低置信 / 范围不允许时循环自身 handback，
+    /// 不会触碰页面；只有 active（pinned 验收版本 + 全范围允许）才真正执行。
+    private func runJevWebGoalLoopOutput(
+        _ toolCall: UIMessagePart.Tool,
+        isUserInitiated: Bool,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) async -> IOSLocalToolExecutionOutput {
+        let arguments = (try? JSONSerialization.jsonObject(
+            with: Data(toolCall.input.utf8)
+        )) as? [String: Any] ?? [:]
+        guard let input = IOSJevWebMountLoopService.loopInput(fromArguments: arguments) else {
+            return .webMountResult(ChatToolOutputFormatter.toolFailureJSON(
+                toolName: "wm_run_goal",
+                reason: "wm_run_goal 需要 session_id 与 goal。"
+            ))
+        }
+        let completionMarker = (arguments["completion_text"] as? String)?.nilIfBlank ?? ""
+
+        let service = IOSJevWebMountLoopService(deps: .init(
+            coordinator: .shared,
+            settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() },
+            observe: { sessionId in
+                await self.webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId)
+            },
+            execute: { sessionId, action in
+                await self.webMountLoopExecute(
+                    sessionId: sessionId,
+                    action: action,
+                    runId: runId,
+                    conversationId: conversationId
+                )
+            },
+            isComplete: { _, observation in
+                IOSJevWebMountLoopService.isComplete(marker: completionMarker, observation: observation)
+            }
+        ))
+        let outcome = await service.run(input, runId: runId)
+        return .webMountResult(IOSJevWebMountLoopService.outputText(for: outcome, goal: input.goal))
+    }
+
+    /// 观察端口：走 wm_observe 既有路径并映射为循环快照。
+    private func webMountLoopObservation(
+        sessionId: String,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) async -> IOSJevWebMountLoopService.PageObservation? {
+        let payload = Self.webMountJSON(["session_id": sessionId])
+        let output = await webMountToolExecutionOutput(
+            toolCall(name: "wm_observe", input: payload),
+            isUserInitiated: false,
+            runId: runId,
+            conversationId: conversationId
+        )
+        guard case .webMountResult(let text) = output,
+              let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else {
+            return nil
+        }
+        return IOSJevWebMountLoopService.observation(fromObservePayload: object)
+    }
+
+    /// 执行端口：先重验快照 revision（decide→execute 窗口防旧目标），再按动作
+    /// 映射到既有具体工具，一次一步，审批与账本内层继承。
+    private func webMountLoopExecute(
+        sessionId: String,
+        action: IOSJevWebMountLoopService.PlannedAction,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) async -> IOSJevWebMountLoopService.ExecutorResult {
+        guard let (toolName, payload) = Self.webMountLoopActionCall(sessionId: sessionId, action: action) else {
+            return .failed(reason: "动作不在可执行白名单内。")
+        }
+        // 快照重验：决策所依据的 revision 与当前不一致 → 页面已变化，交回循环
+        // 重新观察（不执行、不猜测旧目标）。
+        if let current = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId),
+           current.revision != action.snapshotRevision {
+            return .stale
+        }
+        let output = await webMountToolExecutionOutput(
+            toolCall(name: toolName, input: payload),
+            isUserInitiated: false,
+            runId: runId,
+            conversationId: conversationId
+        )
+        switch output {
+        case .failed(let reason):
+            return .failed(reason: reason)
+        case .needsUserAction(let reason):
+            return .denied(reason: reason)
+        case .denied(let reason):
+            return .denied(reason: reason)
+        case .webMountResult(let text):
+            let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+            if object?["status"] as? String == "unknown_after_action" {
+                return .unknown
+            }
+            if let revision = (object?["page_revision"] as? NSNumber).flatMap({ Int($0.doubleValue) }) {
+                return .applied(newRevision: revision)
+            }
+            // 输出未带 revision：重观察一次取值（保持无进展判定有效）。
+            if let observation = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId) {
+                return .applied(newRevision: observation.revision)
+            }
+            return .failed(reason: "动作后无法确认页面状态。")
+        default:
+            return .failed(reason: "WebMount 动作返回了不支持的输出。")
+        }
+    }
+
+    /// 动作 → 既有工具调用映射。只映射循环白名单内的动作。
+    private static func webMountLoopActionCall(
+        sessionId: String,
+        action: IOSJevWebMountLoopService.PlannedAction
+    ) -> (String, String)? {
+        switch action.kind {
+        case .scroll:
+            return ("wm_scroll", webMountJSON(["session_id": sessionId]))
+        case .clickNav, .submitReadonlySearch:
+            guard let elementId = action.elementId else { return nil }
+            return ("wm_click", webMountJSON(["session_id": sessionId, "target": elementId]))
+        case .select:
+            guard let elementId = action.elementId else { return nil }
+            return ("wm_select", webMountJSON(["session_id": sessionId, "target": elementId]))
+        case .typeDraft:
+            guard let elementId = action.elementId, let value = action.value, !value.isEmpty else { return nil }
+            return ("wm_type", webMountJSON(["session_id": sessionId, "target": elementId, "text": value]))
+        }
+    }
+
+    private static func webMountJSON(_ object: [String: String]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else { return "{}" }
+        return text
     }
 
     private func dispatchMemoryToolCall(

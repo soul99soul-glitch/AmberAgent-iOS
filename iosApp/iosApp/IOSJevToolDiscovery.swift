@@ -18,10 +18,10 @@ enum IOSJevToolDiscoveryService {
         var turnBudgetKey: String
     }
 
-    /// 轮次预算 key：会话 + 最后一条 user 消息 id。同一轮的工具循环（多步
-    /// tool_search）共享该 key；steer / 新输入换轮自然换 key。
-    static func turnBudgetKey(conversationId: String?, lastUserMessageId: String?) -> String {
-        "\(conversationId ?? "conv"):#\(lastUserMessageId ?? "none")"
+    /// 轮次预算 key：runId（本 App 的 run 即一次用户输入及其工具续跑；steer
+    /// 不清空当轮已用预算，与计划口径一致）。全部用途共用同一本轮账。
+    static func turnBudgetKey(runId: String?) -> String {
+        runId ?? "run"
     }
 
     /// 三条路径共用的执行入口。返回 tool_search 的最终输出 JSON。
@@ -73,6 +73,28 @@ enum IOSJevToolDiscoveryService {
             inputHash: inputHash
         )
         let keywordTop1 = parsed.candidates.max { $0.keywordScore < $1.keywordScore }?.name
+        let keywordFallback = bridge.executeToolSearch(argumentsJson: argumentsJson)
+
+        // shadow：后台观测只记指标（含建议排序），不阻塞 tool_search 主路径。
+        if effectiveMode == .shadow {
+            let coordinator = coordinator
+            Task(priority: .utility) {
+                _ = await coordinator.decide(
+                    useCase: .toolDiscovery,
+                    requiredScopes: requiredScopes,
+                    state: request.state,
+                    questions: request.questions,
+                    context: context,
+                    cacheKey: "tool_discovery_shadow",
+                    metricSuggestionProvider: { decision in
+                        (rankingTop1(decision, candidates: parsed.candidates), keywordTop1)
+                    }
+                )
+            }
+            return keywordFallback
+        }
+
+        // active：应用 Jev 排序（失败/低置信回退关键词结果）。
         let outcome = await coordinator.decide(
             useCase: .toolDiscovery,
             requiredScopes: requiredScopes,
@@ -84,18 +106,15 @@ enum IOSJevToolDiscoveryService {
                 (rankingTop1(decision, candidates: parsed.candidates), keywordTop1)
             }
         )
-
         switch outcome {
         case .applied(let decision):
             if let ranking = ranking(from: decision, candidates: parsed.candidates, minScore: settings.policy.toolDiscoveryMinScore) {
                 return bridge.executeToolSearch(argumentsJson: argumentsJson, rankingOverride: ranking)
             }
             // 低置信 / 无足够候选：回退原搜索。
-            return bridge.executeToolSearch(argumentsJson: argumentsJson)
+            return keywordFallback
         case .observed, .skipped, .failed:
-            // shadow 建议已由 metricSuggestionProvider 记录；返回原关键词结果、
-            // 不额外暴露（shadow 不改业务结果）。
-            return bridge.executeToolSearch(argumentsJson: argumentsJson)
+            return keywordFallback
         }
     }
 

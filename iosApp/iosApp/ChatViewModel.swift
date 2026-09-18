@@ -1423,9 +1423,9 @@ final class ChatViewModel {
                 memoryRecordIdsForRuntimeContext: { [weak self] messages, override in
                     self?.memoryRecordIdsForRuntimeContext(messages, override: override) ?? []
                 },
-                prepareJevMemoryRecall: { [weak self] messages in
+                prepareJevMemoryRecall: { [weak self] messages, runId in
                     guard let self else { return nil }
-                    return await self.prepareJevMemoryRecallSelection(messages, conversationId: state.conversationId)
+                    return await self.prepareJevMemoryRecallSelection(messages, runId: runId)
                 },
                 recordMemoryUsage: { [weak self] ids, force in
                     self?.recordMemoryUsage(ids, force: force)
@@ -3914,25 +3914,20 @@ final class ChatViewModel {
         ).memoryRecallResult(for: uploadableMessages, override: override).ids
     }
 
-    /// Jev Phase 1（记忆召回）：每轮上传准备时计算统一选中集合。turnBudgetKey =
-    /// 会话 + 最后一条 user 消息 id——同一轮的工具循环复用，steer（新增 user
-    /// 消息）自然换轮；记录内容/范围/配置变化由服务端 turnKey 指纹覆盖。
+    /// Jev Phase 1（记忆召回）：每轮上传准备时计算统一选中集合。轮次预算与
+    /// 并发归属统一用 runId（与其他 Jev 用途共用同一本轮账）；记录内容/范围/
+    /// 配置变化由服务端 turnKey 指纹覆盖。
     /// 返回本轮的统一选中集合（nil = off/shadow/失败回退）。
     private func prepareJevMemoryRecallSelection(
         _ messages: [UIMessage],
-        conversationId: KotlinUuid?
+        runId: String?
     ) async -> ChatMemoryContextBuilder.RecallResult? {
         let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
-        let lastUserId = uploadableMessages.reversed()
-            .first { $0.role == MessageRole.user }?.id.description() ?? "none"
         return await IOSJevMemoryRecallService.shared.prepareTurnSelection(
             messages: uploadableMessages,
             records: IosMemoryFactory.shared.getAllRecords(),
             runtime: sharedSettings.agentRuntime,
-            identity: IOSJevMemoryRecallService.RunIdentity(
-                runId: nil,
-                turnBudgetKey: "\(conversationId?.description() ?? "conv"):#\(lastUserId)"
-            )
+            identity: IOSJevMemoryRecallService.RunIdentity(runId: runId)
         )
     }
 

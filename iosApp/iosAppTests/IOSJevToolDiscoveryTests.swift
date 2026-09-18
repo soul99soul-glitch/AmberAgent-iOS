@@ -193,6 +193,8 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         let service = makeService(settings: makeSettings(mode: .shadow, pinned: nil), transport: transport)
         let queryArgs = #"{"query":"save the file to disk","limit":5}"#
         let output = await execute(service, argumentsJson: queryArgs, bridge: bridge, identity: identity())
+        // shadow 已改为后台观测（不阻塞主路径）；等待一拍再确认发生了调用。
+        try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertGreaterThan(transport.calls, 0, "shadow must observe via network")
         let object = try! JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as! [String: Any]
         let expanded = object["expanded_tools"] as! [String]

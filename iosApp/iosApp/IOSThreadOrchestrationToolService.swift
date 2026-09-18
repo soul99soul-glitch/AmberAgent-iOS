@@ -430,6 +430,29 @@ final class IOSThreadOrchestrationToolService {
                 reason: "线程深度已达上限（/root 起最多 \(Self.maxThreadDepth) 层）。请用当前线程完成子任务或汇总结果。"
             )
         }
+        // (d-pre) Jev Phase 3：fork 源读取与异步判断在占槽前完成——等待网络
+        // 期间不占用 bootstrap 槽，避免 active 调度延迟挤占其他 spawn 的并发
+        // 名额（P2-6）。fork 本身仍发生在占槽之后。
+        let sourceConversation: Conversation?
+        if let current = store.currentConversation, current.id == parentConversationId {
+            sourceConversation = current
+        } else {
+            sourceConversation = try? await store.loadConversationForOrchestration(parentConversationId)
+        }
+        guard let sourceConversation else {
+            return Self.errorJSON(
+                toolName: "spawn_agent",
+                code: ErrorCode.missingContext,
+                reason: "无法读取当前会话，无法 fork。"
+            )
+        }
+        let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
+        let jevPreferredModelIds = await jevPreferredModelIds(
+            arguments: args,
+            parentRunId: parentRunId,
+            allowPoolForInheritedModel: true,
+            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration
+        )
         // (c) 并发上限：活注册表占用（前台 run 0/1 + 后台 activeJobs + 本服务在途
         // bootstrap 槽，含 spawner 自身——与旧全局账本计数「含父自身」同语义）。
         // 检查与占槽之间无 await（三个计数源全部 MainActor 同步），并发 spawn
@@ -458,27 +481,7 @@ final class IOSThreadOrchestrationToolService {
         let now = Int64(Date().timeIntervalSince1970 * 1000)
 
         // (d) fork 会话（三模式 + 变体折叠 + 截断安全），直接经 store 落盘。
-        let sourceConversation: Conversation?
-        if let current = store.currentConversation, current.id == parentConversationId {
-            sourceConversation = current
-        } else {
-            sourceConversation = try? await store.loadConversationForOrchestration(parentConversationId)
-        }
-        guard let sourceConversation else {
-            return Self.errorJSON(
-                toolName: "spawn_agent",
-                code: ErrorCode.missingContext,
-                reason: "无法读取当前会话，无法 fork。"
-            )
-        }
-        let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
-        // Jev Phase 3: 异步判断在 resolve 前完成（等待期间不占模型名额）。
-        let jevPreferredModelIds = await jevPreferredModelIds(
-            arguments: args,
-            parentRunId: parentRunId,
-            allowPoolForInheritedModel: true,
-            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration
-        )
+        // fork 源与 inherited 已在占槽前读取（见 d-pre）。
         let launchResult = resolveAgentLaunch(
             arguments: args,
             providerSetting: providerSetting,
@@ -636,7 +639,8 @@ final class IOSThreadOrchestrationToolService {
     /// different from an omitted scope, which inherits the parent catalog.
     /// Jev Phase 3（模型调度）：spawn/followup 的异步判断预计算。
     /// 在占用任何名额之前 await；返回首选模型 id（空 = 走现有负载/轮转选择）。
-    /// 显式 model_id 的调用不判断（不覆盖用户的明确选择）。
+    /// 显式 model_id、角色/继承/保存覆盖已配模型的调用不判断（不覆盖明确选择，
+    /// 门控口径与 resolveAgentLaunch 内部完全一致，避免白跑出站判断）。
     private func jevPreferredModelIds(
         arguments: [String: Any],
         parentRunId: String,
@@ -645,9 +649,17 @@ final class IOSThreadOrchestrationToolService {
     ) async -> [String] {
         guard Self.optionalTrimmedString(arguments["model_id"]) == nil else { return [] }
         guard let settings = sharedSettingsProvider()?.snapshot else { return [] }
-        let configuredModelId = inherited?.modelId
+        // 与 resolveAgentLaunch 相同的 effectiveRoleId / savedOverride 推导。
+        let roleArgument = Self.optionalTrimmedString(arguments["role_id"])
+        let inheritedBase = roleArgument == nil ? inherited : nil
+        let allowDynamic = settings.agentRuntime.subAgent.allowDynamicSubAgents
+        let effectiveRoleId = roleArgument
+            ?? inheritedBase?.roleId
+            ?? (allowDynamic ? nil : "explorer")
+        let savedModelId = effectiveRoleId.flatMap { settings.agentRuntime.subAgent.overrides[$0]?.modelId?.description() }
+        let configuredModelId = inheritedBase?.modelId ?? savedModelId
         let shouldSelectFromPool = configuredModelId == nil
-            || (allowPoolForInheritedModel && inherited != nil)
+            || (allowPoolForInheritedModel && inheritedBase != nil)
         guard shouldSelectFromPool else { return [] }
         let poolCandidates = sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) } ?? []
         guard !poolCandidates.isEmpty else { return [] }
@@ -1148,11 +1160,11 @@ final class IOSThreadOrchestrationToolService {
                     "active_provider_runs": 0,
                 ]
             }
-            let supported = candidate.supportedReasoning.map(\.name)
+            let supported = candidate.supportedReasoning.map { $0.name.lowercased() }
             let defaultReasoning = (entry.reasoningLevel.flatMap {
-                candidate.supportedReasoning.contains($0) ? $0.name : nil
+                candidate.supportedReasoning.contains($0) ? $0.name.lowercased() : nil
             })
-                ?? modelPool.defaultReasoning(for: candidate).name
+                ?? modelPool.defaultReasoning(for: candidate).name.lowercased()
             return [
                 "model_id": candidate.modelId,
                 "name": candidate.model.displayName,
@@ -1586,16 +1598,6 @@ final class IOSThreadOrchestrationToolService {
         }
 
         // idle：bootstrap（信封渲染直写目标会话 + 标 delivered + durable 后台 run）。
-        guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
-            return Self.errorJSON(
-                toolName: "followup_task",
-                code: ErrorCode.agentLimitReached,
-                reason: "并发运行数已达上限（\(configuredMaxConcurrentRuns) 个子代理）。请先等待或 interrupt 一个子线程再 followup_task。"
-            )
-        }
-        inFlightBootstrapCount += 1
-        defer { inFlightBootstrapCount -= 1 }
-
         guard let store = conversationStoreProvider() else {
             return Self.errorJSON(
                 toolName: "followup_task",
@@ -1613,6 +1615,8 @@ final class IOSThreadOrchestrationToolService {
                 reason: "目标线程 id 无法解析：\(target.hex)"
             )
         }
+        // P2-6：目标会话读取与 Jev 异步判断在占槽前完成，等待网络期间不占
+        // bootstrap 槽；占槽检查与自增之间保持无 await。
         let currentMessages: [UIMessage]
         if store.currentConversation?.id == targetId {
             currentMessages = store.currentConversation?.currentMessages ?? []
@@ -1627,13 +1631,22 @@ final class IOSThreadOrchestrationToolService {
             currentMessages = conversation.currentMessages
         }
         let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
-        // Jev Phase 3: 异步判断在 resolve 前完成（等待期间不占模型名额）。
         let jevPreferredModelIds = await jevPreferredModelIds(
             arguments: args,
             parentRunId: runId,
             allowPoolForInheritedModel: false,
             inherited: inheritedConfiguration
         )
+        guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
+            return Self.errorJSON(
+                toolName: "followup_task",
+                code: ErrorCode.agentLimitReached,
+                reason: "并发运行数已达上限（\(configuredMaxConcurrentRuns) 个子代理）。请先等待或 interrupt 一个子线程再 followup_task。"
+            )
+        }
+        inFlightBootstrapCount += 1
+        defer { inFlightBootstrapCount -= 1 }
+
         let launchResult = resolveAgentLaunch(
             arguments: args,
             providerSetting: providerSetting,

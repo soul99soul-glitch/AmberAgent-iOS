@@ -1875,7 +1875,7 @@ final class ChatKernelRunHost {
         // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
         // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
         // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(projectedMessages)
+        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(projectedMessages, runId)
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
             messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
             effectiveParams.model,

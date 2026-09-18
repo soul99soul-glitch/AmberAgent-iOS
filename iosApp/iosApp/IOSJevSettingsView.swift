@@ -17,6 +17,7 @@ struct IOSJevSettingsView: View {
     @State private var isTestingConnection = false
     @State private var connectionResult: ConnectionTestPresentation?
     @State private var metricsSummary: IOSJevMetricsStore.Summary?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     struct ConnectionTestPresentation: Equatable {
         var succeeded: Bool
@@ -24,7 +25,7 @@ struct IOSJevSettingsView: View {
     }
 
     /// 已接线的用途（网页操作随 wm_run_goal 工具接线后开放）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .modelRouting]
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting]
 
     var body: some View {
         NavigationStack {
@@ -76,37 +77,50 @@ struct IOSJevSettingsView: View {
                     .overlay(AmberTheme.borderSoft)
                     .padding(.leading, 14)
 
-                HStack(spacing: 12) {
-                    Image(systemName: hasKey ? "checkmark.seal.fill" : "key")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(hasKey ? AmberTheme.accentGreen : AmberTheme.foreground2)
-                        .frame(width: 28, height: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(IOSAppLocalization.string(hasKey ? "已保存到钥匙串" : "未配置", defaultValue: hasKey ? "已保存到钥匙串" : "未配置"))
-                            .font(.body)
-                            .foregroundStyle(AmberTheme.foreground)
-                        Text(IOSAppLocalization.string("Key 仅存本机钥匙串；不会写入备份或日志。", defaultValue: "Key 仅存本机钥匙串；不会写入备份或日志。"))
-                            .font(.caption)
-                            .foregroundStyle(AmberTheme.muted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                    Button(IOSAppLocalization.string("保存", defaultValue: "保存")) {
+                // 极端字号下按钮换到第二行：图标+按钮的固定宽度会把文本列挤到
+                // 单字宽（320pt AX3 实测缺陷）；常规字号保持单行（与其他行一致）。
+                let buttons = HStack(spacing: 16) {
+                    Button {
                         saveKey()
+                    } label: {
+                        Text(IOSAppLocalization.string("保存", defaultValue: "保存"))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(apiKeyInput.isEmpty ? AmberTheme.muted2 : AmberTheme.accent)
                     .disabled(apiKeyInput.isEmpty)
 
-                    Button(IOSAppLocalization.string("清除", defaultValue: "清除"), role: .destructive) {
+                    Button {
                         sharedSettings.clearJevApiKey()
                         apiKeyInput = ""
                         keyMessage = IOSAppLocalization.string("已清除 Key；所有 Jev 用途回到未配置状态。", defaultValue: "已清除 Key；所有 Jev 用途回到未配置状态。")
+                    } label: {
+                        Text(IOSAppLocalization.string("清除", defaultValue: "清除"))
+                            .fixedSize(horizontal: true, vertical: false)
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(hasKey ? AmberTheme.accentRed : AmberTheme.muted2)
                     .disabled(!hasKey)
+
+                    Spacer()
+                }
+
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 12) {
+                                keyIcon
+                                keyText
+                            }
+                            buttons.padding(.leading, 40)
+                        }
+                    } else {
+                        HStack(spacing: 12) {
+                            keyIcon
+                            keyText
+                            buttons
+                        }
+                    }
                 }
                 .frame(minHeight: 58)
                 .padding(.horizontal, 14)
@@ -122,6 +136,26 @@ struct IOSJevSettingsView: View {
                     .padding(.top, 8)
             }
         }
+    }
+
+    private var keyIcon: some View {
+        Image(systemName: hasKey ? "checkmark.seal.fill" : "key")
+            .font(.system(size: 16, weight: .medium))
+            .foregroundStyle(hasKey ? AmberTheme.accentGreen : AmberTheme.foreground2)
+            .frame(width: 28, height: 28)
+    }
+
+    private var keyText: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(IOSAppLocalization.string(hasKey ? "已保存到钥匙串" : "未配置", defaultValue: hasKey ? "已保存到钥匙串" : "未配置"))
+                .font(.body)
+                .foregroundStyle(AmberTheme.foreground)
+            Text(IOSAppLocalization.string("Key 仅存本机钥匙串；不会写入备份或日志。", defaultValue: "Key 仅存本机钥匙串；不会写入备份或日志。"))
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func saveKey() {
@@ -267,6 +301,7 @@ struct IOSJevSettingsView: View {
                     switch useCase {
                     case .toolDiscovery: "magnifyingglass"
                     case .memoryRecall: "brain"
+                    case .contextSelection: "doc.text.magnifyingglass"
                     default: "arrow.triangle.branch"
                     }
                 }())
@@ -345,6 +380,7 @@ struct IOSJevSettingsView: View {
         switch useCase {
         case .toolDiscovery: [.toolMetadata, .selectedTaskText]
         case .memoryRecall: [.selectedTaskText, .personalMemory]
+        case .contextSelection: [.selectedTaskText, .toolOutput]
         default: useCase.defaultDataScopes
         }
     }
@@ -390,7 +426,7 @@ struct IOSJevSettingsView: View {
 
                 Divider()
                     .overlay(AmberTheme.borderSoft)
-                    .padding(.leading, 58)
+                    .padding(.leading, 14)
 
                 Button {
                     IOSJevMetricsStore.clear()
