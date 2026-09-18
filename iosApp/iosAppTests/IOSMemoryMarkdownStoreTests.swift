@@ -33,8 +33,7 @@ final class IOSMemoryMarkdownStoreTests: XCTestCase {
 
         let index = try String(contentsOf: root.appendingPathComponent("index.md"), encoding: .utf8)
         XCTAssertTrue(index.contains("[咖啡偏好](topics/9-"))
-        XCTAssertTrue(index.contains("未归档 3 条"))
-        XCTAssertTrue(index.contains("主题 1 个覆盖 1 条"))
+        XCTAssertTrue(index.contains("共 2 条记忆 · 1 个主题 · 1 条未归类"))
 
         let topicsDir = root.appendingPathComponent("topics")
         let topicFiles = try FileManager.default.contentsOfDirectory(atPath: topicsDir.path)
@@ -42,7 +41,8 @@ final class IOSMemoryMarkdownStoreTests: XCTestCase {
         let topicBody = try String(contentsOf: topicsDir.appendingPathComponent("9-咖啡偏好.md"), encoding: .utf8)
         XCTAssertTrue(topicBody.contains("# 咖啡偏好"))
         XCTAssertTrue(topicBody.contains("> 手冲为主"))
-        XCTAssertTrue(topicBody.contains("喜欢冰美式。（长期 · 笔记 ·"))
+        XCTAssertTrue(topicBody.contains("- 喜欢冰美式。"))
+        XCTAssertTrue(topicBody.contains("*长期 · 笔记 ·"))
         XCTAssertFalse(topicBody.contains("memory:"), "用户可读文档不得泄漏内部 memory id")
 
         // 归档主题后重新同步：主题文档被移除，索引不再引用。
@@ -97,7 +97,7 @@ final class IOSMemoryMarkdownStoreTests: XCTestCase {
         let docs = store.listDocuments()
         XCTAssertEqual(docs.map(\.relativePath), ["index.md", "topics/9-咖啡偏好.md"])
         XCTAssertEqual(docs[0].title, "Amber 记忆索引")
-        XCTAssertEqual(docs[0].preview, "咖啡偏好 — 1 条", "预览须剥离 markdown 标题/链接装饰")
+        XCTAssertEqual(docs[0].preview, "共 1 条记忆 · 1 个主题 · 0 条未归类", "概览行应作为索引预览")
         XCTAssertEqual(docs[1].title, "咖啡偏好")
         XCTAssertEqual(docs[1].preview, "手冲为主")
         XCTAssertGreaterThan(docs[0].sizeBytes, 0)

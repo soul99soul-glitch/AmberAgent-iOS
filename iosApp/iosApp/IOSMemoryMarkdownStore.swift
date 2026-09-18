@@ -39,7 +39,7 @@ final class IOSMemoryMarkdownStore {
         // Keyed per directory so sibling stores (fixtures, restored backups)
         // never share a signature and silently skip regeneration.
         self.signatureKey = signatureKey
-            ?? "app.amber.ios.memoryMarkdown.signature.v1.\(directory.standardizedFileURL.path)"
+            ?? "app.amber.ios.memoryMarkdown.signature.v2.\(directory.standardizedFileURL.path)"
         self.now = now
     }
 
@@ -126,9 +126,17 @@ final class IOSMemoryMarkdownStore {
         return text
     }
 
-    /// `内容（作用域 · 类型 · 日期）` — internal ids stay in the JSON store.
+    /// `- 内容` followed by a quiet italic metadata line — the memory itself
+    /// stays primary while scope/kind/date drop to a subordinate second line
+    /// instead of being jammed into the same bullet.
     private static func memberLine(_ record: MemoryRecord) -> String {
-        "- \(record.content)（\(IOSMemoryLibrary.scopeTitle(record.scope)) · \(IOSMemoryLibrary.kindTitle(record.kind)) · \(day(record.updatedAt))）\n"
+        var meta: [String] = []
+        if record.pinned { meta.append("置顶") }
+        meta.append(IOSMemoryLibrary.scopeTitle(record.scope))
+        meta.append(IOSMemoryLibrary.kindTitle(record.kind))
+        meta.append(day(record.updatedAt))
+        // 行尾双空格 = CommonMark 硬换行；缩进两格让元信息留在同一列表项内。
+        return "- \(record.content)  \n  *\(meta.joined(separator: " · "))*\n"
     }
 
     /// Rewrite only when the bytes differ so each document's mtime stays the
@@ -167,12 +175,17 @@ final class IOSMemoryMarkdownStore {
                 .map { Int(truncating: $0) }
                 .compactMap { byId[$0] }
                 .filter { !$0.archived && $0.kind != .topic }
+                .sorted { $0.updatedAt > $1.updatedAt }
             var body = "# \(topic.topicTitle ?? "主题")\n\n"
             if !topic.content.isEmpty {
                 body += "> \(topic.content)\n\n"
             }
-            for member in members {
-                body += Self.memberLine(member)
+            if members.isEmpty {
+                body += "暂无条目。\n"
+            } else {
+                for member in members {
+                    body += Self.memberLine(member)
+                }
             }
             try writeIfChanged(body, to: topicsDir.appendingPathComponent(fileName))
         }
@@ -192,8 +205,12 @@ final class IOSMemoryMarkdownStore {
                 return !member.archived && member.kind != .topic
             }
         })
-        let ungrouped = live.filter { $0.kind != .topic && !groupedIds.contains(Int($0.id)) }
+        let ungrouped = live
+            .filter { $0.kind != .topic && !groupedIds.contains(Int($0.id)) }
+            .sorted { $0.updatedAt > $1.updatedAt }
         var index = "# Amber 记忆索引\n\n<!-- generated \(ISO8601DateFormatter().string(from: now())); do not edit -->\n\n"
+        // 概览行放最前——打开索引先看到总量，而不是先翻主题列表。
+        index += "共 \(groupedIds.count + ungrouped.count) 条记忆 · \(topics.count) 个主题 · \(ungrouped.count) 条未归类\n\n"
         index += "## 主题\n\n"
         if topics.isEmpty {
             index += "暂无主题。\n\n"
@@ -206,14 +223,12 @@ final class IOSMemoryMarkdownStore {
         }
         index += "## 未归类\n\n"
         if ungrouped.isEmpty {
-            index += "暂无。\n\n"
+            index += "暂无。\n"
         } else {
-            for record in ungrouped.sorted(by: { $0.id < $1.id }) {
+            for record in ungrouped {
                 index += Self.memberLine(record)
             }
-            index += "\n"
         }
-        index += "未归档 \(live.count) 条 · 主题 \(topics.count) 个覆盖 \(groupedIds.count) 条 · 未归类 \(ungrouped.count) 条\n"
         try writeIfChanged(index, to: directory.appendingPathComponent("index.md"))
     }
 
