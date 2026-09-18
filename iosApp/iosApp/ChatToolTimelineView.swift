@@ -328,19 +328,54 @@ enum ChatSubAgentRunVisualState: Equatable {
 struct ChatSubAgentPixelAvatar: View {
     let identity: String
     var size: CGFloat = 20
+    /// While a child run is active the sprite loops its 4-step pixel cycle
+    /// (stand → crouch → hop …); queued and terminal states stay on the base
+    /// frame so motion itself signals "working".
+    var isRunning: Bool = false
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        Group {
+            if isRunning, !reduceMotion {
+                TimelineView(.periodic(from: .now, by: frameInterval)) { context in
+                    sprite(step: step(at: context.date))
+                }
+            } else {
+                sprite(step: 0)
+            }
+        }
+        // Frame swaps change pixel content only; the fixed frame keeps the
+        // surrounding row layout perfectly still.
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+
+    private var frameInterval: TimeInterval {
+        ChatSubAgentPixelSpriteLibrary.frameInterval(for: identity)
+    }
+
+    private func step(at date: Date) -> Int {
+        let tick = Int(date.timeIntervalSinceReferenceDate / frameInterval)
+        let phase = ChatSubAgentPixelSpriteLibrary.animationPhase(for: identity)
+        return (tick + phase) % ChatSubAgentPixelSpriteLibrary.animationStepCount
+    }
+
+    @ViewBuilder
+    private func sprite(step: Int) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: max(4, size * 0.24), style: .continuous)
                 .fill(ChatSubAgentPixelSpriteLibrary.background(for: identity))
-            ForEach(ChatSubAgentPixelSpriteLibrary.layers(for: identity)) { layer in
+            ForEach(ChatSubAgentPixelSpriteLibrary.animatedLayers(
+                forSprite: ChatSubAgentPixelSpriteLibrary.spriteIndex(for: identity),
+                identity: identity,
+                step: step
+            )) { layer in
                 HomePixelSitShape(bits: layer.bits)
                     .fill(layer.color)
             }
             .padding(size * 0.10)
         }
-        .frame(width: size, height: size)
-        .accessibilityHidden(true)
     }
 }
 
@@ -1626,7 +1661,7 @@ struct ChatToolTimeline: View {
         let runtimeState = runtimeState(for: step)
         HStack(spacing: 7) {
             if step.isSubAgent, let presentation = step.subAgentPresentation {
-                subAgentContents(presentation, state: state)
+                subAgentContents(presentation, state: state, isRunning: state == .active)
             } else {
                 // Koboyo 实心剪影：与思考胶囊同系；进行中轻呼吸（不用 SF symbolEffect）。
                 Group {
@@ -1713,9 +1748,10 @@ struct ChatToolTimeline: View {
     @ViewBuilder
     private func subAgentContents(
         _ presentation: ChatSubAgentCapsulePresentation,
-        state: ChatToolStepState
+        state: ChatToolStepState,
+        isRunning: Bool
     ) -> some View {
-        ChatSubAgentPixelAvatar(identity: presentation.identity, size: 20)
+        ChatSubAgentPixelAvatar(identity: presentation.identity, size: 20, isRunning: isRunning)
             .frame(width: 20, height: 20)
 
         if dynamicTypeSize.isAccessibilitySize {

@@ -25,21 +25,32 @@ final class IOSSystemAppleCredentialStateProvider: IOSAppleCredentialStateProvid
     func credentialState(for userIdentifier: String) async throws -> IOSAppleAccountCredentialState {
         try await withCheckedThrowingContinuation { continuation in
             provider.getCredentialState(forUserID: userIdentifier) { state, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                switch state {
-                case .authorized:
-                    continuation.resume(returning: .authorized)
-                case .revoked:
-                    continuation.resume(returning: .revoked)
-                case .notFound, .transferred:
-                    continuation.resume(returning: .notFound)
-                @unknown default:
-                    continuation.resume(returning: .notFound)
-                }
+                continuation.resume(with: Self.mapCredentialState(state, error: error))
             }
+        }
+    }
+
+    /// Maps Apple's (state, error) callback pair onto our state. Per
+    /// ASAuthorizationAppleIDProvider.h, a `.notFound` result always arrives
+    /// with a companion error, so state wins there; any other state paired with
+    /// an error is treated as a real failure.
+    nonisolated static func mapCredentialState(
+        _ state: ASAuthorizationAppleIDProvider.CredentialState,
+        error: Error?
+    ) -> Result<IOSAppleAccountCredentialState, Error> {
+        if let error, state != .notFound {
+            return .failure(error)
+        }
+        switch state {
+        case .authorized:
+            return .success(.authorized)
+        case .revoked:
+            return .success(.revoked)
+        case .notFound, .transferred:
+            return .success(.notFound)
+        @unknown default:
+            if let error { return .failure(error) }
+            return .success(.notFound)
         }
     }
 }
@@ -95,18 +106,48 @@ final class IOSAppleSignInModel {
     @ObservationIgnored private let store: any IOSAppleAccountStoring
     @ObservationIgnored private let credentialStateProvider: any IOSAppleCredentialStateProviding
     @ObservationIgnored private let isConfigured: Bool
+    @ObservationIgnored private let notificationCenter: NotificationCenter
+    @ObservationIgnored nonisolated(unsafe) private var revocationObserver: NSObjectProtocol?
 
     init(
         store: any IOSAppleAccountStoring = IOSKeychainAppleAccountStore(),
         credentialStateProvider: any IOSAppleCredentialStateProviding = IOSSystemAppleCredentialStateProvider(),
-        isConfigured: Bool? = nil
+        isConfigured: Bool? = nil,
+        notificationCenter: NotificationCenter = .default
     ) {
         self.store = store
         self.credentialStateProvider = credentialStateProvider
+        self.notificationCenter = notificationCenter
         self.isConfigured = isConfigured ?? Self.currentTargetHasSignInWithAppleEntitlementMirror()
         if !self.isConfigured {
             state = .unavailable
+        } else {
+            // The system posts this when the user revokes the app's access in
+            // Settings → Apple Account; re-check so the local binding clears
+            // without waiting for the next manual refresh.
+            revocationObserver = notificationCenter.addObserver(
+                forName: ASAuthorizationAppleIDProvider.credentialRevokedNotification,
+                object: nil,
+                queue: nil
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.systemCredentialRevoked()
+                }
+            }
         }
+    }
+
+    deinit {
+        if let revocationObserver {
+            notificationCenter.removeObserver(revocationObserver)
+        }
+    }
+
+    /// Re-checks the stored binding after the system reports a revoked Apple
+    /// credential. No-op when nothing is bound locally.
+    func systemCredentialRevoked() async {
+        guard store.userIdentifier != nil else { return }
+        await refresh()
     }
 
     func refresh() async {

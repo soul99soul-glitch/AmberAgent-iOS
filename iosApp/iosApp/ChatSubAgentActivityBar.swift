@@ -328,7 +328,11 @@ private struct ChatSubAgentActivityCard: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            ChatSubAgentPixelAvatar(identity: activity.avatarIdentity, size: 28)
+            ChatSubAgentPixelAvatar(
+                identity: activity.avatarIdentity,
+                size: 28,
+                isRunning: activity.status == .running
+            )
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(activity.title)
@@ -415,7 +419,11 @@ struct ChatSubAgentActivityDetailSheet: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(alignment: .top, spacing: 12) {
-                    ChatSubAgentPixelAvatar(identity: activity.avatarIdentity, size: 40)
+                    ChatSubAgentPixelAvatar(
+                        identity: activity.avatarIdentity,
+                        size: 40,
+                        isRunning: activity.status == .running
+                    )
                     VStack(alignment: .leading, spacing: 6) {
                         Text(activity.title)
                             .font(.title3.weight(.semibold))

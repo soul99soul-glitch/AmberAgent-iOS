@@ -143,6 +143,61 @@ enum ChatSubAgentPixelSpriteLibrary {
     static let baseFaceCount = spriteCount
     private static let masks: [[[UInt16]]] = arts.map { makeMasks(rows: $0.rows) }
 
+    /// Run-cycle motion for one character. Frames are derived from the base
+    /// art by 1px row shifts, so all characters animate without hand-drawn
+    /// sprite sheets: 0 = base, 1 = crouch (sinks 1px), 2 = rise (hops 1px).
+    enum MotionPattern {
+        case hop
+        case breathe
+        case float
+
+        var stepSequence: [Int] {
+            switch self {
+            case .hop: [0, 1, 2, 0]
+            case .breathe: [0, 1, 1, 0]
+            case .float: [0, 2, 0, 2]
+            }
+        }
+
+        /// Hover drifts slower than a hop so the pattern reads by feel alone.
+        var tempoScale: Double {
+            switch self {
+            case .hop: 1.0
+            case .breathe: 1.2
+            case .float: 1.35
+            }
+        }
+    }
+
+    /// Motion personality per sprite: heavy creatures breathe, light ones hop,
+    /// buoyant ones hover.
+    private static let motionPatterns: [MotionPattern] = [
+        .hop,      // 勇者
+        .breathe,  // 魔王
+        .hop,      // 鸟人
+        .breathe,  // 猪头人
+        .float,    // 巫师
+        .breathe,  // 骑士
+        .hop,      // 骷髅
+        .breathe,  // 史莱姆
+        .breathe,  // 蘑菇怪
+        .float,    // 外星人
+        .breathe,  // 龙
+        .hop,      // 猫妖
+        .hop,      // 狐狸
+        .breathe,  // 南瓜怪
+        .breathe,  // 独眼巨人
+        .float,    // 机器人
+        .breathe,  // 树精
+        .float,    // 幽灵
+        .breathe,  // 石头人
+        .float,    // 章鱼
+    ]
+
+    private static let motionGeometry: [[[[UInt16]]]] = masks.map { layers in
+        [layers, layers.map(crouched), layers.map(airborne)]
+    }
+
     static func spriteIndex(for identity: String) -> Int {
         let hash = seed(for: identity)
         let mixed = hash ^ (hash >> 8) ^ (hash >> 16) ^ (hash >> 24)
@@ -185,6 +240,59 @@ enum ChatSubAgentPixelSpriteLibrary {
         return layerBits.enumerated().map { index, bits in
             Layer(id: index, bits: bits, color: colors[index])
         }.filter { $0.bits.contains(where: { $0 != 0 }) }
+    }
+
+    /// How many distinct steps a run cycle has (one pattern covers all sprites).
+    static let animationStepCount = 4
+
+    static func motionPattern(forSprite index: Int) -> MotionPattern {
+        motionPatterns[index]
+    }
+
+    /// The geometric frame shown at each step of the character's run cycle.
+    static func stepSequence(forSprite index: Int) -> [Int] {
+        motionPatterns[index].stepSequence
+    }
+
+    /// Colored, empty-filtered layers for one step of the running cycle.
+    static func animatedLayers(forSprite index: Int, identity: String, step: Int) -> [Layer] {
+        let sequence = stepSequence(forSprite: index)
+        let frame = sequence[nonNegativeRemainder(step, sequence.count)]
+        let layerBits = motionGeometry[index][frame]
+        let colors = colors(for: identity)
+        return layerBits.enumerated().map { layerIndex, bits in
+            Layer(id: layerIndex, bits: bits, color: colors[layerIndex])
+        }.filter { $0.bits.contains(where: { $0 != 0 }) }
+    }
+
+    /// Per-frame cadence, varied per identity so a crowd of workers never bobs
+    /// in lockstep. Deterministic: the same agent keeps the same tempo.
+    static func frameInterval(for identity: String) -> TimeInterval {
+        let base = 0.36 + Double((seed(for: identity) >> 4) % 5) * 0.05
+        return base * motionPatterns[spriteIndex(for: identity)].tempoScale
+    }
+
+    /// Step offset so agents started together still move out of phase.
+    static func animationPhase(for identity: String) -> Int {
+        Int((seed(for: identity) >> 12) % UInt64(animationStepCount))
+    }
+
+    /// Body sinks 1px into the ground; the top row empties so nothing clips.
+    private static func crouched(_ rows: [UInt16]) -> [UInt16] {
+        var out = Array(repeating: UInt16.zero, count: 16)
+        for row in 1..<16 { out[row] = rows[row - 1] }
+        return out
+    }
+
+    /// Body rises 1px off the ground; the bottom row empties as a hop gap.
+    private static func airborne(_ rows: [UInt16]) -> [UInt16] {
+        var out = Array(repeating: UInt16.zero, count: 16)
+        for row in 0..<15 { out[row] = rows[row + 1] }
+        return out
+    }
+
+    private static func nonNegativeRemainder(_ value: Int, _ modulus: Int) -> Int {
+        ((value % modulus) + modulus) % modulus
     }
 
     private static func makeMasks(rows: [String]) -> [[UInt16]] {

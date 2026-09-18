@@ -832,6 +832,73 @@ final class ChatToolGlyphMappingTests: XCTestCase {
         XCTAssertEqual(Set([sam, nora, leo]).count, 3, "sam、nora_4、leo_4 应映射到不同 RPG 角色")
     }
 
+    func testSubAgentSpriteRunCyclesHaveFourStepsAndMoveOffBase() {
+        for index in 0..<ChatSubAgentPixelSpriteLibrary.spriteCount {
+            let identity = "gallery:\(index)"
+            let frames = (0..<ChatSubAgentPixelSpriteLibrary.animationStepCount).map {
+                ChatSubAgentPixelSpriteLibrary.animatedLayers(
+                    forSprite: index, identity: identity, step: $0
+                )
+            }
+            XCTAssertEqual(frames.count, 4, "每个角色的运行循环固定 4 步")
+            for frame in frames {
+                XCTAssertFalse(frame.isEmpty)
+                for layer in frame {
+                    XCTAssertEqual(layer.bits.count, 16, "帧必须保持 16 行网格")
+                }
+            }
+            let baseBits = frames[0].map(\.bits)
+            XCTAssertTrue(
+                frames.dropFirst().contains { $0.map(\.bits) != baseBits },
+                "第 \(index) 款角色的循环至少要有一帧离开基础姿态，否则没有动感"
+            )
+            // 序列必须回到基础帧，收尾状态才与静态头像一致。
+            XCTAssertEqual(
+                ChatSubAgentPixelSpriteLibrary.stepSequence(forSprite: index).first, 0
+            )
+        }
+    }
+
+    func testSubAgentSpriteMotionPersonalitiesAreStable() {
+        // 重装角色呼吸蹲、轻快角色跳、悬浮角色飘 —— 锁定性格表防止无意改动。
+        let names = ChatSubAgentPixelSpriteLibrary.spriteNames
+        let hopNames: Set = ["勇者", "鸟人", "骷髅", "猫妖", "狐狸"]
+        let floatNames: Set = ["巫师", "外星人", "机器人", "幽灵", "章鱼"]
+        for (index, name) in names.enumerated() {
+            let sequence = ChatSubAgentPixelSpriteLibrary.stepSequence(forSprite: index)
+            if hopNames.contains(name) {
+                XCTAssertEqual(sequence, [0, 1, 2, 0], "\(name) 应为跳动循环")
+            } else if floatNames.contains(name) {
+                XCTAssertEqual(sequence, [0, 2, 0, 2], "\(name) 应为悬浮循环")
+            } else {
+                XCTAssertEqual(sequence, [0, 1, 1, 0], "\(name) 应为呼吸蹲循环")
+            }
+        }
+        XCTAssertEqual(names.count, 20)
+    }
+
+    func testSubAgentRunCycleTempoAndPhaseVaryByIdentity() {
+        let sam = "dynamic:sam"
+        XCTAssertEqual(
+            ChatSubAgentPixelSpriteLibrary.frameInterval(for: sam),
+            ChatSubAgentPixelSpriteLibrary.frameInterval(for: sam),
+            "同一身份的节奏必须确定"
+        )
+        XCTAssertTrue(
+            (0.3...0.9).contains(ChatSubAgentPixelSpriteLibrary.frameInterval(for: sam)),
+            "单帧节奏应保持在肉眼舒适区间"
+        )
+        XCTAssertTrue(
+            (0..<ChatSubAgentPixelSpriteLibrary.animationStepCount).contains(
+                ChatSubAgentPixelSpriteLibrary.animationPhase(for: sam)
+            )
+        )
+        let phases = Set((0..<24).map {
+            ChatSubAgentPixelSpriteLibrary.animationPhase(for: "dynamic:agent_\($0)")
+        })
+        XCTAssertEqual(phases, Set(0..<4), "相位偏移应覆盖全部 4 步，避免群体同步跳动")
+    }
+
     func testSpawnCapsuleUsesResolvedNameAfterSiblingCollision() throws {
         let spawn = UIMessagePart.Tool(
             toolCallId: "name-collision", toolName: "spawn_agent",

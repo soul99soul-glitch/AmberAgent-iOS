@@ -175,6 +175,7 @@
     </array>
     <key>AmberAgentExperimentalConfiguredEntitlements</key>
     <array>
+        <string>com.apple.developer.applesignin</string>
         <string>com.apple.security.application-groups</string>
     </array>
     <key>UILaunchScreen</key>

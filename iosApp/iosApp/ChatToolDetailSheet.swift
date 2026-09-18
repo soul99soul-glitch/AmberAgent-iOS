@@ -277,7 +277,8 @@ struct ChatToolDetailSheet: View {
         HStack(alignment: .center, spacing: 10) {
             ChatSubAgentPixelAvatar(
                 identity: presentation?.identity ?? "call:\(tool.toolCallId)",
-                size: 28
+                size: 28,
+                isRunning: isRunning
             )
 
             VStack(alignment: .leading, spacing: 2) {

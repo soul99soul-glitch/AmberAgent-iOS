@@ -1270,17 +1270,70 @@ private extension View {
 }
 
 // Re-enable iOS's interactive pop (edge-swipe-to-go-back) gesture app-wide. NavigationStack pages
-// that hide the nav bar / use a custom back button (`navigationBarBackButtonHidden(true)` +
-// `toolbar(.hidden, for: .navigationBar)`) otherwise lose the default swipe-back, leaving only the
-// top-left button. We become the gesture's delegate and only allow it when there is a page to pop,
-// so the root view is unaffected and no horizontal content gestures are hijacked.
-extension UINavigationController: @retroactive UIGestureRecognizerDelegate {
-    override open func viewDidLoad() {
-        super.viewDidLoad()
-        interactivePopGestureRecognizer?.delegate = self
+// hide the nav bar and draw a custom back button (`navigationBarBackButtonHidden(true)` +
+// `toolbar(.hidden, for: .navigationBar)`), which otherwise loses the default swipe-back.
+//
+// iOS 26 changed the gate: a navigation controller now owns two recognizers —
+// `interactivePopGestureRecognizer` (leading screen edge) and the new
+// `interactiveContentPopGestureRecognizer` (whole content area) — and when the bar is hidden,
+// UIKit vetoes touches through private delegate hooks (`_gestureRecognizer:shouldReceiveTouch:`)
+// implemented on SwiftUI's UIKitNavigationController itself. Installing the controller as the
+// delegate therefore still loses the swipe. This delegate object implements none of those
+// private hooks, so the veto is skipped and the public `gestureRecognizerShouldBegin` decides.
+final class IOSInteractivePopGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    weak var navigationController: UINavigationController?
+
+    /// iOS 26 的 content-pop 覆盖整个内容区；只放行起点在左缘带内的手势，
+    /// 保持经典边缘返回的范围，避免劫持代码块、表格等页面内横向滚动。
+    private static let leadingEdgeBandWidth: CGFloat = 44
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let navigationController, navigationController.viewControllers.count > 1 else {
+            return false
+        }
+        if #available(iOS 26.0, *),
+           gestureRecognizer === navigationController.interactiveContentPopGestureRecognizer,
+           let pan = gestureRecognizer as? UIPanGestureRecognizer,
+           let container = pan.view {
+            let startX = pan.location(in: container).x - pan.translation(in: container).x
+            return startX <= Self.leadingEdgeBandWidth
+        }
+        return true
+    }
+}
+
+extension UINavigationController {
+    private static var interactivePopDelegateKey: UInt8 = 0
+
+    private var interactivePopDelegate: IOSInteractivePopGestureDelegate {
+        if let existing = objc_getAssociatedObject(self, &Self.interactivePopDelegateKey) as? IOSInteractivePopGestureDelegate {
+            return existing
+        }
+        let delegate = IOSInteractivePopGestureDelegate()
+        delegate.navigationController = self
+        objc_setAssociatedObject(self, &Self.interactivePopDelegateKey, delegate, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
+        return delegate
     }
 
-    public func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        viewControllers.count > 1
+    override open func viewDidLoad() {
+        super.viewDidLoad()
+        installInteractivePopGestureDelegateIfNeeded()
+    }
+
+    // Recognizers can be (re)attached after viewDidLoad under SwiftUI; re-apply on layout passes.
+    override open func viewWillLayoutSubviews() {
+        super.viewWillLayoutSubviews()
+        installInteractivePopGestureDelegateIfNeeded()
+    }
+
+    private func installInteractivePopGestureDelegateIfNeeded() {
+        if let edge = interactivePopGestureRecognizer, edge.delegate !== interactivePopDelegate {
+            edge.delegate = interactivePopDelegate
+        }
+        if #available(iOS 26.0, *),
+           let content = interactiveContentPopGestureRecognizer,
+           content.delegate !== interactivePopDelegate {
+            content.delegate = interactivePopDelegate
+        }
     }
 }
