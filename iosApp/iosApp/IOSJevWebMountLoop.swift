@@ -243,7 +243,6 @@ final class IOSJevWebMountLoopService {
         let startedAt = Date()
 
         var noProgressCount = 0
-        var lastUrl: String?
 
         while steps.count < maxDecisions {
             if Task.isCancelled {
@@ -262,8 +261,6 @@ final class IOSJevWebMountLoopService {
             guard let observation = await deps.observe(input.sessionId) else {
                 return .handback(reason: "无法获取页面快照。", steps: steps, latestObservation: nil)
             }
-            let urlChanged = lastUrl.map { $0 != observation.url } ?? false
-            lastUrl = observation.url
 
             // 完成检查先于下一次决策：DONE 由页面/业务状态核验。
             if deps.isComplete(input.sessionId, observation) {
@@ -273,8 +270,7 @@ final class IOSJevWebMountLoopService {
             // 构建本轮合法动作候选（白名单 ∩ 输入允许 ∩ 快照元素存在）。
             let candidates = Self.legalActionCandidates(
                 input: input,
-                observation: observation,
-                urlChanged: urlChanged
+                observation: observation
             )
             if candidates.isEmpty {
                 return .handback(reason: "当前快照下没有白名单内的可行动作。", steps: steps, latestObservation: observation)
@@ -339,8 +335,7 @@ final class IOSJevWebMountLoopService {
 
     static func legalActionCandidates(
         input: LoopInput,
-        observation: PageObservation,
-        urlChanged: Bool
+        observation: PageObservation
     ) -> [PlannedAction] {
         // 基线观察权：滚动始终可用（只读、无目标语义）；allowedActions 只能
         // 再收窄目标类动作，不能放大白名单。

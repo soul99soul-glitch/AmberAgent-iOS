@@ -81,6 +81,8 @@ enum IOSJevRequestError: Error, Equatable {
     /// retryAfterSeconds：429 响应携带的 Retry-After（秒）。
     case http(status: Int, retryAfterSeconds: Double? = nil)
     case invalidResponse(String)
+    /// 出站前的本地拒绝（题数超限/编码失败）：无网络流量，调用方不应计费。
+    case invalidRequest(String)
     case stateTooLarge(bytes: Int)
     case requestTooLarge(bytes: Int)
     case transport(String)
@@ -236,7 +238,7 @@ final class IOSJevClient {
     ) async throws -> IOSJevDecision {
         guard !input.apiKey.isEmpty else { throw IOSJevRequestError.missingKey }
         guard input.questions.count <= policy.maxQuestions else {
-            throw IOSJevRequestError.invalidResponse("too many questions: \(input.questions.count)")
+            throw IOSJevRequestError.invalidRequest("too many questions: \(input.questions.count)")
         }
         let deadline = TimeInterval(deadlineMs ?? policy.deadlineMs) / 1_000
 
@@ -254,7 +256,7 @@ final class IOSJevClient {
         do {
             bodyData = try encoder.encode(body)
         } catch {
-            throw IOSJevRequestError.invalidResponse("encode failed: \(error.localizedDescription)")
+            throw IOSJevRequestError.invalidRequest("encode failed: \(error.localizedDescription)")
         }
         guard bodyData.count <= policy.maxRequestBytes else {
             throw IOSJevRequestError.requestTooLarge(bytes: bodyData.count)
@@ -337,7 +339,7 @@ final class IOSJevClient {
                 }
             case .timeout, .transport:
                 break
-            case .missingKey, .cancelled, .invalidResponse, .stateTooLarge, .requestTooLarge:
+            case .missingKey, .cancelled, .invalidRequest, .invalidResponse, .stateTooLarge, .requestTooLarge:
                 throw error
             }
             return try await executeWithinDeadline(request: request, deadline: deadline)

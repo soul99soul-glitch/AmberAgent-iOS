@@ -96,7 +96,10 @@ final class IOSJevContextSelectionService {
         let requiredScopes: Set<IOSJevDataScope> = [.selectedTaskText, .toolOutput]
         guard settings.canSend(useCase: .contextSelection, required: requiredScopes) else { return messages }
 
-        let candidates = blocks.filter { !$0.mustKeep }
+        // 与工具发现同一契约锁：每块一题、总题数 ≤ maxQuestions（客户端对超题数
+        // 是硬拒绝）。超出上限的块不参评——缺题 = 不确定 = 保留，方向保守。
+        let evalCap = min(settings.policy.maxCandidates, settings.policy.maxQuestions)
+        let candidates = Array(blocks.filter { !$0.mustKeep }.prefix(evalCap))
         guard !candidates.isEmpty else { return messages }
 
         let state = Self.stateText(taskText: taskText, blocks: candidates)
@@ -188,7 +191,7 @@ final class IOSJevContextSelectionService {
                 guard !Self.containsOmissionMarker(text) else { continue }
                 let blocks = Self.splitBlocks(text)
                 guard blocks.count > 1 else { continue } // 无法安全分割 → 原样保留
-                let evaluated = blocks.map { index, text in
+                let evaluated = blocks.map { index, text, _ in
                     let (mustKeep, reason) = Self.mustKeepSignal(toolName: tool.toolName, text: text)
                     return Block(index: index, text: text, mustKeep: mustKeep, keepReason: reason)
                 }
@@ -205,37 +208,53 @@ final class IOSJevContextSelectionService {
     // MARK: Splitting（结构块不拆坏）
 
     /// 按空行切段落；围栏代码块（```...```）整块保留；超长段落不二次切割。
-    static func splitBlocks(_ text: String) -> [(index: Int, text: String)] {
-        var blocks: [String] = []
-        var current: [String] = []
+    /// text 为去首尾空白后的内容（评分/信号用），range 是该块在原文中的区间
+    /// （含块内行间空白）——投影按 range 替换隐藏块，保留块逐字保留原文。
+    static func splitBlocks(_ text: String) -> [(index: Int, text: String, range: Range<String.Index>)] {
+        var blocks: [(text: String, range: Range<String.Index>)] = []
+        var blockStart: String.Index?
+        var blockEnd: String.Index?
         var inFence = false
+
         func flush() {
-            let joined = current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !joined.isEmpty { blocks.append(joined) }
-            current = []
+            defer {
+                blockStart = nil
+                blockEnd = nil
+            }
+            guard let start = blockStart, let end = blockEnd, end > start else { return }
+            let raw = String(text[start..<end])
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            blocks.append((trimmed, start..<end))
         }
-        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        var lineStart = text.startIndex
+        while true {
+            let lineEnd = text[lineStart...].firstIndex(of: "\n") ?? text.endIndex
+            let trimmed = text[lineStart..<lineEnd].trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") {
                 if inFence {
-                    current.append(String(line))
+                    if blockStart == nil { blockStart = lineStart }
+                    blockEnd = lineEnd
                     flush()
                     inFence = false
                 } else {
                     flush()
-                    current.append(String(line))
+                    blockStart = lineStart
+                    blockEnd = lineEnd
                     inFence = true
                 }
-                continue
-            }
-            if !inFence && trimmed.isEmpty {
+            } else if !inFence && trimmed.isEmpty {
                 flush()
             } else {
-                current.append(String(line))
+                if blockStart == nil { blockStart = lineStart }
+                blockEnd = lineEnd
             }
+            if lineEnd == text.endIndex { break }
+            lineStart = text.index(after: lineEnd)
         }
         flush()
-        return blocks.enumerated().map { (index: $0.offset, text: $0.element) }
+        return blocks.enumerated().map { (index: $0.offset, text: $0.element.text, range: $0.element.range) }
     }
 
     // MARK: Must-keep signals
@@ -312,14 +331,22 @@ final class IOSJevContextSelectionService {
         var newParts: [UIMessagePart] = []
         for part in toolPart.output {
             if let text = part as? UIMessagePart.Text {
-                // 隐藏块替换为省略标记，其余原样；tool call ID 与对应关系不变。
-                let segments = splitBlocks(text.text).map { block -> String in
+                // 只动隐藏块：整块区间替换为省略标记；保留块与块间空白逐字保留
+                // 原文，tool call ID 与对应关系不变。
+                let original = text.text
+                var projected = ""
+                var cursor = original.startIndex
+                for block in splitBlocks(original) {
+                    projected += original[cursor..<block.range.lowerBound]
                     if hiddenIndices.contains(block.index) {
-                        return omissionMarker(toolCallId: toolPart.toolCallId, toolName: toolPart.toolName, blockIndex: block.index)
+                        projected += omissionMarker(toolCallId: toolPart.toolCallId, toolName: toolPart.toolName, blockIndex: block.index)
+                    } else {
+                        projected += original[block.range]
                     }
-                    return block.text
+                    cursor = block.range.upperBound
                 }
-                newParts.append(UIMessagePart.Text(text: segments.joined(separator: "\n\n"), metadata: text.metadata))
+                projected += original[cursor..<original.endIndex]
+                newParts.append(UIMessagePart.Text(text: projected, metadata: text.metadata))
             } else {
                 newParts.append(part)
             }

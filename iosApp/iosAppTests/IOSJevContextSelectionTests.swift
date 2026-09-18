@@ -381,4 +381,31 @@ final class IOSJevContextSelectionTests: XCTestCase {
             XCTAssertEqual(anyKeep, expectMustKeep, "case \(name) must-keep expectation mismatch")
         }
     }
+
+    // MARK: 候选封顶（题数契约锁）
+
+    /// 每块一题、总题数 ≤ maxQuestions（客户端出站前硬拒绝）；超出上限的块
+    /// 不参评——缺题 = 不确定 = 保留，方向保守，不因超题数让整链失效。
+    func testCandidateBlocksCappedAtMaxQuestions() async {
+        let transport = JevStubTransport { _ in
+            var answers: [String: Double] = [:]
+            for index in 0..<32 { answers["b\(index)"] = 0.0 }
+            return (self.scorePayload(answers), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let text = (0..<40).map { "段落\($0)标记：" + String(repeating: "内容", count: 120) }
+            .joined(separator: "\n\n")
+        let messages = toolMessage(toolCallId: "call-cap", text: text)
+        let projected = await service.projectedMessages(messages, identity: identity())
+
+        let body = try! JSONSerialization.jsonObject(with: transport.lastBody!) as! [String: Any]
+        let questionCount = (body["questions"] as! [String: Any]).count
+        XCTAssertLessThanOrEqual(questionCount, IOSJevSettings().policy.maxQuestions)
+
+        let projectedText = ((projected[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(projectedText))
+        XCTAssertTrue(projectedText.contains("段落32标记"), "blocks beyond the cap stay verbatim")
+        XCTAssertTrue(projectedText.contains("段落39标记"), "blocks beyond the cap stay verbatim")
+        XCTAssertFalse(projectedText.contains("段落5标记"), "low-score blocks within the cap are hidden")
+    }
 }

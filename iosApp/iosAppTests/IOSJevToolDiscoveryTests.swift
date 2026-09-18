@@ -245,5 +245,29 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertGreaterThan(total, 0)
         print("[Jev Phase 1 baseline] tool frozen cases full-hit: \(hits)/\(total)")
     }
+
+    // MARK: 契约锁（候选数 × 题数）
+
+    /// 每候选一题、总题数 ≤ maxQuestions：客户端对超题数是出站前硬拒绝，
+    /// 且 KMP 快照池的 32 条上限与本截断各自独立演进，任何一侧调整都不许
+    /// 让 active 在大候选集下静默回退。
+    func testMakeRequestCapsQuestionsAtMaxQuestions() {
+        var settings = IOSJevSettings()
+        settings.policy.maxQuestions = 32
+        settings.policy.maxCandidates = 64
+        let candidates = (0..<40).map { index in
+            IOSJevToolDiscoveryService.SnapshotCandidate(
+                name: "tool_\(index)", category: "workspace",
+                description: "d\(index)", mutates: false, keywordScore: index
+            )
+        }
+        let parsed = IOSJevToolDiscoveryService.ParsedSnapshot(
+            query: "查询", category: nil, exactMatch: nil, candidates: candidates
+        )
+        let built = IOSJevToolDiscoveryService.makeRequest(parsed: parsed, settings: settings)
+        XCTAssertNotNil(built)
+        XCTAssertLessThanOrEqual(built!.questions.count, 32, "questions must never exceed client maxQuestions")
+        XCTAssertFalse(built!.state.contains("tool_39"), "candidates beyond the cap must not leak into state")
+    }
 }
 

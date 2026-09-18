@@ -202,7 +202,13 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             record(useCase: useCase, mode: mode, model: model, outcome: outcome, latencyMs: decision.latencyMs, requestBytes: decision.requestBytes, responseBytes: decision.responseBytes, usage: decision.usage, reason: nil, suggestion: metricSuggestionProvider?(decision))
             return mode == .active ? .applied(decision) : .observed(decision)
         } catch let error as IOSJevRequestError {
-            finishBudget(turnKey: context.turnBudgetKey, requestBytes: approximateRequestBytes(state: state, model: model))
+            switch error {
+            case .missingKey, .invalidRequest, .stateTooLarge, .requestTooLarge:
+                // 出站前本地拒绝：无网络流量、不计费，回滚 beginBudget 的预登记。
+                refundBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count)
+            default:
+                finishBudget(turnKey: context.turnBudgetKey, requestBytes: approximateRequestBytes(state: state, model: model))
+            }
             switch error {
             case .http(let status, _) where status == 401 || status == 403:
                 synchronized {
@@ -216,7 +222,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             case .cancelled:
                 record(useCase: useCase, mode: mode, model: model, outcome: "error", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "cancelled", suggestion: nil)
                 return .failed(reason: "cancelled")
-            case .invalidResponse, .stateTooLarge, .requestTooLarge:
+            case .invalidRequest, .invalidResponse, .stateTooLarge, .requestTooLarge:
                 record(useCase: useCase, mode: mode, model: model, outcome: "error", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: reasonCode(for: error), suggestion: nil)
                 return .failed(reason: reasonCode(for: error))
             case .timeout, .transport, .http:
@@ -244,6 +250,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         case .cancelled: "cancelled"
         case .http(let status, _): "http_\(status)"
         case .invalidResponse: "invalid_response"
+        case .invalidRequest: "invalid_request"
         case .stateTooLarge: "state_too_large"
         case .requestTooLarge: "request_too_large"
         case .transport: "transport"
@@ -302,6 +309,20 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             rollDailyLedgerIfNeeded()
             dailyLedger.requestBodyBytes += requestBytes
             trimTurnLedgersIfNeeded()
+        }
+    }
+
+    /// 出站前本地拒绝（题数超限/编码失败/state 或请求体超限/缺 Key）时回滚
+    /// beginBudget 的预登记：请求未发出、无计费，不应占用轮次与日请求预算。
+    private func refundBudget(turnKey: String, stateBytes: Int) {
+        synchronized {
+            rollDailyLedgerIfNeeded()
+            dailyLedger.requests = max(dailyLedger.requests - 1, 0)
+            if var ledger = turnLedgers[turnKey] {
+                ledger.requests = max(ledger.requests - 1, 0)
+                ledger.stateBytes = max(ledger.stateBytes - stateBytes, 0)
+                turnLedgers[turnKey] = ledger
+            }
         }
     }
 

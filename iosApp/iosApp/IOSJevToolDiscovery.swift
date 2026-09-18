@@ -20,8 +20,11 @@ enum IOSJevToolDiscoveryService {
 
     /// 轮次预算 key：runId（本 App 的 run 即一次用户输入及其工具续跑；steer
     /// 不清空当轮已用预算，与计划口径一致）。全部用途共用同一本轮账。
+    /// 非可选调用点可能传空串（如 WebMount 默认 runId），与 nil 统一兜底 "run"，
+    /// 避免同轮账分裂成 "" 与 "run" 两本。
     static func turnBudgetKey(runId: String?) -> String {
-        runId ?? "run"
+        if let runId, !runId.isEmpty { return runId }
+        return "run"
     }
 
     /// 三条路径共用的执行入口。返回 tool_search 的最终输出 JSON。
@@ -179,8 +182,10 @@ enum IOSJevToolDiscoveryService {
     ]
 
     /// state = 查询 + 候选元数据（每条描述截断，防 48KiB 超限；仍超则整体放弃）。
-    private static func makeRequest(parsed: ParsedSnapshot, settings: IOSJevSettings) -> BuiltRequest? {
-        let maxCandidates = min(settings.policy.maxCandidates, parsed.candidates.count)
+    /// internal：契约测试锁定"每候选一题 ≤ maxQuestions"（客户端对超题数是硬拒绝，
+    /// 且 KMP 快照池的 32 条上限与本截断各自独立，任何一侧调整都不许打破）。
+    static func makeRequest(parsed: ParsedSnapshot, settings: IOSJevSettings) -> BuiltRequest? {
+        let maxCandidates = min(settings.policy.maxCandidates, settings.policy.maxQuestions, parsed.candidates.count)
         let candidates = Array(parsed.candidates.prefix(maxCandidates))
         var lines: [String] = []
         lines.append("用户查询：\(parsed.query)")

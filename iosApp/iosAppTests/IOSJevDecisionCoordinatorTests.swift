@@ -166,6 +166,34 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         guard case .applied = await call("turnB", "h3") else { return XCTFail("turnB should apply (fresh budget)") }
     }
 
+    /// 出站前本地拒绝（state 超限等）无网络流量、不计费：不得占用该轮与日预算。
+    func testPreNetworkRejectionRefundsBudget() async {
+        var settings = makeSettings()
+        settings.policy.perTurnRequestBudget = 1
+        let box = SettingsBox(settings)
+        let transport = JevStubTransport { _ in (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200)) }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let hugeState = String(repeating: "a", count: settings.policy.maxStateBytes + 1)
+        let oversized = makeDecideCall(
+            context: IOSJevRunContext(runId: "run1", turnBudgetKey: "turnA", inputHash: "h1")
+        )
+        guard case .failed(let reason) = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: oversized.0, state: hugeState,
+            questions: oversized.2, context: oversized.3, cacheKey: "k1"
+        ) else { return XCTFail("expected state_too_large failure") }
+        XCTAssertEqual(reason, "state_too_large")
+        XCTAssertEqual(transport.calls, 0, "state oversize must be rejected before any network")
+        // 同一轮仍有完整预算：本地拒绝被退款。
+        let normal = makeDecideCall(
+            context: IOSJevRunContext(runId: "run1", turnBudgetKey: "turnA", inputHash: "h2")
+        )
+        guard case .applied = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: normal.0, state: normal.1,
+            questions: normal.2, context: normal.3, cacheKey: "k2"
+        ) else { return XCTFail("pre-network rejection must not consume turn budget") }
+        XCTAssertEqual(transport.calls, 1)
+    }
+
     func testDailyBudgetEnforced() async {
         var settings = makeSettings()
         settings.policy.dailyRequestBudget = 2

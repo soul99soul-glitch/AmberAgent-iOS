@@ -6,7 +6,9 @@ import Foundation
 // 持久化）；API Key 走 IOSCredentialSideTable（Keychain），绝不写进这里。
 // 旧配置（无该 key）默认全用途 off。Jev 不进入普通聊天 provider/模型列表。
 
-/// Jev 用途。Phase 1 只接线 toolDiscovery / memoryRecall；其余为后续 phase 预留。
+/// Jev 用途。五个用途均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 =
+/// Phase 2，模型调度/网页操作 = Phase 3）；设置页展示前四个，webActions 经
+/// wm_run_goal 工具入口启用、不设独立开关行。
 enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
     case toolDiscovery
     case memoryRecall
@@ -34,13 +36,6 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
         case .contextSelection: [.selectedTaskText, .toolOutput]
         case .modelRouting: [.selectedTaskText]
         case .webActions: [.webContent, .selectedTaskText]
-        }
-    }
-
-    var implemented: Bool {
-        switch self {
-        case .toolDiscovery, .memoryRecall: true
-        case .contextSelection, .modelRouting, .webActions: false
         }
     }
 }

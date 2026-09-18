@@ -39,7 +39,7 @@ final class IOSJevMemoryRecallService {
     /// shadow 模式最近一次已观测的 turnKey：同轮不重复发起/记录。
     private var lastShadowObservedKey: String?
 
-    /// 防并发同轮重复发起判断：同 key 在途时后来者直接等待复用结果。
+    /// 防并发同轮重复发起判断：同 key 在途时后来者不等待，直接回退同步原行为。
     private var inFlightKey: String?
 
     private let coordinator: IOSJevDecisionCoordinator
@@ -110,7 +110,7 @@ final class IOSJevMemoryRecallService {
             return nil
         }
 
-        // active：等待判断（deadline 1.2s 上限），完成前不阻塞同 key 重入。
+        // active：等待判断（deadline 1.2s 上限）；同 key 在途时后来者直接回退同步原行为。
         guard beginInFlight(key) else { return nil }
         defer { endInFlight() }
 

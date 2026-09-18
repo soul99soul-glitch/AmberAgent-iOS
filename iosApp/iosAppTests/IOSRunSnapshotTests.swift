@@ -88,7 +88,10 @@ final class IOSRunSnapshotTests: XCTestCase {
             return "token-b"
         }
 
-        let (a, b) = try! await (resolvedA, resolvedB)
+        // Xcode 27 beta 编译器对 `try! await (a, b)` 元组聚合在此处触发 SIL
+        // ownership 校验崩溃；分两次 await 语义不变（async let 仍并发执行）。
+        let a = try! await resolvedA
+        let b = try! await resolvedB
         XCTAssertEqual(a, "token-a")
         XCTAssertEqual(b, "token-b")
         let invocationCount = await counter.count

@@ -225,8 +225,7 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         let input = self.input(allowed: ["type_draft"], draft: nil)
         let candidates = IOSJevWebMountLoopService.legalActionCandidates(
             input: input,
-            observation: observation(),
-            urlChanged: false
+            observation: observation()
         )
         XCTAssertFalse(candidates.contains { $0.kind == .typeDraft }, "missing draft value must not offer type_draft")
         XCTAssertTrue(candidates.allSatisfy { IOSJevWebMountLoopService.actionWhitelist.contains($0.kind.rawValue) })
@@ -241,8 +240,7 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         ], draft: "v")
         let candidates = IOSJevWebMountLoopService.legalActionCandidates(
             input: input,
-            observation: observation(),
-            urlChanged: false
+            observation: observation()
         )
         XCTAssertTrue(candidates.allSatisfy { IOSJevWebMountLoopService.actionWhitelist.contains($0.kind.rawValue) },
                       "runtime whitelist cannot be enlarged by input")
