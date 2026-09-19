@@ -143,6 +143,7 @@ struct IOSJevPolicy: Codable, Equatable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         policyVersion = try container.decodeIfPresent(Int.self, forKey: .policyVersion) ?? 1
         deadlineMs = try container.decodeIfPresent(Int.self, forKey: .deadlineMs) ?? 1_200
+        webActionsDeadlineMs = try container.decodeIfPresent(Int.self, forKey: .webActionsDeadlineMs) ?? 2_500
         maxQuestions = try container.decodeIfPresent(Int.self, forKey: .maxQuestions) ?? 32
         maxCandidates = try container.decodeIfPresent(Int.self, forKey: .maxCandidates) ?? 64
         maxStateBytes = try container.decodeIfPresent(Int.self, forKey: .maxStateBytes) ?? 48 * 1_024
@@ -163,7 +164,7 @@ struct IOSJevPolicy: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case policyVersion, deadlineMs, maxQuestions, maxCandidates, maxStateBytes
+        case policyVersion, deadlineMs, webActionsDeadlineMs, maxQuestions, maxCandidates, maxStateBytes
         case maxRequestBytes, maxResponseBytes, perTurnRequestBudget, perTurnStateBudgetBytes
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
         case memoryRecallMinScore, contextSelectionMinScore, modelRoutingMinScore
@@ -173,6 +174,10 @@ struct IOSJevPolicy: Codable, Equatable {
     var policyVersion: Int = IOSJevPolicy.currentPolicyVersion
     /// 前台单次判断总 deadline（排队 + 网络 + 重试 + 解析），毫秒。
     var deadlineMs: Int = 1_200
+    /// webActions 循环的决策 deadline：一次超时烧掉整轮（观察+决策），
+    /// 且移动网络+网关多一跳时尾部超 1.2s 并不少见——给更长视野把
+    /// "超时"换成"慢一点的决策"。其余用途保持 1.2s 的轻快判断语义。
+    var webActionsDeadlineMs: Int = 2_500
     /// 单请求最多问题数。
     var maxQuestions: Int = 32
     /// 单请求最多候选。

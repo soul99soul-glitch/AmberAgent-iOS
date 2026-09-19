@@ -657,6 +657,37 @@ fun createWebMountRunGoalToolDeclaration(): Tool = webMountTool(
     )
 )
 
+/**
+ * wm_act：一次调用串行执行一小批页面动作。宿主逐步走与单动作相同的
+ * 审批/快照/控制权闸门；find 步的首个匹配 ref 自动喂给缺省 target 的
+ * 后续步；任何 document 导航都熔断剩余步骤。
+ */
+fun createWebMountActToolDeclaration(): Tool = webMountTool(
+    name = "wm_act",
+    description = "Execute a small ordered batch of page actions in one call. Each step runs serially through the same approval, snapshot, and control gates as the matching single tool. A find step feeds its first match ref to a following step that omits target. Any document navigation aborts the remaining steps. Use for 1-3 step tasks like find-then-click or scroll-then-click instead of wm_run_goal. Steps support action=find|wait|click|tap|type|keys|scroll|select with the same fields as the corresponding wm_* tools; never submits forms, deletes, pays, or logs in.",
+    parameters = InputSchema.Obj(
+        properties = buildJsonObject {
+            put("session_id", buildJsonObject {
+                put("type", "string")
+                put("description", "Open WebMount session to operate on.")
+            })
+            put("snapshot_id", buildJsonObject {
+                put("type", "string")
+                put("description", "Required for agent calls. Bind to the snapshot_id returned by the latest wm_observe/wm_find to prove the batch was planned against recent page state.")
+            })
+            put("steps", buildJsonObject {
+                put("type", "array")
+                put("description", "Ordered action steps (max 8). Each step: action=find|wait|click|tap|type|keys|scroll|select plus that action's fields (target, text/value, by_y, key, condition, timeout_ms, ...). A step without target uses the ref from the latest find step.")
+                put("items", buildJsonObject {
+                    put("type", "object")
+                    put("description", "One batch step, e.g. {\"action\":\"find\",\"text\":\"More\"} then {\"action\":\"click\"}.")
+                })
+            })
+        },
+        required = listOf("session_id", "snapshot_id", "steps")
+    )
+)
+
 fun createSelectedFileReadToolDeclaration(): Tool = Tool(
     name = "file_read_selected",
     description = "Read the text preview of the file the user explicitly selected in AmberAgent iOS.",
@@ -1854,6 +1885,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "wm_find" to ::createWebMountFindToolDeclaration,
     "wm_wait" to ::createWebMountWaitToolDeclaration,
     "wm_run_goal" to ::createWebMountRunGoalToolDeclaration,
+    "wm_act" to ::createWebMountActToolDeclaration,
     "mcp_call" to ::createMcpCallToolDeclaration,
     "mcp_list" to ::createMcpListToolDeclaration,
     "mcp_test" to ::createMcpTestToolDeclaration,

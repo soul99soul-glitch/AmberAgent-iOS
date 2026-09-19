@@ -126,6 +126,46 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         XCTAssertEqual(decision.answers.first?.score, 0.9)
     }
 
+    /// Phase 4：webActions 用专属更长 deadline（2500ms 默认）。慢 transport
+    /// 睡 1.5s：默认 1200ms 的用途必超时，webActions 可完成——超时一次烧掉
+    /// 整轮观察+决策，长视野更划算；其余用途保持轻快判断语义。
+    func testWebActionsUsesExtendedDeadline() async {
+        let transport = JevStubTransport { _ in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        var webSettings = IOSJevSettings()
+        webSettings.setMode(.active, for: .webActions)
+        webSettings.pinnedModelVersion = "jev-fixed-v1"
+        webSettings.setScopes([.webContent, .selectedTaskText], for: .webActions)
+        let webBox = SettingsBox(webSettings)
+        let webCoordinator = makeCoordinator(settings: webBox, transport: transport)
+        let webOutcome = await webCoordinator.decide(
+            useCase: .webActions,
+            requiredScopes: [.webContent, .selectedTaskText],
+            state: "state text",
+            questions: [IOSJevQuestion.score(id: "t1", levels: ["0", "3"], instructions: "test")],
+            context: IOSJevRunContext(runId: "run-w", turnBudgetKey: "turn-w", inputHash: "h"),
+            cacheKey: nil
+        )
+        guard case .applied = webOutcome else {
+            return XCTFail("webActions 2500ms deadline 应容纳 1.5s 慢响应：\(webOutcome)")
+        }
+
+        // 同一慢 transport 在 toolDiscovery（1200ms）下必须超时。
+        let box = SettingsBox(makeSettings(mode: .active))
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let (scopes, state, questions, context) = makeDecideCall()
+        let outcome = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes,
+            state: state, questions: questions, context: context, cacheKey: "k"
+        )
+        guard case .failed(let reason) = outcome else {
+            return XCTFail("toolDiscovery 1200ms 应对 1.5s 响应超时：\(outcome)")
+        }
+        XCTAssertEqual(reason, "timeout")
+    }
+
     // MARK: Budgets
 
     func testPerTurnRequestBudgetEnforced() async {
@@ -282,6 +322,24 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
             return XCTFail("expected cooling_down, got \(outcome)")
         }
         XCTAssertEqual(transport.calls, 6, "each failed decide makes 2 attempts (one retry)")
+    }
+
+    /// 永久性 4xx 不计入冷却计数：跨 run 重复失败不得触发全局 cooling_down
+    /// 殃及其他用例——第 4 次 decide 仍应真实出站并以 http_400 失败。
+    func testPermanentHttpFailuresDoNotTripCooldown() async {
+        let box = SettingsBox(makeSettings())
+        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 400)) }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        for index in 0..<4 {
+            let (scopes, state, questions, context) = makeDecideCall(
+                context: IOSJevRunContext(runId: "run\(index)", turnBudgetKey: "turn\(index)", inputHash: "h\(index)")
+            )
+            let outcome = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "k\(index)")
+            guard case .failed(let reason) = outcome, reason == "http_400" else {
+                return XCTFail("decide \(index) must still hit the wire and fail http_400, got \(outcome)")
+            }
+        }
+        XCTAssertEqual(transport.calls, 4, "4xx 不内部重试、不触发冷却：每次都真实出站")
     }
 
     func testAuthFailurePausesUntilReset() async {

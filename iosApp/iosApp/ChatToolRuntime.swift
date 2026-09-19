@@ -5818,6 +5818,10 @@ final class ChatToolRuntime {
                     conversationId: conversationId
                 )
             },
+            probe: { sessionId in
+                await self.webMountLoopProbe(sessionId: sessionId, runId: runId, conversationId: conversationId)
+            },
+            replay: IOSJevWebMountLoopService.sharedReplay,
             isComplete: { _, observation in
                 IOSJevWebMountLoopService.isComplete(marker: completionMarker, observation: observation)
             }
@@ -5849,8 +5853,32 @@ final class ChatToolRuntime {
         return IOSJevWebMountLoopService.observation(fromObservePayload: object)
     }
 
-    /// 执行端口：先重验快照 revision（decide→execute 窗口防旧目标），再按动作
-    /// 映射到既有具体工具，一次一步，审批与账本内层继承。
+    /// 轻量探测端口：走 wm_state（单次 JS 调用，无元素提取）。DOM 未变时
+    /// 循环复用上轮元素表，只更新 url/title/revision/scrollY；快照解析
+    /// 复用 wm_observe 同一映射（page.* 字段同构）。
+    private func webMountLoopProbe(
+        sessionId: String,
+        runId: String,
+        conversationId: KotlinUuid?
+    ) async -> IOSJevWebMountLoopService.PageObservation? {
+        let payload = Self.webMountJSON(["session_id": sessionId])
+        let output = await webMountToolExecutionOutput(
+            toolCall(name: "wm_state", input: payload),
+            isUserInitiated: false,
+            runId: runId,
+            conversationId: conversationId
+        )
+        guard case .webMountResult(let text) = output,
+              let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else {
+            return nil
+        }
+        return IOSJevWebMountLoopService.observation(fromObservePayload: object)
+    }
+
+    /// 执行端口：按动作映射到既有具体工具，一次一步，审批与账本内层继承。
+    /// 快照失效由 wm_* 工具自身的 snapshot_id 绑定拒收（stale_snapshot →
+    /// .stale 回到重观察），不在此重复一次全量观察——那是每动作多付的
+    /// 一次完整 DOM 提取。
     private func webMountLoopExecute(
         sessionId: String,
         action: IOSJevWebMountLoopService.PlannedAction,
@@ -5859,14 +5887,6 @@ final class ChatToolRuntime {
     ) async -> IOSJevWebMountLoopService.ExecutorResult {
         guard let (toolName, payload) = Self.webMountLoopActionCall(sessionId: sessionId, action: action) else {
             return .failed(reason: "动作不在可执行白名单内。")
-        }
-        // 快照重验：决策所依据的 revision 与当前不一致 → 页面已变化，交回循环
-        // 重新观察（不执行、不猜测旧目标）。重观察失败不得放行执行。
-        guard let current = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId) else {
-            return .failed(reason: "无法重验页面快照。")
-        }
-        if current.revision != action.snapshotRevision {
-            return .stale
         }
         let output = await webMountToolExecutionOutput(
             toolCall(name: toolName, input: payload),
@@ -5910,8 +5930,17 @@ final class ChatToolRuntime {
         if key == "unknown_after_action" { return .unknown }
         let failed = (object["ok"] as? Bool == false) || status == "failed" || status == "error"
         if failed {
-            // 工具级快照失效与循环 .stale 同语义：重观察重决策，不算失败。
-            if key == "stale_snapshot" || code == "stale_snapshot" { return .stale }
+            // 工具级快照/元素失效与循环 .stale 同语义：重观察重决策，不算失败。
+            // stale_ref = 目标 ref 在派发点已死（frame 文档替换等），可恢复。
+            let staleKeys: Set<String> = ["stale_snapshot", "stale_ref"]
+            if staleKeys.contains(key ?? "") || staleKeys.contains(code ?? "") { return .stale }
+            // 本地 gate 产出 needs_user_action/requires_human 布尔位（无 status
+            // 字段）——与 status 形态等价映射 .denied：语义是需要用户处理，
+            // 不是动作执行失败。
+            if (object["needs_user_action"] as? Bool == true)
+                || (object["requires_human"] as? Bool == true) {
+                return .denied(reason: webMountResultReason(object) ?? "动作需要用户处理。")
+            }
             switch key {
             case "approval_required", "requires_human":
                 return .denied(reason: webMountResultReason(object) ?? key ?? "动作需要用户处理。")

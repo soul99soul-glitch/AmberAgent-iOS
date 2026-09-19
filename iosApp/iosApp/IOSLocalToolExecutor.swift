@@ -850,7 +850,9 @@ final class IOSLocalToolExecutor {
     }
 
     func webMountHandoffIsPending(toolName: String, input: String) -> Bool {
-        guard ["wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select"].contains(toolName) else {
+        // wm_act 批量内某步触发 requires_human 时，交接同样发生在会话级
+        // （输入带 session_id）——不在白名单内会让审批卡永远无法完成。
+        guard ["wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select", "wm_act"].contains(toolName) else {
             return false
         }
         let object = Self.webMountInputObject(input)
@@ -867,7 +869,7 @@ final class IOSLocalToolExecutor {
     /// sensitive page action. Local sessions return control to the bound run;
     /// desktop sessions fail so the caller can require a local privacy session.
     func completeWebMountHumanHandoff(toolName: String, input: String, runId: String) -> Bool {
-        guard ["wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select"].contains(toolName),
+        guard ["wm_click", "wm_tap", "wm_type", "wm_keys", "wm_select", "wm_act"].contains(toolName),
               let expectedRunId = runId.nilIfBlank else {
             return false
         }
@@ -900,6 +902,8 @@ final class IOSLocalToolExecutor {
         case "wm_clear_session": "清除站点登录状态"
         case "wm_site_add": "新增 WebMount 站点"
         case "wm_site_remove": "移除 WebMount 站点"
+        case "wm_act": "按顺序执行一批网页动作"
+        case "wm_run_goal": "自动执行网页目标"
         default: toolName
         }
     }
@@ -907,6 +911,14 @@ final class IOSLocalToolExecutor {
     private static func webMountApprovalTarget(toolName: String, object: [String: Any]) -> String? {
         if toolName == "wm_tap", let x = object["x"], let y = object["y"] {
             return IOSWebMountRedactor.redactedText("viewport (\(x), \(y))")
+        }
+        // wm_act 的"目标"是整批步骤：摘要动作序列让用户看到要批准什么。
+        if toolName == "wm_act",
+           let steps = object["steps"] as? [[String: Any]], !steps.isEmpty {
+            let actions = steps.map { (($0["action"] as? String) ?? "?").lowercased() }
+            return IOSWebMountRedactor.redactedText(
+                actions.joined(separator: " → ") + "（共 \(actions.count) 步）"
+            )
         }
         let raw = (object["target"] as? String)?.nilIfBlank
             ?? (object["selector"] as? String)?.nilIfBlank
@@ -929,6 +941,8 @@ final class IOSLocalToolExecutor {
                 return "可能提交当前表单；执行前会再次核对页面快照。"
             }
             return "可能提交、授权或改变远端状态；批准只绑定当前页面快照与目标。"
+        case "wm_act":
+            return "会按顺序执行最多 8 个页面动作；每一步仍按页面快照、目标与后果门校验，中途导航或高后果步骤会自动停止。"
         default:
             return "批准只适用于当前会话中的这一项操作。"
         }
@@ -4941,7 +4955,8 @@ enum IOSWebMountToolCatalog {
         .init(name: "wm_select", description: "Select an option value using an observed semantic target.", requiresUserAction: false),
         .init(name: "wm_find", description: "Read-only selector or visible-text search that returns stable element refs without input values.", requiresUserAction: false),
         .init(name: "wm_wait", description: "Wait up to 30 seconds for a target, text, URL, document change, DOM stability, readiness, or delay; readiness alone does not verify the task goal.", requiresUserAction: false),
-        .init(name: "wm_run_goal", description: "Run a bounded Jev fast action loop toward one verifiable goal on an open session; every executed action still passes its own approval and the ledger, and it never submits, deletes, pays, or logs in.", requiresUserAction: false)
+        .init(name: "wm_run_goal", description: "Run a bounded Jev fast action loop toward one verifiable goal on an open session; every executed action still passes its own approval and the ledger, and it never submits, deletes, pays, or logs in.", requiresUserAction: false),
+        .init(name: "wm_act", description: "Execute a small ordered batch of page actions (find/click/tap/type/keys/scroll/select/wait) in one call. Steps run serially through the same approval and snapshot gates as single tools; a find step feeds its first match ref to the next target-less step; any document navigation aborts the remaining steps.", requiresUserAction: false)
     ]
 
     static let supportedToolNames = Set(descriptors.map(\.name))
@@ -5166,6 +5181,11 @@ final class IOSWebMountController {
                 if toolName == "wm_visual_read" {
                     return Self.json(["ok": false, "error_code": "unsupported_backend", "reason": "wm_visual_read currently supports local WKWebView sessions only."])
                 }
+                if toolName == "wm_act" {
+                    // wm_act 是宿主复合工具（逐步走本管道），无 desktop 网关映射——
+                    // 落入 desktopResult 只会得到误导性的 mapping_unsupported。
+                    return Self.json(["ok": false, "error_code": "unsupported_backend", "reason": "wm_act currently supports local WKWebView sessions only."])
+                }
                 return try await desktopResult(
                     toolName: toolName,
                     args: args,
@@ -5201,6 +5221,14 @@ final class IOSWebMountController {
                 return try await stateResult(args: args, context: context)
             case "wm_observe":
                 return try await observeResult(args: args, context: context)
+            case "wm_act":
+                return try await actResult(
+                    args: args,
+                    isUserInitiated: isUserInitiated,
+                    context: context,
+                    allowUnlistedHosts: allowUnlistedHosts,
+                    visualRead: visualRead
+                )
             case "wm_extract":
                 return try await extractResult(args: args, context: context)
             case "wm_get":
@@ -6609,7 +6637,7 @@ final class IOSWebMountController {
     private static let localSessionPolicyToolNames: Set<String> = [
         "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot", "wm_screenshot", "wm_visual_read",
         "wm_back", "wm_forward", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
-        "wm_select", "wm_find", "wm_wait"
+        "wm_select", "wm_find", "wm_wait", "wm_act"
     ]
 
     private static let desktopMutatingToolNames: Set<String> = [
@@ -6895,6 +6923,256 @@ final class IOSWebMountController {
             "state": runtime.snapshot.dictionary(redactURLs: true),
             "page": IOSWebMountRedactor.redactedJSONObject(page)
         ])
+    }
+
+    /// wm_act 批量步骤的白名单：只放行与单动作派发管道一致的交互原语。
+    private static let webMountActToolMap: [String: String] = [
+        "find": "wm_find", "wait": "wm_wait",
+        "click": "wm_click", "tap": "wm_tap", "type": "wm_type",
+        "keys": "wm_keys", "scroll": "wm_scroll", "select": "wm_select",
+    ]
+    /// 批量步数上限：1-3 步任务是设计目标，8 是防滥用边界。
+    private static let webMountActMaxSteps = 8
+    /// 转发进单动作派发管道的参数键白名单（session/snapshot 由宿主注入；
+    /// before_* 缺省时由宿主按上一步页面状态补齐）。
+    private static let webMountActStepArgKeys: Set<String> = [
+        "target", "selector", "text", "value", "key", "keys", "count", "option",
+        "by_y", "dy", "dx", "to", "position", "direction", "x", "y",
+        "condition", "url_contains", "ready_state", "require_page_change",
+        "timeout_ms", "wait_ms", "postcondition",
+        "click_count", "max_results", "stable_ms",
+        "before_document_id", "before_url", "before_url_revision", "before_dom_revision",
+    ]
+
+    /// wm_act：一次调用串行执行一小批页面动作。逐步递归走 executeResult，
+    /// 完整继承策略/快照/语义目标/控制权/高后果门——宿主只负责三件事：
+    /// 逐步注入最新 snapshot_id（批量内 revision 必然推进，绑计划时点
+    /// 会全部 stale）；find 步的首个匹配 ref 补给缺省 target 的后续步；
+    /// 按 document_id 纪元熔断——导航使全部已枚举 ref 失效，剩余不再派发。
+    private func actResult(
+        args: [String: Any],
+        isUserInitiated: Bool,
+        context: IOSWebMountExecutionContext?,
+        allowUnlistedHosts: Bool,
+        visualRead: IOSWebMountVisualReadHandler?
+    ) async throws -> String {
+        let sessionId = (args["session_id"] as? String)?.nilIfBlank ?? ""
+        guard let rawSteps = args["steps"] as? [[String: Any]], !rawSteps.isEmpty else {
+            return Self.json([
+                "ok": false, "tool": "wm_act", "session_id": sessionId,
+                "denied": true, "error_code": "steps_required",
+                "reason": "wm_act requires a non-empty steps array.",
+            ])
+        }
+        guard rawSteps.count <= Self.webMountActMaxSteps else {
+            return Self.json([
+                "ok": false, "tool": "wm_act", "session_id": sessionId,
+                "denied": true, "error_code": "too_many_steps",
+                "reason": "wm_act accepts at most \(Self.webMountActMaxSteps) steps per call.",
+            ])
+        }
+        // agent 调用必须锚定近期观察——与单动作 snapshot_required 同契约；
+        // 批量内逐步绑定的是宿主取的最新快照，顶层值只证明计划时点。
+        if context?.isAgentInvocation == true,
+           (args["snapshot_id"] as? String)?.nilIfBlank == nil {
+            return Self.json([
+                "ok": false, "tool": "wm_act", "session_id": sessionId,
+                "denied": true, "error_code": "snapshot_required",
+                "reason": "Agent WebMount mutations require snapshot_id from the latest observation.",
+            ])
+        }
+        // 起始纪元：document_id。跨步复用的 ref 与快照都以同文档为前提；
+        // 会话钉在解析时点——批量中途切换当前会话不会把剩余步骤发去别处。
+        let runtime = try sessionRuntime(from: args, context: context, requiresControl: false)
+        let resolvedSessionId = runtime.snapshot.sessionId
+        let epoch = try await runtime.state()
+        let epochDocumentId = epoch["document_id"] as? String ?? ""
+        var currentSnapshotId = epoch["snapshot_id"] as? String ?? ""
+        var lastRef: String?
+        var lastAfter = epoch
+        var stepReports: [[String: Any]] = []
+        var completedCount = 0
+        var dispatchedMutations = 0
+        var mayHaveApplied = false
+        var lastUncertainStatus: String?
+        var abort: [String: Any]?
+
+        for (index, step) in rawSteps.enumerated() {
+            guard let action = (step["action"] as? String)?.lowercased(),
+                  let toolName = Self.webMountActToolMap[action] else {
+                abort = [
+                    "index": index,
+                    "action": (step["action"] as? String) ?? "",
+                    "error_code": "unsupported_step_action",
+                    "reason": "Unsupported step action '\(step["action"] ?? "?")'; wm_act steps support find/wait/click/tap/type/keys/scroll/select only.",
+                ]
+                break
+            }
+            var stepArgs: [String: Any] = ["session_id": resolvedSessionId]
+            for key in Self.webMountActStepArgKeys {
+                if let value = step[key] { stepArgs[key] = value }
+            }
+            // find 产出的首个匹配 ref 喂给缺省 target 的后续步。
+            if stepArgs["target"] == nil, stepArgs["selector"] == nil, let lastRef {
+                stepArgs["target"] = lastRef
+            }
+            if !currentSnapshotId.isEmpty {
+                stepArgs["snapshot_id"] = currentSnapshotId
+            }
+            // wait 的变更类条件需要基线：缺省时按上一步页面状态补齐，
+            // 否则 document_changed/url_changed/require_page_change 必然
+            // missing_wait_baseline。
+            if toolName == "wm_wait" {
+                for (key, source) in [
+                    ("before_document_id", "document_id"),
+                    ("before_url", "url"),
+                    ("before_url_revision", "url_revision"),
+                    ("before_dom_revision", "dom_revision"),
+                ] where stepArgs[key] == nil {
+                    if let value = lastAfter[source] { stepArgs[key] = value }
+                }
+            }
+            let output = await executeResult(
+                toolName: toolName,
+                input: Self.json(stepArgs),
+                isUserInitiated: isUserInitiated,
+                context: context,
+                allowUnlistedHosts: allowUnlistedHosts,
+                visualRead: visualRead
+            )
+            let out = Self.parseObject(output)
+            let status = (out["status"] as? String)?.lowercased() ?? ""
+            let ok = out["ok"] as? Bool == true
+            // 未验证步状态记账：成功批量也须把 dispatched_unverified/
+            // ambiguous 透到顶层，供 uncertain notice（读顶层 status）。
+            if ["dispatched_unverified", "ambiguous", "unknown_after_action"].contains(status) {
+                lastUncertainStatus = status
+            }
+            mayHaveApplied = mayHaveApplied || (out["may_have_applied"] as? Bool == true)
+            if let snap = (out["snapshot_id"] as? String)?.nilIfBlank {
+                currentSnapshotId = snap
+            }
+            let after = out["after"] as? [String: Any] ?? [:]
+            if !after.isEmpty { lastAfter = after }
+
+            var report: [String: Any] = [
+                "index": index, "action": action,
+                "ok": ok,
+                "status": out["status"] as? String ?? "",
+                "dispatched": out["dispatched"] as? Bool ?? false,
+                "page_changed": out["page_changed"] as? Bool ?? false,
+            ]
+            if action == "find" {
+                let matches = (out["action"] as? [String: Any])?["matches"] as? [[String: Any]] ?? []
+                lastRef = (matches.first?["ref"] as? String)?.nilIfBlank
+                report["found"] = (out["action"] as? [String: Any])?["found"] as? Bool ?? false
+                report["ref"] = lastRef ?? ""
+            }
+            stepReports.append(report)
+
+            // 已派发的变更步先入账：后续中止（含导航熔断）时 may_have_applied
+            // 必须如实反映"页面可能已变"，verified 结果也不能漏计。
+            if out["dispatched"] as? Bool == true, !["wm_find", "wm_wait"].contains(toolName) {
+                dispatchedMutations += 1
+            }
+
+            // 需要用户处理 / 结果未知：立即终止并原样透出内层原因。
+            if out["needs_user_action"] as? Bool == true
+                || out["requires_human"] as? Bool == true
+                || status == "unknown_after_action" {
+                // unknown 语义即"可能已生效"——即使内层字段缺失也必须置位。
+                if status == "unknown_after_action" { mayHaveApplied = true }
+                abort = [
+                    "index": index, "action": action,
+                    "error_code": out["error_code"] as? String ?? status,
+                    "reason": out["reason"] as? String
+                        ?? "Step requires user action or ended in an unknown state.",
+                    "needs_user_action": out["needs_user_action"] as? Bool ?? false,
+                    "requires_human": out["requires_human"] as? Bool ?? false,
+                    // 批量内不弹审批卡：提示模型以单工具调用重发该步，
+                    // 走完整的审批/人工交接流程。
+                    "retry_hint": "Re-issue this step as a single \(toolName) call to surface its approval or handoff flow.",
+                ]
+                // gate 明细字段前向到顶层（审批/交接/unknown 检测器都读顶层）。
+                for key in ["status", "target_ref", "target_label", "consequence"] {
+                    if let value = out[key] { abort?[key] = value }
+                }
+                break
+            }
+            if !ok {
+                abort = [
+                    "index": index, "action": action,
+                    "error_code": out["error_code"] as? String ?? "step_failed",
+                    "reason": (out["reason"] as? String) ?? (out["error"] as? String) ?? "Step failed.",
+                    "status": status,
+                ]
+                break
+            }
+            // 走到这里说明该步本身成功跑完（包括触发了中止的步——
+            // 中止针对的是后续步，executed 如实记录已跑完的步数）。
+            completedCount += 1
+            // find 未命中：典型链（find→click）已断，不再派发后续。
+            if action == "find", lastRef == nil {
+                abort = [
+                    "index": index, "action": action,
+                    "error_code": "target_not_found",
+                    "reason": "find step matched no element; dependent steps were not dispatched.",
+                ]
+                break
+            }
+            // 导航熔断：document 变换使全部已枚举 ref 失效。
+            let afterDocumentId = after["document_id"] as? String ?? ""
+            if !epochDocumentId.isEmpty, !afterDocumentId.isEmpty, afterDocumentId != epochDocumentId {
+                abort = [
+                    "index": index, "action": action,
+                    "error_code": "page_navigated",
+                    "reason": "Document changed mid-batch; remaining steps were not dispatched.",
+                ]
+                break
+            }
+        }
+
+        var response: [String: Any] = [
+            "ok": abort == nil,
+            "tool": "wm_act",
+            "session_id": resolvedSessionId,
+            "executed": completedCount,
+            "total": rawSteps.count,
+            "may_have_applied": mayHaveApplied || dispatchedMutations > 0,
+            "steps": stepReports,
+            "final": [
+                "url": lastAfter["url"] ?? "",
+                "title": lastAfter["title"] ?? "",
+                "document_id": lastAfter["document_id"] ?? "",
+                "snapshot_id": currentSnapshotId,
+            ],
+        ]
+        if let abort {
+            response["aborted"] = abort
+            // 顶出关键字段：审批卡（webMountUserActionReason/
+            // webMountHumanActionReason）、中断终态（isWebMountInterruptedOutcome
+            // 要顶层 status+may_have_applied）与失败归因都读顶层字段——
+            // 与单工具输出形状对齐，aborted 内保留完整诊断。
+            response["error_code"] = abort["error_code"]
+            if let reason = abort["reason"] { response["reason"] = reason }
+            if abort["needs_user_action"] as? Bool == true { response["needs_user_action"] = true }
+            if abort["requires_human"] as? Bool == true { response["requires_human"] = true }
+            if (abort["error_code"] as? String) == "unknown_after_action"
+                || (abort["status"] as? String) == "unknown_after_action" {
+                response["status"] = "unknown_after_action"
+            } else if let abortStatus = abort["status"] as? String,
+                      ["dispatched_unverified", "ambiguous"].contains(abortStatus) {
+                response["status"] = abortStatus
+            }
+            for key in ["target_ref", "target_label", "consequence", "retry_hint"] {
+                if let value = abort[key] { response[key] = value }
+            }
+        } else if let uncertain = lastUncertainStatus {
+            // 成功批量但含未验证步：与单工具同形状透出 status——
+            // uncertain notice 要求顶层 status+may_have_applied 同时在场。
+            response["status"] = uncertain
+        }
+        return Self.json(response)
     }
 
     private func observeResult(

@@ -339,6 +339,7 @@ final class IOSSharedSettingsStore {
             defaults.set(data, forKey: jevSettingsKey)
         }
         IOSJevDecisionCoordinator.shared.invalidateCaches()
+        IOSJevWebMountLoopService.sharedReplay.clear()
     }
 
     /// 保存 API Key。Keychain 写入成功才更新 UI 状态；失败时保持原可用 Key。
@@ -352,6 +353,7 @@ final class IOSSharedSettingsStore {
         }
         IOSJevDecisionCoordinator.shared.resetAuthState()
         IOSJevDecisionCoordinator.shared.invalidateCaches()
+        IOSJevWebMountLoopService.sharedReplay.clear()
         var settings = jevSettings
         settings.bumpRevision()
         jevSettings = settings
@@ -366,6 +368,7 @@ final class IOSSharedSettingsStore {
         IOSCredentialSideTable.delete(key: IOSCredentialSideTable.jevApiKey)
         IOSJevDecisionCoordinator.shared.resetAuthState()
         IOSJevDecisionCoordinator.shared.invalidateCaches()
+        IOSJevWebMountLoopService.sharedReplay.clear()
         var settings = jevSettings
         settings.bumpRevision()
         jevSettings = settings

@@ -1208,6 +1208,8 @@ struct ChatToolStepModel: Identifiable {
         case "wm_select": Self.localized("选择网页选项")
         case "wm_find": Self.localized("查找网页内容")
         case "wm_wait": Self.localized("等待网页条件")
+        case "wm_act": Self.localized("执行网页动作批")
+        case "wm_run_goal": Self.localized("执行网页目标")
         default: toolName
         }
     }

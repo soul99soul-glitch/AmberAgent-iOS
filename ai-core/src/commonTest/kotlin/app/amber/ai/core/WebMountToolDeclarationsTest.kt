@@ -87,6 +87,21 @@ class WebMountToolDeclarationsTest {
     }
 
     @Test
+    fun actDeclarationBindsSessionSnapshotAndDescribesBatchContract() {
+        val tool = createWebMountActToolDeclaration()
+        val parameters = assertIs<InputSchema.Obj>(tool.parameters())
+
+        assertEquals("wm_act", tool.name)
+        assertEquals(listOf("session_id", "snapshot_id", "steps"), parameters.required)
+        val steps = parameters.properties["steps"]!!.jsonObject
+        assertEquals("array", steps["type"]?.jsonPrimitive?.content)
+        assertTrue(steps["description"]!!.jsonPrimitive.content.contains("max 8"))
+        assertTrue(tool.description.contains("find"))
+        assertTrue(tool.description.contains("approval"))
+        assertTrue(tool.description.contains("document navigation aborts"))
+    }
+
+    @Test
     fun visualReadRequiresSessionAndApprovalPath() {
         val tool = createWebMountVisualReadToolDeclaration()
         val parameters = assertIs<InputSchema.Obj>(tool.parameters())

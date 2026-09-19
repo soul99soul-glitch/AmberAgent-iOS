@@ -208,7 +208,9 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             let decision = try await deps.client.decide(
                 input,
                 policy: policy,
-                deadlineMs: policy.deadlineMs,
+                // webActions 循环一次超时烧掉整轮观察+决策，用专属更长
+                // deadline；其余用途维持 deadlineMs 的轻快判断语义。
+                deadlineMs: useCase == .webActions ? policy.webActionsDeadlineMs : policy.deadlineMs,
                 cacheKey: resolvedCacheKey
             )
             // 提交结果前再次验证：配置（模式/范围/Key）在途中变化 → 丢弃结果，
@@ -249,11 +251,21 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
                 record(useCase: useCase, mode: mode, model: model, outcome: "error", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: reasonCode(for: error), suggestion: nil)
                 return .failed(reason: reasonCode(for: error))
             case .timeout, .transport, .http:
-                synchronized {
-                    consecutiveTransientFailures += 1
-                    if consecutiveTransientFailures >= policy.cooldownFailureThreshold {
-                        cooldownUntil = deps.now().addingTimeInterval(TimeInterval(policy.cooldownSeconds))
-                        consecutiveTransientFailures = 0
+                // 只把可恢复类失败计入冷却计数：永久性 4xx（非 401/403）
+                // 跨 run 重复会触发全局冷却、殃及其他 Jev 用例——与循环侧
+                // isTransientDecisionFailure 同口径（timeout/transport/429/5xx）。
+                let isTransient: Bool
+                switch error {
+                case .http(let status, _): isTransient = status == 429 || status >= 500
+                default: isTransient = true
+                }
+                if isTransient {
+                    synchronized {
+                        consecutiveTransientFailures += 1
+                        if consecutiveTransientFailures >= policy.cooldownFailureThreshold {
+                            cooldownUntil = deps.now().addingTimeInterval(TimeInterval(policy.cooldownSeconds))
+                            consecutiveTransientFailures = 0
+                        }
                     }
                 }
                 record(useCase: useCase, mode: mode, model: model, outcome: "error", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: reasonCode(for: error), suggestion: nil)
