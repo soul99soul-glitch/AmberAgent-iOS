@@ -530,6 +530,7 @@ class ToolExposureState private constructor(
         private val RESIDENT_EXACT_TOOLS = setOf(
             "ask_user",
             "permissions_status",
+            "runtime_status",
             "agent_runtime_status",
             "file_list",
             "file_read",

@@ -50,12 +50,12 @@ class IosToolExposureBridgeTest {
         "subagent_dispatch", "model_council_run", "file_read_selected",
         "ish_handoff", "ios_ish_execute", "terminal_execute", "ios_shell_execute",
         "terminal_job_start", "terminal_job_read", "terminal_job_wait", "terminal_job_stop",
-        "permissions_status", "tools_list", "subagent_report",
+        "permissions_status", "runtime_status", "tools_list", "subagent_report",
     )
 
     /** The pinned iOS resident policy set (see IosToolExposureBridge.kt). */
     private val iosResidentNames = setOf(
-        "tool_search", "tools_list", "ask_user", "permissions_status", "memory_tool",
+        "tool_search", "tools_list", "ask_user", "permissions_status", "runtime_status", "memory_tool",
         "search_web", "scrape_web", "generate_image",
         "workspace_file_read", "workspace_file_write", "workspace_file_edit",
         "workspace_file_list", "workspace_file_search", "workspace_file_move",

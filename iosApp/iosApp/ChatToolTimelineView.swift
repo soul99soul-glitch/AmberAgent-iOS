@@ -800,6 +800,7 @@ struct ChatToolStepModel: Identifiable {
             "plugin_rollback": Self.localized("回退插件"),
             "plugin_export": Self.localized("导出插件"),
             "permissions_status": Self.localized("查看权限状态"),
+            "runtime_status": Self.localized("查看运行时状态"),
             "tool_search": Self.localized("查找工具"),
             "tools_list": Self.localized("列出可用工具"),
             "subagent_report": Self.localized("子智能体汇报"),

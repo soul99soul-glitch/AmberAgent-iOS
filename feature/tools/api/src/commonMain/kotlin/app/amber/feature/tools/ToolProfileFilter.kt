@@ -55,6 +55,7 @@ object ToolProfileFilter {
         "get_time_info",
         "ask_user",
         "permissions_status",
+        "runtime_status",
         "agent_runtime_status",
         "agent_task_list",
         "agent_task_read",

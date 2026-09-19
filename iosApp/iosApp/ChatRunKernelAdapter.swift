@@ -1459,7 +1459,7 @@ final class ChatRunKernelAdapter {
         if toolName == "memory_tool" { return 5 }
         if toolName == "generate_image" { return 6 }
         if toolName == "ask_user" { return 7 }
-        if ["session_search", "session_read"].contains(toolName) { return 8 }
+        if ["session_search", "session_read", "runtime_status"].contains(toolName) { return 8 }
         return 9
     }
 

@@ -22,10 +22,12 @@ struct IOSJevRunContext: Equatable, Sendable {
         self.inputHash = inputHash
     }
 
-    /// 缓存键：完整输入/候选（inputHash）、用途、版本、权限范围、run 隔离。
-    static func cacheKey(useCase: IOSJevUseCase, model: String, scopes: Set<IOSJevDataScope>, context: IOSJevRunContext) -> String {
+    /// 缓存键：完整输入/候选（inputHash）、用途、API 形态、版本、权限范围、
+    /// run 隔离。apiStyle 必须入键——同名模型在不同出站契约下 prompt 不同。
+    static func cacheKey(useCase: IOSJevUseCase, apiStyle: IOSJevAPIStyle, model: String, scopes: Set<IOSJevDataScope>, context: IOSJevRunContext) -> String {
         [
             useCase.rawValue,
+            apiStyle.rawValue,
             model,
             scopes.sorted { $0.rawValue < $1.rawValue }.map(\.rawValue).joined(separator: ","),
             context.turnBudgetKey,
@@ -98,8 +100,9 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
 
     var status: (cooldownRemaining: TimeInterval?, pausedForAuth: Bool) {
         synchronized {
+            // 已过期视为无冷却：Some(0) 会让消费方误判仍在冷却。
             let remaining = cooldownUntil.map { $0.timeIntervalSince(deps.now()) }
-            return (remaining.map { max($0, 0) }, pausedForAuthFailure)
+            return (remaining.flatMap { $0 > 0 ? $0 : nil }, pausedForAuthFailure)
         }
     }
 
@@ -136,19 +139,31 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         let settings = deps.settingsProvider()
         let settingsRevisionAtStart = settings.revision
         let mode = settings.effectiveMode(for: useCase)
+        // mode_off 不落记录：off 是常态，tool_search 等高频调用会把缓冲灌爆。
         guard mode != .off else { return .skipped(reason: "mode_off") }
+        let policy = settings.policy
+        // model 提到所有早退之前：记录零成本 skipped 供 last_error_reason 诊断。
+        let model = settings.activeModelVersion
         guard settings.canSend(useCase: useCase, required: requiredScopes) else {
+            record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "scope_not_allowed", suggestion: nil)
             return .skipped(reason: "scope_not_allowed")
         }
-        let policy = settings.policy
         let apiKey = deps.apiKeyProvider()
-        guard !apiKey.isEmpty else { return .skipped(reason: "missing_key") }
+        guard !apiKey.isEmpty else {
+            record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "missing_key", suggestion: nil)
+            return .skipped(reason: "missing_key")
+        }
 
-        let model = mode == .active ? settings.activeModelVersion : (settings.pinnedModelVersion ?? "jev-latest")
+        // apiStyle 感知：systemone shadow 用 pinned/jev-latest，vercel 用
+        // vercelModel；空模型（vercel 未配置）零网络跳过，不耗预算。
+        guard !model.isEmpty else {
+            record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "model_unspecified", suggestion: nil)
+            return .skipped(reason: "model_unspecified")
+        }
 
         let resolvedCacheKey: String?
         if let cacheKey {
-            resolvedCacheKey = IOSJevRunContext.cacheKey(useCase: useCase, model: model, scopes: requiredScopes, context: context)
+            resolvedCacheKey = IOSJevRunContext.cacheKey(useCase: useCase, apiStyle: settings.apiStyle, model: model, scopes: requiredScopes, context: context)
         } else {
             resolvedCacheKey = nil
         }
@@ -160,14 +175,21 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         }
 
         guard acquireSlot(runKey: context.runId) else {
+            record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "concurrency_limit", suggestion: nil)
             return .skipped(reason: "concurrency_limit")
         }
         defer { releaseSlot(runKey: context.runId) }
 
         // 认证暂停 / 冷却先于预算扣减：跳过（零网络）不得消耗轮次与日预算。
         let (authPaused, cooling) = synchronized { (pausedForAuthFailure, cooldownUntil.map { deps.now() < $0 } ?? false) }
-        if authPaused { return .skipped(reason: "auth_paused") }
-        if cooling { return .skipped(reason: "cooling_down") }
+        if authPaused {
+            record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "auth_paused", suggestion: nil)
+            return .skipped(reason: "auth_paused")
+        }
+        if cooling {
+            record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "cooling_down", suggestion: nil)
+            return .skipped(reason: "cooling_down")
+        }
 
         guard beginBudget(turnKey: context.turnBudgetKey, stateBytes: state.utf8.count, policy: policy) else {
             record(useCase: useCase, mode: mode, model: model, outcome: "skipped", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: "budget_exhausted", suggestion: nil)
@@ -175,11 +197,12 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         }
 
         let input = IOSJevClient.RequestInput(
-            endpoint: IOSJevSettings.productionEndpoint,
+            endpoint: settings.resolvedEndpoint,
             apiKey: apiKey,
             model: model,
             state: state,
-            questions: questions
+            questions: questions,
+            style: settings.apiStyle
         )
         do {
             let decision = try await deps.client.decide(
@@ -391,11 +414,12 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         let state = "Connection test: state is a synthetic sentence used only to verify Jev connectivity."
         let question = IOSJevQuestion.noul(id: "connectivity", instructions: "Return yes with probability 1.0 if the state is readable.")
         let input = IOSJevClient.RequestInput(
-            endpoint: IOSJevSettings.productionEndpoint,
+            endpoint: settings.resolvedEndpoint,
             apiKey: apiKey,
-            model: settings.pinnedModelVersion ?? "jev-latest",
+            model: settings.activeModelVersion,
             state: state,
-            questions: [question]
+            questions: [question],
+            style: settings.apiStyle
         )
         let startedAt = deps.now()
         do {
@@ -424,6 +448,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         }
     }
 
+    /// 日字节预算的近似口径：vercel evaluation body 比 systemone 多一层
+    /// questions 包装与题型重命名，差异在百字节级，略低估可接受。
     private func approximateRequestBytes(state: String, model: String) -> Int {
         state.utf8.count + model.utf8.count + 256
     }

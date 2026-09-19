@@ -484,6 +484,7 @@ internal val IOS_RESIDENT_TOOL_NAMES: Set<String> = setOf(
     "tools_list",
     "ask_user",
     "permissions_status",
+    "runtime_status",
     "memory_tool",
     "search_web",
     "scrape_web",

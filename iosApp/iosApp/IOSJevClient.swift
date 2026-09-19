@@ -7,6 +7,12 @@ import Foundation
 // map<id, Question>（key 不参与推理）。Choice/Score 的 confidence 来自分布；
 // Noul 返回 0~1 概率、不含 confidence。429/529 可退避，401/403/422 不重试。
 //
+// vercelGateway 形态（核对日期 2026-09-19，@ai-sdk/gateway 源码）：
+// POST ai-gateway.vercel.sh/v4/ai/evaluation-model；同一 {state, questions}
+// 负载，模型走 ai-model-id header，题型 noul 记作 boolean；答案从顶层
+// answers map 读（boolean→noul），Choice/Score confidence 经
+// providerMetadata.typesafe.confidence[qid] 下发。
+//
 // 约束（IOSJevPolicy）：deadline 内排队+网络+重试+解析；超时必须取消底层任务；
 // 单请求 ≤32 题 / ≤64 候选；state ≤48 KiB、请求体 ≤64 KiB、响应体 ≤256 KiB。
 // 缺题、未知候选、非有限数值、失效快照均不得成为有效业务结果。
@@ -115,6 +121,10 @@ final class IOSJevClient {
         var model: String
         var state: String
         var questions: [IOSJevQuestion]
+        /// 出站形态：systemone = TypeSafe 原生契约；vercelGateway = Vercel
+        /// AI Gateway 的 evaluation-model 契约（body 同形 {state, questions}，
+        /// 模型走 ai-model-id header，题型 noul 在线上记作 boolean）。
+        var style: IOSJevAPIStyle = .systemone
     }
 
     private let transport: IOSJevTransport
@@ -226,6 +236,55 @@ final class IOSJevClient {
         var questions: [String: IOSJevQuestion]
     }
 
+    // MARK: vercelGateway（Vercel AI Gateway evaluation-model，@ai-sdk/gateway 契约）
+
+    /// Gateway 线上题型：SDK 对外统一 choice/score/boolean，boolean 由 Gateway
+    /// 映射到 TypeSafe 原生 noul。criteria 形状与 IOSJevQuestion.JevCriteria
+    /// 同构（choice = 选项 map，score = 有序等级数组），直接复用编码。
+    private struct GatewayQuestion: Encodable {
+        var type: String
+        var criteria: IOSJevQuestion.JevCriteria?
+        var instructions: String?
+
+        init(_ question: IOSJevQuestion) {
+            type = question.type == "noul" ? "boolean" : question.type
+            criteria = question.criteria
+            instructions = question.instructions
+        }
+    }
+
+    /// evaluation-model body：模型不在 body（走 ai-model-id header），
+    /// state 与 systemone 同为字符串。
+    private struct GatewayEvaluationBody: Encodable {
+        var state: String
+        var questions: [String: GatewayQuestion]
+    }
+
+    private struct GatewayEvaluationResponse: Decodable {
+        var answers: [String: GatewayAnswer]?
+        var usage: GatewayUsage?
+        var providerMetadata: [String: GatewayProviderMetadata]?
+
+        struct GatewayAnswer: Decodable {
+            var type: String
+            var choice: String?
+            var score: Double?
+            var probability: Double?
+        }
+
+        /// Gateway usage 是 camelCase（与 systemone 的 snake_case 不同）。
+        struct GatewayUsage: Decodable {
+            var inputTokens: Int?
+            var outputTokens: Int?
+        }
+
+        /// typesafe provider 的 Choice/Score confidence 经 providerMetadata
+        /// .typesafe.confidence[questionId] 下发（noul 无 confidence 概念）。
+        struct GatewayProviderMetadata: Decodable {
+            var confidence: [String: Double]?
+        }
+    }
+
     // MARK: Execute
 
     /// 单次判断。超限分块由调用方负责；这里做请求级硬校验并抛错。
@@ -237,6 +296,10 @@ final class IOSJevClient {
         cacheKey: String? = nil
     ) async throws -> IOSJevDecision {
         guard !input.apiKey.isEmpty else { throw IOSJevRequestError.missingKey }
+        // 空模型 slug 一律出站前拒绝（vercel 未配模型时不发无意义请求）。
+        guard !input.model.isEmpty else {
+            throw IOSJevRequestError.invalidRequest("empty model")
+        }
         guard input.questions.count <= policy.maxQuestions else {
             throw IOSJevRequestError.invalidRequest("too many questions: \(input.questions.count)")
         }
@@ -246,15 +309,23 @@ final class IOSJevClient {
             return cached
         }
 
-        let body = RequestBody(
-            model: input.model,
-            state: input.state,
-            questions: Dictionary(uniqueKeysWithValues: input.questions.map { ($0.id, $0) })
-        )
+        let questionMap = Dictionary(uniqueKeysWithValues: input.questions.map { ($0.id, $0) })
         let encoder = JSONEncoder()
         let bodyData: Data
         do {
-            bodyData = try encoder.encode(body)
+            switch input.style {
+            case .systemone:
+                bodyData = try encoder.encode(RequestBody(
+                    model: input.model,
+                    state: input.state,
+                    questions: questionMap
+                ))
+            case .vercelGateway:
+                bodyData = try encoder.encode(GatewayEvaluationBody(
+                    state: input.state,
+                    questions: questionMap.mapValues(GatewayQuestion.init)
+                ))
+            }
         } catch {
             throw IOSJevRequestError.invalidRequest("encode failed: \(error.localizedDescription)")
         }
@@ -270,6 +341,14 @@ final class IOSJevClient {
         request.httpBody = bodyData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(input.apiKey)", forHTTPHeaderField: "Authorization")
+        if input.style == .vercelGateway {
+            // @ai-sdk/gateway evaluation-model 协议头：模型 ID 与 spec 版本
+            // 走 header，protocol-version/auth-method 与 SDK 一致。
+            request.setValue("0.0.1", forHTTPHeaderField: "ai-gateway-protocol-version")
+            request.setValue("api-key", forHTTPHeaderField: "ai-gateway-auth-method")
+            request.setValue("4", forHTTPHeaderField: "ai-evaluation-model-specification-version")
+            request.setValue(input.model, forHTTPHeaderField: "ai-model-id")
+        }
         request.timeoutInterval = max(deadline + 0.5, 1.0)
 
         let startedAt = now()
@@ -282,28 +361,15 @@ final class IOSJevClient {
             throw IOSJevRequestError.invalidResponse("response too large: \(data.count)")
         }
 
-        let raw: RawResponse
-        do {
-            raw = try JSONDecoder().decode(RawResponse.self, from: data)
-        } catch {
-            throw IOSJevRequestError.invalidResponse("decode failed: \(error.localizedDescription)")
-        }
-        guard let rawAnswers = raw.answers else {
-            throw IOSJevRequestError.invalidResponse("missing answers map")
-        }
-        let answers = Self.validatedAnswers(for: input.questions, rawAnswers: rawAnswers)
+        let parsed = try parseAnswers(data: data, input: input)
+        let answers = Self.validatedAnswers(for: input.questions, rawAnswers: parsed.rawAnswers)
         guard !answers.isEmpty else {
             throw IOSJevRequestError.invalidResponse("no valid answers")
         }
-        let usage = raw.usage.flatMap { rawUsage -> IOSJevUsage? in
-            guard let inputTokens = rawUsage.input_tokens, let outputTokens = rawUsage.output_tokens,
-                  inputTokens >= 0, outputTokens >= 0 else { return nil }
-            return IOSJevUsage(inputTokens: inputTokens, outputTokens: outputTokens)
-        }
         let decision = IOSJevDecision(
             answers: answers,
-            usage: usage,
-            modelVersion: raw.model ?? input.model,
+            usage: parsed.usage,
+            modelVersion: parsed.model ?? input.model,
             latencyMs: latencyMs,
             requestBytes: bodyData.count,
             responseBytes: data.count
@@ -317,6 +383,68 @@ final class IOSJevClient {
             )
         }
         return decision
+    }
+
+    /// 按出站形态解析响应，统一回 (rawAnswers, usage, model)。
+    /// systemone：顶层 answers map；vercelGateway：顶层 answers map（题型
+    /// boolean 译回 noul、probability→noul 字段，Choice/Score confidence 从
+    /// providerMetadata.typesafe.confidence[qid] 注入），usage 是 camelCase
+    /// inputTokens/outputTokens。Gateway 响应不回显 model，调用方用出站 slug。
+    private func parseAnswers(
+        data: Data,
+        input: RequestInput
+    ) throws -> (rawAnswers: [String: RawAnswer], usage: IOSJevUsage?, model: String?) {
+        switch input.style {
+        case .systemone:
+            let raw: RawResponse
+            do {
+                raw = try JSONDecoder().decode(RawResponse.self, from: data)
+            } catch {
+                throw IOSJevRequestError.invalidResponse("decode failed: \(error.localizedDescription)")
+            }
+            guard let answers = raw.answers else {
+                throw IOSJevRequestError.invalidResponse("missing answers map")
+            }
+            let usage = raw.usage.flatMap { rawUsage -> IOSJevUsage? in
+                guard let inputTokens = rawUsage.input_tokens,
+                      let outputTokens = rawUsage.output_tokens,
+                      inputTokens >= 0, outputTokens >= 0 else { return nil }
+                return IOSJevUsage(inputTokens: inputTokens, outputTokens: outputTokens)
+            }
+            return (answers, usage, raw.model)
+
+        case .vercelGateway:
+            let raw: GatewayEvaluationResponse
+            do {
+                raw = try JSONDecoder().decode(GatewayEvaluationResponse.self, from: data)
+            } catch {
+                throw IOSJevRequestError.invalidResponse("decode failed: \(error.localizedDescription)")
+            }
+            guard let answers = raw.answers else {
+                throw IOSJevRequestError.invalidResponse("missing answers map")
+            }
+            let confidence = raw.providerMetadata?["typesafe"]?.confidence
+            var mapped: [String: RawAnswer] = [:]
+            for (id, answer) in answers {
+                switch answer.type {
+                case "boolean":
+                    mapped[id] = RawAnswer(type: "noul", noul: answer.probability, choice: nil, score: nil, confidence: nil)
+                case "choice":
+                    mapped[id] = RawAnswer(type: "choice", noul: nil, choice: answer.choice, score: nil, confidence: confidence?[id])
+                case "score":
+                    mapped[id] = RawAnswer(type: "score", noul: nil, choice: nil, score: answer.score, confidence: confidence?[id])
+                default:
+                    continue // 未知题型不伪造，由 validatedAnswers 丢弃。
+                }
+            }
+            let usage = raw.usage.flatMap { rawUsage -> IOSJevUsage? in
+                guard let inputTokens = rawUsage.inputTokens,
+                      let outputTokens = rawUsage.outputTokens,
+                      inputTokens >= 0, outputTokens >= 0 else { return nil }
+                return IOSJevUsage(inputTokens: inputTokens, outputTokens: outputTokens)
+            }
+            return (mapped, usage, nil)
+        }
     }
 
     // MARK: Retry（400/401/403/422 不重试；暂时性错误最多一次且需剩余 deadline；429 尊重 Retry-After）

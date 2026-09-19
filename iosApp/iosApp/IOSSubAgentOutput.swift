@@ -145,6 +145,7 @@ enum IOSSubAgentOutputProjection {
             || name == "scrape_web"
             || name == "file_read_selected"
             || name == "permissions_status"
+            || name == "runtime_status"
             || name == "tools_list"
             || name.hasPrefix("workspace_")
             || name.hasPrefix("wm_")

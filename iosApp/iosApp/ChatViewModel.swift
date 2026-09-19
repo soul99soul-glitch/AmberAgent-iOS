@@ -4639,6 +4639,10 @@ final class ChatViewModel {
         // 识别精确工具名——iOS 主目录声明它（常驻；KMP IOS_RESIDENT_TOOL_NAMES
         // 与 DISCOVERY_UTILITY_TOOLS 已把它列为 resident），执行在桥本地。
         toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(names: ["tools_list"]))
+        // runtime_status：agent 运行时自省（Jev 模式/凭据存在性/门控/目录计数）。
+        // 常驻首轮可见——模型无需先 tool_search 就能回答"我有什么能力"；
+        // 本地只读执行（ChatToolRuntime.dispatchRuntimeStatusToolCall），无设置项。
+        toolDeclarations.append(contentsOf: ToolKt.iosToolDeclarations(names: ["runtime_status"]))
         // P3-a: exec 纯求值工具（JavaScriptCore 沙箱，无 tools 桥）。默认关——
         // 仅在开关开时进桥输入全目录（非常驻 deferred 池，tool_search 命中后才
         // 可见可调）；关时零痕迹（声明与执行路径都不存在，模型调用走未知名

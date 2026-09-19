@@ -46,6 +46,45 @@ final class IOSJevClientTests: XCTestCase {
         )
     }
 
+    /// vercelGateway 输入：endpoint 为 Vercel AI Gateway evaluation-model，
+    /// 模型为 provider/model slug。
+    private func vercelInput(
+        questions: [IOSJevQuestion],
+        model: String = "typesafe-ai/jev",
+        state: String = "state"
+    ) -> IOSJevClient.RequestInput {
+        IOSJevClient.RequestInput(
+            endpoint: IOSJevSettings.vercelGatewayEndpoint,
+            apiKey: "vercel-key",
+            model: model,
+            state: state,
+            questions: questions,
+            style: .vercelGateway
+        )
+    }
+
+    private func vercelHTTPResponse(status: Int = 200) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: IOSJevSettings.vercelGatewayEndpoint,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+    }
+
+    /// Gateway evaluation-model 响应：顶层 answers map（题型 boolean/choice/
+    /// score），camelCase usage，confidence 经 providerMetadata.typesafe 下发。
+    private func vercelResponse(
+        answers: [String: [String: Any]],
+        confidence: [String: Double]? = nil,
+        usage: [String: Any]? = ["inputTokens": 120, "outputTokens": 30]
+    ) -> Data {
+        var payload: [String: Any] = ["answers": answers]
+        if let usage { payload["usage"] = usage }
+        if let confidence { payload["providerMetadata"] = ["typesafe": ["confidence": confidence]] }
+        return try! JSONSerialization.data(withJSONObject: payload)
+    }
+
     private let policy = IOSJevPolicy()
 
     private final class TestClock: @unchecked Sendable {
@@ -301,6 +340,130 @@ final class IOSJevClientTests: XCTestCase {
         } catch {
             XCTFail("unexpected error: \(error)")
         }
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    // MARK: vercelGateway（Vercel AI Gateway evaluation-model）
+
+    /// 请求形态：body {state, questions}（与 systemone 同形负载，无 model/
+    /// messages），模型与协议版本走 header；noul 线上记作 boolean。
+    func testVercelRequestShapeAndAnswerMapping() async throws {
+        let seenHeaders = NSMutableArray()
+        let transport = JevStubTransport { request in
+            if let headers = request.allHTTPHeaderFields {
+                seenHeaders.add(headers)
+            }
+            return (self.vercelResponse(answers: [
+                "t1": ["type": "score", "score": 2.5, "probabilities": ["2": 0.7, "3": 0.3]],
+                "n1": ["type": "boolean", "probability": 0.9],
+            ]), self.vercelHTTPResponse())
+        }
+        let client = IOSJevClient(transport: transport)
+        let questions: [IOSJevQuestion] = [
+            .score(id: "t1", levels: ["0", "1", "2", "3"], instructions: "score it"),
+            .noul(id: "n1", instructions: "prob?"),
+        ]
+        let decision = try await client.decide(
+            vercelInput(questions: questions),
+            policy: policy
+        )
+
+        let body = try XCTUnwrap(transport.lastBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertNil(object["model"], "evaluation body 不含 model（走 header）")
+        XCTAssertNil(object["messages"], "evaluation body 不是 chat completions 形态")
+        XCTAssertEqual(object["state"] as? String, "state")
+        let questionsMap = try XCTUnwrap(object["questions"] as? [String: Any])
+        XCTAssertEqual((questionsMap["t1"] as? [String: Any])?["type"] as? String, "score")
+        // noul 在线上必须记作 boolean（Gateway 统一题型）。
+        XCTAssertEqual((questionsMap["n1"] as? [String: Any])?["type"] as? String, "boolean")
+
+        let headers = try XCTUnwrap(seenHeaders.firstObject as? [String: String])
+        XCTAssertEqual(headers["ai-model-id"], "typesafe-ai/jev")
+        XCTAssertEqual(headers["ai-evaluation-model-specification-version"], "4")
+        XCTAssertEqual(headers["ai-gateway-protocol-version"], "0.0.1")
+        XCTAssertEqual(headers["ai-gateway-auth-method"], "api-key")
+        XCTAssertEqual(headers["Authorization"], "Bearer vercel-key")
+
+        XCTAssertEqual(decision.answers.count, 2)
+        XCTAssertEqual(decision.answers.first { $0.id == "t1" }?.score, 2.5)
+        XCTAssertEqual(decision.answers.first { $0.id == "n1" }?.noul, 0.9)
+        XCTAssertEqual(decision.usage?.inputTokens, 120)
+        XCTAssertEqual(decision.usage?.outputTokens, 30)
+        XCTAssertEqual(decision.modelVersion, "typesafe-ai/jev", "Gateway 不回显 model，用出站 slug")
+    }
+
+    /// Choice/Score confidence 经 providerMetadata.typesafe.confidence[qid]
+    /// 注入；boolean 概率译回 noul。
+    func testVercelConfidenceAndChoiceMapping() async throws {
+        let transport = JevStubTransport { _ in
+            (self.vercelResponse(
+                answers: [
+                    "c1": ["type": "choice", "choice": "a", "probabilities": ["a": 0.8, "b": 0.2]],
+                    "s1": ["type": "score", "score": 0.5],
+                ],
+                confidence: ["c1": 0.66, "s1": 0.4]
+            ), self.vercelHTTPResponse())
+        }
+        let client = IOSJevClient(transport: transport)
+        let questions: [IOSJevQuestion] = [
+            .choice(id: "c1", options: ["a": "A 选项", "b": nil], instructions: "pick"),
+            .score(id: "s1", levels: ["0 无关", "3 相关"], instructions: "rate"),
+        ]
+        let decision = try await client.decide(vercelInput(questions: questions), policy: policy)
+        XCTAssertEqual(decision.answers.first { $0.id == "c1" }?.choice, "a")
+        XCTAssertEqual(decision.answers.first { $0.id == "c1" }?.confidence, 0.66)
+        XCTAssertEqual(decision.answers.first { $0.id == "s1" }?.confidence, 0.4)
+    }
+
+    /// 非 JSON 响应体 → invalidResponse，不得成为有效业务结果。
+    func testVercelNonJSONBodyIsInvalidResponse() async {
+        let transport = JevStubTransport { _ in
+            (Data("not json".utf8), self.vercelHTTPResponse())
+        }
+        let client = IOSJevClient(transport: transport)
+        do {
+            _ = try await client.decide(
+                vercelInput(questions: makeQuestions(["t1"])),
+                policy: policy
+            )
+            XCTFail("expected invalidResponse")
+        } catch let error as IOSJevRequestError {
+            guard case .invalidResponse = error else { return XCTFail("wrong error: \(error)") }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    /// 缺 answers map → invalidResponse（不伪造答案）。
+    func testVercelMissingAnswersIsInvalidResponse() async {
+        let payload: [String: Any] = ["usage": ["inputTokens": 1, "outputTokens": 1]]
+        let transport = JevStubTransport { _ in
+            (try! JSONSerialization.data(withJSONObject: payload), self.vercelHTTPResponse())
+        }
+        let client = IOSJevClient(transport: transport)
+        do {
+            _ = try await client.decide(
+                vercelInput(questions: makeQuestions(["t1"])),
+                policy: policy
+            )
+            XCTFail("expected invalidResponse")
+        } catch let error as IOSJevRequestError {
+            guard case .invalidResponse = error else { return XCTFail("wrong error: \(error)") }
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    /// 空模型 slug：出站前本地拒绝，零网络流量。
+    func testVercelEmptyModelRejectedWithoutNetwork() async {
+        let transport = JevStubTransport { _ in (Data(), self.vercelHTTPResponse()) }
+        let client = IOSJevClient(transport: transport)
+        let result = try? await client.decide(
+            vercelInput(questions: makeQuestions(["t1"]), model: ""),
+            policy: policy
+        )
+        XCTAssertNil(result)
         XCTAssertEqual(transport.calls, 0)
     }
 }

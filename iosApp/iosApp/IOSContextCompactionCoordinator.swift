@@ -1473,6 +1473,7 @@ private extension IOSContextCompactionCoordinator {
         "conversation_context_status",
         "conversation_search",
         "conversation_expand",
+        "runtime_status",
         "agent_runtime_status",
         "agent_task_list",
         "agent_task_read",

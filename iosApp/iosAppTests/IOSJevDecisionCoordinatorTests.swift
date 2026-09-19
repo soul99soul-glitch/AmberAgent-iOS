@@ -348,6 +348,114 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         XCTAssertEqual(records.count, 1, "off mode must leave zero metric footprint")
         XCTAssertEqual(records.first?.outcome, "applied")
     }
+
+    // MARK: vercelGateway API 形态
+
+    private func makeVercelSettings(mode: IOSJevMode = .active, model: String = "typesafe-ai/jev") -> IOSJevSettings {
+        var settings = makeSettings(mode: mode)
+        settings.setAPIStyle(.vercelGateway)
+        settings.setVercelModel(model)
+        return settings
+    }
+
+    /// Gateway evaluation-model 响应：顶层 answers map + camelCase usage。
+    private func vercelEvalPayload() -> Data {
+        let payload: [String: Any] = [
+            "answers": ["t1": ["type": "score", "score": 0.8]],
+            "usage": ["inputTokens": 10, "outputTokens": 5],
+            "providerMetadata": ["typesafe": ["confidence": ["t1": 0.9]]],
+        ]
+        return try! JSONSerialization.data(withJSONObject: payload)
+    }
+
+    private func vercelHTTPResponse(status: Int = 200) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: IOSJevSettings.vercelGatewayEndpoint,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+    }
+
+    /// vercel 模式：出站打到 gateway evaluation endpoint，body 为
+    /// {state, questions} 评估负载，模型 slug 走 ai-model-id header；
+    /// 答案映射后正常 applied。
+    func testVercelModeRoutesToGatewayEndpointAndModel() async throws {
+        let box = SettingsBox(makeVercelSettings())
+        let seenURL = NSMutableArray()
+        let seenModelHeader = NSMutableArray()
+        let transport = JevStubTransport { request in
+            seenURL.add(request.url as Any)
+            seenModelHeader.add(request.value(forHTTPHeaderField: "ai-model-id") as Any)
+            return (self.vercelEvalPayload(), self.vercelHTTPResponse())
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let (scopes, state, questions, context) = makeDecideCall()
+        let outcome = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes, state: state,
+            questions: questions, context: context, cacheKey: nil
+        )
+        guard case .applied(let decision) = outcome else {
+            return XCTFail("expected applied, got \(outcome)")
+        }
+        XCTAssertEqual(decision.answers.first?.score, 0.8)
+        XCTAssertEqual(decision.answers.first?.confidence, 0.9)
+        XCTAssertEqual(decision.usage?.inputTokens, 10)
+        XCTAssertEqual(seenURL.firstObject as? URL, IOSJevSettings.vercelGatewayEndpoint)
+        XCTAssertEqual(seenModelHeader.firstObject as? String, "typesafe-ai/jev")
+
+        let body = try XCTUnwrap(transport.lastBody)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertNil(object["model"], "evaluation body 不含 model（走 ai-model-id header）")
+        XCTAssertNil(object["messages"], "evaluation body 不是 chat completions 形态")
+        XCTAssertNotNil(object["state"])
+        XCTAssertNotNil(object["questions"], "evaluation body 顶层携带 questions map")
+    }
+
+    /// vercel 未配置模型 slug：active 收口 shadow 后仍按 model_unspecified 零网络跳过。
+    func testVercelEmptyModelSkipsWithoutNetwork() async {
+        let box = SettingsBox(makeVercelSettings(model: ""))
+        let transport = JevStubTransport { _ in (Data(), self.vercelHTTPResponse()) }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let (scopes, state, questions, context) = makeDecideCall()
+        let outcome = await coordinator.decide(
+            useCase: .toolDiscovery, requiredScopes: scopes, state: state,
+            questions: questions, context: context, cacheKey: nil
+        )
+        guard case .skipped(let reason) = outcome else {
+            return XCTFail("expected skipped, got \(outcome)")
+        }
+        XCTAssertEqual(reason, "model_unspecified")
+        XCTAssertEqual(transport.calls, 0)
+    }
+
+    /// vercel 模式 active + 已填 slug：effective 直接 active（slug 即固定版本）。
+    func testVercelActiveAppliesWithConfiguredModel() async {
+        let settings = makeVercelSettings(mode: .active, model: "anthropic/claude-haiku-4.5")
+        XCTAssertEqual(settings.effectiveMode(for: .toolDiscovery), .active)
+        XCTAssertEqual(settings.activeModelVersion, "anthropic/claude-haiku-4.5")
+        XCTAssertTrue(settings.modelConfigured)
+    }
+
+    /// systemone 设置持久化兼容：旧 JSON（无 apiStyle/vercelModel）解码回默认。
+    func testLegacySettingsDecodeDefaultsToSystemone() throws {
+        var settings = makeSettings()
+        let legacyData = try JSONEncoder().encode(settings)
+        var legacy = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: legacyData) as? [String: Any]
+        )
+        legacy.removeValue(forKey: "apiStyle")
+        legacy.removeValue(forKey: "vercelModel")
+        let decoded = try JSONDecoder().decode(
+            IOSJevSettings.self,
+            from: JSONSerialization.data(withJSONObject: legacy)
+        )
+        XCTAssertEqual(decoded.apiStyle, .systemone)
+        XCTAssertEqual(decoded.vercelModel, "")
+        XCTAssertEqual(decoded.resolvedEndpoint, IOSJevSettings.productionEndpoint)
+        settings.setAPIStyle(.vercelGateway)
+        XCTAssertEqual(settings.resolvedEndpoint, IOSJevSettings.vercelGatewayEndpoint)
+    }
 }
 
 /// 简单异步门（测试专用）。

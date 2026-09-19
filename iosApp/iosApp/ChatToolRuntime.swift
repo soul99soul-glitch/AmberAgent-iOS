@@ -78,6 +78,9 @@ enum ChatPendingToolKind {
     /// 跨会话读取工具（session_search/session_read）：本地只读，无审批，照
     /// tool_search/tools_list 模式独立成类（进 advanced 会因分类侧副作用违约）。
     case sessionRead
+    /// runtime_status：本地运行时自省（Jev 模式/凭据存在性/门控/目录计数），
+    /// 只读无副作用，照 sessionRead 先例独立成类。
+    case runtimeStatus
 }
 
 /// P2-a: 记忆污染置位的工具名判定（harness 拥有，不经模型）。只含明确外部上下文
@@ -1117,6 +1120,18 @@ final class ChatToolRuntime {
             }
         }
 
+        // runtime_status：本地运行时自省（Jev 模式/凭据存在性/门控/目录计数），
+        // 无网络无副作用——前后台同注册（照 session_read 先例）。
+        if availableToolNames.contains("runtime_status") {
+            executors["runtime_status"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                guard let self else { return .failed("Chat runtime is unavailable.") }
+                return .filled(self.dispatchRuntimeStatusToolCall(
+                    self.toolCall(name: toolName, input: arguments),
+                    toolExposureBridge: toolExposureBridge
+                ))
+            }
+        }
+
         // Provider/model 配置：后台仅 status（纯读）；写工具拒绝（审批卡只在前台）。
         for name in IOSProviderConfigToolCatalog.toolNames where availableToolNames.contains(name) {
             executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
@@ -1243,6 +1258,7 @@ final class ChatToolRuntime {
         if name == "generate_image" { return .image }
         if name == "ask_user" { return .askUser }
         if ["session_search", "session_read"].contains(name) { return .sessionRead }
+        if name == "runtime_status" { return .runtimeStatus }
         var advancedNames: Set<String> = Set([
             "mcp_call", "subagent_dispatch", "model_council_run",
             IOSSoulToolCatalog.toolName,
@@ -1348,6 +1364,9 @@ final class ChatToolRuntime {
         if let toolCall = pendingSessionReadToolCall(in: messages, availableToolNames: availableToolNames) {
             return ChatPendingToolCall(kind: .sessionRead, toolCall: toolCall)
         }
+        if let toolCall = pendingRuntimeStatusToolCall(in: messages, availableToolNames: availableToolNames) {
+            return ChatPendingToolCall(kind: .runtimeStatus, toolCall: toolCall)
+        }
         if let toolCall = pendingAdvancedToolCall(in: messages, availableToolNames: availableToolNames) {
             return ChatPendingToolCall(kind: .advanced, toolCall: toolCall)
         }
@@ -1422,6 +1441,8 @@ final class ChatToolRuntime {
             return executeAskUserToolCall(context)
         case .sessionRead:
             return await executeSessionReadToolCall(context)
+        case .runtimeStatus:
+            return executeRuntimeStatusToolCall(context, toolExposureBridge: toolExposureBridge)
         case .advanced:
             return await executeAdvancedToolCall(
                 context,
@@ -2302,6 +2323,25 @@ final class ChatToolRuntime {
         return nil
     }
 
+    /// runtime_status 的待执行检测。只识别可见且 output 为空的调用
+    /// （照 pendingSessionReadToolCall 模式）。
+    private func pendingRuntimeStatusToolCall(
+        in messages: [UIMessage],
+        availableToolNames: Set<String>
+    ) -> UIMessagePart.Tool? {
+        for message in messages.reversed() where message.role == MessageRole.assistant {
+            if let toolCall = message.parts.compactMap({ $0 as? UIMessagePart.Tool })
+                .first(where: {
+                    $0.toolName == "runtime_status"
+                        && availableToolNames.contains($0.toolName)
+                        && $0.output.isEmpty
+                }) {
+                return toolCall
+            }
+        }
+        return nil
+    }
+
     /// session_search / session_read 执行入口：本地只读，无审批、无网络。
     private func executeSessionReadToolCall(_ pending: ChatPendingToolApproval) async -> ChatToolRuntimeResult {
         let resultText = await dispatchSessionReadToolCall(pending.toolCall)
@@ -2334,6 +2374,11 @@ final class ChatToolRuntime {
     /// 走 Foundation 预校验（M4 先例：K/N `Uuid.parse` 对非法串终止进程，
     /// 必须先用 `UUID(uuidString:)` 拦截）。
     private func dispatchSessionReadToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
+        // recipe 原语把 runtime_status 路由到 .sessionRead（同为本地只读）——
+        // 在 store 检查之前分流，避免"会话读取不可用"误报。
+        if toolCall.toolName == "runtime_status" {
+            return dispatchRuntimeStatusToolCall(toolCall, toolExposureBridge: nil)
+        }
         guard let store = conversationStoreProvider?() else {
             return ChatToolOutputFormatter.toolFailureJSON(
                 toolName: toolCall.toolName,
@@ -2693,6 +2738,145 @@ final class ChatToolRuntime {
         if role == MessageRole.system { return "system" }
         if role == MessageRole.tool { return "tool" }
         return String(describing: role).lowercased()
+    }
+
+    // MARK: - 运行时自省（runtime_status）执行体
+
+    /// runtime_status 执行入口：本地只读自省，无审批、无网络、无副作用。
+    /// 回答"我有什么能力/现在什么状态"——Jev 模式、凭据存在性（绝不回传
+    /// Key 本体）、门控与目录计数；不触发任何 Jev 判断，不改设置/缓存/指标。
+    private func executeRuntimeStatusToolCall(
+        _ pending: ChatPendingToolApproval,
+        toolExposureBridge: IosToolExposureBridge?
+    ) -> ChatToolRuntimeResult {
+        let resultText = dispatchRuntimeStatusToolCall(
+            pending.toolCall,
+            toolExposureBridge: toolExposureBridge
+        )
+        return .completed(messagesByFinishingToolCall(
+            pending.toolCall,
+            outputText: resultText,
+            in: pending.baseMessages
+        ))
+    }
+
+    /// 稳定契约：{ok, tool:"runtime_status", schema, platform, runtime, tools, jev}。
+    /// 只暴露布尔/枚举/计数/版本号——Key、原文、URL、会话内容一律不进输出。
+    func dispatchRuntimeStatusToolCall(
+        _ toolCall: UIMessagePart.Tool,
+        toolExposureBridge: IosToolExposureBridge? = nil
+    ) -> String {
+        let jevSettings = sharedSettings.jevSettings
+        let jevKeyConfigured = sharedSettings.hasJevApiKey()
+        let jevCoordinatorStatus = IOSJevDecisionCoordinator.shared.status
+        let jevMetrics = IOSJevMetricsStore.summary()
+
+        var useCases: [String: Any] = [:]
+        for useCase in IOSJevUseCase.allCases {
+            let configured = jevSettings.mode(for: useCase)
+            let effective = jevSettings.effectiveMode(for: useCase)
+            let required = useCase.defaultDataScopes
+            let canSend = jevSettings.canSend(useCase: useCase, required: required)
+            let availableNow = effective != .off
+                && canSend
+                && jevKeyConfigured
+                && jevSettings.modelConfigured
+                && !jevCoordinatorStatus.pausedForAuth
+                && jevCoordinatorStatus.cooldownRemaining == nil
+            useCases[Self.jevUseCaseStatusKey(useCase)] = [
+                "mode": configured.rawValue,
+                "effective_mode": effective.rawValue,
+                "scopes_allowed": jevSettings.allowedScopes(for: useCase).map(\.rawValue).sorted(),
+                "scopes_required": required.map(\.rawValue).sorted(),
+                "can_send_scopes": canSend,
+                "available_now": availableNow,
+            ]
+        }
+
+        var jev: [String: Any] = [
+            "role": "internal_fast_judgment",
+            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
+            "service": jevSettings.apiStyle.serviceIdentifier,
+            "api_mode": jevSettings.apiStyle.statusValue,
+            "model": jevSettings.modelConfigured ? jevSettings.activeModelVersion : NSNull(),
+            "model_configured": jevSettings.modelConfigured,
+            "key_configured": jevKeyConfigured,
+            "settings_revision": jevSettings.revision,
+            "pinned_model_version": jevSettings.pinnedModelVersion ?? NSNull(),
+            "policy_version": jevSettings.policy.policyVersion,
+            "coordinator": [
+                "paused_for_auth": jevCoordinatorStatus.pausedForAuth,
+                "cooldown_remaining_s": jevCoordinatorStatus.cooldownRemaining.map { Int($0) } ?? 0,
+            ],
+            "use_cases": useCases,
+            "budget": [
+                "per_turn_request_limit": jevSettings.policy.perTurnRequestBudget,
+                "daily_request_limit": jevSettings.policy.dailyRequestBudget,
+            ],
+            "metrics": [
+                "today_requests": jevMetrics.todayRequests,
+                "today_request_bytes": jevMetrics.todayRequestBytes,
+                "last24h_applied": jevMetrics.last24hApplied,
+                "last24h_fallback": jevMetrics.last24hFallback,
+                "last_error_reason": jevMetrics.lastErrorReason.map { $0 as Any } ?? NSNull(),
+            ],
+        ]
+        if jevSettings.apiStyle == .systemone,
+           jevSettings.activeModelVersion == "jev-latest" {
+            jev["model_version_note"] = "jev-latest 不是已验收固定版本：配置为 active 的用途按 shadow 收口。"
+        }
+        if jevSettings.apiStyle == .vercelGateway, !jevSettings.modelConfigured {
+            jev["model_version_note"] = "vercel_gateway 未配置模型：填写评估模型 slug（默认 typesafe-ai/jev）后才可出站。"
+        }
+
+        var tools: [String: Any] = [:]
+        if let bridge = toolExposureBridge {
+            tools["catalog_total"] = bridge.fullToolDeclarations().count
+            tools["visible_now"] = bridge.visibleTools().count
+            tools["lazy_mode"] = bridge.lazyModeEnabled()
+            tools["deferred_note"] = "未列出的工具经 tool_search 命中后下一轮可见。"
+        } else {
+            tools["catalog_available"] = false
+        }
+
+        let imageGenerationConfigured = resolvedImageGenerationConfig() != nil
+            || { if case .signedIn = codexImageConfig() { return true }; return false }()
+
+        let runtime: [String: Any] = [
+            "search_enabled": effectiveWebSearchEnabled,
+            "exec_javascript_enabled": effectiveExecJavaScriptEnabled,
+            "webmount_enabled": isWebMountRuntimeEnabled,
+            "memory_tool_enabled": IOSMemoryToolExecutor.isEnabled(runtime: sharedSettings.agentRuntime),
+            "image_generation_configured": imageGenerationConfigured,
+            "local_tool_executor_available": localToolExecutor != nil,
+            "mcp_network_allowed": isMcpNetworkAllowed(),
+            "mcp_servers_enabled": mcpManager.servers.filter(\.enabled).count,
+            "subagent_dispatch_enabled": isCapabilityPolicyEnabled("ios.agent.subagent_dispatch"),
+            "subagent_dynamic_enabled": sharedSettings.agentRuntime.subAgent.allowDynamicSubAgents,
+            "model_council_enabled": isCapabilityPolicyEnabled("ios.agent.model_council_run"),
+            "miniapp_enabled": sharedSettings.agentRuntime.miniApp.enabled,
+        ]
+
+        return IOSWorkspaceStore.json([
+            "ok": true,
+            "tool": "runtime_status",
+            "schema": 1,
+            "platform": "ios",
+            "runtime": runtime,
+            "tools": tools,
+            "jev": jev,
+        ])
+    }
+
+    /// 用例的稳定 JSON 键（rawValue 是 camelCase，契约统一 snake_case）。
+    private static func jevUseCaseStatusKey(_ useCase: IOSJevUseCase) -> String {
+        switch useCase {
+        case .toolDiscovery: "tool_discovery"
+        case .memoryRecall: "memory_recall"
+        case .contextSelection: "context_selection"
+        case .modelRouting: "model_routing"
+        case .webActions: "web_actions"
+        }
     }
 
     private func pendingAdvancedToolCall(
@@ -5611,7 +5795,14 @@ final class ChatToolRuntime {
                 reason: "wm_run_goal 需要 session_id 与 goal。"
             ))
         }
-        let completionMarker = (arguments["completion_text"] as? String)?.nilIfBlank ?? ""
+        // completion_text 必填：空标记永远无法核验完成，循环只能烧完预算退回，
+        // 直接拒收并告知模型比空转诚实（文档契约即"由页面状态证明完成"）。
+        guard let completionMarker = (arguments["completion_text"] as? String)?.nilIfBlank else {
+            return .webMountResult(ChatToolOutputFormatter.toolFailureJSON(
+                toolName: "wm_run_goal",
+                reason: "wm_run_goal 需要非空 completion_text 用于完成核验。"
+            ))
+        }
 
         let service = IOSJevWebMountLoopService(deps: .init(
             coordinator: .shared,
@@ -5631,8 +5822,11 @@ final class ChatToolRuntime {
                 IOSJevWebMountLoopService.isComplete(marker: completionMarker, observation: observation)
             }
         ))
+        // 报告循环启动时的 mode（与服务 settingsProvider 同源同刻）：跑完后重读
+        // 会在中途改配置时谎报——active 执行却被标 shadow，或 dry-run 被标 active。
+        let preRunMode = IOSSharedSettingsStore.loadPersistedJevSettings().effectiveMode(for: .webActions)
         let outcome = await service.run(input, runId: runId)
-        return .webMountResult(IOSJevWebMountLoopService.outputText(for: outcome, goal: input.goal))
+        return .webMountResult(IOSJevWebMountLoopService.outputText(for: outcome, goal: input.goal, effectiveMode: preRunMode))
     }
 
     /// 观察端口：走 wm_observe 既有路径并映射为循环快照。
@@ -5667,9 +5861,11 @@ final class ChatToolRuntime {
             return .failed(reason: "动作不在可执行白名单内。")
         }
         // 快照重验：决策所依据的 revision 与当前不一致 → 页面已变化，交回循环
-        // 重新观察（不执行、不猜测旧目标）。
-        if let current = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId),
-           current.revision != action.snapshotRevision {
+        // 重新观察（不执行、不猜测旧目标）。重观察失败不得放行执行。
+        guard let current = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId) else {
+            return .failed(reason: "无法重验页面快照。")
+        }
+        if current.revision != action.snapshotRevision {
             return .stale
         }
         let output = await webMountToolExecutionOutput(
@@ -5687,11 +5883,10 @@ final class ChatToolRuntime {
             return .denied(reason: reason)
         case .webMountResult(let text):
             let object = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
-            if object?["status"] as? String == "unknown_after_action" {
-                return .unknown
-            }
-            if let revision = (object?["page_revision"] as? NSNumber).flatMap({ Int($0.doubleValue) }) {
-                return .applied(newRevision: revision)
+            // 先判工具级错误：ok:false / 失败 status 不得落到重观察 fallback
+            // 被吞成 applied（此前缺 snapshot_id 的动作全在此被误记已应用）。
+            if let mapped = Self.webMountLoopActionResult(object) {
+                return mapped
             }
             // 输出未带 revision：重观察一次取值（保持无进展判定有效）。
             if let observation = await webMountLoopObservation(sessionId: sessionId, runId: runId, conversationId: conversationId) {
@@ -5703,27 +5898,74 @@ final class ChatToolRuntime {
         }
     }
 
-    /// 动作 → 既有工具调用映射。只映射循环白名单内的动作。
-    private static func webMountLoopActionCall(
+    /// 工具输出 JSON → ExecutorResult。返回 nil = 成功但未带 revision（调用方
+    /// 重观察取值）。错误/stale/审批/unknown 全部显式映射，不吞。
+    static func webMountLoopActionResult(
+        _ object: [String: Any]?
+    ) -> IOSJevWebMountLoopService.ExecutorResult? {
+        guard let object else { return nil }
+        let status = (object["status"] as? String)?.lowercased()
+        let code = (object["error_code"] as? String)?.lowercased()
+        let key = status ?? code
+        if key == "unknown_after_action" { return .unknown }
+        let failed = (object["ok"] as? Bool == false) || status == "failed" || status == "error"
+        if failed {
+            // 工具级快照失效与循环 .stale 同语义：重观察重决策，不算失败。
+            if key == "stale_snapshot" || code == "stale_snapshot" { return .stale }
+            switch key {
+            case "approval_required", "requires_human":
+                return .denied(reason: webMountResultReason(object) ?? key ?? "动作需要用户处理。")
+            default:
+                return .failed(reason: webMountResultReason(object) ?? key ?? "WebMount 动作失败。")
+            }
+        }
+        if let revision = (object["page_revision"] as? NSNumber).flatMap({ Int($0.doubleValue) }) {
+            return .applied(newRevision: revision)
+        }
+        return nil
+    }
+
+    /// 错误输出里的可读原因：reason / error(string|dict.message) / error_code。
+    private static func webMountResultReason(_ object: [String: Any]) -> String? {
+        if let reason = (object["reason"] as? String)?.nilIfBlank { return reason }
+        if let error = object["error"] as? String, !error.isEmpty { return error }
+        if let error = object["error"] as? [String: Any],
+           let message = (error["message"] as? String)?.nilIfBlank { return message }
+        if let code = (object["error_code"] as? String)?.nilIfBlank { return code }
+        return nil
+    }
+
+    /// 动作 → 既有工具调用映射。只映射循环白名单内的动作；wm_* 变更工具
+    /// required session_id+snapshot_id（绑定决策快照，stale 由工具拒收）。
+    static func webMountLoopActionCall(
         sessionId: String,
         action: IOSJevWebMountLoopService.PlannedAction
     ) -> (String, String)? {
+        var payload: [String: Any] = ["session_id": sessionId, "snapshot_id": action.snapshotId]
         switch action.kind {
         case .scroll:
-            return ("wm_scroll", webMountJSON(["session_id": sessionId]))
-        case .clickNav, .submitReadonlySearch:
+            // 逐段下滚由观察反馈驱动（不用 to:bottom 跳页——会跳过目标可视区）。
+            payload["by_y"] = 700
+            return ("wm_scroll", webMountJSON(payload))
+        case .clickNav:
             guard let elementId = action.elementId else { return nil }
-            return ("wm_click", webMountJSON(["session_id": sessionId, "target": elementId]))
+            payload["target"] = elementId
+            return ("wm_click", webMountJSON(payload))
         case .select:
             guard let elementId = action.elementId else { return nil }
-            return ("wm_select", webMountJSON(["session_id": sessionId, "target": elementId]))
-        case .typeDraft:
+            payload["target"] = elementId
+            return ("wm_select", webMountJSON(payload))
+        case .typeDraft, .submitReadonlySearch:
+            // 均经 wm_type 填草稿词；Enter/提交键留在白名单外（保守边界），
+            // 搜索候选项经下轮观察进入 click_nav 候选。
             guard let elementId = action.elementId, let value = action.value, !value.isEmpty else { return nil }
-            return ("wm_type", webMountJSON(["session_id": sessionId, "target": elementId, "text": value]))
+            payload["target"] = elementId
+            payload["text"] = value
+            return ("wm_type", webMountJSON(payload))
         }
     }
 
-    private static func webMountJSON(_ object: [String: String]) -> String {
+    private static func webMountJSON(_ object: [String: Any]) -> String {
         guard let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8) else { return "{}" }
         return text
@@ -6473,6 +6715,15 @@ final class ChatToolRuntime {
                 runId: runId
             )
             return .filled(output)
+        }
+
+        // runtime_status：本地自省只读，不经 localToolExecutor（无 capability
+        // 映射）；子代理 catalog 无桥上下文，传 nil 只省略目录计数。
+        if name == "runtime_status" {
+            return .filled(dispatchRuntimeStatusToolCall(
+                toolCall(name: name, input: arguments),
+                toolExposureBridge: nil
+            ))
         }
 
         if ToolKt.isExpandedMcpToolName(name: name) {

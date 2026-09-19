@@ -35,7 +35,7 @@ enum IOSSubAgentRoleCatalog {
             systemPrompt: "快速侦察范围、列出证据和未知数，优先用只读来源。",
             routing: "范围广、不确定、需要先摸清有哪些信息时调用。",
             toolAllowlist: [
-                "tools_list", "search_web", "scrape_web", "file_read_selected", "permissions_status",
+                "tools_list", "search_web", "scrape_web", "file_read_selected", "permissions_status", "runtime_status",
                 "workspace_file_read", "workspace_file_list", "workspace_file_search", "workspace_artifact_read",
                 "wm_stations", "wm_state", "wm_extract", "wm_get", "wm_find", "wm_wait", "wm_back", "wm_forward"
             ],
@@ -50,7 +50,7 @@ enum IOSSubAgentRoleCatalog {
             summary: "历史会话搜索、主题挖掘、跨分片综合。",
             systemPrompt: "聚合历史上下文，明确哪些结论来自过往记录。",
             routing: "需要回忆过去对话、决策或跨会话主题时调用。",
-            toolAllowlist: ["tools_list", "permissions_status"],
+            toolAllowlist: ["tools_list", "permissions_status", "runtime_status"],
             maxTurns: 4,
             timeoutSeconds: 300,
             outputBudgetChars: 12_000,
@@ -62,7 +62,7 @@ enum IOSSubAgentRoleCatalog {
             summary: "架构取舍、风险复议、提交前评审。",
             systemPrompt: "进行高判断力复议，重点给出风险、反例和取舍。",
             routing: "长期影响大的决定、高风险重构、提交前二次复议时调用。",
-            toolAllowlist: ["tools_list", "file_read_selected", "permissions_status", "workspace_file_read", "workspace_file_search", "workspace_artifact_read"],
+            toolAllowlist: ["tools_list", "file_read_selected", "permissions_status", "runtime_status", "workspace_file_read", "workspace_file_search", "workspace_artifact_read"],
             maxTurns: 4,
             timeoutSeconds: 300,
             outputBudgetChars: 12_000,
@@ -164,7 +164,7 @@ enum IOSSubAgentRoleCatalog {
 enum IOSSubAgentToolPolicy {
     static let readOnlyParentToolNames: Set<String> = [
         "search_web", "scrape_web",
-        "file_read_selected", "permissions_status",
+        "file_read_selected", "permissions_status", "runtime_status",
         "workspace_file_read", "workspace_file_list", "workspace_file_search", "workspace_artifact_read",
         "wm_stations", "wm_state", "wm_extract", "wm_get", "wm_find", "wm_wait", "wm_back", "wm_forward"
     ]
@@ -858,6 +858,7 @@ final class SubAgentToolsListExecutor: IOSToolExecutor {
         case "scrape_web": "Extract readable text from a public http/https URL."
         case "file_read_selected": "Read the user's currently selected foreground file preview."
         case "permissions_status": "Read iOS capability and permission status."
+        case "runtime_status": "Read AmberAgent runtime status: Jev modes and availability, feature flags, tool catalog counts."
         case "workspace_file_read": "Read an imported Workspace file."
         case "workspace_file_list": "List imported Workspace files."
         case "workspace_file_search": "Search imported Workspace file previews."

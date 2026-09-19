@@ -244,7 +244,7 @@ fun Tool.invocationPolicy(input: JsonElement?): ToolInvocationPolicy {
             concurrencySafe = readOnly
         }
 
-        "cron_task_list", "agent_task_list", "agent_task_read", "agent_runtime_status", "tool_policy_explain", "tool_search", "tools_list" -> {
+        "cron_task_list", "agent_task_list", "agent_task_read", "agent_runtime_status", "runtime_status", "tool_policy_explain", "tool_search", "tools_list" -> {
             mutates = false
             risk = ToolRisk.Normal
             riskExplicit = true
@@ -449,7 +449,7 @@ internal fun Tool.category(): String = when {
     name.startsWith("deep_read_") -> "deep_read"
     name.startsWith("cron_task_") -> "cron"
     name.startsWith("agent_task_") || name == "agent_runtime_status" -> "task"
-    name in setOf("tool_policy_explain", "tool_search", "tools_list") -> "utility"
+    name in setOf("tool_policy_explain", "tool_search", "tools_list", "runtime_status") -> "utility"
     name.startsWith("provider_config_") || name.startsWith("theme_pack_") || name == "settings_set_model_slot" -> "settings"
     name.startsWith("subagent_") ||
         name in setOf("spawn_agent", "list_agents", "interrupt_agent", "wait_agent", "send_message", "followup_task") -> "subagent"
@@ -570,7 +570,7 @@ private val FAIL_CLOSED_AUTO_APPROVAL_CATEGORIES = setOf(
 private fun Tool.concurrencySafe(): Boolean = when {
     name in setOf("terminal_install_packages", "terminal_job_stop", "terminal_execute", "terminal_job_start", "ios_shell_execute") -> false
     name.startsWith("cron_task_") && name != "cron_task_list" -> false
-    name.startsWith("agent_task_") || name in setOf("agent_runtime_status", "tool_policy_explain", "tool_search", "tools_list") -> true
+    name.startsWith("agent_task_") || name in setOf("agent_runtime_status", "runtime_status", "tool_policy_explain", "tool_search", "tools_list") -> true
     name.startsWith("subagent_") || name.startsWith("model_council_") -> false
     else -> !mutatesState()
 }

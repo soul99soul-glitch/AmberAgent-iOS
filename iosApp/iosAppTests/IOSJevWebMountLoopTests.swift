@@ -28,6 +28,7 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         private var value: IOSJevSettings
         init(_ value: IOSJevSettings) { self.value = value }
         func get() -> IOSJevSettings { jevSync(lock) { value } }
+        func set(_ newValue: IOSJevSettings) { jevSync(lock) { value = newValue } }
     }
 
     private func makeSettings(mode: IOSJevMode, pinned: String? = "jev-fixed-v1") -> IOSJevSettings {
@@ -83,15 +84,21 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         .init(snapshotId: "s\(revision)", revision: revision, url: "https://example.com/list", elements: baseElements)
     }
 
-    private func input(allowed: Set<String>, draft: String? = "关键词") -> IOSJevWebMountLoopService.LoopInput {
+    private func input(
+        allowed: Set<String>,
+        draft: String? = "关键词",
+        maxDecisions: Int? = nil,
+        maxSeconds: Int? = nil,
+        maxNoProgress: Int? = nil
+    ) -> IOSJevWebMountLoopService.LoopInput {
         .init(
             sessionId: "sess-1",
             goal: "在列表页找到目标条目",
             draftValue: draft,
             allowedActions: allowed,
-            maxActionDecisions: nil,
-            maxSeconds: nil,
-            maxNoProgress: nil
+            maxActionDecisions: maxDecisions,
+            maxSeconds: maxSeconds,
+            maxNoProgress: maxNoProgress
         )
     }
 
@@ -136,7 +143,7 @@ final class IOSJevWebMountLoopTests: XCTestCase {
             execute: { _, _ in recorder.recordExecution("x", "y"); return .applied(newRevision: 2) }
         )
         let outcome = await service.run(
-            input(allowed: ["scroll", "click_nav"], draft: nil),
+            input(allowed: ["scroll", "click_nav"], draft: nil, maxDecisions: 4),
             runId: "run"
         )
         guard case .handback(let reason, let steps, _) = outcome else { return XCTFail("expected decision-cap handback, got \(outcome)") }
@@ -145,6 +152,43 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         XCTAssertTrue(steps.allSatisfy { $0.hasPrefix("dry-run:") })
         XCTAssertTrue(recorder.executed.isEmpty, "shadow must never execute actions")
         XCTAssertGreaterThan(transport.calls, 0)
+    }
+
+    /// 中途降级回归：active 跑起来后配置切 shadow，之后协调器只产 observed
+    /// 决策——它们只能进 dry-run 轨迹，绝不能被执行（启动时快照不得绕过
+    /// 「shadow 只观测不应用」契约）。
+    func testMidRunDowngradeToShadowStopsExecuting() async {
+        let box = SettingsBox(makeSettings(mode: .active))
+        let transport = JevStubTransport { _ in (self.choicePayload("click_nav@e1"), self.httpResponse(status: 200)) }
+        let recorder = Recorder()
+        var observationCount = 0
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { box.get() },
+            apiKeyProvider: { "test-key" },
+            now: { Date() }
+        ))
+        let service = IOSJevWebMountLoopService(deps: .init(
+            coordinator: coordinator,
+            settingsProvider: { box.get() },
+            observe: { _ in
+                recorder.recordObservation()
+                observationCount += 1
+                if observationCount == 2 {
+                    box.set(self.makeSettings(mode: .shadow, pinned: nil))
+                }
+                return self.observation(revision: observationCount)
+            },
+            execute: { _, action in
+                recorder.recordExecution(action.kind.rawValue, action.elementId ?? "-")
+                return .applied(newRevision: observationCount + 1)
+            },
+            isComplete: { _, _ in false }
+        ))
+        let outcome = await service.run(input(allowed: ["click_nav"], maxDecisions: 4), runId: "run")
+        guard case .handback(_, let steps, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertEqual(recorder.executed.count, 1, "降级前的决策已执行一次；降级后 observed 决策不得执行")
+        XCTAssertTrue(steps.dropFirst().allSatisfy { $0.hasPrefix("dry-run:") }, "降级后轨迹只能 dry-run: \(steps)")
     }
 
     // MARK: Active 执行
@@ -199,9 +243,90 @@ final class IOSJevWebMountLoopTests: XCTestCase {
             observe: { _ in self.observation(revision: 1) }, // revision 恒不变
             execute: { _, _ in .applied(newRevision: 1) }
         )
-        let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
+        let outcome = await service.run(input(allowed: ["scroll"], maxNoProgress: 3), runId: "run")
         guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
         XCTAssertTrue(reason.contains("无进展"))
+    }
+
+    /// 真机回归：底部空滚每次 bump page_revision，revision 比较永远算"有进展"，
+    /// max_no_progress 拦不住 → 20 次决策烧干。修复后 scroll 的进展按状态指纹
+    /// （url+scrollY+元素集合）判定：指纹不变 = 空转，计入无进展。
+    func testScrollStallCountsNoProgressDespiteRevisionBump() async {
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll"), self.httpResponse(status: 200)) }
+        let recorder = Recorder()
+        var observeCount = 0
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in
+                observeCount += 1
+                // 模拟真机：每次观察 revision 递增，但 url/scrollY/元素完全不变（页底）。
+                return self.observation(revision: observeCount)
+            },
+            execute: { _, _ in
+                recorder.recordExecution("scroll", "-")
+                return .applied(newRevision: observeCount + 1) // revision 递增 ≠ 进展
+            }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"], maxDecisions: 20, maxNoProgress: 3), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("无进展"), "空转滚动应计无进展，got: \(reason)")
+        XCTAssertEqual(recorder.executed.count, 3, "空滚最多 maxNoProgress 次即退出，不得烧穿决策额度")
+    }
+
+    /// 对照：滚动真带来新元素（无限加载）→ 指纹变化 → 算进展，不计无进展。
+    func testScrollRevealingNewElementsResetsProgress() async {
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll"), self.httpResponse(status: 200)) }
+        var observeCount = 0
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in
+                observeCount += 1
+                var obs = self.observation(revision: observeCount)
+                obs.scrollY = observeCount * 500
+                obs.elements.append(IOSJevWebMountLoopService.PageElement(id: "new\(observeCount)", role: "link", label: "新条目"))
+                return obs
+            },
+            execute: { _, _ in .applied(newRevision: observeCount + 1) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"], maxDecisions: 4, maxNoProgress: 2), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("耗尽"), "滚动持续带来新内容应按决策上限退出，got: \(reason)")
+    }
+
+    /// 页底提示接线：空转一次后，下一轮发给 Jev 的 state 必须带"已到页底"
+    /// 信号与滚动位置——否则 Jev 无从知道 scroll 已无效，只会继续空滚。
+    func testStallHintAndScrollPositionReachDecisionState() async throws {
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll"), self.httpResponse(status: 200)) }
+        var observeCount = 0
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in
+                observeCount += 1
+                var obs = self.observation(revision: observeCount)
+                obs.scrollY = 994
+                return obs
+            },
+            execute: { _, _ in .applied(newRevision: observeCount + 1) }
+        )
+        _ = await service.run(input(allowed: ["scroll"], maxDecisions: 5, maxNoProgress: 2), runId: "run")
+        let body = try XCTUnwrap(transport.lastBody, "第二次决策未发出")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let state = try XCTUnwrap(object["state"] as? String)
+        XCTAssertTrue(state.contains("y=994"), "state 应携带滚动位置")
+        XCTAssertTrue(state.contains("底部"), "空转后 state 应携带页底提示，got: \(state)")
+    }
+
+    /// wm_observe 的 page.scroll.y 必须进 PageObservation（指纹与 state 都依赖它）。
+    func testObservationParsesScrollPosition() throws {
+        let payload: [String: Any] = [
+            "snapshot_id": "doc:3",
+            "page_revision": 3,
+            "page": ["url": "https://example.com", "scroll": ["x": 0, "y": 994]],
+            "interactive_elements": [["ref": "e1", "role": "link", "text": "More"]],
+        ]
+        let obs = try XCTUnwrap(IOSJevWebMountLoopService.observation(fromObservePayload: payload))
+        XCTAssertEqual(obs.scrollY, 994)
+        XCTAssertEqual(obs.elements.first?.id, "e1")
     }
 
     func testDecisionCapHandsBack() async {
@@ -213,10 +338,10 @@ final class IOSJevWebMountLoopTests: XCTestCase {
             execute: { _, _ in revision += 1; return .applied(newRevision: revision) },
             isComplete: { _, _ in false } // 永不完成 → 撞上限
         )
-        let outcome = await service.run(input(allowed: ["click_nav"]), runId: "run")
+        let outcome = await service.run(input(allowed: ["click_nav"], maxDecisions: 6), runId: "run")
         guard case .handback(let reason, let steps, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
         XCTAssertTrue(reason.contains("耗尽"))
-        XCTAssertEqual(steps.count, 6, "runtime cap 6 action decisions; input cannot raise it")
+        XCTAssertEqual(steps.count, 6, "输入收窄上限生效；runtime 默认上限（100）更高时不干预")
     }
 
     // MARK: 白名单与候选约束
@@ -277,6 +402,87 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
         guard case .needsUserAction = outcome else { return XCTFail("expected needsUserAction, got \(outcome)") }
     }
+
+    // MARK: 失败原因透传 / 置信门 / criteria 描述
+
+    /// 协调器 .failed 的原因码必须进 handback，主模型据此区分 http 错误与低置信。
+    func testFailedCallReasonSurfacedInHandback() async {
+        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 500)) }
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in .applied(newRevision: 2) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("http_500"), "handback 应带协调器失败码，got: \(reason)")
+    }
+
+    /// 协调器 .skipped 的原因码同样透传（预算耗尽/冷却/鉴权暂停均可辨识）。
+    func testSkippedReasonSurfacedInHandback() async {
+        var settings = makeSettings(mode: .active)
+        settings.policy.perTurnRequestBudget = 0
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll"), self.httpResponse(status: 200)) }
+        let service = makeService(
+            settings: settings, transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in .applied(newRevision: 2) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("budget_exhausted"), "skipped 原因应透传，got: \(reason)")
+        XCTAssertEqual(transport.calls, 0, "预算耗尽为零网络跳过")
+    }
+
+    /// 置信低于阈值 → handback 且不执行（文档承诺的低置信语义）。
+    func testLowConfidenceChoiceNeverExecutes() async {
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll", confidence: 0.2), self.httpResponse(status: 200)) }
+        let recorder = Recorder()
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in recorder.recordExecution("x", "y"); return .applied(newRevision: 2) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("低置信"), "got: \(reason)")
+        XCTAssertTrue(recorder.executed.isEmpty, "低置信不得执行")
+    }
+
+    /// Vercel 契约按 option→描述字符串校验：null 描述会被 Gateway 拒收（真机
+    /// 0 步 handback 的根因）。每个候选必须带非空描述。
+    func testChoiceCriteriaCarryNonNullDescriptions() async throws {
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll"), self.httpResponse(status: 200)) }
+        let service = makeService(
+            settings: makeSettings(mode: .shadow, pinned: nil), transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in .applied(newRevision: 2) }
+        )
+        _ = await service.run(input(allowed: ["scroll", "click_nav"], maxDecisions: 1), runId: "run")
+        let body = try XCTUnwrap(transport.lastBody, "未发出 Jev 请求")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questions = try XCTUnwrap(object["questions"] as? [String: Any])
+        let nextAction = try XCTUnwrap(questions["next_action"] as? [String: Any])
+        let criteria = try XCTUnwrap(nextAction["criteria"] as? [String: Any])
+        XCTAssertFalse(criteria.isEmpty)
+        for (key, value) in criteria {
+            guard let description = value as? String, !description.isEmpty else {
+                return XCTFail("选项 \(key) 描述为空/null —— Vercel Gateway 会拒收")
+            }
+        }
+    }
+
+    /// 输出带 effective_mode：配置 active 被降级时主模型能直接看到 shadow。
+    func testOutputTextIncludesEffectiveMode() throws {
+        let text = IOSJevWebMountLoopService.outputText(
+            for: .handback(reason: "r", steps: [], latestObservation: nil),
+            goal: "g",
+            effectiveMode: .shadow
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        XCTAssertEqual(object["effective_mode"] as? String, "shadow")
+        XCTAssertEqual(object["status"] as? String, "handback")
+    }
 }
 
 // MARK: - wm_run_goal 工具入口绑定（纯函数层）
@@ -317,6 +523,94 @@ extension IOSJevWebMountLoopTests {
         XCTAssertEqual(narrowed?.allowedActions, ["scroll", "type_draft"])
         XCTAssertEqual(narrowed?.draftValue, "done")
         XCTAssertEqual(narrowed?.maxActionDecisions, 2)
+    }
+
+    /// 真机「applied 但页面不动」根因回归：wm_* 变更工具 required
+    /// session_id+snapshot_id，payload 必须绑定决策快照与正确参数。
+    func testActionCallBindsSessionSnapshotAndTarget() throws {
+        let action = IOSJevWebMountLoopService.PlannedAction(
+            kind: .clickNav, elementId: "wm:sess:3", value: nil,
+            snapshotRevision: 7, snapshotId: "snap-7"
+        )
+        let (tool, payload) = try XCTUnwrap(
+            ChatToolRuntime.webMountLoopActionCall(sessionId: "sess", action: action)
+        )
+        XCTAssertEqual(tool, "wm_click")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any])
+        XCTAssertEqual(object["session_id"] as? String, "sess")
+        XCTAssertEqual(object["snapshot_id"] as? String, "snap-7")
+        XCTAssertEqual(object["target"] as? String, "wm:sess:3")
+    }
+
+    func testScrollAndSubmitReadonlySearchPayloads() throws {
+        let scroll = IOSJevWebMountLoopService.PlannedAction(
+            kind: .scroll, elementId: nil, value: nil, snapshotRevision: 1, snapshotId: "s1"
+        )
+        let (scrollTool, scrollPayload) = try XCTUnwrap(
+            ChatToolRuntime.webMountLoopActionCall(sessionId: "sess", action: scroll)
+        )
+        XCTAssertEqual(scrollTool, "wm_scroll")
+        let scrollObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(scrollPayload.utf8)) as? [String: Any])
+        XCTAssertEqual(scrollObject["snapshot_id"] as? String, "s1")
+        XCTAssertNotNil(scrollObject["by_y"], "scroll 需要位移参数（by_y/to/target 之一）")
+
+        // 搜索框点击只是聚焦不提交：submit_readonly_search 映射 wm_type 填草稿。
+        let submit = IOSJevWebMountLoopService.PlannedAction(
+            kind: .submitReadonlySearch, elementId: "wm:sess:9", value: "关键词",
+            snapshotRevision: 2, snapshotId: "s2"
+        )
+        let (submitTool, submitPayload) = try XCTUnwrap(
+            ChatToolRuntime.webMountLoopActionCall(sessionId: "sess", action: submit)
+        )
+        XCTAssertEqual(submitTool, "wm_type")
+        let submitObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(submitPayload.utf8)) as? [String: Any])
+        XCTAssertEqual(submitObject["target"] as? String, "wm:sess:9")
+        XCTAssertEqual(submitObject["text"] as? String, "关键词")
+        XCTAssertEqual(submitObject["snapshot_id"] as? String, "s2")
+    }
+
+    /// 工具级错误不得被吞成 applied（真机症状：错误 JSON 落到重观察 fallback
+    /// 被误记为已应用、revision 恒不变）。
+    func testActionResultMappingRejectsSwallowedFailures() {
+        guard case .stale = ChatToolRuntime.webMountLoopActionResult([
+            "ok": false, "status": "failed", "error_code": "stale_snapshot",
+        ]) else { return XCTFail("stale_snapshot 必须映射 .stale（重观察重决策）") }
+        guard case .stale = ChatToolRuntime.webMountLoopActionResult([
+            "ok": false, "status": "stale_snapshot",
+        ]) else { return XCTFail("status=stale_snapshot 必须映射 .stale") }
+        guard case .denied = ChatToolRuntime.webMountLoopActionResult([
+            "ok": false, "status": "approval_required", "error_code": "high_consequence_requires_approval",
+        ]) else { return XCTFail("approval_required 必须映射 .denied") }
+        guard case .denied = ChatToolRuntime.webMountLoopActionResult([
+            "ok": false, "status": "requires_human",
+        ]) else { return XCTFail("requires_human 必须映射 .denied") }
+        guard case .failed = ChatToolRuntime.webMountLoopActionResult([
+            "ok": false, "status": "failed", "error": "missing snapshot_id",
+        ]) else { return XCTFail("ok:false 必须映射 .failed") }
+        guard case .unknown = ChatToolRuntime.webMountLoopActionResult([
+            "status": "unknown_after_action",
+        ]) else { return XCTFail("unknown_after_action 必须映射 .unknown") }
+        guard case .applied(let revision) = ChatToolRuntime.webMountLoopActionResult([
+            "ok": true, "page_revision": 4,
+        ]) else { return XCTFail("成功输出必须映射 .applied") }
+        XCTAssertEqual(revision, 4)
+        XCTAssertNil(
+            ChatToolRuntime.webMountLoopActionResult(["ok": true]),
+            "成功但无 revision → nil，由调用方重观察取值"
+        )
+    }
+
+    /// 候选必须带观察快照的 id 与 revision：执行端口据此绑定 snapshot_id。
+    func testCandidatesCarryObservationSnapshotId() {
+        let obs = IOSJevWebMountLoopService.PageObservation(
+            snapshotId: "snap-x", revision: 5, url: "https://example.com", elements: baseElements
+        )
+        let candidates = IOSJevWebMountLoopService.legalActionCandidates(
+            input: input(allowed: ["click_nav", "type_draft", "submit_readonly_search"], draft: "v"),
+            observation: obs
+        )
+        XCTAssertFalse(candidates.isEmpty)
+        XCTAssertTrue(candidates.allSatisfy { $0.snapshotId == "snap-x" && $0.snapshotRevision == 5 })
     }
 
     func testCompletionCheckRequiresMarkerInURLOrElementLabel() {

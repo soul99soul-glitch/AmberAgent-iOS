@@ -609,7 +609,7 @@ fun createWebMountWaitToolDeclaration(): Tool = webMountTool(
 
 /**
  * Jev Phase 3: bounded fast web loop. The main model explicitly calls this to
- * enter the loop; runtime budgets (6 decisions / 15s / 3 no-progress) always
+ * enter the loop; runtime budgets (100 decisions / 600s / 10 no-progress) always
  * cap the caller-provided values, the action whitelist can only be narrowed by
  * the input, and every executed action still goes through the existing
  * per-action approval and ledger path. Completion is verified from page state
@@ -639,15 +639,19 @@ fun createWebMountRunGoalToolDeclaration(): Tool = webMountTool(
             })
             put("completion_text", buildJsonObject {
                 put("type", "string")
-                put("description", "Text that must appear in the page URL or visible element labels for the goal to count as completed.")
+                put("description", "Required. Text that must appear in the page URL or visible element labels for the goal to count as completed; the loop refuses to run without it.")
             })
             put("max_action_decisions", buildJsonObject {
                 put("type", "number")
-                put("description", "Optional smaller action-decision budget (hard cap 6).")
+                put("description", "Optional smaller action-decision budget (hard cap 100).")
             })
             put("max_seconds", buildJsonObject {
                 put("type", "number")
-                put("description", "Optional smaller time budget in seconds (hard cap 15).")
+                put("description", "Optional smaller time budget in seconds (hard cap 600).")
+            })
+            put("max_no_progress", buildJsonObject {
+                put("type", "number")
+                put("description", "Optional smaller no-progress limit before handback (hard cap 10).")
             })
         }
     )
@@ -873,6 +877,13 @@ private fun waitParameters(): InputSchema = InputSchema.Obj(
 fun createPermissionsStatusToolDeclaration(): Tool = Tool(
     name = "permissions_status",
     description = "Return AmberAgent iOS capability and permission status for tools available on this device.",
+    parameters = { emptyObjectParameters() },
+    execute = { emptyList() }
+)
+
+fun createRuntimeStatusToolDeclaration(): Tool = Tool(
+    name = "runtime_status",
+    description = "Return AmberAgent internal runtime status not visible as tools: the Jev fast-judgment service (per-use-case off/shadow/active modes, whether an API key is configured, budget and recent usage), feature gates, and tool runtime flags. Read-only with no side effects. Use when asked what Jev is, whether a capability is enabled, or about the agent's own state.",
     parameters = { emptyObjectParameters() },
     execute = { emptyList() }
 )
@@ -1884,6 +1895,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "terminal_job_wait" to ::createTerminalJobWaitToolDeclaration,
     "terminal_job_stop" to ::createTerminalJobStopToolDeclaration,
     "permissions_status" to ::createPermissionsStatusToolDeclaration,
+    "runtime_status" to ::createRuntimeStatusToolDeclaration,
     "weather_read" to ::createWeatherReadToolDeclaration,
     "health_summary_read" to ::createHealthSummaryReadToolDeclaration,
     "calendar_events_list" to ::createCalendarEventsListToolDeclaration,

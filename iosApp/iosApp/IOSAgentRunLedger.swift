@@ -868,6 +868,9 @@ enum IOSToolEffectClassMapping {
         case .sessionRead:
             // 跨会话读取（session_search/session_read）——本地只读检索，无副作用。
             .pure
+        case .runtimeStatus:
+            // runtime_status——本地运行时自省快照，无副作用。
+            .pure
         case .workspace, .ish, .webMount, .image, .advanced:
             // advanced covers mcp_call / subagent_dispatch / model_council_run.
             .sideEffect
@@ -895,6 +898,10 @@ enum IOSToolEffectClassMapping {
         }
         // 跨会话读取工具：本地只读检索（搜索/读取其它会话），重放无副作用。
         if toolName == "session_search" || toolName == "session_read" {
+            return .pure
+        }
+        // 本地运行时自省快照（Jev 模式/门控/目录计数）——纯读，重放无副作用。
+        if toolName == "runtime_status" {
             return .pure
         }
         if toolName == IOSWeatherToolCatalog.toolName
