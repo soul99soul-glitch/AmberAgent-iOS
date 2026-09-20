@@ -86,6 +86,7 @@ object GenerativeUiPlanner {
                         appendLine("Start with one short sentence, then output the show-widget block immediately.")
                         appendLine("Prefer widget_code SVG for streaming; avoid renderer/spec unless the answer truly needs an interactive chart.")
                         appendLine("Keep the SVG inside its viewBox with 24px padding; do not draw outside the card.")
+                        appendLine("If the request asks for motion (动态/会动/animated), add SMIL or CSS animation inside widget_code.")
                     }
                 }
 
@@ -121,7 +122,7 @@ object GenerativeUiPlanner {
                     if (hasImageGenTool) {
                         appendLine("  1. Call `generate_image` for photographic / painted / textured imagery (landscapes, characters, posters, illustrations, concept art).")
                     }
-                    appendLine("  2. Emit a show-widget SVG for diagrams, charts, schematics, simple icons, line-art logos.")
+                    appendLine("  2. Emit a show-widget SVG for diagrams, charts, schematics, simple icons, line-art logos, and animated SVG requests (SMIL/CSS motion, no scripts).")
                     appendLine("  3. Emit a show-widget renderer for slides if multi-slide presentation is the right form.")
                     appendLine("Use the subject and any style cues in the request to decide. If genuinely 50/50, ask once: \"想要矢量草图（精确、可编辑）还是生成的图像（纹理丰富、写实感）?\"")
                     if (toolMediated) {

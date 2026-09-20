@@ -139,6 +139,28 @@ class GenerativeUiPlannerTest {
         assertTrue(prompt.contains(GenerativeUiProtocol.LOCAL_MOTION_URL))
     }
 
+    @Test
+    fun motionRequestsAdvertiseSmilAndCssAnimation() {
+        val setting = GenerativeUiSetting(enabled = true)
+
+        val catalog = GenerativeUiPromptCatalog.build(setting, null)
+        assertTrue(catalog.contains("animateTransform"))
+        assertTrue(catalog.contains("@keyframes"))
+        assertTrue(catalog.contains("full_html is not limited to decks"))
+
+        val diagramPrompt = GenerativeUiPlanner.buildPrompt(
+            setting = setting,
+            messages = listOf(userMessage("画一个流程图")),
+        )
+        assertTrue(diagramPrompt.contains("SMIL or CSS animation"))
+
+        val ambiguousPrompt = GenerativeUiPlanner.buildPrompt(
+            setting = setting,
+            messages = listOf(userMessage("画一个骑自行车的鹈鹕")),
+        )
+        assertTrue(ambiguousPrompt.contains("animated SVG requests"))
+    }
+
     /**
      * G6 contract: keyword routing injects prompt guidance only — the planner
      * no longer exposes any "suppress tools" predicate, so no caller can clear

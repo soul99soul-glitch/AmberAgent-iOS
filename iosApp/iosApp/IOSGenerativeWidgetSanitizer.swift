@@ -60,7 +60,7 @@ enum IOSGenerativeWidgetSanitizer {
         sanitized = sanitized.replacing(pattern: #"@import\s+[^;]+;?"#, with: "")
         sanitized = sanitized.replacing(pattern: #"url\(\s*(['"]?)\s*javascript:[^)]+\)"#, with: "none")
         sanitized = sanitized.replacing(pattern: #"url\(\s*(['"]?)\s*(https?:|//)[^)]+\)"#, with: "none")
-        sanitized = sanitized.replacing(pattern: #"url\(\s*(['"]?)(?!data:image/|#)[^)]+\)"#, with: "none")
+        sanitized = sanitized.replacing(pattern: #"url\(\s*(?!\s*['"]?\s*(?:data:image/|#))[^)]+\)"#, with: "none")
         sanitized = sanitized.replacing(pattern: #"position\s*:\s*(fixed|-webkit-sticky|sticky)\s*;?"#, with: "position:relative;")
         sanitized = stripUnsafeURLAttributes(sanitized)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -108,8 +108,8 @@ enum IOSGenerativeWidgetSanitizer {
     }
 
     private static func safetyViolation(_ html: String) -> String? {
-        let lower = html.lowercased()
-        let compact = String(lower.unicodeScalars.filter { scalar in
+        let decoded = decodeHTMLEntities(html.lowercased())
+        let compact = String(decoded.unicodeScalars.filter { scalar in
             let value = scalar.value
             if value <= 0x1f || value == 0x00a0 || value == 0xfeff { return false }
             if (0x2000...0x200f).contains(value) { return false }
@@ -120,6 +120,9 @@ enum IOSGenerativeWidgetSanitizer {
             return "dangerous tag"
         }
         if html.containsMatch(pattern: #"\son[a-z]+\s*="#) { return "event handler" }
+        if compact.containsMatch(pattern: #"attributename\s*=\s*["']?\s*on[a-z]+"#) {
+            return "event handler"
+        }
         if compact.contains("javascript:") { return "javascript url" }
         if compact.contains("data:text/html") { return "html data url" }
         if html.containsMatch(pattern: #"\s(srcdoc|action|srcset|poster|background)\s*="#) {
@@ -130,11 +133,31 @@ enum IOSGenerativeWidgetSanitizer {
         }
         if compact.contains("data:image/svg") { return "svg data image" }
         if html.containsMatch(pattern: #"url\("#),
-           !html.containsMatch(pattern: #"url\(\s*(['"]?)data:image/(png|jpeg|jpg|gif|webp);base64,"#),
-           !html.containsMatch(pattern: #"url\(\s*(['"]?)#"#) {
+           !html.containsMatch(pattern: #"url\(\s*(['"]?)\s*data:image/(png|jpeg|jpg|gif|webp);base64,"#),
+           !html.containsMatch(pattern: #"url\(\s*(['"]?)\s*#"#) {
             return "css url"
         }
         return nil
+    }
+
+    private static func decodeHTMLEntities(_ text: String) -> String {
+        var result = text.replacingMatches(pattern: #"&#(x[0-9a-f]+|[0-9]+);?"#) { match, source in
+            guard let range = Range(match.range(at: 1), in: source) else { return "" }
+            let token = source[range]
+            let value = token.hasPrefix("x") ? UInt32(token.dropFirst(), radix: 16) : UInt32(token)
+            guard let value, let scalar = Unicode.Scalar(value) else { return "" }
+            return String(scalar)
+        }
+        result = result.replacingMatches(pattern: #"&(colon|tab|newline|sol);"#) { match, source in
+            guard let range = Range(match.range(at: 1), in: source) else { return "" }
+            switch source[range] {
+            case "colon": return ":"
+            case "sol": return "/"
+            case "tab": return "\t"
+            default: return "\n"
+            }
+        }
+        return result
     }
 
     private static func isSafeDataImage(_ value: String) -> Bool {

@@ -86,8 +86,8 @@ final class IOSSkillMcpToolsTests: XCTestCase {
             withJSONObject: [
                 "path": "/workspace/skills/visual-svg/SKILL.md",
                 "content": factory.replacingOccurrences(
-                    of: "version: 1.0.1",
-                    with: "version: 1.0.1-edited"
+                    of: "version: 1.1.0",
+                    with: "version: 1.1.0-edited"
                 ),
                 "overwrite": true,
             ] as [String: Any],
@@ -215,6 +215,20 @@ final class IOSSkillMcpToolsTests: XCTestCase {
         XCTAssertFalse(refreshed.contains("version: 2.1.0"))
         let kept = try store.resolveSkillFile(name: "skill-creator", relativePath: "references/kept.md")
         XCTAssertEqual(try String(contentsOf: kept, encoding: .utf8), "keep across factory refresh\n")
+    }
+
+    func testInstallRefreshesUnmodifiedLegacyVisualSvgV101() throws {
+        let store = IOSSkillFileStore(baseDirectory: tempRoot())
+        let legacy = IOSBuiltinSkills.legacyVisualSvgMarkdownV101
+        _ = try store.saveSkillFiles(files: ["SKILL.md": legacy], allowBuiltinSkill: true)
+        XCTAssertTrue(IOSBuiltinSkills.isFactorySnapshot(legacy))
+
+        _ = IOSBuiltinSkills.installIfMissing(into: store)
+        let refreshed = try store.readSkillMarkdown(dirName: "visual-svg")
+        XCTAssertTrue(refreshed.contains("version: 1.1.0"))
+        XCTAssertTrue(refreshed.contains("动效"))
+        XCTAssertTrue(refreshed.contains("animateTransform"))
+        XCTAssertFalse(refreshed.contains("version: 1.0.1"))
     }
 
     func testSkillImportSingleSkillMarkdownMergesExistingSiblings() async throws {

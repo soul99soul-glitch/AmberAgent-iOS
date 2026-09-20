@@ -37,6 +37,9 @@ object GenerativeUiPromptCatalog {
                 appendLine("- The JSON title is the native card header; do not repeat the same title inside the SVG artwork.")
                 appendLine("- Never output generic placeholder titles or template-only widget code; every widget must contain real rendered SVG/HTML.")
                 appendLine("- Do not use iframe, object, embed, form, meta, link, base tags, external CDNs, fixed positioning, or navigation.")
+                appendLine("- Motion is allowed inside widget_code when the user asks for animated/moving visuals: SVG SMIL (<animate>, <animateTransform>, <animateMotion>+<mpath xlink:href=\"#id\">, <set>) and CSS inside <style> (@keyframes, animation, transition) render and play inline.")
+                appendLine("- Prefer auto-starting animations (begin=\"0s\", repeatCount=\"indefinite\", or CSS infinite): taps on the inline card open the expanded view, so begin=\"click\" never fires there.")
+                appendLine("- Animate transforms/opacity/SMIL attributes and keep moving elements inside the viewBox at all times; group parts in <g> and animate the group.")
                 if (setting.enableActions) {
                     appendLine("- You may add up to 3 optional native actions: \"actions\":[{\"id\":\"explain\",\"label\":\"解释这块\",\"instruction\":\"解释图中的关键节点\"}].")
                 }
@@ -59,7 +62,8 @@ object GenerativeUiPromptCatalog {
                 appendLine("- When the user asks to PREVIEW / OPEN / BROWSE / 打开 / 预览 / 给我看 / 发出来预览 a PPT/HTML deck previously saved to /workspace, do NOT call share_file. Read it and emit one complete full_html show-widget if it fits; otherwise say the preview is too large instead of emitting partial HTML.")
                 appendLine("- share_file is only for genuine sharing/exporting/forwarding; previews always stay inside the chat as widgets.")
                 appendLine("- full_html spec.html may be much larger than ordinary widget_code, but it must still be complete in one response: avoid base64 images, huge static datasets, and repeated templates.")
-                appendLine("- Do not use script tags or inline event handlers in ordinary widget_code; JavaScript will be stripped there. The script-capable PPT path is renderer \"${GenerativeUiProtocol.FULL_HTML_RENDERER}\" with HTML in spec.html.")
+                appendLine("- Do not use script tags or inline event handlers in ordinary widget_code; JavaScript will be stripped there. The script-capable path is renderer \"${GenerativeUiProtocol.FULL_HTML_RENDERER}\" with HTML in spec.html.")
+                appendLine("- full_html is not limited to decks: a complete single-page HTML document in spec.html is also valid for JavaScript-driven animated/interactive visuals. The timeline still shows only the widget_code cover; the live page plays in the expanded view.")
                 appendLine("- Do not make decorative widgets that merely repeat the prose answer.")
                 append(modelGuidance(model))
             }
@@ -89,7 +93,7 @@ object GenerativeUiPromptCatalog {
         return """
             **Visible Generative UI Retry**
             The previous stream did not produce a visible widget: $issue
-            Reply in visible content immediately with one valid fenced `show-widget` JSON block containing a small, static, self-contained `widget_code` SVG tailored to the user's request, then at most one short sentence.
+            Reply in visible content immediately with one valid fenced `show-widget` JSON block containing a small, self-contained `widget_code` SVG tailored to the user's request, then at most one short sentence.
             Do not use renderer/spec in this retry. Do not put widget JSON or SVG inside hidden reasoning. Do not output Markdown-only prose.
         """.trimIndent()
     }

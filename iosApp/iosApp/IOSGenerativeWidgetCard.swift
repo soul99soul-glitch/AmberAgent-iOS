@@ -265,19 +265,28 @@ enum IOSGenerativeWidgetSVGExport {
                 if depth > 0 {
                     depth -= 1
                     if depth == 0, let start {
-                        return String(source[start..<tag.upperBound])
+                        return declaringXlinkNamespaceIfNeeded(String(source[start..<tag.upperBound]))
                     }
                 }
             } else {
                 if start == nil { start = tag.lowerBound }
                 if selfClosing, depth == 0, let start {
-                    return String(source[start..<tag.upperBound])
+                    return declaringXlinkNamespaceIfNeeded(String(source[start..<tag.upperBound]))
                 }
                 if !selfClosing { depth += 1 }
             }
             cursor = tag.upperBound
         }
         return nil
+    }
+
+    /// HTML 解析器容忍未声明的 xlink:href，但独立 .svg 是 XML——导出时补齐命名空间声明。
+    private static func declaringXlinkNamespaceIfNeeded(_ svg: String) -> String {
+        guard svg.contains("xlink:"), !svg.contains("xmlns:xlink"),
+              let open = svg.range(of: "<svg") else { return svg }
+        var svg = svg
+        svg.insert(contentsOf: #" xmlns:xlink="http://www.w3.org/1999/xlink""#, at: open.upperBound)
+        return svg
     }
 
     static func filename(for title: String?) -> String {
@@ -1040,6 +1049,7 @@ private func receiverHTML(interactive: Bool, fillContainer: Bool) -> String {
     table{width:100%;border-collapse:collapse;}
     td,th{border:1px solid #d8d8dd;padding:6px 8px;}
     a{color:#1F5EFF;text-decoration:none;}
+    @media (prefers-reduced-motion: reduce){*{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
     </style>
     </head>
     <body>
@@ -1080,8 +1090,15 @@ private func receiverHTML(interactive: Bool, fillContainer: Bool) -> String {
           }
         }
       }
+      function applyMotionPreference(){
+        if(!window.matchMedia||!matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        var svgs=root.getElementsByTagName('svg');
+        for(var i=0;i<svgs.length;i++){
+          if(svgs[i].pauseAnimations){ svgs[i].pauseAnimations(); svgs[i].setCurrentTime(0); }
+        }
+      }
       window.__amberWidgetSetHtml=function(html){
-        if(root.innerHTML!==html){ root.innerHTML=html; clampSvgOverflow(); }
+        if(root.innerHTML!==html){ root.innerHTML=html; clampSvgOverflow(); applyMotionPreference(); }
         report();
       };
       new ResizeObserver(report).observe(root);

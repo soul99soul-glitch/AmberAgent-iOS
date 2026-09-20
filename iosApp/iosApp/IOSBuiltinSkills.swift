@@ -165,6 +165,7 @@ enum IOSBuiltinSkills {
             legacyChineseSkillCreatorMarkdownV21,
             legacyEnglishSkillCreatorMarkdown,
             visualSvgMarkdown,
+            legacyVisualSvgMarkdownV101,
             providerSetupMarkdown,
         ]
     }
@@ -533,6 +534,102 @@ Do not create extra files such as `README.md`, `INSTALLATION_GUIDE.md`, or `CHAN
     /// 融合 visualise（对话内联图解）与 upbrew svg-creator（插画技法），统一 Amber `show-widget` 出口。
     /// 可选 seed：安装但不默认启用。
     private static let visualSvgMarkdown = #"""
+---
+name: visual-svg
+version: 1.1.0
+description: 当用户要画 SVG、矢量图、流程图、架构图、示意图、信息图、图标、Logo 线稿、插画风角色/场景矢量图，或说「画一个」「画张图」「可视化」「diagram」「illustrate」且适合用矢量表达时使用。用户要「会动的 SVG」「动态图」「animated SVG」「动画矢量」也用本技能（SMIL/CSS 动画）。启用后可 use_skill 加载画法；已加载或目录已提示时，按 diagram/illustration 直接输出 Amber show-widget。不要用本技能替代真实照片级生图（generate_image）。
+---
+
+# Visual SVG（图解 + 插画）
+
+一个技能、两条画法、统一 Amber 出口。技法提炼自开源 visualise（内联图解纪律）与 svg-creator（插画光影），已改成 Amber 时间线可渲染的 `show-widget`。
+
+## 何时调用
+
+用户要「看得见」的矢量结果时使用本技能画法。选模式，再画，再交付。不必为「只是画图」另开工具链；需要事实时先取事实，再画最终图。
+
+| 用户意图 | 模式 |
+|---------|------|
+| 流程、架构、时序、对比、结构拆解、示意图、信息图 | **diagram** |
+| 角色、吉祥物、场景、装饰插画、有光影的矢量画 | **illustration** |
+| 小图标、线稿 Logo、徽章 | **diagram**（极简网格；不要插画滤镜） |
+| 写实照片、厚涂、材质丰富海报 | **不要用本技能** → `generate_image` |
+
+不确定时：关系/步骤清楚 → diagram；要「好看/氛围/角色」→ illustration。
+
+## 统一出口（强制）
+
+1. 可见回复先一句短说明（可省略标题复述）。
+2. 立刻输出**一个**完整 fenced 块：
+
+````
+```show-widget
+{"title":"简短标题","widget_code":"<svg width=\"100%\" viewBox=\"0 0 680 H\" xmlns=\"http://www.w3.org/2000/svg\">...</svg>"}
+```
+````
+
+3. 规则：
+- `widget_code` 必须是**完整**单根 `<svg>`，JSON 内转义引号；尽量单行 JSON。
+- `width="100%"` + `viewBox="0 0 680 H"`；内容留 ≥24px 边距，勿画出 viewBox。
+- `title` 是原生卡片标题；**不要**在 SVG 里再画一遍相同大标题。
+- `widget_code` 默认上限约 12000 字符；超限先减细节，不要拆成多个 widget。
+- 不要用 \`\`\`visualizer、\`\`\`svg、单独 HTML 页、MiniApp、或本机 Python/Cairo 渲染环。
+- 不要为「只是画图」去调 browser / eval_javascript / 终端；需要事实时先工具，再画最终图。
+- 勿在 reasoning/thinking 里藏 show-widget JSON。
+
+## 模式 A — diagram（清晰优先）
+
+目标：手机上一眼可读。
+
+- 扁平色块 + 细描边；**少用**渐变、阴影、模糊、噪点（避免糊成一团）。
+- 节点圆角 `rx="8"`～`12`；连线 stroke `#94a3b8`，宽 2；箭头用 `marker` 或明确三角。
+- 标签 12–16px；长文手动换行；单图颜色 ≤ 3 组语义色（如蓝=输入、绿=处理、橙=结果）。
+- 分层：`#background` → `#nodes` → `#labels` → `#connections`（连线最后画，避免被挡住）。
+- 先心算布局：清单元素 → 网格占位 → 按文字估宽 → 再写 SVG。
+- 交付前自检：无重叠框、无出界文字、箭头不穿字、viewBox 高度贴合内容。
+
+## 模式 B — illustration（观感优先）
+
+目标：矢量也有体积与光感（默认静态；用户要动效时按下节加 SMIL/CSS 动画）。
+
+- 结构：`<defs>`（渐变/滤镜）→ `#background` → `#midground` → `#foreground` → `#effects`。
+- 重要色面用 **4+ 色标** 渐变；球体用径向渐变并偏移高光（如 `fx="0.3" fy="0.3"`）。
+- 五区光（非平面色）：高光（偏暖）→ 亮部 → 固有色 → 形影（偏冷蓝紫，忌纯黑）→ 反射光（阴影边缘低透明暖色）。
+- 阴影用深蓝/紫/青（如 `#1a1a4e`），不要 `#000` 死黑。
+- 角色：躯干 → 腿 → 臂 → 头 → 细节；关节用圆帽描边或圆点衔接，避免悬浮断肢。
+- 可少量 `feGaussianBlur` 投影；控制滤镜数量，优先观感与体量。
+- 仍遵守 viewBox/边距/字号与 12000 字符上限。
+
+## 动效（用户要「会动」「动态」「animated」时）
+
+默认交付静态图；用户明确要动效，或题材本身需要运动（骑车、转轮、流水）时，用声明式动画，不写 JS。
+
+- SMIL：`<animate attributeName="...">`（属性值插值）、`<animateTransform type="rotate|translate|scale">`（位移/旋转/缩放）、`<animateMotion>` 配 `<mpath xlink:href="#path">`（沿路径运动）。
+- CSS：`<style>` 内 `@keyframes` + `animation`/`transition` 作用于 class；SVG 元素旋转前先设 `transform-box:fill-box;transform-origin:center`。
+- 自动播放优先：`begin="0s"`、`repeatCount="indefinite"` 或 CSS `infinite`。不要用 `begin="click"`——卡片内点击是打开展开页，不会触发动画。
+- 部件分组 `<g>` 后整体动（如车轮组旋转、腿部组摆动）；一两组循环动画即可，不堆帧数。
+- 运动元素全程留在 viewBox 内；优先 transform/opacity/SMIL 属性动画，避免动画改变卡片布局高度。
+- 不要为动效写 `<script>`（会被剥掉）。需要 JS 物理/程序动画时走 `full_html`：`spec.html` 放完整单页 HTML，卡片仍只显示静态封面，展开页可交互播放。
+
+## 安全与禁忌
+
+- 不要：`<script>`、外部 URL、`foreignObject` 套复杂 HTML、iframe、表单、事件处理器。
+- 装饰性可用 `aria-hidden="true"`；表意图加 `<title>`。
+- 不要把多页 PPT 画进一张 SVG 网格；幻灯片走 full_html 演示路径（若用户要 PPT）。
+- 不要输出占位模板图；每个 widget 必须对应当前用户请求。
+
+## 最短自检
+
+- [ ] 模式选对（diagram / illustration）
+- [ ] 仅一个完整 `show-widget`，SVG 在 `widget_code` 内
+- [ ] viewBox 680 宽 + 边距；标题不重复
+- [ ] diagram 清晰可读 / illustration 有光影体积
+- [ ] 要动效时用 SMIL/CSS 自动播放，无 `begin="click"`
+- [ ] 无脚本、无外链、体积可控
+"""#
+
+    /// 1.0.1 出厂快照：仅用于识别未修改的老安装并自动刷新，不作恢复目标。
+    static let legacyVisualSvgMarkdownV101 = #"""
 ---
 name: visual-svg
 version: 1.0.1

@@ -658,6 +658,25 @@ final class IOSGenerativeWidgetParserTests: XCTestCase {
         )
     }
 
+    func testSVGExportDeclaresXlinkNamespaceWhenUsed() {
+        let source = ##"<div><svg viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg"><animateMotion><mpath xlink:href="#p"/></animateMotion><path id="p" d="M0 0h9"/></svg></div>"##
+
+        XCTAssertEqual(
+            IOSGenerativeWidgetSVGExport.extractSVG(from: source),
+            ##"<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 10 10" xmlns="http://www.w3.org/2000/svg"><animateMotion><mpath xlink:href="#p"/></animateMotion><path id="p" d="M0 0h9"/></svg>"##
+        )
+        XCTAssertEqual(
+            IOSGenerativeWidgetSVGExport.extractSVG(from: ##"<svg xmlns:xlink="http://www.w3.org/1999/xlink"><mpath xlink:href="#p"/></svg>"##),
+            ##"<svg xmlns:xlink="http://www.w3.org/1999/xlink"><mpath xlink:href="#p"/></svg>"##,
+            "已声明命名空间时不得重复注入"
+        )
+        XCTAssertEqual(
+            IOSGenerativeWidgetSVGExport.extractSVG(from: #"<svg><rect/></svg>"#),
+            #"<svg><rect/></svg>"#,
+            "未使用 xlink 时不注入声明"
+        )
+    }
+
     func testSVGExportOnlyAllowsCompleteReadySVGWidgets() {
         let svg = "<svg><rect/></svg>"
         let completeWidget = IOSGenerativeWidget(id: "complete", title: nil, widgetCode: svg, complete: true)
@@ -721,6 +740,27 @@ final class IOSGenerativeWidgetParserTests: XCTestCase {
         XCTAssertEqual(IOSGenerativeWidgetSVGExport.filename(for: "\n\u{0000}\t"), "visualization.svg")
     }
 
+    func testAnimatedSvgWidgetCodeParsesToCompleteWidget() {
+        let segments = IOSGenerativeWidgetParser.parse(
+            """
+            ```show-widget
+            {"title":"鹈鹕骑车","widget_code":"<svg width=\\"100%\\" viewBox=\\"0 0 680 340\\" xmlns=\\"http://www.w3.org/2000/svg\\"><g><circle cx=\\"80\\" cy=\\"170\\" r=\\"24\\" fill=\\"#2563eb\\"><animateTransform attributeName=\\"transform\\" type=\\"rotate\\" from=\\"0 80 170\\" to=\\"360 80 170\\" dur=\\"2s\\" repeatCount=\\"indefinite\\"/></circle></g></svg>"}
+            ```
+            """,
+            streaming: false
+        )
+
+        guard case .widget(let widget) = segments.single else {
+            return XCTFail("Expected widget")
+        }
+        XCTAssertTrue(widget.complete)
+        XCTAssertTrue(widget.widgetCode.contains("<animateTransform"))
+        XCTAssertEqual(
+            IOSGenerativeWidgetSanitizer.sanitize(widget.widgetCode).status,
+            .ready
+        )
+    }
+
     private func message(role: MessageRole, text: String) -> UIMessage {
         UIMessage(
             id: KotlinUuid.companion.random(),
@@ -745,5 +785,213 @@ final class IOSGenerativeWidgetParserTests: XCTestCase {
 private extension Array {
     var single: Element? {
         count == 1 ? self[0] : nil
+    }
+}
+
+/// 动态 SVG 契约：SMIL 与 CSS 动画必须穿过 sanitize 到达 WKWebView，
+/// 同时安全边界（script / 事件属性 / 外链）不回归。
+final class IOSGenerativeWidgetSanitizerTests: XCTestCase {
+    private func sanitize(_ code: String) -> IOSSanitizedGenerativeWidget {
+        IOSGenerativeWidgetSanitizer.sanitize(code)
+    }
+
+    func testSmilElementsPassThroughSanitizer() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="80" cy="170" r="24" fill="#2563eb">
+                <animate attributeName="cx" values="80;600;80" dur="4s" repeatCount="indefinite"/>
+            </circle>
+            <g transform="translate(340 170)">
+                <rect x="-30" y="-30" width="60" height="60" fill="#16a34a">
+                    <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="3s" repeatCount="indefinite" additive="sum"/>
+                </rect>
+            </g>
+            <rect x="300" y="80" width="20" height="20" fill="#ea580c"><set attributeName="opacity" to="0.2" begin="1s"/></rect>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertTrue(result.html.contains("<animate attributeName=\"cx\""))
+        XCTAssertTrue(result.html.contains("<animateTransform"))
+        XCTAssertTrue(result.html.contains("repeatCount=\"indefinite\""))
+        XCTAssertTrue(result.html.contains("<set attributeName=\"opacity\""))
+    }
+
+    func testSmilMotionPathReferenceSurvives() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+            <path id="rail" d="M60 260 Q340 60 620 260" fill="none" stroke="#94a3b8"/>
+            <circle r="14" fill="#9333ea">
+                <animateMotion dur="3s" repeatCount="indefinite"><mpath xlink:href="#rail"/></animateMotion>
+            </circle>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertTrue(result.html.contains("<animateMotion"))
+        XCTAssertTrue(result.html.contains("xlink:href=\"#rail\""))
+    }
+
+    func testCssKeyframeAnimationInsideStylePassesThrough() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <style>
+            .wheel { animation: spin 2s linear infinite; transform-box: fill-box; transform-origin: center; }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            </style>
+            <g class="wheel"><circle cx="340" cy="170" r="60" fill="none" stroke="#2563eb" stroke-width="10"/></g>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertTrue(result.html.contains("@keyframes spin"))
+        XCTAssertTrue(result.html.contains("animation: spin 2s linear infinite"))
+        XCTAssertTrue(result.html.contains("transform-origin: center"))
+    }
+
+    func testInternalPaintServerUrlReferenceSurvives() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="g"><stop offset="0" stop-color="#2563eb"/><stop offset="1" stop-color="#16a34a"/></linearGradient></defs>
+            <rect x="40" y="40" width="600" height="120" rx="14" fill="url(#g)">
+                <animate attributeName="opacity" values="1;0.4;1" dur="2s" repeatCount="indefinite"/>
+            </rect>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertTrue(result.html.contains("fill=\"url(#g)\""))
+    }
+
+    func testAnimationCannotSmuggleScriptOrHandlers() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg" onload="alert(1)">
+            <script>alert(2)</script>
+            <circle cx="80" cy="170" r="24" fill="#2563eb" onclick="alert(3)">
+                <animate attributeName="cx" values="80;600;80" dur="4s" repeatCount="indefinite" onbegin="alert(4)"/>
+            </circle>
+            <a href="javascript:alert(5)"><text x="40" y="40">x</text></a>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertFalse(result.html.lowercased().contains("<script"))
+        XCTAssertFalse(result.html.containsMatch(pattern: #"\son[a-z]+\s*="#))
+        XCTAssertFalse(result.html.lowercased().contains("javascript:"))
+        XCTAssertTrue(result.html.contains("<animate attributeName=\"cx\""))
+    }
+
+    func testEntityEncodedJavascriptInSmilValuesIsUnsafe() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <a><animate attributeName="href" values="java&#115;cript:alert(1)" dur="1s"/>
+            <text x="40" y="40">x</text></a>
+        </svg>
+        """#
+
+        XCTAssertEqual(sanitize(svg).status, .unsafe)
+    }
+
+    func testSmilAnimationOfEventAttributesIsUnsafe() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <set attributeName="onload" to="alert(1)"/>
+            <rect x="40" y="40" width="100" height="100" fill="#2563eb"/>
+        </svg>
+        """#
+
+        XCTAssertEqual(sanitize(svg).status, .unsafe)
+    }
+
+    func testExternalMotionPathReferenceIsStripped() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+            <circle r="14" fill="#9333ea">
+                <animateMotion dur="3s" repeatCount="indefinite"><mpath xlink:href="https://evil.example/p.svg#p"/></animateMotion>
+            </circle>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertFalse(result.html.contains("xlink:href=\"https://"))
+    }
+
+    func testCssUrlInsideStyleKeepsInternalPaintServer() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <style>.fade { animation: pulse 1s ease infinite; fill: url(#g); } @keyframes pulse { 50% { opacity: .3; } }</style>
+            <defs><linearGradient id="g"><stop offset="0" stop-color="#2563eb"/></linearGradient></defs>
+            <rect class="fade" x="40" y="40" width="600" height="120" rx="14"/>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertTrue(result.html.contains("fill: url(#g)"))
+    }
+
+    func testMissingSemicolonNumericEntityInSmilValuesIsUnsafe() {
+        // HTML5 对缺失分号的数字字符引用按 parse-error 解码：&#106 → j
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <a><animate attributeName="href" values="&#106avascript:alert(1)" dur="1s"/>
+            <text x="40" y="40">x</text></a>
+        </svg>
+        """#
+
+        XCTAssertEqual(sanitize(svg).status, .unsafe)
+    }
+
+    func testNamedEntitiesInSmilValuesAreUnsafe() {
+        // &colon;/&sol;/&Tab;/&NewLine; 由浏览器在取值时解码
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <a><animate attributeName="href" values="javascript&colon;alert(1)" dur="1s"/>
+            <text x="40" y="40">x</text></a>
+        </svg>
+        """#
+        let svgTab = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <a><animate attributeName="href" values="java&Tab;script&colon;alert(1)" dur="1s"/>
+            <text x="40" y="40">x</text></a>
+        </svg>
+        """#
+        let svgDataHtml = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <a><animate attributeName="href" values="data&colon;text&sol;html,&lt;svg/&gt;" dur="1s"/>
+            <text x="40" y="40">x</text></a>
+        </svg>
+        """#
+
+        XCTAssertEqual(sanitize(svg).status, .unsafe)
+        XCTAssertEqual(sanitize(svgTab).status, .unsafe)
+        XCTAssertEqual(sanitize(svgDataHtml).status, .unsafe)
+    }
+
+    func testCssUrlWithWhitespaceAroundQuotedInternalRefSurvives() {
+        let svg = #"""
+        <svg width="100%" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+            <defs><linearGradient id="g"><stop offset="0" stop-color="#2563eb"/></linearGradient></defs>
+            <rect x="40" y="40" width="600" height="120" rx="14" fill="url( '#g' )"/>
+        </svg>
+        """#
+
+        let result = sanitize(svg)
+
+        XCTAssertEqual(result.status, .ready)
+        XCTAssertTrue(result.html.contains("url( '#g' )"))
     }
 }
