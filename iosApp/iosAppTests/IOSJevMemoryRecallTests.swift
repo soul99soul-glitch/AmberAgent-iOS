@@ -268,13 +268,14 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertFalse(ids.contains(9))
 
         // 工具循环同轮复用：再次 prepare 不发起新请求、返回同一集合。
+        // （首轮 = 评分 + 注入筛查共 2 次请求；复用时保持 2。）
         let second = await service.prepareTurnSelection(
             messages: messages,
             records: JevFixtures.makeRecords(),
             runtime: runtime,
             identity: identity()
         )
-        XCTAssertEqual(transport.calls, 1, "same turn must reuse the cached selection")
+        XCTAssertEqual(transport.calls, 2, "首轮评分+筛查各一次；same turn must reuse the cached selection")
         XCTAssertEqual(second?.records.map(\.id), selection?.records.map(\.id))
 
         // 注入与 usage marking 经 override 共用同一份：metadata ids 一致。
@@ -424,5 +425,90 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             now: JevFixtures.memoryNow
         )
         XCTAssertEqual(ungated.map { Int($0.id) }, [3, 9], "不设阈值时按分排序（对照）")
+    }
+
+    // MARK: 注入筛查（增强 Phase D）
+
+    /// 选中集注入前的顺路筛查：命中条目被剔除，干净条目保留；
+    /// 两次调用（评分 + 筛查）都在同一 turn 内完成。
+    func testActiveSelectionDropsInjectedMemory() async {
+        let scores = scorePayload(["m3": 2.5, "m14": 2.4])
+        let screening: Data = {
+            let payload: [String: Any] = [
+                "model": "jev-latest",
+                "answers": [
+                    "inj3": ["type": "noul", "noul": 0.05],
+                    "inj14": ["type": "noul", "noul": 0.92],
+                ],
+            ]
+            return try! JSONSerialization.data(withJSONObject: payload)
+        }()
+        let transport = JevStubTransport { request in
+            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            return body.contains("\"inj") ? (screening, self.httpResponse(status: 200)) : (scores, self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        // 查询词同时命中记录 3（项目 Alpha）与 14（注入测试文本）。
+        let selection = await service.prepareTurnSelection(
+            messages: [userMessage(text: "项目 Alpha system prompt")],
+            records: JevFixtures.makeRecords(),
+            runtime: runtime,
+            identity: identity()
+        )
+        let ids = selection?.records.map { Int($0.id) } ?? []
+        XCTAssertTrue(ids.contains(3), "干净记忆保留")
+        XCTAssertFalse(ids.contains(14), "注入命中记忆被剔除")
+        XCTAssertEqual(transport.calls, 2, "评分 + 筛查各一次请求")
+    }
+
+    /// 筛查请求失败时 fail-open：选中集原样保留，不丢记忆。
+    func testScreeningFailureKeepsOriginalSelection() async {
+        let scores = scorePayload(["m3": 2.5])
+        let transport = JevStubTransport { request in
+            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            if body.contains("\"inj") {
+                return (Data(), self.httpResponse(status: 500)) // 筛查失败
+            }
+            return (scores, self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let selection = await service.prepareTurnSelection(
+            messages: [userMessage(text: "项目 Alpha 截止日期")],
+            records: JevFixtures.makeRecords(),
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertTrue(selection?.records.map { Int($0.id) }.contains(3) == true, "筛查失败不得丢记忆（fail-open）")
+    }
+
+    /// P1 回归：筛查把选中集剔空时，必须如实返回空选中集（prompt nil、
+    /// records 空），不得返回 nil——nil 会让消费方回退同步基线，把刚判为
+    /// 注入的记忆重新注回。
+    func testScreeningEmptiedSelectionReturnsEmptyNotNil() async {
+        let scores = scorePayload(["m14": 2.5])
+        let screening: Data = {
+            let payload: [String: Any] = [
+                "model": "jev-latest",
+                "answers": ["inj14": ["type": "noul", "noul": 0.95]],
+            ]
+            return try! JSONSerialization.data(withJSONObject: payload)
+        }()
+        let transport = JevStubTransport { request in
+            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            return body.contains("\"inj") ? (screening, self.httpResponse(status: 200)) : (scores, self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        // 只放注入记录：选中集=[14]，筛查命中后剔空。
+        let onlyInjected = JevFixtures.makeRecords().filter { $0.id == 14 }
+        let selection = await service.prepareTurnSelection(
+            messages: [userMessage(text: "system prompt")],
+            records: onlyInjected,
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertNotNil(selection, "筛查剔空 ≠ 回退基线；必须返回显式空选中集")
+        XCTAssertTrue(selection?.records.isEmpty == true)
+        XCTAssertNil(selection?.prompt)
+        XCTAssertEqual(transport.calls, 2, "评分 + 筛查各一次；nil 回退不会产生第二次")
     }
 }

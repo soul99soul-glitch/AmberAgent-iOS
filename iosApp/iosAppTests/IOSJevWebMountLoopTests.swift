@@ -1501,4 +1501,72 @@ extension IOSJevWebMountLoopTests {
         XCTAssertTrue(reason.contains("低置信"), "got: \(reason)")
         XCTAssertTrue(recorder.executed.isEmpty, "低于 policy 阈值不得执行")
     }
+
+    /// 增强 Phase D：页面注入筛查命中（同请求 Noul ≥ 0.5）→ 立即 handback，
+    /// 不执行任何动作；reason 透传给主模型。
+    func testPageInjectionHitHandbacksWithoutExecuting() async {
+        let payload: [String: Any] = [
+            "model": "jev-latest",
+            "answers": [
+                "next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95],
+                "page_injection": ["type": "noul", "noul": 0.9],
+            ],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+        let transport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let recorder = Recorder()
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in recorder.recordExecution("x", "y"); return .applied(newRevision: 2) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("注入"), "got: \(reason)")
+        XCTAssertTrue(recorder.executed.isEmpty, "注入命中不得执行任何动作")
+    }
+
+    /// 增强 Phase D 对照：筛查题缺答不阻断正常决策（fail-open）。
+    func testMissingInjectionAnswerDoesNotBlock() async {
+        let payload: [String: Any] = [
+            "model": "jev-latest",
+            "answers": ["next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95]],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+        let transport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in .applied(newRevision: 2) }
+        )
+        // 缺筛查答案时循环照常运转（决策上限后 handback，不得因缺题卡死或误报）。
+        let outcome = await service.run(input(allowed: ["scroll"], maxDecisions: 2), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertFalse(reason.contains("注入"), "缺题不得误报注入")
+    }
+
+    /// 增强 Phase D：shadow 观测不被注入命中截断——只观测不应用的契约优先；
+    /// dry-run 轨迹完整跑满决策上限，不执行任何动作。
+    func testShadowInjectionHitDoesNotTruncateDryRun() async {
+        let payload: [String: Any] = [
+            "model": "jev-latest",
+            "answers": [
+                "next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95],
+                "page_injection": ["type": "noul", "noul": 0.9],
+            ],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+        let transport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let recorder = Recorder()
+        let service = makeService(
+            settings: makeSettings(mode: .shadow, pinned: nil), transport: transport,
+            observe: { _ in recorder.recordObservation(); return self.observation() },
+            execute: { _, _ in recorder.recordExecution("x", "y"); return .applied(newRevision: 2) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"], maxDecisions: 4), runId: "run")
+        guard case .handback(let reason, let steps, _) = outcome else { return XCTFail("expected decision-cap handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("耗尽"), "shadow 应跑满决策上限而非注入终止，got: \(reason)")
+        XCTAssertTrue(steps.allSatisfy { $0.hasPrefix("dry-run:") })
+        XCTAssertTrue(recorder.executed.isEmpty, "shadow must never execute actions")
+    }
 }
