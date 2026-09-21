@@ -269,5 +269,38 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertLessThanOrEqual(built!.questions.count, 32, "questions must never exceed client maxQuestions")
         XCTAssertFalse(built!.state.contains("tool_39"), "candidates beyond the cap must not leak into state")
     }
+
+    /// A3 置信弃权：高分但置信低于 policy 阈值的候选按未入选计；
+    /// 不设阈值时同一响应仍由高分候选领先（对照证明是置信门在起作用）。
+    func testConfidenceFloorGatesHighScoreCandidate() async {
+        let payload: [String: Any] = [
+            "model": "jev-latest",
+            "answers": [
+                "wm_click": ["type": "score", "score": 2.8, "confidence": 0.3],
+                "workspace_file_write": ["type": "score", "score": 2.0, "confidence": 0.95],
+            ],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+
+        let ungatedTransport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let ungated = await execute(
+            makeService(settings: makeSettings(mode: .active), transport: ungatedTransport),
+            argumentsJson: args, bridge: makeBridge(), identity: identity()
+        )
+        let ungatedObject = try! JSONSerialization.jsonObject(with: ungated.data(using: .utf8)!) as! [String: Any]
+        XCTAssertEqual((ungatedObject["expanded_tools"] as! [String]).first, "wm_click", "无阈值：高分低置信候选领先")
+
+        var gated = makeSettings(mode: .active)
+        gated.policy.toolDiscoveryMinConfidence = 0.5
+        let gatedTransport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let output = await execute(
+            makeService(settings: gated, transport: gatedTransport),
+            argumentsJson: args, bridge: makeBridge(), identity: identity()
+        )
+        let object = try! JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as! [String: Any]
+        let expanded = object["expanded_tools"] as! [String]
+        XCTAssertEqual(expanded.first, "workspace_file_write", "低置信高分候选被弃权，次候选顶上")
+        XCTAssertFalse(expanded.contains("wm_click"), "被弃权候选不进入暴露集合")
+    }
 }
 

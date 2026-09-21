@@ -514,6 +514,41 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         settings.setAPIStyle(.vercelGateway)
         XCTAssertEqual(settings.resolvedEndpoint, IOSJevSettings.vercelGatewayEndpoint)
     }
+
+    /// A3：成功决策的指标携带头条数值（跨答案最大置信/最高分）；
+    /// 缓存命中同样填充；skipped 记录为 nil。
+    func testMetricsCarryHeadlineConfidenceAndScore() async {
+        let box = SettingsBox(makeSettings())
+        let metrics = MetricsSpy()
+        let payload: [String: Any] = [
+            "model": "jev-latest",
+            "answers": [
+                "t1": ["type": "score", "score": 2.0, "confidence": 0.7],
+                "t2": ["type": "score", "score": 2.8, "confidence": 0.4],
+            ],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+        let transport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let coordinator = makeCoordinator(settings: box, transport: transport, metrics: metrics)
+        let questions = [
+            // 4 级量表（合法分 0...3），与答案分 2.0/2.8 对齐。
+            IOSJevQuestion.score(id: "t1", levels: ["0", "1", "2", "3"], instructions: "a"),
+            IOSJevQuestion.score(id: "t2", levels: ["0", "1", "2", "3"], instructions: "b"),
+        ]
+        let context = IOSJevRunContext(runId: "run1", turnBudgetKey: "turn1", inputHash: "h")
+        let scopes: Set<IOSJevDataScope> = [.toolMetadata, .selectedTaskText]
+        _ = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: "s", questions: questions, context: context, cacheKey: "k-headline")
+        _ = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: "s", questions: questions, context: context, cacheKey: "k-headline")
+
+        let records = metrics.all()
+        XCTAssertEqual(records.count, 2, "网络一次 + 缓存命中一次")
+        XCTAssertEqual(records[0].outcome, "applied")
+        XCTAssertEqual(records[0].topConfidence, 0.7, "头条置信 = 跨答案最大值")
+        XCTAssertEqual(records[0].topScore, 2.8)
+        XCTAssertEqual(records[1].topConfidence, 0.7, "缓存命中同样填充头条数值")
+        XCTAssertEqual(records[1].latencyMs, 0, "缓存命中零延迟")
+        XCTAssertEqual(transport.calls, 1)
+    }
 }
 
 /// 简单异步门（测试专用）。

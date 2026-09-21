@@ -165,4 +165,27 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         )
         XCTAssertEqual(preferred.map { $0.model.modelId }, ["model-b", "model-a"], "unknown ids dropped, Jev order preserved")
     }
+
+    /// A3 置信弃权：低置信高分配适分不进首选集；高置信候选照常。
+    func testConfidenceFloorDropsLowConfidenceFit() async {
+        let payload: [String: Any] = [
+            "model": "jev-latest",
+            "answers": [
+                "model-a": ["type": "score", "score": 2.9, "confidence": 0.3],
+                "model-b": ["type": "score", "score": 2.5, "confidence": 0.95],
+            ],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: payload)
+        let transport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        var settings = makeSettings(mode: .active)
+        settings.policy.modelRoutingMinConfidence = 0.5
+        let service = makeService(settings: settings, transport: transport)
+        let candidates = ["model-a", "model-b"].map(makeCandidate)
+        let ranked = await service.rankedPreferredModelIds(
+            taskText: "修复这段代码的空指针",
+            candidates: candidates,
+            turnBudgetKey: "run-test"
+        )
+        XCTAssertEqual(ranked, ["model-b"], "低置信高分被弃权")
+    }
 }

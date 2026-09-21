@@ -170,7 +170,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
 
         // 缓存命中不占预算、不占并发。
         if let key = resolvedCacheKey, let cached = deps.client.cachedDecision(cacheKey: key) {
-            record(useCase: useCase, mode: mode, model: model, outcome: mode == .active ? "applied" : "observed", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: nil, suggestion: metricSuggestionProvider?(cached))
+            record(useCase: useCase, mode: mode, model: model, outcome: mode == .active ? "applied" : "observed", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: nil, suggestion: metricSuggestionProvider?(cached), headline: Self.headlineMetrics(from: cached))
             return mode == .active ? .applied(cached) : .observed(cached)
         }
 
@@ -224,7 +224,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             synchronized { consecutiveTransientFailures = 0 }
             finishBudget(turnKey: context.turnBudgetKey, requestBytes: decision.requestBytes)
             let outcome = mode == .active ? "applied" : "observed"
-            record(useCase: useCase, mode: mode, model: model, outcome: outcome, latencyMs: decision.latencyMs, requestBytes: decision.requestBytes, responseBytes: decision.responseBytes, usage: decision.usage, reason: nil, suggestion: metricSuggestionProvider?(decision))
+            record(useCase: useCase, mode: mode, model: model, outcome: outcome, latencyMs: decision.latencyMs, requestBytes: decision.requestBytes, responseBytes: decision.responseBytes, usage: decision.usage, reason: nil, suggestion: metricSuggestionProvider?(decision), headline: Self.headlineMetrics(from: decision))
             return mode == .active ? .applied(decision) : .observed(decision)
         } catch let error as IOSJevRequestError {
             switch error {
@@ -388,7 +388,8 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         responseBytes: Int,
         usage: IOSJevUsage?,
         reason: String?,
-        suggestion: (suggestedTop1: String?, keywordTop1: String?)?
+        suggestion: (suggestedTop1: String?, keywordTop1: String?)?,
+        headline: (topConfidence: Double?, topScore: Double?)? = nil
     ) {
         deps.metricsStore(
             IOSJevMetricsRecord(
@@ -404,10 +405,20 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
                 outputTokens: usage?.outputTokens,
                 reason: reason,
                 suggestedTop1: suggestion?.suggestedTop1,
-                keywordTop1: suggestion?.keywordTop1
+                keywordTop1: suggestion?.keywordTop1,
+                topConfidence: headline?.topConfidence,
+                topScore: headline?.topScore
             ),
             deps.now()
         )
+    }
+
+    /// 决策头条数值：跨答案的最大置信与最高分（非有限值剔除）。
+    /// 指标只承载分布监测口径；逐答案校准由分析侧从完整决策重建。
+    static func headlineMetrics(from decision: IOSJevDecision) -> (topConfidence: Double?, topScore: Double?) {
+        let confidences = decision.answers.compactMap(\.confidence).filter { $0.isFinite }
+        let scores = decision.answers.compactMap(\.score).filter { $0.isFinite }
+        return (confidences.max(), scores.max())
     }
 
     // MARK: Connection test（合成数据；返回实际模型版本、耗时与错误，不自动启用任何用途）

@@ -130,6 +130,7 @@ final class IOSJevMemoryRecallService {
             candidates: candidates,
             decision: decision,
             minScore: settings.policy.memoryRecallMinScore,
+            minConfidence: settings.policy.memoryRecallMinConfidence,
             queryText: queryText,
             now: Int64(Date().timeIntervalSince1970 * 1_000)
         )
@@ -219,14 +220,17 @@ final class IOSJevMemoryRecallService {
         candidates: [MemoryRecord],
         decision: IOSJevDecision,
         minScore: Double,
+        minConfidence: Double? = nil,
         queryText: String,
         now: Int64
     ) -> [MemoryRecord] {
         var scores: [Int32: Double] = [:]
+        var confidences: [Int32: Double] = [:]
         for answer in decision.answers where answer.type == "score" {
             guard let score = answer.score, answer.id.hasPrefix("m"),
                   let id = Int32(answer.id.dropFirst()) else { continue }
             scores[id] = score
+            if let confidence = answer.confidence { confidences[id] = confidence }
         }
         let candidateIds = Set(candidates.map(\.id))
         var selectedIds = Set<Int32>()
@@ -237,6 +241,8 @@ final class IOSJevMemoryRecallService {
             .filter { candidateIds.contains($0.id) && $0.kind != .topic }
             .compactMap { record -> (MemoryRecord, Double)? in
                 guard let score = scores[record.id], score >= minScore else { return nil }
+                // 置信弃权：低于 policy 阈值不进选中集；置信缺失不门控。
+                if let minConfidence, let confidence = confidences[record.id], confidence < minConfidence { return nil }
                 return (record, score)
             }
             .sorted {

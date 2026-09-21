@@ -111,7 +111,7 @@ enum IOSJevToolDiscoveryService {
         )
         switch outcome {
         case .applied(let decision):
-            if let ranking = ranking(from: decision, candidates: parsed.candidates, minScore: settings.policy.toolDiscoveryMinScore) {
+            if let ranking = ranking(from: decision, candidates: parsed.candidates, minScore: settings.policy.toolDiscoveryMinScore, minConfidence: settings.policy.toolDiscoveryMinConfidence) {
                 return bridge.executeToolSearch(argumentsJson: argumentsJson, rankingOverride: ranking)
             }
             // 低置信 / 无足够候选：回退原搜索。
@@ -231,7 +231,8 @@ enum IOSJevToolDiscoveryService {
     private static func ranking(
         from decision: IOSJevDecision,
         candidates: [SnapshotCandidate],
-        minScore: Double
+        minScore: Double,
+        minConfidence: Double? = nil
     ) -> [String]? {
         var scores: [String: (score: Double, confidence: Double?)] = [:]
         for answer in decision.answers where answer.type == "score" {
@@ -239,6 +240,16 @@ enum IOSJevToolDiscoveryService {
             scores[answer.id] = (score, answer.confidence)
         }
         let indexed = Array(candidates.enumerated())
+        // 置信弃权：低于 policy 阈值的候选直接剔除（不参与排序与入选）；
+        // 置信缺失不门控。
+        var abstained = Set<String>()
+        if let minConfidence {
+            for candidate in candidates {
+                if let confidence = scores[candidate.name]?.confidence, confidence < minConfidence {
+                    abstained.insert(candidate.name)
+                }
+            }
+        }
         let ordered = indexed
             .map { index, candidate in
                 let entry = scores[candidate.name]
@@ -249,8 +260,9 @@ enum IOSJevToolDiscoveryService {
                 if $0.keyword != $1.keyword { return $0.keyword > $1.keyword }
                 return $0.index < $1.index
             }
-        guard let best = ordered.first, best.score >= minScore else { return nil }
-        return ordered.filter { $0.score >= minScore }.map(\.name)
+        let surviving = ordered.filter { !abstained.contains($0.name) && $0.score >= minScore }
+        // 空集 = 低置信 / 无足够候选：回退原搜索。
+        return surviving.isEmpty ? nil : surviving.map(\.name)
     }
 
     static func stableHash(_ text: String) -> String {

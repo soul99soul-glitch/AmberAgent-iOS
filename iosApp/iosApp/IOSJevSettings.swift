@@ -157,6 +157,11 @@ struct IOSJevPolicy: Codable, Equatable {
         memoryRecallMinScore = try container.decodeIfPresent(Double.self, forKey: .memoryRecallMinScore) ?? 1.0
         contextSelectionMinScore = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinScore) ?? 1.0
         modelRoutingMinScore = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinScore) ?? 2.0
+        toolDiscoveryMinConfidence = try container.decodeIfPresent(Double.self, forKey: .toolDiscoveryMinConfidence)
+        memoryRecallMinConfidence = try container.decodeIfPresent(Double.self, forKey: .memoryRecallMinConfidence)
+        contextSelectionMinConfidence = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinConfidence)
+        modelRoutingMinConfidence = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinConfidence)
+        webActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .webActionsMinConfidence) ?? 0.5
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
         cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 300
         cooldownFailureThreshold = try container.decodeIfPresent(Int.self, forKey: .cooldownFailureThreshold) ?? 3
@@ -168,6 +173,8 @@ struct IOSJevPolicy: Codable, Equatable {
         case maxRequestBytes, maxResponseBytes, perTurnRequestBudget, perTurnStateBudgetBytes
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
         case memoryRecallMinScore, contextSelectionMinScore, modelRoutingMinScore
+        case toolDiscoveryMinConfidence, memoryRecallMinConfidence, contextSelectionMinConfidence
+        case modelRoutingMinConfidence, webActionsMinConfidence
         case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
     }
 
@@ -205,6 +212,15 @@ struct IOSJevPolicy: Codable, Equatable {
     var contextSelectionMinScore: Double = 1.0
     /// 模型调度：Score 达到该值（0-3 适配量表）才进入 Jev 首选集合。
     var modelRoutingMinScore: Double = 2.0
+    /// 置信弃权线（0-1）：答案置信低于该值时放弃 Jev 结果、回退原路径。
+    /// nil = 不门控（置信缺失也不门控）。默认值由 shadow 期校准数据逐用途确定，
+    /// 不采用供应商默认阈值——分桶校准见 IOSJevCalibration。
+    var toolDiscoveryMinConfidence: Double? = nil
+    var memoryRecallMinConfidence: Double? = nil
+    var contextSelectionMinConfidence: Double? = nil
+    var modelRoutingMinConfidence: Double? = nil
+    /// webActions 置信下限（原循环内硬编码 0.5 收编进版本化 policy）。
+    var webActionsMinConfidence: Double = 0.5
     /// 缓存条目上限（内存）。
     var cacheMaxEntries: Int = 128
     /// 缓存 TTL（秒）。
@@ -234,6 +250,11 @@ struct IOSJevMetricsRecord: Codable, Equatable, Sendable {
     var suggestedTop1: String?
     /// 同次判断的关键词路径 top1（对比 Jev 是否真的改变排序）。
     var keywordTop1: String?
+    /// 头条数值：该次决策全部答案中的最大置信（0-1）；跳过/错误为 nil。
+    /// 用于生产 shadow 的置信分布监测；逐答案校准明细由分析侧从完整决策重建。
+    var topConfidence: Double?
+    /// 头条数值：该次决策全部答案中的最高分；跳过/错误为 nil。
+    var topScore: Double?
 }
 
 /// 版本化 Jev 设置。revision 随每次更新递增，作为判断身份与缓存失效输入。

@@ -408,4 +408,31 @@ final class IOSJevContextSelectionTests: XCTestCase {
         XCTAssertTrue(projectedText.contains("段落39标记"), "blocks beyond the cap stay verbatim")
         XCTAssertFalse(projectedText.contains("段落5标记"), "low-score blocks within the cap are hidden")
     }
+
+    /// A3 置信弃权：低置信低分块 = 不确定 → 保留；高置信低分块照常隐藏。
+    func testLowConfidenceBlockIsKept() {
+        let candidates = [
+            IOSJevContextSelectionService.Block(index: 0, text: "a", mustKeep: false, keepReason: nil),
+            IOSJevContextSelectionService.Block(index: 1, text: "b", mustKeep: false, keepReason: nil),
+        ]
+        let decision = IOSJevDecision(
+            answers: [
+                IOSJevAnswer(id: "b0", type: "score", confidence: 0.3, score: 0.2),
+                IOSJevAnswer(id: "b1", type: "score", confidence: 0.95, score: 0.1),
+            ],
+            usage: nil, modelVersion: "m", latencyMs: 0, requestBytes: 0, responseBytes: 0
+        )
+        XCTAssertEqual(
+            IOSJevContextSelectionService.hiddenBlockIndices(
+                candidates: candidates, decision: decision, minScore: 1.0, minConfidence: 0.5
+            ),
+            [1], "低置信块保留，高置信低分块隐藏"
+        )
+        XCTAssertEqual(
+            IOSJevContextSelectionService.hiddenBlockIndices(
+                candidates: candidates, decision: decision, minScore: 1.0
+            ),
+            [0, 1], "不设阈值时两块都隐藏（对照）"
+        )
+    }
 }

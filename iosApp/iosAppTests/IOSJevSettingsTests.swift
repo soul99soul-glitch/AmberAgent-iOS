@@ -376,4 +376,50 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertEqual(summary.last24hApplied, 1)
         XCTAssertEqual(summary.last24hFallback, 1)
     }
+
+    // MARK: 置信弃权线（A3）
+
+    func testPolicyConfidenceFloorsDefaultsAndRoundTrip() throws {
+        var policy = IOSJevPolicy()
+        // 默认：四用途不门控；webActions 接管原循环内硬编码 0.5。
+        XCTAssertNil(policy.toolDiscoveryMinConfidence)
+        XCTAssertNil(policy.memoryRecallMinConfidence)
+        XCTAssertNil(policy.contextSelectionMinConfidence)
+        XCTAssertNil(policy.modelRoutingMinConfidence)
+        XCTAssertEqual(policy.webActionsMinConfidence, 0.5)
+
+        policy.toolDiscoveryMinConfidence = 0.7
+        policy.memoryRecallMinConfidence = 0.6
+        policy.contextSelectionMinConfidence = 0.65
+        policy.modelRoutingMinConfidence = 0.75
+        policy.webActionsMinConfidence = 0.8
+        let decoded = try JSONDecoder().decode(IOSJevPolicy.self, from: JSONEncoder().encode(policy))
+        XCTAssertEqual(decoded, policy)
+    }
+
+    func testPolicyLegacyDecodeWithoutConfidenceKeysUsesDefaults() throws {
+        let legacy = """
+        {"policyVersion":2,"toolDiscoveryMinScore":1.5}
+        """
+        let policy = try JSONDecoder().decode(IOSJevPolicy.self, from: Data(legacy.utf8))
+        XCTAssertEqual(policy.toolDiscoveryMinScore, 1.5, "存量字段保留")
+        XCTAssertNil(policy.toolDiscoveryMinConfidence)
+        XCTAssertNil(policy.memoryRecallMinConfidence)
+        XCTAssertNil(policy.contextSelectionMinConfidence)
+        XCTAssertNil(policy.modelRoutingMinConfidence)
+        XCTAssertEqual(policy.webActionsMinConfidence, 0.5)
+    }
+
+    func testMetricsRecordLegacyDecodeWithoutHeadlineFields() throws {
+        // 旧指标记录（无 topConfidence/topScore）必须解码成功且新字段为 nil。
+        let legacy = """
+        {"timestamp":0,"useCase":"toolDiscovery","mode":"shadow","modelVersion":"jev-fixed-v1",
+         "outcome":"observed","latencyMs":12,"requestBytes":100,"responseBytes":200}
+        """
+        let record = try JSONDecoder().decode(IOSJevMetricsRecord.self, from: Data(legacy.utf8))
+        XCTAssertEqual(record.outcome, "observed")
+        XCTAssertNil(record.topConfidence)
+        XCTAssertNil(record.topScore)
+        XCTAssertNil(record.suggestedTop1)
+    }
 }

@@ -154,7 +154,8 @@ final class IOSJevContextSelectionService {
         let hidden = Self.hiddenBlockIndices(
             candidates: candidates,
             decision: decision,
-            minScore: settings.policy.contextSelectionMinScore
+            minScore: settings.policy.contextSelectionMinScore,
+            minConfidence: settings.policy.contextSelectionMinConfidence
         )
         guard !hidden.isEmpty else { return messages }
 
@@ -290,22 +291,27 @@ final class IOSJevContextSelectionService {
 
     // MARK: Jev decision application
 
-    /// 只有低分块被隐藏；缺题/无效/不确定一律保留（缺失不等于 0 分）。
+    /// 只有低分块被隐藏；缺题/无效/低置信/不确定一律保留（缺失不等于 0 分）。
     static func hiddenBlockIndices(
         candidates: [Block],
         decision: IOSJevDecision,
-        minScore: Double
+        minScore: Double,
+        minConfidence: Double? = nil
     ) -> [Int] {
         var scores: [Int: Double] = [:]
+        var confidences: [Int: Double] = [:]
         for answer in decision.answers where answer.type == "score" {
             guard answer.id.hasPrefix("b"), let index = Int(answer.id.dropFirst()),
                   let score = answer.score else { continue }
             scores[index] = score
+            if let confidence = answer.confidence { confidences[index] = confidence }
         }
         return candidates
             .filter { block in
                 // 缺题（无评分）= 不确定 → 保留。
                 guard let score = scores[block.index] else { return false }
+                // 低置信 = 不确定 → 保留；置信缺失不门控。
+                if let minConfidence, let confidence = confidences[block.index], confidence < minConfidence { return false }
                 return score < minScore
             }
             .map(\.index)

@@ -117,12 +117,17 @@ final class IOSJevModelRoutingService {
         guard case .applied(let decision) = outcome else { return [] }
 
         var scores: [String: Double] = [:]
+        var confidences: [String: Double] = [:]
         for answer in decision.answers where answer.type == "score" {
             guard let score = answer.score, answer.id.count <= 128 else { continue }
             scores[answer.id] = score
+            if let confidence = answer.confidence { confidences[answer.id] = confidence }
         }
+        let minConfidence = settings.policy.modelRoutingMinConfidence
         let scored = entries.compactMap { entry -> (String, Double)? in
             guard let score = scores[entry.id], score >= settings.policy.modelRoutingMinScore else { return nil }
+            // 置信弃权：低于 policy 阈值不进首选集；置信缺失不门控。
+            if let minConfidence, let confidence = confidences[entry.id], confidence < minConfidence { return nil }
             return (entry.id, score)
         }
         let sorted = scored.sorted { lhs, rhs in

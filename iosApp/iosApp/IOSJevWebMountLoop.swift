@@ -392,8 +392,6 @@ final class IOSJevWebMountLoopService {
         /// probe 连续 N 次键失配后本次运行停用探测：DOM 高频变动页面上
         /// 探测必然 miss，每轮 2 次 JS 调用比每轮全量更贵。
         static let probeDisableAfterMisses = 3
-        /// Choice 置信下限：低于则 handback，不执行猜测动作；置信缺失不门控。
-        static let lowConfidenceThreshold = 0.5
     }
 
     func run(
@@ -847,9 +845,11 @@ final class IOSJevWebMountLoopService {
               let chosen = bounded.first(where: { Self.optionLabel($0) == chosenLabel }) else {
             return .indeterminate(reason: "返回答案缺失或不在候选内")
         }
-        // 低置信门：有置信值且低于阈值时交回主模型，不执行猜测动作。
+        // 低置信门（policy.webActionsMinConfidence）：有置信值且低于阈值时
+        // 交回主模型，不执行猜测动作；置信缺失不门控。
+        let confidenceFloor = deps.settingsProvider().policy.webActionsMinConfidence
         if let confidence = answer.confidence,
-           confidence < Constants.lowConfidenceThreshold {
+           confidence < confidenceFloor {
             return .indeterminate(reason: "低置信 \(confidence)")
         }
         return .chose(chosen, applicable: applicable)

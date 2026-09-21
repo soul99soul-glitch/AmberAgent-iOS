@@ -392,4 +392,37 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             seedOnMissingStore: false
         )
     }
+
+    /// A3 置信弃权：低置信高分记忆不进选中集；高置信次高分顶上。
+    /// 记录 3/9 均非 pinned/core，不会被强保留段重新捞回。
+    func testOrderedSelectionDropsLowConfidenceHighScore() {
+        let records = JevFixtures.makeRecords().filter { [3, 9].contains(Int($0.id)) }
+        let decision = IOSJevDecision(
+            answers: [
+                IOSJevAnswer(id: "m3", type: "score", confidence: 0.2, score: 0.95),
+                IOSJevAnswer(id: "m9", type: "score", confidence: 0.9, score: 0.6),
+            ],
+            usage: nil, modelVersion: "jev-latest", latencyMs: 10, requestBytes: 0, responseBytes: 0
+        )
+        let gated = IOSJevMemoryRecallService.orderedSelection(
+            eligible: records,
+            candidates: records,
+            decision: decision,
+            minScore: 0.34,
+            minConfidence: 0.5,
+            queryText: "项目",
+            now: JevFixtures.memoryNow
+        )
+        XCTAssertEqual(gated.map { Int($0.id) }, [9], "低置信高分被弃权")
+
+        let ungated = IOSJevMemoryRecallService.orderedSelection(
+            eligible: records,
+            candidates: records,
+            decision: decision,
+            minScore: 0.34,
+            queryText: "项目",
+            now: JevFixtures.memoryNow
+        )
+        XCTAssertEqual(ungated.map { Int($0.id) }, [3, 9], "不设阈值时按分排序（对照）")
+    }
 }

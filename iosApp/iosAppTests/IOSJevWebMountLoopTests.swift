@@ -1483,4 +1483,22 @@ extension IOSJevWebMountLoopTests {
         let handbackObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(handback.utf8)) as? [String: Any])
         XCTAssertEqual(handbackObject["status"] as? String, "handback")
     }
+
+    /// A3：置信下限收编进版本化 policy——调高 webActionsMinConfidence 后，
+    /// 原可通过的 0.9 置信也触发 handback 且不执行。
+    func testConfidenceFloorComesFromPolicy() async {
+        var settings = makeSettings(mode: .active)
+        settings.policy.webActionsMinConfidence = 0.95
+        let transport = JevStubTransport { _ in (self.choicePayload("scroll", confidence: 0.9), self.httpResponse(status: 200)) }
+        let recorder = Recorder()
+        let service = makeService(
+            settings: settings, transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, _ in recorder.recordExecution("x", "y"); return .applied(newRevision: 2) }
+        )
+        let outcome = await service.run(input(allowed: ["scroll"]), runId: "run")
+        guard case .handback(let reason, _, _) = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        XCTAssertTrue(reason.contains("低置信"), "got: \(reason)")
+        XCTAssertTrue(recorder.executed.isEmpty, "低于 policy 阈值不得执行")
+    }
 }
