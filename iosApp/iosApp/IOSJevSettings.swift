@@ -6,8 +6,8 @@ import Foundation
 // 持久化）；API Key 走 IOSCredentialSideTable（Keychain），绝不写进这里。
 // 旧配置（无该 key）默认全用途 off。Jev 不进入普通聊天 provider/模型列表。
 
-/// Jev 用途。五个用途均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 =
-/// Phase 2，模型调度/网页操作 = Phase 3）；设置页展示全部五个开关，
+/// Jev 用途。六个用途均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 =
+/// Phase 2，模型调度/网页操作 = Phase 3，意图路由 = 增强 Phase C）；
 /// webActions 的调用入口是 wm_run_goal 工具。
 enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
     case toolDiscovery
@@ -15,6 +15,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
     case contextSelection
     case modelRouting
     case webActions
+    case subagentIntent
 
     var id: String { rawValue }
 
@@ -25,6 +26,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
         case .contextSelection: "上下文筛选"
         case .modelRouting: "模型调度"
         case .webActions: "网页操作"
+        case .subagentIntent: "意图路由"
         }
     }
 
@@ -36,6 +38,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
         case .contextSelection: [.selectedTaskText, .toolOutput]
         case .modelRouting: [.selectedTaskText]
         case .webActions: [.webContent, .selectedTaskText]
+        case .subagentIntent: [.selectedTaskText, .toolMetadata]
         }
     }
 }
@@ -162,6 +165,7 @@ struct IOSJevPolicy: Codable, Equatable {
         contextSelectionMinConfidence = try container.decodeIfPresent(Double.self, forKey: .contextSelectionMinConfidence)
         modelRoutingMinConfidence = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinConfidence)
         webActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .webActionsMinConfidence) ?? 0.5
+        subagentIntentMinConfidence = try container.decodeIfPresent(Double.self, forKey: .subagentIntentMinConfidence)
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
         cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 300
         cooldownFailureThreshold = try container.decodeIfPresent(Int.self, forKey: .cooldownFailureThreshold) ?? 3
@@ -174,7 +178,7 @@ struct IOSJevPolicy: Codable, Equatable {
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
         case memoryRecallMinScore, contextSelectionMinScore, modelRoutingMinScore
         case toolDiscoveryMinConfidence, memoryRecallMinConfidence, contextSelectionMinConfidence
-        case modelRoutingMinConfidence, webActionsMinConfidence
+        case modelRoutingMinConfidence, webActionsMinConfidence, subagentIntentMinConfidence
         case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
     }
 
@@ -221,6 +225,9 @@ struct IOSJevPolicy: Codable, Equatable {
     var modelRoutingMinConfidence: Double? = nil
     /// webActions 置信下限（原循环内硬编码 0.5 收编进版本化 policy）。
     var webActionsMinConfidence: Double = 0.5
+    /// 意图路由：角色 Choice 的置信弃权线（nil = 不门控）；对齐回执是 Noul，
+    /// 无 confidence 字段，以 0.5 概率为分界线，不走该字段。
+    var subagentIntentMinConfidence: Double? = nil
     /// 缓存条目上限（内存）。
     var cacheMaxEntries: Int = 128
     /// 缓存 TTL（秒）。

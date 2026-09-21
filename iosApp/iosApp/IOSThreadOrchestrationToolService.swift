@@ -453,6 +453,14 @@ final class IOSThreadOrchestrationToolService {
             allowPoolForInheritedModel: true,
             inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration
         )
+        // (d-pre2) Jev 增强 Phase C（意图路由）：缺省角色定义时给角色建议与
+        // 对齐回执。与模型调度同窗口 await，不占 bootstrap 槽；显式任务定义或
+        // 继承角色在场时零判断（门控与 resolveAgentLaunch 推导同口径）。
+        let jevIntent = await jevSubAgentIntent(
+            arguments: args,
+            sourceConversation: sourceConversation,
+            parentRunId: parentRunId
+        )
         // (c) 并发上限：活注册表占用（前台 run 0/1 + 后台 activeJobs + 本服务在途
         // bootstrap 槽，含 spawner 自身——与旧全局账本计数「含父自身」同语义）。
         // 检查与占槽之间无 await（三个计数源全部 MainActor 同步），并发 spawn
@@ -489,7 +497,8 @@ final class IOSThreadOrchestrationToolService {
             toolExposureBridge: toolExposureBridge,
             inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
             allowPoolForInheritedModel: true,
-            jevPreferredModelIds: jevPreferredModelIds
+            jevPreferredModelIds: jevPreferredModelIds,
+            jevSuggestedRoleId: jevIntent.roleId
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -601,14 +610,20 @@ final class IOSThreadOrchestrationToolService {
             )
         }
 
-        return IOSWorkspaceStore.json([
+        var spawnResult: [String: Any] = [
             "ok": true,
             "tool": "spawn_agent",
             "task_name": resolvedTaskName,
             "agent_path": childAgentPath,
             "child_thread_id": childHex,
             "status": "started",
-        ])
+        ]
+        // 对齐回执：Jev 判定子任务偏离用户最新请求时如实标注。仅 active 会
+        // 产出标注（shadow/off 为空建议）；标注不改变 spawn 结果本身。
+        if jevIntent.alignmentDoubtful {
+            spawnResult["jev_alignment"] = "doubtful"
+        }
+        return IOSWorkspaceStore.json(spawnResult)
     }
 
     // MARK: - list_agents
@@ -672,6 +687,31 @@ final class IOSThreadOrchestrationToolService {
         )
     }
 
+    /// Jev 增强 Phase C（意图路由）：spawn 缺省角色定义时的角色建议 + 对齐回执。
+    /// 显式任务定义（role_id/system_prompt/context/tool_scope/skills）或继承配置
+    /// 带角色时零出站判断；失败/弃权/低置信 → 空建议，走现有 spawn 优先级。
+    private func jevSubAgentIntent(
+        arguments: [String: Any],
+        sourceConversation: Conversation,
+        parentRunId: String
+    ) async -> IOSJevSubAgentIntentService.Suggestion {
+        guard !Self.hasAgentConfigurationArguments(arguments) else {
+            return IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
+        }
+        guard Self.orchestrationConfiguration(from: sourceConversation.currentMessages)?.roleId == nil else {
+            return IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
+        }
+        let taskName = Self.optionalTrimmedString(arguments["task_name"]) ?? ""
+        let message = Self.optionalTrimmedString(arguments["message"]) ?? ""
+        let parentRequest = sourceConversation.currentMessages.reversed()
+            .first { $0.role == MessageRole.user }?.toText()
+        return await IOSJevSubAgentIntentService.shared.suggest(
+            taskText: "\(taskName)\n\(message)",
+            parentRequestText: parentRequest,
+            turnBudgetKey: parentRunId
+        )
+    }
+
     private func resolveAgentLaunch(
         arguments: [String: Any],
         providerSetting: ProviderSetting,
@@ -679,7 +719,8 @@ final class IOSThreadOrchestrationToolService {
         toolExposureBridge: IosToolExposureBridge?,
         inherited: IOSOrchestrationAgentConfiguration?,
         allowPoolForInheritedModel: Bool = false,
-        jevPreferredModelIds: [String] = []
+        jevPreferredModelIds: [String] = [],
+        jevSuggestedRoleId: String? = nil
     ) -> Result<ResolvedAgentLaunch, AgentLaunchError> {
         let settings = sharedSettingsProvider()?.snapshot
         let allowDynamic = settings?.agentRuntime.subAgent.allowDynamicSubAgents ?? true
@@ -696,8 +737,13 @@ final class IOSThreadOrchestrationToolService {
             || skillNamesArgument.present
 
         let inheritedBase = roleArgument == nil ? inherited : nil
+        // Jev 意图路由建议仅在显式/继承角色缺位且允许动态子代理时补位
+        // （服务侧已做目录校验与置信门）。!allowDynamic 时一律 explorer：
+        // 该开关关闭的是"子代理形态的裁量权"，Jev 建议同属裁量源，不让位。
+        // 对齐回执（标注）不受此限，照常产出。
         let effectiveRoleId = roleArgument
             ?? inheritedBase?.roleId
+            ?? (allowDynamic ? jevSuggestedRoleId : nil)
             ?? (allowDynamic ? nil : "explorer")
         let role = effectiveRoleId.flatMap(IOSSubAgentRoleCatalog.resolve)
 

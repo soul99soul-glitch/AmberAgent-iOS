@@ -2795,7 +2795,7 @@ final class ChatToolRuntime {
 
         var jev: [String: Any] = [
             "role": "internal_fast_judgment",
-            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
+            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
             "service": jevSettings.apiStyle.serviceIdentifier,
             "api_mode": jevSettings.apiStyle.statusValue,
             "model": jevSettings.modelConfigured ? jevSettings.activeModelVersion : NSNull(),
@@ -2876,6 +2876,7 @@ final class ChatToolRuntime {
         case .contextSelection: "context_selection"
         case .modelRouting: "model_routing"
         case .webActions: "web_actions"
+        case .subagentIntent: "subagent_intent"
         }
     }
 

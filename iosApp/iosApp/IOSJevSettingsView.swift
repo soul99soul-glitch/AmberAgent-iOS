@@ -26,8 +26,9 @@ struct IOSJevSettingsView: View {
         var text: String
     }
 
-    /// 已接线的用途（五个全部开放；网页操作由 wm_run_goal 工具真实驱动）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions]
+    /// 已接线的用途（六个全部开放；网页操作由 wm_run_goal 工具真实驱动，
+    /// 意图路由作用于 spawn_agent 缺省角色定义的边界）。
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions, .subagentIntent]
 
     var body: some View {
         NavigationStack {
@@ -473,6 +474,7 @@ struct IOSJevSettingsView: View {
                     case .contextSelection: "doc.text.magnifyingglass"
                     case .modelRouting: "arrow.triangle.branch"
                     case .webActions: "globe"
+                    case .subagentIntent: "signpost.and.arrowtriangle.up"
                     }
                 }())
                     .font(.system(size: 16, weight: .medium))
