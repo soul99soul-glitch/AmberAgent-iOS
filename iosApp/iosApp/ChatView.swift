@@ -1265,6 +1265,12 @@ struct ChatView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            // 增强 Phase E：审批分诊标签行——异步补充,缺失时审批卡与原样一致。
+            if let triage = viewModel.jevApprovalTriage {
+                JevApprovalTriageChips(triage: triage)
+                    .transition(.opacity)
+            }
+
             if let request = viewModel.pendingMemoryApproval {
                 MemoryToolApprovalCard(
                     request: request,

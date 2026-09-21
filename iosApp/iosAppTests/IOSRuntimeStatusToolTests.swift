@@ -282,7 +282,7 @@ final class IOSRuntimeStatusToolTests: XCTestCase {
         let jev = jevObject(object)
 
         XCTAssertEqual(jev["key_configured"] as? Bool, false, "无 Key 时必须如实报 false")
-        for key in ["tool_discovery", "memory_recall", "context_selection", "model_routing", "web_actions", "subagent_intent"] {
+        for key in ["tool_discovery", "memory_recall", "context_selection", "model_routing", "web_actions", "subagent_intent", "approval_triage"] {
             let entry = useCaseObject(object, key)
             XCTAssertEqual(entry["mode"] as? String, "off", "\(key) 默认 mode 必须 off")
             XCTAssertEqual(entry["effective_mode"] as? String, "off", "\(key) 默认 effective 必须 off")

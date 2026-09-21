@@ -26,9 +26,9 @@ struct IOSJevSettingsView: View {
         var text: String
     }
 
-    /// 已接线的用途（六个全部开放；网页操作由 wm_run_goal 工具真实驱动，
-    /// 意图路由作用于 spawn_agent 缺省角色定义的边界）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions, .subagentIntent]
+    /// 已接线的用途（七个全部开放；网页操作由 wm_run_goal 工具真实驱动，
+    /// 意图路由作用于 spawn_agent 缺省角色定义的边界，审批分诊只标注不授权）。
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions, .subagentIntent, .approvalTriage]
 
     var body: some View {
         NavigationStack {
@@ -79,45 +79,68 @@ struct IOSJevSettingsView: View {
         VStack(spacing: 0) {
             AmberSectionLabel(text: "API")
             AmberFormGroup {
-                HStack(spacing: 12) {
-                    Image(systemName: "network")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(AmberTheme.foreground2)
-                        .frame(width: 28, height: 28)
-                    Text(IOSAppLocalization.string("调用方式", defaultValue: "调用方式"))
-                        .font(.body)
-                        .foregroundStyle(AmberTheme.foreground)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Menu {
-                        ForEach(IOSJevAPIStyle.allCases) { style in
-                            Button {
-                                updateAPIStyle(style)
-                            } label: {
-                                if style == sharedSettings.jevSettings.apiStyle {
-                                    Label(style.displayName, systemImage: "checkmark")
-                                } else {
-                                    Text(style.displayName)
-                                }
+                // 辅助功能大字号下标题与取值垂直堆叠：窄列里 "TypeSafe 原生"
+                // 会被逐字符断行（含英文单词中间断开），堆叠后取值有全宽可用。
+                let styleMenu = Menu {
+                    ForEach(IOSJevAPIStyle.allCases) { style in
+                        Button {
+                            updateAPIStyle(style)
+                        } label: {
+                            if style == sharedSettings.jevSettings.apiStyle {
+                                Label(style.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(style.displayName)
                             }
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(IOSAppLocalization.string(
-                                sharedSettings.jevSettings.apiStyle.displayName,
-                                defaultValue: sharedSettings.jevSettings.apiStyle.displayName
-                            ))
-                                .font(.subheadline.monospacedDigit())
-                                .foregroundStyle(AmberTheme.accent)
-                            Image(systemName: "chevron.up.chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(AmberTheme.muted2)
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(IOSAppLocalization.string(
+                            sharedSettings.jevSettings.apiStyle.displayName,
+                            defaultValue: sharedSettings.jevSettings.apiStyle.displayName
+                        ))
+                            .font(.subheadline.monospacedDigit())
+                            .foregroundStyle(AmberTheme.accent)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(AmberTheme.muted2)
+                    }
+                }
+                .accessibilityLabel("Jev API 调用方式")
+
+                if dynamicTypeSize.isAccessibilitySize {
+                    HStack(spacing: 12) {
+                        Image(systemName: "network")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .frame(width: 28, height: 28)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(IOSAppLocalization.string("调用方式", defaultValue: "调用方式"))
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.foreground)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            styleMenu
                         }
                     }
-                    .accessibilityLabel("Jev API 调用方式")
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
+                } else {
+                    HStack(spacing: 12) {
+                        Image(systemName: "network")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .frame(width: 28, height: 28)
+                        Text(IOSAppLocalization.string("调用方式", defaultValue: "调用方式"))
+                            .font(.body)
+                            .foregroundStyle(AmberTheme.foreground)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        styleMenu
+                    }
+                    .frame(minHeight: 58)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 4)
                 }
-                .frame(minHeight: 58)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
 
                 if sharedSettings.jevSettings.apiStyle == .vercelGateway {
                     Divider()
@@ -475,6 +498,7 @@ struct IOSJevSettingsView: View {
                     case .modelRouting: "arrow.triangle.branch"
                     case .webActions: "globe"
                     case .subagentIntent: "signpost.and.arrowtriangle.up"
+                    case .approvalTriage: "checklist"
                     }
                 }())
                     .font(.system(size: 16, weight: .medium))

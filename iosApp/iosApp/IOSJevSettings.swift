@@ -16,6 +16,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
     case modelRouting
     case webActions
     case subagentIntent
+    case approvalTriage
 
     var id: String { rawValue }
 
@@ -27,6 +28,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
         case .modelRouting: "模型调度"
         case .webActions: "网页操作"
         case .subagentIntent: "意图路由"
+        case .approvalTriage: "审批分诊"
         }
     }
 
@@ -39,6 +41,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
         case .modelRouting: [.selectedTaskText]
         case .webActions: [.webContent, .selectedTaskText]
         case .subagentIntent: [.selectedTaskText, .toolMetadata]
+        case .approvalTriage: [.toolMetadata, .selectedTaskText]
         }
     }
 }
