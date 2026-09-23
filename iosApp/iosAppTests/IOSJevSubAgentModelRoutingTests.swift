@@ -269,4 +269,29 @@ final class IOSJevSubAgentModelRoutingTests: XCTestCase {
         )
         XCTAssertEqual(ranked, [candidates[1].modelId], "低置信高分被弃权")
     }
+
+    func testShadowCounterfactualCanDifferWithoutAdvancingLocalPool() {
+        let candidates = [makeCandidate(id: "model-a"), makeCandidate(id: "model-b")]
+        let decision = IOSJevDecision(
+            answers: [
+                IOSJevAnswer(id: candidates[0].modelId, type: "score", noul: nil, choice: nil, confidence: 0.9, score: 1),
+                IOSJevAnswer(id: candidates[1].modelId, type: "score", noul: nil, choice: nil, confidence: 0.9, score: 3),
+            ],
+            usage: nil, modelVersion: "jev-v1", latencyMs: 10,
+            requestBytes: 100, responseBytes: 100
+        )
+        let preferred = IOSJevModelRoutingService.preferredModelIds(
+            from: decision, candidates: candidates, settings: makeSettings(mode: .shadow)
+        )
+        let pool = IOSSubAgentModelPool()
+        let baseline = pool.previewSelection(from: candidates, activeModelCounts: [:], activeProviderCounts: [:])
+        let hypothetical = pool.previewSelection(
+            from: IOSJevModelRoutingService.preferredCandidates(from: candidates, rankedIds: preferred),
+            activeModelCounts: [:], activeProviderCounts: [:]
+        )
+        XCTAssertEqual(baseline?.modelId, candidates[0].modelId)
+        XCTAssertEqual(hypothetical?.modelId, candidates[1].modelId)
+        XCTAssertEqual(pool.select(from: candidates, activeModelCounts: [:], activeProviderCounts: [:])?.modelId,
+                       baseline?.modelId, "shadow comparison must not move the real pool cursor")
+    }
 }

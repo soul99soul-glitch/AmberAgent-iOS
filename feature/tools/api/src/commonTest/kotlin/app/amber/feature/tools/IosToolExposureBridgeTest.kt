@@ -520,6 +520,29 @@ class IosToolExposureBridgeTest {
     }
 
     @Test
+    fun toolSearchPreviewMatchesExecutionWithoutChangingExposure() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+        val beforeVisible = bridge.visibleTools().map { it.name }.toSet()
+        val arguments = """{"query":"workspace file edit","limit":5}"""
+        val ranking = listOf("wm_click", "workspace_file_edit")
+
+        val keywordPreview = parseObject(bridge.previewToolSearch(arguments))
+        val rankedPreview = parseObject(bridge.previewToolSearch(arguments, ranking))
+
+        assertEquals("ok", keywordPreview["status"]?.jsonPrimitive?.content)
+        assertEquals("ok", rankedPreview["status"]?.jsonPrimitive?.content)
+        assertEquals("wm_click", rankedPreview["expanded_tools"]!!.jsonArray.first().jsonPrimitive.content)
+        assertEquals(beforeVisible, bridge.visibleTools().map { it.name }.toSet(), "previews must not mutate exposure")
+
+        val executed = parseObject(bridge.executeToolSearch(arguments, ranking))
+        assertEquals(rankedPreview, executed, "preview and execution must share the same search payload")
+        assertEquals(
+            beforeVisible + rankedPreview["expanded_tools"]!!.jsonArray.map { it.jsonPrimitive.content },
+            bridge.visibleTools().map { it.name }.toSet(),
+        )
+    }
+
+    @Test
     fun approvalTriageFactsExposeRegisteredMutationAndRiskMetadataOnly() {
         val bridge = IosToolExposureBridge(tools = fullIosTools())
 

@@ -395,7 +395,7 @@ final class IOSJevSettingsTests: XCTestCase {
             timestamp: now, useCase: .toolDiscovery, mode: .active, modelVersion: "jev-v1",
             outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
             inputTokens: nil, outputTokens: nil, reason: "no_suitable_tool",
-            numbers: ["business_fallback": 1]
+            numbers: ["business_fallback": 1, "exposure_ratio": 0.8, "next_step_new_tool_used": 1]
         ))
         for completed in [1.0, 0.0] {
             IOSJevMetricsStore.append(IOSJevMetricsRecord(
@@ -415,11 +415,22 @@ final class IOSJevSettingsTests: XCTestCase {
                 timestamp: now, useCase: .contextSelection, mode: .active, modelVersion: "jev-v1",
                 outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
                 inputTokens: nil, outputTokens: nil, reason: nil,
-                runId: "run", numbers: ["hidden_characters": 1_200]
+                runId: "run", numbers: ["hidden_characters": 1_200, "hidden_blocks": 4, "reread_after_hide_count": 1]
             ))
         }
         XCTAssertEqual(IOSJevMetricsStore.runSummary(runId: "run", now: now).hiddenCharacters, 1_200,
                        "replayed projection describes the current upload, not a sum over model steps")
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: now, useCase: .modelRouting, mode: .active, modelVersion: "jev-v1",
+            outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+            inputTokens: nil, outputTokens: nil, reason: nil,
+            numbers: ["child_succeeded": 1]
+        ))
+        let finalSummaries = IOSJevMetricsStore.useCaseSummaries(now: now)
+        XCTAssertEqual(finalSummaries.first(where: { $0.useCase == .toolDiscovery })?.exposureRatio, 0.8)
+        XCTAssertEqual(finalSummaries.first(where: { $0.useCase == .toolDiscovery })?.newToolUseRate, 1)
+        XCTAssertEqual(finalSummaries.first(where: { $0.useCase == .contextSelection })?.rereadAfterHideRate, 0.25)
+        XCTAssertEqual(finalSummaries.first(where: { $0.useCase == .modelRouting })?.childSucceeded, 1)
     }
 
     func testMetricsDropRecordsOlderThanSevenDays() {

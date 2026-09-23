@@ -2956,7 +2956,8 @@ final class ChatToolRuntime {
                 bridge: toolExposureBridge,
                 identity: IOSJevToolDiscoveryService.RunIdentity(
                     runId: pending.runId,
-                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(runId: pending.runId)
+                    turnBudgetKey: IOSJevToolDiscoveryService.turnBudgetKey(runId: pending.runId),
+                    trackNextForegroundStep: true
                 )
             )
         }

@@ -152,13 +152,27 @@ final class IOSThreadOrchestrationToolService {
         let params: TextGenerationParams
         let modelReservation: IOSSubAgentModelPool.Reservation?
         let baselinePoolModelId: String?
+        let poolSelectionSnapshot: IOSSubAgentModelPool.SelectionSnapshot?
+        let poolSelectionCandidates: [IOSSubAgentModelPool.SelectionKey]
+    }
+
+    private struct DeferredShadowT3Batch {
+        let parts: [IOSJevBatchPart]
+        let context: IOSJevRunContext
+        let settings: IOSJevSettings
+        let modelCandidates: [IOSSubAgentModelPool.Candidate]
+        let modelPartId: String?
+        let hasIntentPart: Bool
     }
 
     private struct JevSpawnDecision {
         var preferredModelIds: [String] = []
+        var observedPreferredModelIds: [String] = []
+        var modelRoutingObserved = false
         var intent = IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
         var intentRoutingRequested = false
         var observedIntentRoleId: String?
+        var deferredShadowBatch: DeferredShadowT3Batch?
         var settings = IOSJevSettings()
         var modelRoutingRequested = false
     }
@@ -508,6 +522,7 @@ final class IOSThreadOrchestrationToolService {
             inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
             allowPoolForInheritedModel: true,
             jevPreferredModelIds: jevDecision.preferredModelIds,
+            jevObservedPreferredModelIds: jevDecision.observedPreferredModelIds,
             jevSuggestedRoleId: jevDecision.intent.roleId
         )
         let launch: ResolvedAgentLaunch
@@ -622,9 +637,18 @@ final class IOSThreadOrchestrationToolService {
         recordSelectedPoolModelIfNeeded(
             launch: launch,
             decision: jevDecision,
-            runId: parentRunId
+            runId: parentRunId,
+            childRunId: childRunId,
+            childThreadId: childHex
         )
         recordIntentSelectionIfNeeded(launch: launch, decision: jevDecision, runId: parentRunId)
+        scheduleDeferredShadowT3ObservationIfNeeded(
+            decision: jevDecision,
+            launch: launch,
+            runId: parentRunId,
+            childRunId: childRunId,
+            childThreadId: childHex
+        )
 
         var spawnResult: [String: Any] = [
             "ok": true,
@@ -669,7 +693,8 @@ final class IOSThreadOrchestrationToolService {
     /// An empty `tool_scope` is intentionally preserved as an empty set: it is
     /// different from an omitted scope, which inherits the parent catalog.
     /// T3：spawn 将模型调度与缺省角色意图合并成一次批量判断；followup 只加入模型调度。
-    /// 在占用 bootstrap 名额前等待，不持有模型预留；显式 model_id / role_id 整批跳过。
+    /// active 结果在占用 bootstrap 名额前等待；全 shadow 等 durable start 成功后再后台观察。
+    /// 不持有模型预留；显式 model_id / role_id 整批跳过。
     private func jevSpawnDecision(
         arguments: [String: Any],
         parentRunId: String,
@@ -766,17 +791,40 @@ final class IOSThreadOrchestrationToolService {
             turnBudgetKey: parentRunId,
             inputHash: inputHash
         )
+        let sendableParts = parts.filter { part in
+            jevSettings.effectiveMode(for: part.useCase) != .off
+                && jevSettings.canSend(useCase: part.useCase, required: part.requiredScopes)
+        }
+        guard !sendableParts.isEmpty else { return result }
+        if sendableParts.allSatisfy({ jevSettings.effectiveMode(for: $0.useCase) == .shadow }) {
+            result.deferredShadowBatch = DeferredShadowT3Batch(
+                parts: parts,
+                context: context,
+                settings: jevSettings,
+                modelCandidates: modelCandidates,
+                modelPartId: modelPartId,
+                hasIntentPart: parts.contains { $0.id == IOSJevSubAgentIntentService.batchPartId }
+            )
+            return result
+        }
         let outcomes = await jevCoordinator.decideBatch(
             parts: parts,
             context: context,
             waitBudgetMs: jevSettings.policy.t3WaitBudgetMs
         )
         if let modelPartId {
+            let outcome = outcomes[modelPartId] ?? .skipped(reason: "missing_part_result")
             result.preferredModelIds = IOSJevModelRoutingService.preferredModelIds(
-                from: outcomes[modelPartId] ?? .skipped(reason: "missing_part_result"),
+                from: outcome,
                 candidates: modelCandidates,
                 settings: jevSettings
             )
+            if case .observed(let decision) = outcome {
+                result.modelRoutingObserved = true
+                result.observedPreferredModelIds = IOSJevModelRoutingService.preferredModelIds(
+                    from: decision, candidates: modelCandidates, settings: jevSettings
+                )
+            }
         }
         if parts.contains(where: { $0.id == IOSJevSubAgentIntentService.batchPartId }) {
             let outcome = outcomes[IOSJevSubAgentIntentService.batchPartId] ?? .skipped(reason: "missing_part_result")
@@ -798,16 +846,40 @@ final class IOSThreadOrchestrationToolService {
     private func recordSelectedPoolModelIfNeeded(
         launch: ResolvedAgentLaunch,
         decision: JevSpawnDecision,
-        runId: String
+        runId: String,
+        childRunId: String,
+        childThreadId: String
     ) {
         guard decision.modelRoutingRequested,
               launch.modelReservation != nil,
               let modelId = launch.configuration?.modelId,
               let uuid = Self.parseKotlinUuid(modelId) else { return }
         let settings = decision.settings
-        var numbers: [String: Double] = ["preferred_set_size": Double(decision.preferredModelIds.count)]
-        if let baseline = launch.baselinePoolModelId {
-            numbers["difference"] = baseline == uuid.toHexDashString() ? 0 : 1
+        let mode = settings.effectiveMode(for: .modelRouting)
+        var numbers: [String: Double]?
+        if mode == .shadow {
+            if decision.modelRoutingObserved,
+               let snapshot = launch.poolSelectionSnapshot {
+                let preferred = decision.observedPreferredModelIds
+                let keysById = launch.poolSelectionCandidates.reduce(into: [String: IOSSubAgentModelPool.SelectionKey]()) {
+                    $0[$1.modelId] = $1
+                }
+                let preferredKeys = preferred.compactMap { keysById[$0] }
+                let hypothetical = snapshot.selectedModelId(
+                    from: preferredKeys.isEmpty ? launch.poolSelectionCandidates : preferredKeys
+                )
+                var values = ["preferred_set_size": Double(preferred.count)]
+                if let hypothetical {
+                    values["difference"] = hypothetical == uuid.toHexDashString() ? 0 : 1
+                }
+                numbers = values
+            }
+        } else {
+            var values = ["preferred_set_size": Double(decision.preferredModelIds.count)]
+            if launch.baselinePoolModelId != nil {
+                values["difference"] = launch.baselinePoolModelId == uuid.toHexDashString() ? 0 : 1
+            }
+            numbers = values
         }
         IOSJevMetricsStore.append(IOSJevMetricsRecord(
             timestamp: Date(),
@@ -829,7 +901,89 @@ final class IOSThreadOrchestrationToolService {
             waitPhase: "t3",
             waitedMs: nil,
             numbers: numbers,
-            ids: ["selected_model_id": uuid.toHexDashString()]
+            ids: [
+                "selected_model_id": uuid.toHexDashString(),
+                "child_run_id": childRunId,
+                "child_thread_id": childThreadId,
+            ]
+        ))
+    }
+
+    static let modelRoutingTimeoutTerminalReason = "subagent_timeout"
+
+    static func modelRoutingChildOutcomeNumber(
+        status: AgentRunStatus,
+        terminalReason: String?
+    ) -> String? {
+        switch status {
+        case .completed:
+            return "child_succeeded"
+        case .failed:
+            return terminalReason == modelRoutingTimeoutTerminalReason
+                ? "child_timed_out"
+                : "child_failed"
+        default:
+            return nil
+        }
+    }
+
+    /// Outcome counters are attached only to a durable child run that was
+    /// actually launched with a Jev-routed pool model. IDs are local and contain
+    /// no task text.
+    func recordModelRoutingChildOutcomeIfNeeded(
+        childThreadId: String,
+        childRunId: String,
+        terminalStatus: AgentRunStatus,
+        terminalReason: String?
+    ) {
+        guard let number = Self.modelRoutingChildOutcomeNumber(
+            status: terminalStatus,
+            terminalReason: terminalReason
+        ) else { return }
+        let records = IOSJevMetricsStore.load()
+        guard let routingRecord = records.last(where: {
+            $0.useCase == .modelRouting
+                && $0.outcome == "summary"
+                && $0.ids?["child_run_id"] == childRunId
+                && $0.ids?["child_thread_id"] == childThreadId
+        }),
+        let parentRunId = routingRecord.runId else {
+            return
+        }
+        guard !records.contains(where: {
+            $0.useCase == .modelRouting
+                && $0.outcome == "summary"
+                && $0.runId == parentRunId
+                && $0.ids?["child_run_id"] == childRunId
+                && $0.ids?["child_thread_id"] == childThreadId
+                && $0.ids?["child_outcome"] == "terminal"
+        }) else { return }
+
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(),
+            useCase: .modelRouting,
+            mode: routingRecord.mode,
+            modelVersion: routingRecord.modelVersion,
+            outcome: "summary",
+            latencyMs: 0,
+            requestBytes: 0,
+            responseBytes: 0,
+            inputTokens: nil,
+            outputTokens: nil,
+            reason: number,
+            suggestedTop1: nil,
+            keywordTop1: nil,
+            topConfidence: nil,
+            topScore: nil,
+            runId: parentRunId,
+            waitPhase: "t3",
+            waitedMs: nil,
+            numbers: [number: 1],
+            ids: [
+                "child_run_id": childRunId,
+                "child_thread_id": childThreadId,
+                "child_outcome": "terminal",
+            ]
         ))
     }
 
@@ -854,6 +1008,162 @@ final class IOSThreadOrchestrationToolService {
         ))
     }
 
+    /// 全 shadow 的 T3 在 durable child 接受后才出站。它不参与当前 spawn 的
+    /// 选择；后台观察完成后，只将同一选择点快照下的反事实差异写入指标。
+    private func scheduleDeferredShadowT3ObservationIfNeeded(
+        decision: JevSpawnDecision,
+        launch: ResolvedAgentLaunch,
+        runId: String,
+        childRunId: String,
+        childThreadId: String
+    ) {
+        guard let request = decision.deferredShadowBatch else { return }
+        let modelSelection = ShadowModelSelection(
+            selectionSnapshot: launch.poolSelectionSnapshot,
+            poolCandidates: launch.poolSelectionCandidates,
+            baselineModelId: launch.baselinePoolModelId,
+            selectedModelId: launch.configuration?.modelId.flatMap(Self.parseKotlinUuid)?.toHexDashString(),
+            selectedRoleId: launch.configuration?.roleId ?? "none"
+        )
+        let coordinator = jevCoordinator
+        Task(priority: .utility) { @MainActor [request, modelSelection] in
+            let outcomes = await coordinator.decideBatch(
+                parts: request.parts,
+                context: request.context,
+                // Background shadow may finish after the T3 foreground wait budget;
+                // wait up to the request deadline here so an observed result can be measured.
+                waitBudgetMs: max(request.settings.policy.deadlineMs, request.settings.policy.t3WaitBudgetMs),
+                expectedSettingsRevision: request.settings.revision
+            )
+            if let partId = request.modelPartId,
+               case .observed(let observed)? = outcomes[partId] {
+                self.recordDeferredShadowModelMetric(
+                    decision: observed,
+                    candidates: request.modelCandidates,
+                    selection: modelSelection,
+                    settings: request.settings,
+                    runId: runId,
+                    childRunId: childRunId,
+                    childThreadId: childThreadId
+                )
+            }
+            if request.hasIntentPart,
+               case .observed(let observed)? = outcomes[IOSJevSubAgentIntentService.batchPartId],
+               let suggestedRoleId = observed.answers.first(where: { $0.id == "role_choice" })?.choice {
+                self.recordDeferredShadowIntentMetric(
+                    suggestedRoleId: suggestedRoleId,
+                    selectedRoleId: modelSelection.selectedRoleId,
+                    settings: request.settings,
+                    runId: runId,
+                    childRunId: childRunId,
+                    childThreadId: childThreadId
+                )
+            }
+        }
+    }
+
+    private struct ShadowModelSelection {
+        let selectionSnapshot: IOSSubAgentModelPool.SelectionSnapshot?
+        let poolCandidates: [IOSSubAgentModelPool.SelectionKey]
+        let baselineModelId: String?
+        let selectedModelId: String?
+        let selectedRoleId: String
+    }
+
+    private func recordDeferredShadowModelMetric(
+        decision: IOSJevDecision,
+        candidates: [IOSSubAgentModelPool.Candidate],
+        selection: ShadowModelSelection,
+        settings: IOSJevSettings,
+        runId: String,
+        childRunId: String,
+        childThreadId: String
+    ) {
+        guard let snapshot = selection.selectionSnapshot,
+              let selectedModelId = selection.selectedModelId,
+              selection.baselineModelId != nil else { return }
+        let preferredIds = IOSJevModelRoutingService.preferredModelIds(
+            from: decision,
+            candidates: candidates,
+            settings: settings
+        )
+        let keysById = selection.poolCandidates.reduce(into: [String: IOSSubAgentModelPool.SelectionKey]()) {
+            $0[$1.modelId] = $1
+        }
+        let preferredKeys = preferredIds.compactMap { keysById[$0] }
+        let counterfactual = snapshot.selectedModelId(
+            from: preferredKeys.isEmpty ? selection.poolCandidates : preferredKeys
+        )
+        guard let counterfactual else { return }
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(),
+            useCase: .modelRouting,
+            mode: .shadow,
+            modelVersion: settings.activeModelVersion,
+            outcome: "summary",
+            latencyMs: 0,
+            requestBytes: 0,
+            responseBytes: 0,
+            inputTokens: nil,
+            outputTokens: nil,
+            reason: nil,
+            suggestedTop1: nil,
+            keywordTop1: nil,
+            topConfidence: nil,
+            topScore: nil,
+            runId: runId,
+            waitPhase: "t3",
+            waitedMs: nil,
+            numbers: [
+                "preferred_set_size": Double(preferredIds.count),
+                "difference": selectedModelId == counterfactual ? 0 : 1,
+            ],
+            ids: [
+                "selected_model_id": selectedModelId,
+                "counterfactual_model_id": counterfactual,
+                "child_run_id": childRunId,
+                "child_thread_id": childThreadId,
+            ]
+        ))
+    }
+
+    private func recordDeferredShadowIntentMetric(
+        suggestedRoleId: String,
+        selectedRoleId: String,
+        settings: IOSJevSettings,
+        runId: String,
+        childRunId: String,
+        childThreadId: String
+    ) {
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(),
+            useCase: .subagentIntent,
+            mode: .shadow,
+            modelVersion: settings.activeModelVersion,
+            outcome: "summary",
+            latencyMs: 0,
+            requestBytes: 0,
+            responseBytes: 0,
+            inputTokens: nil,
+            outputTokens: nil,
+            reason: nil,
+            suggestedTop1: nil,
+            keywordTop1: nil,
+            topConfidence: nil,
+            topScore: nil,
+            runId: runId,
+            waitPhase: "t3",
+            waitedMs: nil,
+            numbers: ["difference": suggestedRoleId == selectedRoleId ? 0 : 1],
+            ids: [
+                "suggested_role_id": suggestedRoleId,
+                "selected_role_id": selectedRoleId,
+                "child_run_id": childRunId,
+                "child_thread_id": childThreadId,
+            ]
+        ))
+    }
+
     private func resolveAgentLaunch(
         arguments: [String: Any],
         providerSetting: ProviderSetting,
@@ -862,6 +1172,7 @@ final class IOSThreadOrchestrationToolService {
         inherited: IOSOrchestrationAgentConfiguration?,
         allowPoolForInheritedModel: Bool = false,
         jevPreferredModelIds: [String] = [],
+        jevObservedPreferredModelIds: [String] = [],
         jevSuggestedRoleId: String? = nil
     ) -> Result<ResolvedAgentLaunch, AgentLaunchError> {
         let settings = sharedSettingsProvider()?.snapshot
@@ -983,6 +1294,8 @@ final class IOSThreadOrchestrationToolService {
         var modelReservation: IOSSubAgentModelPool.Reservation?
         var selectedPoolCandidate: IOSSubAgentModelPool.Candidate?
         var baselinePoolModelId: String?
+        var poolSelectionSnapshot: IOSSubAgentModelPool.SelectionSnapshot?
+        var poolSelectionCandidates: [IOSSubAgentModelPool.SelectionKey] = []
         let poolCandidates = settings.flatMap { settings in
             sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
         } ?? []
@@ -1002,10 +1315,9 @@ final class IOSThreadOrchestrationToolService {
             let shouldSelectFromPool = configuredModelId == nil
                 || (allowPoolForInheritedModel && inheritedBase != nil)
             if shouldSelectFromPool, !poolCandidates.isEmpty {
-                // Jev Phase 3（模型调度）：异步判断在 resolveAgentLaunch 之前完成
-                //（见 jevPreferredModelIds 预计算参数），不占用任何名额；这里的
-                // select 仍在无 await 的同步临界段内。off/shadow/失败 → 空首选集，
-                // 走现有负载/轮转选择。
+                // Jev Phase 3（模型调度）：active 判断在这里之前完成，shadow
+                // 只排入后台观察；两者都不提前占用模型名额。select 与 reserve
+                // 仍在无 await 的同步临界段内；空首选集沿用本地负载/轮转选择。
                 let refreshedPoolCandidates = settings.flatMap { settings in
                     sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
                 } ?? []
@@ -1014,15 +1326,19 @@ final class IOSThreadOrchestrationToolService {
                     rankedIds: jevPreferredModelIds
                 )
                 let rankedPool = selectionPool.isEmpty ? refreshedPoolCandidates : selectionPool
-                baselinePoolModelId = modelPool.previewSelection(
-                    from: refreshedPoolCandidates,
-                    activeModelCounts: backgroundCoordinator.activeModelCounts,
-                    activeProviderCounts: backgroundCoordinator.activeProviderCounts
-                )?.modelId
+                let activeModelCounts = backgroundCoordinator.activeModelCounts
+                let activeProviderCounts = backgroundCoordinator.activeProviderCounts
+                let snapshot = modelPool.selectionSnapshot(
+                    activeModelCounts: activeModelCounts,
+                    activeProviderCounts: activeProviderCounts
+                )
+                poolSelectionSnapshot = snapshot
+                poolSelectionCandidates = refreshedPoolCandidates.map(\.selectionKey)
+                baselinePoolModelId = snapshot.selectedModelId(from: poolSelectionCandidates)
                 guard let selected = modelPool.select(
                     from: rankedPool,
-                    activeModelCounts: backgroundCoordinator.activeModelCounts,
-                    activeProviderCounts: backgroundCoordinator.activeProviderCounts
+                    activeModelCounts: activeModelCounts,
+                    activeProviderCounts: activeProviderCounts
                 ) else {
                     return .failure(AgentLaunchError(reason: "模型池中没有可用模型，请在子代理设置中重新选择。"))
                 }
@@ -1120,7 +1436,9 @@ final class IOSThreadOrchestrationToolService {
             providerSetting: childProvider,
             params: childParams,
             modelReservation: modelReservation,
-            baselinePoolModelId: baselinePoolModelId
+            baselinePoolModelId: baselinePoolModelId,
+            poolSelectionSnapshot: poolSelectionSnapshot,
+            poolSelectionCandidates: poolSelectionCandidates
         ))
     }
 
@@ -1851,7 +2169,8 @@ final class IOSThreadOrchestrationToolService {
             toolExposureBridge: toolExposureBridge,
             inherited: inheritedConfiguration,
             allowPoolForInheritedModel: false,
-            jevPreferredModelIds: jevDecision.preferredModelIds
+            jevPreferredModelIds: jevDecision.preferredModelIds,
+            jevObservedPreferredModelIds: jevDecision.observedPreferredModelIds
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -1908,7 +2227,16 @@ final class IOSThreadOrchestrationToolService {
         recordSelectedPoolModelIfNeeded(
             launch: launch,
             decision: jevDecision,
-            runId: runId
+            runId: runId,
+            childRunId: targetRunId,
+            childThreadId: target.hex
+        )
+        scheduleDeferredShadowT3ObservationIfNeeded(
+            decision: jevDecision,
+            launch: launch,
+            runId: runId,
+            childRunId: targetRunId,
+            childThreadId: target.hex
         )
         // 审计信封：bootstrap 已直写会话，信封仅留审计记录（标 delivered，不参与 drain）。
         try? await Self.enqueueIfAbsent(
@@ -2349,10 +2677,20 @@ final class IOSThreadOrchestrationToolService {
     func notifyRunTerminal(
         conversationId: KotlinUuid?,
         runId: String,
-        finalMessages: [UIMessage]
+        finalMessages: [UIMessage],
+        terminalStatus: AgentRunStatus? = nil,
+        terminalReason: String? = nil
     ) async {
         guard let conversationId else { return }
         let childHex = conversationId.toHexDashString()
+        if let terminalStatus {
+            recordModelRoutingChildOutcomeIfNeeded(
+                childThreadId: childHex,
+                childRunId: runId,
+                terminalStatus: terminalStatus,
+                terminalReason: terminalReason
+            )
+        }
         guard let edge = await Self.edgeFor(childThreadId: childHex, threadEdgeDao: threadEdgeDaoProvider()),
               edge.status == EdgeStatus.open else {
             return

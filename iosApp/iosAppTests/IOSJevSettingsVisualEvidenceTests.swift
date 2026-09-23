@@ -92,11 +92,11 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
             type: .accessibility3,
             size: CGSize(width: 320, height: 640)
         )
-        // 加高画幅：完整入镜全部七个用途行（默认 852 高度只到第三行）。
+        // 加高画幅：完整入镜七个用途与下方指标（默认 852 高度只到第三行）。
         try await capture(
             IOSJevSettingsView(sharedSettings: settings),
             name: "jev-settings-tall",
-            size: CGSize(width: 393, height: 1_700)
+            size: CGSize(width: 393, height: 2_700)
         )
         let context = ChatContextSnapshot(
             messageCount: 8, modelId: "demo", supportsReasoning: true,

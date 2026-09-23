@@ -26,6 +26,51 @@ final class IOSSubAgentModelPool {
 
         var modelId: String { model.id.toHexDashString() }
         var providerId: String { provider.id.toHexDashString() }
+
+        var selectionKey: SelectionKey {
+            SelectionKey(modelId: modelId, providerId: providerId)
+        }
+    }
+
+    struct SelectionKey: Equatable, Sendable {
+        let modelId: String
+        let providerId: String
+    }
+
+    /// Immutable selector inputs captured before the real pool choice. A shadow
+    /// result may arrive after reservations and the rotation cursor have moved;
+    /// evaluating against this snapshot keeps its counterfactual tied to the
+    /// actual bootstrap decision point.
+    struct SelectionSnapshot: Sendable {
+        let roundRobinCursor: Int
+        let activeModelCounts: [String: Int]
+        let activeProviderCounts: [String: Int]
+        let reservedModelCounts: [String: Int]
+        let reservedProviderCounts: [String: Int]
+
+        func selectedModelId(from candidates: [SelectionKey]) -> String? {
+            guard !candidates.isEmpty else { return nil }
+            let start = roundRobinCursor % candidates.count
+            guard let best = candidates.enumerated().min(by: { lhs, rhs in
+                score(lhs.element, originalIndex: lhs.offset, start: start, candidateCount: candidates.count)
+                    < score(rhs.element, originalIndex: rhs.offset, start: start, candidateCount: candidates.count)
+            }) else { return nil }
+            return best.element.modelId
+        }
+
+        private func score(
+            _ candidate: SelectionKey,
+            originalIndex: Int,
+            start: Int,
+            candidateCount: Int
+        ) -> (Int, Int, Int) {
+            let providerLoad = activeProviderCounts[candidate.providerId, default: 0]
+                + reservedProviderCounts[candidate.providerId, default: 0]
+            let modelLoad = activeModelCounts[candidate.modelId, default: 0]
+                + reservedModelCounts[candidate.modelId, default: 0]
+            let rotation = (originalIndex - start + candidateCount) % candidateCount
+            return (providerLoad, modelLoad, rotation)
+        }
     }
 
     private var reservedModelCounts: [String: Int] = [:]
@@ -91,62 +136,40 @@ final class IOSSubAgentModelPool {
         activeProviderCounts: [String: Int]
     ) -> Candidate? {
         guard !candidates.isEmpty else { return nil }
-        let selected = previewSelection(
-            from: candidates,
+        let snapshot = selectionSnapshot(
             activeModelCounts: activeModelCounts,
             activeProviderCounts: activeProviderCounts
         )
+        let selectedId = snapshot.selectedModelId(from: candidates.map(\.selectionKey))
         roundRobinCursor = (roundRobinCursor + 1) % candidates.count
-        return selected
+        return candidates.first { $0.modelId == selectedId }
+    }
+
+    func selectionSnapshot(
+        activeModelCounts: [String: Int],
+        activeProviderCounts: [String: Int]
+    ) -> SelectionSnapshot {
+        SelectionSnapshot(
+            roundRobinCursor: roundRobinCursor,
+            activeModelCounts: activeModelCounts,
+            activeProviderCounts: activeProviderCounts,
+            reservedModelCounts: reservedModelCounts,
+            reservedProviderCounts: reservedProviderCounts
+        )
     }
 
     /// 只读反事实：同一预留/负载/轮转状态下，本地池当前会选择谁。
-    /// 供 Jev shadow/active 差异指标使用，不改变下次真实选择。
     func previewSelection(
         from candidates: [Candidate],
         activeModelCounts: [String: Int],
         activeProviderCounts: [String: Int]
     ) -> Candidate? {
         guard !candidates.isEmpty else { return nil }
-        let start = roundRobinCursor % candidates.count
-        guard let best = candidates.enumerated().min(by: { lhs, rhs in
-            let left = score(
-                candidate: lhs.element,
-                originalIndex: lhs.offset,
-                start: start,
-                candidateCount: candidates.count,
-                activeModelCounts: activeModelCounts,
-                activeProviderCounts: activeProviderCounts
-            )
-            let right = score(
-                candidate: rhs.element,
-                originalIndex: rhs.offset,
-                start: start,
-                candidateCount: candidates.count,
-                activeModelCounts: activeModelCounts,
-                activeProviderCounts: activeProviderCounts
-            )
-            return left < right
-        }) else { return nil }
-        return best.element
-    }
-
-    private func score(
-        candidate: Candidate,
-        originalIndex: Int,
-        start: Int,
-        candidateCount: Int,
-        activeModelCounts: [String: Int],
-        activeProviderCounts: [String: Int]
-    ) -> (Int, Int, Int) {
-        let providerLoad = activeProviderCounts[candidate.providerId, default: 0]
-            + reservedProviderCounts[candidate.providerId, default: 0]
-        let modelLoad = activeModelCounts[candidate.modelId, default: 0]
-            + reservedModelCounts[candidate.modelId, default: 0]
-        let rotation = (originalIndex - start + candidateCount) % candidateCount
-        // Provider occupancy is the primary spread key; model occupancy and
-        // round-robin are deterministic tie breakers.
-        return (providerLoad, modelLoad, rotation)
+        let selectedId = selectionSnapshot(
+            activeModelCounts: activeModelCounts,
+            activeProviderCounts: activeProviderCounts
+        ).selectedModelId(from: candidates.map(\.selectionKey))
+        return candidates.first { $0.modelId == selectedId }
     }
 
     private func decrement(_ values: inout [String: Int], key: String) {

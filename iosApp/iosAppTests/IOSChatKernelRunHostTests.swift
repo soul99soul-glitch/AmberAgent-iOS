@@ -403,7 +403,7 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         }
         harness.bindings.generationSucceeded = { succeededCount += 1 }
         harness.bindings.restoreSteerQueueLeftover = { _ in restoreLeftoverCount += 1 }
-        harness.bindings.onRunTerminal = { _, runId, finalMessages in
+        harness.bindings.onRunTerminal = { _, runId, _, finalMessages in
             terminalReports.append((runId, finalMessages.count))
         }
         let provider = HostScriptedProvider(rounds: [textRound("你好，世界")])
@@ -441,16 +441,23 @@ final class IOSChatKernelRunHostTests: XCTestCase {
     }
 
     func testTerminalCASFailureReleasesLocalOwnerAndSuppressesExternalCompletion() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
         let harness = makeHarness()
         harness.failRunTerminals = true
         var terminalReported = false
-        harness.bindings.onRunTerminal = { _, _, _ in terminalReported = true }
+        harness.bindings.onRunTerminal = { _, _, _, _ in terminalReported = true }
         let host = makeHost(
             harness: harness,
             provider: HostScriptedProvider(rounds: [textRound("完成")])
         )
 
         start(host, harness: harness)
+        if let runId = harness.capturedRunId {
+            IOSJevToolDiscoveryMetricsTracker.registerActiveExposure(
+                runId: runId, exposedToolNames: ["wm_click"], modelVersion: "jev-v1"
+            )
+        }
         let attempted = await waitForCondition { harness.runTerminalRecordAttempts == 1 }
 
         XCTAssertTrue(attempted)
@@ -459,6 +466,11 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertFalse(terminalReported, "durable 终态失败时不得发布外部完成")
         XCTAssertEqual(harness.terminalSteerAutoContinue, [false])
         XCTAssertNil(harness.log.terminalStatus())
+        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
+            runId: harness.capturedRunId, calledToolNames: ["wm_click"]
+        )
+        XCTAssertFalse(IOSJevMetricsStore.load().contains(where: { $0.numbers?["next_step_new_tool_used"] != nil }),
+                       "durable terminal rejection must discard pending tool-discovery observation")
     }
 
     // MARK: - 审批暂停/恢复

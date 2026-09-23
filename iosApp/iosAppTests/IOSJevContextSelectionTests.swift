@@ -123,9 +123,9 @@ final class IOSJevContextSelectionTests: XCTestCase {
     private func toolMessage(
         toolCallId: String = "call-1",
         toolName: String = "scrape_web",
+        toolArgs: String = "{\"url\":\"https://example.com\"}",
         text: String
     ) -> [UIMessage] {
-        let toolArgs = "{\"url\":\"https://example.com\"}"
         return [
             makeMessage(role: MessageRole.user, parts: [UIMessagePart.Text(text: "帮我研究这个主题", metadata: nil)]),
             makeMessage(role: MessageRole.assistant, parts: [UIMessagePart.Tool(
@@ -144,18 +144,19 @@ final class IOSJevContextSelectionTests: XCTestCase {
         to messages: [UIMessage],
         toolCallId: String,
         text: String,
-        prompt: String
+        prompt: String,
+        toolName: String = "scrape_web",
+        toolArgs: String? = nil
     ) -> [UIMessage] {
-        let toolName = "scrape_web"
-        let toolArgs = "{\"url\":\"https://example.com/\(toolCallId)\"}"
+        let input = toolArgs ?? "{\"url\":\"https://example.com/\(toolCallId)\"}"
         return messages + [
             UIMessage.companion.user(prompt: prompt),
             makeMessage(role: .assistant, parts: [UIMessagePart.Tool(
-                toolCallId: toolCallId, toolName: toolName, input: toolArgs,
+                toolCallId: toolCallId, toolName: toolName, input: input,
                 output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
             )]),
             makeMessage(role: .tool, parts: [UIMessagePart.Tool(
-                toolCallId: toolCallId, toolName: toolName, input: toolArgs,
+                toolCallId: toolCallId, toolName: toolName, input: input,
                 output: [UIMessagePart.Text(text: text, metadata: nil)],
                 approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
             )]),
@@ -446,6 +447,177 @@ final class IOSJevContextSelectionTests: XCTestCase {
         XCTAssertEqual(summaryRecord?.numbers?["original_characters"], Double(originalText.count))
     }
 
+    func testRereadMetricCountsOnlyNewSameToolSameArgumentsAfterHiddenOutput() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let args = #"{"url":"https://example.com"}"#
+        let source = toolMessage(
+            toolCallId: "call-hidden-source",
+            toolArgs: args,
+            text: LongOutputFactory.paragraphs(count: 14)
+        )
+
+        _ = await service.projectedMessages(source, identity: identity(runId: "run-hidden-source"))
+        let initialSummary = IOSJevMetricsStore.load().last {
+            $0.runId == "run-hidden-source" && $0.outcome == "summary"
+        }
+        XCTAssertEqual(initialSummary?.numbers?["reread_after_hide_count"], 0)
+        XCTAssertGreaterThan(initialSummary?.numbers?["hidden_blocks"] ?? 0, 0)
+
+        var history = appendingToolMessage(
+            to: source,
+            toolCallId: "call-different-arguments",
+            text: LongOutputFactory.paragraphs(count: 14, prefix: "其他参数"),
+            prompt: "读取另一个地址",
+            toolArgs: #"{"url":"https://other.example"}"#
+        )
+        history = appendingToolMessage(
+            to: history,
+            toolCallId: "call-hidden-source",
+            text: LongOutputFactory.paragraphs(count: 14),
+            prompt: "重放相同的历史调用",
+            toolArgs: args
+        )
+        history = appendingToolMessage(
+            to: history,
+            toolCallId: "call-real-reread",
+            text: LongOutputFactory.paragraphs(count: 14),
+            prompt: "按原参数重读",
+            toolArgs: #"{ "url" : "https://example.com" }"#
+        )
+
+        _ = await service.projectedMessages(history, identity: identity(runId: "run-after-reread"))
+        let afterReread = IOSJevMetricsStore.load().last {
+            $0.runId == "run-after-reread" && $0.outcome == "summary"
+        }
+        XCTAssertEqual(afterReread?.numbers?["reread_after_hide_count"], 1,
+                       "only a later, distinct toolCallId with the same tool and JSON arguments counts")
+
+        _ = await service.projectedMessages(history, identity: identity(runId: "run-upload-replay"))
+        let replaySummary = IOSJevMetricsStore.load().last {
+            $0.runId == "run-upload-replay" && $0.outcome == "summary"
+        }
+        XCTAssertEqual(replaySummary?.numbers?["reread_after_hide_count"], 1,
+                       "re-uploading the same history snapshot does not increment the reread count")
+        XCTAssertEqual(replaySummary?.numbers?["hidden_blocks"], afterReread?.numbers?["hidden_blocks"],
+                       "summary numbers describe the latest history snapshot rather than accumulating per upload")
+    }
+
+    func testProjectionSummaryClearsWhenSameRunHasNoCandidateOutputs() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request, score: 0.1), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let runId = "run-cleared-after-compaction"
+        let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        _ = await service.projectedMessages(messages, identity: identity(runId: runId))
+        XCTAssertGreaterThan(IOSJevMetricsStore.runSummary(runId: runId).hiddenCharacters ?? 0, 0)
+
+        _ = await service.projectedMessages(
+            [UIMessage.companion.user(prompt: "继续")],
+            identity: identity(runId: runId)
+        )
+
+        let latest = IOSJevMetricsStore.load().last {
+            $0.runId == runId && $0.useCase == .contextSelection && $0.outcome == "summary" && $0.waitPhase == "T2"
+        }
+        XCTAssertEqual(IOSJevMetricsStore.runSummary(runId: runId).hiddenCharacters, 0)
+        XCTAssertEqual(latest?.numbers?["original_characters"], 0)
+        XCTAssertEqual(latest?.numbers?["hidden_blocks"], 0)
+        XCTAssertEqual(latest?.numbers?["reread_after_hide_count"], 0)
+    }
+
+    func testTurningOffContextSelectionClearsPriorRunSnapshotWithoutAddingOffOnlyMetrics() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+
+        let settingsBox = SettingsBox(makeSettings(mode: .active))
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request, score: 0.1), self.httpResponse(status: 200))
+        }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { settingsBox.get() },
+            apiKeyProvider: { "test-key" },
+            now: { Date() }
+        ))
+        let service = IOSJevContextSelectionService(deps: .init(
+            coordinator: coordinator,
+            settingsProvider: { settingsBox.get() }
+        ))
+        let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        let runId = "run-cleared-after-off"
+        _ = await service.projectedMessages(messages, identity: identity(runId: runId))
+        XCTAssertGreaterThan(IOSJevMetricsStore.runSummary(runId: runId).hiddenCharacters ?? 0, 0)
+
+        var disabled = settingsBox.get()
+        disabled.setMode(.off, for: .contextSelection)
+        settingsBox.set(disabled)
+
+        let returned = await service.projectedMessages(messages, identity: identity(runId: runId))
+        let returnedText = ((returned[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        let originalText = ((messages[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(returnedText, originalText)
+        XCTAssertEqual(IOSJevMetricsStore.runSummary(runId: runId).hiddenCharacters, 0)
+        let latest = IOSJevMetricsStore.load().last {
+            $0.runId == runId && $0.useCase == .contextSelection && $0.outcome == "summary" && $0.waitPhase == "T2"
+        }
+        XCTAssertEqual(latest?.numbers?["hidden_blocks"], 0)
+        XCTAssertEqual(latest?.numbers?["reread_after_hide_count"], 0)
+
+        _ = await service.projectedMessages(messages, identity: identity(runId: "run-never-projected-off"))
+        XCTAssertFalse(IOSJevMetricsStore.load().contains {
+            $0.runId == "run-never-projected-off" && $0.useCase == .contextSelection && $0.outcome == "summary"
+        }, "an off-only run must not create a T2 metrics row")
+    }
+
+    func testChangingFromActiveToShadowClearsActualProjectionSnapshot() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+
+        let settingsBox = SettingsBox(makeSettings(mode: .active))
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request, score: 0.1), self.httpResponse(status: 200))
+        }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { settingsBox.get() },
+            apiKeyProvider: { "test-key" },
+            now: { Date() }
+        ))
+        let service = IOSJevContextSelectionService(deps: .init(
+            coordinator: coordinator,
+            settingsProvider: { settingsBox.get() }
+        ))
+        let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        let runId = "run-cleared-after-shadow"
+        _ = await service.projectedMessages(messages, identity: identity(runId: runId))
+        XCTAssertGreaterThan(IOSJevMetricsStore.runSummary(runId: runId).hiddenCharacters ?? 0, 0)
+
+        var shadow = settingsBox.get()
+        shadow.setMode(.shadow, for: .contextSelection)
+        settingsBox.set(shadow)
+
+        let returned = await service.projectedMessages(messages, identity: identity(runId: runId))
+        let returnedText = ((returned[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        let originalText = ((messages[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(returnedText, originalText)
+        XCTAssertEqual(IOSJevMetricsStore.runSummary(runId: runId).hiddenCharacters, 0)
+        let latest = IOSJevMetricsStore.load().last {
+            $0.runId == runId && $0.useCase == .contextSelection && $0.outcome == "summary" && $0.waitPhase == "T2"
+        }
+        XCTAssertEqual(latest?.numbers?["reread_after_hide_count"], 0)
+        XCTAssertEqual(latest?.numbers?["hidden_blocks"], 0)
+    }
+
     func testConversationIdSeparatesProjectionDecisions() async {
         let calls = JevCallCounter()
         let transport = JevStubTransport { request in
@@ -566,15 +738,30 @@ final class IOSJevContextSelectionTests: XCTestCase {
     }
 
     func testShadowObservesButReturnsOriginal() async {
-        let transport = JevStubTransport { _ in (self.scorePayload(["b0": 0.1]), self.httpResponse(status: 200)) }
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request, score: 0.1), self.httpResponse(status: 200))
+        }
         let service = makeService(settings: makeSettings(mode: .shadow, pinned: nil), transport: transport)
         let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
         let projected = await service.projectedMessages(messages, identity: identity())
         let tool = projected[2].parts.first as! UIMessagePart.Tool
-        XCTAssertTrue(((tool.output.first as! UIMessagePart.Text).text.contains("章节0")), "shadow returns original request")
+        let projectedText = (tool.output.first as! UIMessagePart.Text).text
+        let originalText = ((messages[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(projectedText, originalText, "shadow returns the original request")
         // shadow 观测是异步的；等待一拍后确认发生了调用。
         try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertGreaterThan(transport.calls, 0)
+        let observation = IOSJevMetricsStore.load().last {
+            $0.runId == "run" && $0.useCase == .contextSelection && $0.mode == .shadow
+        }
+        XCTAssertEqual(observation?.numbers?["shadow_original_characters"], Double(originalText.count))
+        XCTAssertGreaterThan(observation?.numbers?["shadow_hidden_characters"] ?? 0, 0,
+                             "shadow records the hypothetical hidden character count")
+        XCTAssertEqual(Set(observation?.numbers?.keys.map { $0 } ?? []), Set([
+            "shadow_hidden_characters", "shadow_original_characters",
+        ]), "shadow writes only the hypothetical projection numbers")
     }
 
     func testScopeNotAllowedSkipsNetwork() async {

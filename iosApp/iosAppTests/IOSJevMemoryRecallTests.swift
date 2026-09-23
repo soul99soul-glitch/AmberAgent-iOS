@@ -323,19 +323,38 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertNil(selection)
     }
 
-    func testShadowDoesNotApplySelection() async {
+    func testShadowDoesNotApplySelectionAndRecordsOverlapRatio() async throws {
+        let runId = "memory-shadow-overlap-\(UUID().uuidString)"
+        let records = JevFixtures.makeRecords().filter { [3, 14].contains($0.id) }
         let transport = JevStubTransport { request in
-            (self.batchPayload(for: request, scores: ["m3": 0.9], noul: ["inj3": 0.05]), self.httpResponse(status: 200))
+            (self.batchPayload(for: request, scores: ["m3": 0.1, "m14": 2.5], noul: ["inj3": 0, "inj14": 0]), self.httpResponse(status: 200))
         }
         let service = makeService(settings: makeSettings(mode: .shadow, pinned: nil), transport: transport)
-        let messages = [userMessage(text: "你好")]
+        let messages = [userMessage(text: "项目 Alpha")]
         let selection = await service.prepareTurnSelection(
             messages: messages,
-            records: JevFixtures.makeRecords(),
+            records: records,
             runtime: runtime,
-            identity: identity()
+            identity: .init(runId: runId)
         )
         XCTAssertNil(selection)
+        let baseline = ChatMemoryContextBuilder.contextPromptResult(
+            records: records,
+            runtime: runtime,
+            queryText: "项目 Alpha"
+        )
+        XCTAssertEqual(baseline.ids, [3])
+        XCTAssertEqual(selection?.ids ?? baseline.ids, baseline.ids, "shadow 不得覆盖 prompt/usage/citation 所用基线")
+
+        var overlapMetric: IOSJevMetricsRecord?
+        for _ in 0..<100 where overlapMetric == nil {
+            overlapMetric = IOSJevMetricsStore.load().first {
+                $0.runId == runId && $0.waitPhase == "t1_shadow_selection"
+            }
+            if overlapMetric == nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        }
+        XCTAssertEqual(overlapMetric?.numbers?["overlap_ratio"], 0)
+        XCTAssertEqual(transport.calls, 1)
     }
 
     func testFallbackOnInvalidResponseKeepsSyncPath() async {

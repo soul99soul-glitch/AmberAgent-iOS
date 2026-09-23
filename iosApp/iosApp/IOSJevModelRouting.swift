@@ -65,7 +65,8 @@ final class IOSJevModelRoutingService {
                     state: part.state,
                     questions: part.questions,
                     context: context,
-                    cacheKey: cacheKey
+                    cacheKey: cacheKey,
+                    expectedSettingsRevision: settings.revision
                 )
                 _ = self
             }
@@ -141,6 +142,15 @@ final class IOSJevModelRoutingService {
         settings: IOSJevSettings
     ) -> [String] {
         guard case .applied(let decision) = outcome else { return [] }
+        return preferredModelIds(from: decision, candidates: candidates, settings: settings)
+    }
+
+    /// Shadow 评估使用同一解析规则计算反事实首选集合，不应用到真实选择。
+    static func preferredModelIds(
+        from decision: IOSJevDecision,
+        candidates: [IOSSubAgentModelPool.Candidate],
+        settings: IOSJevSettings
+    ) -> [String] {
         let candidateIds = Set(toolCapableCandidates(candidates).map(\.modelId))
         var scores: [String: Double] = [:]
         var confidences: [String: Double] = [:]

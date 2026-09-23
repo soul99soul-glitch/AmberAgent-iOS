@@ -214,6 +214,105 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertTrue(expanded.contains("workspace_file_write"))
     }
 
+    func testActiveExposureRatioUsesReadOnlyKeywordPreview() async throws {
+        IOSJevMetricsStore.clear()
+        defer {
+            IOSJevToolDiscoveryMetricsTracker.discardPending(runId: "run")
+            IOSJevMetricsStore.clear()
+        }
+
+        let queryArgs = #"{"query":"save the file to disk","limit":5}"#
+        let bridge = makeBridge()
+        let keywordPreview = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: bridge.previewToolSearch(argumentsJson: queryArgs).data(using: .utf8)!
+        ) as? [String: Any])
+        let keywordCount = Set(keywordPreview["expanded_tools"] as? [String] ?? []).count
+        XCTAssertGreaterThan(keywordCount, 0)
+
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 2.8, "workspace_file_write": 2.0], for: request), self.httpResponse(status: 200))
+        }
+        let output = await execute(
+            makeService(settings: makeSettings(mode: .active), transport: transport),
+            argumentsJson: queryArgs,
+            bridge: bridge,
+            identity: .init(runId: "run", turnBudgetKey: "turn", trackNextForegroundStep: true)
+        )
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as? [String: Any])
+        let activeCount = Set(payload["expanded_tools"] as? [String] ?? []).count
+        let exposureRecords = IOSJevMetricsStore.load().filter {
+            $0.useCase == .toolDiscovery && $0.outcome == "summary" && $0.numbers?["exposure_ratio"] != nil
+        }
+        let exposureRecord = try XCTUnwrap(exposureRecords.last)
+        let exposureRatio = try XCTUnwrap(exposureRecord.numbers?["exposure_ratio"])
+        XCTAssertEqual(
+            exposureRatio,
+            Double(activeCount) / Double(keywordCount),
+            accuracy: 0.000_001
+        )
+
+        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
+            runId: "run",
+            calledToolNames: ["wm_click"]
+        )
+        let nextStepRecord = try XCTUnwrap(IOSJevMetricsStore.load().last {
+            $0.useCase == .toolDiscovery && $0.numbers?["next_step_new_tool_used"] != nil
+        })
+        XCTAssertEqual(nextStepRecord.numbers?["next_step_new_tool_used"], 1)
+    }
+
+    func testBackgroundLikeDiscoveryDoesNotRetainForegroundTracker() async {
+        IOSJevMetricsStore.clear()
+        defer {
+            IOSJevToolDiscoveryMetricsTracker.discardPending(runId: "run")
+            IOSJevMetricsStore.clear()
+        }
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 2.8], for: request), self.httpResponse(status: 200))
+        }
+        _ = await execute(
+            makeService(settings: makeSettings(mode: .active), transport: transport),
+            argumentsJson: args,
+            bridge: makeBridge(),
+            identity: identity()
+        )
+        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(runId: "run", calledToolNames: ["wm_click"])
+        XCTAssertFalse(IOSJevMetricsStore.load().contains(where: { $0.numbers?["next_step_new_tool_used"] != nil }))
+    }
+
+    func testNextModelStepTrackerRecordsEachPendingSearchOnce() {
+        IOSJevMetricsStore.clear()
+        defer {
+            IOSJevToolDiscoveryMetricsTracker.discardPending(runId: "tracker-run")
+            IOSJevMetricsStore.clear()
+        }
+
+        IOSJevToolDiscoveryMetricsTracker.registerActiveExposure(
+            runId: "tracker-run", exposedToolNames: ["tool_used"], modelVersion: "jev-v1"
+        )
+        IOSJevToolDiscoveryMetricsTracker.registerActiveExposure(
+            runId: "tracker-run", exposedToolNames: ["tool_not_used"], modelVersion: "jev-v1"
+        )
+        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
+            runId: "tracker-run", calledToolNames: ["tool_used"]
+        )
+
+        let outcomes = IOSJevMetricsStore.load().compactMap { record -> Double? in
+            guard record.useCase == .toolDiscovery else { return nil }
+            return record.numbers?["next_step_new_tool_used"]
+        }
+        XCTAssertEqual(outcomes, [1, 0])
+
+        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
+            runId: "tracker-run", calledToolNames: ["tool_used"]
+        )
+        XCTAssertEqual(
+            IOSJevMetricsStore.load().compactMap { $0.numbers?["next_step_new_tool_used"] },
+            [1, 0],
+            "one next model response must consume all pending searches exactly once"
+        )
+    }
+
     func testActiveExposureContainsOnlyRankedResultsAndRelatedExpansion() async throws {
         let queryArgs = #"{"query":"在系统日历创建会议","limit":5}"#
         let bridge = makeBridge()
@@ -279,6 +378,8 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
     }
 
     func testShadowReturnsKeywordResultButObserves() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
         let transport = JevStubTransport { request in
             (self.scorePayload(["wm_click": 2.8], for: request), self.httpResponse(status: 200))
         }
@@ -289,6 +390,8 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         // shadow 已改为后台观测（不阻塞主路径）；等待一拍再确认发生了调用。
         try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertGreaterThan(transport.calls, 0, "shadow must observe via network")
+        XCTAssertNotNil(IOSJevMetricsStore.useCaseSummaries().first(where: { $0.useCase == .toolDiscovery })?.exposureRatio,
+                        "shadow should record a hypothetical exposure ratio without changing the keyword result")
         let object = try! JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as! [String: Any]
         let expanded = object["expanded_tools"] as! [String]
         XCTAssertEqual(expanded.first, keywordFirstResult(bridge: bridge, argumentsJson: queryArgs), "shadow must return keyword result")

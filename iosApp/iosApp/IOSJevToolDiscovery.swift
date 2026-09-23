@@ -18,6 +18,8 @@ enum IOSJevToolDiscoveryService {
     struct RunIdentity: Sendable {
         var runId: String?
         var turnBudgetKey: String
+        /// 只有前台 Host 会在下一模型响应/终态消费 tracker；后台与 Recipe 不登记。
+        var trackNextForegroundStep: Bool = false
     }
 
     /// 轮次预算 key：runId（本 App 的 run 即一次用户输入及其工具续跑；steer
@@ -88,6 +90,74 @@ enum IOSJevToolDiscoveryService {
             bridge.executeToolSearch(argumentsJson: argumentsJson)
         }
 
+        let keywordExposureNames = Self.expandedToolNames(
+            from: bridge.previewToolSearch(argumentsJson: argumentsJson)
+        )
+
+        // shadow：后台观测只记指标（含建议排序），不阻塞 tool_search 主路径。
+        if effectiveMode == .shadow {
+            let coordinator = coordinator
+            Task(priority: .utility) { @MainActor in
+                let outcome = await coordinator.decide(
+                    useCase: .toolDiscovery,
+                    requiredScopes: requiredScopes,
+                    state: request.state,
+                    questions: request.questions,
+                    context: context,
+                    cacheKey: "tool_discovery_shadow",
+                    waitBudgetMs: settings.policy.deadlineMs,
+                    expectedSettingsRevision: settings.revision,
+                    metricSuggestionProvider: { decision in
+                        (rankingTop1(decision, candidates: parsed.candidates), keywordTop1)
+                    }
+                )
+                guard case .observed(let decision) = outcome,
+                      !keywordExposureNames.isEmpty else { return }
+                let suitable = (decision.answers.first(where: { $0.id == request.suitabilityQuestionID })?.noul ?? 0) >= 0.5
+                let predictedRanking = suitable
+                    ? ranking(from: decision, candidates: request.candidates,
+                              minScore: settings.policy.toolDiscoveryMinScore,
+                              minConfidence: settings.policy.toolDiscoveryMinConfidence)
+                    : nil
+                let predicted = predictedRanking.map {
+                    Self.expandedToolNames(from: bridge.previewToolSearch(argumentsJson: argumentsJson, rankingOverride: $0))
+                } ?? keywordExposureNames
+                IOSJevMetricsStore.append(IOSJevMetricsRecord(
+                    timestamp: Date(), useCase: .toolDiscovery, mode: .shadow,
+                    modelVersion: settings.activeModelVersion, outcome: "summary",
+                    latencyMs: 0, requestBytes: 0, responseBytes: 0,
+                    inputTokens: nil, outputTokens: nil, reason: nil,
+                    runId: context.runId,
+                    numbers: ["exposure_ratio": Double(predicted.count) / Double(keywordExposureNames.count)]
+                ))
+            }
+            return keywordFallback()
+        }
+
+        let visibleBeforeDecision = Set(bridge.visibleTools().map(\.name))
+
+        func recordActiveExposure(_ output: String, jevRanked: Bool) {
+            let activeExposureNames = Self.expandedToolNames(from: output)
+            IOSJevToolDiscoveryMetricsTracker.recordExposureRatio(
+                runId: context.runId,
+                modelVersion: settings.activeModelVersion,
+                activeExposureCount: activeExposureNames.count,
+                keywordExposureCount: keywordExposureNames.count
+            )
+            guard jevRanked, identity.trackNextForegroundStep else { return }
+            IOSJevToolDiscoveryMetricsTracker.registerActiveExposure(
+                runId: context.runId,
+                exposedToolNames: activeExposureNames.subtracting(visibleBeforeDecision),
+                modelVersion: settings.activeModelVersion
+            )
+        }
+
+        func activeKeywordFallback() -> String {
+            let output = keywordFallback()
+            recordActiveExposure(output, jevRanked: false)
+            return output
+        }
+
         func appliedFallback(_ reason: String) -> String {
             IOSJevMetricsStore.append(IOSJevMetricsRecord(
                 timestamp: Date(), useCase: .toolDiscovery, mode: .active,
@@ -96,26 +166,7 @@ enum IOSJevToolDiscoveryService {
                 inputTokens: nil, outputTokens: nil, reason: reason,
                 runId: context.runId, numbers: ["business_fallback": 1]
             ))
-            return keywordFallback()
-        }
-
-        // shadow：后台观测只记指标（含建议排序），不阻塞 tool_search 主路径。
-        if effectiveMode == .shadow {
-            let coordinator = coordinator
-            Task(priority: .utility) {
-                _ = await coordinator.decide(
-                    useCase: .toolDiscovery,
-                    requiredScopes: requiredScopes,
-                    state: request.state,
-                    questions: request.questions,
-                    context: context,
-                    cacheKey: "tool_discovery_shadow",
-                    metricSuggestionProvider: { decision in
-                        (rankingTop1(decision, candidates: parsed.candidates), keywordTop1)
-                    }
-                )
-            }
-            return keywordFallback()
+            return activeKeywordFallback()
         }
 
         // active：应用 Jev 排序（失败/低置信回退关键词结果）。
@@ -137,13 +188,21 @@ enum IOSJevToolDiscoveryService {
                 return appliedFallback("no_suitable_tool")
             }
             if let ranking = ranking(from: decision, candidates: request.candidates, minScore: settings.policy.toolDiscoveryMinScore, minConfidence: settings.policy.toolDiscoveryMinConfidence) {
-                return bridge.executeToolSearch(argumentsJson: argumentsJson, rankingOverride: ranking)
+                let output = bridge.executeToolSearch(argumentsJson: argumentsJson, rankingOverride: ranking)
+                recordActiveExposure(output, jevRanked: true)
+                return output
             }
             // 低置信 / 无足够候选：回退原搜索。
             return appliedFallback("ranking_unavailable")
         case .observed, .skipped, .failed:
-            return keywordFallback()
+            return activeKeywordFallback()
         }
+    }
+
+    private static func expandedToolNames(from payload: String) -> Set<String> {
+        guard let object = snapshotJSON(payload),
+              let names = object["expanded_tools"] as? [String] else { return [] }
+        return Set(names)
     }
 
     // MARK: Snapshot parsing
@@ -324,5 +383,78 @@ enum IOSJevToolDiscoveryService {
             hash = hash &* 1_099_511_628_211
         }
         return String(format: "%016llx", hash)
+    }
+}
+
+/// In-memory correlation between an active Jev exposure and the next assistant
+/// model response. Tool names stay only in this short-lived tracker; persisted
+/// metrics contain the 0/1 outcome and run ID, never the query text.
+@MainActor
+enum IOSJevToolDiscoveryMetricsTracker {
+    private struct PendingExposure {
+        var toolNames: Set<String>
+        var modelVersion: String
+    }
+
+    private static var pendingByRun: [String: [PendingExposure]] = [:]
+
+    static func recordExposureRatio(
+        runId: String?,
+        modelVersion: String,
+        activeExposureCount: Int,
+        keywordExposureCount: Int
+    ) {
+        guard keywordExposureCount > 0 else { return }
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(), useCase: .toolDiscovery, mode: .active,
+            modelVersion: modelVersion, outcome: "summary",
+            latencyMs: 0, requestBytes: 0, responseBytes: 0,
+            inputTokens: nil, outputTokens: nil, reason: nil,
+            runId: runId,
+            numbers: ["exposure_ratio": Double(activeExposureCount) / Double(keywordExposureCount)]
+        ))
+    }
+
+    /// Called after an active ranked result has updated bridge exposure.
+    /// Names are held only until the following model step is observed.
+    static func registerActiveExposure(
+        runId: String?,
+        exposedToolNames: Set<String>,
+        modelVersion: String = ""
+    ) {
+        guard let key = validRunKey(runId), !exposedToolNames.isEmpty else { return }
+        pendingByRun[key, default: []].append(
+            PendingExposure(toolNames: exposedToolNames, modelVersion: modelVersion)
+        )
+    }
+
+    /// Call once when the next assistant model response is available, before
+    /// its tool calls execute. Multiple searches from the prior step are
+    /// evaluated independently against this same response.
+    static func recordNextModelStep(runId: String?, calledToolNames: Set<String>) {
+        guard let key = validRunKey(runId),
+              let exposures = pendingByRun.removeValue(forKey: key) else { return }
+        for exposure in exposures {
+            IOSJevMetricsStore.append(IOSJevMetricsRecord(
+                timestamp: Date(), useCase: .toolDiscovery, mode: .active,
+                modelVersion: exposure.modelVersion, outcome: "summary",
+                latencyMs: 0, requestBytes: 0, responseBytes: 0,
+                inputTokens: nil, outputTokens: nil, reason: nil,
+                runId: key,
+                numbers: ["next_step_new_tool_used": exposure.toolNames.isDisjoint(with: calledToolNames) ? 0 : 1]
+            ))
+        }
+    }
+
+    /// Drop pending observations when a run ends without another assistant
+    /// model response (for example, cancellation).
+    static func discardPending(runId: String?) {
+        guard let key = validRunKey(runId) else { return }
+        pendingByRun.removeValue(forKey: key)
+    }
+
+    private static func validRunKey(_ runId: String?) -> String? {
+        guard let runId, !runId.isEmpty else { return nil }
+        return runId
     }
 }

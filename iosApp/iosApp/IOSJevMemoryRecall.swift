@@ -157,11 +157,30 @@ final class IOSJevMemoryRecallService {
             // 同一轮（同 key）只观测一次，避免工具循环逐轮刷重复指标。
             guard rememberShadowObservation(key) else { return nil }
             let coordinator = self.coordinator
-            Task(priority: .utility) {
-                _ = await coordinator.decideBatch(
+            Task(priority: .utility) { @MainActor in
+                let outcomes = await coordinator.decideBatch(
                     parts: [recallPart, injectionPart],
                     context: context,
-                    waitBudgetMs: settings.policy.t1WaitBudgetMs
+                    // Shadow runs outside the user path and can wait through the network deadline.
+                    waitBudgetMs: settings.policy.deadlineMs,
+                    expectedSettingsRevision: settings.revision
+                )
+                guard case .observed(let recallDecision) = outcomes[recallPart.id],
+                      case .observed(let injectionDecision) = outcomes[injectionPart.id] else { return }
+                let overlapRatio = self.shadowOverlapRatio(
+                    baseline: localResult,
+                    eligible: eligible,
+                    candidates: candidates,
+                    runtime: runtime,
+                    queryText: queryText,
+                    recallDecision: recallDecision,
+                    injectionDecision: injectionDecision,
+                    settings: settings
+                )
+                Self.recordShadowOverlapMetric(
+                    overlapRatio: overlapRatio,
+                    identity: identity,
+                    settings: settings
                 )
             }
             return nil
@@ -464,6 +483,70 @@ final class IOSJevMemoryRecallService {
             }
             return ["memory_selected_before_screening_and_budget": Double(selectedIds.count)]
         }
+    }
+
+    private func shadowOverlapRatio(
+        baseline: ChatMemoryContextBuilder.RecallResult,
+        eligible: [MemoryRecord],
+        candidates: [MemoryRecord],
+        runtime: AgentRuntimeSetting,
+        queryText: String,
+        recallDecision: IOSJevDecision,
+        injectionDecision: IOSJevDecision,
+        settings: IOSJevSettings
+    ) -> Double {
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        let ordered = Self.orderedSelection(
+            eligible: eligible,
+            candidates: candidates,
+            decision: recallDecision,
+            minScore: settings.policy.memoryRecallMinScore,
+            minConfidence: settings.policy.memoryRecallMinConfidence,
+            queryText: queryText,
+            now: now
+        )
+        let hits = IOSJevInjectionScreening.hitQuestionIds(
+            from: injectionDecision,
+            minimumProbability: settings.policy.memoryInjectionMinProbability
+        )
+        let screened = ordered.filter { !hits.contains("inj\($0.id)") }
+        let screeningRemovedHits = screened.count < ordered.count
+        let result = ChatMemoryContextBuilder.contextPromptResult(
+            records: eligible,
+            runtime: runtime,
+            queryText: queryText,
+            now: now,
+            orderedSelection: screened
+        )
+        // Active recall falls back to the captured local set when a nonempty ordered
+        // selection cannot fit the existing prompt budget.
+        let selectedIds = result.records.isEmpty && !ordered.isEmpty && !screeningRemovedHits
+            ? Set(baseline.ids)
+            : Set(result.ids)
+        let baselineIds = Set(baseline.ids)
+        let union = selectedIds.union(baselineIds)
+        return union.isEmpty ? 1 : Double(selectedIds.intersection(baselineIds).count) / Double(union.count)
+    }
+
+    private static func recordShadowOverlapMetric(
+        overlapRatio: Double,
+        identity: RunIdentity,
+        settings: IOSJevSettings
+    ) {
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(),
+            useCase: .memoryRecall,
+            mode: .shadow,
+            modelVersion: settings.activeModelVersion,
+            outcome: "observed",
+            latencyMs: 0,
+            requestBytes: 0,
+            responseBytes: 0,
+            reason: nil,
+            runId: identity.runId,
+            waitPhase: "t1_shadow_selection",
+            numbers: ["overlap_ratio": overlapRatio]
+        ))
     }
 
     private static func recordSelectedMetric(

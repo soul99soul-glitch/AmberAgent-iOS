@@ -235,14 +235,20 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
         context: IOSJevRunContext,
         cacheKey: String? = nil,
         waitBudgetMs: Int? = nil,
-        metricSuggestionProvider: (@Sendable (IOSJevDecision) -> (suggestedTop1: String?, keywordTop1: String?))? = nil
+        expectedSettingsRevision: Int? = nil,
+        metricSuggestionProvider: (@Sendable (IOSJevDecision) -> (suggestedTop1: String?, keywordTop1: String?))? = nil,
+        metricNumbersProvider: (@Sendable (IOSJevDecision) -> [String: Double]?)? = nil
     ) async -> IOSJevDecisionOutcome {
         let part = IOSJevBatchPart(
             id: "single", useCase: useCase, requiredScopes: requiredScopes,
             state: state, questions: questions, cacheKey: cacheKey,
-            metricSuggestionProvider: metricSuggestionProvider
+            metricSuggestionProvider: metricSuggestionProvider,
+            metricNumbersProvider: metricNumbersProvider
         )
-        return await decideBatch(parts: [part], context: context, waitBudgetMs: waitBudgetMs)["single"]
+        return await decideBatch(
+            parts: [part], context: context, waitBudgetMs: waitBudgetMs,
+            expectedSettingsRevision: expectedSettingsRevision
+        )["single"]
             ?? .skipped(reason: "empty_batch")
     }
 
@@ -251,11 +257,15 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
     func decideBatch(
         parts: [IOSJevBatchPart],
         context: IOSJevRunContext,
-        waitBudgetMs: Int? = nil
+        waitBudgetMs: Int? = nil,
+        expectedSettingsRevision: Int? = nil
     ) async -> [String: IOSJevDecisionOutcome] {
         guard !parts.isEmpty else { return [:] }
         let epochBefore = synchronized { configurationEpoch }
         let settings = deps.settingsProvider()
+        if let expectedSettingsRevision, settings.revision != expectedSettingsRevision {
+            return parts.reduce(into: [:]) { $0[$1.id] = .skipped(reason: "config_changed") }
+        }
         let epochAtStart = synchronized { configurationChangeDepth == 0 && configurationEpoch == epochBefore ? configurationEpoch : nil }
         guard let epochAtStart else {
             return parts.reduce(into: [:]) { $0[$1.id] = .skipped(reason: "config_changed") }

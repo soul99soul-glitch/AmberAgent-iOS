@@ -1296,10 +1296,14 @@ final class ChatViewModel {
         // 只有单个 VM，测试不驱动真实后台 job）。
         IOSChatBackgroundGenerationCoordinator.shared.onRunTerminal = {
             [weak self] conversationId, runId, finalMessages in
-            await self?.orchestrationToolService.notifyRunTerminal(
+            guard let self else { return }
+            let terminal = try? await self.runStore.snapshot(runId: runId)
+            await self.orchestrationToolService.notifyRunTerminal(
                 conversationId: conversationId,
                 runId: runId,
-                finalMessages: finalMessages
+                finalMessages: finalMessages,
+                terminalStatus: terminal?.status,
+                terminalReason: terminal?.terminalReason
             )
         }
         IOSChatBackgroundGenerationCoordinator.shared.onRunFinishedWithPendingTasks = {
@@ -1587,12 +1591,13 @@ final class ChatViewModel {
                 onForegroundYield: { runId in
                     state.waitingForChildRunId = runId
                 },
-                onRunTerminal: { [weak self] conversationId, runId, finalMessages in
+                onRunTerminal: { [weak self] conversationId, runId, terminalStatus, finalMessages in
                     self?.observeYieldedChildResults(state: state, runId: runId)
                     await self?.orchestrationToolService.notifyRunTerminal(
                         conversationId: conversationId,
                         runId: runId,
-                        finalMessages: finalMessages
+                        finalMessages: finalMessages,
+                        terminalStatus: terminalStatus
                     )
                 },
                 setToolOutcomeUnknown: { [weak self] descriptor in

@@ -140,6 +140,7 @@ final class ChatKernelRunHost {
     private var streamClock = ChatGenerationSpeedClock()
     private var didRecordJevFirstDelta = false
     private var jevModelStepCount = 0
+    private var lastJevToolOutcomeAssistantMessageId: String?
     private var keepaliveHeld = false
     private var didReportFirstDeltaThisRound = false
     /// 适配器已进入 run()(决定 cancel 是否调用 adapter.cancel——进入前
@@ -282,6 +283,7 @@ final class ChatKernelRunHost {
         streamClock = ChatGenerationSpeedClock()
         didRecordJevFirstDelta = false
         jevModelStepCount = 0
+        lastJevToolOutcomeAssistantMessageId = nil
         let tracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         citationTracker = tracker
 
@@ -464,6 +466,7 @@ final class ChatKernelRunHost {
         streamClock = ChatGenerationSpeedClock()
         didRecordJevFirstDelta = false
         jevModelStepCount = 0
+        lastJevToolOutcomeAssistantMessageId = nil
 
         let imagePresentation = AgentActivityPresentation.runningTool(toolName: "generate_image")
         bindings.startLiveActivity(runId, conversationId, imagePresentation)
@@ -750,10 +753,13 @@ final class ChatKernelRunHost {
                 await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
             }
             let succeeded = failureReason == nil && didPersist
+            let terminalStatus: AgentRunStatus = didPersist
+                ? (failureReason == nil ? .completed : .failed)
+                : .recoveryPending
             let didRecordTerminalRun = await self.bindings.recordRun(
                 runId,
                 startedAt,
-                didPersist ? (failureReason == nil ? .completed : .failed) : .recoveryPending,
+                terminalStatus,
                 inputDigest,
                 conversationHex,
                 nil
@@ -789,7 +795,8 @@ final class ChatKernelRunHost {
             )
             self.teardownRun(
                 runId: runId,
-                terminalEvent: succeeded ? .generationCompleted : .generationFailed
+                terminalEvent: succeeded ? .generationCompleted : .generationFailed,
+                terminalStatus: terminalStatus
             )
             if succeeded {
                 self.bindings.generationSucceeded()
@@ -822,10 +829,11 @@ final class ChatKernelRunHost {
         bindings.bumpMessageRevision(.toolResultAppended, 1)
         let conversationHex = conversationId?.toHexDashString()
         let didPersist = await bindings.persistMessages(conversationId)
+        let terminalStatus: AgentRunStatus = didPersist ? .failed : .recoveryPending
         let didRecordRun = await bindings.recordRun(
             runId,
             startedAt,
-            didPersist ? .failed : .recoveryPending,
+            terminalStatus,
             inputDigest,
             conversationHex,
             nil
@@ -841,7 +849,7 @@ final class ChatKernelRunHost {
             summary: WatchTaskText.clipped(reason, maxLength: 200)
         )
         await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
-        teardownRun(runId: runId, terminalEvent: .generationFailed)
+        teardownRun(runId: runId, terminalEvent: .generationFailed, terminalStatus: terminalStatus)
     }
 
     private func recordImageToolTerminalIfNeeded(
@@ -1542,6 +1550,7 @@ final class ChatKernelRunHost {
         var callbacks = ChatRunKernelAdapter.Callbacks()
         callbacks.onMessagesUpdated = { [weak self] messages in
             guard let self, self.currentRunId == runId else { return }
+            self.recordJevNextModelStepIfNeeded(runId: runId, messages: messages)
             self.activeToolExecutionName = nil
             self.activeToolEffectClass = nil
             // 权威快照落地:刚完成的 assistant 消息已在其中(与 provisional
@@ -2069,10 +2078,11 @@ final class ChatKernelRunHost {
         let conversationHex = conversationId?.toHexDashString()
         let finalMessages = bindings.getMessages()
         let didPersist = await bindings.persistMessages(conversationId)
+        let terminalStatus: AgentRunStatus = didPersist ? .outcomeUnknown : .recoveryPending
         let didRecordRun = await bindings.recordRun(
             runId,
             startedAt,
-            didPersist ? .outcomeUnknown : .recoveryPending,
+            terminalStatus,
             inputDigest,
             conversationHex,
             nil
@@ -2114,7 +2124,7 @@ final class ChatKernelRunHost {
         }
         await dependencies.liveActivityController.end(runId: runId, presentation: .failed())
         bindings.setMessages(finalMessages)
-        teardownRun(runId: runId, terminalEvent: .generationFailed)
+        teardownRun(runId: runId, terminalEvent: .generationFailed, terminalStatus: terminalStatus)
     }
 
     /// completed(CG-C handleCompletedStream 正常分支 :2732-2797 +
@@ -2148,9 +2158,12 @@ final class ChatKernelRunHost {
                 await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
             }
             let succeeded = didPersist && !miniAppExpected
+            let terminalStatus: AgentRunStatus = didPersist
+                ? (miniAppExpected ? .failed : .completed)
+                : .recoveryPending
             let didRecordRun = await bindings.recordRun(
                 runId, startedAt,
-                didPersist ? (miniAppExpected ? .failed : .completed) : .recoveryPending,
+                terminalStatus,
                 inputDigest, conversationHex, nil
             )
             guard didRecordRun else {
@@ -2179,7 +2192,11 @@ final class ChatKernelRunHost {
                 runId: runId,
                 presentation: succeeded ? .completed() : .failed()
             )
-            teardownRun(runId: runId, terminalEvent: succeeded ? .generationCompleted : .generationFailed)
+            teardownRun(
+                runId: runId,
+                terminalEvent: succeeded ? .generationCompleted : .generationFailed,
+                terminalStatus: terminalStatus
+            )
             if succeeded {
                 bindings.generationSucceeded()
             }
@@ -2219,9 +2236,12 @@ final class ChatKernelRunHost {
             bindings.bumpMessageRevision(.toolResultAppended, 1)
             _ = await bindings.persistMessages(conversationId)
         }
+        let terminalStatus: AgentRunStatus = didPersist
+            ? (miniAppFailed ? .failed : .completed)
+            : .recoveryPending
         let didRecordRun = await bindings.recordRun(
             runId, startedAt,
-            didPersist ? (miniAppFailed ? .failed : .completed) : .recoveryPending,
+            terminalStatus,
             inputDigest, conversationHex, nil
         )
         guard didRecordRun else {
@@ -2260,7 +2280,8 @@ final class ChatKernelRunHost {
         }
         teardownRun(
             runId: runId,
-            terminalEvent: didPersist && !miniAppFailed ? .generationCompleted : .generationFailed
+            terminalEvent: didPersist && !miniAppFailed ? .generationCompleted : .generationFailed,
+            terminalStatus: terminalStatus
         )
         if didPersist && !miniAppFailed {
             bindings.generationSucceeded()
@@ -2332,9 +2353,11 @@ final class ChatKernelRunHost {
         if didPersist {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
         }
+        let terminalStatus: AgentRunStatus = didPersist && !requiresRecovery
+            ? .failed
+            : .recoveryPending
         let didRecordRun = await bindings.recordRun(
-            runId, startedAt,
-            didPersist && !requiresRecovery ? .failed : .recoveryPending,
+            runId, startedAt, terminalStatus,
             inputDigest, conversationHex, nil
         )
         guard didRecordRun else {
@@ -2368,7 +2391,7 @@ final class ChatKernelRunHost {
         if !didPersist {
             print("[AmberChat] Failed to persist kernel failure terminal run=\(runId)")
         }
-        teardownRun(runId: runId, terminalEvent: .generationFailed)
+        teardownRun(runId: runId, terminalEvent: .generationFailed, terminalStatus: terminalStatus)
     }
 
     /// cancelled(CG-C cancel 尾 :1501-1581):取消填充/快照已由适配器同步
@@ -2414,9 +2437,10 @@ final class ChatKernelRunHost {
         if didPersist {
             await IOSRunRecovery.reconcilePersistedToolResults(runId: runId)
         }
+        let terminalStatus: AgentRunStatus = didPersist ? cause.durableStatus : .recoveryPending
         let didRecordRun = await bindings.recordRun(
             runId, startedAt,
-            didPersist ? cause.durableStatus : .recoveryPending,
+            terminalStatus,
             inputDigest, conversationHex, nil
         )
         guard didRecordRun else {
@@ -2457,20 +2481,29 @@ final class ChatKernelRunHost {
         backgroundExecution.end(runId)
         // P1-c 终态回传(CG-C :1570-1579 同款;服务按 runId 幂等去重)。
         let terminalMessages = messages
+        finishJevToolDiscoveryStep(
+            runId: runId,
+            messages: terminalMessages,
+            terminalStatus: terminalStatus
+        )
         recordJevRunCompletion(runId: runId, messages: terminalMessages)
         let terminalConversationId = conversationId
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
-        Task { @MainActor [bindings, terminalConversationId, runId, terminalMessages] in
-            await bindings.onRunTerminal(terminalConversationId, runId, terminalMessages)
+        Task { @MainActor [bindings, terminalConversationId, runId, terminalMessages, terminalStatus] in
+            await bindings.onRunTerminal(terminalConversationId, runId, terminalStatus, terminalMessages)
         }
     }
 
     /// finishStreaming :4919-4979 的 kernel 等价。durable checkpoint 在正常
     /// 终态丢弃，前台投影没有 CGC 独立 pacer/consumer 任务需要清理。
-    private func teardownRun(runId: String, terminalEvent: ChatMessageUpdateReason) {
+    private func teardownRun(
+        runId: String,
+        terminalEvent: ChatMessageUpdateReason,
+        terminalStatus: AgentRunStatus
+    ) {
         let runConversationId = currentConversationIdForRun
         IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
         if terminalEvent == .generationCompleted {
@@ -2486,6 +2519,11 @@ final class ChatKernelRunHost {
         ChatStreamRecorder.shared.finish(runId: runId)
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         let terminalMessages = bindings.getMessages()
+        finishJevToolDiscoveryStep(
+            runId: runId,
+            messages: terminalMessages,
+            terminalStatus: terminalStatus
+        )
         recordJevRunCompletion(runId: runId, messages: terminalMessages)
         clearRunIdentity()
         adapter = nil
@@ -2499,8 +2537,8 @@ final class ChatKernelRunHost {
         }
         bindings.handleSteerQueueAtTerminal(runConversationId, terminalEvent == .generationCompleted)
         // P1-c 终态回传(CG-C :4970-4977 同款 fire-and-forget)。
-        Task { @MainActor [bindings, runConversationId, runId, terminalMessages] in
-            await bindings.onRunTerminal(runConversationId, runId, terminalMessages)
+        Task { @MainActor [bindings, runConversationId, runId, terminalMessages, terminalStatus] in
+            await bindings.onRunTerminal(runConversationId, runId, terminalStatus, terminalMessages)
         }
     }
 
@@ -2518,11 +2556,56 @@ final class ChatKernelRunHost {
         IOSJevMetricsStore.appendRunNumbers(runId: runId, numbers: numbers)
     }
 
+    private func recordJevNextModelStepIfNeeded(runId: String, messages: [UIMessage]) {
+        let baselineIds = Set(displayBaseline.map { $0.id.toHexDashString() })
+        guard currentRunId == runId,
+              let assistant = messages.reversed().first(where: { message in
+                  message.role == MessageRole.assistant
+                      && !baselineIds.contains(message.id.toHexDashString())
+                      && (ChatContextSnapshot.epochMillis(from: message.createdAt) ?? 0) >= currentStartedAt
+              }) else { return }
+        let messageId = assistant.id.toHexDashString()
+        guard lastJevToolOutcomeAssistantMessageId != messageId else { return }
+        let calledToolNames = Set(assistant.parts.compactMap { ($0 as? UIMessagePart.Tool)?.toolName })
+        guard !calledToolNames.isEmpty else { return }
+        lastJevToolOutcomeAssistantMessageId = messageId
+        IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
+            runId: runId,
+            calledToolNames: calledToolNames
+        )
+    }
+
+    private func finishJevToolDiscoveryStep(
+        runId: String,
+        messages: [UIMessage],
+        terminalStatus: AgentRunStatus
+    ) {
+        let baselineIds = Set(displayBaseline.map { $0.id.toHexDashString() })
+        if terminalStatus == .completed,
+           let assistant = messages.reversed().first(where: { message in
+               message.role == MessageRole.assistant
+                   && !baselineIds.contains(message.id.toHexDashString())
+                   && (ChatContextSnapshot.epochMillis(from: message.createdAt) ?? 0) >= currentStartedAt
+           }) {
+            let messageId = assistant.id.toHexDashString()
+            if lastJevToolOutcomeAssistantMessageId != messageId {
+                lastJevToolOutcomeAssistantMessageId = messageId
+                let calledToolNames = Set(assistant.parts.compactMap { ($0 as? UIMessagePart.Tool)?.toolName })
+                IOSJevToolDiscoveryMetricsTracker.recordNextModelStep(
+                    runId: runId,
+                    calledToolNames: calledToolNames
+                )
+            }
+        }
+        IOSJevToolDiscoveryMetricsTracker.discardPending(runId: runId)
+    }
+
     /// The durable row rejected this terminal, so do not publish a terminal to
     /// Watch/orchestration. The provider is already done; release only the
     /// process-local owner so the composer cannot remain stuck forever.
     private func releaseLocalRunAfterTerminalRecordFailure(runId: String) {
         guard currentRunId == runId else { return }
+        IOSJevToolDiscoveryMetricsTracker.discardPending(runId: runId)
         let runConversationId = currentConversationIdForRun
         backgroundExecution.end(runId)
         keepaliveHeld = false

@@ -28,11 +28,17 @@ final class IOSJevContextSelectionService {
         var conversationId: String? = nil
     }
 
-    struct Block: Equatable {
+    struct Block: Equatable, Sendable {
         var index: Int
         var text: String
         var mustKeep: Bool
         var keepReason: String?
+    }
+
+    private struct ShadowProjectionCandidate: Sendable {
+        var blocks: [Block]
+        var outputToken: String?
+        var outputMultiplicity: Int
     }
 
     private struct OutputCandidate {
@@ -54,6 +60,13 @@ final class IOSJevContextSelectionService {
     private struct OutputGroup {
         var key: ProjectionKey
         var outputs: [OutputCandidate]
+    }
+
+    private struct HiddenOutputSource {
+        var messageIndex: Int
+        var toolCallId: String
+        var toolName: String
+        var inputHash: String
     }
 
     private enum ProjectionDecision {
@@ -157,7 +170,13 @@ final class IOSJevContextSelectionService {
     ) async -> [UIMessage] {
         let settings = deps.settingsProvider()
         let mode = settings.effectiveMode(for: .contextSelection)
-        guard mode != .off else { return messages }
+        guard mode != .off else {
+            recordProjectionSummary(
+                hiddenCharacters: 0, hiddenBlocks: 0, originalCharacters: 0,
+                rereadAfterHideCount: 0, identity: identity, settings: settings
+            )
+            return messages
+        }
         guard let conversationId = identity.conversationId, !conversationId.isEmpty else { return messages }
 
         let taskText = messages.reversed().first { $0.role == MessageRole.user }?.toText() ?? ""
@@ -179,13 +198,29 @@ final class IOSJevContextSelectionService {
             retaining: activeKeys,
             maxEntries: settings.policy.cacheMaxEntries
         )
-        guard !outputs.isEmpty else { return messages }
+        guard !outputs.isEmpty else {
+            recordProjectionSummary(
+                hiddenCharacters: 0, hiddenBlocks: 0, originalCharacters: 0,
+                rereadAfterHideCount: 0, identity: identity, settings: settings
+            )
+            return messages
+        }
 
         let requiredScopes: Set<IOSJevDataScope> = [.selectedTaskText, .toolOutput]
         guard settings.canSend(useCase: .contextSelection, required: requiredScopes) else { return messages }
 
+        // 只把本次入口前已经固定为隐藏的输出作为归因来源。这样当同一历史快照
+        // 首次得到隐藏决策时，不会把此前已经发生的同参调用倒算成“隐藏后重读”。
+        let rereadAfterHideCount = countRereadsAfterHide(
+            in: messages,
+            outputs: outputs,
+            conversationId: conversationId,
+            policyVersion: settings.policy.policyVersion
+        )
+
         var projectedMessages = messages
         var hiddenCharacters = 0
+        var hiddenBlocks = 0
         var groups: [OutputGroup] = []
         var groupIndices: [ProjectionKey: Int] = [:]
 
@@ -213,6 +248,7 @@ final class IOSJevContextSelectionService {
             if case .hide(let indices) = stored, !indices.isEmpty {
                 for output in group.outputs {
                     hiddenCharacters += output.blocks.filter { indices.contains($0.index) }.reduce(0) { $0 + $1.text.count }
+                    hiddenBlocks += output.blocks.filter { indices.contains($0.index) }.count
                     projectedMessages = Self.projecting(
                         messages: projectedMessages,
                         messageIndex: output.messageIndex,
@@ -240,7 +276,9 @@ final class IOSJevContextSelectionService {
         guard !undecided.isEmpty else {
             recordProjectionSummary(
                 hiddenCharacters: hiddenCharacters,
+                hiddenBlocks: hiddenBlocks,
                 originalCharacters: outputs.reduce(0) { $0 + $1.outputCharacterCount },
+                rereadAfterHideCount: rereadAfterHideCount,
                 identity: identity,
                 settings: settings
             )
@@ -260,7 +298,9 @@ final class IOSJevContextSelectionService {
                 for item in undecided { remember(.keepFull, for: item.key, maxEntries: settings.policy.cacheMaxEntries) }
                 recordProjectionSummary(
                     hiddenCharacters: hiddenCharacters,
+                    hiddenBlocks: hiddenBlocks,
                     originalCharacters: outputs.reduce(0) { $0 + $1.outputCharacterCount },
+                    rereadAfterHideCount: rereadAfterHideCount,
                     identity: identity,
                     settings: settings
                 )
@@ -283,6 +323,12 @@ final class IOSJevContextSelectionService {
         )
 
         if mode == .shadow {
+            // 当前调用不会实际隐藏输出；如本 run 曾有 active 投影摘要，先清除实际值。
+            // hypothetical 结果由 coordinator 的 shadow decision 数字单独记录。
+            recordProjectionSummary(
+                hiddenCharacters: 0, hiddenBlocks: 0, originalCharacters: 0,
+                rereadAfterHideCount: 0, identity: identity, settings: settings
+            )
             let turnKey = identity.runId ?? conversationId
             if let observed = shadowObservedByTurn[turnKey], observed == context.inputHash {
                 return messages
@@ -292,6 +338,37 @@ final class IOSJevContextSelectionService {
                 shadowObservedByTurn.removeAll(keepingCapacity: true)
             }
             let coordinator = deps.coordinator
+            let shadowCandidates = undecided.map { item in
+                let representative = item.outputs[0]
+                return ShadowProjectionCandidate(
+                    blocks: representative.blocks.filter { !$0.mustKeep },
+                    outputToken: undecided.count > 1 ? Self.outputQuestionToken(representative) : nil,
+                    outputMultiplicity: item.outputs.count
+                )
+            }
+            let originalCharacters = outputs.reduce(0) { $0 + $1.outputCharacterCount }
+            let minimumScore = settings.policy.contextSelectionMinScore
+            let minimumConfidence = settings.policy.contextSelectionMinConfidence
+            let metricNumbersProvider: @Sendable (IOSJevDecision) -> [String: Double]? = { decision in
+                var hiddenCharacters = 0
+                for candidate in shadowCandidates {
+                    let hiddenIndices = Set(Self.hiddenBlockIndices(
+                        candidates: candidate.blocks,
+                        decision: decision,
+                        outputToken: candidate.outputToken,
+                        minScore: minimumScore,
+                        minConfidence: minimumConfidence
+                    ))
+                    let outputHiddenCharacters = candidate.blocks
+                        .filter { hiddenIndices.contains($0.index) }
+                        .reduce(0) { $0 + $1.text.count }
+                    hiddenCharacters += outputHiddenCharacters * candidate.outputMultiplicity
+                }
+                return [
+                    "shadow_hidden_characters": Double(hiddenCharacters),
+                    "shadow_original_characters": Double(originalCharacters),
+                ]
+            }
             Task(priority: .utility) {
                 _ = await coordinator.decide(
                     useCase: .contextSelection,
@@ -300,7 +377,9 @@ final class IOSJevContextSelectionService {
                     questions: questions,
                     context: context,
                     cacheKey: "context_shadow",
-                    waitBudgetMs: settings.policy.t2WaitBudgetMs
+                    waitBudgetMs: settings.policy.t2WaitBudgetMs,
+                    expectedSettingsRevision: settings.revision,
+                    metricNumbersProvider: metricNumbersProvider
                 )
             }
             return messages
@@ -320,7 +399,9 @@ final class IOSJevContextSelectionService {
             for item in undecided { remember(.keepFull, for: item.key, maxEntries: settings.policy.cacheMaxEntries) }
             recordProjectionSummary(
                 hiddenCharacters: hiddenCharacters,
+                hiddenBlocks: hiddenBlocks,
                 originalCharacters: outputs.reduce(0) { $0 + $1.outputCharacterCount },
+                rereadAfterHideCount: rereadAfterHideCount,
                 identity: identity,
                 settings: settings
             )
@@ -342,6 +423,7 @@ final class IOSJevContextSelectionService {
             if !hidden.isEmpty {
                 for output in item.outputs {
                     hiddenCharacters += output.blocks.filter { hidden.contains($0.index) }.reduce(0) { $0 + $1.text.count }
+                    hiddenBlocks += output.blocks.filter { hidden.contains($0.index) }.count
                     projectedMessages = Self.projecting(
                         messages: projectedMessages,
                         messageIndex: output.messageIndex,
@@ -354,7 +436,9 @@ final class IOSJevContextSelectionService {
         }
         recordProjectionSummary(
             hiddenCharacters: hiddenCharacters,
+            hiddenBlocks: hiddenBlocks,
             originalCharacters: outputs.reduce(0) { $0 + $1.outputCharacterCount },
+            rereadAfterHideCount: rereadAfterHideCount,
             identity: identity,
             settings: settings
         )
@@ -363,11 +447,14 @@ final class IOSJevContextSelectionService {
 
     private func recordProjectionSummary(
         hiddenCharacters: Int,
+        hiddenBlocks: Int,
         originalCharacters: Int,
+        rereadAfterHideCount: Int,
         identity: RunIdentity,
         settings: IOSJevSettings
     ) {
-        guard hiddenCharacters > 0 else { return }
+        let clearsPreviousSnapshot = hiddenCharacters == 0
+        guard !clearsPreviousSnapshot || hasT2ProjectionSummary(runId: identity.runId) else { return }
         IOSJevMetricsStore.append(IOSJevMetricsRecord(
             timestamp: Date(),
             useCase: .contextSelection,
@@ -389,11 +476,92 @@ final class IOSJevContextSelectionService {
             waitPhase: "T2",
             waitedMs: nil,
             numbers: [
-                "hidden_characters": Double(hiddenCharacters),
-                "original_characters": Double(originalCharacters),
+                "hidden_characters": Double(clearsPreviousSnapshot ? 0 : hiddenCharacters),
+                "original_characters": Double(clearsPreviousSnapshot ? 0 : originalCharacters),
+                "hidden_blocks": Double(clearsPreviousSnapshot ? 0 : hiddenBlocks),
+                "reread_after_hide_count": Double(clearsPreviousSnapshot ? 0 : rereadAfterHideCount),
             ],
             ids: nil
         ))
+    }
+
+    private func hasT2ProjectionSummary(runId: String?) -> Bool {
+        guard let runId, !runId.isEmpty else { return false }
+        return IOSJevMetricsStore.load().contains { record in
+            record.runId == runId
+                && record.useCase == .contextSelection
+                && record.outcome == "summary"
+                && record.waitPhase == "T2"
+                && record.numbers?["hidden_characters"] != nil
+        }
+    }
+
+    /// 只统计已完成的工具输出：同一个 canonical toolCallId 会在后续上传中反复出现，
+    /// 因而必须是来源输出之后的新 ID，且工具名和 JSON 参数完全一致。
+    private func countRereadsAfterHide(
+        in messages: [UIMessage],
+        outputs: [OutputCandidate],
+        conversationId: String,
+        policyVersion: Int
+    ) -> Int {
+        let hiddenSources = outputs.compactMap { output -> HiddenOutputSource? in
+            let key = ProjectionKey(
+                conversationId: conversationId,
+                toolCallId: output.toolPart.toolCallId,
+                outputHash: output.outputHash,
+                policyVersion: policyVersion
+            )
+            guard let decision = projectionDecisions[key],
+                  case .hide(let indices) = decision,
+                  !indices.isEmpty,
+                  let inputHash = Self.canonicalToolInputHash(output.toolPart.input) else {
+                return nil
+            }
+            return HiddenOutputSource(
+                messageIndex: output.messageIndex,
+                toolCallId: output.toolPart.toolCallId,
+                toolName: output.toolPart.toolName,
+                inputHash: inputHash
+            )
+        }
+        guard !hiddenSources.isEmpty else { return 0 }
+
+        var rereadToolCallIds: Set<String> = []
+        for messageIndex in messages.indices {
+            let message = messages[messageIndex]
+            guard message.role == MessageRole.tool else { continue }
+            for part in message.parts {
+                guard let tool = part as? UIMessagePart.Tool,
+                      tool.isExecuted,
+                      Self.isRereadableTool(tool.toolName),
+                      let inputHash = Self.canonicalToolInputHash(tool.input) else {
+                    continue
+                }
+                let followsHiddenOutput = hiddenSources.contains { source in
+                    messageIndex > source.messageIndex
+                        && tool.toolCallId != source.toolCallId
+                        && tool.toolName == source.toolName
+                        && inputHash == source.inputHash
+                }
+                if followsHiddenOutput {
+                    rereadToolCallIds.insert(tool.toolCallId)
+                }
+            }
+        }
+        return rereadToolCallIds.count
+    }
+
+    /// 参数只在本地比较，metrics 仅存投影结果的数值。要求合法 JSON 对象，避免
+    /// 因空值、损坏输入或任意字符串碰巧相同而把调用归为同参重读。
+    private static func canonicalToolInputHash(_ input: String) -> String? {
+        guard let data = input.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]),
+              value is [String: Any],
+              let canonical = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
+              let text = String(data: canonical, encoding: .utf8) else {
+            return nil
+        }
+        return contentHash(text)
     }
 
     // MARK: Candidate discovery
@@ -618,7 +786,7 @@ final class IOSJevContextSelectionService {
     // MARK: Jev decision application
 
     /// 只有低分块被隐藏；缺题/无效/低置信/不确定一律保留（缺失不等于 0 分）。
-    static func hiddenBlockIndices(
+    nonisolated static func hiddenBlockIndices(
         candidates: [Block],
         decision: IOSJevDecision,
         outputToken: String? = nil,

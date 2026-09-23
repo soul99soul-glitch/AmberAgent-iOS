@@ -189,6 +189,21 @@ class IosToolExposureBridge private constructor(
         executeToolSearch(argumentsJson, rankingOverride = null)
 
     /**
+     * Read-only preview of the search payload, including recipe metadata and
+     * related-tool expansion. This uses the same [ToolSearchIndex] path as
+     * [executeToolSearch] but never changes the run's exposure state, so callers
+     * can compare a ranked result with the keyword baseline without exposing
+     * tools as a side effect.
+     */
+    fun previewToolSearch(argumentsJson: String): String =
+        previewToolSearch(argumentsJson, rankingOverride = null)
+
+    /** Read-only ranked preview. Names are validated by [ToolSearchIndex]. */
+    fun previewToolSearch(argumentsJson: String, rankingOverride: List<String>?): String =
+        runCatching { prepareToolSearch(argumentsJson, rankingOverride).payload.toString() }
+            .getOrElse { toolSearchErrorPayload(it.message) }
+
+    /**
      * Jev Phase 1: same contract as [executeToolSearch], with an optional
      * externally computed ranking (validated against the current registry by
      * [ToolSearchIndex.searchPayload]). `null` keeps the keyword order. All
@@ -197,24 +212,40 @@ class IosToolExposureBridge private constructor(
      */
     fun executeToolSearch(argumentsJson: String, rankingOverride: List<String>?): String {
         return runCatching {
-            val input = parseSearchArguments(argumentsJson)
-            val payload = ToolSearchIndex(registry).searchPayload(
-                query = input.query,
-                category = input.category,
-                limit = input.limit,
-                rankingOverride = rankingOverride,
-            )
-            // Wave B1 (§16.3): recipe hits additionally carry version,
-            // permission summary and source=custom.recipe. The manifest body is
-            // never included — the model only gets the schema at call time.
-            val enriched = enrichRecipeSearchResults(payload)
-            val searchHits = enriched["expanded_tools"]?.jsonArray
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                .orEmpty()
-            val expanded = relatedExpandedToolNames(searchHits)
-            exposureState.exposeToolNames(expanded)
-            payloadWithRelatedExposure(enriched, searchHits, expanded).toString()
+            val prepared = prepareToolSearch(argumentsJson, rankingOverride)
+            exposureState.exposeToolNames(prepared.expandedToolNames)
+            prepared.payload.toString()
         }.getOrElse { toolSearchErrorPayload(it.message) }
+    }
+
+    private data class PreparedToolSearch(
+        val payload: JsonObject,
+        val expandedToolNames: List<String>,
+    )
+
+    private fun prepareToolSearch(
+        argumentsJson: String,
+        rankingOverride: List<String>?,
+    ): PreparedToolSearch {
+        val input = parseSearchArguments(argumentsJson)
+        val payload = ToolSearchIndex(registry).searchPayload(
+            query = input.query,
+            category = input.category,
+            limit = input.limit,
+            rankingOverride = rankingOverride,
+        )
+        // Wave B1 (§16.3): recipe hits additionally carry version,
+        // permission summary and source=custom.recipe. The manifest body is
+        // never included — the model only gets the schema at call time.
+        val enriched = enrichRecipeSearchResults(payload)
+        val searchHits = enriched["expanded_tools"]?.jsonArray
+            ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+            .orEmpty()
+        val expanded = relatedExpandedToolNames(searchHits)
+        return PreparedToolSearch(
+            payload = payloadWithRelatedExposure(enriched, searchHits, expanded),
+            expandedToolNames = expanded,
+        )
     }
 
     /**

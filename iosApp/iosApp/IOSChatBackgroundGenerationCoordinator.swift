@@ -2142,7 +2142,8 @@ final class IOSChatBackgroundGenerationCoordinator {
             _ = await self.persistExpirationFailure(
                 job: prepared, requestId: requestId,
                 rawMessage: "子代理已达到运行时限（\(max(1, Int(ceil(seconds / 60)))) 分钟），已保存当前结果。可在子代理设置中调整超时后重试。",
-                partialAssistantText: nil
+                partialAssistantText: nil,
+                terminalReason: IOSThreadOrchestrationToolService.modelRoutingTimeoutTerminalReason
             )
         }
     }
@@ -3246,7 +3247,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         job: IOSChatBackgroundRuntimeJob,
         requestId: String,
         rawMessage: String,
-        partialAssistantText: String?
+        partialAssistantText: String?,
+        terminalReason: String? = nil
     ) async -> Bool {
         let reconciledBase = Self.reconciledDisplayPrefix(
             resultMessages: job.messagesSnapshot.messages,
@@ -3280,7 +3282,8 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard await recordRun(
             job.runId,
             status: recordedStatus,
-            conversationId: job.conversationId
+            conversationId: job.conversationId,
+            terminalReason: terminalReason
         ) else {
             releaseRuntimeOwnership(requestId: requestId)
             return false
@@ -3886,13 +3889,15 @@ final class IOSChatBackgroundGenerationCoordinator {
         _ runId: String,
         status: AgentRunStatus,
         conversationId: KotlinUuid,
-        interruptedReason: String? = nil
+        interruptedReason: String? = nil,
+        terminalReason: String? = nil
     ) async -> Bool {
         await recordRunResult(
             runId,
             status: status,
             conversationId: conversationId,
-            interruptedReason: interruptedReason
+            interruptedReason: interruptedReason,
+            terminalReason: terminalReason
         ) == .recorded
     }
 
@@ -3900,17 +3905,18 @@ final class IOSChatBackgroundGenerationCoordinator {
         _ runId: String,
         status: AgentRunStatus,
         conversationId: KotlinUuid,
-        interruptedReason: String? = nil
+        interruptedReason: String? = nil,
+        terminalReason: String? = nil
     ) async -> RunRecordResult {
-        let resolvedInterruptedReason: String? = status == .interrupted
+        let resolvedTerminalReason: String? = status == .interrupted
             ? (interruptedReason ?? "background_interruption")
-            : nil
+            : terminalReason
 
         do {
             let didRecord = try await runStore.transitionFromAnyActiveOrMatchingState(
                 runId: runId,
                 to: status,
-                detail: resolvedInterruptedReason
+                detail: resolvedTerminalReason
             )
             if !didRecord {
                 let detail = IOSAppLocalization.string(

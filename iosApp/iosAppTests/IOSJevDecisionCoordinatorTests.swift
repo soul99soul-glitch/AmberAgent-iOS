@@ -542,6 +542,22 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testDeferredBatchRejectsChangedSettingsRevisionBeforeNetwork() async {
+        let settings = makeSettings()
+        let box = SettingsBox(settings)
+        let transport = JevStubTransport { _ in (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200)) }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let (scopes, state, questions, context) = makeDecideCall()
+        let part = IOSJevBatchPart(id: "route", useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions)
+        let outcomes = await coordinator.decideBatch(
+            parts: [part], context: context,
+            expectedSettingsRevision: settings.revision + 1
+        )
+        guard case .skipped(let reason)? = outcomes["route"] else { return XCTFail("stale deferred request must skip") }
+        XCTAssertEqual(reason, "config_changed")
+        XCTAssertEqual(transport.calls, 0)
+    }
+
     func testConnectionTestDoesNotAcceptStaleConfiguration() async {
         let box = SettingsBox(makeSettings())
         let gate = continuationGate()

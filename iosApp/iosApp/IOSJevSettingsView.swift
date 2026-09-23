@@ -780,6 +780,18 @@ struct IOSJevSettingsView: View {
                     metricLine("差异率", value: summary.differenceRate.map(formatRate))
                     metricLine("等待 p50", value: summary.waitP50Ms.map(formatMilliseconds))
                     metricLine("等待 p95", value: summary.waitP95Ms.map(formatMilliseconds))
+                    if summary.useCase == .toolDiscovery {
+                        metricLine("预测/实际暴露数比", value: summary.exposureRatio.map(formatRatio))
+                        metricLine("前台 tool_search 新工具使用率", value: summary.newToolUseRate.map(formatRate))
+                    }
+                    if summary.useCase == .contextSelection {
+                        metricLine("隐藏后重读率", value: summary.rereadAfterHideRate.map(formatRate))
+                    }
+                    if summary.useCase == .modelRouting {
+                        metricLine("子任务成功", value: summary.childSucceeded.map { String($0) })
+                        metricLine("子任务失败", value: summary.childFailed.map { String($0) })
+                        metricLine("子任务超时", value: summary.childTimedOut.map { String($0) })
+                    }
                     if summary.useCase == .webActions {
                         metricLine("目标完成率", value: summary.completionRate.map(formatRate))
                     }
@@ -868,6 +880,10 @@ struct IOSJevSettingsView: View {
 
     private func formatRate(_ rate: Double) -> String {
         String(format: "%.1f%%", rate * 100)
+    }
+
+    private func formatRatio(_ ratio: Double) -> String {
+        String(format: "%.2f×", ratio)
     }
 
     private func formatMilliseconds(_ milliseconds: Int) -> String {

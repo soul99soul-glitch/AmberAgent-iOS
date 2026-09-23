@@ -274,6 +274,10 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         try await waitUntil { coordinator.activeJobCount == 0 }
         let snapshot = try await IOSDurableRunStore().snapshot(runId: run.handoff.runId)
         XCTAssertEqual(snapshot?.status, .failed)
+        XCTAssertEqual(
+            snapshot?.terminalReason,
+            IOSThreadOrchestrationToolService.modelRoutingTimeoutTerminalReason
+        )
         let messages = await run.store.messages(for: run.handoff.conversationId)
         XCTAssertTrue(messages?.contains { $0.toText().contains("运行时限") } == true)
         XCTAssertTrue(keepAlive.activeLeaseIds.isEmpty)

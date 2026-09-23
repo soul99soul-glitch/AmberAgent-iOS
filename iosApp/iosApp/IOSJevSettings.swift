@@ -633,6 +633,12 @@ enum IOSJevMetricsStore {
         var waitP50Ms: Int?
         var waitP95Ms: Int?
         var completionRate: Double?
+        var exposureRatio: Double?
+        var newToolUseRate: Double?
+        var rereadAfterHideRate: Double?
+        var childSucceeded: Int?
+        var childFailed: Int?
+        var childTimedOut: Int?
         var fallbackReasons: [String: Int]
     }
 
@@ -648,7 +654,21 @@ enum IOSJevMetricsStore {
             let projections = numericRecords.filter { $0.outcome == "summary" }
             let hidden = projections.compactMap { $0.numbers?["hidden_characters"] }.reduce(0, +)
             let original = projections.compactMap { $0.numbers?["original_characters"] }.reduce(0, +)
+            let shadowHidden = numericRecords.compactMap { $0.numbers?["shadow_hidden_characters"] }.reduce(0, +)
+            let shadowOriginal = numericRecords.compactMap { $0.numbers?["shadow_original_characters"] }.reduce(0, +)
             let completions = projections.compactMap { $0.numbers?["web_completed"] }
+            let exposureRatios = projections.compactMap { $0.numbers?["exposure_ratio"] }
+            let nextToolUses = projections.compactMap { $0.numbers?["next_step_new_tool_used"] }
+            var latestProjectionByRun: [String: IOSJevMetricsRecord] = [:]
+            for record in projections where record.numbers?["hidden_blocks"] != nil {
+                if let runId = record.runId { latestProjectionByRun[runId] = record }
+            }
+            let hiddenBlockCount = latestProjectionByRun.values.compactMap { $0.numbers?["hidden_blocks"] }.reduce(0, +)
+            let rereadCount = latestProjectionByRun.values.compactMap { $0.numbers?["reread_after_hide_count"] }.reduce(0, +)
+            let childSuccesses = projections.compactMap { $0.numbers?["child_succeeded"] }
+            let childFailures = projections.compactMap { $0.numbers?["child_failed"] }
+            let childTimeouts = projections.compactMap { $0.numbers?["child_timed_out"] }
+            let hasChildOutcomes = !childSuccesses.isEmpty || !childFailures.isEmpty || !childTimeouts.isEmpty
             let differenceRate: Double?
             if !comparable.isEmpty {
                 differenceRate = Double(differences) / Double(comparable.count)
@@ -658,6 +678,8 @@ enum IOSJevMetricsStore {
                 differenceRate = 1 - overlaps.reduce(0, +) / Double(overlaps.count)
             } else if original > 0 {
                 differenceRate = hidden / original
+            } else if shadowOriginal > 0 {
+                differenceRate = shadowHidden / shadowOriginal
             } else {
                 differenceRate = nil
             }
@@ -680,6 +702,12 @@ enum IOSJevMetricsStore {
                 waitP50Ms: percentile(0.5),
                 waitP95Ms: percentile(0.95),
                 completionRate: completions.isEmpty ? nil : completions.reduce(0, +) / Double(completions.count),
+                exposureRatio: exposureRatios.isEmpty ? nil : exposureRatios.reduce(0, +) / Double(exposureRatios.count),
+                newToolUseRate: nextToolUses.isEmpty ? nil : nextToolUses.reduce(0, +) / Double(nextToolUses.count),
+                rereadAfterHideRate: hiddenBlockCount > 0 ? rereadCount / hiddenBlockCount : nil,
+                childSucceeded: hasChildOutcomes ? Int(childSuccesses.reduce(0, +)) : nil,
+                childFailed: hasChildOutcomes ? Int(childFailures.reduce(0, +)) : nil,
+                childTimedOut: hasChildOutcomes ? Int(childTimeouts.reduce(0, +)) : nil,
                 fallbackReasons: reasons
             )
         }
