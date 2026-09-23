@@ -112,6 +112,27 @@ final class IOSJevClientTests: XCTestCase {
         XCTAssertEqual(decision.modelVersion, "jev-latest")
     }
 
+    func testDuplicateQuestionIdsAreRejectedBeforeNetwork() async {
+        let transport = JevStubTransport { _ in
+            (self.scoreResponse(answers: ["duplicate": 1]), self.httpResponse(status: 200))
+        }
+        let client = IOSJevClient(transport: transport)
+        let input = makeInput(
+            transport: transport,
+            questions: makeQuestions(["duplicate", "duplicate"])
+        )
+
+        do {
+            _ = try await client.decide(input, policy: policy)
+            XCTFail("expected local duplicate id rejection")
+        } catch let error as IOSJevRequestError {
+            XCTAssertEqual(error, .invalidRequest("duplicate question id"))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+        XCTAssertEqual(transport.calls, 0, "duplicate question ids must be rejected before network")
+    }
+
     func testNoulAndChoiceMapping() async throws {
         let payload: [String: Any] = [
             "model": "jev-latest",
@@ -467,4 +488,3 @@ final class IOSJevClientTests: XCTestCase {
         XCTAssertEqual(transport.calls, 0)
     }
 }
-

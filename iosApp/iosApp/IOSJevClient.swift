@@ -285,6 +285,29 @@ final class IOSJevClient {
         }
     }
 
+    /// 与实际出站共用编码，供协调器在并发预算锁内预留精确请求体字节数。
+    func requestBodyByteCount(_ input: RequestInput) throws -> Int {
+        try encodedRequestBody(input).count
+    }
+
+    private func encodedRequestBody(_ input: RequestInput) throws -> Data {
+        guard Set(input.questions.map(\.id)).count == input.questions.count else {
+            throw IOSJevRequestError.invalidRequest("duplicate question id")
+        }
+        let questionMap = Dictionary(uniqueKeysWithValues: input.questions.map { ($0.id, $0) })
+        let encoder = JSONEncoder()
+        do {
+            switch input.style {
+            case .systemone:
+                return try encoder.encode(RequestBody(model: input.model, state: input.state, questions: questionMap))
+            case .vercelGateway:
+                return try encoder.encode(GatewayEvaluationBody(state: input.state, questions: questionMap.mapValues(GatewayQuestion.init)))
+            }
+        } catch {
+            throw IOSJevRequestError.invalidRequest("encode failed: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: Execute
 
     /// 单次判断。超限分块由调用方负责；这里做请求级硬校验并抛错。
@@ -303,32 +326,16 @@ final class IOSJevClient {
         guard input.questions.count <= policy.maxQuestions else {
             throw IOSJevRequestError.invalidRequest("too many questions: \(input.questions.count)")
         }
+        guard Set(input.questions.map(\.id)).count == input.questions.count else {
+            throw IOSJevRequestError.invalidRequest("duplicate question id")
+        }
         let deadline = TimeInterval(deadlineMs ?? policy.deadlineMs) / 1_000
 
         if let cacheKey, let cached = cachedDecision(cacheKey: cacheKey) {
             return cached
         }
 
-        let questionMap = Dictionary(uniqueKeysWithValues: input.questions.map { ($0.id, $0) })
-        let encoder = JSONEncoder()
-        let bodyData: Data
-        do {
-            switch input.style {
-            case .systemone:
-                bodyData = try encoder.encode(RequestBody(
-                    model: input.model,
-                    state: input.state,
-                    questions: questionMap
-                ))
-            case .vercelGateway:
-                bodyData = try encoder.encode(GatewayEvaluationBody(
-                    state: input.state,
-                    questions: questionMap.mapValues(GatewayQuestion.init)
-                ))
-            }
-        } catch {
-            throw IOSJevRequestError.invalidRequest("encode failed: \(error.localizedDescription)")
-        }
+        let bodyData = try encodedRequestBody(input)
         guard bodyData.count <= policy.maxRequestBytes else {
             throw IOSJevRequestError.requestTooLarge(bytes: bodyData.count)
         }

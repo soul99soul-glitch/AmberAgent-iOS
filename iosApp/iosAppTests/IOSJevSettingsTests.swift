@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import iosApp
 
 // IOSJevSettingsTests：默认 off、持久化 round-trip、active 无固定版本降级、
@@ -233,6 +234,26 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertEqual(decodedV2.policy.perTurnRequestBudget, 77, "v2 存量保留存储值")
     }
 
+    func testPolicyV3MigrationReturnsActiveUseCasesToShadow() throws {
+        var settings = IOSJevSettings()
+        settings.setMode(.active, for: .toolDiscovery)
+        settings.setMode(.active, for: .memoryRecall)
+        settings.setMode(.off, for: .webActions)
+        settings.pinnedModelVersion = "jev-fixed-v2"
+        settings.setScopes([.toolMetadata], for: .toolDiscovery)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any])
+        var policy = try XCTUnwrap(object["policy"] as? [String: Any])
+        policy["policyVersion"] = 2
+        object["policy"] = policy
+        let migrated = try JSONDecoder().decode(IOSJevSettings.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertEqual(migrated.policy.policyVersion, 3)
+        XCTAssertEqual(migrated.mode(for: .toolDiscovery), .shadow)
+        XCTAssertEqual(migrated.mode(for: .memoryRecall), .shadow)
+        XCTAssertEqual(migrated.mode(for: .webActions), .off)
+        XCTAssertEqual(migrated.allowedScopes(for: .toolDiscovery), [.toolMetadata])
+        XCTAssertEqual(migrated.pinnedModelVersion, "jev-fixed-v2")
+    }
+
     // MARK: Store wiring
 
     func testStorePersistsAndUpdatesJevSettings() {
@@ -262,6 +283,22 @@ final class IOSJevSettingsTests: XCTestCase {
         store.updateJevSettings(settings)
         let reloaded3 = IOSSharedSettingsStore(userDefaults: defaults)
         XCTAssertEqual(reloaded3.jevSettings.pinnedModelVersion, "jev-2026-09-15")
+    }
+
+    func testRecommendedConfigurationPersistsOnlyFiveShadowUseCases() {
+        let defaults = isolatedDefaults()
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        var settings = store.jevSettings
+        settings.applyRecommendedConfiguration()
+        store.updateJevSettings(settings)
+        let reloaded = IOSSharedSettingsStore(userDefaults: defaults).jevSettings
+        for useCase in [IOSJevUseCase.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .subagentIntent] {
+            XCTAssertEqual(reloaded.effectiveMode(for: useCase), .shadow)
+            XCTAssertEqual(reloaded.allowedScopes(for: useCase), useCase.defaultDataScopes)
+        }
+        XCTAssertEqual(reloaded.mode(for: .webActions), .off)
+        XCTAssertEqual(reloaded.mode(for: .approvalTriage), .off)
+        XCTAssertTrue(reloaded.allowedScopes(for: .modelRouting).contains(.modelMetadata))
     }
 
     func testStoreApiKeyLifecycleRequiresKeychainSuccess() {
@@ -318,6 +355,71 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertEqual(loaded.first?.outcome, "observed")
         IOSJevMetricsStore.clear()
         XCTAssertTrue(IOSJevMetricsStore.load().isEmpty)
+    }
+
+    func testMetricsFlushPersistsBufferedRecord() throws {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(), useCase: .toolDiscovery, mode: .shadow, modelVersion: "jev-latest",
+            outcome: "observed", latencyMs: 120, requestBytes: 100, responseBytes: 200,
+            inputTokens: 1, outputTokens: 2, reason: nil
+        ))
+        XCTAssertNil(UserDefaults.standard.data(forKey: "app.amber.ios.jevMetrics.v1"))
+        IOSJevMetricsStore.flush()
+        let data = try XCTUnwrap(UserDefaults.standard.data(forKey: "app.amber.ios.jevMetrics.v1"))
+        XCTAssertEqual(try JSONDecoder().decode([IOSJevMetricsRecord].self, from: data).count, 1)
+    }
+
+    func testMetricsAppendedAfterBackgroundNotificationPersistImmediately() throws {
+        IOSJevMetricsStore.clear()
+        defer {
+            NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+            IOSJevMetricsStore.clear()
+        }
+        NotificationCenter.default.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(), useCase: .memoryRecall, mode: .shadow, modelVersion: "jev-latest",
+            outcome: "late", latencyMs: 500, requestBytes: 100, responseBytes: 100,
+            inputTokens: nil, outputTokens: nil, reason: "late"
+        ))
+        let data = try XCTUnwrap(UserDefaults.standard.data(forKey: "app.amber.ios.jevMetrics.v1"))
+        XCTAssertEqual(try JSONDecoder().decode([IOSJevMetricsRecord].self, from: data).last?.outcome, "late")
+    }
+
+    func testUseCaseSummariesIncludeBusinessFallbackAndWebCompletion() {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+        let now = Date()
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: now, useCase: .toolDiscovery, mode: .active, modelVersion: "jev-v1",
+            outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+            inputTokens: nil, outputTokens: nil, reason: "no_suitable_tool",
+            numbers: ["business_fallback": 1]
+        ))
+        for completed in [1.0, 0.0] {
+            IOSJevMetricsStore.append(IOSJevMetricsRecord(
+                timestamp: now, useCase: .webActions, mode: .active, modelVersion: "jev-v1",
+                outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+                inputTokens: nil, outputTokens: nil,
+                reason: completed == 0 ? "jev_uncertain" : nil,
+                numbers: ["web_completed": completed, "handback": 1 - completed]
+            ))
+        }
+        let summaries = IOSJevMetricsStore.useCaseSummaries(now: now)
+        XCTAssertEqual(summaries.first(where: { $0.useCase == .toolDiscovery })?.fallbackReasons["no_suitable_tool"], 1)
+        XCTAssertEqual(summaries.first(where: { $0.useCase == .webActions })?.completionRate, 0.5)
+        XCTAssertEqual(summaries.first(where: { $0.useCase == .webActions })?.fallbackReasons["jev_uncertain"], 1)
+        for _ in 0..<2 {
+            IOSJevMetricsStore.append(IOSJevMetricsRecord(
+                timestamp: now, useCase: .contextSelection, mode: .active, modelVersion: "jev-v1",
+                outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+                inputTokens: nil, outputTokens: nil, reason: nil,
+                runId: "run", numbers: ["hidden_characters": 1_200]
+            ))
+        }
+        XCTAssertEqual(IOSJevMetricsStore.runSummary(runId: "run", now: now).hiddenCharacters, 1_200,
+                       "replayed projection describes the current upload, not a sum over model steps")
     }
 
     func testMetricsDropRecordsOlderThanSevenDays() {

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 // MARK: - Jev Phase 1 settings
 //
@@ -9,7 +10,7 @@ import Foundation
 /// Jev 用途。六个用途均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 =
 /// Phase 2，模型调度/网页操作 = Phase 3，意图路由 = 增强 Phase C）；
 /// webActions 的调用入口是 wm_run_goal 工具。
-enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
+enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
     case toolDiscovery
     case memoryRecall
     case contextSelection
@@ -38,7 +39,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
         case .toolDiscovery: [.toolMetadata, .selectedTaskText]
         case .memoryRecall: [.selectedTaskText, .personalMemory]
         case .contextSelection: [.selectedTaskText, .toolOutput]
-        case .modelRouting: [.selectedTaskText]
+        case .modelRouting: [.selectedTaskText, .modelMetadata]
         case .webActions: [.webContent, .selectedTaskText]
         case .subagentIntent: [.selectedTaskText, .toolMetadata]
         case .approvalTriage: [.toolMetadata, .selectedTaskText]
@@ -47,7 +48,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable {
 }
 
 /// 每用途三模式。shadow 同样把允许外发的数据发给 TypeSafe，只是不应用结果。
-enum IOSJevMode: String, Codable, CaseIterable, Identifiable {
+enum IOSJevMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case off
     case shadow
     case active
@@ -72,8 +73,9 @@ enum IOSJevMode: String, Codable, CaseIterable, Identifiable {
 }
 
 /// 数据外发范围。请求需要的范围全部允许才发送。
-enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable {
+enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable, Sendable {
     case toolMetadata
+    case modelMetadata
     case selectedTaskText
     case personalMemory
     case toolOutput
@@ -84,6 +86,7 @@ enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .toolMetadata: "工具目录元数据"
+        case .modelMetadata: "候选模型与服务商信息"
         case .selectedTaskText: "当前任务文本"
         case .personalMemory: "个人记忆内容"
         case .toolOutput: "文件 / 工具输出"
@@ -96,7 +99,7 @@ enum IOSJevDataScope: String, Codable, CaseIterable, Identifiable {
 /// vercelGateway 走 Vercel AI Gateway 的 evaluation-model 契约（模型为
 /// provider/model slug，默认 typesafe-ai/jev；同一个 Key 字段承载
 /// AI_GATEWAY_API_KEY）。注意 Gateway 的 evaluation 不经 OpenAI 兼容端点。
-enum IOSJevAPIStyle: String, Codable, CaseIterable, Identifiable {
+enum IOSJevAPIStyle: String, Codable, CaseIterable, Identifiable, Sendable {
     case systemone
     case vercelGateway
 
@@ -139,9 +142,9 @@ enum IOSJevAPIStyle: String, Codable, CaseIterable, Identifiable {
 /// v2：真实用量口径——一次长任务工具调用可达数百次，网页循环单目标几十至
 /// 上百步，v1 的 6 次/轮、1000 次/日预算在真实负载下必然撞墙；预算保留为
 /// 失控熔断，量级按「实践中不触发」放宽。
-struct IOSJevPolicy: Codable, Equatable {
+struct IOSJevPolicy: Codable, Equatable, Sendable {
     /// 当前策略版本；存量低于该值的策略整体回默认（阈值无 UI 可编辑，重设无损）。
-    static let currentPolicyVersion = 2
+    static let currentPolicyVersion = 3
 
     init() {}
 
@@ -150,6 +153,13 @@ struct IOSJevPolicy: Codable, Equatable {
         policyVersion = try container.decodeIfPresent(Int.self, forKey: .policyVersion) ?? 1
         deadlineMs = try container.decodeIfPresent(Int.self, forKey: .deadlineMs) ?? 1_200
         webActionsDeadlineMs = try container.decodeIfPresent(Int.self, forKey: .webActionsDeadlineMs) ?? 2_500
+        t1WaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .t1WaitBudgetMs) ?? 400
+        t2WaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .t2WaitBudgetMs) ?? 400
+        t3WaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .t3WaitBudgetMs) ?? 400
+        onDemandWaitBudgetMs = try container.decodeIfPresent(Int.self, forKey: .onDemandWaitBudgetMs) ?? 400
+        activePerRunLimit = try container.decodeIfPresent(Int.self, forKey: .activePerRunLimit) ?? 3
+        activeAppLimit = try container.decodeIfPresent(Int.self, forKey: .activeAppLimit) ?? 6
+        shadowAppLimit = try container.decodeIfPresent(Int.self, forKey: .shadowAppLimit) ?? 2
         maxQuestions = try container.decodeIfPresent(Int.self, forKey: .maxQuestions) ?? 32
         maxCandidates = try container.decodeIfPresent(Int.self, forKey: .maxCandidates) ?? 64
         maxStateBytes = try container.decodeIfPresent(Int.self, forKey: .maxStateBytes) ?? 48 * 1_024
@@ -169,6 +179,7 @@ struct IOSJevPolicy: Codable, Equatable {
         modelRoutingMinConfidence = try container.decodeIfPresent(Double.self, forKey: .modelRoutingMinConfidence)
         webActionsMinConfidence = try container.decodeIfPresent(Double.self, forKey: .webActionsMinConfidence) ?? 0.5
         subagentIntentMinConfidence = try container.decodeIfPresent(Double.self, forKey: .subagentIntentMinConfidence)
+        memoryInjectionMinProbability = try container.decodeIfPresent(Double.self, forKey: .memoryInjectionMinProbability) ?? 0.8
         cacheMaxEntries = try container.decodeIfPresent(Int.self, forKey: .cacheMaxEntries) ?? 128
         cacheTTLSeconds = try container.decodeIfPresent(Int.self, forKey: .cacheTTLSeconds) ?? 300
         cooldownFailureThreshold = try container.decodeIfPresent(Int.self, forKey: .cooldownFailureThreshold) ?? 3
@@ -176,12 +187,15 @@ struct IOSJevPolicy: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case policyVersion, deadlineMs, webActionsDeadlineMs, maxQuestions, maxCandidates, maxStateBytes
+        case policyVersion, deadlineMs, webActionsDeadlineMs, t1WaitBudgetMs, t2WaitBudgetMs
+        case t3WaitBudgetMs, onDemandWaitBudgetMs, activePerRunLimit, activeAppLimit, shadowAppLimit
+        case maxQuestions, maxCandidates, maxStateBytes
         case maxRequestBytes, maxResponseBytes, perTurnRequestBudget, perTurnStateBudgetBytes
         case dailyRequestBudget, dailyRequestBodyBudgetBytes, toolDiscoveryMinScore
         case memoryRecallMinScore, contextSelectionMinScore, modelRoutingMinScore
         case toolDiscoveryMinConfidence, memoryRecallMinConfidence, contextSelectionMinConfidence
         case modelRoutingMinConfidence, webActionsMinConfidence, subagentIntentMinConfidence
+        case memoryInjectionMinProbability
         case cacheMaxEntries, cacheTTLSeconds, cooldownFailureThreshold, cooldownSeconds
     }
 
@@ -192,6 +206,14 @@ struct IOSJevPolicy: Codable, Equatable {
     /// 且移动网络+网关多一跳时尾部超 1.2s 并不少见——给更长视野把
     /// "超时"换成"慢一点的决策"。其余用途保持 1.2s 的轻快判断语义。
     var webActionsDeadlineMs: Int = 2_500
+    /// 网络 deadline 与主路径等待预算独立。暂无真实延迟基线时的实验初值。
+    var t1WaitBudgetMs: Int = 400
+    var t2WaitBudgetMs: Int = 400
+    var t3WaitBudgetMs: Int = 400
+    var onDemandWaitBudgetMs: Int = 400
+    var activePerRunLimit: Int = 3
+    var activeAppLimit: Int = 6
+    var shadowAppLimit: Int = 2
     /// 单请求最多问题数。
     var maxQuestions: Int = 32
     /// 单请求最多候选。
@@ -231,6 +253,7 @@ struct IOSJevPolicy: Codable, Equatable {
     /// 意图路由：角色 Choice 的置信弃权线（nil = 不门控）；对齐回执是 Noul，
     /// 无 confidence 字段，以 0.5 概率为分界线，不走该字段。
     var subagentIntentMinConfidence: Double? = nil
+    var memoryInjectionMinProbability: Double = 0.8
     /// 缓存条目上限（内存）。
     var cacheMaxEntries: Int = 128
     /// 缓存 TTL（秒）。
@@ -265,10 +288,17 @@ struct IOSJevMetricsRecord: Codable, Equatable, Sendable {
     var topConfidence: Double?
     /// 头条数值：该次决策全部答案中的最高分；跳过/错误为 nil。
     var topScore: Double?
+    /// 只存运行标识、数字差异和阶段，不存任务或工具输出原文。
+    var runId: String?
+    var waitPhase: String?
+    var waitedMs: Int?
+    var numbers: [String: Double]?
+    /// 仅存本地稳定 ID，不存任务文本或工具输出。
+    var ids: [String: String]?
 }
 
 /// 版本化 Jev 设置。revision 随每次更新递增，作为判断身份与缓存失效输入。
-struct IOSJevSettings: Codable, Equatable {
+struct IOSJevSettings: Codable, Equatable, Sendable {
     var schemaVersion: Int = 1
     var revision: Int = 0
     /// 连接测试与实验用 "jev-latest"；active 必须使用经过验收的固定版本。
@@ -329,6 +359,9 @@ struct IOSJevSettings: Codable, Equatable {
         // 可编辑，重置只丢手工改过的值。
         if policy.policyVersion < IOSJevPolicy.currentPolicyVersion {
             policy = IOSJevPolicy()
+            for useCase in IOSJevUseCase.allCases where modes[useCase] == .active {
+                modes[useCase] = .shadow
+            }
         }
     }
 
@@ -452,6 +485,15 @@ struct IOSJevSettings: Codable, Equatable {
     mutating func bumpRevision() {
         revision += 1
     }
+
+    /// 推荐配置只开启五个低风险用途的 shadow 观测，保留其它用途原设置。
+    mutating func applyRecommendedConfiguration() {
+        for useCase in [IOSJevUseCase.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .subagentIntent] {
+            modes[useCase] = .shadow
+            dataScopes[useCase] = useCase.defaultDataScopes
+        }
+        revision += 1
+    }
 }
 
 // MARK: - Metrics store（上限 7 天 / 5 MiB，可清除）
@@ -461,28 +503,75 @@ enum IOSJevMetricsStore {
     private static let maxAgeSeconds: TimeInterval = 7 * 24 * 60 * 60
     private static let maxBytes = 5 * 1_024 * 1_024
     private static let maxCount = 2_000
+    private static let flushInterval: TimeInterval = 5
+    private static let flushCount = 50
 
     private static var defaults: UserDefaults { .standard }
 
     /// load→append→set 的读改写必须原子，否则并发 shadow 判断互相覆盖丢记录。
     private static let lock = NSLock()
+    nonisolated(unsafe) private static var memoryRecords: [IOSJevMetricsRecord]?
+    nonisolated(unsafe) private static var unflushedCount = 0
+    nonisolated(unsafe) private static var pendingFlush: DispatchWorkItem?
+    nonisolated(unsafe) private static var isInBackground = false
+    nonisolated(unsafe) private static let backgroundObserver: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: UIApplication.didEnterBackgroundNotification,
+        object: nil,
+        queue: nil
+    ) { _ in
+        lock.lock()
+        defer { lock.unlock() }
+        isInBackground = true
+        flushLocked()
+    }
+    nonisolated(unsafe) private static let foregroundObserver: NSObjectProtocol = NotificationCenter.default.addObserver(
+        forName: UIApplication.willEnterForegroundNotification,
+        object: nil,
+        queue: nil
+    ) { _ in
+        lock.lock()
+        defer { lock.unlock() }
+        isInBackground = false
+    }
+
+    /// 协调器创建时即注册，确保在首条 late 指标出现前已接收后台通知。
+    static func startObservingLifecycle() {
+        _ = backgroundObserver
+        _ = foregroundObserver
+    }
+
+    static func setApplicationBackgroundState(_ background: Bool) {
+        startObservingLifecycle()
+        lock.lock()
+        defer { lock.unlock() }
+        isInBackground = background
+        if background { flushLocked() }
+    }
 
     static func load(now: Date = Date()) -> [IOSJevMetricsRecord] {
+        _ = backgroundObserver
+        _ = foregroundObserver
         lock.lock()
         defer { lock.unlock() }
         return loadLocked(now: now)
     }
 
     private static func loadLocked(now: Date) -> [IOSJevMetricsRecord] {
-        guard let data = defaults.data(forKey: key),
-              let records = try? JSONDecoder().decode([IOSJevMetricsRecord].self, from: data) else {
-            return []
+        if memoryRecords == nil {
+            if let data = defaults.data(forKey: key),
+               let records = try? JSONDecoder().decode([IOSJevMetricsRecord].self, from: data) {
+                memoryRecords = records
+            } else {
+                memoryRecords = []
+            }
         }
         let cutoff = now.addingTimeInterval(-maxAgeSeconds)
-        return records.filter { $0.timestamp >= cutoff }
+        return (memoryRecords ?? []).filter { $0.timestamp >= cutoff }
     }
 
     static func append(_ record: IOSJevMetricsRecord, now: Date = Date()) {
+        _ = backgroundObserver
+        _ = foregroundObserver
         lock.lock()
         defer { lock.unlock() }
         var records = loadLocked(now: now)
@@ -491,22 +580,150 @@ enum IOSJevMetricsStore {
         if records.count > maxCount {
             records = Array(records.suffix(maxCount))
         }
-        guard let data = try? JSONEncoder().encode(records) else { return }
-        if data.count <= maxBytes {
-            defaults.set(data, forKey: key)
-            return
+        memoryRecords = records
+        unflushedCount += 1
+        if isInBackground || unflushedCount >= flushCount {
+            flushLocked()
+        } else if pendingFlush == nil {
+            let item = DispatchWorkItem { flush() }
+            pendingFlush = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + flushInterval, execute: item)
         }
-        // 超 5 MiB：丢弃最旧一半后重写一次；仍超则放弃本轮记录。
-        let trimmed = Array(records.suffix(records.count / 2))
-        if let trimmedData = try? JSONEncoder().encode(trimmed), trimmedData.count <= maxBytes {
-            defaults.set(trimmedData, forKey: key)
+    }
+
+    static func flush() {
+        lock.lock()
+        defer { lock.unlock() }
+        flushLocked()
+    }
+
+    private static func flushLocked() {
+        pendingFlush?.cancel()
+        pendingFlush = nil
+        guard unflushedCount > 0, var records = memoryRecords else { return }
+        var data = try? JSONEncoder().encode(records)
+        while let bytes = data, bytes.count > maxBytes, records.count > 1 {
+            records.removeFirst(max(1, records.count / 2))
+            data = try? JSONEncoder().encode(records)
+        }
+        if let data, data.count <= maxBytes {
+            memoryRecords = records
+            defaults.set(data, forKey: key)
+            unflushedCount = 0
         }
     }
 
     static func clear() {
+        _ = backgroundObserver
+        _ = foregroundObserver
         lock.lock()
         defer { lock.unlock() }
+        pendingFlush?.cancel()
+        pendingFlush = nil
+        memoryRecords = []
+        unflushedCount = 0
         defaults.removeObject(forKey: key)
+    }
+
+    struct UseCaseSummary: Equatable {
+        var useCase: IOSJevUseCase
+        var total: Int
+        /// nil 表示尚无可比较的基线/建议，UI 不应显示成 0%。
+        var differenceRate: Double?
+        var waitP50Ms: Int?
+        var waitP95Ms: Int?
+        var completionRate: Double?
+        var fallbackReasons: [String: Int]
+    }
+
+    static func useCaseSummaries(now: Date = Date()) -> [UseCaseSummary] {
+        let records = load(now: now)
+        return IOSJevUseCase.allCases.map { useCase in
+            let numericRecords = records.filter { $0.useCase == useCase && $0.outcome != "connection_test" }
+            let group = numericRecords.filter { $0.outcome != "summary" }
+            let comparable = group.filter { $0.suggestedTop1 != nil && $0.keywordTop1 != nil }
+            let differences = comparable.filter { $0.suggestedTop1 != $0.keywordTop1 }.count
+            let numericDifferences = numericRecords.compactMap { $0.numbers?["difference"] }
+            let overlaps = numericRecords.compactMap { $0.numbers?["overlap_ratio"] }
+            let projections = numericRecords.filter { $0.outcome == "summary" }
+            let hidden = projections.compactMap { $0.numbers?["hidden_characters"] }.reduce(0, +)
+            let original = projections.compactMap { $0.numbers?["original_characters"] }.reduce(0, +)
+            let completions = projections.compactMap { $0.numbers?["web_completed"] }
+            let differenceRate: Double?
+            if !comparable.isEmpty {
+                differenceRate = Double(differences) / Double(comparable.count)
+            } else if !numericDifferences.isEmpty {
+                differenceRate = numericDifferences.reduce(0, +) / Double(numericDifferences.count)
+            } else if !overlaps.isEmpty {
+                differenceRate = 1 - overlaps.reduce(0, +) / Double(overlaps.count)
+            } else if original > 0 {
+                differenceRate = hidden / original
+            } else {
+                differenceRate = nil
+            }
+            let waits = group.compactMap(\.waitedMs).sorted()
+            func percentile(_ p: Double) -> Int? {
+                guard !waits.isEmpty else { return nil }
+                return waits[Int((Double(waits.count - 1) * p).rounded(.up))]
+            }
+            var reasons: [String: Int] = [:]
+            for record in group where record.outcome == "skipped" || record.outcome == "error" || record.outcome == "late" || record.outcome == "shadow_dropped" {
+                reasons[record.reason ?? record.outcome, default: 0] += 1
+            }
+            for record in projections where record.numbers?["business_fallback"] == 1 || record.numbers?["handback"] == 1 {
+                reasons[record.reason ?? "business_fallback", default: 0] += 1
+            }
+            return UseCaseSummary(
+                useCase: useCase,
+                total: group.count,
+                differenceRate: differenceRate,
+                waitP50Ms: percentile(0.5),
+                waitP95Ms: percentile(0.95),
+                completionRate: completions.isEmpty ? nil : completions.reduce(0, +) / Double(completions.count),
+                fallbackReasons: reasons
+            )
+        }
+    }
+
+    struct RunSummary: Equatable {
+        var decisions: Int
+        var memorySelected: Int?
+        var memoryInjectionHits: Int?
+        var hiddenCharacters: Int?
+        var selectedModelId: String?
+        var firstVisibleDeltaMs: Int?
+        var modelSteps: Int?
+        var cacheHitRatio: Double?
+    }
+
+    /// 端到端数字以 summary 行保存；全用途 off 时保持零 Jev 指标。
+    static func appendRunNumbers(runId: String, numbers: [String: Double], now: Date = Date()) {
+        let settings = IOSSharedSettingsStore.loadPersistedJevSettings()
+        let enabled = IOSJevUseCase.allCases.contains { settings.effectiveMode(for: $0) != .off }
+        guard enabled || load(now: now).contains(where: { $0.runId == runId && $0.outcome != "summary" }) else { return }
+        append(IOSJevMetricsRecord(
+            timestamp: now, useCase: .toolDiscovery, mode: .off, modelVersion: "",
+            outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+            inputTokens: nil, outputTokens: nil, reason: nil,
+            runId: runId, numbers: numbers
+        ), now: now)
+    }
+
+    static func runSummary(runId: String, now: Date = Date()) -> RunSummary {
+        let records = load(now: now).filter { $0.runId == runId }
+        func latestNumber(_ key: String) -> Int? {
+            records.reversed().compactMap { $0.numbers?[key] }.first.map(Int.init)
+        }
+        return RunSummary(
+            decisions: records.filter { ["applied", "observed", "late"].contains($0.outcome) }.count,
+            memorySelected: latestNumber("memory_selected"),
+            memoryInjectionHits: latestNumber("memory_injection_hits"),
+            hiddenCharacters: latestNumber("hidden_characters"),
+            selectedModelId: records.reversed().compactMap { $0.ids?["selected_model_id"] }.first,
+            firstVisibleDeltaMs: latestNumber("first_visible_delta_ms"),
+            modelSteps: latestNumber("model_steps"),
+            cacheHitRatio: records.reversed().compactMap { $0.numbers?["cache_hit_ratio"] }.first
+        )
     }
 
     struct Summary: Equatable {
@@ -519,7 +736,7 @@ enum IOSJevMetricsStore {
     }
 
     static func summary(now: Date = Date()) -> Summary {
-        let records = load(now: now).filter { $0.outcome != "connection_test" }
+        let records = load(now: now).filter { $0.outcome != "connection_test" && $0.outcome != "summary" }
         let dayStart = Calendar.current.startOfDay(for: now)
         let today = records.filter { $0.timestamp >= dayStart }
         let last24h = records.filter { $0.timestamp >= now.addingTimeInterval(-24 * 60 * 60) }

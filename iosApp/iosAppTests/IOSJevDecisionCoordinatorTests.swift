@@ -33,9 +33,12 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
     }
 
     private func scorePayload(_ answers: [String: Double]) -> Data {
+        let mapped: [String: [String: Any]] = Dictionary(uniqueKeysWithValues: answers.map {
+            ("single." + $0.key, ["type": "score", "score": $0.value])
+        })
         let payload: [String: Any] = [
             "model": "jev-latest",
-            "answers": answers.mapValues { ["type": "score", "score": $0] },
+            "answers": mapped,
         ]
         return try! JSONSerialization.data(withJSONObject: payload)
     }
@@ -146,7 +149,8 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
             state: "state text",
             questions: [IOSJevQuestion.score(id: "t1", levels: ["0", "3"], instructions: "test")],
             context: IOSJevRunContext(runId: "run-w", turnBudgetKey: "turn-w", inputHash: "h"),
-            cacheKey: nil
+            cacheKey: nil,
+            waitBudgetMs: 2_000
         )
         guard case .applied = webOutcome else {
             return XCTFail("webActions 2500ms deadline 应容纳 1.5s 慢响应：\(webOutcome)")
@@ -158,7 +162,7 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         let (scopes, state, questions, context) = makeDecideCall()
         let outcome = await coordinator.decide(
             useCase: .toolDiscovery, requiredScopes: scopes,
-            state: state, questions: questions, context: context, cacheKey: "k"
+            state: state, questions: questions, context: context, cacheKey: "k", waitBudgetMs: 2_000
         )
         guard case .failed(let reason) = outcome else {
             return XCTFail("toolDiscovery 1200ms 应对 1.5s 响应超时：\(outcome)")
@@ -274,7 +278,7 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
 
     // MARK: Concurrency
 
-    func testPerRunConcurrencyLimitedToOne() async {
+    func testPerRunAllowsThreeActiveAndQueuesFourthUntilWaitBudget() async {
         let box = SettingsBox(makeSettings())
         let gate = continuationGate()
         let transport = JevStubTransport { _ in
@@ -283,17 +287,171 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         }
         let coordinator = makeCoordinator(settings: box, transport: transport)
         let (scopes, state, questions, context) = makeDecideCall()
-        let firstTask = Task { await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "c1") }
-        // 等第一个真正在途后再发第二个。
-        try? await Task.sleep(nanoseconds: 100_000_000)
-        let second = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "c2")
-        guard case .skipped(let reason) = second, reason == "concurrency_limit" else {
-            gate.release()
-            return XCTFail("second concurrent call for same run must be skipped, got \(second)")
+        let firstThree = (0..<3).map { index in
+            Task { await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "c\(index)", waitBudgetMs: 2_000) }
         }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(transport.calls, 3)
+        let fourth = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "c4", waitBudgetMs: 80)
+        guard case .skipped = fourth else {
+            for _ in 0..<3 { gate.release() }
+            return XCTFail("fourth request must fall back after wait budget: \(fourth)")
+        }
+        XCTAssertEqual(transport.calls, 3)
+        for _ in 0..<3 { gate.release() }
+        for task in firstThree {
+            guard case .applied = await task.value else { return XCTFail("first three active requests should complete") }
+        }
+    }
+
+    func testBatchOmitsDisallowedStateAndSplitsAnswersByPart() async throws {
+        var settings = makeSettings()
+        settings.setMode(.active, for: .memoryRecall)
+        settings.setScopes([.selectedTaskText], for: .memoryRecall)
+        let box = SettingsBox(settings)
+        let transport = JevStubTransport { request in
+            let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            let state = body["state"] as! String
+            XCTAssertTrue(state.contains("allowed catalogue"))
+            XCTAssertFalse(state.contains("private memory"))
+            let questions = body["questions"] as! [String: Any]
+            XCTAssertEqual(Set(questions.keys), ["tools.t1"])
+            let payload: [String: Any] = [
+                "model": "jev-fixed-v1",
+                "answers": [
+                    "tools.t1": ["type": "score", "score": 0.9],
+                    "unknown.t1": ["type": "score", "score": 0.9],
+                ],
+            ]
+            return (try! JSONSerialization.data(withJSONObject: payload), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let parts = [
+            IOSJevBatchPart(id: "tools", useCase: .toolDiscovery, requiredScopes: [.toolMetadata, .selectedTaskText], state: "allowed catalogue", questions: [.score(id: "t1", levels: ["0", "1"], instructions: "a")]),
+            IOSJevBatchPart(id: "memory", useCase: .memoryRecall, requiredScopes: [.personalMemory], state: "private memory", questions: [.score(id: "t1", levels: ["0", "1"], instructions: "b")]),
+        ]
+        let outcomes = await coordinator.decideBatch(parts: parts, context: IOSJevRunContext(runId: "r", turnBudgetKey: "r", inputHash: "h"))
+        guard case .applied(let tools)? = outcomes["tools"] else { return XCTFail("allowed part should apply") }
+        XCTAssertEqual(tools.answers.map(\.id), ["t1"])
+        guard case .skipped(let reason)? = outcomes["memory"] else { return XCTFail("disallowed part should skip") }
+        XCTAssertEqual(reason, "scope_not_allowed")
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testBatchSplitsAboveLocalQuestionLimit() async {
+        var settings = makeSettings()
+        settings.policy.maxQuestions = 2
+        let box = SettingsBox(settings)
+        let transport = JevStubTransport { request in
+            let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            let questions = body["questions"] as! [String: Any]
+            XCTAssertLessThanOrEqual(questions.count, 2)
+            let answers: [String: [String: Any]] = Dictionary(uniqueKeysWithValues: questions.keys.map {
+                ($0, ["type": "score", "score": 0.9])
+            })
+            return (try! JSONSerialization.data(withJSONObject: ["model": "jev-fixed-v1", "answers": answers]), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let questions = (1...3).map { IOSJevQuestion.score(id: "q\($0)", levels: ["0", "1"], instructions: "test") }
+        let part = IOSJevBatchPart(id: "tools", useCase: .toolDiscovery, requiredScopes: [.toolMetadata, .selectedTaskText], state: "catalogue", questions: questions)
+        let result = await coordinator.decideBatch(parts: [part], context: IOSJevRunContext(runId: "r", turnBudgetKey: "r", inputHash: "h"))
+        guard case .applied(let decision)? = result["tools"] else { return XCTFail("split request should apply") }
+        XCTAssertEqual(Set(decision.answers.map(\.id)), ["q1", "q2", "q3"])
+        XCTAssertEqual(transport.calls, 2)
+    }
+
+    func testIncompleteBatchAnswersFailOnlyAffectedPart() async {
+        var settings = makeSettings()
+        settings.setMode(.active, for: .memoryRecall)
+        settings.setScopes([.personalMemory], for: .memoryRecall)
+        let box = SettingsBox(settings)
+        let transport = JevStubTransport { _ in
+            let payload: [String: Any] = ["model": "jev-fixed-v1", "answers": ["tools.t1": ["type": "score", "score": 0.9]]]
+            return (try! JSONSerialization.data(withJSONObject: payload), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let question = [IOSJevQuestion.score(id: "t1", levels: ["0", "1"], instructions: "test")]
+        let parts = [
+            IOSJevBatchPart(id: "tools", useCase: .toolDiscovery, requiredScopes: [.toolMetadata, .selectedTaskText], state: "catalogue", questions: question, cacheKey: "tool"),
+            IOSJevBatchPart(id: "memory", useCase: .memoryRecall, requiredScopes: [.personalMemory], state: "records", questions: question, cacheKey: "mem"),
+        ]
+        let results = await coordinator.decideBatch(parts: parts, context: IOSJevRunContext(runId: "r", turnBudgetKey: "r", inputHash: "h"))
+        guard case .applied? = results["tools"] else { return XCTFail("complete tools part should apply") }
+        guard case .failed(let reason)? = results["memory"] else { return XCTFail("missing memory answer must fail open") }
+        XCTAssertEqual(reason, "incomplete_response")
+        _ = await coordinator.decideBatch(parts: parts, context: IOSJevRunContext(runId: "r", turnBudgetKey: "r", inputHash: "h"))
+        XCTAssertEqual(transport.calls, 2, "incomplete part must be sent again; complete part may hit cache")
+    }
+
+    func testLateResultOnlyReachesNextCachedCall() async {
+        let box = SettingsBox(makeSettings())
+        let metrics = MetricsSpy()
+        let transport = JevStubTransport { _ in
+            try? await Task.sleep(nanoseconds: 180_000_000)
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport, metrics: metrics)
+        let (scopes, state, questions, context) = makeDecideCall()
+        let first = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "late", waitBudgetMs: 30)
+        guard case .skipped(let reason) = first, reason == "late" else { return XCTFail("first call must fall back") }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let second = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "late", waitBudgetMs: 30)
+        guard case .applied(let cached) = second else { return XCTFail("late answer should be cached for next call") }
+        XCTAssertEqual(cached.answers.first?.score, 0.9)
+        XCTAssertEqual(transport.calls, 1)
+        XCTAssertTrue(metrics.all().contains(where: { $0.outcome == "late" }))
+    }
+
+    func testShadowOccupancyDoesNotBlockActive() async {
+        var settings = makeSettings(mode: .shadow)
+        settings.setMode(.active, for: .memoryRecall)
+        settings.setScopes([.personalMemory], for: .memoryRecall)
+        settings.policy.shadowAppLimit = 1
+        let box = SettingsBox(settings)
+        let gate = continuationGate()
+        let transport = JevStubTransport { request in
+            let state = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            if state.contains("shadow-marker") { await gate.wait() }
+            let answers: [String: Any] = ["single.t1": ["type": "score", "score": 0.9]]
+            return (try! JSONSerialization.data(withJSONObject: ["model": "jev-fixed-v1", "answers": answers]), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let context = IOSJevRunContext(runId: "same", turnBudgetKey: "same", inputHash: "h")
+        let question = [IOSJevQuestion.score(id: "t1", levels: ["0", "1"], instructions: "test")]
+        let shadowTask = Task { await coordinator.decide(useCase: .toolDiscovery, requiredScopes: [.toolMetadata, .selectedTaskText], state: "shadow-marker", questions: question, context: context, waitBudgetMs: 2_000) }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let active = await coordinator.decide(useCase: .memoryRecall, requiredScopes: [.personalMemory], state: "active-marker", questions: question, context: context)
+        guard case .applied = active else { gate.release(); return XCTFail("shadow must not occupy active lane") }
         gate.release()
-        let first = await firstTask.value
-        guard case .applied = first else { return XCTFail("first should apply, got \(first)") }
+        _ = await shadowTask.value
+    }
+
+    func testConcurrentRequestsReserveExactDailyBodyBudget() async throws {
+        var settings = makeSettings()
+        let (scopes, state, questions, context) = makeDecideCall()
+        var prefixed = questions[0]
+        prefixed.id = "single." + prefixed.id
+        let client = IOSJevClient(transport: JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) })
+        let encodedBytes = try client.requestBodyByteCount(.init(
+            endpoint: settings.resolvedEndpoint, apiKey: "test-key", model: settings.activeModelVersion,
+            state: "## toolDiscovery.single\n" + state, questions: [prefixed], style: settings.apiStyle
+        ))
+        settings.policy.dailyRequestBodyBudgetBytes = encodedBytes
+        let box = SettingsBox(settings)
+        let gate = continuationGate()
+        let transport = JevStubTransport { _ in
+            await gate.wait()
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let first = Task { await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "first", waitBudgetMs: 2_000) }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let second = await coordinator.decide(useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions, context: context, cacheKey: "second")
+        guard case .skipped(let reason) = second else { gate.release(); return XCTFail("second body must exceed reserved budget") }
+        XCTAssertEqual(reason, "budget_exhausted")
+        XCTAssertEqual(transport.calls, 1)
+        gate.release()
+        guard case .applied = await first.value else { return XCTFail("first request should complete") }
     }
 
     private func continuationGate() -> (wait: @Sendable () async -> Void, release: @Sendable () -> Void) {
@@ -384,6 +542,26 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testConnectionTestDoesNotAcceptStaleConfiguration() async {
+        let box = SettingsBox(makeSettings())
+        let gate = continuationGate()
+        let transport = JevStubTransport { _ in
+            await gate.wait()
+            let payload: [String: Any] = ["model": "jev-fixed-v1", "answers": ["connectivity": ["type": "noul", "noul": 1.0]]]
+            return (try! JSONSerialization.data(withJSONObject: payload), self.httpResponse(status: 200))
+        }
+        let coordinator = makeCoordinator(settings: box, transport: transport)
+        let task = Task { await coordinator.runConnectionTest(apiKey: "test-key") }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        var changed = box.get()
+        changed.setAPIStyle(.vercelGateway)
+        box.set(changed)
+        gate.release()
+        let result = await task.value
+        XCTAssertFalse(result.succeeded)
+        XCTAssertEqual(result.errorReason, "config_changed")
+    }
+
     // MARK: Metrics
 
     func testMetricsRecordedForAppliedAndSkipped() async {
@@ -419,9 +597,9 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
     /// Gateway evaluation-model 响应：顶层 answers map + camelCase usage。
     private func vercelEvalPayload() -> Data {
         let payload: [String: Any] = [
-            "answers": ["t1": ["type": "score", "score": 0.8]],
+            "answers": ["single.t1": ["type": "score", "score": 0.8]],
             "usage": ["inputTokens": 10, "outputTokens": 5],
-            "providerMetadata": ["typesafe": ["confidence": ["t1": 0.9]]],
+            "providerMetadata": ["typesafe": ["confidence": ["single.t1": 0.9]]],
         ]
         return try! JSONSerialization.data(withJSONObject: payload)
     }
@@ -523,8 +701,8 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         let payload: [String: Any] = [
             "model": "jev-latest",
             "answers": [
-                "t1": ["type": "score", "score": 2.0, "confidence": 0.7],
-                "t2": ["type": "score", "score": 2.8, "confidence": 0.4],
+                "single.t1": ["type": "score", "score": 2.0, "confidence": 0.7],
+                "single.t2": ["type": "score", "score": 2.8, "confidence": 0.4],
             ],
         ]
         let data = try! JSONSerialization.data(withJSONObject: payload)

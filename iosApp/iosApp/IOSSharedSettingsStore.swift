@@ -122,6 +122,14 @@ final class IOSSharedSettingsStore {
     private let remoteSyncStatusKey = "app.amber.ios.remoteSyncStatus"
     private let capabilityGatesKey = "app.amber.ios.capabilityGates.v1"
     private let jevSettingsKey = "app.amber.ios.jevSettings.v1"
+    private static let jevSnapshotLock = NSLock()
+    nonisolated(unsafe) private static var jevPersistedSnapshot: IOSJevSettings?
+
+    private static func invalidateJevPersistedSnapshot() {
+        jevSnapshotLock.lock()
+        defer { jevSnapshotLock.unlock() }
+        jevPersistedSnapshot = nil
+    }
 
     private(set) var capabilityGates: IOSCapabilityGateSettings
     /// Jev 快速判断设置（独立版本化；API Key 在 Keychain side-table，不在此持久化）。
@@ -334,11 +342,13 @@ final class IOSSharedSettingsStore {
 
     /// 更新并持久化 Jev 设置。revision 递增使在途判断的返回值失效、缓存失效。
     func updateJevSettings(_ settings: IOSJevSettings) {
+        IOSJevDecisionCoordinator.shared.beginConfigurationChange()
+        defer { IOSJevDecisionCoordinator.shared.endConfigurationChange() }
         jevSettings = settings
         if let data = try? JSONEncoder().encode(settings) {
             defaults.set(data, forKey: jevSettingsKey)
         }
-        IOSJevDecisionCoordinator.shared.invalidateCaches()
+        Self.invalidateJevPersistedSnapshot()
         IOSJevWebMountLoopService.sharedReplay.clear()
     }
 
@@ -348,11 +358,12 @@ final class IOSSharedSettingsStore {
     func storeJevApiKey(_ key: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        IOSJevDecisionCoordinator.shared.beginConfigurationChange()
+        defer { IOSJevDecisionCoordinator.shared.endConfigurationChange() }
         guard IOSCredentialSideTable.store(key: IOSCredentialSideTable.jevApiKey, value: trimmed) else {
             return false
         }
         IOSJevDecisionCoordinator.shared.resetAuthState()
-        IOSJevDecisionCoordinator.shared.invalidateCaches()
         IOSJevWebMountLoopService.sharedReplay.clear()
         var settings = jevSettings
         settings.bumpRevision()
@@ -360,14 +371,16 @@ final class IOSSharedSettingsStore {
         if let data = try? JSONEncoder().encode(settings) {
             defaults.set(data, forKey: jevSettingsKey)
         }
+        Self.invalidateJevPersistedSnapshot()
         return true
     }
 
     /// 清除 API Key（Keychain + 缓存失效 + revision 递增使在途结果不可应用）。
     func clearJevApiKey() {
+        IOSJevDecisionCoordinator.shared.beginConfigurationChange()
+        defer { IOSJevDecisionCoordinator.shared.endConfigurationChange() }
         IOSCredentialSideTable.delete(key: IOSCredentialSideTable.jevApiKey)
         IOSJevDecisionCoordinator.shared.resetAuthState()
-        IOSJevDecisionCoordinator.shared.invalidateCaches()
         IOSJevWebMountLoopService.sharedReplay.clear()
         var settings = jevSettings
         settings.bumpRevision()
@@ -375,6 +388,7 @@ final class IOSSharedSettingsStore {
         if let data = try? JSONEncoder().encode(settings) {
             defaults.set(data, forKey: jevSettingsKey)
         }
+        Self.invalidateJevPersistedSnapshot()
     }
 
     func hasJevApiKey() -> Bool {
@@ -384,6 +398,18 @@ final class IOSSharedSettingsStore {
 
     /// 协调器的轻量读取入口：不走完整 store 初始化（rehydrate 等重活）。
     static func loadPersistedJevSettings(defaults: UserDefaults = .standard) -> IOSJevSettings {
+        if defaults === UserDefaults.standard {
+            jevSnapshotLock.lock()
+            defer { jevSnapshotLock.unlock() }
+            if let jevPersistedSnapshot { return jevPersistedSnapshot }
+            let loaded = decodePersistedJevSettings(defaults: defaults)
+            jevPersistedSnapshot = loaded
+            return loaded
+        }
+        return decodePersistedJevSettings(defaults: defaults)
+    }
+
+    private static func decodePersistedJevSettings(defaults: UserDefaults) -> IOSJevSettings {
         guard let data = defaults.data(forKey: "app.amber.ios.jevSettings.v1"),
               let decoded = try? JSONDecoder().decode(IOSJevSettings.self, from: data) else {
             return IOSJevSettings()

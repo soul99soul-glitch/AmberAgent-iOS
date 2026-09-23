@@ -13,10 +13,21 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         HTTPURLResponse(url: IOSJevSettings.productionEndpoint, statusCode: status, httpVersion: nil, headerFields: nil)!
     }
 
-    private func scorePayload(_ answers: [String: Double]) -> Data {
+    private func scorePayload(_ answers: [String: Double], suitable: Double = 0.9, confidences: [String: Double] = [:], for request: URLRequest) -> Data {
+        let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        let requested = body["questions"] as! [String: Any]
+        var rawAnswers: [String: [String: Any]] = [:]
+        for id in requested.keys where id != "single." + IOSJevToolDiscoveryService.suitabilityQuestionID {
+            let localId = id.hasPrefix("single.") ? String(id.dropFirst("single.".count)) : id
+            rawAnswers[id] = ["type": "score", "score": answers[localId] ?? 0.0, "confidence": confidences[localId] ?? 0.9]
+        }
+        rawAnswers["single." + IOSJevToolDiscoveryService.suitabilityQuestionID] = [
+            "type": "noul",
+            "noul": suitable,
+        ]
         let payload: [String: Any] = [
             "model": "jev-latest",
-            "answers": answers.mapValues { ["type": "score", "score": $0] },
+            "answers": rawAnswers,
         ]
         return try! JSONSerialization.data(withJSONObject: payload)
     }
@@ -70,11 +81,10 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
 
     private let args = #"{"query":"帮我把总结保存成文件","limit":5}"#
 
-    /// 纯关键词参考结果（用于回退语义断言，不硬编码具体工具名）。
+    /// 在被测 bridge 上执行纯关键词搜索，避免拿另一份目录/暴露状态作基线。
     private func keywordFirstResult(bridge: IosToolExposureBridge, argumentsJson: String) -> String? {
-        let referenceBridge = makeBridge()
-        let reference = referenceBridge.executeToolSearch(argumentsJson: argumentsJson)
-        let object = try! JSONSerialization.jsonObject(with: reference.data(using: .utf8)!) as! [String: Any]
+        let baseline = bridge.executeToolSearch(argumentsJson: argumentsJson)
+        let object = try! JSONSerialization.jsonObject(with: baseline.data(using: .utf8)!) as! [String: Any]
         return (object["expanded_tools"] as? [String])?.first
     }
 
@@ -130,6 +140,40 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertTrue(visible.contains("workspace_file_write"))
     }
 
+    func testRequestIncludesUserWordsAndOneSuitableToolQuestion() throws {
+        var settings = makeSettings(mode: .active)
+        settings.policy.maxQuestions = 4
+        let parsed = IOSJevToolDiscoveryService.ParsedSnapshot(
+            query: "查日程",
+            category: nil,
+            exactMatch: nil,
+            candidates: [
+                .init(
+                    name: IOSJevToolDiscoveryService.suitabilityQuestionID,
+                    category: "calendar",
+                    description: "查询日程",
+                    mutates: false,
+                    keywordScore: 1
+                ),
+                .init(name: "calendar_create", category: "calendar", description: "创建日程", mutates: true, keywordScore: 1),
+                .init(name: "calendar_list", category: "calendar", description: "列出日程", mutates: false, keywordScore: 1),
+                .init(name: "calendar_search", category: "calendar", description: "搜索日程", mutates: false, keywordScore: 1),
+            ]
+        )
+
+        let built = try XCTUnwrap(IOSJevToolDiscoveryService.makeRequest(
+            parsed: parsed,
+            selectedTaskText: "  请找出我刚才提到的周五会议，并告诉我安排。  ",
+            settings: settings
+        ))
+
+        XCTAssertTrue(built.state.contains("用户最新原话：请找出我刚才提到的周五会议，并告诉我安排。"))
+        XCTAssertEqual(built.questions.count, settings.policy.maxQuestions)
+        XCTAssertEqual(built.questions.last?.type, "noul")
+        XCTAssertNotEqual(built.suitabilityQuestionID, IOSJevToolDiscoveryService.suitabilityQuestionID)
+        XCTAssertEqual(Set(built.questions.map(\.id)).count, built.questions.count)
+    }
+
     // MARK: Service paths
 
     func testExactNameQueryBypassesJev() async {
@@ -157,8 +201,8 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
     func testActiveAppliesJevRanking() async {
         // 关键词对"保存文件"命中 workspace_file_write；Jev 给 wm_click 更高分
         // 也应重排到前面（active 语义），且都在 expanded_tools。
-        let transport = JevStubTransport { _ in
-            (self.scorePayload(["wm_click": 2.8, "workspace_file_write": 2.0]), self.httpResponse(status: 200))
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 2.8, "workspace_file_write": 2.0], for: request), self.httpResponse(status: 200))
         }
         let bridge = makeBridge()
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
@@ -170,11 +214,41 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertTrue(expanded.contains("workspace_file_write"))
     }
 
+    func testActiveExposureContainsOnlyRankedResultsAndRelatedExpansion() async throws {
+        let queryArgs = #"{"query":"在系统日历创建会议","limit":5}"#
+        let bridge = makeBridge()
+        let before = Set(bridge.visibleTools().map(\.name))
+        let snapshot = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: bridge.candidateSnapshot(argumentsJson: queryArgs).data(using: .utf8)!
+        ) as? [String: Any])
+        let candidateNames = Set((snapshot["candidates"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String })
+        XCTAssertTrue(candidateNames.contains("calendar_event_create"))
+        XCTAssertTrue(candidateNames.contains("wm_click"))
+
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 2.8], for: request), self.httpResponse(status: 200))
+        }
+        let output = await execute(
+            makeService(settings: makeSettings(mode: .active), transport: transport),
+            argumentsJson: queryArgs,
+            bridge: bridge,
+            identity: identity()
+        )
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as? [String: Any])
+        let expanded = Set(object["expanded_tools"] as? [String] ?? [])
+        let newlyExposed = Set(bridge.visibleTools().map(\.name)).subtracting(before)
+
+        XCTAssertTrue(expanded.contains("wm_click"))
+        XCTAssertTrue(expanded.contains("wm_open"), "related WebMount tools must remain included in the ranked exposure")
+        XCTAssertFalse(expanded.contains("calendar_event_create"), "keyword-only results must not survive the applied Jev ranking")
+        XCTAssertEqual(newlyExposed, expanded.subtracting(before), "only ranked results and their related expansion become visible")
+    }
+
     func testLowConfidenceFallsBackToKeywordOrder() async {
         // 全部低分 → 回退关键词顺序。查询含英文 token "file"（中文整句无空格
         // 时关键词路径本来召回为空——那是 Jev 要补的基线缺口，不作回退断言载体）。
-        let transport = JevStubTransport { _ in
-            (self.scorePayload(["wm_click": 0.4, "workspace_file_write": 0.2]), self.httpResponse(status: 200))
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 0.4, "workspace_file_write": 0.2], for: request), self.httpResponse(status: 200))
         }
         let bridge = makeBridge()
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
@@ -185,9 +259,28 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertEqual(expanded.first, keywordFirstResult(bridge: bridge, argumentsJson: queryArgs), "low confidence must fall back to keyword order")
     }
 
+    func testNoSuitableToolFallsBackToKeywordResults() async {
+        let queryArgs = #"{"query":"save the file to disk","limit":5}"#
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 2.8], suitable: 0.1, for: request), self.httpResponse(status: 200))
+        }
+        let bridge = makeBridge()
+        let output = await execute(
+            makeService(settings: makeSettings(mode: .active), transport: transport),
+            argumentsJson: queryArgs,
+            bridge: bridge,
+            identity: identity()
+        )
+        let object = try! JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as! [String: Any]
+        let expanded = object["expanded_tools"] as! [String]
+
+        XCTAssertEqual(expanded.first, keywordFirstResult(bridge: bridge, argumentsJson: queryArgs))
+        XCTAssertFalse(expanded.contains("wm_click"), "a negative suitable-tool judgment must skip Jev ranking")
+    }
+
     func testShadowReturnsKeywordResultButObserves() async {
-        let transport = JevStubTransport { _ in
-            (self.scorePayload(["wm_click": 2.8]), self.httpResponse(status: 200))
+        let transport = JevStubTransport { request in
+            (self.scorePayload(["wm_click": 2.8], for: request), self.httpResponse(status: 200))
         }
         let bridge = makeBridge()
         let service = makeService(settings: makeSettings(mode: .shadow, pinned: nil), transport: transport)
@@ -216,12 +309,19 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         let bridge = makeBridge()
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let queryArgs = #"{"query":"save the file to disk","limit":5}"#
+        let before = Set(bridge.visibleTools().map(\.name))
         let output = await execute(service, argumentsJson: queryArgs, bridge: bridge, identity: identity())
         let object = try! JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as! [String: Any]
+        let expanded = object["expanded_tools"] as? [String] ?? []
         XCTAssertEqual(
-            (object["expanded_tools"] as! [String]).first,
+            expanded.first,
             keywordFirstResult(bridge: bridge, argumentsJson: queryArgs),
             "network failure must fall back to keyword result"
+        )
+        XCTAssertEqual(
+            Set(bridge.visibleTools().map(\.name)).subtracting(before),
+            Set(expanded).subtracting(before),
+            "fallback exposure must match the original keyword result"
         )
     }
 
@@ -273,16 +373,15 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
     /// A3 置信弃权：高分但置信低于 policy 阈值的候选按未入选计；
     /// 不设阈值时同一响应仍由高分候选领先（对照证明是置信门在起作用）。
     func testConfidenceFloorGatesHighScoreCandidate() async {
-        let payload: [String: Any] = [
-            "model": "jev-latest",
-            "answers": [
-                "wm_click": ["type": "score", "score": 2.8, "confidence": 0.3],
-                "workspace_file_write": ["type": "score", "score": 2.0, "confidence": 0.95],
-            ],
-        ]
-        let data = try! JSONSerialization.data(withJSONObject: payload)
+        let response: (URLRequest) -> Data = { request in
+            self.scorePayload(
+                ["wm_click": 2.8, "workspace_file_write": 2.0],
+                confidences: ["wm_click": 0.3, "workspace_file_write": 0.95],
+                for: request
+            )
+        }
 
-        let ungatedTransport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let ungatedTransport = JevStubTransport { request in (response(request), self.httpResponse(status: 200)) }
         let ungated = await execute(
             makeService(settings: makeSettings(mode: .active), transport: ungatedTransport),
             argumentsJson: args, bridge: makeBridge(), identity: identity()
@@ -292,7 +391,7 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
 
         var gated = makeSettings(mode: .active)
         gated.policy.toolDiscoveryMinConfidence = 0.5
-        let gatedTransport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
+        let gatedTransport = JevStubTransport { request in (response(request), self.httpResponse(status: 200)) }
         let output = await execute(
             makeService(settings: gated, transport: gatedTransport),
             argumentsJson: args, bridge: makeBridge(), identity: identity()
@@ -303,4 +402,3 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         XCTAssertFalse(expanded.contains("wm_click"), "被弃权候选不进入暴露集合")
     }
 }
-

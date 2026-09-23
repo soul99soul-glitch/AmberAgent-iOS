@@ -13,6 +13,8 @@ import Foundation
 
 enum IOSJevToolDiscoveryService {
 
+    static let suitabilityQuestionID = "jev_tool_discovery_suitable"
+
     struct RunIdentity: Sendable {
         var runId: String?
         var turnBudgetKey: String
@@ -32,6 +34,7 @@ enum IOSJevToolDiscoveryService {
     @MainActor
     static func execute(
         argumentsJson: String,
+        selectedTaskText: String = "",
         bridge: IosToolExposureBridge?,
         coordinator: IOSJevDecisionCoordinator = .shared,
         settingsProvider: @escaping () -> IOSJevSettings = { IOSSharedSettingsStore.loadPersistedJevSettings() },
@@ -65,7 +68,11 @@ enum IOSJevToolDiscoveryService {
             return bridge.executeToolSearch(argumentsJson: argumentsJson)
         }
 
-        guard let request = makeRequest(parsed: parsed, settings: settings) else {
+        guard let request = makeRequest(
+            parsed: parsed,
+            selectedTaskText: selectedTaskText,
+            settings: settings
+        ) else {
             return bridge.executeToolSearch(argumentsJson: argumentsJson)
         }
 
@@ -76,7 +83,21 @@ enum IOSJevToolDiscoveryService {
             inputHash: inputHash
         )
         let keywordTop1 = parsed.candidates.max { $0.keywordScore < $1.keywordScore }?.name
-        let keywordFallback = bridge.executeToolSearch(argumentsJson: argumentsJson)
+
+        func keywordFallback() -> String {
+            bridge.executeToolSearch(argumentsJson: argumentsJson)
+        }
+
+        func appliedFallback(_ reason: String) -> String {
+            IOSJevMetricsStore.append(IOSJevMetricsRecord(
+                timestamp: Date(), useCase: .toolDiscovery, mode: .active,
+                modelVersion: settings.activeModelVersion, outcome: "summary",
+                latencyMs: 0, requestBytes: 0, responseBytes: 0,
+                inputTokens: nil, outputTokens: nil, reason: reason,
+                runId: context.runId, numbers: ["business_fallback": 1]
+            ))
+            return keywordFallback()
+        }
 
         // shadow：后台观测只记指标（含建议排序），不阻塞 tool_search 主路径。
         if effectiveMode == .shadow {
@@ -94,7 +115,7 @@ enum IOSJevToolDiscoveryService {
                     }
                 )
             }
-            return keywordFallback
+            return keywordFallback()
         }
 
         // active：应用 Jev 排序（失败/低置信回退关键词结果）。
@@ -111,13 +132,17 @@ enum IOSJevToolDiscoveryService {
         )
         switch outcome {
         case .applied(let decision):
-            if let ranking = ranking(from: decision, candidates: parsed.candidates, minScore: settings.policy.toolDiscoveryMinScore, minConfidence: settings.policy.toolDiscoveryMinConfidence) {
+            guard let suitability = decision.answers.first(where: { $0.id == request.suitabilityQuestionID })?.noul,
+                  suitability >= 0.5 else {
+                return appliedFallback("no_suitable_tool")
+            }
+            if let ranking = ranking(from: decision, candidates: request.candidates, minScore: settings.policy.toolDiscoveryMinScore, minConfidence: settings.policy.toolDiscoveryMinConfidence) {
                 return bridge.executeToolSearch(argumentsJson: argumentsJson, rankingOverride: ranking)
             }
             // 低置信 / 无足够候选：回退原搜索。
-            return keywordFallback
+            return appliedFallback("ranking_unavailable")
         case .observed, .skipped, .failed:
-            return keywordFallback
+            return keywordFallback()
         }
     }
 
@@ -172,6 +197,8 @@ enum IOSJevToolDiscoveryService {
     struct BuiltRequest {
         var state: String
         var questions: [IOSJevQuestion]
+        var candidates: [SnapshotCandidate]
+        var suitabilityQuestionID: String
     }
 
     private static let relevanceLevels = [
@@ -184,11 +211,21 @@ enum IOSJevToolDiscoveryService {
     /// state = 查询 + 候选元数据（每条描述截断，防 48KiB 超限；仍超则整体放弃）。
     /// internal：契约测试锁定"每候选一题 ≤ maxQuestions"（客户端对超题数是硬拒绝，
     /// 且 KMP 快照池的 32 条上限与本截断各自独立，任何一侧调整都不许打破）。
-    static func makeRequest(parsed: ParsedSnapshot, settings: IOSJevSettings) -> BuiltRequest? {
-        let maxCandidates = min(settings.policy.maxCandidates, settings.policy.maxQuestions, parsed.candidates.count)
+    static func makeRequest(
+        parsed: ParsedSnapshot,
+        selectedTaskText: String = "",
+        settings: IOSJevSettings
+    ) -> BuiltRequest? {
+        guard settings.policy.maxQuestions > 1 else { return nil }
+        let maxCandidates = min(settings.policy.maxCandidates, settings.policy.maxQuestions - 1, parsed.candidates.count)
         let candidates = Array(parsed.candidates.prefix(maxCandidates))
+        guard !candidates.isEmpty else { return nil }
         var lines: [String] = []
         lines.append("用户查询：\(parsed.query)")
+        let trimmedTaskText = String(selectedTaskText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1_000))
+        if !trimmedTaskText.isEmpty {
+            lines.append("用户最新原话：\(trimmedTaskText)")
+        }
         if let category = parsed.category {
             lines.append("限定类别：\(category)")
         }
@@ -199,14 +236,28 @@ enum IOSJevToolDiscoveryService {
             lines.append("- \(candidate.name) [\(candidate.category)]\(candidate.mutates ? " (mutates)" : ""): \(description)")
         }
         let state = lines.joined(separator: "\n")
-        let questions = candidates.map { candidate in
+        let candidateQuestions = candidates.map { candidate in
             IOSJevQuestion.score(
                 id: candidate.name,
                 levels: relevanceLevels,
-                instructions: "评估候选工具「\(candidate.name)」对用户查询的语义相关性。只依据查询意图与候选描述，不因候选在列表中的位置产生偏好。"
+                instructions: "评估候选工具「\(candidate.name)」对用户查询和用户最新原话所表达意图的语义相关性。只依据意图与候选描述，不因候选在列表中的位置产生偏好。"
             )
         }
-        return BuiltRequest(state: state, questions: questions)
+        let candidateIDs = Set(candidates.map(\.name))
+        var suitabilityQuestionID = Self.suitabilityQuestionID
+        while candidateIDs.contains(suitabilityQuestionID) {
+            suitabilityQuestionID += "_"
+        }
+        let suitabilityQuestion = IOSJevQuestion.noul(
+            id: suitabilityQuestionID,
+            instructions: "候选工具中是否至少有一个能够完成用户查询和用户最新原话表达的意图？仅当候选列表中确有合适工具时回答是；否则回答否。"
+        )
+        return BuiltRequest(
+            state: state,
+            questions: candidateQuestions + [suitabilityQuestion],
+            candidates: candidates,
+            suitabilityQuestionID: suitabilityQuestionID
+        )
     }
 
     /// Score 0-3 分量表 → 排序。任一候选达到 minScore 才算足够；全部低于阈值

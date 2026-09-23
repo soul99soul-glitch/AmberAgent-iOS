@@ -458,12 +458,21 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        IOSJevMetricsStore.setApplicationBackgroundState(application.applicationState == .background)
         UNUserNotificationCenter.current().delegate = self
         WatchConnectivityBridge.shared.startReceiving(
             actionHandler: WatchTaskCoordinator.shared
         )
         IOSChatBackgroundGenerationCoordinator.shared.prepareForApplicationLaunch()
         return true
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        IOSJevMetricsStore.setApplicationBackgroundState(true)
+    }
+
+    func applicationWillEnterForeground(_ application: UIApplication) {
+        IOSJevMetricsStore.setApplicationBackgroundState(false)
     }
 
     func userNotificationCenter(

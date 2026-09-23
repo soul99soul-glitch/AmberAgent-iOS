@@ -42,64 +42,30 @@ final class IOSJevModelRoutingService {
     ) async -> [String] {
         guard !candidates.isEmpty else { return [] }
         let settings = deps.settingsProvider()
-        guard settings.effectiveMode(for: .modelRouting) != .off else { return [] }
-        let requiredScopes: Set<IOSJevDataScope> = [.selectedTaskText]
+        let mode = settings.effectiveMode(for: .modelRouting)
+        guard mode != .off else { return [] }
+        let requiredScopes: Set<IOSJevDataScope> = [.selectedTaskText, .modelMetadata]
         guard settings.canSend(useCase: .modelRouting, required: requiredScopes) else { return [] }
-
-        // 契约 3.3 步骤 2：已知能力硬过滤先于 Jev 排序。子任务运行始终带工具，
-        // 声明了能力且不含 TOOL 的候选直接淘汰；未声明能力 = unknown，保留。
-        let toolCapable = candidates.filter { candidate in
-            var hasDeclarations = false
-            var declaresTool = false
-            for ability in candidate.model.abilities {
-                hasDeclarations = true
-                if ability.name == "TOOL" { declaresTool = true }
-            }
-            return !hasDeclarations || declaresTool
-        }
-        guard !toolCapable.isEmpty else { return [] }
-
-        let trimmedTask = String(taskText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1_500))
-        guard !trimmedTask.isEmpty else { return [] }
-
-        // state/questions 构建一次，active 与 shadow 共用。
-        let entries = toolCapable.map { candidate -> (id: String, description: String) in
-            let contextWindow = Self.intValue(candidate.model.contextWindowTokens)
-                .map { "context=\($0) tokens" } ?? "context=unknown"
-            return (candidate.model.modelId, "\(candidate.model.modelId) (\(contextWindow))")
-        }
-        var lines: [String] = []
-        lines.append("子任务文本：\(trimmedTask)")
-        lines.append("候选模型（id = 模型标识）：")
-        for entry in entries {
-            lines.append("- \(entry.id): \(entry.description)")
-        }
-        let state = lines.joined(separator: "\n")
-        let questions = entries.map { entry in
-            IOSJevQuestion.score(
-                id: entry.id,
-                levels: Self.fitLevels,
-                instructions: "评估该模型执行此子任务的适配度。依据任务复杂度与模型上下文容量，不对未知能力做假设，不因标识中出现熟悉名称而加分。"
-            )
-        }
+        guard let part = Self.makeBatchPart(taskText: taskText, candidates: candidates) else { return [] }
         let context = IOSJevRunContext(
             runId: turnBudgetKey,
             turnBudgetKey: turnBudgetKey,
-            inputHash: IOSJevToolDiscoveryService.stableHash(state)
+            inputHash: IOSJevToolDiscoveryService.stableHash(part.state)
         )
+        let cacheKey = part.cacheKey
 
         // shadow：后台观测只记指标，不阻塞主路径（契约表：shadow 不阻塞原主路径）。
-        if settings.effectiveMode(for: .modelRouting) == .shadow {
+        if mode == .shadow {
             let coordinator = deps.coordinator
             Task(priority: .utility) { [weak self] in
                 guard let self else { return }
                 _ = await coordinator.decide(
-                    useCase: .modelRouting,
-                    requiredScopes: requiredScopes,
-                    state: state,
-                    questions: questions,
+                    useCase: part.useCase,
+                    requiredScopes: part.requiredScopes,
+                    state: part.state,
+                    questions: part.questions,
                     context: context,
-                    cacheKey: "model_routing_shadow"
+                    cacheKey: cacheKey
                 )
                 _ = self
             }
@@ -107,34 +73,103 @@ final class IOSJevModelRoutingService {
         }
 
         let outcome = await deps.coordinator.decide(
+            useCase: part.useCase,
+            requiredScopes: part.requiredScopes,
+            state: part.state,
+            questions: part.questions,
+            context: context,
+            cacheKey: cacheKey
+        )
+        return Self.preferredModelIds(from: outcome, candidates: candidates, settings: settings)
+    }
+
+    /// 为 spawn 的单次 decideBatch 构建可复用模型调度 part。
+    /// 已知不支持工具的模型在出站前硬过滤；未知能力保留并明确标成 unknown。
+    static func makeBatchPart(
+        taskText: String,
+        candidates: [IOSSubAgentModelPool.Candidate],
+        partId: String = "model_routing"
+    ) -> IOSJevBatchPart? {
+        let toolCapable = toolCapableCandidates(candidates)
+        guard !toolCapable.isEmpty else { return nil }
+        let trimmedTask = String(taskText.trimmingCharacters(in: .whitespacesAndNewlines).prefix(1_500))
+        guard !trimmedTask.isEmpty else { return nil }
+
+        let entries = toolCapable.map { candidate -> (id: String, description: String) in
+            let modelName = candidate.model.displayName.isEmpty ? "unknown" : candidate.model.displayName
+            let modelId = candidate.model.modelId.isEmpty ? "unknown" : candidate.model.modelId
+            let providerName = candidate.provider.name.isEmpty ? "unknown" : candidate.provider.name
+            let abilities = candidate.model.abilities.isEmpty
+                ? "unknown"
+                : candidate.model.abilities.map { $0.name.lowercased() }.sorted().joined(separator: ",")
+            let contextWindow = intValue(candidate.model.contextWindowTokens)
+                .map { "\($0) tokens" } ?? "unknown"
+            let supportedReasoning = candidate.supportedReasoning.isEmpty
+                ? "unknown"
+                : candidate.supportedReasoning.map { $0.name.lowercased() }.sorted().joined(separator: ",")
+            let configuredReasoning = candidate.configuredReasoning?.name.lowercased() ?? "unknown"
+            let description = "name=\(modelName); model_id=\(modelId); provider=\(providerName); abilities=\(abilities); context=\(contextWindow); supported_reasoning=\(supportedReasoning); configured_reasoning=\(configuredReasoning)"
+            return (candidate.modelId, description)
+        }
+        var lines = [
+            "子任务文本：\(trimmedTask)",
+            "候选模型（id = 本地候选 UUID；unknown 表示该事实未提供）：",
+        ]
+        lines += entries.map { "- \($0.id): \($0.description)" }
+        let state = lines.joined(separator: "\n")
+        let questions = entries.map { entry in
+            IOSJevQuestion.score(
+                id: entry.id,
+                levels: fitLevels,
+                instructions: "评估该模型执行此子任务的适配度。以已提供的能力事实为主要依据，模型名称只作辅助参考；unknown 表示未提供，不得自行补全或假设模型能力。"
+            )
+        }
+        return IOSJevBatchPart(
+            id: partId,
             useCase: .modelRouting,
-            requiredScopes: requiredScopes,
+            requiredScopes: [.selectedTaskText, .modelMetadata],
             state: state,
             questions: questions,
-            context: context,
-            cacheKey: "model_routing"
+            cacheKey: partId
         )
-        guard case .applied(let decision) = outcome else { return [] }
+    }
 
+    /// 只解析 active 成功结果；UUID 必须仍属于当前池，未知或不可用条目不入选。
+    static func preferredModelIds(
+        from outcome: IOSJevDecisionOutcome,
+        candidates: [IOSSubAgentModelPool.Candidate],
+        settings: IOSJevSettings
+    ) -> [String] {
+        guard case .applied(let decision) = outcome else { return [] }
+        let candidateIds = Set(toolCapableCandidates(candidates).map(\.modelId))
         var scores: [String: Double] = [:]
         var confidences: [String: Double] = [:]
         for answer in decision.answers where answer.type == "score" {
-            guard let score = answer.score, answer.id.count <= 128 else { continue }
+            guard candidateIds.contains(answer.id), let score = answer.score else { continue }
             scores[answer.id] = score
             if let confidence = answer.confidence { confidences[answer.id] = confidence }
         }
         let minConfidence = settings.policy.modelRoutingMinConfidence
-        let scored = entries.compactMap { entry -> (String, Double)? in
-            guard let score = scores[entry.id], score >= settings.policy.modelRoutingMinScore else { return nil }
+        let scored = candidateIds.compactMap { candidateId -> (String, Double)? in
+            guard let score = scores[candidateId], score >= settings.policy.modelRoutingMinScore else { return nil }
             // 置信弃权：低于 policy 阈值不进首选集；置信缺失不门控。
-            if let minConfidence, let confidence = confidences[entry.id], confidence < minConfidence { return nil }
-            return (entry.id, score)
+            if let minConfidence, let confidence = confidences[candidateId], confidence < minConfidence { return nil }
+            return (candidateId, score)
         }
         let sorted = scored.sorted { lhs, rhs in
             if lhs.1 != rhs.1 { return lhs.1 > rhs.1 }
             return lhs.0 < rhs.0
         }
         return sorted.map { pair in pair.0 }
+    }
+
+    private static func toolCapableCandidates(
+        _ candidates: [IOSSubAgentModelPool.Candidate]
+    ) -> [IOSSubAgentModelPool.Candidate] {
+        candidates.filter { candidate in
+            let abilities = candidate.model.abilities
+            return abilities.isEmpty || abilities.contains { $0.name == "TOOL" }
+        }
     }
 
     /// 在 Jev 首选集合内切出仍存在的池内候选（保持 Jev 顺序）。
@@ -144,7 +179,7 @@ final class IOSJevModelRoutingService {
     ) -> [IOSSubAgentModelPool.Candidate] {
         guard !rankedIds.isEmpty else { return [] }
         return rankedIds.compactMap { rankedId in
-            candidates.first { $0.model.modelId.caseInsensitiveCompare(rankedId) == .orderedSame }
+            candidates.first { $0.modelId.caseInsensitiveCompare(rankedId) == .orderedSame }
         }
     }
 
