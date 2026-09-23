@@ -75,12 +75,17 @@ final class IOSSubAgentModelPoolTests: XCTestCase {
         XCTAssertEqual(second?.modelId, candidateA.modelId)
 
         pool.release(reservation)
+        let preview = pool.previewSelection(
+            from: [candidateA, candidateB],
+            activeModelCounts: [:],
+            activeProviderCounts: [:]
+        )
         let third = pool.select(
             from: [candidateA, candidateB],
             activeModelCounts: [:],
             activeProviderCounts: [:]
         )
-        XCTAssertNotNil(third)
+        XCTAssertEqual(third?.modelId, preview?.modelId, "counterfactual preview must not advance pool rotation")
     }
 
     func testDefaultReasoningPrefersAutoThenMediumThenHighThenFirst() {

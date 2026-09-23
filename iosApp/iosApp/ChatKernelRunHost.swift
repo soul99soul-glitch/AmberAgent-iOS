@@ -2,6 +2,12 @@ import Foundation
 import UIKit
 @preconcurrency import Shared
 
+/// KMP RecallResult 未声明 Sendable；并行任务只跨边界传 Void，结果留在主 actor。
+@MainActor
+private final class JevRecallResultBox {
+    var value: ChatMemoryContextBuilder.RecallResult?
+}
+
 /// P0-2 B1: 内核前台 run 的 Host——把 `ChatRunKernelAdapter` 的回调面接到
 /// 与 `ChatGenerationCoordinator`(CGC)完全相同的副作用序列:
 ///
@@ -132,6 +138,8 @@ final class ChatKernelRunHost {
     private var durableCheckpointPersisted = false
     private var citationTracker: IOSMemoryCitationTracker?
     private var streamClock = ChatGenerationSpeedClock()
+    private var didRecordJevFirstDelta = false
+    private var jevModelStepCount = 0
     private var keepaliveHeld = false
     private var didReportFirstDeltaThisRound = false
     /// 适配器已进入 run()(决定 cancel 是否调用 adapter.cancel——进入前
@@ -272,6 +280,8 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         didReportFirstDeltaThisRound = false
         streamClock = ChatGenerationSpeedClock()
+        didRecordJevFirstDelta = false
+        jevModelStepCount = 0
         let tracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         citationTracker = tracker
 
@@ -452,6 +462,8 @@ final class ChatKernelRunHost {
         keepaliveHeld = true
         citationTracker = nil
         streamClock = ChatGenerationSpeedClock()
+        didRecordJevFirstDelta = false
+        jevModelStepCount = 0
 
         let imagePresentation = AgentActivityPresentation.runningTool(toolName: "generate_image")
         bindings.startLiveActivity(runId, conversationId, imagePresentation)
@@ -1571,6 +1583,7 @@ final class ChatKernelRunHost {
         }
         callbacks.onAssistantTurnStarted = { [weak self] in
             guard let self, self.currentRunId == runId else { return }
+            self.jevModelStepCount += 1
             self.didReportFirstDeltaThisRound = false
             self.streamClock.resetRound()
             self.bindings.setMessages(
@@ -1651,6 +1664,11 @@ final class ChatKernelRunHost {
             guard let self,
                   self.currentRunId == runId,
                   !self.didFinalizeTerminal else { return }
+            if !self.didRecordJevFirstDelta {
+                self.didRecordJevFirstDelta = true
+                let elapsed = max(0, Int64(Date().timeIntervalSince1970 * 1_000) - self.currentStartedAt)
+                IOSJevMetricsStore.appendRunNumbers(runId: runId, numbers: ["first_visible_delta_ms": Double(elapsed)])
+            }
             self.streamClock.noteVisibleDelta()
             if !self.didReportFirstDeltaThisRound {
                 self.didReportFirstDeltaThisRound = true
@@ -1813,6 +1831,13 @@ final class ChatKernelRunHost {
         } else {
             requestMessages = plan.uploadMessages
         }
+        // 记忆候选只依赖本轮 canonical 用户输入；尽早启动，使网络等待与
+        // 压缩、上下文投影、图片准备重叠。本轮选择仍只在注入前读取一次。
+        let recallBox = JevRecallResultBox()
+        let memoryRecallTask = Task { @MainActor in
+            recallBox.value = await bindings.prepareJevMemoryRecall(requestMessages, runId)
+        }
+        defer { memoryRecallTask.cancel() }
 
         // 注入开销估算基于 canonical 输入（无投影），保证压缩预算口径与
         // 原行为一致（等价于 Phase 1 之前 Host 的估算方式）。
@@ -1865,7 +1890,8 @@ final class ChatKernelRunHost {
         let projectedMessages = await IOSJevContextSelectionService.shared.projectedMessages(
             promptedUploadMessages,
             identity: IOSJevContextSelectionService.RunIdentity(
-                runId: runId
+                runId: runId,
+                conversationId: conversationId?.toHexDashString()
             )
         )
 
@@ -1875,7 +1901,8 @@ final class ChatKernelRunHost {
         // Jev Phase 1（记忆召回）：在注入前计算本轮统一选中集合，显式持有并
         // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
         // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
-        let memoryRecallOverride = await bindings.prepareJevMemoryRecall(projectedMessages, runId)
+        await memoryRecallTask.value
+        let memoryRecallOverride = recallBox.value
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
             messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
             effectiveParams.model,
@@ -2430,6 +2457,7 @@ final class ChatKernelRunHost {
         backgroundExecution.end(runId)
         // P1-c 终态回传(CG-C :1570-1579 同款;服务按 runId 幂等去重)。
         let terminalMessages = messages
+        recordJevRunCompletion(runId: runId, messages: terminalMessages)
         let terminalConversationId = conversationId
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
         clearRunIdentity()
@@ -2457,6 +2485,8 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         ChatStreamRecorder.shared.finish(runId: runId)
         IOSWebMountController.shared.releaseAgentOwnership(runId: runId)
+        let terminalMessages = bindings.getMessages()
+        recordJevRunCompletion(runId: runId, messages: terminalMessages)
         clearRunIdentity()
         adapter = nil
         citationTracker = nil
@@ -2469,10 +2499,23 @@ final class ChatKernelRunHost {
         }
         bindings.handleSteerQueueAtTerminal(runConversationId, terminalEvent == .generationCompleted)
         // P1-c 终态回传(CG-C :4970-4977 同款 fire-and-forget)。
-        let terminalMessages = bindings.getMessages()
         Task { @MainActor [bindings, runConversationId, runId, terminalMessages] in
             await bindings.onRunTerminal(runConversationId, runId, terminalMessages)
         }
+    }
+
+    private func recordJevRunCompletion(runId: String, messages: [UIMessage]) {
+        var numbers: [String: Double] = ["model_steps": Double(jevModelStepCount)]
+        let generated = messages.filter { message in
+            message.role == MessageRole.assistant
+                && (ChatContextSnapshot.epochMillis(from: message.createdAt) ?? 0) >= currentStartedAt
+        }
+        let inputTokens = generated.compactMap(\.usage).reduce(0) { $0 + Int($1.promptTokens) }
+        let cachedTokens = generated.compactMap(\.usage).reduce(0) { $0 + Int($1.cachedTokens) }
+        if inputTokens > 0 {
+            numbers["cache_hit_ratio"] = Double(cachedTokens) / Double(inputTokens)
+        }
+        IOSJevMetricsStore.appendRunNumbers(runId: runId, numbers: numbers)
     }
 
     /// The durable row rejected this terminal, so do not publish a terminal to

@@ -2,6 +2,12 @@ import XCTest
 @preconcurrency import Shared
 @testable import iosApp
 
+/// KMP RecallResult is not Sendable; test tasks cross the actor boundary with Void only.
+@MainActor
+private final class JevMemoryRecallResultBox {
+    var value: ChatMemoryContextBuilder.RecallResult?
+}
+
 // IOSJevMemoryRecallTests：硬筛选先于外发、orderedSelection 组装（强保留 +
 // 预算）、一次计算选中集合（注入与 IDs 共用）、turnKey 失效语义、shadow 不影
 // 响注入、off 零网络、fallback 保持同步原行为。
@@ -13,11 +19,25 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         HTTPURLResponse(url: IOSJevSettings.productionEndpoint, statusCode: status, httpVersion: nil, headerFields: nil)!
     }
 
-    private func scorePayload(_ answers: [String: Double]) -> Data {
-        let payload: [String: Any] = [
-            "model": "jev-latest",
-            "answers": answers.mapValues { ["type": "score", "score": $0] },
-        ]
+    private func batchPayload(
+        for request: URLRequest,
+        scores: [String: Double],
+        noul: [String: Double] = [:],
+        includeNoulAnswers: Bool = true
+    ) -> Data {
+        let body = request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let questions = body?["questions"] as? [String: Any] ?? [:]
+        var answers: [String: [String: Any]] = [:]
+        for questionId in questions.keys {
+            if questionId.hasPrefix("memory_recall.") {
+                let id = String(questionId.dropFirst("memory_recall.".count))
+                answers[questionId] = ["type": "score", "score": scores[id] ?? 0]
+            } else if includeNoulAnswers, questionId.hasPrefix("memory_injection.") {
+                let id = String(questionId.dropFirst("memory_injection.".count))
+                answers[questionId] = ["type": "noul", "noul": noul[id] ?? 0]
+            }
+        }
+        let payload: [String: Any] = ["model": "jev-latest", "answers": answers]
         return try! JSONSerialization.data(withJSONObject: payload)
     }
 
@@ -248,10 +268,10 @@ final class IOSJevMemoryRecallTests: XCTestCase {
     // MARK: Full flow (active)
 
     func testActiveFlowComputesSharedSelectionOnce() async {
-        let transport = JevStubTransport { _ in
-            (self.scorePayload([
+        let transport = JevStubTransport { request in
+            (self.batchPayload(for: request, scores: [
                 "m3": 2.5, "m9": 0.2, "m15": 2.0, "m40": 1.5,
-            ]), self.httpResponse(status: 200))
+            ], noul: ["inj3": 0.05]), self.httpResponse(status: 200))
         }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let messages = [userMessage(text: "帮我准备项目 Alpha 的周报")]
@@ -268,14 +288,14 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertFalse(ids.contains(9))
 
         // 工具循环同轮复用：再次 prepare 不发起新请求、返回同一集合。
-        // （首轮 = 评分 + 注入筛查共 2 次请求；复用时保持 2。）
+        // 同一 user turn 只判断一次；后续模型步骤复用固定集合。
         let second = await service.prepareTurnSelection(
             messages: messages,
             records: JevFixtures.makeRecords(),
             runtime: runtime,
             identity: identity()
         )
-        XCTAssertEqual(transport.calls, 2, "首轮评分+筛查各一次；same turn must reuse the cached selection")
+        XCTAssertEqual(transport.calls, 1, "相关性与筛查共用一次请求，后续步骤复用该集合")
         XCTAssertEqual(second?.records.map(\.id), selection?.records.map(\.id))
 
         // 注入与 usage marking 经 override 共用同一份：metadata ids 一致。
@@ -304,7 +324,9 @@ final class IOSJevMemoryRecallTests: XCTestCase {
     }
 
     func testShadowDoesNotApplySelection() async {
-        let transport = JevStubTransport { _ in (self.scorePayload(["m3": 0.9]), self.httpResponse(status: 200)) }
+        let transport = JevStubTransport { request in
+            (self.batchPayload(for: request, scores: ["m3": 0.9], noul: ["inj3": 0.05]), self.httpResponse(status: 200))
+        }
         let service = makeService(settings: makeSettings(mode: .shadow, pinned: nil), transport: transport)
         let messages = [userMessage(text: "你好")]
         let selection = await service.prepareTurnSelection(
@@ -316,8 +338,8 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertNil(selection)
     }
 
-    func testFallbackOnNetworkFailureKeepsSyncPath() async {
-        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 500)) }
+    func testFallbackOnInvalidResponseKeepsSyncPath() async {
+        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let messages = [userMessage(text: "你好")]
         let selection = await service.prepareTurnSelection(
@@ -326,7 +348,20 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             runtime: runtime,
             identity: identity()
         )
-        XCTAssertNil(selection)
+        let eligible = ChatMemoryContextBuilder.hardEligible(
+            ChatMemoryContextBuilder.recordsForPrompt(records: JevFixtures.makeRecords(), runtime: runtime)
+        )
+        let baseline = ChatMemoryContextBuilder.contextPromptResult(records: eligible, runtime: runtime, queryText: "你好")
+        XCTAssertEqual(selection?.ids, baseline.ids, "失败时返回并冻结原同步基线")
+        let callsAfterFirst = transport.calls
+        let second = await service.prepareTurnSelection(
+            messages: messages,
+            records: JevFixtures.makeRecords(),
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertEqual(second?.ids, selection?.ids)
+        XCTAssertEqual(transport.calls, callsAfterFirst, "本轮失败回退也固定，后续步骤不再重发")
     }
 
     func testScopeNotAllowedSkipsNetwork() async {
@@ -342,7 +377,19 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             identity: identity()
         )
         XCTAssertEqual(transport.calls, 0)
-        XCTAssertNil(selection)
+        let eligible = ChatMemoryContextBuilder.hardEligible(
+            ChatMemoryContextBuilder.recordsForPrompt(records: JevFixtures.makeRecords(), runtime: runtime)
+        )
+        let baseline = ChatMemoryContextBuilder.contextPromptResult(records: eligible, runtime: runtime, queryText: "你好")
+        XCTAssertEqual(selection?.ids, baseline.ids, "范围不允许时回退并冻结同步基线")
+        let repeated = await service.prepareTurnSelection(
+            messages: messages,
+            records: JevFixtures.makeRecords(),
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertEqual(repeated?.ids, baseline.ids)
+        XCTAssertEqual(transport.calls, 0)
     }
 
     // MARK: Frozen eval set（基线不得由 Jev 自评）
@@ -429,23 +476,12 @@ final class IOSJevMemoryRecallTests: XCTestCase {
 
     // MARK: 注入筛查（增强 Phase D）
 
-    /// 选中集注入前的顺路筛查：命中条目被剔除，干净条目保留；
-    /// 两次调用（评分 + 筛查）都在同一 turn 内完成。
+    /// 选中集注入前的顺路筛查：命中条目被剔除，干净条目保留；相关性与筛查
+    /// 在同一个请求里完成。
     func testActiveSelectionDropsInjectedMemory() async {
-        let scores = scorePayload(["m3": 2.5, "m14": 2.4])
-        let screening: Data = {
-            let payload: [String: Any] = [
-                "model": "jev-latest",
-                "answers": [
-                    "inj3": ["type": "noul", "noul": 0.05],
-                    "inj14": ["type": "noul", "noul": 0.92],
-                ],
-            ]
-            return try! JSONSerialization.data(withJSONObject: payload)
-        }()
+        let runId = "memory-screen-metric-\(UUID().uuidString)"
         let transport = JevStubTransport { request in
-            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            return body.contains("\"inj") ? (screening, self.httpResponse(status: 200)) : (scores, self.httpResponse(status: 200))
+            (self.batchPayload(for: request, scores: ["m3": 2.5, "m14": 2.4], noul: ["inj3": 0.05, "inj14": 0.92]), self.httpResponse(status: 200))
         }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         // 查询词同时命中记录 3（项目 Alpha）与 14（注入测试文本）。
@@ -453,23 +489,22 @@ final class IOSJevMemoryRecallTests: XCTestCase {
             messages: [userMessage(text: "项目 Alpha system prompt")],
             records: JevFixtures.makeRecords(),
             runtime: runtime,
-            identity: identity()
+            identity: .init(runId: runId)
         )
         let ids = selection?.records.map { Int($0.id) } ?? []
         XCTAssertTrue(ids.contains(3), "干净记忆保留")
         XCTAssertFalse(ids.contains(14), "注入命中记忆被剔除")
-        XCTAssertEqual(transport.calls, 2, "评分 + 筛查各一次请求")
+        XCTAssertEqual(transport.calls, 1, "相关性与筛查共用一次请求")
+        let metrics = IOSJevMetricsStore.load().filter { $0.runId == runId }
+        XCTAssertTrue(metrics.contains { $0.numbers?["memory_injection_hits"] == 1 }, "筛查命中数以数值写入指标")
+        XCTAssertTrue(metrics.contains { $0.numbers?["memory_selected"] == Double(selection?.records.count ?? -1) })
+        XCTAssertTrue(metrics.contains { $0.numbers?["overlap_ratio"] != nil })
     }
 
-    /// 筛查请求失败时 fail-open：选中集原样保留，不丢记忆。
+    /// 响应缺少 Noul 答案时 fail-open：选中集原样保留，不丢记忆。
     func testScreeningFailureKeepsOriginalSelection() async {
-        let scores = scorePayload(["m3": 2.5])
         let transport = JevStubTransport { request in
-            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            if body.contains("\"inj") {
-                return (Data(), self.httpResponse(status: 500)) // 筛查失败
-            }
-            return (scores, self.httpResponse(status: 200))
+            (self.batchPayload(for: request, scores: ["m3": 2.5], includeNoulAnswers: false), self.httpResponse(status: 200))
         }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let selection = await service.prepareTurnSelection(
@@ -485,17 +520,8 @@ final class IOSJevMemoryRecallTests: XCTestCase {
     /// records 空），不得返回 nil——nil 会让消费方回退同步基线，把刚判为
     /// 注入的记忆重新注回。
     func testScreeningEmptiedSelectionReturnsEmptyNotNil() async {
-        let scores = scorePayload(["m14": 2.5])
-        let screening: Data = {
-            let payload: [String: Any] = [
-                "model": "jev-latest",
-                "answers": ["inj14": ["type": "noul", "noul": 0.95]],
-            ]
-            return try! JSONSerialization.data(withJSONObject: payload)
-        }()
         let transport = JevStubTransport { request in
-            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-            return body.contains("\"inj") ? (screening, self.httpResponse(status: 200)) : (scores, self.httpResponse(status: 200))
+            (self.batchPayload(for: request, scores: ["m14": 2.5], noul: ["inj14": 0.95]), self.httpResponse(status: 200))
         }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         // 只放注入记录：选中集=[14]，筛查命中后剔空。
@@ -509,6 +535,180 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertNotNil(selection, "筛查剔空 ≠ 回退基线；必须返回显式空选中集")
         XCTAssertTrue(selection?.records.isEmpty == true)
         XCTAssertNil(selection?.prompt)
-        XCTAssertEqual(transport.calls, 2, "评分 + 筛查各一次；nil 回退不会产生第二次")
+        XCTAssertEqual(transport.calls, 1, "相关性与筛查共用一次请求")
+    }
+
+    func testInjectionProbabilityUsesPolicyThreshold() async {
+        var settings = makeSettings(mode: .active)
+        settings.policy.memoryInjectionMinProbability = 0.95
+        let transport = JevStubTransport { request in
+            (self.batchPayload(for: request, scores: ["m14": 2.5], noul: ["inj14": 0.9]), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: settings, transport: transport)
+        let selection = await service.prepareTurnSelection(
+            messages: [userMessage(text: "system prompt")],
+            records: JevFixtures.makeRecords().filter { $0.id == 14 },
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertTrue(selection?.ids.contains(14) == true, "0.9 低于 policy 的 0.95 时应按 fail-open 保留")
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testOrdinaryLanguagePreferenceBelowPolicyThresholdIsKept() async {
+        let original = JevFixtures.makeRecords().first { $0.id == 31 }!
+        let preference = original.doCopy(
+            id: original.id,
+            content: "回答时使用简体中文。",
+            scope: original.scope,
+            kind: original.kind,
+            assistantId: original.assistantId,
+            sourceConversationId: original.sourceConversationId,
+            sourceMessageIds: original.sourceMessageIds,
+            supersedesIds: original.supersedesIds,
+            expiresAt: original.expiresAt,
+            confidence: original.confidence,
+            pinned: original.pinned,
+            archived: original.archived,
+            createdAt: original.createdAt,
+            updatedAt: original.updatedAt,
+            lastUsedAt: original.lastUsedAt,
+            topicTitle: original.topicTitle,
+            memberIds: original.memberIds
+        )
+        let transport = JevStubTransport { request in
+            (self.batchPayload(for: request, scores: ["m31": 2.5], noul: ["inj31": 0.7]), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let selection = await service.prepareTurnSelection(
+            messages: [userMessage(text: "怎么回复")],
+            records: [preference],
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertTrue(selection?.ids.contains(31) == true, "0.7 位于旧 0.5 与默认 0.8 之间，不应误删正常偏好")
+        XCTAssertEqual(transport.calls, 1)
+    }
+
+    func testCandidatePoolKeepsBothQuestionsWithinOneRequestLimit() async throws {
+        var settings = makeSettings(mode: .active)
+        settings.policy.maxQuestions = 5
+        settings.policy.maxCandidates = 64
+        let transport = JevStubTransport { request in
+            (self.batchPayload(for: request, scores: ["m30": 2.0], noul: ["inj30": 0.0]), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: settings, transport: transport)
+        _ = await service.prepareTurnSelection(
+            messages: [userMessage(text: "无词面匹配的查询")],
+            records: JevFixtures.makeRecords(),
+            runtime: runtime,
+            identity: identity()
+        )
+        XCTAssertEqual(IOSJevMemoryRecallService.candidatePoolLimit(policy: settings.policy), 2)
+        XCTAssertEqual(transport.calls, 1, "候选池已缩小，不应并行拆批")
+        let body = try XCTUnwrap(transport.lastBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questions = try XCTUnwrap(json["questions"] as? [String: Any])
+        XCTAssertEqual(questions.count, 4, "每条候选一题相关性 + 一题筛查")
+        XCTAssertLessThanOrEqual(questions.count, settings.policy.maxQuestions)
+    }
+
+    func testLateBatchCannotReplaceFirstLocalSelection() async throws {
+        var settings = makeSettings(mode: .active)
+        settings.policy.t1WaitBudgetMs = 20
+        let runId = "memory-late-\(UUID().uuidString)"
+        let transport = JevStubTransport { request in
+            try await Task.sleep(nanoseconds: 200_000_000)
+            return (self.batchPayload(for: request, scores: ["m14": 2.5], noul: ["inj14": 0.0]), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: settings, transport: transport)
+        let messages = [userMessage(text: "项目 Alpha")]
+        let records = JevFixtures.makeRecords().filter { [3, 14].contains($0.id) }
+        let first = await service.prepareTurnSelection(
+            messages: messages,
+            records: records,
+            runtime: runtime,
+            identity: .init(runId: runId)
+        )
+        let baseline = ChatMemoryContextBuilder.contextPromptResult(
+            records: records,
+            runtime: runtime,
+            queryText: "项目 Alpha"
+        )
+        XCTAssertEqual(first?.ids, baseline.ids, "wait budget expires to the frozen local selection")
+        let second = await service.prepareTurnSelection(
+            messages: messages,
+            records: records,
+            runtime: runtime,
+            identity: .init(runId: runId)
+        )
+        XCTAssertEqual(second?.ids, first?.ids)
+
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let third = await service.prepareTurnSelection(
+            messages: messages,
+            records: records,
+            runtime: runtime,
+            identity: .init(runId: runId)
+        )
+        XCTAssertEqual(third?.ids, first?.ids, "late Jev answer cannot mutate the turn")
+        let metrics = IOSJevMetricsStore.load().filter { $0.runId == runId }
+        XCTAssertTrue(metrics.contains { $0.outcome == "late" && $0.numbers?["memory_injection_hits"] == 0 })
+    }
+
+    func testDifferentTurnsKeepIndependentSelectionsWhileRequestsOverlap() async throws {
+        var settings = makeSettings(mode: .active)
+        settings.policy.t1WaitBudgetMs = 1_000
+        let records = JevFixtures.makeRecords().filter { [3, 14].contains($0.id) }
+        let transport = JevStubTransport { request in
+            let body = request.httpBody.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            let isFirstTurn = body.contains("任务甲")
+            if isFirstTurn { try await Task.sleep(nanoseconds: 150_000_000) }
+            let payload = isFirstTurn
+                ? self.batchPayload(for: request, scores: ["m3": 2.5, "m14": 0.1], noul: ["inj3": 0, "inj14": 0])
+                : self.batchPayload(for: request, scores: ["m3": 0.1, "m14": 2.5], noul: ["inj3": 0, "inj14": 0])
+            return (payload, self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: settings, transport: transport)
+        let firstMessages = [userMessage(text: "请处理任务甲")]
+        let secondMessages = [userMessage(text: "项目 Alpha")]
+        let firstBox = JevMemoryRecallResultBox()
+        let firstTask = Task { @MainActor in
+            firstBox.value = await service.prepareTurnSelection(
+                messages: firstMessages,
+                records: records,
+                runtime: runtime,
+                identity: .init(runId: "overlap-a")
+            )
+        }
+
+        for _ in 0..<100 where transport.calls == 0 {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertEqual(transport.calls, 1, "第一轮请求已进入传输层后再启动第二轮")
+
+        let second = await service.prepareTurnSelection(
+            messages: secondMessages,
+            records: records,
+            runtime: runtime,
+            identity: .init(runId: "overlap-b")
+        )
+        await firstTask.value
+        let first = firstBox.value
+
+        XCTAssertTrue(first?.ids.contains(3) == true)
+        XCTAssertFalse(first?.ids.contains(14) == true)
+        XCTAssertTrue(second?.ids.contains(14) == true)
+        XCTAssertFalse(second?.ids.contains(3) == true)
+        XCTAssertEqual(transport.calls, 2, "两个不同 turnKey 都应各自出站一次")
+
+        let repeatedFirst = await service.prepareTurnSelection(
+            messages: firstMessages,
+            records: records,
+            runtime: runtime,
+            identity: .init(runId: "overlap-a")
+        )
+        XCTAssertEqual(repeatedFirst?.ids, first?.ids)
+        XCTAssertEqual(transport.calls, 2, "A 的结果应保存在 A 的 turnKey 下，工具循环不能重发")
     }
 }

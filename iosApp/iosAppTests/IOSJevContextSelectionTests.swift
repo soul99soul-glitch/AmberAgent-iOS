@@ -2,11 +2,11 @@ import XCTest
 @preconcurrency import Shared
 @testable import iosApp
 
-// IOSJevContextSelectionTests（Phase 2）：
+// IOSJevContextSelectionTests（Phase 2 / Phase 3）：
 // 结构块切分（围栏/JSON 不拆坏）、必须保留信号（错误/审批/未知状态/分页 token/
 // 用户要求全文）、8,000 字符门槛、隐藏判定（缺题不解码为 0 分）、投影（tool
 // call ID 不变、marker 幂等、canonical 原文不动）、off 零网络、shadow 不改请
-// 求、active 应用/失败回退、恢复引用内容正确。
+// 求、active 应用/失败固定全文、跨轮决策重放、相邻段落合并与长块首尾送检。
 
 @MainActor
 final class IOSJevContextSelectionTests: XCTestCase {
@@ -16,11 +16,21 @@ final class IOSJevContextSelectionTests: XCTestCase {
     }
 
     private func scorePayload(_ answers: [String: Double]) -> Data {
+        let coordinatorAnswers = Dictionary(uniqueKeysWithValues: answers.map { entry in
+            let id = entry.key
+            return (id.hasPrefix("single.") ? id : "single.\(id)", entry.value)
+        })
         let payload: [String: Any] = [
             "model": "jev-latest",
-            "answers": answers.mapValues { ["type": "score", "score": $0] },
+            "answers": coordinatorAnswers.mapValues { ["type": "score", "score": $0] },
         ]
         return try! JSONSerialization.data(withJSONObject: payload)
+    }
+
+    private func scorePayload(for request: URLRequest, score: Double = 0.1) -> Data {
+        let body = try! JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+        let questionIds = Array((body["questions"] as! [String: Any]).keys)
+        return scorePayload(Dictionary(uniqueKeysWithValues: questionIds.map { ($0, score) }))
     }
 
     private final class SettingsBox: @unchecked Sendable {
@@ -52,8 +62,11 @@ final class IOSJevContextSelectionTests: XCTestCase {
         ))
     }
 
-    private func identity() -> IOSJevContextSelectionService.RunIdentity {
-        .init(runId: "run")
+    private func identity(
+        runId: String = "run",
+        conversationId: String? = "conversation-1"
+    ) -> IOSJevContextSelectionService.RunIdentity {
+        .init(runId: runId, conversationId: conversationId)
     }
 
     // MARK: Long output fixtures（20 组代表性场景，覆盖多页网页/代码表格/日志/
@@ -84,7 +97,7 @@ final class IOSJevContextSelectionTests: XCTestCase {
         }
 
         static func errorLog() -> String {
-            "2026-09-17 ERROR connection refused\n" + paragraphs(count: 13, prefix: "日志")
+            "ERROR: connection refused\n" + paragraphs(count: 13, prefix: "日志")
         }
     }
 
@@ -127,6 +140,28 @@ final class IOSJevContextSelectionTests: XCTestCase {
         ]
     }
 
+    private func appendingToolMessage(
+        to messages: [UIMessage],
+        toolCallId: String,
+        text: String,
+        prompt: String
+    ) -> [UIMessage] {
+        let toolName = "scrape_web"
+        let toolArgs = "{\"url\":\"https://example.com/\(toolCallId)\"}"
+        return messages + [
+            UIMessage.companion.user(prompt: prompt),
+            makeMessage(role: .assistant, parts: [UIMessagePart.Tool(
+                toolCallId: toolCallId, toolName: toolName, input: toolArgs,
+                output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )]),
+            makeMessage(role: .tool, parts: [UIMessagePart.Tool(
+                toolCallId: toolCallId, toolName: toolName, input: toolArgs,
+                output: [UIMessagePart.Text(text: text, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil
+            )]),
+        ]
+    }
+
     // MARK: Splitting
 
     func testSplitBlocksKeepsFencedCodeWhole() {
@@ -150,6 +185,33 @@ final class IOSJevContextSelectionTests: XCTestCase {
         XCTAssertEqual(blocks.count, 2, "oversized paragraph stays whole; no mid-paragraph split")
     }
 
+    func testSplitBlocksMergesAdjacentParagraphsAndPreservesTables() {
+        let paragraphs = (0..<8).map { "段落\($0)：" + String(repeating: "内容。", count: 180) }
+        let table = "| 名称 | 值 |\n| --- | --- |\n| alpha | 1 |\n| beta | 2 |"
+        let text = paragraphs.joined(separator: "\n\n") + "\n\n" + table + "\n\n尾段。"
+        let blocks = IOSJevContextSelectionService.splitBlocks(text)
+
+        XCTAssertLessThan(blocks.filter { $0.text.hasPrefix("段落") }.count, paragraphs.count, "adjacent paragraphs should merge")
+        XCTAssertTrue(blocks.contains { $0.text == table }, "a Markdown table remains one structure block")
+        XCTAssertTrue(blocks.contains { $0.text == "尾段。" })
+        for block in blocks where block.text.hasPrefix("段落") {
+            if block.text.count < 2_000, blocks.count > 3 {
+                XCTAssertGreaterThan(block.text.count, 1_000, "ordinary paragraphs should merge toward the target size")
+            }
+        }
+    }
+
+    func testInspectionExcerptIncludesHeadAndTail() {
+        let text = String(repeating: "A", count: 700) + String(repeating: "M", count: 1_000) + String(repeating: "Z", count: 700)
+        let block = IOSJevContextSelectionService.Block(index: 0, text: text, mustKeep: false, keepReason: nil)
+        let state = IOSJevContextSelectionService.stateText(taskText: "research", blocks: [block])
+
+        XCTAssertTrue(state.contains(String(repeating: "A", count: 100)))
+        XCTAssertTrue(state.contains(String(repeating: "Z", count: 100)))
+        XCTAssertFalse(state.contains(String(repeating: "M", count: 100)), "the omitted middle should not occupy the excerpt")
+        XCTAssertLessThan(state.count, 1_100)
+    }
+
     // MARK: Must-keep signals
 
     func testErrorOutputIsMustKeep() {
@@ -165,7 +227,7 @@ final class IOSJevContextSelectionTests: XCTestCase {
     }
 
     func testContinuationTokenIsMustKeep() {
-        let (keep, reason) = IOSJevContextSelectionService.mustKeepSignal(toolName: "scrape_web", text: "listing... next_offset: 40")
+        let (keep, reason) = IOSJevContextSelectionService.mustKeepSignal(toolName: "scrape_web", text: "{\"next_offset\": 40}")
         XCTAssertTrue(keep)
         XCTAssertEqual(reason, "continuation_token")
     }
@@ -175,6 +237,23 @@ final class IOSJevContextSelectionTests: XCTestCase {
             let (keep, reason) = IOSJevContextSelectionService.mustKeepSignal(toolName: "session_read", text: text)
             XCTAssertTrue(keep, "shape must be hard-keep: \(text)")
             XCTAssertEqual(reason, "error_output")
+        }
+    }
+
+    func testUnstructuredKeywordsDoNotForceKeepButStructuredSignalsDo() {
+        for text in [
+            "The cursor moves to the next page; there is a todo in the source and an error: field in the example.",
+            "{\"cursor\": \"abc\", \"todo\": false}",
+        ] {
+            XCTAssertFalse(IOSJevContextSelectionService.mustKeepSignal(toolName: "session_read", text: text).0, text)
+        }
+        for text in [
+            "{\"has_more\": true}",
+            "{\"next_cursor\": \"abc\"}",
+            "TODO: revisit pagination",
+            "Traceback (most recent call last): error",
+        ] {
+            XCTAssertTrue(IOSJevContextSelectionService.mustKeepSignal(toolName: "session_read", text: text).0, text)
         }
     }
 
@@ -209,7 +288,9 @@ final class IOSJevContextSelectionTests: XCTestCase {
     /// 真实恢复回路（stub 级）：投影产生 marker → 解析 marker 拿到来源 → 用来源
     /// 定位原 toolCallId 重新读原文 → 内容一致。
     func testRecoveryRoundTripFromMarkerToOriginalText() async {
-        let transport = JevStubTransport { _ in (self.scorePayload(["b0": 0.1, "b1": 0.1, "b2": 0.1, "b3": 2.8]), self.httpResponse(status: 200)) }
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let originalText = LongOutputFactory.paragraphs(count: 14)
         let messages = toolMessage(toolCallId: "call-recover", text: originalText)
@@ -274,9 +355,14 @@ final class IOSJevContextSelectionTests: XCTestCase {
     // MARK: Full flow (active)
 
     func testActiveProjectionHidesLowScoreBlocksAndKeepsStructure() async {
-        let transport = JevStubTransport { _ in (self.scorePayload(["b0": 0.1, "b1": 2.5, "b2": 0.2, "b12": 2.8, "b13": 0.1]), self.httpResponse(status: 200)) }
-        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let longText = LongOutputFactory.paragraphs(count: 12) + "\n\n" + "核心结论：关键信息在这里。" + String(repeating: "补充说明。", count: 400) + "\n\n" + LongOutputFactory.paragraphs(count: 12, prefix: "附录")
+        let blocks = IOSJevContextSelectionService.splitBlocks(longText)
+        let coreIndex = blocks.first { $0.text.contains("核心结论") }!.index
+        let answers = Dictionary(uniqueKeysWithValues: blocks.map { ($0.index, $0.index == coreIndex ? 2.5 : 0.1) })
+        let transport = JevStubTransport { _ in
+            (self.scorePayload(Dictionary(uniqueKeysWithValues: answers.map { ("b\($0.key)", $0.value) })), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let messages = toolMessage(text: longText)
         let projected = await service.projectedMessages(messages, identity: identity())
         XCTAssertGreaterThan(transport.calls, 0)
@@ -297,7 +383,9 @@ final class IOSJevContextSelectionTests: XCTestCase {
     }
 
     func testProjectionIsIdempotent() async {
-        let transport = JevStubTransport { _ in (self.scorePayload(["b0": 0.1, "b1": 0.1, "b2": 0.1]), self.httpResponse(status: 200)) }
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
         let projected = await service.projectedMessages(messages, identity: identity())
@@ -314,6 +402,157 @@ final class IOSJevContextSelectionTests: XCTestCase {
         let tool = projected[2].parts.first as! UIMessagePart.Tool
         let text = (tool.output.first as! UIMessagePart.Text).text
         XCTAssertTrue(text.contains("章节0"), "failure keeps full text")
+    }
+
+    func testFailureIsPinnedToFullTextOnLaterTurns() async {
+        let calls = JevCallCounter()
+        let transport = JevStubTransport { request in
+            if calls.next() == 1 {
+                return (Data(), self.httpResponse(status: 400))
+            }
+            return (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        _ = await service.projectedMessages(messages, identity: identity())
+        let later = await service.projectedMessages(messages, identity: identity(runId: "run-2"))
+
+        XCTAssertEqual(transport.calls, 1, "a failed first judgement is fixed as full text")
+        let text = ((later[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertTrue(text.contains("章节0"))
+        XCTAssertFalse(IOSJevContextSelectionService.containsOmissionMarker(text))
+    }
+
+    func testStableProjectionReplaysAcrossTurnsAndTaskText() async {
+        IOSJevMetricsStore.clear()
+        defer { IOSJevMetricsStore.clear() }
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let messages = toolMessage(toolCallId: "call-stable", text: LongOutputFactory.paragraphs(count: 14))
+        let first = await service.projectedMessages(messages, identity: identity())
+        var laterMessages = messages
+        laterMessages[0] = UIMessage.companion.user(prompt: "请总结一下")
+        let later = await service.projectedMessages(laterMessages, identity: identity(runId: "run-next"))
+
+        XCTAssertEqual(transport.calls, 1, "task text and run id do not invalidate an output decision")
+        let firstText = ((first[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        let laterText = ((later[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(laterText, firstText, "projection is byte-for-byte stable on the next turn")
+        XCTAssertGreaterThan(IOSJevMetricsStore.runSummary(runId: "run").hiddenCharacters ?? 0, 0)
+        let originalText = ((messages[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        let summaryRecord = IOSJevMetricsStore.load().first { $0.runId == "run" && $0.outcome == "summary" }
+        XCTAssertEqual(summaryRecord?.numbers?["original_characters"], Double(originalText.count))
+    }
+
+    func testConversationIdSeparatesProjectionDecisions() async {
+        let calls = JevCallCounter()
+        let transport = JevStubTransport { request in
+            if calls.next() == 1 {
+                return (Data(), self.httpResponse(status: 400))
+            }
+            return (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        let firstConversation = await service.projectedMessages(messages, identity: identity(conversationId: "conversation-a"))
+        let secondConversation = await service.projectedMessages(
+            messages,
+            identity: identity(runId: "run-b", conversationId: "conversation-b")
+        )
+        XCTAssertEqual(transport.calls, 2, "a full-text decision in one conversation must not carry into another")
+        let firstText = ((firstConversation[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        let secondText = ((secondConversation[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertFalse(IOSJevContextSelectionService.containsOmissionMarker(firstText))
+        XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(secondText))
+    }
+
+    func testOlderDecisionReplaysAfterNewLongOutputArrives() async {
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let original = toolMessage(toolCallId: "call-old", text: LongOutputFactory.paragraphs(count: 14))
+        let first = await service.projectedMessages(original, identity: identity())
+        let combined = appendingToolMessage(
+            to: original,
+            toolCallId: "call-new",
+            text: LongOutputFactory.paragraphs(count: 14, prefix: "新段落"),
+            prompt: "继续检索"
+        )
+        let next = await service.projectedMessages(combined, identity: identity(runId: "run-new"))
+
+        XCTAssertEqual(transport.calls, 2, "the older output replays; only the new output needs another decision")
+        let firstOldText = ((first[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        let nextOldText = ((next[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(nextOldText, firstOldText)
+        let requestState = String(data: transport.lastBody!, encoding: .utf8)!
+        XCTAssertTrue(requestState.contains("新段落0"))
+        XCTAssertFalse(requestState.contains("章节0"), "the previously decided output is not sent again")
+    }
+
+    func testDuplicateOutputIdentityUsesOneUniqueQuestionSet() async {
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let text = LongOutputFactory.paragraphs(count: 14)
+        let original = toolMessage(toolCallId: "call-duplicate", text: text)
+        let duplicated = appendingToolMessage(
+            to: original,
+            toolCallId: "call-duplicate",
+            text: text,
+            prompt: "再次读取"
+        )
+        let projected = await service.projectedMessages(duplicated, identity: identity())
+
+        XCTAssertEqual(transport.calls, 1, "identical decision keys are evaluated once")
+        let body = try! JSONSerialization.jsonObject(with: transport.lastBody!) as! [String: Any]
+        let questionIds = Array((body["questions"] as! [String: Any]).keys)
+        XCTAssertEqual(questionIds.count, Set(questionIds).count)
+        for messageIndex in [2, 5] {
+            let text = ((projected[messageIndex].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+            XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(text))
+        }
+    }
+
+    func testActiveHistoryKeysAreNeverEvictedPastDecisionCapacity() async {
+        var settings = makeSettings(mode: .active)
+        settings.policy.cacheMaxEntries = 1
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: settings, transport: transport)
+        var messages = toolMessage(toolCallId: "call-a", text: LongOutputFactory.paragraphs(count: 14, prefix: "A"))
+        messages = appendingToolMessage(to: messages, toolCallId: "call-b", text: LongOutputFactory.paragraphs(count: 14, prefix: "B"), prompt: "继续")
+        messages = appendingToolMessage(to: messages, toolCallId: "call-c", text: LongOutputFactory.paragraphs(count: 14, prefix: "C"), prompt: "继续")
+
+        let first = await service.projectedMessages(messages, identity: identity())
+        let repeated = await service.projectedMessages(messages, identity: identity(runId: "run-repeat"))
+        let withNewOutput = appendingToolMessage(to: messages, toolCallId: "call-d", text: LongOutputFactory.paragraphs(count: 14, prefix: "D"), prompt: "继续")
+        let later = await service.projectedMessages(withNewOutput, identity: identity(runId: "run-later"))
+
+        XCTAssertEqual(transport.calls, 1, "overflow outputs are pinned to full text and never re-evaluated")
+        for index in [2, 5, 8] {
+            let firstText = ((first[index].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+            let repeatedText = ((repeated[index].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+            let laterText = ((later[index].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+            XCTAssertEqual(repeatedText, firstText)
+            XCTAssertEqual(laterText, firstText)
+        }
+        let newText = ((later[11].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertTrue(newText.contains("D0"), "new outputs beyond capacity stay complete")
+    }
+
+    func testMissingConversationIdKeepsOriginalWithoutNetwork() async {
+        let transport = JevStubTransport { _ in (self.scorePayload(["b0": 0.1]), self.httpResponse(status: 200)) }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let messages = toolMessage(text: LongOutputFactory.paragraphs(count: 14))
+        let projected = await service.projectedMessages(messages, identity: identity(conversationId: nil))
+        XCTAssertEqual(transport.calls, 0)
+        XCTAssertEqual(((projected[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text,
+                       ((messages[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text)
     }
 
     func testOffModeZeroNetworkAndNoProjection() async {
@@ -368,11 +607,11 @@ final class IOSJevContextSelectionTests: XCTestCase {
         }
         cases.append(("error", "{\"ok\": false, \"error\": \"permission denied\"}\n" + LongOutputFactory.paragraphs(count: 12), true))
         cases.append(("unknown_state", "{\"status\": \"unknown_after_action\", \"may_have_applied\": true}\n" + LongOutputFactory.paragraphs(count: 12), true))
-        cases.append(("pagination", LongOutputFactory.paragraphs(count: 12) + "\n\nnext_offset: 60", true))
-        cases.append(("approval", "该操作需要确认。\n" + LongOutputFactory.paragraphs(count: 12), true))
+        cases.append(("pagination", LongOutputFactory.paragraphs(count: 12) + "\n\n{\"next_offset\": 60}", true))
+        cases.append(("approval", "{\"needs_approval\": true}\n" + LongOutputFactory.paragraphs(count: 12), true))
         cases.append(("code_block", "```json\n{\"pagination\": {\"next_page\": 3}}\n```\n" + LongOutputFactory.paragraphs(count: 12), true))
         for _ in 0..<5 {
-            cases.append(("log_tail", "ERROR timeout\n" + LongOutputFactory.paragraphs(count: 12) + "\n\nneeds_approval: true", true))
+            cases.append(("log_tail", "ERROR: timeout\n" + LongOutputFactory.paragraphs(count: 12) + "\n\n{\"needs_approval\": true}", true))
         }
         XCTAssertEqual(cases.count, 20, "sample registry intact")
         for (name, text, expectMustKeep) in cases {
@@ -382,31 +621,30 @@ final class IOSJevContextSelectionTests: XCTestCase {
         }
     }
 
-    // MARK: 候选封顶（题数契约锁）
+    // MARK: 长文档采样（状态字节上限）
 
-    /// 每块一题、总题数 ≤ maxQuestions（客户端出站前硬拒绝）；超出上限的块
-    /// 不参评——缺题 = 不确定 = 保留，方向保守，不因超题数让整链失效。
-    func testCandidateBlocksCappedAtMaxQuestions() async {
-        let transport = JevStubTransport { _ in
-            var answers: [String: Double] = [:]
-            for index in 0..<32 { answers["b\(index)"] = 0.0 }
-            return (self.scorePayload(answers), self.httpResponse(status: 200))
+    /// 每块约 1,800 字；题数封顶时在整篇文档上均匀取样，避免尾部永远未评估。
+    func testQuestionSamplingCoversTailWithinStateBudget() async {
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
         }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
-        let text = (0..<40).map { "段落\($0)标记：" + String(repeating: "内容", count: 120) }
+        let text = (0..<40).map { "段落\($0)标记：" + String(repeating: "内容", count: 900) }
             .joined(separator: "\n\n")
         let messages = toolMessage(toolCallId: "call-cap", text: text)
         let projected = await service.projectedMessages(messages, identity: identity())
 
         let body = try! JSONSerialization.jsonObject(with: transport.lastBody!) as! [String: Any]
-        let questionCount = (body["questions"] as! [String: Any]).count
-        XCTAssertLessThanOrEqual(questionCount, IOSJevSettings().policy.maxQuestions)
+        let questions = body["questions"] as! [String: Any]
+        let questionCount = questions.count
+        XCTAssertLessThanOrEqual(questionCount, IOSJevSettings().policy.maxCandidates)
+        XCTAssertLessThanOrEqual((body["state"] as! String).utf8.count, IOSJevSettings().policy.maxStateBytes)
+        XCTAssertTrue(questions.keys.contains("single.b39"), "the final output block should be included in the evaluation")
 
         let projectedText = ((projected[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
         XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(projectedText))
-        XCTAssertTrue(projectedText.contains("段落32标记"), "blocks beyond the cap stay verbatim")
-        XCTAssertTrue(projectedText.contains("段落39标记"), "blocks beyond the cap stay verbatim")
-        XCTAssertFalse(projectedText.contains("段落5标记"), "low-score blocks within the cap are hidden")
+        XCTAssertFalse(projectedText.contains("段落39标记"), "the tail block can be hidden after evaluation")
+        XCTAssertTrue(projectedText.contains("段落2标记"), "unselected blocks remain verbatim")
     }
 
     /// A3 置信弃权：低置信低分块 = 不确定 → 保留；高置信低分块照常隐藏。

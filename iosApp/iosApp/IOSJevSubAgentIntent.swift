@@ -31,28 +31,18 @@ final class IOSJevSubAgentIntentService {
     /// 不是供应商默认阈值；Noul 无 confidence，不做置信门。
     static let alignmentProbabilityFloor = 0.5
 
-    private let deps: Dependencies
+    static let batchPartId = "subagent_intent"
 
-    init(deps: Dependencies) {
-        self.deps = deps
-    }
-
-    static let shared = IOSJevSubAgentIntentService(deps: .init(
-        coordinator: .shared,
-        settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() }
-    ))
-
-    /// 为一次 spawn 给出角色建议与对齐标注。空建议 = 调用方走现有优先级。
-    /// turnBudgetKey：调用方 runId——与其他用途共享 runId 单本轮次账。
-    /// shadow：协调器返回 observed，本服务不应用结果（空建议），指标照常记录。
-    func suggest(
+    /// 构造可并入 spawn 时机的角色 Choice 与对齐 Noul part。
+    /// 模式和数据范围仍由 decideBatch 按用途独立判定。
+    static func makeBatchPart(
         taskText: String,
         parentRequestText: String?,
-        turnBudgetKey: String
-    ) async -> Suggestion {
-        let settings = deps.settingsProvider()
+        settings: IOSJevSettings,
+        partId: String = batchPartId
+    ) -> IOSJevBatchPart? {
         let roles = IOSSubAgentRoleCatalog.builtIns
-        guard !roles.isEmpty else { return Suggestion(roleId: nil, alignmentDoubtful: false) }
+        guard !roles.isEmpty else { return nil }
 
         var lines: [String] = []
         lines.append("子任务：\(String(taskText.prefix(600)))")
@@ -80,22 +70,28 @@ final class IOSJevSubAgentIntentService {
                 instructions: "判断：该子任务直接服务于用户最新请求（是=true）。子任务明显偏离、扩大范围或与用户请求无关时为否。"
             ),
         ]
-        let context = IOSJevRunContext(
-            runId: turnBudgetKey,
-            turnBudgetKey: turnBudgetKey,
-            inputHash: IOSJevToolDiscoveryService.stableHash(state)
-        )
-        let outcome = await deps.coordinator.decide(
+        let alignmentFloor = alignmentProbabilityFloor
+        return IOSJevBatchPart(
+            id: partId,
             useCase: .subagentIntent,
             requiredScopes: [.selectedTaskText, .toolMetadata],
             state: state,
             questions: questions,
-            context: context,
-            // shadow/active 分键（全用途惯例）：协调器缓存命中不重核 revision，
-            // 分键保证 shadow 期观测永远不会在切 active 后被命中应用。
             cacheKey: settings.effectiveMode(for: .subagentIntent) == .active
-                ? "subagent_intent" : "subagent_intent_shadow"
+                ? "subagent_intent" : "subagent_intent_shadow",
+            metricNumbersProvider: { decision in
+                guard let probability = decision.answers.first(where: { $0.id == "aligned" })?.noul else { return nil }
+                return ["alignment_doubtful": probability < alignmentFloor ? 1 : 0]
+            },
+            metricIdsProvider: { decision in
+                guard let choice = decision.answers.first(where: { $0.id == "role_choice" })?.choice else { return nil }
+                return ["suggested_role_id": choice]
+            }
         )
+    }
+
+    /// 只消费 active 结果；shadow、失败或不确定均走现有 spawn 优先级。
+    static func suggestion(from outcome: IOSJevDecisionOutcome, settings: IOSJevSettings) -> Suggestion {
         guard case .applied(let decision) = outcome else {
             return Suggestion(roleId: nil, alignmentDoubtful: false)
         }
@@ -104,7 +100,6 @@ final class IOSJevSubAgentIntentService {
         if let roleAnswer = decision.answers.first(where: { $0.id == "role_choice" }),
            roleAnswer.type == "choice",
            let choice = roleAnswer.choice, choice != "none" {
-            // 置信弃权（policy.subagentIntentMinConfidence）；置信缺失不门控。
             let confidenceOk: Bool
             if let floor = settings.policy.subagentIntentMinConfidence,
                let confidence = roleAnswer.confidence {
@@ -112,7 +107,6 @@ final class IOSJevSubAgentIntentService {
             } else {
                 confidenceOk = true
             }
-            // 目录外 id 按弃权处理（不猜、不映射）。
             if confidenceOk, IOSSubAgentRoleCatalog.resolve(roleId: choice) != nil {
                 suggestedRoleId = choice
             }
@@ -124,5 +118,48 @@ final class IOSJevSubAgentIntentService {
             alignmentDoubtful = probability < Self.alignmentProbabilityFloor
         }
         return Suggestion(roleId: suggestedRoleId, alignmentDoubtful: alignmentDoubtful)
+    }
+
+    private let deps: Dependencies
+
+    init(deps: Dependencies) {
+        self.deps = deps
+    }
+
+    static let shared = IOSJevSubAgentIntentService(deps: .init(
+        coordinator: .shared,
+        settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() }
+    ))
+
+    /// 为一次 spawn 给出角色建议与对齐标注。空建议 = 调用方走现有优先级。
+    /// turnBudgetKey：调用方 runId——与其他用途共享 runId 单本轮次账。
+    /// shadow：协调器返回 observed，本服务不应用结果（空建议），指标照常记录。
+    func suggest(
+        taskText: String,
+        parentRequestText: String?,
+        turnBudgetKey: String
+    ) async -> Suggestion {
+        let settings = deps.settingsProvider()
+        guard let part = Self.makeBatchPart(
+            taskText: taskText,
+            parentRequestText: parentRequestText,
+            settings: settings
+        ) else { return Suggestion(roleId: nil, alignmentDoubtful: false) }
+        let context = IOSJevRunContext(
+            runId: turnBudgetKey,
+            turnBudgetKey: turnBudgetKey,
+            inputHash: IOSJevToolDiscoveryService.stableHash(part.state)
+        )
+        let outcome = await deps.coordinator.decide(
+            useCase: part.useCase,
+            requiredScopes: part.requiredScopes,
+            state: part.state,
+            questions: part.questions,
+            context: context,
+            // shadow/active 分键（全用途惯例）：协调器缓存命中不重核 revision，
+            // 分键保证 shadow 期观测永远不会在切 active 后被命中应用。
+            cacheKey: part.cacheKey
+        )
+        return Self.suggestion(from: outcome, settings: settings)
     }
 }

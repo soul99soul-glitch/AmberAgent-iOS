@@ -216,7 +216,9 @@ final class IOSOrchestrationToolTests: XCTestCase {
         foregroundRunCount: @escaping () -> Int = { 0 },
         maxConcurrentRuns: Int? = nil,
         roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true },
-        sharedSettings: IOSSharedSettingsStore? = nil
+        sharedSettings: IOSSharedSettingsStore? = nil,
+        jevCoordinator: IOSJevDecisionCoordinator = .shared,
+        jevSettingsProvider: @escaping () -> IOSJevSettings = { IOSSharedSettingsStore.loadPersistedJevSettings() }
     ) -> IOSThreadOrchestrationToolService {
         IOSThreadOrchestrationToolService(
             conversationStoreProvider: { store },
@@ -237,8 +239,22 @@ final class IOSOrchestrationToolTests: XCTestCase {
             foregroundRunCount: foregroundRunCount,
             maxConcurrentRuns: maxConcurrentRuns,
             roleAssistantExists: roleAssistantExists,
-            sharedSettingsProvider: { sharedSettings }
+            sharedSettingsProvider: { sharedSettings },
+            jevCoordinator: jevCoordinator,
+            jevSettingsProvider: jevSettingsProvider
         )
+    }
+
+    private func makeJevCoordinator(
+        settings: IOSJevSettings,
+        transport: JevStubTransport
+    ) -> IOSJevDecisionCoordinator {
+        IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { settings },
+            apiKeyProvider: { "test-key" },
+            now: { Date() }
+        ))
     }
 
     private func spawnArguments(
@@ -962,6 +978,151 @@ final class IOSOrchestrationToolTests: XCTestCase {
         })
         XCTAssertEqual(defaults[modelA.id.toHexDashString()], "low")
         XCTAssertEqual(defaults[modelB.id.toHexDashString()], "high")
+    }
+
+    func testSpawnBatchesModelRoutingAndRoleIntentInOneRequest() async throws {
+        let base = makeTempDirectory("SpawnJevBatch")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = makeStore(directory: base)
+        await store.newConversation()
+        let parentId = try XCTUnwrap(store.currentConversation?.id)
+        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "请调查并总结这份材料")])
+        let db = makeDatabase(directory: base)
+
+        let modelA = makePoolModel(id: KotlinUuid.companion.random(), modelId: "api-model", displayName: "Candidate A")
+        let modelB = makePoolModel(id: KotlinUuid.companion.random(), modelId: "api-model", displayName: "Candidate B")
+        let providerA = makeProviderSetting()
+        let providerB = makePoolClaudeProvider(id: KotlinUuid.companion.random(), model: modelB)
+        let sharedSettings = makePoolSettings(
+            modelA: modelA,
+            providerA: ProviderSetting.OpenAI(
+                id: providerA.id, enabled: true, name: "Pool OpenAI", models: [modelA],
+                balanceOption: providerA.balanceOption, builtIn: false, descriptionText: nil,
+                shortDescriptionText: nil, apiKey: "test-key", baseUrl: "https://example.test",
+                chatCompletionsPath: "/chat/completions", useResponseApi: false,
+                authMode: .apiKey, brand: .generic
+            ),
+            modelB: modelB,
+            providerB: providerB
+        )
+        var jevSettings = IOSJevSettings()
+        jevSettings.pinnedModelVersion = "jev-fixed-v1"
+        jevSettings.setMode(.active, for: .modelRouting)
+        jevSettings.setMode(.active, for: .subagentIntent)
+        let roleId = try XCTUnwrap(IOSSubAgentRoleCatalog.builtIns.first?.id)
+        let transport = JevStubTransport { request in
+            let body = try XCTUnwrap(request.httpBody)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            let questionMap = try XCTUnwrap(object["questions"] as? [String: Any])
+            var candidateAnswers: [String: Any] = [:]
+            for questionId in questionMap.keys {
+                if questionId.hasPrefix("model_routing.") {
+                    let candidateId = String(questionId.dropFirst("model_routing.".count))
+                    candidateAnswers[questionId] = [
+                        "type": "score",
+                        "score": candidateId == modelB.id.toHexDashString() ? 3 : 1,
+                    ]
+                } else if questionId == "subagent_intent.role_choice" {
+                    candidateAnswers[questionId] = ["type": "choice", "choice": roleId, "confidence": 0.9]
+                } else if questionId == "subagent_intent.aligned" {
+                    candidateAnswers[questionId] = ["type": "noul", "noul": 0.2]
+                }
+            }
+            return (
+                try JSONSerialization.data(withJSONObject: ["model": "jev-latest", "answers": candidateAnswers]),
+                jevResponse(200)
+            )
+        }
+        let coordinator = makeJevCoordinator(settings: jevSettings, transport: transport)
+        let scheduler = FakeBackgroundScheduler()
+        let service = makeService(
+            store: store,
+            db: db,
+            scheduler: scheduler,
+            currentConversationId: { parentId },
+            sharedSettings: sharedSettings,
+            jevCoordinator: coordinator,
+            jevSettingsProvider: { jevSettings }
+        )
+
+        let spawned = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(taskName: "investigate", message: "调查并总结材料"),
+            providerSetting: providerA,
+            params: makeParams(),
+            runId: "spawn-jev-batch"
+        ))
+
+        XCTAssertEqual(spawned["ok"] as? Bool, true)
+        XCTAssertEqual(transport.calls, 1, "模型调度和角色意图应共用一次出站请求")
+        XCTAssertEqual(scheduler.startedHandoff?.params.model.id.toHexDashString(), modelB.id.toHexDashString())
+        XCTAssertEqual(spawned["jev_alignment"] as? String, "doubtful")
+        let requestBody = try XCTUnwrap(transport.lastBody)
+        let requestObject = try XCTUnwrap(JSONSerialization.jsonObject(with: requestBody) as? [String: Any])
+        let questions = try XCTUnwrap(requestObject["questions"] as? [String: Any])
+        XCTAssertEqual(Set(questions.keys), Set([
+            "model_routing.\(modelA.id.toHexDashString())",
+            "model_routing.\(modelB.id.toHexDashString())",
+            "subagent_intent.role_choice",
+            "subagent_intent.aligned",
+        ]))
+
+        let childId = try XCTUnwrap(spawned["child_thread_id"] as? String)
+        let childUUID = KotlinUuid.companion.parse(uuidString: childId)
+        let maybeChild = try await store.loadConversationForOrchestration(childUUID)
+        let child = try XCTUnwrap(maybeChild)
+        let configText = try XCTUnwrap(child.currentMessages.first {
+            $0.role == MessageRole.system && $0.toText().hasPrefix("[amber orchestration configuration v1]\n")
+        }?.toText())
+        let configData = Data(configText.dropFirst("[amber orchestration configuration v1]\n".count).utf8)
+        let configuration = try XCTUnwrap(try JSONSerialization.jsonObject(with: configData) as? [String: Any])
+        XCTAssertEqual(configuration["roleId"] as? String, roleId)
+
+        let explicit = parseJSON(await service.execute(
+            toolName: "spawn_agent",
+            arguments: spawnArguments(
+                taskName: "explicit_choice",
+                roleId: roleId,
+                modelId: modelA.id.toHexDashString()
+            ),
+            providerSetting: providerA,
+            params: makeParams(),
+            runId: "spawn-jev-explicit"
+        ))
+        XCTAssertEqual(explicit["ok"] as? Bool, true)
+        XCTAssertEqual(transport.calls, 1, "显式 model_id 与 role_id 都不触发 Jev 判断")
+
+        await store.newConversation()
+        let idleTargetId = try XCTUnwrap(store.currentConversation?.id)
+        await store.saveCurrent(messages: [UIMessage.companion.user(prompt: "已有任务")])
+        let idleTargetHex = idleTargetId.toHexDashString()
+        try await db.threadEdgeDao().insertEdge(edge: ThreadEdgeEntity(
+            childThreadId: idleTargetHex,
+            parentThreadId: parentId.toHexDashString(),
+            agentPath: "/root/idle_target",
+            nickname: nil,
+            roleAssistantId: nil,
+            forkTurns: "all",
+            status: IOSThreadOrchestrationToolService.EdgeStatus.open,
+            createdAt: Int64(Date().timeIntervalSince1970 * 1_000)
+        ))
+        let followup = parseJSON(await service.execute(
+            toolName: "followup_task",
+            arguments: #"{"target":"\#(idleTargetHex)","message":"继续核对"}"#,
+            providerSetting: providerA,
+            params: makeParams(),
+            runId: "followup-jev-batch",
+            conversationId: parentId
+        ))
+        XCTAssertEqual(followup["status"] as? String, "started")
+        XCTAssertEqual(transport.calls, 2)
+        let followupBody = try XCTUnwrap(transport.lastBody)
+        let followupObject = try XCTUnwrap(JSONSerialization.jsonObject(with: followupBody) as? [String: Any])
+        let followupQuestions = try XCTUnwrap(followupObject["questions"] as? [String: Any])
+        XCTAssertEqual(Set(followupQuestions.keys), Set([
+            "model_routing.\(modelA.id.toHexDashString())",
+            "model_routing.\(modelB.id.toHexDashString())",
+        ]), "followup 只判断模型调度")
     }
 
     func testExplicitPoolModelAndReasoningRejectInvalidRequests() async throws {

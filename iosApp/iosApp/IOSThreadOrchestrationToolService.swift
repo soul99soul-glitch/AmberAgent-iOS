@@ -151,6 +151,16 @@ final class IOSThreadOrchestrationToolService {
         let providerSetting: ProviderSetting
         let params: TextGenerationParams
         let modelReservation: IOSSubAgentModelPool.Reservation?
+        let baselinePoolModelId: String?
+    }
+
+    private struct JevSpawnDecision {
+        var preferredModelIds: [String] = []
+        var intent = IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
+        var intentRoutingRequested = false
+        var observedIntentRoleId: String?
+        var settings = IOSJevSettings()
+        var modelRoutingRequested = false
     }
 
     private struct AgentLaunchError: Error {
@@ -205,6 +215,8 @@ final class IOSThreadOrchestrationToolService {
     /// Read settings at launch time. The effective values are copied into the
     /// child marker; followups do not read the parent's current settings again.
     private let sharedSettingsProvider: () -> IOSSharedSettingsStore?
+    private let jevCoordinator: IOSJevDecisionCoordinator
+    private let jevSettingsProvider: () -> IOSJevSettings
     private let modelPool = IOSSubAgentModelPool()
     /// P1-d: wait_agent 超时 clamp 区间与默认值（测试注入小下限避免真实等待）。
     private let waitTimeoutMinMs: Int64
@@ -252,7 +264,9 @@ final class IOSThreadOrchestrationToolService {
         waitTimeoutDefaultMs: Int64 = 30_000,
         roleAssistantExists: @escaping (KotlinUuid) -> Bool = { _ in true },
         soulMarkdown: @escaping () -> String = { "" },
-        sharedSettingsProvider: @escaping () -> IOSSharedSettingsStore? = { nil }
+        sharedSettingsProvider: @escaping () -> IOSSharedSettingsStore? = { nil },
+        jevCoordinator: IOSJevDecisionCoordinator = .shared,
+        jevSettingsProvider: @escaping () -> IOSJevSettings = { IOSSharedSettingsStore.loadPersistedJevSettings() }
     ) {
         self.conversationStoreProvider = conversationStoreProvider
         self.mailboxDaoProvider = mailboxDaoProvider
@@ -272,6 +286,8 @@ final class IOSThreadOrchestrationToolService {
         self.roleAssistantExists = roleAssistantExists
         self.soulMarkdown = soulMarkdown
         self.sharedSettingsProvider = sharedSettingsProvider
+        self.jevCoordinator = jevCoordinator
+        self.jevSettingsProvider = jevSettingsProvider
     }
 
     // MARK: - Dispatch
@@ -447,19 +463,13 @@ final class IOSThreadOrchestrationToolService {
             )
         }
         let inheritedConfiguration = Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
-        let jevPreferredModelIds = await jevPreferredModelIds(
+        let jevDecision = await jevSpawnDecision(
             arguments: args,
             parentRunId: parentRunId,
             allowPoolForInheritedModel: true,
-            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration
-        )
-        // (d-pre2) Jev 增强 Phase C（意图路由）：缺省角色定义时给角色建议与
-        // 对齐回执。与模型调度同窗口 await，不占 bootstrap 槽；显式任务定义或
-        // 继承角色在场时零判断（门控与 resolveAgentLaunch 推导同口径）。
-        let jevIntent = await jevSubAgentIntent(
-            arguments: args,
+            inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
             sourceConversation: sourceConversation,
-            parentRunId: parentRunId
+            includeRoleIntent: true
         )
         // (c) 并发上限：活注册表占用（前台 run 0/1 + 后台 activeJobs + 本服务在途
         // bootstrap 槽，含 spawner 自身——与旧全局账本计数「含父自身」同语义）。
@@ -497,8 +507,8 @@ final class IOSThreadOrchestrationToolService {
             toolExposureBridge: toolExposureBridge,
             inherited: Self.hasAgentConfigurationArguments(args) ? nil : inheritedConfiguration,
             allowPoolForInheritedModel: true,
-            jevPreferredModelIds: jevPreferredModelIds,
-            jevSuggestedRoleId: jevIntent.roleId
+            jevPreferredModelIds: jevDecision.preferredModelIds,
+            jevSuggestedRoleId: jevDecision.intent.roleId
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -609,6 +619,12 @@ final class IOSThreadOrchestrationToolService {
                 reason: "子线程已创建但后台任务提交失败（子会话与边已持久化，线程保留可再次派活）。"
             )
         }
+        recordSelectedPoolModelIfNeeded(
+            launch: launch,
+            decision: jevDecision,
+            runId: parentRunId
+        )
+        recordIntentSelectionIfNeeded(launch: launch, decision: jevDecision, runId: parentRunId)
 
         var spawnResult: [String: Any] = [
             "ok": true,
@@ -620,7 +636,7 @@ final class IOSThreadOrchestrationToolService {
         ]
         // 对齐回执：Jev 判定子任务偏离用户最新请求时如实标注。仅 active 会
         // 产出标注（shadow/off 为空建议）；标注不改变 spawn 结果本身。
-        if jevIntent.alignmentDoubtful {
+        if jevDecision.intent.alignmentDoubtful {
             spawnResult["jev_alignment"] = "doubtful"
         }
         return IOSWorkspaceStore.json(spawnResult)
@@ -652,64 +668,190 @@ final class IOSThreadOrchestrationToolService {
     /// not request a role/configuration and should inherit the parent's params.
     /// An empty `tool_scope` is intentionally preserved as an empty set: it is
     /// different from an omitted scope, which inherits the parent catalog.
-    /// Jev Phase 3（模型调度）：spawn/followup 的异步判断预计算。
-    /// 在占用任何名额之前 await；返回首选模型 id（空 = 走现有负载/轮转选择）。
-    /// 显式 model_id、角色/继承/保存覆盖已配模型的调用不判断（不覆盖明确选择，
-    /// 门控口径与 resolveAgentLaunch 内部完全一致，避免白跑出站判断）。
-    private func jevPreferredModelIds(
+    /// T3：spawn 将模型调度与缺省角色意图合并成一次批量判断；followup 只加入模型调度。
+    /// 在占用 bootstrap 名额前等待，不持有模型预留；显式 model_id / role_id 整批跳过。
+    private func jevSpawnDecision(
         arguments: [String: Any],
         parentRunId: String,
         allowPoolForInheritedModel: Bool,
-        inherited: IOSOrchestrationAgentConfiguration?
-    ) async -> [String] {
-        guard Self.optionalTrimmedString(arguments["model_id"]) == nil else { return [] }
-        guard let settings = sharedSettingsProvider()?.snapshot else { return [] }
-        // 与 resolveAgentLaunch 相同的 effectiveRoleId / savedOverride 推导。
-        let roleArgument = Self.optionalTrimmedString(arguments["role_id"])
-        let inheritedBase = roleArgument == nil ? inherited : nil
-        let allowDynamic = settings.agentRuntime.subAgent.allowDynamicSubAgents
-        let effectiveRoleId = roleArgument
-            ?? inheritedBase?.roleId
-            ?? (allowDynamic ? nil : "explorer")
-        let savedModelId = effectiveRoleId.flatMap { settings.agentRuntime.subAgent.overrides[$0]?.modelId?.description() }
-        let configuredModelId = inheritedBase?.modelId ?? savedModelId
-        let shouldSelectFromPool = configuredModelId == nil
-            || (allowPoolForInheritedModel && inheritedBase != nil)
-        guard shouldSelectFromPool else { return [] }
-        let poolCandidates = sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) } ?? []
-        guard !poolCandidates.isEmpty else { return [] }
+        inherited: IOSOrchestrationAgentConfiguration?,
+        sourceConversation: Conversation?,
+        includeRoleIntent: Bool
+    ) async -> JevSpawnDecision {
+        let jevSettings = jevSettingsProvider()
+        var result = JevSpawnDecision(settings: jevSettings)
+        guard Self.optionalTrimmedString(arguments["model_id"]) == nil,
+              Self.optionalTrimmedString(arguments["role_id"]) == nil else {
+            return result
+        }
+
         let taskName = Self.optionalTrimmedString(arguments["task_name"]) ?? ""
         let message = Self.optionalTrimmedString(arguments["message"]) ?? ""
-        return await IOSJevModelRoutingService.shared.rankedPreferredModelIds(
-            taskText: "\(taskName)\n\(message)",
-            candidates: poolCandidates,
-            turnBudgetKey: parentRunId
+        let taskText = "\(taskName)\n\(message)"
+        let questionLimit = max(1, min(jevSettings.policy.maxQuestions, jevSettings.policy.maxCandidates))
+        var parts: [IOSJevBatchPart] = []
+        var modelCandidates: [IOSSubAgentModelPool.Candidate] = []
+        var modelPartId: String?
+
+        // 显式任务定义和继承角色继续优先于 Jev 角色建议。
+        if includeRoleIntent,
+           let sourceConversation,
+           (questionLimit >= 2
+               || jevSettings.effectiveMode(for: .subagentIntent) == .off
+               || !jevSettings.canSend(useCase: .subagentIntent, required: [.selectedTaskText, .toolMetadata])),
+           !Self.hasAgentConfigurationArguments(arguments),
+           Self.orchestrationConfiguration(from: sourceConversation.currentMessages)?.roleId == nil {
+            let parentRequest = sourceConversation.currentMessages.reversed()
+                .first { $0.role == MessageRole.user }?.toText()
+            if let part = IOSJevSubAgentIntentService.makeBatchPart(
+                taskText: taskText,
+                parentRequestText: parentRequest,
+                settings: jevSettings
+            ) {
+                parts.append(part)
+            }
+        }
+
+        if let sharedSettings = sharedSettingsProvider() {
+            let inheritedBase = inherited
+            let allowDynamic = sharedSettings.snapshot.agentRuntime.subAgent.allowDynamicSubAgents
+            let effectiveRoleId = inheritedBase?.roleId ?? (allowDynamic ? nil : "explorer")
+            let savedModelId = effectiveRoleId.flatMap {
+                sharedSettings.snapshot.agentRuntime.subAgent.overrides[$0]?.modelId?.description()
+            }
+            let configuredModelId = inheritedBase?.modelId ?? savedModelId
+            let shouldSelectFromPool = configuredModelId == nil
+                || (allowPoolForInheritedModel && inheritedBase != nil)
+            if shouldSelectFromPool {
+                modelCandidates = modelPool.candidates(
+                    settings: sharedSettings.snapshot,
+                    sharedSettings: sharedSettings
+                )
+            }
+        }
+
+        // 同一 T3 请求不因模型池过大而在协调器内拆成多次出站。
+        // 适用且获允许的角色 part 占两题，其余额度给模型候选。
+        let intentPartIsSendable = parts.contains(where: { $0.id == IOSJevSubAgentIntentService.batchPartId })
+            && jevSettings.effectiveMode(for: .subagentIntent) != .off
+            && jevSettings.canSend(useCase: .subagentIntent, required: [.selectedTaskText, .toolMetadata])
+        result.intentRoutingRequested = intentPartIsSendable
+        let intentQuestionCount = intentPartIsSendable ? 2 : 0
+        let modelQuestionLimit = max(0, questionLimit - intentQuestionCount)
+        if !modelCandidates.isEmpty,
+           modelQuestionLimit > 0,
+           jevSettings.effectiveMode(for: .modelRouting) != .off {
+            let boundedCandidates = Array(modelCandidates.prefix(modelQuestionLimit))
+            if var part = IOSJevModelRoutingService.makeBatchPart(
+                taskText: taskText,
+                candidates: boundedCandidates
+            ) {
+                let mode = jevSettings.effectiveMode(for: .modelRouting)
+                part.cacheKey = mode == .shadow ? "model_routing_shadow" : "model_routing"
+                modelPartId = part.id
+                parts.append(part)
+                result.modelRoutingRequested = jevSettings.canSend(
+                    useCase: .modelRouting,
+                    required: part.requiredScopes
+                )
+            }
+        }
+
+        guard !parts.isEmpty else { return result }
+        let inputHash = IOSJevToolDiscoveryService.stableHash(
+            parts.map { "\($0.id):\($0.state)" }.joined(separator: "\n\n")
         )
+        let context = IOSJevRunContext(
+            runId: parentRunId,
+            turnBudgetKey: parentRunId,
+            inputHash: inputHash
+        )
+        let outcomes = await jevCoordinator.decideBatch(
+            parts: parts,
+            context: context,
+            waitBudgetMs: jevSettings.policy.t3WaitBudgetMs
+        )
+        if let modelPartId {
+            result.preferredModelIds = IOSJevModelRoutingService.preferredModelIds(
+                from: outcomes[modelPartId] ?? .skipped(reason: "missing_part_result"),
+                candidates: modelCandidates,
+                settings: jevSettings
+            )
+        }
+        if parts.contains(where: { $0.id == IOSJevSubAgentIntentService.batchPartId }) {
+            let outcome = outcomes[IOSJevSubAgentIntentService.batchPartId] ?? .skipped(reason: "missing_part_result")
+            result.intent = IOSJevSubAgentIntentService.suggestion(
+                from: outcome,
+                settings: jevSettings
+            )
+            let observedDecision: IOSJevDecision?
+            switch outcome {
+            case .applied(let decision), .observed(let decision): observedDecision = decision
+            case .skipped, .failed: observedDecision = nil
+            }
+            result.observedIntentRoleId = observedDecision?.answers.first(where: { $0.id == "role_choice" })?.choice
+        }
+        return result
     }
 
-    /// Jev 增强 Phase C（意图路由）：spawn 缺省角色定义时的角色建议 + 对齐回执。
-    /// 显式任务定义（role_id/system_prompt/context/tool_scope/skills）或继承配置
-    /// 带角色时零出站判断；失败/弃权/低置信 → 空建议，走现有 spawn 优先级。
-    private func jevSubAgentIntent(
-        arguments: [String: Any],
-        sourceConversation: Conversation,
-        parentRunId: String
-    ) async -> IOSJevSubAgentIntentService.Suggestion {
-        guard !Self.hasAgentConfigurationArguments(arguments) else {
-            return IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
+    /// 只存被实际后台启动的池内候选 UUID；展示名和 API 模型名均不写指标。
+    private func recordSelectedPoolModelIfNeeded(
+        launch: ResolvedAgentLaunch,
+        decision: JevSpawnDecision,
+        runId: String
+    ) {
+        guard decision.modelRoutingRequested,
+              launch.modelReservation != nil,
+              let modelId = launch.configuration?.modelId,
+              let uuid = Self.parseKotlinUuid(modelId) else { return }
+        let settings = decision.settings
+        var numbers: [String: Double] = ["preferred_set_size": Double(decision.preferredModelIds.count)]
+        if let baseline = launch.baselinePoolModelId {
+            numbers["difference"] = baseline == uuid.toHexDashString() ? 0 : 1
         }
-        guard Self.orchestrationConfiguration(from: sourceConversation.currentMessages)?.roleId == nil else {
-            return IOSJevSubAgentIntentService.Suggestion(roleId: nil, alignmentDoubtful: false)
-        }
-        let taskName = Self.optionalTrimmedString(arguments["task_name"]) ?? ""
-        let message = Self.optionalTrimmedString(arguments["message"]) ?? ""
-        let parentRequest = sourceConversation.currentMessages.reversed()
-            .first { $0.role == MessageRole.user }?.toText()
-        return await IOSJevSubAgentIntentService.shared.suggest(
-            taskText: "\(taskName)\n\(message)",
-            parentRequestText: parentRequest,
-            turnBudgetKey: parentRunId
-        )
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(),
+            useCase: .modelRouting,
+            mode: settings.effectiveMode(for: .modelRouting),
+            modelVersion: settings.activeModelVersion,
+            outcome: "summary",
+            latencyMs: 0,
+            requestBytes: 0,
+            responseBytes: 0,
+            inputTokens: nil,
+            outputTokens: nil,
+            reason: nil,
+            suggestedTop1: nil,
+            keywordTop1: nil,
+            topConfidence: nil,
+            topScore: nil,
+            runId: runId,
+            waitPhase: "t3",
+            waitedMs: nil,
+            numbers: numbers,
+            ids: ["selected_model_id": uuid.toHexDashString()]
+        ))
+    }
+
+    private func recordIntentSelectionIfNeeded(
+        launch: ResolvedAgentLaunch,
+        decision: JevSpawnDecision,
+        runId: String
+    ) {
+        guard decision.intentRoutingRequested,
+              let suggested = decision.observedIntentRoleId else { return }
+        let selected = launch.configuration?.roleId ?? "none"
+        let settings = decision.settings
+        IOSJevMetricsStore.append(IOSJevMetricsRecord(
+            timestamp: Date(), useCase: .subagentIntent,
+            mode: settings.effectiveMode(for: .subagentIntent),
+            modelVersion: settings.activeModelVersion,
+            outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+            inputTokens: nil, outputTokens: nil, reason: nil,
+            runId: runId, waitPhase: "T3",
+            numbers: ["difference": suggested == selected ? 0 : 1],
+            ids: ["suggested_role_id": suggested, "selected_role_id": selected]
+        ))
     }
 
     private func resolveAgentLaunch(
@@ -840,6 +982,7 @@ final class IOSThreadOrchestrationToolService {
         let explicitReasoningRaw = Self.optionalTrimmedString(arguments["reasoning_level"])
         var modelReservation: IOSSubAgentModelPool.Reservation?
         var selectedPoolCandidate: IOSSubAgentModelPool.Candidate?
+        var baselinePoolModelId: String?
         let poolCandidates = settings.flatMap { settings in
             sharedSettingsProvider().map { modelPool.candidates(settings: settings, sharedSettings: $0) }
         } ?? []
@@ -871,6 +1014,11 @@ final class IOSThreadOrchestrationToolService {
                     rankedIds: jevPreferredModelIds
                 )
                 let rankedPool = selectionPool.isEmpty ? refreshedPoolCandidates : selectionPool
+                baselinePoolModelId = modelPool.previewSelection(
+                    from: refreshedPoolCandidates,
+                    activeModelCounts: backgroundCoordinator.activeModelCounts,
+                    activeProviderCounts: backgroundCoordinator.activeProviderCounts
+                )?.modelId
                 guard let selected = modelPool.select(
                     from: rankedPool,
                     activeModelCounts: backgroundCoordinator.activeModelCounts,
@@ -971,7 +1119,8 @@ final class IOSThreadOrchestrationToolService {
             configuration: configuration,
             providerSetting: childProvider,
             params: childParams,
-            modelReservation: modelReservation
+            modelReservation: modelReservation,
+            baselinePoolModelId: baselinePoolModelId
         ))
     }
 
@@ -1677,11 +1826,13 @@ final class IOSThreadOrchestrationToolService {
             currentMessages = conversation.currentMessages
         }
         let inheritedConfiguration = Self.orchestrationConfiguration(from: currentMessages)
-        let jevPreferredModelIds = await jevPreferredModelIds(
+        let jevDecision = await jevSpawnDecision(
             arguments: args,
             parentRunId: runId,
             allowPoolForInheritedModel: false,
-            inherited: inheritedConfiguration
+            inherited: inheritedConfiguration,
+            sourceConversation: nil,
+            includeRoleIntent: false
         )
         guard occupiedRunSlotCount < configuredMaxConcurrentRuns else {
             return Self.errorJSON(
@@ -1700,7 +1851,7 @@ final class IOSThreadOrchestrationToolService {
             toolExposureBridge: toolExposureBridge,
             inherited: inheritedConfiguration,
             allowPoolForInheritedModel: false,
-            jevPreferredModelIds: jevPreferredModelIds
+            jevPreferredModelIds: jevDecision.preferredModelIds
         )
         let launch: ResolvedAgentLaunch
         switch launchResult {
@@ -1754,6 +1905,11 @@ final class IOSThreadOrchestrationToolService {
                 reason: "目标线程已持久化但后台任务提交失败（线程保留，可再次 followup_task）。"
             )
         }
+        recordSelectedPoolModelIfNeeded(
+            launch: launch,
+            decision: jevDecision,
+            runId: runId
+        )
         // 审计信封：bootstrap 已直写会话，信封仅留审计记录（标 delivered，不参与 drain）。
         try? await Self.enqueueIfAbsent(
             mailboxDao: mailboxDaoProvider(),

@@ -3,7 +3,7 @@ import XCTest
 
 // IOSJevInjectionScreeningTests（增强 Phase D）：
 // base64 单层探测（真载荷解码送检、短段/非文本/假 base64 不动）、
-// 筛查题构造、命中集合语义（≥0.5 命中、缺题/非有限不命中）。
+// 筛查题构造、policy 概率阈值与缺题/非有限 fail-open 语义。
 
 final class IOSJevInjectionScreeningTests: XCTestCase {
 
@@ -63,15 +63,22 @@ final class IOSJevInjectionScreeningTests: XCTestCase {
         let decision = IOSJevDecision(
             answers: [
                 IOSJevAnswer(id: "inj1", type: "noul", noul: 0.9),   // 命中
-                IOSJevAnswer(id: "inj2", type: "noul", noul: 0.5),   // 边界命中
-                IOSJevAnswer(id: "inj3", type: "noul", noul: 0.49),  // 不命中
+                IOSJevAnswer(id: "inj2", type: "noul", noul: 0.8),   // policy 边界命中
+                IOSJevAnswer(id: "inj3", type: "noul", noul: 0.79),  // 阈值以下
                 IOSJevAnswer(id: "inj4", type: "noul", noul: nil),   // 缺值不命中
                 IOSJevAnswer(id: "inj5", type: "noul", noul: .nan),  // 非有限不命中
                 IOSJevAnswer(id: "inj6", type: "choice", choice: "x"), // 错类型不命中
             ],
             usage: nil, modelVersion: "m", latencyMs: 0, requestBytes: 0, responseBytes: 0
         )
-        XCTAssertEqual(IOSJevInjectionScreening.hitQuestionIds(from: decision), ["inj1", "inj2"])
+        XCTAssertEqual(
+            IOSJevInjectionScreening.hitQuestionIds(from: decision, minimumProbability: 0.8),
+            ["inj1", "inj2"]
+        )
+        XCTAssertEqual(
+            IOSJevInjectionScreening.hitQuestionIds(from: decision, minimumProbability: 0.95),
+            []
+        )
     }
 
     /// 记忆筛查条目按 maxQuestions 截断（保头部优先序），防止超大选中集

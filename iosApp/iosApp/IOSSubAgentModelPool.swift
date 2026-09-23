@@ -91,8 +91,24 @@ final class IOSSubAgentModelPool {
         activeProviderCounts: [String: Int]
     ) -> Candidate? {
         guard !candidates.isEmpty else { return nil }
-        let start = roundRobinCursor % candidates.count
+        let selected = previewSelection(
+            from: candidates,
+            activeModelCounts: activeModelCounts,
+            activeProviderCounts: activeProviderCounts
+        )
         roundRobinCursor = (roundRobinCursor + 1) % candidates.count
+        return selected
+    }
+
+    /// 只读反事实：同一预留/负载/轮转状态下，本地池当前会选择谁。
+    /// 供 Jev shadow/active 差异指标使用，不改变下次真实选择。
+    func previewSelection(
+        from candidates: [Candidate],
+        activeModelCounts: [String: Int],
+        activeProviderCounts: [String: Int]
+    ) -> Candidate? {
+        guard !candidates.isEmpty else { return nil }
+        let start = roundRobinCursor % candidates.count
         guard let best = candidates.enumerated().min(by: { lhs, rhs in
             let left = score(
                 candidate: lhs.element,

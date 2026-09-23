@@ -80,12 +80,12 @@ enum IOSJevInjectionScreening {
         }
     }
 
-    /// 命中集合：Noul ≥ 0.5 视为含注入。缺题/无效值不命中（fail-open）。
-    static func hitQuestionIds(from decision: IOSJevDecision) -> Set<String> {
+    /// 命中集合按 policy 阈值判断。缺题/无效值不命中（fail-open）。
+    static func hitQuestionIds(from decision: IOSJevDecision, minimumProbability: Double) -> Set<String> {
         var hits = Set<String>()
         for answer in decision.answers where answer.type == "noul" {
             guard let probability = answer.noul, probability.isFinite else { continue }
-            if probability >= 0.5 { hits.insert(answer.id) }
+            if probability >= minimumProbability { hits.insert(answer.id) }
         }
         return hits
     }

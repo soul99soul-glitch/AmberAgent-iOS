@@ -18,10 +18,10 @@ final class IOSJevSubAgentIntentTests: XCTestCase {
         if let choice {
             var body: [String: Any] = ["type": "choice", "choice": choice]
             if let choiceConfidence { body["confidence"] = choiceConfidence }
-            answers["role_choice"] = body
+            answers["single.role_choice"] = body
         }
         if let aligned {
-            answers["aligned"] = ["type": "noul", "noul": aligned]
+            answers["single.aligned"] = ["type": "noul", "noul": aligned]
         }
         let payload: [String: Any] = ["model": "jev-latest", "answers": answers]
         return try! JSONSerialization.data(withJSONObject: payload)
@@ -64,6 +64,21 @@ final class IOSJevSubAgentIntentTests: XCTestCase {
     }
 
     // MARK: 模式与范围
+
+    func testBatchPartKeepsRoleAndAlignmentQuestionsTogether() throws {
+        let settings = makeSettings(mode: .active)
+        let part = try XCTUnwrap(IOSJevSubAgentIntentService.makeBatchPart(
+            taskText: "整理文本",
+            parentRequestText: "帮我整理",
+            settings: settings
+        ))
+
+        XCTAssertEqual(part.id, IOSJevSubAgentIntentService.batchPartId)
+        XCTAssertEqual(part.useCase, .subagentIntent)
+        XCTAssertEqual(Set(part.questions.map(\.id)), Set(["role_choice", "aligned"]))
+        XCTAssertTrue(part.state.contains("子任务：整理文本"))
+        XCTAssertTrue(part.state.contains("用户最新请求：帮我整理"))
+    }
 
     func testOffModeZeroNetwork() async {
         let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
@@ -146,13 +161,13 @@ final class IOSJevSubAgentIntentTests: XCTestCase {
         XCTAssertTrue(result.alignmentDoubtful, "Noul < 0.5 = 偏离标注")
     }
 
-    func testMissingAlignmentAnswerIsNotDoubtful() async {
+    func testMissingAlignmentAnswerFallsBackToEmptySuggestion() async {
         let role = validRoleId()
         let transport = JevStubTransport { _ in (self.payload(choice: role, choiceConfidence: 0.9, aligned: nil), self.httpResponse(status: 200)) }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let result = await service.suggest(taskText: "任务", parentRequestText: "请求", turnBudgetKey: "run")
-        XCTAssertEqual(result.roleId, role)
-        XCTAssertFalse(result.alignmentDoubtful, "缺题 = 不确定 = 不标注（不伪造）")
+        XCTAssertNil(result.roleId)
+        XCTAssertFalse(result.alignmentDoubtful, "缺题使整组角色判断失效，回退本地选择")
     }
 
     func testFailureFallsBackToEmptySuggestion() async {
