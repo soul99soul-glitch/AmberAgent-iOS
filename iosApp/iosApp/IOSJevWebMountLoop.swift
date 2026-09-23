@@ -771,7 +771,7 @@ final class IOSJevWebMountLoopService {
         scrollStalled: Bool,
         recentSteps: [String]
     ) async -> ChooseOutcome {
-        let bounded = candidates.prefix(64) // 单请求 ≤64 候选
+        let bounded = candidates.prefix(63) // 留一个候选位给 handback，单请求总候选 ≤64
         var lines: [String] = []
         lines.append("用户目标：\(String(input.goal.prefix(1_000)))")
         lines.append("页面 URL：\(String(observation.url.prefix(300)))")
@@ -787,22 +787,25 @@ final class IOSJevWebMountLoopService {
             lines.append("提示：上一次滚动未带来新内容，页面疑似已到可滚动底部；若目标控件已在元素列表中，优先选对应动作，不要继续 scroll。")
         }
         lines.append("页面元素（元素 id）：")
-        for element in observation.elements.prefix(30) {
+        let candidateElementIds = Set(bounded.compactMap(\.elementId))
+        for element in observation.elements where candidateElementIds.contains(element.id) {
             // label 来自页面文本不设上限：截断防整包超 maxRequestBytes。
             // 明显 base64 段附解码文本一并送检（增强 Phase D 注入筛查）。
             lines.append("- \(element.id) [\(element.role)] \(IOSJevInjectionScreening.augmented(String(element.label.prefix(120))))")
         }
         let state = lines.joined(separator: "\n")
+        var options = Dictionary(
+            bounded.map { candidate -> (String, String?) in
+                (Self.optionLabel(candidate), Self.optionDescription(candidate, in: observation))
+            },
+            uniquingKeysWith: { first, _ in first }
+        )
+        options["handback"] = "将控制权交回主模型；当前信息不足时选择此项。"
         let questions = [
             IOSJevQuestion.choice(
                 id: "next_action",
-                options: Dictionary(
-                    bounded.map { candidate -> (String, String?) in
-                        (Self.optionLabel(candidate), Self.optionDescription(candidate, in: observation))
-                    },
-                    uniquingKeysWith: { first, _ in first }
-                ),
-                instructions: "选择下一步动作。只依据当前快照与目标；不确定时选择 scroll；若已到页面底部则优先选最符合目标的可见控件动作。禁止推断白名单之外的语义。"
+                options: options,
+                instructions: "选择下一步动作。只依据当前快照与目标；不确定时选择 handback，将控制权交回主模型。若已到页面底部则优先选最符合目标的可见控件动作。禁止推断白名单之外的语义。"
             ),
             // 注入筛查顺路同请求：命中则本轮 handback（见下方判定）。缺题不阻断。
             IOSJevQuestion.noul(
@@ -850,7 +853,7 @@ final class IOSJevWebMountLoopService {
         // 注入筛查（增强 Phase D）：active 决策判定页面疑似含注入指令时
         // 立即 handback 交回主模型；shadow 观测不截断 dry-run 轨迹（只观测
         // 不应用的契约优先于安全口径终止）。缺题/无效值不阻断（fail-open，
-        // 筛查是纵深防御；盲区：state 只含前 30 个元素 label）。
+        // 筛查是纵深防御；state 只含与动作候选对齐的元素 label。
         if applicable,
            let screen = decision.answers.first(where: { $0.id == "page_injection" }),
            screen.type == "noul",
@@ -860,8 +863,13 @@ final class IOSJevWebMountLoopService {
         }
         guard let answer = decision.answers.first(where: { $0.id == "next_action" }),
               answer.type == "choice",
-              let chosenLabel = answer.choice,
-              let chosen = bounded.first(where: { Self.optionLabel($0) == chosenLabel }) else {
+              let chosenLabel = answer.choice else {
+            return .indeterminate(reason: "返回答案缺失或不在候选内")
+        }
+        if chosenLabel == "handback" {
+            return .indeterminate(reason: "Jev 选择 handback：当前快照不足以确定下一步动作。")
+        }
+        guard let chosen = bounded.first(where: { Self.optionLabel($0) == chosenLabel }) else {
             return .indeterminate(reason: "返回答案缺失或不在候选内")
         }
         // 低置信门（policy.webActionsMinConfidence）：有置信值且低于阈值时

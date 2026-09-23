@@ -381,12 +381,16 @@ final class ChatViewModel {
 
     /// 增强 Phase E：pending 审批出现时异步分诊标注，永不阻塞审批链。
     /// 清除 pending 时同步清除标注；token 守卫保证迟到结果只在同一审批
-    /// 仍 pending 时落地。off/失败/超时 → 无标注，审批卡片与原样一致。
+    /// 仍 pending 时落地。关闭或 shadow 不加标签；Jev 失败时保留本地已知事实。
     private func triagePendingApproval(
         _ state: ChatConversationRunState,
         requestId: String?,
         toolName: String,
-        actionSummary: String
+        actionSummary: String,
+        parameterSummary: String? = nil,
+        invocationArgumentsJSON: String? = nil,
+        staticFacts: IOSJevApprovalTriageService.StaticFacts? = nil,
+        requiresParameterSummary: Bool = false
     ) {
         state.approvalTriageToken &+= 1
         let token = state.approvalTriageToken
@@ -401,11 +405,24 @@ final class ChatViewModel {
         let runKey = state.conversationId
             .flatMap { conversationRuns[$0.toHexDashString()]?.host?.currentRunId }
             ?? "approval-triage-\(requestId)"
+        let metadataJSON: String?
+        if let invocationArgumentsJSON {
+            metadataJSON = state.toolExposureBridge?.approvalTriageFactsJsonForInvocation(
+                toolName: toolName,
+                argumentsJson: invocationArgumentsJSON
+            )
+        } else {
+            metadataJSON = state.toolExposureBridge?.approvalTriageFactsJson(toolName: toolName)
+        }
+        let facts = staticFacts ?? IOSJevApprovalTriageService.StaticFacts.registeredTool(metadataJSON: metadataJSON)
         Task { @MainActor in
             let triage = await IOSJevApprovalTriageService.shared.triage(
                 requestId: requestId,
                 toolName: toolName,
                 actionSummary: actionSummary,
+                parameterSummary: parameterSummary,
+                staticFacts: facts,
+                requiresParameterSummary: requiresParameterSummary,
                 goalText: goalText,
                 turnBudgetKey: runKey
             )
@@ -484,6 +501,12 @@ final class ChatViewModel {
             .compactMap(\.host)
             .first(where: { $0.isRunning })?
             .currentRunId
+    }
+
+    /// 当前会话实际持有的运行标识；不跨会话挑选仍在后台运行的任务。
+    var currentConversationRunId: String? {
+        guard let conversationId = currentConversationId?.toHexDashString() else { return nil }
+        return conversationRuns[conversationId]?.host?.currentRunId
     }
 
     // MARK: - P1-e 编排子线程只读缓存
@@ -1347,38 +1370,97 @@ final class ChatViewModel {
                 },
                 setPendingMemoryApproval: { [weak self] request in
                     state.pendingMemoryApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: "memory_tool", actionSummary: request?.action ?? "")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: "memory_tool",
+                        actionSummary: "action=\(request?.action ?? "unknown"), kind=\(request?.kind ?? "unknown")"
+                    )
                 },
                 setPendingSearchApproval: { [weak self] request in
                     state.pendingSearchApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: request?.toolName ?? "search", actionSummary: request?.providerType ?? "")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: request?.toolName ?? "search",
+                        actionSummary: "provider=\(request?.providerName ?? "unknown")",
+                        parameterSummary: IOSJevApprovalTriageService.parameterSummary(fields: [
+                            "target": request?.target ?? "",
+                            "provider_type": request?.providerType ?? "",
+                        ])
+                    )
                 },
                 setPendingWebMountApproval: { [weak self] request in
                     state.pendingWebMountApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: request?.toolName ?? "webmount", actionSummary: request?.action ?? "")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: request?.toolName ?? "webmount",
+                        actionSummary: request.map { "action=\($0.action)" } ?? ""
+                    )
                 },
                 setPendingWorkspaceApproval: { [weak self] request in
                     state.pendingWorkspaceApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: request?.toolName ?? "workspace", actionSummary: "\(request?.action ?? "")(\(request?.isWrite == true ? "写" : "读"))")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: request?.toolName ?? "workspace",
+                        actionSummary: "action=\(request?.action ?? "unknown")",
+                        parameterSummary: IOSJevApprovalTriageService.parameterSummary(fields: ["target": request?.target ?? ""]),
+                        staticFacts: request.map { .workspace(isWrite: $0.isWrite) }
+                    )
                 },
                 setPendingIshHandoffApproval: { [weak self] request in
                     state.pendingIshHandoffApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: "ish_handoff", actionSummary: request?.mode.rawValue ?? "")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: "ish_handoff",
+                        actionSummary: "mode=\(request?.mode.rawValue ?? "unknown")",
+                        parameterSummary: IOSJevApprovalTriageService.parameterSummary(fields: ["filename": request?.filename ?? ""])
+                    )
                 },
                 setPendingMcpApproval: { [weak self] request in
                     state.pendingMcpApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: request.map { "\($0.serverName)/\($0.toolName)" } ?? "mcp", actionSummary: "")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: request.map { $0.serverName == "local" ? $0.toolName : "\($0.serverName)/\($0.toolName)" } ?? "mcp",
+                        actionSummary: "",
+                        parameterSummary: request.flatMap { IOSJevApprovalTriageService.parameterSummary(fromJSON: $0.argumentsPreview) },
+                        invocationArgumentsJSON: request?.argumentsPreview,
+                        requiresParameterSummary: true
+                    )
                 },
                 setPendingCouncilApproval: { [weak self] request in
                     state.pendingCouncilApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: "model_council_run", actionSummary: "")
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: "model_council_run",
+                        actionSummary: "",
+                        parameterSummary: IOSJevApprovalTriageService.parameterSummary(fields: ["objective": request?.objectivePreview ?? ""])
+                    )
                 },
                 setPendingAskUser: { request in
                     state.pendingAskUser = request
                 },
                 setPendingRecipeApproval: { [weak self] request in
                     state.pendingRecipeApproval = request
-                    self?.triagePendingApproval(state, requestId: request?.id, toolName: "recipe", actionSummary: request.map { "\($0.recipeName)@\($0.recipeVersion)" } ?? "")
+                    let parameterPreview: String?
+                    switch request?.payload {
+                    case .step(let payload): parameterPreview = payload.argumentsPreview
+                    case .pluginInvocation(let payload): parameterPreview = payload.argumentsPreview
+                    case .recipeImport, .none: parameterPreview = nil
+                    }
+                    self?.triagePendingApproval(
+                        state,
+                        requestId: request?.id,
+                        toolName: "recipe",
+                        actionSummary: request.map { "recipe=\($0.recipeName), version=\($0.recipeVersion)" } ?? "",
+                        parameterSummary: IOSJevApprovalTriageService.parameterSummary(fromJSON: parameterPreview),
+                        requiresParameterSummary: true
+                    )
                 },
                 setContextCompactState: { [weak self, runState = state] state in
                     withAnimation(.easeOut(duration: 0.22)) {

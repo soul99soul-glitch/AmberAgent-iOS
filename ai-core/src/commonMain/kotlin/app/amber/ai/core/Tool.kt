@@ -617,7 +617,7 @@ fun createWebMountWaitToolDeclaration(): Tool = webMountTool(
  */
 fun createWebMountRunGoalToolDeclaration(): Tool = webMountTool(
     name = "wm_run_goal",
-    description = "Run a bounded fast action loop toward one goal on an open WebMount session. Provide the session_id, a single concrete goal, the allowed_actions whitelist (subset of scroll/select/click_nav/type_draft/submit_readonly_search), an optional draft_value for text entry, and completion_text that proves completion from page state. The loop observes, picks whitelisted actions, and hands back with structured status and steps; it never submits forms, deletes, pays, or logs in.",
+    description = "Use for one concrete, verifiable goal on an already-open WebMount session when the allowed actions are read-only navigation or inspection, selection, draft-only text entry, or a read-only search. Do not use for vague goals, sending or publishing content, destructive or account-changing actions, payment, login, or any task that needs a human decision during the loop; use individual wm_* tools or ask the user. Provide session_id, goal, an allowed_actions subset of scroll/select/click_nav/type_draft/submit_readonly_search, optional draft_value, and completion_text that proves completion from page state. The loop returns structured status and steps, and each action still passes the host approval and ledger checks.",
     parameters = InputSchema.Obj(
         properties = buildJsonObject {
             put("session_id", buildJsonObject {

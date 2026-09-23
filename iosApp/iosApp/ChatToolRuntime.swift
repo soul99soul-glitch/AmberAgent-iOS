@@ -741,6 +741,7 @@ final class ChatToolRuntime {
                 // Jev Phase 1：后台与前台共用语义发现服务（off 零网络）。
                 let output = await IOSJevToolDiscoveryService.execute(
                     argumentsJson: arguments,
+                    selectedTaskText: messages.reversed().first(where: { $0.role == MessageRole.user })?.toText() ?? "",
                     bridge: bridge,
                     identity: IOSJevToolDiscoveryService.RunIdentity(
                         runId: runId,
@@ -2951,6 +2952,7 @@ final class ChatToolRuntime {
         } else {
             resultText = await IOSJevToolDiscoveryService.execute(
                 argumentsJson: pending.toolCall.input,
+                selectedTaskText: pending.baseMessages.reversed().first(where: { $0.role == MessageRole.user })?.toText() ?? "",
                 bridge: toolExposureBridge,
                 identity: IOSJevToolDiscoveryService.RunIdentity(
                     runId: pending.runId,
@@ -5120,6 +5122,7 @@ final class ChatToolRuntime {
             // Jev Phase 1：Recipe discovery 与前台/后台共用语义发现服务。
             let result = await IOSJevToolDiscoveryService.execute(
                 argumentsJson: argsJSON,
+                selectedTaskText: context.baseMessages.reversed().first(where: { $0.role == MessageRole.user })?.toText() ?? "",
                 bridge: bridge,
                 identity: IOSJevToolDiscoveryService.RunIdentity(
                     runId: context.runId,
@@ -5831,7 +5834,45 @@ final class ChatToolRuntime {
         // 报告循环启动时的 mode（与服务 settingsProvider 同源同刻）：跑完后重读
         // 会在中途改配置时谎报——active 执行却被标 shadow，或 dry-run 被标 active。
         let preRunMode = IOSSharedSettingsStore.loadPersistedJevSettings().effectiveMode(for: .webActions)
+        let decisionCountBefore = preRunMode == .off ? 0 : IOSJevMetricsStore.load().filter {
+            $0.runId == runId && $0.useCase == .webActions && $0.outcome != "summary"
+        }.count
         let outcome = await service.run(input, runId: runId)
+        if preRunMode != .off {
+            let decisionCountAfter = IOSJevMetricsStore.load().filter {
+                $0.runId == runId && $0.useCase == .webActions && $0.outcome != "summary"
+            }.count
+            let completed: Double
+            let handback: Double
+            let actionCount: Int
+            let reasonCode: String?
+            switch outcome {
+            case .completed(let steps, _):
+                completed = 1; handback = 0; actionCount = steps.count; reasonCode = nil
+            case .handback(let reason, let steps, _):
+                completed = 0; handback = 1; actionCount = steps.count
+                if reason.contains("Jev 选择 handback") { reasonCode = "jev_uncertain" }
+                else if reason.contains("低置信") { reasonCode = "low_confidence" }
+                else if reason.contains("注入") { reasonCode = "page_injection" }
+                else if reason.contains("无进展") { reasonCode = "no_progress" }
+                else { reasonCode = "other_handback" }
+            case .needsUserAction(_, let steps):
+                completed = 0; handback = 0; actionCount = steps.count; reasonCode = "needs_user_action"
+            case .cancelled(let steps):
+                completed = 0; handback = 0; actionCount = steps.count; reasonCode = "cancelled"
+            case .outcomeUnknown(_, let steps):
+                completed = 0; handback = 0; actionCount = steps.count; reasonCode = "outcome_unknown"
+            }
+            IOSJevMetricsStore.append(IOSJevMetricsRecord(
+                timestamp: Date(), useCase: .webActions, mode: preRunMode,
+                modelVersion: IOSSharedSettingsStore.loadPersistedJevSettings().activeModelVersion,
+                outcome: "summary", latencyMs: 0, requestBytes: 0, responseBytes: 0,
+                inputTokens: nil, outputTokens: nil, reason: reasonCode, runId: runId,
+                numbers: ["web_completed": completed, "handback": handback,
+                          "decision_count": Double(max(0, decisionCountAfter - decisionCountBefore)),
+                          "action_count": Double(actionCount)]
+            ))
+        }
         return .webMountResult(IOSJevWebMountLoopService.outputText(for: outcome, goal: input.goal, effectiveMode: preRunMode))
     }
 

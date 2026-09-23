@@ -15,9 +15,9 @@ final class IOSJevApprovalTriageTests: XCTestCase {
 
     private func payload(readonly: Double? = nil, reversible: Double? = nil, aligned: Double? = nil) -> Data {
         var answers: [String: Any] = [:]
-        if let readonly { answers["readonly"] = ["type": "noul", "noul": readonly] }
-        if let reversible { answers["reversible"] = ["type": "noul", "noul": reversible] }
-        if let aligned { answers["goal_aligned"] = ["type": "noul", "noul": aligned] }
+        if let readonly { answers["single.readonly"] = ["type": "noul", "noul": readonly] }
+        if let reversible { answers["single.reversible"] = ["type": "noul", "noul": reversible] }
+        if let aligned { answers["single.goal_aligned"] = ["type": "noul", "noul": aligned] }
         let payload: [String: Any] = ["model": "jev-latest", "answers": answers]
         return try! JSONSerialization.data(withJSONObject: payload)
     }
@@ -63,6 +63,21 @@ final class IOSJevApprovalTriageTests: XCTestCase {
         XCTAssertEqual(IOSJevApprovalTriageService.band(.infinity), .unknown)
     }
 
+    func testRegisteredToolFactsDoNotMistakeNoMutationForReadOnly() {
+        let mutating = IOSJevApprovalTriageService.StaticFacts.registeredTool(
+            metadataJSON: #"{"mutates":true,"risk":"sensitive"}"#
+        )
+        XCTAssertEqual(mutating?.readonly, .no)
+        XCTAssertEqual(mutating?.reversible, .unknown)
+        XCTAssertEqual(mutating?.risk, "sensitive")
+
+        let noMutation = IOSJevApprovalTriageService.StaticFacts.registeredTool(
+            metadataJSON: #"{"mutates":false,"risk":"normal"}"#
+        )
+        XCTAssertEqual(noMutation?.readonly, .unknown)
+        XCTAssertEqual(noMutation?.reversible, .unknown)
+    }
+
     // MARK: 模式与范围
 
     func testOffModeReturnsNilWithoutNetwork() async {
@@ -103,12 +118,77 @@ final class IOSJevApprovalTriageTests: XCTestCase {
         XCTAssertEqual(triage?.goalAligned, .unknown, "中间带 = 未知")
     }
 
-    func testMissingAnswersAreUnknown() async {
+    func testIncompletePartDoesNotApplyPartialAnswers() async {
         let transport = JevStubTransport { _ in (self.payload(readonly: 0.9), self.httpResponse(status: 200)) }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let triage = await service.triage(requestId: "r1", toolName: "t", actionSummary: "a", goalText: nil, turnBudgetKey: "run")
-        XCTAssertEqual(triage?.readonly, .yes)
-        XCTAssertEqual(triage?.reversible, .unknown, "缺题 = 未知，不伪造")
+        XCTAssertNil(triage, "协调器要求单个审批 part 的题目答案完整，不能应用部分答案")
+    }
+
+    func testKnownWorkspaceFactsOverrideJevAndParameterSummaryOmitsCredentials() async throws {
+        let transport = JevStubTransport { _ in
+            (self.payload(reversible: 0.5, aligned: 0.9), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let parameterSummary = IOSJevApprovalTriageService.parameterSummary(fromJSON: """
+            {"target":"notes.md","api_key":"private-key","password":"secret"}
+            """)
+        let triage = await service.triage(
+            requestId: "r1",
+            toolName: "workspace_file_write",
+            actionSummary: "action=write",
+            parameterSummary: parameterSummary,
+            staticFacts: .workspace(isWrite: true),
+            goalText: "修改笔记",
+            turnBudgetKey: "run"
+        )
+
+        XCTAssertEqual(triage?.readonly, .no)
+        XCTAssertEqual(triage?.reversible, .unknown)
+        XCTAssertEqual(triage?.goalAligned, .yes)
+        let body = try XCTUnwrap(transport.lastBody)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questions = try XCTUnwrap(request["questions"] as? [String: Any])
+        XCTAssertEqual(Set(questions.keys), Set(["single.reversible", "single.goal_aligned"]), "known read/write fact is not re-asked; unknown reversibility may be judged")
+        let state = try XCTUnwrap(request["state"] as? String)
+        XCTAssertTrue(state.contains("target=notes.md"))
+        XCTAssertFalse(state.contains("private-key"))
+        XCTAssertFalse(state.contains("secret"))
+    }
+
+    func testMcpApprovalWithoutParameterSummaryShowsUnknownWithoutNetwork() async {
+        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 200)) }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let triage = await service.triage(
+            requestId: "r1",
+            toolName: "remote/read_record",
+            actionSummary: "",
+            parameterSummary: IOSJevApprovalTriageService.parameterSummary(fromJSON: "{}"),
+            requiresParameterSummary: true,
+            goalText: "查看记录",
+            turnBudgetKey: "run"
+        )
+
+        XCTAssertEqual(triage?.readonly, .unknown)
+        XCTAssertEqual(triage?.reversible, .unknown)
+        XCTAssertEqual(triage?.goalAligned, .unknown)
+        XCTAssertEqual(transport.calls, 0, "缺少参数时不要求 Jev 猜测 MCP 动作")
+    }
+
+    func testJevFailureKeepsKnownWorkspaceFacts() async {
+        let transport = JevStubTransport { _ in (Data(), self.httpResponse(status: 500)) }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let triage = await service.triage(
+            requestId: "r1",
+            toolName: "workspace_file_write",
+            actionSummary: "action=write",
+            staticFacts: .workspace(isWrite: true),
+            goalText: "修改笔记",
+            turnBudgetKey: "run"
+        )
+
+        XCTAssertEqual(triage?.readonly, .no)
+        XCTAssertEqual(triage?.reversible, .unknown)
         XCTAssertEqual(triage?.goalAligned, .unknown)
     }
 

@@ -520,6 +520,40 @@ class IosToolExposureBridgeTest {
     }
 
     @Test
+    fun approvalTriageFactsExposeRegisteredMutationAndRiskMetadataOnly() {
+        val bridge = IosToolExposureBridge(tools = fullIosTools())
+
+        val facts = parseObject(bridge.approvalTriageFactsJson("ios_shell_execute")!!)
+        assertEquals(setOf("mutates", "risk"), facts.keys)
+        assertEquals(true, facts["mutates"]?.jsonPrimitive?.content?.toBoolean())
+        assertEquals("sensitive", facts["risk"]?.jsonPrimitive?.content)
+        assertEquals(null, bridge.approvalTriageFactsJson("mcp__remote__unknown"))
+    }
+
+    @Test
+    fun approvalTriageFactsUseInvocationMutationAndRiskWhenArgumentsAreAvailable() {
+        val bridge = IosToolExposureBridge(tools = listOf(tool("http_request")))
+
+        val post = parseObject(
+            bridge.approvalTriageFactsJsonForInvocation(
+                "http_request",
+                """{"method":"POST","url":"https://example.com/items"}""",
+            )!!,
+        )
+        assertEquals("true", post["mutates"]?.jsonPrimitive?.content)
+        assertEquals("high", post["risk"]?.jsonPrimitive?.content)
+
+        val get = parseObject(
+            bridge.approvalTriageFactsJsonForInvocation(
+                "http_request",
+                """{"method":"GET","url":"https://example.com/items"}""",
+            )!!,
+        )
+        assertEquals("false", get["mutates"]?.jsonPrimitive?.content)
+        assertEquals("normal", get["risk"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun executeToolSearchRankingOverrideDropsUnknownNamesAndKeepsKeywordScores() {
         val bridge = IosToolExposureBridge(tools = fullIosTools())
         // Jev 排序：把 memory_tool 排到最前；未知名与目录外工具必须被丢弃。

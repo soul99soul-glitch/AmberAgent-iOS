@@ -18,7 +18,10 @@ final class IOSJevWebMountLoopTests: XCTestCase {
     private func choicePayload(_ option: String, confidence: Double = 0.9) -> Data {
         let payload: [String: Any] = [
             "model": "jev-latest",
-            "answers": ["next_action": ["type": "choice", "choice": option, "confidence": confidence]],
+            "answers": [
+                "single.next_action": ["type": "choice", "choice": option, "confidence": confidence],
+                "single.page_injection": ["type": "noul", "noul": 0.0],
+            ],
         ]
         return try! JSONSerialization.data(withJSONObject: payload)
     }
@@ -221,6 +224,70 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         XCTAssertEqual(recorder.executed.first?.1, "e1")
         XCTAssertEqual(final?.revision, 2, "completion verified against page state, not Jev DONE")
         XCTAssertFalse(steps.isEmpty)
+    }
+
+    func testHandbackChoiceDoesNotExecuteAndItsReasonReachesToolResult() async throws {
+        let transport = JevStubTransport { _ in
+            (self.choicePayload("handback"), self.httpResponse(status: 200))
+        }
+        let recorder = Recorder()
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in self.observation() },
+            execute: { _, action in
+                recorder.recordExecution(action.kind.rawValue, action.elementId ?? "-")
+                return .applied(newRevision: 2)
+            }
+        )
+
+        let outcome = await service.run(input(allowed: ["click_nav"]), runId: "run")
+        guard case .handback(let reason, let steps, _) = outcome else {
+            return XCTFail("expected handback, got \(outcome)")
+        }
+        XCTAssertTrue(reason.contains("Jev 选择 handback"))
+        XCTAssertTrue(steps.isEmpty)
+        XCTAssertTrue(recorder.executed.isEmpty)
+
+        let output = IOSJevWebMountLoopService.outputText(for: outcome, goal: "在列表找目标")
+        let outputObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        XCTAssertEqual(outputObject["status"] as? String, "handback")
+        XCTAssertEqual(outputObject["reason"] as? String, reason)
+
+        let body = try XCTUnwrap(transport.lastBody)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questions = try XCTUnwrap(request["questions"] as? [String: Any])
+        let actionQuestion = try XCTUnwrap(questions["single.next_action"] as? [String: Any])
+        let options = try XCTUnwrap(actionQuestion["criteria"] as? [String: Any])
+        XCTAssertNotNil(options["handback"])
+        XCTAssertFalse((actionQuestion["instructions"] as? String ?? "").contains("不确定时选择 scroll"))
+    }
+
+    func testStateIncludesAllElementsWithBoundedActionCandidates() async throws {
+        let elements = (1...80).map {
+            IOSJevWebMountLoopService.PageElement(id: "e\($0)", role: "link", label: "条目 \($0)")
+        }
+        let page = IOSJevWebMountLoopService.PageObservation(
+            snapshotId: "snapshot-many", revision: 1,
+            url: "https://example.com/list", elements: elements
+        )
+        let transport = JevStubTransport { _ in
+            (self.choicePayload("handback"), self.httpResponse(status: 200))
+        }
+        let service = makeService(
+            settings: makeSettings(mode: .active), transport: transport,
+            observe: { _ in page },
+            execute: { _, _ in XCTFail("handback must not execute a page action"); return .failed(reason: "unexpected") }
+        )
+
+        let outcome = await service.run(input(allowed: ["click_nav"]), runId: "run")
+        guard case .handback = outcome else { return XCTFail("expected handback, got \(outcome)") }
+        let body = try XCTUnwrap(transport.lastBody)
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let state = try XCTUnwrap(request["state"] as? String)
+        let elementLines = state.components(separatedBy: "\n").filter { $0.hasPrefix("- e") }
+        XCTAssertEqual(elementLines.count, 62, "63 legal choices include scroll, leaving 62 element actions plus handback")
+        XCTAssertTrue(state.contains("- e62 [link]"))
+        XCTAssertFalse(state.contains("- e63 [link]"), "elements without a bounded action must not appear in state")
     }
 
     func testUnknownExecutorResultNeverReplays() async {
@@ -1262,7 +1329,7 @@ final class IOSJevWebMountLoopTests: XCTestCase {
         let body = try XCTUnwrap(transport.lastBody, "未发出 Jev 请求")
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
         let questions = try XCTUnwrap(object["questions"] as? [String: Any])
-        let nextAction = try XCTUnwrap(questions["next_action"] as? [String: Any])
+        let nextAction = try XCTUnwrap(questions["single.next_action"] as? [String: Any])
         let criteria = try XCTUnwrap(nextAction["criteria"] as? [String: Any])
         XCTAssertFalse(criteria.isEmpty)
         for (key, value) in criteria {
@@ -1508,8 +1575,8 @@ extension IOSJevWebMountLoopTests {
         let payload: [String: Any] = [
             "model": "jev-latest",
             "answers": [
-                "next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95],
-                "page_injection": ["type": "noul", "noul": 0.9],
+                "single.next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95],
+                "single.page_injection": ["type": "noul", "noul": 0.9],
             ],
         ]
         let data = try! JSONSerialization.data(withJSONObject: payload)
@@ -1530,7 +1597,7 @@ extension IOSJevWebMountLoopTests {
     func testMissingInjectionAnswerDoesNotBlock() async {
         let payload: [String: Any] = [
             "model": "jev-latest",
-            "answers": ["next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95]],
+            "answers": ["single.next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95]],
         ]
         let data = try! JSONSerialization.data(withJSONObject: payload)
         let transport = JevStubTransport { _ in (data, self.httpResponse(status: 200)) }
@@ -1551,8 +1618,8 @@ extension IOSJevWebMountLoopTests {
         let payload: [String: Any] = [
             "model": "jev-latest",
             "answers": [
-                "next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95],
-                "page_injection": ["type": "noul", "noul": 0.9],
+                "single.next_action": ["type": "choice", "choice": "scroll", "confidence": 0.95],
+                "single.page_injection": ["type": "noul", "noul": 0.9],
             ],
         ]
         let data = try! JSONSerialization.data(withJSONObject: payload)

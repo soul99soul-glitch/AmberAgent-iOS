@@ -120,6 +120,35 @@ class IosToolExposureBridge private constructor(
         exposureState.exposeToolNames(names)
     }
 
+    /**
+     * Approval-triage facts for a registered tool. This is intentionally a
+     * metadata-only projection: argument values are supplied separately by
+     * the iOS host only when the user allowed the matching data scope.
+     */
+    fun approvalTriageFactsJson(toolName: String): String? {
+        val metadata = registry.metadataFor(toolName) ?: return null
+        return approvalTriageFactsJson(metadata.mutates, metadata.risk)
+    }
+
+    /** Resolve invocation-specific mutation and risk when a safe local preview is available. */
+    fun approvalTriageFactsJsonForInvocation(toolName: String, argumentsJson: String): String? {
+        val metadata = registry.metadataFor(toolName) ?: return null
+        val input = runCatching {
+            bridgeJson.parseToJsonElement(argumentsJson.ifBlank { "{}" }) as? JsonObject
+        }.getOrNull() ?: return approvalTriageFactsJson(metadata.mutates, metadata.risk)
+        val invocation = registry.evaluateInvocation(toolName, input)
+        return approvalTriageFactsJson(
+            invocation?.mutates ?: metadata.mutates,
+            invocation?.risk ?: metadata.risk,
+        )
+    }
+
+    private fun approvalTriageFactsJson(mutates: Boolean, risk: ToolRisk): String =
+        buildJsonObject {
+            put("mutates", mutates)
+            put("risk", risk.name.lowercase())
+        }.toString()
+
     /** Restores recent conversation activity against this run's current catalog. */
     fun restoreExecutedTools(tools: List<UIMessagePart.Tool>) {
         val names = tools.filter { it.isExecuted }.flatMap {
