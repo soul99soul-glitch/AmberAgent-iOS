@@ -98,5 +98,22 @@ final class IOSJevSettingsVisualEvidenceTests: XCTestCase {
             name: "jev-settings-tall",
             size: CGSize(width: 393, height: 1_700)
         )
+        let context = ChatContextSnapshot(
+            messageCount: 8, modelId: "demo", supportsReasoning: true,
+            pendingSelectedFileName: nil, pendingSelectedFileBytesText: nil,
+            promptTokens: 1_200, completionTokens: 300, totalTokens: 1_500,
+            cachedTokens: 600, tokensPerSecond: 45,
+            contextWindowTokens: 128_000, currentContextTokens: 1_500
+        )
+        let jevSummary = IOSJevMetricsStore.RunSummary(
+            decisions: 4, memorySelected: 3, memoryInjectionHits: 1,
+            hiddenCharacters: 1_200, selectedModelId: "123e4567-e89b-12d3-a456-426614174000",
+            firstVisibleDeltaMs: 350, modelSteps: 2, cacheHitRatio: 0.5
+        )
+        try await capture(
+            ComposerContextPanel(snapshot: context, jevRunSummary: jevSummary),
+            name: "jev-composer-summary",
+            size: CGSize(width: 393, height: 640)
+        )
     }
 }

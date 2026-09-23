@@ -124,6 +124,7 @@ struct ChatView: View {
     let initialMessageAnchor: ChatMessageAnchor?
     @State private var viewModel: ChatViewModel
     @State private var activeComposerPanel: ComposerPanel?
+    @State private var observedJevSummaryRunIds: [String: String] = [:]
     @State private var isModelSheetPresented = false
     @State private var isImportingSelectedFile = false
     @State private var isAttachExpanded = false
@@ -430,7 +431,10 @@ struct ChatView: View {
         } message: {
             Text("删除后不可恢复。")
         }
-        .onAppear(perform: handleChatAppear)
+        .onAppear {
+            handleChatAppear()
+            rememberJevSummaryRun(viewModel.currentConversationRunId)
+        }
         .task(id: "\(currentConversationIdString ?? ""): \(viewModel.isGenerationActive)") {
             await viewModel.observeIdleMailboxResults(conversationId: viewModel.currentConversationId)
         }
@@ -440,6 +444,9 @@ struct ChatView: View {
         // 消息内容同步由 generation 链路的 setMessages 负责，不靠这里。
         .onChange(of: conversationStore.conversationSwitchedRevision) { _, _ in
             handleConversationSwitch()
+        }
+        .onChange(of: viewModel.currentConversationRunId) { _, runId in
+            rememberJevSummaryRun(runId)
         }
         .onChange(of: conversationStore.backgroundContentRevision) { _, _ in
             handleBackgroundContentLanded()
@@ -750,6 +757,17 @@ struct ChatView: View {
 
     private var currentConversationIdString: String? {
         viewModel.currentConversationId?.toHexDashString()
+    }
+
+    private var jevSummaryRunId: String? {
+        if let currentRunId = viewModel.currentConversationRunId { return currentRunId }
+        guard let conversationId = currentConversationIdString else { return nil }
+        return observedJevSummaryRunIds[conversationId]
+    }
+
+    private func rememberJevSummaryRun(_ runId: String?) {
+        guard let runId, let conversationId = currentConversationIdString else { return }
+        observedJevSummaryRunIds[conversationId] = runId
     }
 
     @MainActor
@@ -1614,7 +1632,12 @@ struct ChatView: View {
                                     toggleComposerPanel(.context)
                                 }
                                 .popover(isPresented: popoverBinding(for: .context), arrowEdge: .bottom) {
-                                    ComposerContextPanel(snapshot: viewModel.contextSnapshot)
+                                    ComposerContextPanel(
+                                        snapshot: viewModel.contextSnapshot,
+                                        jevRunSummary: jevSummaryRunId.map {
+                                            IOSJevMetricsStore.runSummary(runId: $0)
+                                        }
+                                    )
                                         .presentationCompactAdaptation(.popover)
                                 }
                             }

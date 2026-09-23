@@ -900,17 +900,20 @@ struct ComposerThinkingPanel: View {
 struct ComposerContextPanel: View {
     let snapshot: ChatContextSnapshot
     let novelInjection: NovelInjectionPanelModel?
+    let jevRunSummary: IOSJevMetricsStore.RunSummary?
 
     init(
         snapshot: ChatContextSnapshot,
-        novelInjection: NovelInjectionPanelModel? = nil
+        novelInjection: NovelInjectionPanelModel? = nil,
+        jevRunSummary: IOSJevMetricsStore.RunSummary? = nil
     ) {
         self.snapshot = snapshot
         self.novelInjection = novelInjection
+        self.jevRunSummary = jevRunSummary
     }
 
     var body: some View {
-        ComposerPopoverSurface(width: novelInjection == nil ? 248 : 300) {
+        ComposerPopoverSurface(width: popoverWidth) {
             VStack(spacing: 14) {
                 HStack(spacing: 14) {
                     VStack {
@@ -955,10 +958,69 @@ struct ComposerContextPanel: View {
                     Divider()
                     NovelInjectionPanelDetails(model: novelInjection)
                 }
+
+                if let jevRunSummary, jevRunSummary.decisions > 0 {
+                    Divider()
+                    ComposerJevRunSummaryDetails(summary: jevRunSummary)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 18)
         }
+    }
+
+    private var popoverWidth: CGFloat {
+        novelInjection != nil || (jevRunSummary?.decisions ?? 0) > 0 ? 300 : 248
+    }
+}
+
+private struct ComposerJevRunSummaryDetails: View {
+    let summary: IOSJevMetricsStore.RunSummary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(IOSAppLocalization.string("本轮 Jev 判断", defaultValue: "本轮 Jev 判断"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+
+            ComposerContextCompactStatRow(
+                label: "判断次数",
+                value: formattedCount(summary.decisions, unit: "次")
+            )
+            ComposerContextCompactStatRow(
+                label: "记忆选中",
+                value: summary.memorySelected.map { formattedCount($0, unit: "条") } ?? missingValue
+            )
+            ComposerContextCompactStatRow(
+                label: "注入筛查命中",
+                value: summary.memoryInjectionHits.map { formattedCount($0, unit: "条") } ?? missingValue
+            )
+            ComposerContextCompactStatRow(
+                label: "隐藏字符",
+                value: summary.hiddenCharacters.map { formattedCount($0, unit: "字") } ?? missingValue
+            )
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(IOSAppLocalization.string("所选模型 ID", defaultValue: "所选模型 ID"))
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                Text(summary.selectedModelId ?? missingValue)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(summary.selectedModelId == nil ? AmberTheme.muted : AmberTheme.foreground)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var missingValue: String {
+        IOSAppLocalization.string("暂无数据", defaultValue: "暂无数据")
+    }
+
+    private func formattedCount(_ count: Int, unit: String) -> String {
+        let number = NumberFormatter.localizedString(from: NSNumber(value: count), number: .decimal)
+        return "\(number) \(IOSAppLocalization.string(unit, defaultValue: unit))"
     }
 }
 

@@ -19,6 +19,9 @@ struct IOSJevSettingsView: View {
     @State private var isTestingConnection = false
     @State private var connectionResult: ConnectionTestPresentation?
     @State private var metricsSummary: IOSJevMetricsStore.Summary?
+    @State private var useCaseMetricsSummaries: [IOSJevMetricsStore.UseCaseSummary] = []
+    @State private var isAdvancedSettingsExpanded = true
+    @State private var showingRecommendedConfigurationConfirmation = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     struct ConnectionTestPresentation: Equatable {
@@ -39,6 +42,7 @@ struct IOSJevSettingsView: View {
                         apiSection
                         keySection
                         connectionSection
+                        recommendedConfigurationSection
                         useCaseSection
                         metricsSection
                     }
@@ -64,6 +68,7 @@ struct IOSJevSettingsView: View {
 
     private func refreshDynamicState() {
         metricsSummary = IOSJevMetricsStore.summary()
+        useCaseMetricsSummaries = IOSJevMetricsStore.useCaseSummaries()
         let stored = sharedSettings.jevSettings.vercelModel
         // 存量配置（apiStyle=vercelGateway 且模型为空）打开页面时展示默认
         // slug；onSubmit/onDisappear/连接测试的既有 commit 路径负责落盘。
@@ -391,6 +396,7 @@ struct IOSJevSettingsView: View {
         // 也避免结束时的 refreshDynamicState 覆盖未提交文本。
         commitVercelModel()
         commitPinnedModel()
+        let startedRevision = sharedSettings.jevSettings.revision
         guard let apiKey = IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey), !apiKey.isEmpty else {
             connectionResult = ConnectionTestPresentation(
                 succeeded: false,
@@ -398,10 +404,22 @@ struct IOSJevSettingsView: View {
             )
             return
         }
+        guard sharedSettings.jevSettings.revision == startedRevision else { return }
         isTestingConnection = true
         connectionResult = nil
         Task {
             let result = await IOSJevDecisionCoordinator.shared.runConnectionTest(apiKey: apiKey)
+            guard sharedSettings.jevSettings.revision == startedRevision else {
+                await MainActor.run {
+                    isTestingConnection = false
+                    connectionResult = ConnectionTestPresentation(
+                        succeeded: false,
+                        text: IOSAppLocalization.string("设置或 Key 已变化，请重新测试连接。", defaultValue: "设置或 Key 已变化，请重新测试连接。")
+                    )
+                    refreshDynamicState()
+                }
+                return
+            }
             let presentation: ConnectionTestPresentation
             if result.succeeded, let model = result.modelVersion {
                 var text = IOSAppLocalization.formatted(
@@ -433,7 +451,9 @@ struct IOSJevSettingsView: View {
             } else {
                 let reason = result.errorReason ?? "unknown"
                 let hint: String
-                if reason == "http_401" || reason == "http_403" || reason == "missing_key" {
+                if reason == "config_changed" {
+                    hint = IOSAppLocalization.string("设置或 Key 已变化，请重新测试。", defaultValue: "设置或 Key 已变化，请重新测试。")
+                } else if reason == "http_401" || reason == "http_403" || reason == "missing_key" {
                     hint = IOSAppLocalization.string("请检查 Key。", defaultValue: "请检查 Key。")
                 } else if reason == "invalid_request" || reason == "http_400" {
                     hint = sharedSettings.jevSettings.apiStyle == .vercelGateway
@@ -460,26 +480,113 @@ struct IOSJevSettingsView: View {
 
     // MARK: Per-use-case modes & scopes
 
+    private var recommendedConfigurationSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "推荐配置")
+            AmberFormGroup {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(IOSAppLocalization.string(
+                        "先用 Shadow 观测五个用途，再根据对比结果逐项决定是否启用。",
+                        defaultValue: "先用 Shadow 观测五个用途，再根据对比结果逐项决定是否启用。"
+                    ))
+                    .font(.subheadline)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Button {
+                        showingRecommendedConfigurationConfirmation = true
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "sparkles")
+                            Text(IOSAppLocalization.string("设置推荐配置", defaultValue: "设置推荐配置"))
+                                .fontWeight(.semibold)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(AmberTheme.muted2)
+                        }
+                        .foregroundStyle(AmberTheme.accent)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.985, haptic: .selection))
+                    .accessibilityHint("确认后会发送各用途允许的数据供 Shadow 观测。")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
+            }
+            Text(IOSAppLocalization.string(
+                "只观测、不应用判断；网页操作与审批分诊保持原设置。",
+                defaultValue: "只观测、不应用判断；网页操作与审批分诊保持原设置。"
+            ))
+            .font(.caption)
+            .foregroundStyle(AmberTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 30)
+            .padding(.top, 8)
+        }
+        .confirmationDialog(
+            IOSAppLocalization.string("开启推荐配置？", defaultValue: "开启推荐配置？"),
+            isPresented: $showingRecommendedConfigurationConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(IOSAppLocalization.string("确认并开启 Shadow 观测", defaultValue: "确认并开启 Shadow 观测")) {
+                applyRecommendedConfiguration()
+            }
+            Button(IOSAppLocalization.string("取消", defaultValue: "取消"), role: .cancel) {}
+        } message: {
+            Text(IOSAppLocalization.string(
+                "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作和审批分诊不变。",
+                defaultValue: "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作和审批分诊不变。"
+            ))
+        }
+    }
+
+    private func applyRecommendedConfiguration() {
+        var settings = sharedSettings.jevSettings
+        settings.applyRecommendedConfiguration()
+        sharedSettings.updateJevSettings(settings)
+    }
+
     private var useCaseSection: some View {
         VStack(spacing: 0) {
-            AmberSectionLabel(text: "用途与范围")
-            AmberFormGroup {
-                ForEach(Array(activeUseCases.enumerated()), id: \.element) { index, useCase in
-                    if index > 0 {
-                        Divider()
-                            .overlay(AmberTheme.borderSoft)
-                            .padding(.leading, 58)
+            DisclosureGroup(isExpanded: $isAdvancedSettingsExpanded) {
+                VStack(spacing: 0) {
+                    AmberSectionLabel(text: "用途与范围")
+                    AmberFormGroup {
+                        ForEach(Array(activeUseCases.enumerated()), id: \.element) { index, useCase in
+                            if index > 0 {
+                                Divider()
+                                    .overlay(AmberTheme.borderSoft)
+                                    .padding(.leading, 58)
+                            }
+                            useCaseRow(useCase)
+                        }
                     }
-                    useCaseRow(useCase)
+                    Text(IOSAppLocalization.string("Shadow 只观测不应用；关闭即零网络。", defaultValue: "Shadow 只观测不应用；关闭即零网络。"))
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 30)
+                        .padding(.top, 8)
                 }
+            } label: {
+                HStack {
+                    Text(IOSAppLocalization.string("高级设置", defaultValue: "高级设置"))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AmberTheme.foreground)
+                    Spacer()
+                    Text(IOSAppLocalization.string("逐用途模式与数据范围", defaultValue: "逐用途模式与数据范围"))
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                }
+                .contentShape(Rectangle())
             }
-            Text(IOSAppLocalization.string("Shadow 只观测不应用；关闭即零网络。", defaultValue: "Shadow 只观测不应用；关闭即零网络。"))
-                .font(.caption)
-                .foregroundStyle(AmberTheme.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 30)
-                .padding(.top, 8)
+            .tint(AmberTheme.accent)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
         }
     }
 
@@ -613,6 +720,7 @@ struct IOSJevSettingsView: View {
                         Text(IOSAppLocalization.string("暂无记录", defaultValue: "暂无记录"))
                     }
                     statusLine
+                    useCaseMetricsSection
                 }
                 .font(.caption)
                 .foregroundStyle(AmberTheme.muted)
@@ -627,6 +735,7 @@ struct IOSJevSettingsView: View {
                 Button {
                     IOSJevMetricsStore.clear()
                     metricsSummary = IOSJevMetricsStore.summary()
+                    useCaseMetricsSummaries = IOSJevMetricsStore.useCaseSummaries()
                 } label: {
                     HStack {
                         Text(IOSAppLocalization.string("清除使用记录", defaultValue: "清除使用记录"))
@@ -650,6 +759,95 @@ struct IOSJevSettingsView: View {
         }
     }
 
+    private var useCaseMetricsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(IOSAppLocalization.string("Shadow 对比（近 7 天）", defaultValue: "Shadow 对比（近 7 天）"))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+                .padding(.top, 4)
+
+            ForEach(useCaseMetricsSummaries, id: \.useCase) { summary in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 8) {
+                        Text(IOSAppLocalization.string(summary.useCase.displayName, defaultValue: summary.useCase.displayName))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(AmberTheme.foreground)
+                        Spacer(minLength: 8)
+                        Text(IOSAppLocalization.formatted("%d 条", defaultValue: "%d 条", arguments: [summary.total]))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                    metricLine("差异率", value: summary.differenceRate.map(formatRate))
+                    metricLine("等待 p50", value: summary.waitP50Ms.map(formatMilliseconds))
+                    metricLine("等待 p95", value: summary.waitP95Ms.map(formatMilliseconds))
+                    if summary.useCase == .webActions {
+                        metricLine("目标完成率", value: summary.completionRate.map(formatRate))
+                    }
+                    fallbackReasonsLine(summary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 5)
+
+                if summary.useCase != useCaseMetricsSummaries.last?.useCase {
+                    Divider()
+                        .overlay(AmberTheme.borderSoft)
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 4)
+    }
+
+    private func metricLine(_ label: String, value: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(IOSAppLocalization.string(label, defaultValue: label))
+                .foregroundStyle(AmberTheme.muted)
+            Spacer(minLength: 8)
+            Text(value ?? IOSAppLocalization.string("暂无数据", defaultValue: "暂无数据"))
+                .foregroundStyle(AmberTheme.muted)
+                .monospacedDigit()
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private func fallbackReasonsLine(_ summary: IOSJevMetricsStore.UseCaseSummary) -> some View {
+        if summary.fallbackReasons.isEmpty {
+            metricLine(
+                "回退原因",
+                value: summary.total == 0
+                    ? IOSAppLocalization.string("暂无数据", defaultValue: "暂无数据")
+                    : IOSAppLocalization.string("无回退记录", defaultValue: "无回退记录")
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(IOSAppLocalization.string("回退原因", defaultValue: "回退原因"))
+                    .foregroundStyle(AmberTheme.muted)
+                ForEach(sortedFallbackReasons(summary), id: \.key) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(entry.key)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Text("×\(entry.value)")
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(AmberTheme.muted)
+                }
+            }
+            .font(.caption)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func sortedFallbackReasons(_ summary: IOSJevMetricsStore.UseCaseSummary) -> [(key: String, value: Int)] {
+        summary.fallbackReasons.sorted { lhs, rhs in
+            lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value > rhs.value
+        }
+    }
+
     @ViewBuilder
     private var statusLine: some View {
         let status = IOSJevDecisionCoordinator.shared.status
@@ -666,5 +864,13 @@ struct IOSJevSettingsView: View {
 
     private func formatBytes(_ bytes: Int) -> String {
         bytes < 1_024 ? "\(bytes) B" : String(format: "%.1f KiB", Double(bytes) / 1_024)
+    }
+
+    private func formatRate(_ rate: Double) -> String {
+        String(format: "%.1f%%", rate * 100)
+    }
+
+    private func formatMilliseconds(_ milliseconds: Int) -> String {
+        "\(milliseconds) ms"
     }
 }
