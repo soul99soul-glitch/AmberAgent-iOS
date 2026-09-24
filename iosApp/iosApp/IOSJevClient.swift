@@ -287,21 +287,29 @@ final class IOSJevClient {
 
     /// 与实际出站共用编码，供协调器在并发预算锁内预留精确请求体字节数。
     func requestBodyByteCount(_ input: RequestInput) throws -> Int {
-        try encodedRequestBody(input).count
+        try Self.encodedRequestBody(
+            model: input.model, state: input.state, questions: input.questions, style: input.style
+        ).count
     }
 
-    private func encodedRequestBody(_ input: RequestInput) throws -> Data {
-        guard Set(input.questions.map(\.id)).count == input.questions.count else {
+    /// Shared with callers that fit a bounded batch to the actual wire byte budget.
+    static func encodedRequestBody(
+        model: String,
+        state: String,
+        questions: [IOSJevQuestion],
+        style: IOSJevAPIStyle
+    ) throws -> Data {
+        guard Set(questions.map(\.id)).count == questions.count else {
             throw IOSJevRequestError.invalidRequest("duplicate question id")
         }
-        let questionMap = Dictionary(uniqueKeysWithValues: input.questions.map { ($0.id, $0) })
+        let questionMap = Dictionary(uniqueKeysWithValues: questions.map { ($0.id, $0) })
         let encoder = JSONEncoder()
         do {
-            switch input.style {
+            switch style {
             case .systemone:
-                return try encoder.encode(RequestBody(model: input.model, state: input.state, questions: questionMap))
+                return try encoder.encode(RequestBody(model: model, state: state, questions: questionMap))
             case .vercelGateway:
-                return try encoder.encode(GatewayEvaluationBody(state: input.state, questions: questionMap.mapValues(GatewayQuestion.init)))
+                return try encoder.encode(GatewayEvaluationBody(state: state, questions: questionMap.mapValues(GatewayQuestion.init)))
             }
         } catch {
             throw IOSJevRequestError.invalidRequest("encode failed: \(error.localizedDescription)")
@@ -335,7 +343,9 @@ final class IOSJevClient {
             return cached
         }
 
-        let bodyData = try encodedRequestBody(input)
+        let bodyData = try Self.encodedRequestBody(
+            model: input.model, state: input.state, questions: input.questions, style: input.style
+        )
         guard bodyData.count <= policy.maxRequestBytes else {
             throw IOSJevRequestError.requestTooLarge(bytes: bodyData.count)
         }

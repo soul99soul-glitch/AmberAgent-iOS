@@ -1290,6 +1290,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         while steps < configuration.maxSteps {
             let chunk: MessageChunk
             let cancelledBeforeProvider: Bool
+            var transcriptRequest: PromptTranscriptRequest?
             if Task.isCancelled {
                 cancelledBeforeProvider = true
             } else {
@@ -1313,11 +1314,24 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 // B1: 钩子可抛(如上下文压缩失败)——落入下方通用 catch,与本轮
                 // provider 失败同路径收口(CG-C prepareAndStartStreaming 压缩失败
                 // → presentStreamError 的引擎侧等价)。
-                let requestMessages = try await prepareRequestMessages?(working) ?? working
+                var requestMessages = try await prepareRequestMessages?(working) ?? working
                 let preparedRequest = try await prepareStepRequest(
                     providerSetting: providerSetting,
                     params: effectiveParams
                 )
+                let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
+                    setting: preparedRequest.providerSetting,
+                    model: preparedRequest.params.model
+                )
+                if transcriptCapabilities.systemUpdates {
+                    let prepared = PromptTranscript.shared.prepare(
+                        canonicalMessages: working,
+                        preparedMessages: requestMessages,
+                        tools: preparedRequest.params.tools
+                    )
+                    requestMessages = prepared.messages
+                    transcriptRequest = prepared
+                }
                 if let ledger, let ledgerRunId {
                     let snapshot = IOSRunRequestSnapshot.make(
                         roundIndex: steps + 1,
@@ -1381,7 +1395,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
 
             let rawAssistantMessage = assistantMessage(from: chunk)
             if Self.reachedOutputLimit(chunk) {
-                let limitedMessages = rawAssistantMessage.map { working + [$0] } ?? working
+                let recorded = rawAssistantMessage.map { message in
+                    transcriptRequest.map { PromptTranscript.shared.recordResponse(message: message, request: $0) } ?? message
+                }
+                let limitedMessages = recorded.map { working + [$0] } ?? working
                 onMessagesUpdated?(limitedMessages)
                 return IOSAgentToolEngineResult(
                     messages: limitedMessages,
@@ -1395,28 +1412,38 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             let emittedTools = pendingToolCalls(in: rawAssistantMessage)
             let alreadyCompleted = completedToolKeys(in: working)
             let assistantMessage: UIMessage? = rawAssistantMessage.flatMap { message in
-                guard message.role == MessageRole.assistant, !alreadyCompleted.isEmpty else {
-                    return message
-                }
-                let retainedParts = message.parts.filter { part in
-                    guard let tool = part as? UIMessagePart.Tool, tool.output.isEmpty else {
-                        return true
+                let retained: UIMessage?
+                if message.role != MessageRole.assistant || alreadyCompleted.isEmpty {
+                    retained = message
+                } else {
+                    let retainedParts = message.parts.filter { part in
+                        guard let tool = part as? UIMessagePart.Tool, tool.output.isEmpty else {
+                            return true
+                        }
+                        return !alreadyCompleted.contains(Self.toolCallKey(tool))
                     }
-                    return !alreadyCompleted.contains(Self.toolCallKey(tool))
+                    if retainedParts.isEmpty {
+                        retained = nil
+                    } else if retainedParts.count == message.parts.count {
+                        retained = message
+                    } else {
+                        retained = UIMessage(
+                            id: message.id,
+                            role: message.role,
+                            parts: retainedParts,
+                            annotations: message.annotations,
+                            createdAt: message.createdAt,
+                            finishedAt: message.finishedAt,
+                            modelId: message.modelId,
+                            usage: message.usage,
+                            translation: message.translation
+                        )
+                    }
                 }
-                guard !retainedParts.isEmpty else { return nil }
-                guard retainedParts.count != message.parts.count else { return message }
-                return UIMessage(
-                    id: message.id,
-                    role: message.role,
-                    parts: retainedParts,
-                    annotations: message.annotations,
-                    createdAt: message.createdAt,
-                    finishedAt: message.finishedAt,
-                    modelId: message.modelId,
-                    usage: message.usage,
-                    translation: message.translation
-                )
+                guard let retained else { return nil }
+                return transcriptRequest.map {
+                    PromptTranscript.shared.recordResponse(message: retained, request: $0)
+                } ?? retained
             }
             if let assistantMessage {
                 working.append(assistantMessage)
@@ -1688,11 +1715,25 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             try Task.checkCancellation()
 
             let preparedMessages = try await prepareRequestMessages?(messages) ?? messages
-            let requestMessages = [Self.toolLoopGuardFinalizationInstruction()] + preparedMessages
+            var requestMessages = [Self.toolLoopGuardFinalizationInstruction()] + preparedMessages
             let preparedRequest = try await prepareStepRequest(
                 providerSetting: providerSetting,
                 params: params.replacingTools([])
             )
+            var transcriptRequest: PromptTranscriptRequest?
+            let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
+                setting: preparedRequest.providerSetting,
+                model: preparedRequest.params.model
+            )
+            if transcriptCapabilities.systemUpdates {
+                let prepared = PromptTranscript.shared.prepare(
+                    canonicalMessages: messages,
+                    preparedMessages: requestMessages,
+                    tools: preparedRequest.params.tools
+                )
+                requestMessages = prepared.messages
+                transcriptRequest = prepared
+            }
             if let ledger, let ledgerRunId {
                 let snapshot = IOSRunRequestSnapshot.make(
                     roundIndex: stepsExecuted + 1,
@@ -1720,7 +1761,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             )
             let reachedOutputLimit = Self.reachedOutputLimit(chunk)
             var finalMessages = messages
-            if let assistant = toolFreeAssistantMessage(from: assistantMessage(from: chunk)) {
+            if let rawAssistant = toolFreeAssistantMessage(from: assistantMessage(from: chunk)) {
+                let assistant = transcriptRequest.map {
+                    PromptTranscript.shared.recordResponse(message: rawAssistant, request: $0)
+                } ?? rawAssistant
                 finalMessages.append(assistant)
             } else {
                 finalMessages.append(Self.toolLoopGuardFallbackMessage())
@@ -2287,14 +2331,10 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     return part
                 }
                 didChange = true
-                return UIMessagePart.Tool(
-                    toolCallId: toolPart.toolCallId,
-                    toolName: toolPart.toolName,
+                return PromptTranscript.shared.doCopyTool(
+                    tool: toolPart,
                     input: toolPart.input,
-                    output: newOutput,
-                    approvalState: toolPart.approvalState,
-                    streamIndex: toolPart.streamIndex,
-                    metadata: nil
+                    output: newOutput
                 )
             }
             guard didChange else { return message }

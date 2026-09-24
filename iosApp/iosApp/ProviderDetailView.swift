@@ -317,7 +317,7 @@ struct ProviderDetailView: View {
                         )
                         ProviderDetailDivider()
                     }
-                    if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode) {
+                    if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode), openAI.brand != OpenAIBrand.mimo {
                         ProviderStaticRow(title: "API 地址", subtitle: "", value: draftBaseURL, valueStyle: .mono)
                     } else if isGeminiOAuth {
                         ProviderStaticRow(title: "API 地址", subtitle: "", value: draftBaseURL, valueStyle: .mono)
@@ -339,7 +339,7 @@ struct ProviderDetailView: View {
                         )
                     }
                 }
-                if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode) {
+                if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode), openAI.brand != OpenAIBrand.mimo {
                     ProviderDetailFooter("已钉到该品牌官方 Coding Plan 地址。")
                 } else if isGeminiOAuth {
                     ProviderDetailFooter("已钉到 Antigravity Gemini 官方地址。")
@@ -1017,6 +1017,7 @@ struct ProviderDetailView: View {
         guard let brand else { return nil }
         if brand == OpenAIBrand.zhipu { return .zhipuCodingPlan }
         if brand == OpenAIBrand.kimi { return .kimiCodingPlan }
+        if brand == OpenAIBrand.mimo { return .mimoCodingPlan }
         if brand == OpenAIBrand.minimax { return .minimaxTokenPlan }
         return nil
     }

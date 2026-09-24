@@ -186,7 +186,7 @@ struct ChatView: View {
         )
     }
 
-    var body: some View {
+    private var chatContent: some View {
         ZStack {
             AmberThemePageBackground(surface: .app)
             messageList
@@ -401,6 +401,10 @@ struct ChatView: View {
             }
             .ignoresSafeArea()
         }
+    }
+
+    var body: some View {
+        chatContent
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onDisappear {
@@ -415,10 +419,7 @@ struct ChatView: View {
         }
         .confirmationDialog(
             "删除这条消息？",
-            isPresented: Binding(
-                get: { pendingDeleteMessageId != nil },
-                set: { if !$0 { pendingDeleteMessageId = nil } }
-            ),
+            isPresented: pendingDeleteMessageBinding,
             titleVisibility: .visible
         ) {
             Button("删除", role: .destructive) {
@@ -618,6 +619,13 @@ struct ChatView: View {
                     conversationStore.clearUserVisibleError()
                 }
             }
+        )
+    }
+
+    private var pendingDeleteMessageBinding: Binding<Bool> {
+        Binding(
+            get: { pendingDeleteMessageId != nil },
+            set: { if !$0 { pendingDeleteMessageId = nil } }
         )
     }
 
@@ -1489,31 +1497,9 @@ struct ChatView: View {
             }
 
             if !viewModel.chatSuggestions.isEmpty, !viewModel.isGenerationActive {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(viewModel.chatSuggestions.prefix(4), id: \.self) { suggestion in
-                            Button {
-                                viewModel.inputText = suggestion
-                                withAnimation(.easeOut(duration: 0.2)) {
-                                    viewModel.chatSuggestions = []
-                                }
-                                isInputFocused = true
-                            } label: {
-                                Text(suggestion)
-                                    .font(.caption)
-                                    .foregroundStyle(AmberTheme.foreground2)
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 10)
-                                    .frame(height: 26)
-                            }
-                            .buttonStyle(.plain)
-                            .amberGlass(cornerRadius: 13, interactive: false)
-                            .frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                    }
-                    .padding(.horizontal, 2)
-                    .padding(.vertical, 3)
+                ChatSuggestionStrip(suggestions: viewModel.chatSuggestions) { suggestion in
+                    viewModel.fillInputFromSuggestion(suggestion)
+                    isInputFocused = true
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }

@@ -71,7 +71,7 @@ final class IOSProviderConfigToolService {
                 "auth_mode": Self.authMode(of: provider),
                 "chat_model_count": chatModels.count,
                 "image_model_count": imageModels.count,
-                // false for placeholder brands (e.g. MiMo) — still listed in settings.
+                // Runtime protocol support is independent of credentials and enabled state.
                 "chat_streaming_supported": chatCapable,
             ]
             if let openAI = provider as? ProviderSetting.OpenAI {

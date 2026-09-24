@@ -158,6 +158,43 @@ final class ProviderRegistryStoreTests: XCTestCase {
         XCTAssertTrue(ProviderRouteKind.isEditablePreset(provider))
     }
 
+    func testMiMoSupportsChatSelectionAndBothAuthenticationModes() {
+        let namespace = "MiMoProvider-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: namespace)!
+        defer { defaults.removePersistentDomain(forName: namespace) }
+        let registry = ProviderRegistryStore(
+            settingsStore: makeSettings(apiKey: "", modelId: ""),
+            userDefaults: defaults,
+            keyNamespace: namespace,
+            keychainPrefix: namespace,
+            keyStore: TestProviderRegistryKeyStore(defaults: defaults, prefix: namespace)
+        )
+        for mode in [OpenAIAuthMode.apiKey, .mimoCodingPlan] {
+            let endpoint = mode == .apiKey
+                ? "https://api.xiaomimimo.com/v1"
+                : "https://token-plan-cn.xiaomimimo.com/v1"
+            let provider = makeOpenAIProvider(
+                useResponseApi: false, apiKey: "mimo-test-key",
+                brand: .mimo, authMode: mode, baseUrl: endpoint, modelId: "mimo-v2.5"
+            )
+            XCTAssertTrue(ChatProviderConfiguration.supportsChatStreaming(provider))
+            XCTAssertNil(ChatProviderConfiguration.issue(for: provider.models[0], provider: provider))
+            XCTAssertEqual(ChatProviderConfiguration.configuredChatModels(in: [provider]).count, 1)
+            XCTAssertTrue(registry.canActivate(provider))
+            XCTAssertTrue(ProviderRouteKind.isEditablePreset(provider))
+
+            let missingKey = makeOpenAIProvider(
+                useResponseApi: false, apiKey: "", brand: .mimo,
+                authMode: mode, baseUrl: endpoint, modelId: "mimo-v2.5"
+            )
+            XCTAssertEqual(
+                ChatProviderConfiguration.issue(for: missingKey.models[0], provider: missingKey),
+                .missingAPIKey
+            )
+            XCTAssertTrue(ChatProviderConfiguration.configuredChatModels(in: [missingKey]).isEmpty)
+        }
+    }
+
     func testSettingsStorePersistsProviderConfigurationAcrossRestart() throws {
         let namespace = "SettingsStorePersistence-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: namespace)!
@@ -474,22 +511,26 @@ final class ProviderRegistryStoreTests: XCTestCase {
         )
     }
 
-    private func makeOpenAIProvider(useResponseApi: Bool, apiKey: String) -> ProviderSetting.OpenAI {
+    private func makeOpenAIProvider(
+        useResponseApi: Bool, apiKey: String,
+        brand: OpenAIBrand = .generic, authMode: OpenAIAuthMode = .apiKey,
+        baseUrl: String = "https://api.x.ai/v1", modelId: String = "grok-4"
+    ) -> ProviderSetting.OpenAI {
         ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),
             enabled: true,
             name: useResponseApi ? "xAI Responses" : "OpenAI Compatible",
-            models: [makeChatModel("grok-4")],
+            models: [makeChatModel(modelId)],
             balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
             builtIn: true,
             descriptionText: nil,
             shortDescriptionText: nil,
             apiKey: apiKey,
-            baseUrl: "https://api.x.ai/v1",
+            baseUrl: baseUrl,
             chatCompletionsPath: useResponseApi ? "/responses" : "/chat/completions",
             useResponseApi: useResponseApi,
-            authMode: OpenAIAuthMode.apiKey,
-            brand: OpenAIBrand.generic
+            authMode: authMode,
+            brand: brand
         )
     }
 }

@@ -2485,6 +2485,34 @@ final class IOSOrchestrationToolTests: XCTestCase {
         XCTAssertTrue(upload.contains("Verify each claim against its source."))
     }
 
+    func testInheritedConfigurationSuppressesJevRoleSuggestion() {
+        let inherited = IOSOrchestrationAgentConfiguration(
+            roleId: nil,
+            systemPrompt: "继承的提示",
+            context: "继承的上下文",
+            toolScope: ["search_web"]
+        )
+
+        XCTAssertFalse(
+            IOSThreadOrchestrationToolService.shouldRequestJevSubAgentIntent(
+                arguments: ["task_name": "worker", "message": "继续"],
+                inheritedConfiguration: inherited
+            )
+        )
+        XCTAssertTrue(
+            IOSThreadOrchestrationToolService.shouldRequestJevSubAgentIntent(
+                arguments: ["task_name": "worker", "message": "继续"],
+                inheritedConfiguration: nil
+            )
+        )
+        XCTAssertFalse(
+            IOSThreadOrchestrationToolService.shouldRequestJevSubAgentIntent(
+                arguments: ["task_name": "worker", "message": "继续", "role_id": "explorer"],
+                inheritedConfiguration: nil
+            )
+        )
+    }
+
 }
 
 /// Sendable 桥：跨 await 调 non-Sendable 的 `any IOSToolExecutor`（照

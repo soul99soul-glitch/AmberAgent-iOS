@@ -55,6 +55,37 @@ final class ChatViewModelGenerationParamsTests: XCTestCase {
         }?.value, conversationB.toHexDashString())
     }
 
+    func testMimoV26ModelDefaultsSurvivePersistenceAndEnableImages() throws {
+        let defaults = isolatedDefaults()
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        let provider = store.addProvider(IosSettingsMutations.shared.buildBlankOpenAIProvider(
+            name: "MiMo", apiKey: "mimo-capability-test", baseUrl: "https://api.xiaomimimo.com/v1"
+        ))
+        let modelIds = ["mimo-v2.6-pro", "mimo-v2.6-flash", "mimo-v2.6-pro-ultraspeed"]
+        _ = store.mergeProviderChatModels(
+            providerId: provider.id.description(),
+            models: modelIds.map { (modelId: $0, displayName: $0) }
+        )
+        let reloaded = IOSSharedSettingsStore(userDefaults: defaults)
+        let savedProvider = try XCTUnwrap(reloaded.snapshot.providers.first { $0.id == provider.id })
+        for model in savedProvider.models {
+            XCTAssertEqual(model.inputModalities.map(\.name), ["TEXT", "IMAGE", "AUDIO", "VIDEO"])
+            XCTAssertEqual(model.abilities.map(\.name), ["TOOL", "REASONING"])
+            XCTAssertNil(model.contextWindowTokens, "使用注册表默认窗口，不写入伪装成手动覆盖的值")
+            XCTAssertEqual(ChatContextSnapshot.resolvedContextWindowTokens(modelWindow: nil, modelId: model.modelId), 1_000_000)
+            XCTAssertEqual(ChatContextSnapshot.resolvedContextWindowTokens(modelWindow: 128_000, modelId: model.modelId), 128_000)
+            reloaded.setCurrentChatModelId(model.id.description())
+            reloaded.setCurrentAssistantChatModelId(model.id.description())
+            let viewModel = ChatViewModel(
+                settingsStore: SettingsStore(userDefaults: isolatedDefaults()),
+                sharedSettings: reloaded, autoGenerateResponses: false
+            )
+            viewModel.addPendingImage(dataUrl: "data:image/png;base64,AAAA", previewData: Data())
+            XCTAssertEqual(viewModel.imageAttachmentState, .ready, model.modelId)
+        }
+        XCTAssertEqual(savedProvider.models.count, modelIds.count)
+    }
+
     private func isolatedDefaults() -> UserDefaults {
         let suite = "ChatViewModelGenerationParamsTests-\(UUID().uuidString)"
         return UserDefaults(suiteName: suite)!

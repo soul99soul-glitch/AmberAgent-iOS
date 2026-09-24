@@ -330,6 +330,14 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(glow.contains("isAnimated && !isPaused && !isReduceMotion"))
     }
 
+    func testMiMoCodingPlanIsSelectableInProviderSettings() throws {
+        let detail = try source("iosApp/ProviderDetailView.swift")
+        XCTAssertTrue(detail.contains("if brand == OpenAIBrand.mimo { return .mimoCodingPlan }"))
+        XCTAssertTrue(detail.contains("switchAuthMode(to: tokenPlan)"))
+        XCTAssertTrue(detail.contains("sharedSettings.setOpenAIAuthMode(providerId: providerId, authMode: mode)"))
+        XCTAssertTrue(detail.contains("openAI.brand != OpenAIBrand.mimo"))
+    }
+
     func testGrokWebLoginIsWiredToProviderSettingsAndChatRuntime() throws {
         let detail = try source("iosApp/ProviderDetailView.swift")
         let configuration = try source("iosApp/ChatProviderConfiguration.swift")

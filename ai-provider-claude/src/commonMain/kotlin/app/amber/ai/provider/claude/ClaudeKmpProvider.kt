@@ -2,6 +2,9 @@ package app.amber.ai.provider.claude
 
 import app.amber.ai.core.InputSchema
 import app.amber.ai.core.MessageRole
+import app.amber.ai.core.PromptToolDeclaration
+import app.amber.ai.core.PromptTranscript
+import app.amber.ai.core.PromptTranscriptCapabilities
 import app.amber.ai.core.ReasoningLevel
 import app.amber.ai.core.SYSTEM_PROMPT_CACHE_CONTROL_METADATA
 import app.amber.ai.core.SYSTEM_PROMPT_CACHE_DISABLED
@@ -62,6 +65,8 @@ import kotlinx.serialization.json.putJsonArray
 import kotlin.time.Clock
 
 private const val ANTHROPIC_VERSION = "2023-06-01"
+private const val MID_CONVERSATION_TOOL_CHANGES_BETA = "mid-conversation-tool-changes-2026-07-01"
+private const val DEFERRED_TOOL_PLACEHOLDER = "__amber_deferred_placeholder__"
 
 /**
  * KMP Anthropic/Claude chat provider. Implements [Provider] for
@@ -138,7 +143,7 @@ class ClaudeKmpProvider internal constructor(
     ): MessageChunk {
         val requestBody = buildMessageRequest(providerSetting, messages, params)
         val response = httpClient.post("${providerSetting.baseUrl}/messages") {
-            generationHeaders(providerSetting, messages, params.customHeaders).forEach {
+            generationHeaders(providerSetting, messages, params).forEach {
                 header(it.name, it.value)
             }
             contentType(ContentType.Application.Json)
@@ -185,7 +190,7 @@ class ClaudeKmpProvider internal constructor(
         val events = sseClient.sseFlow("$baseUrl/messages") {
             method = HttpMethod.Post
             contentType(ContentType.Application.Json)
-            generationHeaders(providerSetting, messages, params.customHeaders).forEach {
+            generationHeaders(providerSetting, messages, params).forEach {
                 header(it.name, it.value)
             }
             header("x-api-key", apiKey)
@@ -331,12 +336,42 @@ class ClaudeKmpProvider internal constructor(
     private fun generationHeaders(
         providerSetting: ProviderSetting.Claude,
         messages: List<UIMessage>,
-        customHeaders: List<CustomHeader>,
-    ): List<CustomHeader> = OpenCodeRequestHeaders.forGeneration(
-        baseUrl = providerSetting.baseUrl,
-        messages = messages,
-        customHeaders = customHeaders,
-    )
+        params: TextGenerationParams,
+    ): List<CustomHeader> {
+        val headers = OpenCodeRequestHeaders.forGeneration(
+            baseUrl = providerSetting.baseUrl,
+            messages = messages,
+            customHeaders = params.customHeaders,
+        )
+        if (!usesNativeToolChanges(providerSetting, messages, params)) return headers
+
+        val existingIndex = headers.indexOfFirst { it.name.equals("anthropic-beta", ignoreCase = true) }
+        if (existingIndex < 0) {
+            return headers + CustomHeader("anthropic-beta", MID_CONVERSATION_TOOL_CHANGES_BETA)
+        }
+        val existing = headers[existingIndex]
+        if (existing.value.split(',').any { it.trim() == MID_CONVERSATION_TOOL_CHANGES_BETA }) return headers
+        return headers.toMutableList().apply {
+            set(existingIndex, existing.copy(value = "${existing.value},$MID_CONVERSATION_TOOL_CHANGES_BETA"))
+        }
+    }
+
+    private fun usesNativeToolChanges(
+        providerSetting: ProviderSetting.Claude,
+        messages: List<UIMessage>,
+        params: TextGenerationParams,
+    ): Boolean {
+        val capabilities = PromptTranscriptCapabilities.resolve(providerSetting, params.model)
+        if (!params.model.abilities.contains(ModelAbility.TOOL) ||
+            !capabilities.systemUpdates ||
+            !capabilities.toolAdditions ||
+            !capabilities.toolRemovals
+        ) return false
+        val view = PromptTranscript.resolve(messages, params.tools, nativeSystem = true)
+        return view.hasTranscript &&
+            view.initialTools.isNotEmpty() &&
+            !view.hasToolRedefinitions
+    }
 
     // ---- request building ----
     // Internal (not private) so JVM tests can assert the JSON shape without HTTP.
@@ -348,9 +383,28 @@ class ClaudeKmpProvider internal constructor(
     ): JsonObject {
         fun cacheControlEphemeral() = buildJsonObject { put("type", "ephemeral") }
 
+        val capabilities = PromptTranscriptCapabilities.resolve(providerSetting, params.model)
+        val nativeSystem = capabilities.systemUpdates &&
+            PromptTranscript.resolve(messages, params.tools, nativeSystem = true).hasTranscript
+        val transcript = PromptTranscript.resolve(messages, params.tools, nativeSystem)
+        val nativeToolChanges = nativeSystem &&
+            params.model.abilities.contains(ModelAbility.TOOL) &&
+            capabilities.toolAdditions &&
+            capabilities.toolRemovals &&
+            transcript.initialTools.isNotEmpty() &&
+            !transcript.hasToolRedefinitions
+
         return buildJsonObject {
             put("model", params.model.modelId)
-            put("messages", buildMessages(messages, providerSetting.promptCaching))
+            put(
+                "messages",
+                buildMessages(
+                    transcript.messages,
+                    providerSetting.promptCaching,
+                    nativeSystem = nativeSystem,
+                    nativeToolChanges = nativeToolChanges,
+                ),
+            )
             put("max_tokens", params.maxTokens ?: 64_000)
 
             if (params.temperature != null && !params.reasoningLevel.isEnabled) {
@@ -363,9 +417,15 @@ class ClaudeKmpProvider internal constructor(
             // Anthropic has one top-level system array, so flatten every system
             // message in source order. Keep the per-text-part metadata below so
             // prompt-cache markers retain their existing behavior.
-            val systemTextParts = messages
-                .filter { it.role == MessageRole.SYSTEM }
-                .flatMap { message -> message.parts.filterIsInstance<UIMessagePart.Text>() }
+            val systemTextParts = transcript.messages
+                .filter { message ->
+                    if (message.role != MessageRole.SYSTEM) return@filter false
+                    if (!nativeSystem || !transcript.hasTranscript) return@filter true
+                    PromptTranscript.event(message)?.initial == true
+                }
+                .flatMap { message ->
+                    message.parts.filterIsInstance<UIMessagePart.Text>().filter { it.text.isNotEmpty() }
+                }
             if (systemTextParts.isNotEmpty()) {
                 val cacheDisabled = systemTextParts.any { part ->
                     part.metadata?.get(SYSTEM_PROMPT_CACHE_CONTROL_METADATA)?.jsonPrimitive?.contentOrNull == SYSTEM_PROMPT_CACHE_DISABLED
@@ -373,7 +433,11 @@ class ClaudeKmpProvider internal constructor(
                 val explicitCacheIndex = systemTextParts.indexOfLast { part ->
                     part.metadata?.get(SYSTEM_PROMPT_CACHE_CONTROL_METADATA)?.jsonPrimitive?.contentOrNull == SYSTEM_PROMPT_CACHE_EPHEMERAL
                 }
-                val cacheIndex = explicitCacheIndex.takeIf { it >= 0 }
+                val cacheIndex = when {
+                    explicitCacheIndex >= 0 -> explicitCacheIndex
+                    nativeSystem && providerSetting.promptCaching && !cacheDisabled -> systemTextParts.lastIndex
+                    else -> null
+                }
                 put("system", buildJsonArray {
                     systemTextParts.forEachIndexed { index, part ->
                         add(buildJsonObject {
@@ -422,42 +486,156 @@ class ClaudeKmpProvider internal constructor(
             }
 
             // tools
-            if (params.model.abilities.contains(ModelAbility.TOOL) && params.tools.isNotEmpty()) {
-                putJsonArray("tools") {
-                    params.tools.forEachIndexed { index, tool ->
-                        add(buildJsonObject {
-                            put("name", tool.name)
-                            put("description", tool.description)
-                            tool.parameters()?.let { schema ->
-                                put("input_schema", json.encodeToJsonElement(InputSchema.serializer(), schema))
-                            }
-                            if (providerSetting.promptCaching && index == params.tools.lastIndex) {
-                                put("cache_control", cacheControlEphemeral())
-                            }
-                        })
-                    }
+            if (params.model.abilities.contains(ModelAbility.TOOL)) {
+                val toolDeclarations = if (nativeToolChanges) {
+                    collectTranscriptToolDeclarations(transcript.messages)
+                } else {
+                    emptyList()
                 }
-                put("tool_choice", buildJsonObject {
-                    put("type", "auto")
-                    put("disable_parallel_tool_use", true)
-                })
+                if (params.tools.isNotEmpty() || toolDeclarations.isNotEmpty()) {
+                    putJsonArray("tools") {
+                        if (nativeToolChanges) {
+                            val initialNames = transcript.initialTools.mapTo(hashSetOf()) { it.name }
+                            transcript.initialTools.forEachIndexed { index, tool ->
+                                add(tool.toAnthropicTool(index == transcript.initialTools.lastIndex && providerSetting.promptCaching, cacheControlEphemeral()))
+                            }
+                            add(buildJsonObject {
+                                put("name", DEFERRED_TOOL_PLACEHOLDER)
+                                put("description", "Reserved placeholder. Never available. Never call this.")
+                                put("input_schema", emptyObjectInputSchema())
+                                put("defer_loading", true)
+                            })
+                            toolDeclarations
+                                .filter { it.name !in initialNames }
+                                .forEach { add(it.toAnthropicTool(cache = false, cacheControl = null, deferred = true)) }
+                        } else {
+                            params.tools.forEachIndexed { index, tool ->
+                                add(buildJsonObject {
+                                    put("name", tool.name)
+                                    put("description", tool.description)
+                                    tool.parameters()?.let { schema ->
+                                        put("input_schema", json.encodeToJsonElement(InputSchema.serializer(), schema))
+                                    }
+                                    if (providerSetting.promptCaching && index == params.tools.lastIndex) {
+                                        put("cache_control", cacheControlEphemeral())
+                                    }
+                                })
+                            }
+                        }
+                    }
+                    put("tool_choice", buildJsonObject {
+                        put("type", "auto")
+                        put("disable_parallel_tool_use", true)
+                    })
+                }
             }
         }.mergeCustomBody(params.customBody)
     }
 
-    private fun buildMessages(messages: List<UIMessage>, promptCaching: Boolean) = buildJsonArray {
-        messages
-            .filter { it.isValidToUpload() && it.role != MessageRole.SYSTEM }
-            .forEach { message ->
-                if (message.role == MessageRole.ASSISTANT) {
-                    addAssistantMessage(message)
-                } else {
-                    addUserMessage(message)
+    private fun buildMessages(
+        messages: List<UIMessage>,
+        promptCaching: Boolean,
+        nativeSystem: Boolean,
+        nativeToolChanges: Boolean,
+    ) = buildJsonArray {
+        val pendingSystem = mutableListOf<JsonObject>()
+        fun flushPendingSystem() {
+            pendingSystem.forEach { add(it) }
+            pendingSystem.clear()
+        }
+
+        val initialSystem = messages.firstOrNull { message ->
+            message.role == MessageRole.SYSTEM && PromptTranscript.event(message)?.initial == true
+        }
+        var skippedInitial = false
+        messages.forEach { message ->
+            if (message.role == MessageRole.SYSTEM) {
+                if (nativeSystem && message === initialSystem && !skippedInitial) {
+                    skippedInitial = true
+                } else if (nativeSystem) {
+                    buildSystemUpdate(message, nativeToolChanges)?.let(pendingSystem::add)
                 }
+                return@forEach
             }
+            if (!message.isValidToUpload()) return@forEach
+            if (message.role == MessageRole.ASSISTANT) {
+                flushPendingSystem()
+                addAssistantMessage(message)
+            } else {
+                addUserMessage(message)
+            }
+        }
+        flushPendingSystem()
     }.let { messagesArray ->
         if (!promptCaching) return@let messagesArray
         insertMessagesCacheControl(messagesArray)
+    }
+
+    private fun buildSystemUpdate(message: UIMessage, nativeToolChanges: Boolean): JsonObject? {
+        val event = PromptTranscript.event(message)
+        val textParts = message.parts.filterIsInstance<UIMessagePart.Text>().filter { it.text.isNotEmpty() }
+        val hasToolBlocks = nativeToolChanges && event != null &&
+            (event.toolsAdded.isNotEmpty() || event.toolsRemoved.isNotEmpty())
+        if (textParts.isEmpty() && !hasToolBlocks) return null
+        return buildJsonObject {
+            put("role", "system")
+            putJsonArray("content") {
+                textParts.forEach { part ->
+                    add(buildJsonObject {
+                        put("type", "text")
+                        put("text", part.text)
+                    })
+                }
+                if (nativeToolChanges && event != null) {
+                    event.toolsRemoved.forEach { name ->
+                        add(buildJsonObject {
+                            put("type", "tool_removal")
+                            put("tool", buildJsonObject {
+                                put("type", "tool_reference")
+                                put("name", name)
+                            })
+                        })
+                    }
+                    event.toolsAdded.forEach { tool ->
+                        add(buildJsonObject {
+                            put("type", "tool_addition")
+                            put("tool", buildJsonObject {
+                                put("type", "tool_reference")
+                                put("name", tool.name)
+                            })
+                        })
+                    }
+                }
+            }
+        }
+    }
+
+    private fun collectTranscriptToolDeclarations(messages: List<UIMessage>): List<PromptToolDeclaration> {
+        val declarations = linkedMapOf<String, PromptToolDeclaration>()
+        messages.forEach { message ->
+            if (message.role == MessageRole.SYSTEM) {
+                PromptTranscript.event(message)?.toolsAdded?.forEach { declarations[it.name] = it }
+            }
+        }
+        return declarations.values.toList()
+    }
+
+    private fun PromptToolDeclaration.toAnthropicTool(
+        cache: Boolean,
+        cacheControl: JsonObject?,
+        deferred: Boolean = false,
+    ): JsonObject = buildJsonObject {
+        put("name", name)
+        put("description", description)
+        parameters?.let { put("input_schema", json.encodeToJsonElement(InputSchema.serializer(), it)) }
+        if (cache && cacheControl != null) put("cache_control", cacheControl)
+        if (deferred) put("defer_loading", true)
+    }
+
+    private fun emptyObjectInputSchema(): JsonObject = buildJsonObject {
+        put("type", "object")
+        put("properties", buildJsonObject {})
+        put("required", buildJsonArray {})
     }
 
     /**

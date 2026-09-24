@@ -4,6 +4,8 @@ import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.BuiltInTools
 import app.amber.ai.provider.GoogleAuthMode
+import app.amber.ai.provider.MIMO_API_DEFAULT_BASE_URL
+import app.amber.ai.provider.MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
 import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelAbility
 import app.amber.ai.provider.Modality
@@ -180,6 +182,86 @@ class IosSettingsMutationsProviderTest {
         ).providers.single() as ProviderSetting.OpenAI
         assertEquals(OpenAIAuthMode.API_KEY, restored.authMode)
         assertEquals("https://open.bigmodel.cn/api/paas/v4", restored.baseUrl)
+    }
+
+    @Test
+    fun mimoAuthModeRoundTripPinsTokenPlanAndRestoresPublicApiBaseUrl() {
+        val provider = ProviderSetting.OpenAI(
+            apiKey = "tp-preserve",
+            baseUrl = MIMO_API_DEFAULT_BASE_URL,
+            models = listOf(Model(modelId = "mimo-v2.5-pro")),
+            brand = OpenAIBrand.MIMO,
+        )
+        val settings = Settings(providers = listOf(provider))
+
+        val planned = IosSettingsMutations.setOpenAIAuthMode(
+            settings = settings,
+            providerId = provider.id.toString(),
+            authMode = OpenAIAuthMode.MIMO_CODING_PLAN,
+        ).providers.single() as ProviderSetting.OpenAI
+        assertEquals(OpenAIAuthMode.MIMO_CODING_PLAN, planned.authMode)
+        assertEquals(MIMO_TOKEN_PLAN_DEFAULT_BASE_URL, planned.baseUrl)
+
+        val restored = IosSettingsMutations.setOpenAIAuthMode(
+            settings = Settings(providers = listOf(planned)),
+            providerId = provider.id.toString(),
+            authMode = OpenAIAuthMode.API_KEY,
+        ).providers.single() as ProviderSetting.OpenAI
+        assertEquals(OpenAIAuthMode.API_KEY, restored.authMode)
+        assertEquals(MIMO_API_DEFAULT_BASE_URL, restored.baseUrl)
+        assertEquals(provider.apiKey, restored.apiKey)
+        assertEquals(provider.models, restored.models)
+    }
+
+    @Test
+    fun mimoTokenPlanPreservesOfficialRegionalEndpointsAndRestoresPublicApi() {
+        listOf(
+            MIMO_TOKEN_PLAN_DEFAULT_BASE_URL,
+            "https://token-plan-sgp.xiaomimimo.com/v1",
+            "https://token-plan-ams.xiaomimimo.com/v1",
+        ).forEach { endpoint ->
+            val provider = ProviderSetting.OpenAI(
+                baseUrl = endpoint,
+                brand = OpenAIBrand.MIMO,
+            )
+
+            val planned = IosSettingsMutations.setOpenAIAuthMode(
+                settings = Settings(providers = listOf(provider)),
+                providerId = provider.id.toString(),
+                authMode = OpenAIAuthMode.MIMO_CODING_PLAN,
+            ).providers.single() as ProviderSetting.OpenAI
+            assertEquals(endpoint, planned.baseUrl)
+
+            val restored = IosSettingsMutations.setOpenAIAuthMode(
+                settings = Settings(providers = listOf(planned)),
+                providerId = provider.id.toString(),
+                authMode = OpenAIAuthMode.API_KEY,
+            ).providers.single() as ProviderSetting.OpenAI
+            assertEquals(MIMO_API_DEFAULT_BASE_URL, restored.baseUrl)
+        }
+    }
+
+    @Test
+    fun mimoTokenPlanPreservesCustomProxyAcrossAuthModeSwitches() {
+        val proxy = "https://mimo-proxy.example/v1"
+        val provider = ProviderSetting.OpenAI(
+            baseUrl = proxy,
+            brand = OpenAIBrand.MIMO,
+        )
+
+        val planned = IosSettingsMutations.setOpenAIAuthMode(
+            settings = Settings(providers = listOf(provider)),
+            providerId = provider.id.toString(),
+            authMode = OpenAIAuthMode.MIMO_CODING_PLAN,
+        ).providers.single() as ProviderSetting.OpenAI
+        assertEquals(proxy, planned.baseUrl)
+
+        val restored = IosSettingsMutations.setOpenAIAuthMode(
+            settings = Settings(providers = listOf(planned)),
+            providerId = provider.id.toString(),
+            authMode = OpenAIAuthMode.API_KEY,
+        ).providers.single() as ProviderSetting.OpenAI
+        assertEquals(proxy, restored.baseUrl)
     }
 
     @Test

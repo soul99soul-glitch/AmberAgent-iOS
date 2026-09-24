@@ -1570,6 +1570,18 @@ final class IOSChatBackgroundGenerationCoordinator {
             displayMessages: job.displayMessages,
             model: job.params.model
         )
+        let transcriptRequest: PromptTranscriptRequest? = {
+            let capabilities = PromptTranscriptCapabilities.companion.resolve(
+                setting: job.providerSetting,
+                model: job.params.model
+            )
+            guard capabilities.systemUpdates else { return nil }
+            return PromptTranscript.shared.prepare(
+                canonicalMessages: job.displayMessages,
+                preparedMessages: job.uploadMessages,
+                tools: job.params.tools
+            )
+        }()
         let completion = IOSChatDurableResumeCompletion()
         activeDetachedResponseCompletions[requestId] = completion
         let transport = OpenAIResponsesBackgroundTransport()
@@ -1622,7 +1634,16 @@ final class IOSChatBackgroundGenerationCoordinator {
         guard !Task.isCancelled else { return }
         switch outcome {
         case .completed:
-            let messages = accumulator.messages
+            var messages = accumulator.messages
+            if let transcriptRequest,
+               let index = messages.indices.reversed().first(where: {
+                   $0 >= job.displayMessages.count && messages[$0].role == MessageRole.assistant
+               }) {
+                messages[index] = PromptTranscript.shared.recordResponse(
+                    message: messages[index],
+                    request: transcriptRequest
+                )
+            }
             job.messagesSnapshot.replace(with: messages)
             if job.toolRuntime.hasUnresolvedToolCall(in: messages) {
                 let generatedSuffix = Array(messages.dropFirst(job.displayMessages.count))
@@ -2424,11 +2445,17 @@ final class IOSChatBackgroundGenerationCoordinator {
                     requirement: job.generativeUiRequirement,
                     issue: widgetIssue
                 )
+                let retryParams = IOSGenerativeUiRequestPolicy.retryParams(requestParams)
+                let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
+                    setting: requestProvider,
+                    model: retryParams.model
+                )
                 let retryUpload = IOSChatBackgroundRetryMessages(
-                    values: ChatRuntimeContextBuilder.coalescingSystemMessages(retryMessages)
+                    values: transcriptCapabilities.systemUpdates
+                        ? retryMessages
+                        : ChatRuntimeContextBuilder.coalescingSystemMessages(retryMessages)
                 )
                 let retryUploadMessageCount = retryUpload.values.count
-                let retryParams = IOSGenerativeUiRequestPolicy.retryParams(requestParams)
                 guard self.persistGenerativeUiRetryCheckpoint(
                     for: job,
                     requestId: backgroundTask.identifier,

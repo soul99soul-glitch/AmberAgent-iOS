@@ -88,6 +88,52 @@ final class IOSAgentToolEngineTests: XCTestCase {
         )
     }
 
+    private func makePromptTranscriptProviderSetting() -> ProviderSetting.OpenAI {
+        ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(),
+            enabled: true,
+            name: "DeepSeek transcript test",
+            models: [],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""),
+            builtIn: false,
+            descriptionText: nil,
+            shortDescriptionText: nil,
+            apiKey: "sk-test",
+            baseUrl: "https://api.deepseek.com/v1",
+            chatCompletionsPath: "/chat/completions",
+            useResponseApi: false,
+            authMode: OpenAIAuthMode.apiKey,
+            brand: OpenAIBrand.deepseek
+        )
+    }
+
+    private func makePromptTranscriptParams() -> TextGenerationParams {
+        let model = Model(
+            modelId: "deepseek-v4-pro",
+            displayName: "deepseek-v4-pro",
+            id: KotlinUuid.companion.random(),
+            type: ModelType.chat,
+            customHeaders: [],
+            customBodies: [],
+            inputModalities: [],
+            outputModalities: [],
+            abilities: [],
+            tools: Set<BuiltInTools>(),
+            contextWindowTokens: nil,
+            providerOverwrite: nil
+        )
+        return TextGenerationParams(
+            model: model,
+            temperature: KotlinFloat(value: 0.7),
+            topP: nil,
+            maxTokens: nil,
+            tools: [],
+            reasoningLevel: .off,
+            customHeaders: [],
+            customBody: []
+        )
+    }
+
     private func makeMessage(role: MessageRole, parts: [UIMessagePart]) -> UIMessage {
         // KMP UIMessage bridge does not expose Kotlin default args; pass the
         // full initializer (same pattern as ChatViewModel).
@@ -200,6 +246,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
     final class ParamsRecordingProvider: IOSAgentTextProvider, @unchecked Sendable {
         private var script: [UIMessage]
         private(set) var recordedParams: [TextGenerationParams] = []
+        private(set) var recordedMessages: [[UIMessage]] = []
         init(_ script: [UIMessage]) { self.script = script }
 
         func generateText(
@@ -208,6 +255,7 @@ final class IOSAgentToolEngineTests: XCTestCase {
             params: TextGenerationParams
         ) async throws -> MessageChunk {
             recordedParams.append(params)
+            recordedMessages.append(messages)
             if !script.isEmpty {
                 return chunk(with: script.removeFirst())
             }
@@ -682,6 +730,76 @@ final class IOSAgentToolEngineTests: XCTestCase {
 
         XCTAssertEqual(provider.callCount, 0)
         XCTAssertEqual(result.providerFailureMessage, "request snapshot ledger write failed")
+    }
+
+    func testNativePromptTranscriptAttachesTransitionToAssistantAndReplaysNextRound() async {
+        let provider = ParamsRecordingProvider([
+            toolCallMessage(toolCallId: "tc-1", toolName: "echo", input: "{}"),
+            assistantText("second"),
+        ])
+        let engine = IOSAgentToolEngine(
+            provider: provider,
+            executors: ["echo": RecordingExecutor(.filled("{\"ok\":true}"))]
+        )
+        let result = await engine.run(
+            providerSetting: makePromptTranscriptProviderSetting(),
+            messages: [userMessage("hello")],
+            params: makePromptTranscriptParams(),
+            prepareRequestMessages: { messages in
+                [PromptTranscript.shared.sectionMessage(name: "system", text: "stable instructions")] + messages
+            }
+        )
+
+        XCTAssertNil(result.providerFailureMessage)
+        guard let assistant = result.messages.first(where: { $0.role == MessageRole.assistant }) else {
+            return XCTFail("native transcript test must produce an assistant response")
+        }
+        XCTAssertNotNil(PromptTranscript.shared.event(message: assistant))
+        guard provider.recordedMessages.count >= 2 else {
+            return XCTFail("tool round must be followed by a second provider round")
+        }
+        XCTAssertTrue(
+            provider.recordedMessages[1].contains { message in
+                message.role == MessageRole.system && message.toText().contains("amber_section")
+            }
+        )
+    }
+
+    @MainActor
+    func testApprovalToolResultPreservesPromptTranscriptEventOnPureToolAssistant() {
+        let runtime = ChatToolRuntime(
+            settingsStore: SettingsStore(),
+            sharedSettings: IOSSharedSettingsStore(),
+            localToolExecutor: nil,
+            searchTransport: IOSURLSessionSearchHTTPTransport(),
+            mcpManager: IOSMcpManager(serverProvider: { [] })
+        )
+        let user = userMessage("approve this")
+        let prepared = PromptTranscript.shared.prepare(
+            canonicalMessages: [user],
+            preparedMessages: [
+                PromptTranscript.shared.sectionMessage(name: "system", text: "stable instructions"),
+                user,
+            ],
+            tools: []
+        )
+        let toolMessage = toolCallMessage(toolCallId: "approval-tool", toolName: "search_web", input: "{}")
+        let recorded = PromptTranscript.shared.recordResponse(message: toolMessage, request: prepared)
+        let target = recorded.parts.compactMap { $0 as? UIMessagePart.Tool }.first!
+
+        let finished = runtime.messagesByFinishingToolCall(
+            target,
+            outputText: #"{"ok":true}"#,
+            in: [user, recorded]
+        )
+
+        guard let assistant = finished.last(where: { $0.role == MessageRole.assistant }) else {
+            return XCTFail("approval finisher must retain the assistant tool message")
+        }
+        XCTAssertNotNil(PromptTranscript.shared.event(message: assistant))
+        XCTAssertFalse(
+            assistant.parts.compactMap { $0 as? UIMessagePart.Tool }.first?.output.isEmpty ?? true
+        )
     }
 
     func testProviderFailureIsExposedWithoutParsingTheTranscript() async {

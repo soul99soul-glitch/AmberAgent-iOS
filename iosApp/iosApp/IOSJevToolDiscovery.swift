@@ -85,7 +85,6 @@ enum IOSJevToolDiscoveryService {
             inputHash: inputHash
         )
         let keywordTop1 = parsed.candidates.max { $0.keywordScore < $1.keywordScore }?.name
-
         func keywordFallback() -> String {
             bridge.executeToolSearch(argumentsJson: argumentsJson)
         }

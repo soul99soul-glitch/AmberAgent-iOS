@@ -131,7 +131,11 @@ final class IOSJevApprovalTriageTests: XCTestCase {
         }
         let service = makeService(settings: makeSettings(mode: .active), transport: transport)
         let parameterSummary = IOSJevApprovalTriageService.parameterSummary(fromJSON: """
-            {"target":"notes.md","api_key":"private-key","password":"secret"}
+            {
+              "target":"notes.md", "count":3, "api_key":"private-key", "password":"secret",
+              "url":"https://alice:url-secret@example.com/plain?token=query-secret",
+              "command":"curl -H 'Authorization: Bearer bearer-secret-1234' https://example.com/plain"
+            }
             """)
         let triage = await service.triage(
             requestId: "r1",
@@ -152,7 +156,10 @@ final class IOSJevApprovalTriageTests: XCTestCase {
         XCTAssertEqual(Set(questions.keys), Set(["single.reversible", "single.goal_aligned"]), "known read/write fact is not re-asked; unknown reversibility may be judged")
         let state = try XCTUnwrap(request["state"] as? String)
         XCTAssertTrue(state.contains("target=notes.md"))
+        XCTAssertTrue(state.contains("count=3"))
+        XCTAssertTrue(state.contains("https://example.com/plain"))
         XCTAssertFalse(state.contains("private-key"))
+        XCTAssertFalse(state.contains("alice"))
         XCTAssertFalse(state.contains("secret"))
     }
 

@@ -273,7 +273,10 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
         var parts = message.parts
         if let lastTextIndex = parts.indices.reversed().first(where: { parts[$0] is UIMessagePart.Text }),
            let text = parts[lastTextIndex] as? UIMessagePart.Text {
-            parts[lastTextIndex] = UIMessagePart.Text(text: text.text + remainder, metadata: text.metadata)
+            parts[lastTextIndex] = PromptTranscript.shared.doCopyText(
+                part: text,
+                text: text.text + remainder
+            )
         } else {
             parts.append(UIMessagePart.Text(text: remainder, metadata: nil))
         }
@@ -334,7 +337,7 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
                 let stripped = stripper.feed(text.text)
                 if stripped != text.text {
                     changed = true
-                    newParts.append(UIMessagePart.Text(text: stripped, metadata: text.metadata))
+                    newParts.append(PromptTranscript.shared.doCopyText(part: text, text: stripped))
                 } else {
                     newParts.append(part)
                 }

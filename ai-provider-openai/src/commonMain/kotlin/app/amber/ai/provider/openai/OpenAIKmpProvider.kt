@@ -2,6 +2,11 @@ package app.amber.ai.provider.openai
 
 import app.amber.ai.core.InputSchema
 import app.amber.ai.core.MessageRole
+import app.amber.ai.core.PromptTranscript
+import app.amber.ai.core.PromptTranscriptCapabilities
+import app.amber.ai.core.PromptTranscriptEvent
+import app.amber.ai.core.PromptTranscriptView
+import app.amber.ai.core.PromptToolDeclaration
 import app.amber.ai.core.ReasoningLevel
 import app.amber.ai.core.TokenUsage
 import app.amber.ai.provider.BuiltInTools
@@ -295,8 +300,23 @@ class OpenAIKmpProvider internal constructor(
     ): JsonObject = buildJsonObject {
         val host = hostOf(providerSetting.baseUrl)
         val isMiMo = isMiMoProvider(providerSetting, host, params.model.modelId)
+        val capabilities = PromptTranscriptCapabilities.resolve(providerSetting, params.model)
+        val transcript = PromptTranscript.resolve(
+            messages = messages,
+            tools = params.tools,
+            nativeSystem = capabilities.systemUpdates,
+        )
+        val toolPlan = resolvePromptToolPlan(transcript, capabilities)
         put("model", params.model.modelId)
-        put("messages", buildMessages(messages))
+        put(
+            "messages",
+            buildMessages(
+                messages = transcript.messages,
+                transcript = transcript,
+                capabilities = capabilities,
+                toolPlan = toolPlan,
+            ),
+        )
 
         if (params.temperature != null) put("temperature", params.temperature)
         if (params.topP != null) put("top_p", params.topP)
@@ -331,30 +351,25 @@ class OpenAIKmpProvider internal constructor(
             }
         }
 
-        if (params.tools.isNotEmpty()) {
+        if (toolPlan.requestTools.isNotEmpty()) {
             putJsonArray("tools") {
-                params.tools.forEach { tool ->
-                    add(buildJsonObject {
-                        put("type", "function")
-                        put("function", buildJsonObject {
-                            put("name", tool.name)
-                            put("description", tool.description)
-                            tool.parameters()?.let { schema ->
-                                put(
-                                    "parameters",
-                                    json.encodeToJsonElement(InputSchema.serializer(), schema)
-                                )
-                            }
-                        })
-                    })
-                }
+                toolPlan.requestTools.forEach { add(it.toChatCompletionTool()) }
             }
+        }
+        if (toolPlan.requestTools.isNotEmpty() || hasInlineToolAdditions(transcript.messages, toolPlan)) {
             put("parallel_tool_calls", false)
         }
     }.mergeCustomBody(params.customBody)
 
-    private fun buildMessages(messages: List<UIMessage>): JsonArray = buildJsonArray {
-        val uploadable = messages.filter { it.isValidToUpload() }
+    private fun buildMessages(
+        messages: List<UIMessage>,
+        transcript: PromptTranscriptView,
+        capabilities: PromptTranscriptCapabilities,
+        toolPlan: PromptToolPlan,
+    ): JsonArray = buildJsonArray {
+        val uploadable = messages.filter {
+            it.isValidToUpload() || (it.role == MessageRole.SYSTEM && PromptTranscript.event(it) != null)
+        }
         val lastUserIndex = uploadable.indexOfLast { it.role == MessageRole.USER }
         uploadable.forEachIndexed { index, message ->
             if (message.role == MessageRole.ASSISTANT) {
@@ -363,9 +378,73 @@ class OpenAIKmpProvider internal constructor(
                 // 会把请求体里不该出现的 reasoning_content 判为非法 → HTTP 500。对齐 Android 的 gating。
                 addAssistantMessages(message, includeReasoning = index > lastUserIndex)
             } else {
-                addNonAssistantMessage(message)
+                val event = PromptTranscript.event(message)
+                if (message.role == MessageRole.SYSTEM && transcript.hasTranscript &&
+                    capabilities.toolAdditions && toolPlan.inlineAdditions &&
+                    event != null && !event.initial && event.toolsAdded.isNotEmpty()
+                ) {
+                    add(buildJsonObject {
+                        put("role", "system")
+                        putJsonArray("tools") {
+                            event.toolsAdded.forEach { add(it.toChatCompletionTool()) }
+                        }
+                    })
+                }
+                if (message.role != MessageRole.SYSTEM || message.toText().isNotEmpty() || event == null) {
+                    addNonAssistantMessage(message)
+                }
             }
         }
+    }
+
+    private data class PromptToolPlan(
+        val requestTools: List<PromptToolDeclaration>,
+        val inlineAdditions: Boolean,
+    )
+
+    private fun resolvePromptToolPlan(
+        view: PromptTranscriptView,
+        capabilities: PromptTranscriptCapabilities,
+        allowInlineAdditions: Boolean = true,
+    ): PromptToolPlan {
+        val canKeepInitialPrefix = view.hasTranscript &&
+            (capabilities.toolAdditions || capabilities.responsesToolSearch) &&
+            !view.hasNonAdditiveToolChanges &&
+            !view.hasToolRedefinitions
+        return PromptToolPlan(
+            requestTools = if (canKeepInitialPrefix) view.initialTools else view.currentTools,
+            inlineAdditions = canKeepInitialPrefix && capabilities.toolAdditions && allowInlineAdditions,
+        )
+    }
+
+    private fun hasInlineToolAdditions(
+        messages: List<UIMessage>,
+        toolPlan: PromptToolPlan,
+    ): Boolean = toolPlan.inlineAdditions && messages.any { message ->
+        message.role == MessageRole.SYSTEM && PromptTranscript.event(message)?.let {
+            !it.initial && it.toolsAdded.isNotEmpty()
+        } == true
+    }
+
+    private fun PromptToolDeclaration.toChatCompletionTool(): JsonObject = buildJsonObject {
+        put("type", "function")
+        put("function", buildJsonObject {
+            put("name", name)
+            put("description", description)
+            parameters?.let { schema ->
+                put("parameters", json.encodeToJsonElement(InputSchema.serializer(), schema))
+            }
+        })
+    }
+
+    private fun PromptToolDeclaration.toResponsesTool(deferLoading: Boolean = false): JsonObject = buildJsonObject {
+        put("type", "function")
+        put("name", name)
+        put("description", description)
+        parameters?.let { schema ->
+            put("parameters", json.encodeToJsonElement(InputSchema.serializer(), schema))
+        }
+        if (deferLoading) put("defer_loading", true)
     }
 
     private fun JsonArrayBuilder.addAssistantMessages(message: UIMessage, includeReasoning: Boolean) {
@@ -617,20 +696,27 @@ class OpenAIKmpProvider internal constructor(
         return JsonObject(toMutableMap().apply { customBody.forEach { put(it.key, it.value) } })
     }
 
+    internal fun resolveAuthenticationHeaders(
+        providerSetting: ProviderSetting.OpenAI,
+        extraHeaders: List<CustomHeader> = emptyList(),
+    ): List<CustomHeader> {
+        val token = providerSetting.apiKey
+        val host = hostOf(providerSetting.baseUrl)
+        val usesMimoApiKey = providerSetting.brand == OpenAIBrand.MIMO ||
+            providerSetting.authMode == OpenAIAuthMode.MIMO_CODING_PLAN ||
+            (host.startsWith("token-plan-") && host.endsWith("xiaomimimo.com"))
+        val authentication = CustomHeader(
+            name = if (usesMimoApiKey) "api-key" else "Authorization",
+            value = if (usesMimoApiKey) token else "Bearer $token",
+        )
+        return listOf(authentication) + resolveOpenAIRequestHeaders(providerSetting.authMode, extraHeaders)
+    }
+
     private fun HttpRequestBuilder.configureAuth(
         providerSetting: ProviderSetting.OpenAI,
         extraHeaders: List<CustomHeader> = emptyList(),
     ) {
-        val token = providerSetting.apiKey
-        val host = hostOf(providerSetting.baseUrl)
-        val usesMimoApiKey = providerSetting.authMode == OpenAIAuthMode.MIMO_CODING_PLAN ||
-            (host.startsWith("token-plan-") && host.endsWith("xiaomimimo.com"))
-        if (usesMimoApiKey) {
-            header("api-key", token)
-        } else {
-            header("Authorization", "Bearer $token")
-        }
-        resolveOpenAIRequestHeaders(providerSetting.authMode, extraHeaders)
+        resolveAuthenticationHeaders(providerSetting, extraHeaders)
             .forEach { header(it.name, it.value) }
     }
 
@@ -814,11 +900,25 @@ class OpenAIKmpProvider internal constructor(
         stream: Boolean,
     ): JsonObject {
         val host = hostOf(providerSetting.baseUrl)
-        val capabilities = resolveResponseProviderCapabilities(host)
+        val capabilities = resolveResponseProviderCapabilities(host, providerSetting.brand)
+        val isMiMo = isMiMoProvider(providerSetting, host, params.model.modelId)
+        val transcriptCapabilities = PromptTranscriptCapabilities.resolve(providerSetting, params.model)
+        val transcript = PromptTranscript.resolve(
+            messages = messages,
+            tools = params.tools,
+            nativeSystem = transcriptCapabilities.systemUpdates,
+        )
+        val toolPlan = resolvePromptToolPlan(
+            view = transcript,
+            capabilities = transcriptCapabilities,
+            allowInlineAdditions = params.model.abilities.contains(ModelAbility.TOOL),
+        )
         return buildJsonObject {
             put("model", params.model.modelId)
             put("stream", stream)
-            put("store", false)
+            // MiMo's Responses API only documents the fields below; unknown OpenAI
+            // fields may be rejected by its compatibility layer.
+            if (!isMiMo) put("store", false)
 
             if (responsesIsModelAllowTemperature(params.model)) {
                 if (params.temperature != null) put("temperature", params.temperature)
@@ -826,13 +926,25 @@ class OpenAIKmpProvider internal constructor(
             }
             if (params.maxTokens != null) put("max_output_tokens", params.maxTokens)
 
-            // System messages are kept as separate UI messages so callers can
-            // attach independent runtime fragments. Responses has one
-            // top-level `instructions` string, so preserve every fragment in
-            // its original order when flattening the wire request.
-            val systemTextParts = messages
-                .filter { it.role == MessageRole.SYSTEM }
-                .flatMap { message -> message.parts.filterIsInstance<UIMessagePart.Text>() }
+            // Responses has one top-level `instructions` string. Once a
+            // transcript exists, only its initial checkpoint belongs there;
+            // later system events stay at their historical position in input
+            // so the stable prefix remains cacheable. Legacy messages without
+            // transcript metadata retain the old flattening behavior.
+            val systemTextParts = if (transcript.hasTranscript && transcriptCapabilities.systemUpdates) {
+                transcript.messages
+                    .firstOrNull { it.role == MessageRole.SYSTEM }
+                    ?.parts
+                    ?.filterIsInstance<UIMessagePart.Text>()
+                    ?.filter { it.text.isNotEmpty() }
+                    .orEmpty()
+            } else {
+                transcript.messages
+                    .filter { it.role == MessageRole.SYSTEM }
+                    .flatMap { message ->
+                        message.parts.filterIsInstance<UIMessagePart.Text>().filter { it.text.isNotEmpty() }
+                    }
+            }
             if (systemTextParts.isNotEmpty()) {
                 put(
                     "instructions",
@@ -841,7 +953,16 @@ class OpenAIKmpProvider internal constructor(
             }
 
             // messages
-            put("input", buildResponsesMessages(messages))
+            put(
+                "input",
+                buildResponsesMessages(
+                    messages = transcript.messages,
+                    transcript = transcript,
+                    capabilities = transcriptCapabilities,
+                    model = params.model,
+                    toolPlan = toolPlan,
+                ),
+            )
 
             // reasoning
             if (params.model.abilities.contains(ModelAbility.REASONING)) {
@@ -872,19 +993,7 @@ class OpenAIKmpProvider internal constructor(
 
             val toolDefinitions = buildJsonArray {
                 if (params.model.abilities.contains(ModelAbility.TOOL)) {
-                    params.tools.forEach { tool ->
-                        add(buildJsonObject {
-                            put("type", "function")
-                            put("name", tool.name)
-                            put("description", tool.description)
-                            tool.parameters()?.let { schema ->
-                                put(
-                                    "parameters",
-                                    json.encodeToJsonElement(InputSchema.serializer(), schema),
-                                )
-                            }
-                        })
-                    }
+                    toolPlan.requestTools.forEach { add(it.toResponsesTool()) }
                 }
                 params.model.tools.forEach { builtInTool ->
                     when (builtInTool) {
@@ -894,10 +1003,11 @@ class OpenAIKmpProvider internal constructor(
                     }
                 }
             }
-            if (toolDefinitions.isNotEmpty()) {
-                put("tools", toolDefinitions)
+            if (!isMiMo && (toolDefinitions.isNotEmpty() || hasInlineToolAdditions(transcript.messages, toolPlan))) {
+                if (toolDefinitions.isNotEmpty()) put("tools", toolDefinitions)
                 put("parallel_tool_calls", false)
             }
+            if (isMiMo && toolDefinitions.isNotEmpty()) put("tools", toolDefinitions)
         }.mergeCustomBody(params.customBody).let { body ->
             if (providerSetting.authMode != OpenAIAuthMode.CODEX_OAUTH) body
             else JsonObject(body.toMutableMap().apply {
@@ -907,16 +1017,94 @@ class OpenAIKmpProvider internal constructor(
         }
     }
 
-    private fun buildResponsesMessages(messages: List<UIMessage>): JsonArray = buildJsonArray {
+    private fun buildResponsesMessages(
+        messages: List<UIMessage>,
+        transcript: PromptTranscriptView,
+        capabilities: PromptTranscriptCapabilities,
+        model: Model,
+        toolPlan: PromptToolPlan,
+    ): JsonArray = buildJsonArray {
         messages
-            .filter { it.isValidToUpload() && it.role != MessageRole.SYSTEM }
-            .forEach { message ->
-                if (message.role == MessageRole.ASSISTANT) {
-                    addResponsesAssistantItems(message)
-                } else {
-                    addResponsesUserItems(message)
+            .filter {
+                it.isValidToUpload() || (it.role == MessageRole.SYSTEM && PromptTranscript.event(it) != null)
+            }
+            .forEachIndexed { eventIndex, message ->
+                when (message.role) {
+                    MessageRole.SYSTEM -> {
+                        val event = PromptTranscript.event(message)
+                        if (transcript.hasTranscript && capabilities.systemUpdates &&
+                            (event == null || !event.initial)
+                        ) {
+                            if (toolPlan.inlineAdditions && event != null) {
+                                addResponsesToolTransition(event, capabilities, eventIndex)
+                            }
+                            if (message.toText().isNotEmpty()) {
+                                add(buildJsonObject {
+                                    put(
+                                        "role",
+                                        if (model.abilities.contains(ModelAbility.REASONING)) {
+                                            "developer"
+                                        } else {
+                                            "system"
+                                        },
+                                    )
+                                    put("content", message.toText())
+                                })
+                            }
+                        }
+                    }
+
+                    MessageRole.ASSISTANT -> addResponsesAssistantItems(message)
+                    else -> addResponsesUserItems(message)
                 }
             }
+    }
+
+    private fun JsonArrayBuilder.addResponsesToolTransition(
+        event: PromptTranscriptEvent,
+        capabilities: PromptTranscriptCapabilities,
+        eventIndex: Int,
+    ) {
+        if (event.toolsAdded.isEmpty()) return
+        if (capabilities.responsesToolSearch) {
+            val names = event.toolsAdded.joinToString(" ") { it.name }
+            val callId = "amber_tool_load_${eventIndex}_${stablePromptHash(names)}"
+            add(buildJsonObject {
+                put("type", "tool_search_call")
+                put("call_id", callId)
+                put("execution", "client")
+                put("status", "completed")
+                put("arguments", buildJsonObject {
+                    put("query", names)
+                    put("limit", event.toolsAdded.size)
+                })
+            })
+            add(buildJsonObject {
+                put("type", "tool_search_output")
+                put("call_id", callId)
+                put("execution", "client")
+                put("status", "completed")
+                putJsonArray("tools") {
+                    event.toolsAdded.forEach { add(it.toResponsesTool(deferLoading = true)) }
+                }
+            })
+        } else if (capabilities.toolAdditions) {
+            add(buildJsonObject {
+                put("type", "additional_tools")
+                put("role", "developer")
+                putJsonArray("tools") {
+                    event.toolsAdded.forEach { add(it.toResponsesTool()) }
+                }
+            })
+        }
+    }
+
+    private fun stablePromptHash(value: String): String {
+        var hash = 0x811c9dc5.toInt()
+        value.forEach { character ->
+            hash = (hash xor character.code) * 0x01000193
+        }
+        return hash.toUInt().toString(16)
     }
 
     private fun JsonArrayBuilder.addResponsesAssistantItems(message: UIMessage) {
@@ -1431,13 +1619,23 @@ class OpenAIKmpProvider internal constructor(
         val supportEncryptedContent: Boolean = true,
     )
 
-    private fun resolveResponseProviderCapabilities(host: String): ResponseProviderCapabilities =
-        when (host) {
-            "ark.cn-beijing.volces.com" -> ResponseProviderCapabilities(
+    private fun resolveResponseProviderCapabilities(
+        host: String,
+        brand: OpenAIBrand,
+    ): ResponseProviderCapabilities =
+        when {
+            brand == OpenAIBrand.MIMO || host.endsWith("xiaomimimo.com") ->
+                ResponseProviderCapabilities(
+                    supportsReasoningSummary = false,
+                    supportEncryptedContent = false,
+                )
+
+            host == "ark.cn-beijing.volces.com" -> ResponseProviderCapabilities(
                 supportsReasoningSummary = false,
                 supportEncryptedContent = false,
             )
-            "cli-chat-proxy.grok.com" -> ResponseProviderCapabilities(
+
+            host == "cli-chat-proxy.grok.com" -> ResponseProviderCapabilities(
                 supportsReasoningSummary = false,
                 supportEncryptedContent = false,
             )

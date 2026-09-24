@@ -47,4 +47,13 @@ class OpenAIRequestHeaderPolicyTest {
             OpenAIAuthMode.ZHIPU_CODING_PLAN.fixedBaseUrl(),
         )
     }
+
+    @Test
+    fun mimoDefaultsUseTheOfficialApiAndTokenPlanEndpoints() {
+        assertEquals("https://api.xiaomimimo.com/v1", OpenAIBrand.MIMO.defaultApiBaseUrl())
+        assertEquals(
+            "https://token-plan-cn.xiaomimimo.com/v1",
+            OpenAIAuthMode.MIMO_CODING_PLAN.fixedBaseUrl(),
+        )
+    }
 }

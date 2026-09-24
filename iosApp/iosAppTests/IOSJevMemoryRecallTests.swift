@@ -520,6 +520,100 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertTrue(metrics.contains { $0.numbers?["overlap_ratio"] != nil })
     }
 
+    func testScreenedResidentsStayAheadOfUnscreenedTail() async throws {
+        let residents = (1...32).map { id in
+            JevFixtures.makeRecord(.init(
+                id: Int32(id), content: "置顶记忆 \(id)",
+                scope: .longTerm, kind: .note, pinned: true,
+                updatedAt: JevFixtures.memoryNow, confidence: 0.9,
+                archived: false, expiresAt: nil
+            ))
+        }
+        let topics = (100...115).map { id in
+            JevFixtures.makeRecord(.init(
+                id: Int32(id), content: "记忆主题 \(id)",
+                scope: .longTerm, kind: .topic, pinned: false,
+                updatedAt: JevFixtures.memoryNow, confidence: 0.9,
+                archived: false, expiresAt: nil
+            ))
+        }
+        for records in [residents, topics + residents] {
+            var screenedIds = Set<String>()
+            let transport = JevStubTransport { request in
+                let body = try XCTUnwrap(request.httpBody)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let questions = try XCTUnwrap(payload["questions"] as? [String: Any])
+                screenedIds = Set(questions.keys.filter { $0.hasPrefix("memory_injection.") })
+                return (self.batchPayload(
+                    for: request,
+                    scores: Dictionary(uniqueKeysWithValues: (1...32).map { ("m\($0)", 2.5) }),
+                    noul: ["inj1": 1]
+                ), self.httpResponse(status: 200))
+            }
+            let result = await makeService(
+                settings: makeSettings(mode: .active), transport: transport
+            ).prepareTurnSelection(
+                messages: [userMessage(text: "记忆")], records: records,
+                runtime: runtime, identity: identity()
+            )
+            let selection = try XCTUnwrap(result)
+            XCTAssertEqual(selection.ids, Array(2...13).map(Int32.init))
+            XCTAssertTrue(selection.ids.allSatisfy { screenedIds.contains("memory_injection.inj\($0)") })
+            XCTAssertEqual(transport.calls, 1)
+        }
+    }
+
+    func testLongChineseScreeningFitsRequestBudgetForBothAPIStyles() async throws {
+        let records = (1...32).map { id in
+            JevFixtures.makeRecord(.init(
+                id: Int32(id), content: id == 2 ? "干净且应保留的用户记忆" : String(repeating: "中文记忆", count: 200),
+                scope: .longTerm, kind: .note, pinned: true,
+                updatedAt: JevFixtures.memoryNow, confidence: 0.9,
+                archived: false, expiresAt: nil
+            ))
+        }
+        for style in [IOSJevAPIStyle.systemone, .vercelGateway] {
+            var settings = makeSettings(mode: .active)
+            settings.apiStyle = style
+            settings.vercelModel = "typesafe/jev"
+            settings.policy.maxRequestBytes = 20 * 1_024
+            let maxBytes = settings.policy.maxRequestBytes
+            var screenedIds = Set<String>()
+            let transport = JevStubTransport { request in
+                let body = try XCTUnwrap(request.httpBody)
+                XCTAssertLessThanOrEqual(body.count, maxBytes)
+                let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+                let questions = try XCTUnwrap(payload["questions"] as? [String: Any])
+                screenedIds = Set(questions.keys.filter { $0.hasPrefix("memory_injection.") })
+                let answers = questions.keys.reduce(into: [String: Any]()) { result, id in
+                    if id.hasPrefix("memory_injection.") {
+                        result[id] = style == .systemone
+                            ? ["type": "noul", "noul": id == "memory_injection.inj1" ? 1.0 : 0.0]
+                            : ["type": "boolean", "probability": id == "memory_injection.inj1" ? 1.0 : 0.0]
+                    } else {
+                        result[id] = ["type": "score", "score": 2.5]
+                    }
+                }
+                return (try JSONSerialization.data(withJSONObject: ["answers": answers]), self.httpResponse(status: 200))
+            }
+            let selection = await makeService(settings: settings, transport: transport).prepareTurnSelection(
+                messages: [userMessage(text: "记忆")], records: records,
+                runtime: JevTestRuntimeFactory.makeRuntime(maxPromptChars: 30_000),
+                identity: identity(turn: style.rawValue)
+            )
+            XCTAssertEqual(transport.calls, 1, "相关性与筛查共用一次请求")
+            XCTAssertTrue(screenedIds.contains("memory_injection.inj1"))
+            XCTAssertTrue(screenedIds.contains("memory_injection.inj2"))
+            XCTAssertLessThan(screenedIds.count, 16, "长文本只筛查本次字节预算能容纳的头部条目")
+            let result = try XCTUnwrap(selection)
+            XCTAssertFalse(result.ids.contains(1), "筛查命中仍须剔除，不能因请求超限整批放行")
+            XCTAssertTrue(result.ids.contains(2), "已筛查的干净记忆不能被未筛查的尾部挤掉")
+            let screenedSurvivors = screenedIds.compactMap { Int32($0.dropFirst("memory_injection.inj".count)) }
+                .filter { $0 != 1 }.sorted()
+            XCTAssertEqual(Array(result.ids.prefix(screenedSurvivors.count)), screenedSurvivors)
+        }
+    }
+
     /// 响应缺少 Noul 答案时 fail-open：选中集原样保留，不丢记忆。
     func testScreeningFailureKeepsOriginalSelection() async {
         let transport = JevStubTransport { request in

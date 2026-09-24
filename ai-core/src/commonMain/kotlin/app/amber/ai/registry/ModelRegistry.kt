@@ -580,6 +580,14 @@ object ModelRegistry {
         contextWindow(1_000_000)
     }
 
+    // MiMo V2.6 Pro, Flash and Pro UltraSpeed share the published modalities/window.
+    private val XIAOMI_MIMO_V2_6 = defineModel {
+        tokens("mimo", "v", "2", "6", "pro|flash")
+        input(Modality.TEXT, Modality.IMAGE, Modality.AUDIO, Modality.VIDEO)
+        toolReasoningAbility()
+        contextWindow(1_000_000)
+    }
+
     val QWEN_MT = defineModel {
         tokens("qwen", "mt")
         contextWindow(16_000)
@@ -723,6 +731,7 @@ object ModelRegistry {
         XIAOMI_MIMO_V2_FLASH,
         XIAOMI_MIMO_V2_5,
         XIAOMI_MIMO_V2_5_PRO,
+        XIAOMI_MIMO_V2_6,
         QWEN_MT
     )
 
@@ -778,7 +787,7 @@ object ModelRegistry {
         return if (modalities.isEmpty()) {
             listOf(Modality.TEXT)
         } else {
-            listOf(Modality.TEXT, Modality.IMAGE, Modality.AUDIO).filter { it in modalities }
+            listOf(Modality.TEXT, Modality.IMAGE, Modality.AUDIO, Modality.VIDEO).filter { it in modalities }
         }
     }
 

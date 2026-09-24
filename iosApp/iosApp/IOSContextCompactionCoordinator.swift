@@ -133,6 +133,7 @@ final class IOSContextCompactionCoordinator {
         params: TextGenerationParams,
         fallbackProvider: ProviderSetting,
         promptOverheadTokens: Int = 0,
+        additionalHistoryOverhead: (([UIMessage]) -> Int)? = nil,
         onEvent: ((IOSContextCompactionEvent) -> Void)? = nil
     ) async throws -> [UIMessage] {
         let policy = IOSCompactPolicy(settings.agentRuntime.contextCompaction)
@@ -142,10 +143,14 @@ final class IOSContextCompactionCoordinator {
         ).contextMessageSize)
         let systemMessages = uploadMessages.filter { $0.role == MessageRole.system }
         let historyMessages = uploadMessages.filter { $0.role != MessageRole.system }
-        let overheadEstimate = Self.estimateTokens(systemMessages) + Self.requestOverheadTokens(
+        let baseOverhead = Self.estimateTokens(systemMessages) + Self.requestOverheadTokens(
             params: params,
             promptOverheadTokens: promptOverheadTokens
         )
+        func overhead(for history: [UIMessage]) -> Int {
+            baseOverhead + max(additionalHistoryOverhead?(systemMessages + history) ?? 0, 0)
+        }
+        var overheadEstimate = overhead(for: historyMessages)
 
         let edited: (messages: [UIMessage], removedToolResults: Int)
         if policy.enabled {
@@ -218,7 +223,9 @@ final class IOSContextCompactionCoordinator {
         )
         let forceBudget = max(Int(Double(contextWindow) * policy.forceRatio), 1)
         let softTotalBudget = max(forceBudget, 4_000)
-        let targetMessageBudget = max(softTotalBudget - overheadEstimate, 1_000)
+        // Compaction folds covered prompt transitions into a checkpoint. Recompute
+        // their cost instead of reserving the now-removed history indefinitely.
+        overheadEstimate = overhead(for: preparedMessages)
         var estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
 
         // At most one summary cycle per request; use the existing local budget fit afterwards.
@@ -260,14 +267,16 @@ final class IOSContextCompactionCoordinator {
                 contextMessageSize: contextMessageSize,
                 removedToolResults: removedToolResults
             )
+            overheadEstimate = overhead(for: preparedMessages)
             estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
         }
 
         if estimate > forceBudget {
             preparedMessages = Self.fitMessagesToTokenBudget(
                 preparedMessages,
-                maxTokens: targetMessageBudget
+                maxTokens: max(softTotalBudget - overheadEstimate, 1_000)
             )
+            overheadEstimate = overhead(for: preparedMessages)
         }
         try Self.assertFitsRequest(
             messages: preparedMessages,
@@ -280,10 +289,12 @@ final class IOSContextCompactionCoordinator {
     func finalizedMessagesForRequest(
         _ messages: [UIMessage],
         settings: Settings,
-        params: TextGenerationParams
+        params: TextGenerationParams,
+        additionalOverheadTokens: Int = 0,
+        preserveMessageOrder: Bool = false
     ) throws -> [UIMessage] {
         let policy = IOSCompactPolicy(settings.agentRuntime.contextCompaction)
-        let toolOverhead = Self.requestOverheadTokens(params: params)
+        let toolOverhead = Self.requestOverheadTokens(params: params) + max(additionalOverheadTokens, 0)
         let contextWindow = Self.estimateContextWindow(
             ChatContextSnapshot.resolvedContextWindowTokens(
                 modelWindow: Self.intValue(params.model.contextWindowTokens), modelId: params.model.modelId
@@ -292,6 +303,13 @@ final class IOSContextCompactionCoordinator {
         let forceBudget = max(Int(Double(contextWindow) * policy.forceRatio), 1)
         let estimate = Self.estimateTokens(messages) + toolOverhead
         guard estimate > forceBudget else { return messages }
+        // A native transcript's system updates have historical positions. The
+        // ordinary fitter groups system messages at the front, so it must never
+        // rewrite a prepared transcript. Its caller fits the canonical copy first.
+        if preserveMessageOrder {
+            try Self.assertFitsRequest(messages: messages, overheadTokens: toolOverhead, forceBudget: forceBudget)
+            return messages
+        }
         let softTotalBudget = max(forceBudget, 4_000)
         let targetMessageBudget = max(softTotalBudget - toolOverhead, 1_000)
         let fitted = Self.fitMessagesToTokenBudget(messages, maxTokens: targetMessageBudget)
@@ -926,14 +944,10 @@ private extension IOSContextCompactionCoordinator {
             guard let tool = part as? UIMessagePart.Tool, !tool.output.isEmpty else { return part }
             let capped = ChatToolOutputFormatter.cappedToolOutputParts(tool.output, maxChars: maxCharsPerOutput)
             guard capped != tool.output else { return part }
-            return UIMessagePart.Tool(
-                toolCallId: tool.toolCallId,
-                toolName: tool.toolName,
+            return PromptTranscript.shared.doCopyTool(
+                tool: tool,
                 input: tool.input,
-                output: capped,
-                approvalState: tool.approvalState,
-                streamIndex: tool.streamIndex,
-                metadata: tool.metadata
+                output: capped
             )
         }
         return UIMessage(
@@ -1440,14 +1454,10 @@ private extension IOSContextCompactionCoordinator {
     }
 
     static func replacingToolOutput(_ tool: UIMessagePart.Tool, text: String) -> UIMessagePart.Tool {
-        UIMessagePart.Tool(
-            toolCallId: tool.toolCallId,
-            toolName: tool.toolName,
+        PromptTranscript.shared.doCopyTool(
+            tool: tool,
             input: tool.input,
-            output: [UIMessagePart.Text(text: text, metadata: nil)],
-            approvalState: tool.approvalState,
-            streamIndex: tool.streamIndex,
-            metadata: tool.metadata
+            output: [UIMessagePart.Text(text: text, metadata: nil)]
         )
     }
 

@@ -3049,6 +3049,12 @@ final class ChatViewModel {
         )
     }
 
+    func fillInputFromSuggestion(_ suggestion: String) {
+        invalidateSuggestionRequest()
+        inputText = suggestion
+        chatSuggestions = []
+    }
+
     private func generateChatSuggestions() {
         let snapshot = sharedSettings.snapshot
         guard let model = resolveAuxModel(snapshot.suggestionModelId) else { return }
@@ -4819,6 +4825,12 @@ final class ChatViewModel {
         // the whole run so hits become callable on the NEXT round.
         let exposureBridge = IosToolExposureBridge(tools: toolDeclarations, recipeSearchInfo: recipeSearchInfo)
         exposureBridge.restoreExecutedTools(tools: recentToolsForExposure())
+        if let provider = makeProviderSetting(),
+           PromptTranscriptCapabilities.companion.resolve(setting: provider, model: model).toolAdditions {
+            // Native tool additions remain at their historical load point across user turns.
+            // Restore names against this run's filtered catalog, never old schemas/executors.
+            exposureBridge.exposeToolNames(names: PromptTranscript.shared.currentToolNames(messages: messages))
+        }
         lastAssembledToolExposureBridge = exposureBridge
         // Real params: temperature/topP from Assistant, maxTokens from
         // resolveSessionDefaults (Assistant → group default), reasoningLevel
