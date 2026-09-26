@@ -292,6 +292,8 @@ struct WebMountToolApprovalRequest: Identifiable, Equatable {
     let action: String
     let consequence: String
     let screenshotRetentionWarning: String?
+    let siteMemoryChanges: [String]?
+    let siteMemoryBaseline: String?
     let requiresHumanHandoff: Bool
     let reason: String
     let sessionId: String?
@@ -304,6 +306,8 @@ struct WebMountToolApprovalRequest: Identifiable, Equatable {
         switch toolName {
         case "wm_clear_session":
             return "清除 WebMount Session"
+        case "wm_site_memory":
+            return "确认站点记忆变更"
         default:
             return "执行 WebMount 前台动作"
         }
@@ -866,6 +870,8 @@ enum ChatToolApprovalRequestBuilder {
             action: preview.action,
             consequence: preview.consequence,
             screenshotRetentionWarning: preview.screenshotRetentionWarning,
+            siteMemoryChanges: preview.siteMemoryChanges,
+            siteMemoryBaseline: preview.siteMemoryBaseline,
             requiresHumanHandoff: reason.hasPrefix("human_handoff:"),
             reason: reason,
             sessionId: preview.sessionId,
@@ -1313,49 +1319,58 @@ enum ChatToolOutputFormatter {
         for toolCall: UIMessagePart.Tool,
         output: IOSLocalToolExecutionOutput
     ) -> String {
+        func contextualResult(_ fields: [String: Any]) -> String {
+            var fields = fields
+            if let data = toolCall.input.data(using: .utf8),
+               let input = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+               let sessionId = (input["session_id"] as? String)?.nilIfBlank {
+                fields["session_id"] = sessionId
+            }
+            return IOSWebMountController.json(fields)
+        }
         switch output {
         case .webMountResult(let result):
             return result
         case .terminalResult, .ishExecuteResult, .ishHandoffResult:
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": false,
                 "tool": toolCall.toolName,
                 "error": "Unexpected iSH output for WebMount tool."
             ])
         case .needsUserAction(let reason):
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": false,
                 "tool": toolCall.toolName,
                 "needs_user_action": true,
                 "reason": reason
             ])
         case .denied(let reason):
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": false,
                 "tool": toolCall.toolName,
                 "denied": true,
                 "reason": reason
             ])
         case .failed(let message):
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": false,
                 "tool": toolCall.toolName,
                 "error": message
             ])
         case .selectedFilePreview:
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": false,
                 "tool": toolCall.toolName,
                 "error": "Unexpected selected-file output for WebMount tool."
             ])
         case .workspaceResult:
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": false,
                 "tool": toolCall.toolName,
                 "error": "Unexpected Workspace output for WebMount tool."
             ])
         case .permissionsStatus(let snapshot):
-            return IOSWebMountController.json([
+            return contextualResult([
                 "ok": true,
                 "tool": toolCall.toolName,
                 "platform": snapshot.platform
@@ -1687,6 +1702,8 @@ enum ChatToolOutputFormatter {
         protectedKey: ((String) -> Bool)? = nil,
         minimumLengthForKey: ((String) -> Int)? = nil
     ) -> (path: [Any], value: String)? {
+        // A locator is reused as a complete fingerprint by wm_find.
+        if protectedKey != nil, path.contains(where: { $0 as? String == "locator" }) { return nil }
         if let string = value as? String, string.count > minimumLength {
             return (path, string)
         }

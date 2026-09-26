@@ -449,8 +449,11 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UIView {
-        let view = UIView(frame: .zero)
+        let view = ResolverProbeView(frame: .zero)
         view.isHidden = true
+        view.onLayout = { [weak coordinator = context.coordinator] in
+            coordinator?.monitorRecentMetrics()
+        }
         return view
     }
 
@@ -463,6 +466,7 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
             guard let scrollView = view?.nativeTimelineAncestor(of: UIScrollView.self) else { return }
             onResolve(scrollView)
             context.coordinator.observe(scrollView)
+            context.coordinator.monitorRecentMetrics()
         }
     }
 
@@ -471,9 +475,14 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
         private let onMetricsChanged: () -> Void
         private weak var observedScrollView: UIScrollView?
         private var displayLink: CADisplayLink?
+        private var monitoringDeadline: CFTimeInterval?
+        private var keyboardFrameObserver: NSObjectProtocol?
         private var pendingCallback = false
         private var lastMetrics: Metrics?
         private var invalidated = false
+
+        // UIScrollView 未承诺这些指标符合 KVO；由布局和键盘事件开启静止窗口采样。
+        private let quietInterval: CFTimeInterval = 0.35
 
         init(onMetricsChanged: @escaping () -> Void) {
             self.onMetricsChanged = onMetricsChanged
@@ -483,33 +492,77 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
             invalidated = true
             displayLink?.invalidate()
             displayLink = nil
+            monitoringDeadline = nil
+            if let keyboardFrameObserver {
+                NotificationCenter.default.removeObserver(keyboardFrameObserver)
+                self.keyboardFrameObserver = nil
+            }
             observedScrollView = nil
         }
 
         func observe(_ scrollView: UIScrollView) {
             guard !invalidated else { return }
             guard observedScrollView !== scrollView else { return }
+            if let keyboardFrameObserver {
+                NotificationCenter.default.removeObserver(keyboardFrameObserver)
+                self.keyboardFrameObserver = nil
+            }
+            displayLink?.invalidate()
+            displayLink = nil
+            monitoringDeadline = nil
             observedScrollView = scrollView
             lastMetrics = Metrics(scrollView)
-            startDisplayLinkIfNeeded()
+            observeKeyboardFrameChanges()
             scheduleCallback()
+        }
+
+        func monitorRecentMetrics() {
+            guard !invalidated, observedScrollView != nil else { return }
+            monitoringDeadline = CACurrentMediaTime() + quietInterval
+            startDisplayLinkIfNeeded()
+        }
+
+        private func observeKeyboardFrameChanges() {
+            keyboardFrameObserver = NotificationCenter.default.addObserver(
+                forName: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.monitorRecentMetrics()
+                }
+            }
         }
 
         private func startDisplayLinkIfNeeded() {
             guard displayLink == nil else { return }
-            let link = CADisplayLink(target: self, selector: #selector(displayLinkTick))
+            let link = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
             link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 120, preferred: 60)
             link.add(to: .main, forMode: .common)
             displayLink = link
         }
 
         @objc
-        private func displayLinkTick() {
-            guard let scrollView = observedScrollView else { return }
+        private func displayLinkTick(_ link: CADisplayLink) {
+            guard let scrollView = observedScrollView else {
+                stopDisplayLink()
+                return
+            }
             let metrics = Metrics(scrollView)
-            guard metrics != lastMetrics else { return }
-            lastMetrics = metrics
-            scheduleCallback()
+            if metrics != lastMetrics {
+                lastMetrics = metrics
+                monitoringDeadline = link.timestamp + quietInterval
+                scheduleCallback()
+            }
+            if let monitoringDeadline, link.timestamp >= monitoringDeadline {
+                stopDisplayLink()
+            }
+        }
+
+        private func stopDisplayLink() {
+            displayLink?.invalidate()
+            displayLink = nil
+            monitoringDeadline = nil
         }
 
         private func scheduleCallback() {
@@ -536,6 +589,20 @@ struct NativeTimelineScrollViewResolver: UIViewRepresentable {
                 adjustedContentInset = scrollView.adjustedContentInset
             }
         }
+    }
+}
+
+private final class ResolverProbeView: UIView {
+    var onLayout: (() -> Void)?
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        onLayout?()
     }
 }
 

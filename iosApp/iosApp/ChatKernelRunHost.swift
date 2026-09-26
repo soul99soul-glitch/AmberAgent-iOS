@@ -336,9 +336,16 @@ final class ChatKernelRunHost {
                 return
             }
             guard self.currentRunId == runId else { return }
-            // mcp sync(CG-C :1125-1128)。
+            // mcp sync(CG-C :1125-1128)。本轮工具目录已在 start 前由 VM 钉住
+            // (toolExposureBridge),同步只保活连接并为后续轮次刷新目录,
+            // 所以不阻塞首 token;本轮 MCP 调用由 mcpManager 等待同步完成。
             if self.mcpEnabledForRun {
-                await self.dependencies.mcpManager.syncAll(enabledOverride: true)
+                let mcpManager = self.dependencies.mcpManager
+                // 冷启动首轮:先无网络发布持久化目录,注入不依赖同步先完成。
+                mcpManager.loadPersistedCatalogIfNeeded()
+                Task { @MainActor in
+                    await mcpManager.syncAll(enabledOverride: true)
+                }
             }
             guard self.currentRunId == runId else { return }
             if self.cancelCause != nil {
@@ -1321,7 +1328,7 @@ final class ChatKernelRunHost {
               let handoff = backgroundHandoff,
               let openAI = handoff.providerSetting as? ProviderSetting.OpenAI else { return }
         activeDurableTextProvider?.cancelLocalStream()
-        _ = try? OpenAIResponsesBackgroundTransport().cancelBackground(
+        _ = try? IOSSharedKmpProviders.openAIBackgroundTransport.cancelBackground(
             providerSetting: openAI,
             responseId: cursor.responseId,
             customHeaders: handoff.params.customHeaders,
@@ -2782,7 +2789,7 @@ private final class ChatKernelDurableTextProvider: IOSAgentTextProvider, IOSAgen
         activeOnError = onError
         lock.unlock()
         do {
-            let job = try OpenAIResponsesBackgroundTransport().startBackground(
+            let job = try IOSSharedKmpProviders.openAIBackgroundTransport.startBackground(
                 providerSetting: openAI,
                 messages: messages,
                 params: params,

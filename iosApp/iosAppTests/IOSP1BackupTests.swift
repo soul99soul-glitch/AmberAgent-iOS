@@ -182,4 +182,39 @@ final class IOSP1BackupTests: XCTestCase {
         XCTAssertTrue(restored.preview.datasets.contains { $0.id == "conversations" })
         XCTAssertTrue(restored.preview.datasets.contains { $0.id == "settings" })
     }
+
+    /// 收藏片段后备份/恢复仍可用：产物架 sidecar 不进入备份，恢复覆盖的会话清掉本机旧收藏。
+    func testBackupRestoreSucceedsAfterPinningSnippet() async throws {
+        let sourceDir = try makeTempDir("ConvPinnedSource")
+        let targetDir = try makeTempDir("ConvPinnedTarget")
+        defer {
+            try? FileManager.default.removeItem(at: sourceDir)
+            try? FileManager.default.removeItem(at: targetDir)
+        }
+        let source = IOSConversationStore(baseDirectory: sourceDir)
+        await source.bootstrap()
+        let id = try XCTUnwrap(source.currentConversation?.id).toHexDashString()
+        let answer = UIMessage.companion.assistant(prompt: "收藏这段")
+        let messages = [UIMessage.companion.user(prompt: "问题"), answer]
+        await source.saveCurrent(messages: messages)
+        let snippet = try XCTUnwrap(ChatArtifactPinning.snippet(
+            messageID: ChatMessageProjector.messageId(for: answer), text: "收藏这段", kind: .message, messages: messages
+        ))
+        try source.artifactStore.pin(snippet, for: id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sourceDir.appendingPathComponent("artifact-shelf.json").path))
+
+        let zip = try XCTUnwrap(IOSSyncBackup.conversationsZip(fromDirectory: sourceDir))
+        let documents = try IOSSyncBackup.conversationDocuments(zipData: zip)
+        XCTAssertEqual(documents.count, 1)
+        XCTAssertFalse(documents.contains { $0.contains("adoptedVersions") })
+
+        // 目标设备上同一会话已有旧收藏：恢复后该会话的收藏被清掉。
+        let target = IOSConversationStore(baseDirectory: targetDir)
+        await target.bootstrap()
+        try target.artifactStore.pin(snippet, for: id)
+        let restored = try await target.importConversationDocuments(documents)
+        XCTAssertEqual(restored, 1)
+        XCTAssertTrue(target.artifactStore.snippets(for: id).isEmpty)
+        XCTAssertTrue(target.allSummaries.contains { $0.id.toHexDashString() == id })
+    }
 }

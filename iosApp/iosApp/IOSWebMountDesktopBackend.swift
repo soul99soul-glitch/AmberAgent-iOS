@@ -858,6 +858,9 @@ final class IOSWebMountDesktopBackendAdapter {
             mapped["kind"] = kind
             return mapped
         case "wm_find":
+            if arguments["locator"] != nil {
+                throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_find/locator")
+            }
             if let selector = string(arguments, "selector") {
                 guard remoteTool.explicitlySupports("selector") else {
                     throw IOSWebMountDesktopBackendError.mappingUnsupported("wm_find/selector")

@@ -6,6 +6,18 @@
 import Foundation
 import SwiftUI
 
+private struct CodeBlockHeaderAccessoryProviderKey: EnvironmentKey {
+  static let defaultValue: ((_ code: String, _ language: String?) -> AnyView?)? = nil
+}
+
+public extension EnvironmentValues {
+  /// Optional host view for each code block's `headerAccessory` slot. The default nil keeps the original header.
+  var swiftStreamingMarkdownCodeBlockHeaderAccessory: ((_ code: String, _ language: String?) -> AnyView?)? {
+    get { self[CodeBlockHeaderAccessoryProviderKey.self] }
+    set { self[CodeBlockHeaderAccessoryProviderKey.self] = newValue }
+  }
+}
+
 struct BlockView: View {
 
   @Environment(\.markdownConfig) var config: MarkdownRenderConfig
@@ -29,6 +41,7 @@ struct SingleBlockView: View {
 
   @Environment(\.markdownConfig) var config: MarkdownRenderConfig
   @Environment(\.markdownUsesTextKit1ForAttachmentFreeText) var usesTextKit1ForAttachmentFreeText
+  @Environment(\.swiftStreamingMarkdownCodeBlockHeaderAccessory) private var codeBlockHeaderAccessory
   @State private var hasMountedText = false
 
   let renderable: MarkdownRenderable
@@ -113,7 +126,8 @@ struct SingleBlockView: View {
         UnorderedListView(items: items, nestedLevel: nestedLevel)
       case .codeBlock(_, let language, let code):
         CodeBlockView(language: language ?? "",
-                      code: code)
+                      code: code,
+                      headerAccessory: codeBlockHeaderAccessory?(code, language))
       case .thematicBreak:
         ThematicBreakView()
       case .table(_, let headers, let rows, let rawMarkdown):

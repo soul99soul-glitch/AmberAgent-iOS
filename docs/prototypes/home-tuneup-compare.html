@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amber 首页 · 原版 vs 微调</title>
+<style>
+  :root {
+    --sans: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    --bg: #EDE5D8; --dot: rgba(90,70,40,.10);
+    --card: #FDFBF6; --ink: #1E1B17; --ink-2: #7B756C; --ink-3: #A39D93;
+    --sep: rgba(38,30,20,.07);
+    --accent: #B4623B; --accent-tile: #EFDDD2; --accent-band: #F4E9E2; --accent-avatar: #EAD5C9;
+    --idle-avatar: #EFEBE5; --idle-ink: #8C877F;
+    --chip: #F1ECE4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #D8D3CB; font-family: var(--sans); -webkit-font-smoothing: antialiased; padding: 30px 24px 50px; display: flex; justify-content: center; gap: 44px; }
+  .cap { text-align: center; margin-top: 16px; font: 600 14px var(--sans); color: #4b463f; }
+  .cap small { display: block; font-weight: 400; font-size: 12px; color: #7a746b; margin-top: 4px; }
+
+  .phone { width: 420px; height: 912px; border-radius: 58px; overflow: hidden; position: relative; background: var(--bg); color: var(--ink);
+    box-shadow: 0 0 0 11px #121212, 0 0 0 12px #333, 0 40px 80px rgba(0,0,0,.22); }
+  .phone::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(var(--dot) 1px, transparent 1.3px); background-size: 16px 16px; pointer-events: none; }
+  .island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 124px; height: 36px; background: #000; border-radius: 20px; z-index: 9; }
+  .status { position: absolute; top: 0; left: 0; right: 0; height: 58px; display: flex; justify-content: space-between; align-items: center; padding: 6px 36px 0 44px; font: 600 17px var(--sans); z-index: 8; }
+  .status .r { display: flex; gap: 6px; align-items: center; }
+  .batt { background: #5DCB5A; color: #fff; font: 700 12px var(--sans); border-radius: 5px; padding: 1px 5px; }
+  .content { position: absolute; inset: 0; padding-top: 68px; }
+
+  /* header */
+  .head { display: flex; align-items: center; height: 40px; padding: 0 16px; }
+  .head svg.wm { margin-top: 2px; }
+  .head .sp { flex: 1; }
+  .gl { height: 38px; border-radius: 19px; display: flex; align-items: center; justify-content: center; gap: 6px;
+    background: linear-gradient(#FFFCF7cc, #F8F2E8aa); box-shadow: inset 0 .5px 0 #fff, 0 0 0 .75px rgba(60,45,25,.14), 0 3px 10px rgba(60,40,15,.06); }
+  .gl.search { width: 78px; font: 500 15px var(--sans); color: #5c564e; margin-right: 18px; }
+  .gl.gear { width: 38px; margin-right: 10px; color: var(--accent); }
+  .avatar { width: 38px; height: 38px; border-radius: 50%; background: radial-gradient(circle at 45% 45%, #d9a37a 0 18%, transparent 19%), conic-gradient(from 30deg, #2e5f96, #e3833b, #c7453c, #3a79a8, #e8b85c, #7a3fa0, #2e5f96); }
+
+  /* control card */
+  .cc { margin: 18px 16px 0; background: var(--card); border-radius: 28px; box-shadow: 0 1px 2px rgba(60,45,25,.06), 0 6px 20px rgba(60,45,25,.05); }
+  .cont { display: flex; align-items: center; padding: 18px 16px 18px 16px; gap: 14px; }
+  .tile { width: 44px; height: 44px; border-radius: 13px; background: var(--accent-tile); color: var(--accent); display: grid; place-items: center; flex: none; }
+  .cont .txt { flex: 1; min-width: 0; }
+  .cont .t { font: 600 16px var(--sans); }
+  .cont .s { font: 400 13px var(--sans); color: var(--ink-2); margin-top: 3px; }
+  .btn { height: 32px; padding: 0 17px; border-radius: 16px; background: var(--chip); font: 600 15px var(--sans); display: grid; place-items: center; }
+  .cc hr { border: 0; height: 1px; background: var(--sep); margin: 0 16px; }
+  .shortcuts { display: grid; grid-template-columns: repeat(5, 1fr); padding: 14px 4px 16px; }
+  .sc { display: flex; flex-direction: column; align-items: center; gap: 7px; color: #4F4A43; font: 500 12.5px var(--sans); }
+  .sc svg { color: #58534C; }
+
+  .label { padding: 26px 16px 12px; font: 600 11px var(--sans); letter-spacing: .11px; color: #55524D; }
+
+  /* list */
+  .list { margin: 0 16px; background: var(--card); border-radius: 22px 22px 0 0; overflow: hidden; }
+  .row { display: flex; align-items: center; height: 72px; position: relative; }
+  .row .av { width: 40px; height: 40px; border-radius: 50%; background: var(--idle-avatar); color: var(--idle-ink); display: grid; place-items: center; margin: 0 14px 0 17px; flex: none; }
+  .row .tx { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: center; margin-right: 16px; position: relative; }
+  .row + .row .tx::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: var(--sep); }
+  .row .t { font: 600 17px var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .m { font: 400 13px var(--sans); color: var(--ink-2); margin-top: 4px; letter-spacing: .3px; }
+  .row.active { background: var(--accent-band); }
+  .row.active .av { background: var(--accent-avatar); color: var(--accent); }
+  .row.active + .row .tx::before { display: none; }
+
+  .newchat { position: absolute; right: 26px; bottom: 26px; height: 44px; padding: 0 20px 0 16px; border-radius: 22px; display: flex; align-items: center; gap: 8px;
+    background: linear-gradient(#C0714A, #AD5A34); color: #fff; font: 600 16px var(--sans);
+    box-shadow: inset 0 .5px 0 rgba(255,255,255,.4), 0 0 0 1px rgba(150,70,35,.35), 0 8px 20px rgba(140,60,25,.25); z-index: 5; }
+  .home-ind { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 140px; height: 5px; border-radius: 3px; background: #111; z-index: 9; }
+
+  /* ---------- 微调 ---------- */
+  /* ③ 分区标题更可读 */
+  .tuned .label { font-size: 15px; font-weight: 600; color: #4A453E; padding-top: 22px; padding-bottom: 10px; letter-spacing: 0; }
+  .tuned [data-cont-title] { margin-left: -.45em; }
+  /* ① 续接卡：书名为主，类别降为副信息（见 JS 文案替换） */
+  .mk { position: absolute; width: 24px; height: 24px; border-radius: 50%; background: #2F6FEB; color: #fff; font: 700 13px var(--sans);
+    display: none; place-items: center; z-index: 20; box-shadow: 0 0 0 2px #fff, 0 2px 6px rgba(0,0,0,.25); }
+  .tuned .mk { display: grid; }
+</style>
+</head>
+<body>
+
+<template id="screen">
+<div class="phone">
+  <div class="island"></div>
+  <div class="status">
+    <span>16:08</span>
+    <span class="r">
+      <svg width="19" height="12" viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+      <svg width="17" height="12" viewBox="0 0 16 12" fill="currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.1-1.2A10.4 10.4 0 0 0 8 .6 10.4 10.4 0 0 0 .9 3.4L2 4.6a8.8 8.8 0 0 1 6-2.4Zm0 3.3c1.4 0 2.7.5 3.7 1.4l1.1-1.2A7.1 7.1 0 0 0 8 3.9a7.1 7.1 0 0 0-4.8 1.8l1.1 1.2c1-.9 2.3-1.4 3.7-1.4Zm0 3.3c-.6 0-1.1.2-1.5.6L8 11l1.5-1.6c-.4-.4-.9-.6-1.5-.6Z"/></svg>
+      <span class="batt">58</span>
+    </span>
+  </div>
+
+  <div class="content">
+    <div class="head">
+      <svg class="wm" data-wordmark></svg>
+      <span class="sp"></span>
+      <span class="gl search"><svg width="15" height="15" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="m12.2 12.2 3.8 3.8"/></svg>搜索</span>
+      <span class="gl gear"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M10.3 2.5h3.4l.5 2.7 1.9 1.1 2.6-.9 1.7 2.9-2.1 1.8v2.2l2.1 1.8-1.7 2.9-2.6-.9-1.9 1.1-.5 2.7h-3.4l-.5-2.7-1.9-1.1-2.6.9-1.7-2.9 2.1-1.8v-2.2L3.6 9.2l1.7-2.9 2.6.9 1.9-1.1zM12 8.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4z"/></svg></span>
+      <span class="avatar"></span>
+    </div>
+
+    <div class="cc">
+      <div class="cont">
+        <span class="tile"><svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><path fill-rule="evenodd" d="M5 3h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm3 1.8v12.4h9.2V4.8zm2.3 3h5v1.6h-5zm0 3.2h5v1.6h-5z"/></svg></span>
+        <div class="txt"><div class="t" data-cont-title>小说创作</div><div class="s" data-cont-sub>《赵大来了》· 2 天前</div></div>
+        <span class="btn">继续</span>
+      </div>
+      <hr>
+      <div class="shortcuts">
+        <span class="sc"><svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><path fill-rule="evenodd" d="M4 3h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zm4.5 3.5h-2v9h2zm2 0v9h1v-9zm3 0v2.5h2V6.5zm0 4v2h2v-2zm0 3.5v1.5h2V14z"/></svg>深度阅读</span>
+        <span class="sc"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="2.5" width="14" height="17" rx="1.5"/><path d="M7.5 7h7M7.5 10h7M7.5 13h7M7.5 16h4"/></svg>小说创作</span>
+        <span class="sc"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 3.5h14a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-7l-4 3.5V15H4a2 2 0 0 1-2-2V5.5a2 2 0 0 1 2-2z"/><path d="M7 8h2M10 8h2M13 8h2M7 11h2M10 11h2" stroke-linecap="round"/></svg>模型议会</span>
+        <span class="sc"><svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><rect x="3" y="3" width="6.5" height="6.5" rx="1.2"/><rect x="12.5" y="3" width="6.5" height="6.5" rx="1.2"/><rect x="3" y="12.5" width="6.5" height="6.5" rx="1.2"/><rect x="12.5" y="12.5" width="6.5" height="6.5" rx="1.2"/></svg>小应用</span>
+        <span class="sc"><svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8.5"/><circle cx="11" cy="11" r="3.2" fill="currentColor"/><path d="M5 7.5h12M5 14.5h12"/></svg>站点</span>
+      </div>
+    </div>
+
+    <div class="label">会话</div>
+    <div class="list" data-list></div>
+  </div>
+
+  <div class="newchat"><svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M11 2.5 13.5 5 6 12.5H3.5V10z"/></svg>新对话</div>
+  <div class="home-ind"></div>
+  <span class="mk" style="left:64px; top:118px">1</span>
+  <span class="mk" style="left:8px; top:618px">2</span>
+  <span class="mk" style="left:58px; top:306px">3</span>
+</div>
+</template>
+
+<script>
+  const ICONS = {
+    moon: '<svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><path d="M18.5 13.6A8 8 0 1 1 8.4 3.5a6.5 6.5 0 0 0 10.1 10.1z"/></svg>',
+    calendar: '<svg width="22" height="22" viewBox="0 0 22 22"><rect x="3" y="4" width="16" height="15" rx="3" fill="currentColor"/><rect x="6.5" y="2" width="2" height="4" rx="1" fill="currentColor"/><rect x="13.5" y="2" width="2" height="4" rx="1" fill="currentColor"/><text x="11" y="16.3" text-anchor="middle" font-size="8" font-weight="700" fill="#fff" font-family="-apple-system">12</text></svg>',
+    crown: '<svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><path d="M3 7.5 7 10.5 11 5l4 5.5 4-3-1.5 9h-13z"/><circle cx="3" cy="6.5" r="1.5"/><circle cx="11" cy="4" r="1.5"/><circle cx="19" cy="6.5" r="1.5"/></svg>',
+    pill: '<svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><path d="M13.5 3.2a5 5 0 0 1 7 7l-3.3 3.3-7-7z"/><path d="M9.3 7.4l7 7-3.3 3.3a5 5 0 0 1-7-7z" opacity=".75"/></svg>',
+    robot: '<svg width="22" height="22" viewBox="0 0 22 22" fill="currentColor"><rect x="10" y="2" width="2" height="4" rx="1"/><path fill-rule="evenodd" d="M6 6h10a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3zm2 5a1.3 1.3 0 1 0 0 2.6A1.3 1.3 0 0 0 8 11zm6 0a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6zm-6 4.5V17h6v-1.5z"/></svg>',
+    gear: '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" d="M10.3 2.5h3.4l.5 2.7 1.9 1.1 2.6-.9 1.7 2.9-2.1 1.8v2.2l2.1 1.8-1.7 2.9-2.6-.9-1.9 1.1-.5 2.7h-3.4l-.5-2.7-1.9-1.1-2.6.9-1.7-2.9 2.1-1.8v-2.2L3.6 9.2l1.7-2.9 2.6.9 1.9-1.1zM12 8.8a3.2 3.2 0 1 0 0 6.4 3.2 3.2 0 0 0 0-6.4z"/></svg>',
+    chat: '<svg width="21" height="21" viewBox="0 0 22 22" fill="currentColor"><path d="M11 3c4.7 0 8.5 3.2 8.5 7.2s-3.8 7.2-8.5 7.2c-1 0-2-.1-2.9-.4L4 19l1.1-3.6C3.5 14 2.5 12.2 2.5 10.2 2.5 6.2 6.3 3 11 3z"/></svg>',
+  };
+  // [标题, 元信息, 原版图标, 微调后图标]
+  // ② 只有哈希兜底（与标题语义无关）的图标换成中性气泡；关键词 / LLM 命中的保持不变。
+  const ROWS = [
+    ["春江花月夜哲思", "7小时前 · 2 条", "moon", "moon", true],
+    ["北宋白月光", "19小时前 · 10 条", "moon", "moon"],
+    ["宋仁宗天圣四年", "2天前 · 15 条", "calendar", "calendar"],
+    ["宋太祖谥号", "2天前 · 14 条", "crown", "crown"],
+    ["用 SVG 画一个鹈鹕骑自行车", "3天前 · 2 条", "pill", "chat"],
+    ["mac 与 Synara 连接", "5天前 · 30 条", "robot", "robot"],
+    ["Jev 网页循环负加速", "5天前 · 12 条", "robot", "robot"],
+    ["Jev 启用状态", "6天前 · 106 条", "gear", "gear"],
+    ["宋神宗熙宁变法", "6天前 · 8 条", "calendar", "calendar"],
+  ];
+
+  const GLYPHS = {
+    A: ["01110","10001","10001","11111","10001","10001","10001"],
+    M: ["10001","11011","10101","10101","10001","10001","10001"],
+    B: ["11110","10001","10001","11110","10001","10001","11110"],
+    E: ["11111","10000","10000","11110","10000","10000","11111"],
+    R: ["11110","10001","10001","11110","10100","10010","10001"],
+  };
+  function drawWordmark(svg) {
+    const cell = 3.9, dot = 3.1, gap = 1, word = "AMBER", ns = "http://www.w3.org/2000/svg";
+    const w = word.length * 5 + (word.length - 1) * gap;
+    svg.setAttribute("width", w * cell); svg.setAttribute("height", 7 * cell);
+    svg.setAttribute("viewBox", `0 0 ${w * cell} ${7 * cell}`);
+    [...word].forEach((ch, i) => GLYPHS[ch].forEach((row, y) => [...row].forEach((b, x) => {
+      if (b !== "1") return;
+      const r = document.createElementNS(ns, "rect");
+      r.setAttribute("x", (i * (5 + gap) + x) * cell); r.setAttribute("y", y * cell);
+      r.setAttribute("width", dot); r.setAttribute("height", dot);
+      r.setAttribute("fill", "currentColor"); svg.appendChild(r);
+    })));
+  }
+
+  const tpl = document.getElementById("screen");
+  [[false, "原版", "当前线上首页的 1:1 还原"], [true, "微调", "只改 3 处（蓝色编号），其余不动"]].forEach(([tuned, label, note]) => {
+    const wrap = document.createElement("div");
+    const node = tpl.content.cloneNode(true);
+    const phone = node.querySelector(".phone");
+    if (tuned) phone.classList.add("tuned");
+    drawWordmark(node.querySelector("[data-wordmark]"));
+    if (tuned) {
+      node.querySelector("[data-cont-title]").textContent = "《赵大来了》";
+      node.querySelector("[data-cont-sub]").textContent = "小说创作 · 2 天前";
+    }
+    const list = node.querySelector("[data-list]");
+    ROWS.forEach(([t, m, ic0, ic1, active]) => {
+      const row = document.createElement("div");
+      row.className = "row" + (active ? " active" : "");
+      row.innerHTML = `<span class="av">${ICONS[tuned ? ic1 : ic0]}</span><div class="tx"><div class="t">${t}</div><div class="m">${m.replace("·", "&nbsp;·&nbsp;")}</div></div>`;
+      list.appendChild(row);
+    });
+    wrap.appendChild(node);
+    const cap = document.createElement("div"); cap.className = "cap";
+    cap.innerHTML = `${label}<small>${note}</small>`;
+    wrap.appendChild(cap); document.body.appendChild(wrap);
+  });
+</script>
+</body>
+</html>

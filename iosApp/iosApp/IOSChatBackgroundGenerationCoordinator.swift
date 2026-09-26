@@ -1572,7 +1572,7 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
         let completion = IOSChatDurableResumeCompletion()
         activeDetachedResponseCompletions[requestId] = completion
-        let transport = OpenAIResponsesBackgroundTransport()
+        let transport = IOSSharedKmpProviders.openAIBackgroundTransport
         let outcome = await withCheckedContinuation { continuation in
             completion.install(continuation)
             do {
@@ -2028,7 +2028,7 @@ final class IOSChatBackgroundGenerationCoordinator {
     private func cancelRemoteResponse(for job: IOSChatBackgroundRuntimeJob) {
         guard let openAI = job.providerSetting as? ProviderSetting.OpenAI,
               let responseId = job.responseId else { return }
-        _ = try? OpenAIResponsesBackgroundTransport().cancelBackground(
+        _ = try? IOSSharedKmpProviders.openAIBackgroundTransport.cancelBackground(
             providerSetting: openAI,
             responseId: responseId,
             customHeaders: job.params.customHeaders,

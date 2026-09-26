@@ -2063,7 +2063,7 @@ final class NovelSessionReplayTests: XCTestCase {
 
         XCTAssertTrue(source.contains("@State private var followState = NovelSessionBottomFollowState()"))
         XCTAssertTrue(source.contains(".task(id: listSignal.sessionID)"))
-        XCTAssertTrue(source.contains("presentInitialRowsIfNeeded(listSignal)"))
+        XCTAssertTrue(source.contains("onInitialRows(listSignal)"))
     }
 
     func testUserDragEndingNearBottomCommitsSemanticBottomFollow() {

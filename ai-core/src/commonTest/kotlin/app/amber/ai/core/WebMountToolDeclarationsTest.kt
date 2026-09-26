@@ -10,6 +10,15 @@ import kotlin.test.assertTrue
 
 class WebMountToolDeclarationsTest {
     @Test
+    fun siteMemoryDeclaresReadAndApprovedProposalShape() {
+        val tool = createWebMountSiteMemoryToolDeclaration()
+        val parameters = assertIs<InputSchema.Obj>(tool.parameters())
+        assertEquals(listOf("host", "action"), parameters.required)
+        assertEquals("array", parameters.properties["changes"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertTrue(tool.description.contains("explicit per-call user approval"))
+    }
+
+    @Test
     fun agentMutationDeclarationsRequireBoundSessionAndSnapshot() {
         val tools = listOf(
             createWebMountClickToolDeclaration(),
@@ -60,6 +69,9 @@ class WebMountToolDeclarationsTest {
             val schema = find.properties[name]!!.jsonObject
             assertEquals("1", schema["minLength"]?.jsonPrimitive?.content, name)
         }
+        assertEquals("object", find.properties["locator"]!!.jsonObject["type"]?.jsonPrimitive?.content)
+        assertTrue(find.properties["locator"]!!.jsonObject["description"]!!.jsonPrimitive.content.contains("high-confidence match"))
+        assertTrue(createWebMountFindToolDeclaration().description.contains("semantic locator object"))
     }
 
     @Test
@@ -99,6 +111,8 @@ class WebMountToolDeclarationsTest {
         assertTrue(tool.description.contains("find"))
         assertTrue(tool.description.contains("approval"))
         assertTrue(tool.description.contains("document navigation aborts"))
+        assertTrue(tool.description.contains("semantic locator object"))
+        assertTrue(steps["description"]!!.jsonPrimitive.content.contains("locator for find"))
     }
 
     @Test

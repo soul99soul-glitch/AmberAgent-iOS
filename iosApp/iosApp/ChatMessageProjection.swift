@@ -17,21 +17,30 @@ struct ChatMessageAnchor: Hashable, Sendable {
     let conversationID: String
     let messageID: String
     let toolCallID: String?
+    let requestToken: UUID?
 
     init(
         conversationID: String,
         messageID: String,
-        toolCallID: String? = nil
+        toolCallID: String? = nil,
+        requestToken: UUID? = nil
     ) {
         self.conversationID = conversationID
         self.messageID = messageID
         self.toolCallID = toolCallID
+        self.requestToken = requestToken
     }
 }
 
 enum ChatImageGenerationAnchorTarget {
-    static func id(toolCallID: String) -> String {
-        "image-tool-\(toolCallID)"
+    static func id(messageID: String, toolCallID: String) -> String {
+        "image-tool-\(messageID)-\(toolCallID)"
+    }
+}
+
+enum ChatToolCallAnchorTarget {
+    static func id(messageID: String, toolCallID: String) -> String {
+        "tool-call-\(messageID)-\(toolCallID)"
     }
 }
 

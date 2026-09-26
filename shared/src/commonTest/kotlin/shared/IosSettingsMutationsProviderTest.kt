@@ -12,6 +12,7 @@ import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.hasUsableAuth
+import app.amber.ai.core.ReasoningLevel
 import app.amber.core.model.Assistant
 import app.amber.core.settings.DEFAULT_AUTO_MODEL_ID
 import app.amber.core.settings.Settings
@@ -255,6 +256,45 @@ class IosSettingsMutationsProviderTest {
         assertEquals(listOf(Modality.TEXT, Modality.IMAGE), model.inputModalities)
         assertEquals(listOf(ModelAbility.TOOL, ModelAbility.REASONING), model.abilities)
         assertNull(model.contextWindowTokens)
+    }
+
+    @Test
+    fun legacyCodexGpt6ModelsGainReasoningWithoutOverridingLaterOffChoice() {
+        val sol = Model(modelId = "gpt-6-sol", abilities = emptyList())
+        val luna = Model(modelId = "gpt-6-luna", abilities = emptyList())
+        val provider = ProviderSetting.OpenAI(
+            authMode = OpenAIAuthMode.CODEX_OAUTH,
+            models = listOf(sol, luna),
+        )
+        val assistant = Assistant(
+            chatModelId = sol.id,
+            reasoningLevel = ReasoningLevel.OFF,
+            rememberedReasoningLevelsByModelId = mapOf(
+                sol.id.toString() to ReasoningLevel.OFF,
+                luna.id.toString() to ReasoningLevel.OFF,
+            ),
+        )
+        val saved = Settings(
+            providers = listOf(provider),
+            chatModelId = sol.id,
+            assistants = listOf(assistant),
+        )
+
+        val migrated = IosSettingsMutations.migrateLegacyCodexGpt6Reasoning(saved)
+        val models = migrated.providers.single().models
+        assertTrue(models.all { ModelAbility.REASONING in it.abilities })
+        assertEquals(listOf(sol.id, luna.id), models.map { it.id })
+        assertEquals(ReasoningLevel.AUTO, migrated.assistants.single().reasoningLevel)
+        assertEquals(ReasoningLevel.AUTO, migrated.assistants.single().rememberedReasoningLevelsByModelId[luna.id.toString()])
+        assertEquals(ReasoningLevel.MEDIUM, IosSettingsMutations.currentAssistantReasoningLevel(migrated))
+        assertEquals(migrated, IosSettingsMutations.migrateLegacyCodexGpt6Reasoning(migrated))
+
+        val chosenOff = migrated.copy(assistants = listOf(migrated.assistants.single().copy(
+            reasoningLevel = ReasoningLevel.OFF,
+            rememberedReasoningLevelsByModelId = migrated.assistants.single().rememberedReasoningLevelsByModelId +
+                (sol.id.toString() to ReasoningLevel.OFF),
+        )))
+        assertEquals(chosenOff, IosSettingsMutations.migrateLegacyCodexGpt6Reasoning(chosenOff))
     }
 
     @Test

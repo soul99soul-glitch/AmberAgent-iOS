@@ -152,6 +152,64 @@ struct ChatAssistantText<Content: View>: View {
     }
 }
 
+/// 已播过入场的 live 元素 key：LazyVStack 回收后重建不会重播，只有真正新出现的元素才渐入。
+@MainActor
+enum ChatLiveEntranceRegistry {
+    private static var revealed: Set<String> = []
+    private static var order: [String] = []
+    private static let capacity = 512
+
+    static func hasRevealed(_ key: String) -> Bool { revealed.contains(key) }
+
+    static func claim(_ key: String) -> Bool {
+        guard revealed.insert(key).inserted else { return false }
+        order.append(key)
+        if order.count > capacity {
+            revealed.remove(order.removeFirst())
+        }
+        return true
+    }
+}
+
+/// 流式过程中新出现的元素（等待指示、思考卡、工具胶囊、首段正文）轻微上移 + 渐入。
+/// 只用 opacity/offset 这类渲染期效果，不改变布局高度，不干扰滚动测量与底部跟随。
+/// 历史内容（`isLive == false`）和已播过的 key 直接以终态出现。
+private struct ChatLiveEntranceModifier: ViewModifier {
+    let key: String
+    let isLive: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase: Phase = .pending
+
+    private enum Phase { case pending, hidden, shown }
+
+    func body(content: Content) -> some View {
+        // 重建的已播元素首帧就按终态绘制，避免一帧闪烁。
+        let hidden = phase == .hidden ||
+            (phase == .pending && isLive && !ChatLiveEntranceRegistry.hasRevealed(key))
+        content
+            .opacity(hidden ? 0 : 1)
+            .offset(y: hidden && !reduceMotion ? 8 : 0)
+            .onAppear {
+                guard phase == .pending else { return }
+                guard isLive, ChatLiveEntranceRegistry.claim(key) else {
+                    phase = .shown
+                    return
+                }
+                phase = .hidden
+                withAnimation(reduceMotion ? .easeOut(duration: 0.2) : .smooth(duration: 0.38)) {
+                    phase = .shown
+                }
+            }
+    }
+}
+
+extension View {
+    func chatLiveEntrance(key: String, isLive: Bool) -> some View {
+        modifier(ChatLiveEntranceModifier(key: key, isLive: isLive))
+    }
+}
+
 struct ChatAssistantPendingResponseView: View {
     @State private var startedAt = Date()
     /// Overridable so callers with a richer phase model (e.g. Novel's quickStart streaming

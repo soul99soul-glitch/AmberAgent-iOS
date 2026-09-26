@@ -18,6 +18,7 @@ struct AppShell: View {
     @State private var mcpConfigStore: IOSMcpConfigStore
     @State private var conversationStore: IOSConversationStore
     @State private var chatViewModel: ChatViewModel
+    @State private var conversationActivityCenter: ConversationActivityCenter
     @State private var councilChatViewModel: CouncilChatViewModel
     @State private var storeCoordinator = IOSStoreCoordinator()
     @State private var novelCreationViewModel: NovelCreationViewModel?
@@ -113,6 +114,7 @@ struct AppShell: View {
         self._sharedSettings = State(initialValue: sharedSettingsStore)
         self._mcpConfigStore = State(initialValue: .shared)
         self._conversationStore = State(initialValue: conversationStore)
+        self._conversationActivityCenter = State(initialValue: ConversationActivityCenter(conversationStore: conversationStore))
         self._chatViewModel = State(initialValue: chatViewModel)
         self._councilChatViewModel = State(initialValue: councilChatViewModel)
         self._novelCreationViewModel = State(initialValue: novelCreationViewModel)
@@ -191,6 +193,7 @@ struct AppShell: View {
         .environment(rootRouter)
         .environment(conversationStore)
         .environment(chatViewModel)
+        .environment(conversationActivityCenter)
         .environment(documentAccessStore)
         .environment(workspaceStore)
         .environment(\.locale, selectedLanguage.resolvedLocale())
@@ -367,6 +370,7 @@ struct AppShell: View {
             }
             sharedSettings.repairCurrentChatModelIfNeeded(settingsStore)
             IOSSubAgentActivityStore.shared.start()
+            conversationActivityCenter.start()
             await openPendingAgentActivityIfReady()
             await openPendingAppDeepLinkIfReady()
         }

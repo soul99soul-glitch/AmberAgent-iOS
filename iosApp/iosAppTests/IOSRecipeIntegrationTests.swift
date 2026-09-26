@@ -47,6 +47,7 @@ final class IOSRecipeIntegrationTests: XCTestCase {
             "generate_image",
             "mcp__unknown__missing",
             "wm_eval",
+            "wm_site_memory",
         ] {
             XCTAssertNil(
                 IOSDynamicToolRegistry.primitiveCatalogEntry(for: rejected),

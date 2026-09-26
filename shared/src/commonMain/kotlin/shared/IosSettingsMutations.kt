@@ -779,6 +779,43 @@ object IosSettingsMutations {
         return model.reasoningOptions(provider).map { it.level }
     }
 
+    /** Backfill Codex models saved before GPT-6 Sol/Luna were in the registry. */
+    fun migrateLegacyCodexGpt6Reasoning(settings: Settings): Settings {
+        val modelIds = setOf("gpt-6-sol", "gpt-6-luna")
+        val legacyModelUuids = settings.providers
+            .filterIsInstance<ProviderSetting.OpenAI>()
+            .filter { it.authMode == OpenAIAuthMode.CODEX_OAUTH }
+            .flatMap { it.models }
+            .filter { it.modelId.lowercase() in modelIds && ModelAbility.REASONING !in it.abilities }
+            .map { it.id }
+            .toSet()
+        if (legacyModelUuids.isEmpty()) return settings
+
+        val migratedProviders = settings.providers.map { provider ->
+            if (provider !is ProviderSetting.OpenAI || provider.authMode != OpenAIAuthMode.CODEX_OAUTH) {
+                provider
+            } else {
+                provider.copy(models = provider.models.map { model ->
+                    if (model.id !in legacyModelUuids) model
+                    else model.copy(abilities = (model.abilities + ModelRegistry.MODEL_ABILITIES.getData(model.modelId)).distinct())
+                })
+            }
+        }
+        val legacyKeys = legacyModelUuids.map { it.toString() }.toSet()
+        val migratedAssistants = settings.assistants.map { assistant ->
+            val activeModelId = assistant.chatModelId ?: settings.chatModelId
+            assistant.copy(
+                reasoningLevel = if (activeModelId in legacyModelUuids && assistant.reasoningLevel == ReasoningLevel.OFF) {
+                    ReasoningLevel.AUTO
+                } else assistant.reasoningLevel,
+                rememberedReasoningLevelsByModelId = assistant.rememberedReasoningLevelsByModelId.mapValues { (modelId, level) ->
+                    if (modelId in legacyKeys && level == ReasoningLevel.OFF) ReasoningLevel.AUTO else level
+                },
+            )
+        }
+        return settings.copy(providers = migratedProviders, assistants = migratedAssistants)
+    }
+
     fun currentAssistantReasoningLevel(settings: Settings): ReasoningLevel {
         val model = settings.getCurrentChatModel() ?: return settings.getCurrentAssistant().reasoningLevel
         val provider = model.findProvider(settings.providers)

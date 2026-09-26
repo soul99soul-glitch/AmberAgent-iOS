@@ -24,7 +24,9 @@ enum IOSCodexOAuthConstants {
     static let deviceVerificationUrl = issuer + "/codex/device"
     static let chatGptBackendBaseUrl = "https://chatgpt.com/backend-api"
     static let codexBackendBaseUrl = "https://chatgpt.com/backend-api/codex"
-    static let clientVersion = "0.153.4"
+    // The Codex model catalog is filtered by client_version. Keep this aligned
+    // with a current Codex catalog version when new models are released.
+    static let clientVersion = "0.155.0"
     static let originator = "amberagent_android"
     /// Synthetic model id for the codex image model (matches Android
     /// `CODEX_OAUTH_IMAGE_MODEL_ID`); generation runs via the Responses

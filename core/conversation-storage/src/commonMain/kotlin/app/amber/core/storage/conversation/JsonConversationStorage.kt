@@ -136,7 +136,11 @@ class JsonConversationStorage(
 
     @Throws(Throwable::class)
     override suspend fun saveConversation(conversation: Conversation): Conversation = operationMutex.withLock {
-        saveConversationLocked(conversation)
+        // Keep the full read-modify-write serialized while moving synchronous file IO
+        // and JSON work off the caller's dispatcher, matching conversation reads.
+        withContext(Dispatchers.Default) {
+            saveConversationLocked(conversation)
+        }
     }
 
     private fun saveConversationLocked(conversation: Conversation): Conversation {

@@ -239,6 +239,8 @@ private enum WebMountResultTab: String, CaseIterable, Identifiable {
 private enum WebMountSiteSheet: String, Identifiable, Equatable {
     case inspector
     case popup
+    case runReport
+    case siteMemory
 
     var id: String { rawValue }
 }
@@ -1060,6 +1062,33 @@ struct WebMountSiteView: View {
         runtime.popupWebViews.last.map { ObjectIdentifier($0) }
     }
 
+    private var siteMemoryHosts: [String] {
+        var hosts = resolvedSite.allowedHosts
+            .map { IOSWebMountRegistry.memoryHostKey($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            .filter { !$0.isEmpty }
+        let homepageHost = IOSWebMountRegistry.memoryHostKey(
+            resolvedSite.homepageHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        if !hosts.contains(homepageHost) {
+            hosts.append(homepageHost)
+        }
+        return hosts.reduce(into: [String]()) { result, host in
+            if !result.contains(host) { result.append(host) }
+        }
+    }
+
+    private var siteMemoryInitialHost: String {
+        if let currentHost = runtime.snapshot.currentURL
+            .flatMap({ URL(string: $0)?.host })
+            .map(IOSWebMountRegistry.memoryHostKey),
+           siteMemoryHosts.contains(currentHost) {
+            return currentHost
+        }
+        return IOSWebMountRegistry.memoryHostKey(
+            resolvedSite.homepageHost.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
+
     private var activePopup: WKWebView? {
         if let selectedPopupIdentifier,
            let selected = runtime.popupWebViews.first(where: {
@@ -1155,6 +1184,18 @@ struct WebMountSiteView: View {
                 inspectorSheet
             case .popup:
                 popupSheet
+            case .runReport:
+                WebMountRunReportSheet(sessionRecord: sessionRecord) {
+                    presentedSheet = nil
+                }
+            case .siteMemory:
+                WebMountSiteMemorySheet(
+                    hosts: siteMemoryHosts,
+                    selectedHost: siteMemoryInitialHost,
+                    registry: registry
+                ) {
+                    presentedSheet = nil
+                }
             }
         }
         .onChange(of: latestPopupIdentifier) { _, identifier in
@@ -1176,7 +1217,7 @@ struct WebMountSiteView: View {
                 } else {
                     popupPresentationQueued = true
                 }
-            case .inspector:
+            case .inspector, .runReport, .siteMemory:
                 popupPresentationQueued = true
             case .popup:
                 break
@@ -1205,7 +1246,7 @@ struct WebMountSiteView: View {
                 selectedPopupIdentifier = identifier
                 if presentedSheet == nil, runtime.browserDialog == nil {
                     presentedSheet = .popup
-                } else if presentedSheet == .inspector {
+                } else if presentedSheet == .inspector || presentedSheet == .runReport || presentedSheet == .siteMemory {
                     popupPresentationQueued = true
                 }
             }
@@ -1233,6 +1274,14 @@ struct WebMountSiteView: View {
 
             workspaceBackButton
             workspaceForwardButton
+            workspaceBrowserButton(
+                systemImage: "brain",
+                accessibilityLabel: "站点记忆",
+                isEnabled: true
+            ) {
+                presentedSheet = .siteMemory
+            }
+            .accessibilityIdentifier("webmount.siteMemory.header")
             pageMenu
         }
         .padding(.horizontal, 8)
@@ -1266,6 +1315,15 @@ struct WebMountSiteView: View {
                     inspectorTab = .overview
                     presentedSheet = .inspector
                 }
+                Button("站点记忆", systemImage: "brain") {
+                    presentedSheet = .siteMemory
+                }
+                .accessibilityIdentifier("webmount.siteMemory")
+                Button("运行报告", systemImage: "chart.bar.xaxis") {
+                    presentedSheet = .runReport
+                }
+                .disabled(sessionRecord == nil)
+                .accessibilityIdentifier("webmount.runReport")
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -2257,6 +2315,539 @@ struct WebMountSiteView: View {
         }
     }
 
+}
+
+@MainActor
+struct WebMountSiteMemorySheet: View {
+    let hosts: [String]
+    let registry: IOSWebMountRegistry
+    let onClose: () -> Void
+
+    @State private var selectedHost: String
+    @State private var entries: [IOSWebMountSiteMemoryEntry] = []
+    @State private var showsClearConfirmation = false
+
+    init(host: String, registry: IOSWebMountRegistry, onClose: @escaping () -> Void) {
+        self.init(hosts: [host], selectedHost: host, registry: registry, onClose: onClose)
+    }
+
+    init(
+        hosts: [String],
+        selectedHost: String?,
+        registry: IOSWebMountRegistry,
+        onClose: @escaping () -> Void
+    ) {
+        let normalizedHosts = hosts
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .reduce(into: [String]()) { result, host in
+                if !result.contains(host) { result.append(host) }
+            }
+        let requestedHost = selectedHost?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        self.hosts = normalizedHosts
+        self.registry = registry
+        self.onClose = onClose
+        _selectedHost = State(initialValue: normalizedHosts.first(where: { $0 == requestedHost }) ?? normalizedHosts.first ?? "")
+    }
+
+    private var host: String { selectedHost }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Agent 提议并经你确认的站点经验保存在本机，供后续任务参考。")
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
+
+                    AmberSectionLabel(text: "站点记忆")
+                    if hosts.count > 1 {
+                        HStack {
+                            Text("站点域名")
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.muted)
+                            Spacer(minLength: 8)
+                            Picker("站点域名", selection: $selectedHost) {
+                                ForEach(hosts, id: \.self) { host in
+                                    Text(host).tag(host)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .accessibilityIdentifier("webmount.siteMemory.hostPicker")
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 8)
+                    } else {
+                        Text(host)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(AmberTheme.muted)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+                    }
+
+                    if entries.isEmpty {
+                        AmberFormGroup {
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text("暂无站点记忆")
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(AmberTheme.foreground)
+                                Text("Agent 提交记忆提案并经你批准后，会显示在这里。")
+                                    .font(.caption)
+                                    .foregroundStyle(AmberTheme.muted)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 13)
+                        }
+                    } else {
+                        AmberFormGroup {
+                            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                                WebMountSiteMemoryEntryRow(entry: entry) {
+                                    registry.deleteSiteMemoryEntry(host: host, id: entry.id)
+                                    reloadEntries()
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 11)
+
+                                if index < entries.count - 1 {
+                                    Divider()
+                                        .overlay(AmberTheme.borderSoft)
+                                        .padding(.leading, 14)
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+            .background(AmberTheme.surface2)
+            .navigationTitle("站点记忆")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(AmberTheme.surface2, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(role: .destructive) {
+                        showsClearConfirmation = true
+                    } label: {
+                        Label("清空", systemImage: "trash")
+                    }
+                    .disabled(entries.isEmpty)
+                    .accessibilityIdentifier("webmount.siteMemory.clear")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成", systemImage: "xmark", action: onClose)
+                }
+            }
+            .confirmationDialog(
+                "清空站点记忆？",
+                isPresented: $showsClearConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("清空记忆", role: .destructive) {
+                    registry.clearSiteMemory(host: host)
+                    reloadEntries()
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("将删除 \(host) 的全部站点记忆。")
+            }
+        }
+        .task(id: selectedHost) { reloadEntries() }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .accessibilityIdentifier("webmount.siteMemory.root")
+    }
+
+    private func reloadEntries() {
+        guard !host.isEmpty else {
+            entries = []
+            return
+        }
+        entries = registry.siteMemory(host: host)
+    }
+}
+
+private struct WebMountSiteMemoryEntryRow: View {
+    let entry: IOSWebMountSiteMemoryEntry
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Label(kindLabel, systemImage: kindImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.accent)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AmberTheme.accentRed)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("删除\(kindLabel)：\(entry.name)")
+                .accessibilityIdentifier("webmount.siteMemory.delete.\(entry.id)")
+            }
+
+            Text(entry.name)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let urlPattern = entry.urlPattern?.nilIfBlank {
+                memoryValue(label: "URL 模式", value: urlPattern, monospaced: true)
+            }
+            if let locatorJSON = entry.locatorJSON?.nilIfBlank {
+                memoryValue(label: "Locator", value: locatorJSON, monospaced: true)
+            }
+            if let detail = entry.detail.nilIfBlank {
+                memoryValue(label: "说明", value: detail, monospaced: false)
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("来源：\(entry.source.rawValue == "user" ? "用户" : "Agent")")
+                Text("更新于：\(Date(timeIntervalSince1970: Double(entry.updatedAtMillis) / 1_000).formatted(date: .abbreviated, time: .shortened))")
+            }
+            .font(.caption2)
+            .foregroundStyle(AmberTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("webmount.siteMemory.entry.\(entry.id)")
+    }
+
+    private var kindLabel: String {
+        switch entry.kind.rawValue {
+        case "pages": "页面"
+        case "actions": "操作"
+        case "pitfalls": "注意事项"
+        case "cannot_do": "无法执行"
+        default: entry.kind.rawValue
+        }
+    }
+
+    private var kindImage: String {
+        switch entry.kind.rawValue {
+        case "pages": "doc.text"
+        case "actions": "cursorarrow.click"
+        case "pitfalls": "exclamationmark.triangle"
+        case "cannot_do": "xmark.circle"
+        default: "text.alignleft"
+        }
+    }
+
+    private func memoryValue(label: String, value: String, monospaced: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(AmberTheme.muted)
+            Text(value)
+                .font(monospaced ? .caption.monospaced() : .caption)
+                .foregroundStyle(AmberTheme.foreground2)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+@MainActor
+struct WebMountRunReportSheet: View {
+    let sessionRecord: IOSWebMountSessionRecord?
+    let onClose: () -> Void
+
+    @State private var reports: [IOSWebMountRunReport] = []
+    @State private var isLoading = true
+    private let ledger = IOSAgentRunLedger()
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if reports.isEmpty && isLoading {
+                    ProgressView("正在读取运行记录…")
+                        .tint(AmberTheme.accent)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if !reports.isEmpty {
+                    reportContent(reports)
+                } else {
+                    emptyState
+                }
+            }
+            .background(AmberTheme.surface2)
+            .navigationTitle("运行报告")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("刷新", systemImage: "arrow.clockwise") {
+                        Task { await reloadReports() }
+                    }
+                    .disabled(isLoading || sessionRecord == nil)
+                    .accessibilityIdentifier("webmount.runReport.refresh")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成", systemImage: "xmark", action: onClose)
+                }
+            }
+        }
+        .task(id: sessionRecord?.id) {
+            await reloadReports()
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .accessibilityIdentifier("webmount.runReport.root")
+    }
+
+    private func reloadReports() async {
+        guard let sessionRecord else {
+            reports = []
+            isLoading = false
+            return
+        }
+        isLoading = true
+        defer { isLoading = false }
+        reports = await ledger.webMountRunReports(
+            sessionId: sessionRecord.id,
+            ownerConversationId: sessionRecord.ownerConversationId,
+            ownerRunId: sessionRecord.ownerRunId
+        )
+    }
+
+    func reportContent(_ reports: [IOSWebMountRunReport]) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("调用总数和时长按整次 Agent 运行统计；WebMount 次数、失败/拒绝与交还次数只计入结果明确关联当前会话的步骤。时间线中的其他工具用于运行上下文。")
+                    .font(.caption2)
+                    .foregroundStyle(AmberTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+
+                AmberSectionLabel(text: "Agent 运行")
+                VStack(spacing: 12) {
+                    ForEach(reports) { report in
+                        runSection(report)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("webmount.runReport.content")
+    }
+
+    private func runSection(_ report: IOSWebMountRunReport) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    runStatus(report)
+                    Spacer(minLength: 4)
+                    runDate(report, allowsWrapping: false)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    runStatus(report)
+                    runDate(report, allowsWrapping: true)
+                }
+            }
+            .foregroundStyle(AmberTheme.muted)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                metric("\(report.totalToolCalls)", title: "运行调用")
+                metric("\(report.webMountToolCalls)", title: "网页工具调用")
+                metric("\(report.failedToolCalls)", title: "失败")
+                metric("\(report.rejectedToolCalls)", title: "拒绝")
+                metric("\(report.userHandoffCount)", title: "交还用户")
+                metric(durationText(report.durationMillis), title: "墙钟时长")
+            }
+
+            Text("调用时间线")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground2)
+                .padding(.top, 2)
+            if report.steps.isEmpty {
+                Text("没有可显示的工具调用记录。")
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+            } else {
+                VStack(spacing: 8) {
+                    ForEach(report.steps) { step in
+                        WebMountRunReportStepRow(step: step)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
+        .overlay {
+            RoundedRectangle(cornerRadius: AmberTheme.radiusMedium)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+        }
+        .accessibilityIdentifier("webmount.runReport.run.\(report.id)")
+    }
+
+    private func runStatus(_ report: IOSWebMountRunReport) -> some View {
+        Label(report.isRunning ? "运行中" : "已结束",
+              systemImage: report.isRunning ? "circle.fill" : "circle")
+            .font(.caption.weight(.medium))
+            .fixedSize()
+    }
+
+    private func runDate(_ report: IOSWebMountRunReport, allowsWrapping: Bool) -> some View {
+        Text(dateText(report.startedAtMillis))
+            .font(.caption2)
+            .foregroundStyle(AmberTheme.muted)
+            .lineLimit(allowsWrapping ? nil : 1)
+            .truncationMode(.middle)
+            .fixedSize(horizontal: !allowsWrapping, vertical: true)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(AmberTheme.muted2)
+            Text("暂无可归属的运行记录")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+            Text("报告只读取现有 Agent 工具记录，并按 WebMount 会话 ID 归属步骤。")
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("webmount.runReport.empty")
+    }
+
+    private func metric(_ value: String, title: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(value)
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
+    }
+
+    private func durationText(_ milliseconds: Int64) -> String {
+        let totalSeconds = max(0, milliseconds) / 1_000
+        let hours = totalSeconds / 3_600
+        let minutes = (totalSeconds % 3_600) / 60
+        let seconds = totalSeconds % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%d:%02d", minutes, seconds)
+    }
+
+    private func dateText(_ milliseconds: Int64) -> String {
+        Date(timeIntervalSince1970: Double(milliseconds) / 1_000)
+            .formatted(date: .abbreviated, time: .shortened)
+    }
+}
+
+private struct WebMountRunReportStepRow: View {
+    let step: IOSWebMountRunReportStep
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(step.toolName)
+                    .font(.subheadline.weight(.semibold).monospaced())
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 4)
+                if let timestampMillis = step.timestampMillis {
+                    Text(Date(timeIntervalSince1970: Double(timestampMillis) / 1_000).formatted(date: .omitted, time: .shortened))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize()
+                }
+            }
+
+            Text(step.targetSummary)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.foreground2)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) { receiptBadges }
+                VStack(alignment: .leading, spacing: 6) { receiptBadges }
+            }
+
+            if let errorCode = step.errorCode {
+                Text("错误码：\(errorCode)")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(AmberTheme.accentRed)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            if step.handedOffToUser { flag("已交还用户", systemImage: "person.crop.circle") }
+            if step.pageDrift { flag("页面漂移", systemImage: "arrow.triangle.2.circlepath") }
+            if step.credentialRedacted { flag("凭据已隐去", systemImage: "lock.fill") }
+            if step.unattributedPageActivity { flag("存在未归因页面活动", systemImage: "waveform.path") }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: AmberTheme.radiusMedium))
+        .overlay {
+            RoundedRectangle(cornerRadius: AmberTheme.radiusMedium)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("webmount.runReport.step.\(step.id)")
+    }
+
+    @ViewBuilder
+    private var receiptBadges: some View {
+        receipt("派发", value: step.dispatched)
+        receipt("页面变化", value: step.pageChanged)
+        receipt("目标验证", value: step.goalVerified)
+    }
+
+    private func receipt(_ title: String, value: Bool?) -> some View {
+        HStack(spacing: 4) {
+            Circle()
+                .fill(value == true ? AmberTheme.accent : AmberTheme.muted2)
+                .frame(width: 5, height: 5)
+            Text("\(title)·\(value.map { $0 ? "是" : "否" } ?? "未知")")
+                .font(.caption2)
+                .foregroundStyle(AmberTheme.foreground2)
+                .fixedSize()
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 5)
+        .background(AmberTheme.surface2, in: Capsule())
+    }
+
+    private func flag(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(AmberTheme.foreground2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
 }
 
 @MainActor

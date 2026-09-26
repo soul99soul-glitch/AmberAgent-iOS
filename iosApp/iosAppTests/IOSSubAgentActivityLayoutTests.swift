@@ -155,6 +155,12 @@ final class IOSSubAgentActivityLayoutTests: XCTestCase {
         }
         let conversations = IOSConversationStore(baseDirectory: directory, subagentConversationIDsProvider: { [] })
         await conversations.bootstrap()
+        let activityCenter = ConversationActivityCenter(
+            conversationStore: conversations,
+            dao: IosDatabaseFactory.shared.createDatabase(
+                atFilePath: directory.appendingPathComponent("runs.db").path
+            ).agentRuntimeDao()
+        )
         let sourceA = try XCTUnwrap(conversations.currentConversation?.id)
         await conversations.renameConversation(id: sourceA, title: "接口核查 · 来源会话")
         await conversations.saveCurrent(messages: [UIMessage.companion.user(prompt: "请核对接口，并整理结果。")])
@@ -195,6 +201,7 @@ final class IOSSubAgentActivityLayoutTests: XCTestCase {
             let content = NavigationStack {
                 ChatView(settingsStore: settings, sharedSettings: shared, viewModel: vm, activityStore: activity)
             }
+            .environment(activityCenter)
             .environment(conversations)
             .environment(router)
             .sheet(item: .constant(detail)) { selected in

@@ -907,7 +907,7 @@ private extension NovelLiveModelAdapter {
     }
 
     static func backgroundStartTransport() -> NovelLiveTransport {
-        let transport = OpenAIResponsesBackgroundTransport()
+        let transport = IOSSharedKmpProviders.openAIBackgroundTransport
         return { request, callbacks in
             guard let openAI = request.providerSetting as? ProviderSetting.OpenAI else {
                 callbacks.onFailure(failure(
@@ -975,7 +975,7 @@ private extension NovelLiveModelAdapter {
     }
 
     static func backgroundResumeTransport() -> NovelDurableResumeTransport {
-        let transport = OpenAIResponsesBackgroundTransport()
+        let transport = IOSSharedKmpProviders.openAIBackgroundTransport
         return { request, provider, customHeaders, callbacks in
             guard let openAI = provider as? ProviderSetting.OpenAI else {
                 callbacks.onFailure(failure(

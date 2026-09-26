@@ -10,6 +10,9 @@ import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
+import app.amber.ai.provider.defaultReasoningLevel
+import app.amber.ai.provider.reasoningOptions
+import app.amber.ai.registry.ModelRegistry
 import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
 import kotlinx.serialization.json.boolean
@@ -256,6 +259,46 @@ class OpenAIKmpProviderRequestTest {
         )
         assertFalse(apiBody.getValue("stream").jsonPrimitive.boolean)
         assertEquals("1200", apiBody.getValue("max_output_tokens").jsonPrimitive.content)
+    }
+
+    @Test
+    fun codexGpt6SolAndLunaExposeReasoningAndSendSelectedEffort() {
+        val codex = setting.copy(
+            baseUrl = "https://chatgpt.com/backend-api/codex",
+            authMode = OpenAIAuthMode.CODEX_OAUTH,
+            useResponseApi = true,
+        )
+        for (modelId in listOf("gpt-6-sol", "gpt-6-luna")) {
+            val model = Model(
+                modelId = modelId,
+                displayName = modelId,
+                abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
+            )
+            assertTrue(ModelAbility.REASONING in model.abilities, modelId)
+            assertEquals(
+                listOf(
+                    ReasoningLevel.OFF,
+                    ReasoningLevel.LOW,
+                    ReasoningLevel.MEDIUM,
+                    ReasoningLevel.HIGH,
+                    ReasoningLevel.XHIGH,
+                    ReasoningLevel.MAX,
+                ),
+                model.reasoningOptions(codex).map { it.level },
+                modelId,
+            )
+            assertEquals(ReasoningLevel.MEDIUM, model.defaultReasoningLevel(codex), modelId)
+
+            val body = provider.buildResponsesRequestBody(
+                providerSetting = codex,
+                messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+                params = TextGenerationParams(model = model, reasoningLevel = ReasoningLevel.HIGH),
+                stream = true,
+            )
+            val reasoning = body.getValue("reasoning").jsonObject
+            assertEquals("high", reasoning.getValue("effort").jsonPrimitive.content, modelId)
+            assertEquals("auto", reasoning.getValue("summary").jsonPrimitive.content, modelId)
+        }
     }
 
     @Test

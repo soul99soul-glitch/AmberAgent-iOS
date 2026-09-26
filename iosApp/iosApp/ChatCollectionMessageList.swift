@@ -342,6 +342,8 @@ struct NativeChatTimelineView: View {
     @State private var consumedMessageAnchor: ChatMessageAnchor?
     @State private var scheduledMessageAnchor: ChatMessageAnchor?
     @State private var imageAccessibilityFocusToolCallID: String?
+    @State private var islandToolHighlight: ChatIslandToolHighlight?
+    @State private var islandToolHighlightTask: Task<Void, Never>?
     @State private var historyStartIndex: Int?
     @State private var historyResetRevision: Int?
     @State private var historyRevealAnchor: HistoryRevealAnchor?
@@ -549,9 +551,18 @@ struct NativeChatTimelineView: View {
                 ChatSwiftUIScrollGeometry(
                     distanceToBottom: max(0, geo.contentSize.height - geo.visibleRect.maxY),
                     visibleHeight: max(1, geo.visibleRect.height),
-                    contentHeight: geo.contentSize.height
+                    contentHeight: geo.contentSize.height,
+                    topInset: geo.contentInsets.top,
+                    bottomInset: geo.contentInsets.bottom
                 )
             } action: { previousGeometry, geometry in
+                if isNativeScrollDriverActive && (
+                    previousGeometry.visibleHeight != geometry.visibleHeight ||
+                    previousGeometry.topInset != geometry.topInset ||
+                    previousGeometry.bottomInset != geometry.bottomInset
+                ) {
+                    scrollDriver.handleLayoutMetricsChanged()
+                }
                 let wasAtBottom = viewportState.isAtBottom
                 let messages = messagesProvider()
                 let rawViewportState = NativeStaticTimelineViewportPolicy.state(
@@ -591,6 +602,9 @@ struct NativeChatTimelineView: View {
                 historyRevealAnchor = nil
                 nativeUserScrollActive = false
                 scrollDriver.invalidate()
+                islandToolHighlightTask?.cancel()
+                islandToolHighlightTask = nil
+                islandToolHighlight = nil
             }
             .onChange(of: followGeneration) { _, enabled in
                 scrollDriver.setAutomaticFollowEnabled(enabled)
@@ -755,17 +769,22 @@ struct NativeChatTimelineView: View {
 
     @discardableResult
     private func scrollToMessageAnchorIfAvailable() -> Bool {
-        let messages = messagesProvider()
-        let availableMessageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
-        let availableImageToolCallIDs = Self.imageToolCallIDs(in: messages)
         guard let request = messageAnchor,
               scheduledMessageAnchor != request,
-              let targetID = NativeTimelineMessageAnchorPolicy.targetEntryID(
+              consumedMessageAnchor != request else {
+            return false
+        }
+        let messages = messagesProvider()
+        let availableMessageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+        let availableImageToolCallIDsByMessageID = Self.imageToolCallIDsByMessageID(in: messages)
+        let availableToolCallIDsByMessageID = Self.toolCallIDsByMessageID(in: messages)
+        guard let targetID = NativeTimelineMessageAnchorPolicy.targetEntryID(
                 request: request,
                 consumed: consumedMessageAnchor,
                 currentConversationID: currentConversationID,
                 availableMessageIDs: availableMessageIDs,
-                availableImageToolCallIDs: availableImageToolCallIDs
+                availableImageToolCallIDsByMessageID: availableImageToolCallIDsByMessageID,
+                availableToolCallIDsByMessageID: availableToolCallIDsByMessageID
               ),
               NativeTimelineMessageAnchorPolicy.canSchedule(
                 nativeDriverActive: isNativeScrollDriverActive,
@@ -802,7 +821,8 @@ struct NativeChatTimelineView: View {
                 consumed: consumedMessageAnchor,
                 currentConversationID: currentConversationID,
                 availableMessageIDs: Set(currentMessages.map(ChatMessageProjector.messageId(for:))),
-                availableImageToolCallIDs: Self.imageToolCallIDs(in: currentMessages)
+                availableImageToolCallIDsByMessageID: Self.imageToolCallIDsByMessageID(in: currentMessages),
+                availableToolCallIDsByMessageID: Self.toolCallIDsByMessageID(in: currentMessages)
             ) == targetID else {
                 scheduledMessageAnchor = nil
                 return
@@ -827,26 +847,38 @@ struct NativeChatTimelineView: View {
         targetID: String
     ) {
         let currentMessages = messagesProvider()
+        let imageToolCallIDsByMessageID = Self.imageToolCallIDsByMessageID(in: currentMessages)
+        let toolCallIDsByMessageID = Self.toolCallIDsByMessageID(in: currentMessages)
         guard scheduledMessageAnchor == request,
               NativeTimelineMessageAnchorPolicy.targetEntryID(
                 request: request,
                 consumed: consumedMessageAnchor,
                 currentConversationID: currentConversationID,
                 availableMessageIDs: Set(currentMessages.map(ChatMessageProjector.messageId(for:))),
-                availableImageToolCallIDs: Self.imageToolCallIDs(in: currentMessages)
+                availableImageToolCallIDsByMessageID: imageToolCallIDsByMessageID,
+                availableToolCallIDsByMessageID: toolCallIDsByMessageID
               ) == targetID else {
             scheduledMessageAnchor = nil
             return
         }
         if let toolCallID = request.toolCallID {
-            imageAccessibilityFocusToolCallID = toolCallID
-            if UIAccessibility.isVoiceOverRunning,
-               let announcement = Self.imageAnchorAnnouncement(
-                toolCallID: toolCallID,
-                messages: currentMessages
-               ) {
-                UIAccessibility.post(notification: .announcement, argument: announcement)
+            imageAccessibilityFocusToolCallID = nil
+            if imageToolCallIDsByMessageID[request.messageID]?.contains(toolCallID) == true {
+                imageAccessibilityFocusToolCallID = toolCallID
+                if UIAccessibility.isVoiceOverRunning,
+                   let announcement = Self.imageAnchorAnnouncement(
+                    messageID: request.messageID,
+                    toolCallID: toolCallID,
+                    messages: currentMessages
+                   ) {
+                    UIAccessibility.post(notification: .announcement, argument: announcement)
+                }
             }
+            showIslandToolHighlight(
+                messageID: request.messageID,
+                toolCallID: toolCallID,
+                requestToken: request.requestToken
+            )
         }
         ChatImageGenerationResumeConsumption.markViewedIfCompleted(
             anchor: request,
@@ -857,43 +889,72 @@ struct NativeChatTimelineView: View {
         scheduledMessageAnchor = nil
     }
 
-    private static func imageToolCallIDs(in messages: [UIMessage]) -> Set<String> {
-        Set(messages.flatMap { message in
-            message.parts.compactMap { part in
+    private func showIslandToolHighlight(messageID: String, toolCallID: String, requestToken: UUID?) {
+        let highlight = ChatIslandToolHighlight(
+            messageID: messageID,
+            toolCallID: toolCallID,
+            requestToken: requestToken ?? UUID()
+        )
+        islandToolHighlightTask?.cancel()
+        islandToolHighlight = highlight
+        islandToolHighlightTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled, islandToolHighlight == highlight else { return }
+            islandToolHighlight = nil
+            islandToolHighlightTask = nil
+        }
+    }
+
+    private static func imageToolCallIDsByMessageID(in messages: [UIMessage]) -> [String: Set<String>] {
+        messages.reduce(into: [:]) { result, message in
+            let imageToolCallIDs = Set<String>(message.parts.compactMap { part in
                 guard let tool = part as? UIMessagePart.Tool,
                       tool.toolName == "generate_image" else { return nil }
                 return tool.toolCallId
-            }
-        })
+            })
+            guard !imageToolCallIDs.isEmpty else { return }
+            result[ChatMessageProjector.messageId(for: message)] = imageToolCallIDs
+        }
+    }
+
+    private static func toolCallIDsByMessageID(in messages: [UIMessage]) -> [String: Set<String>] {
+        messages.reduce(into: [:]) { result, message in
+            let toolCallIDs = Set(message.parts.compactMap { part in
+                (part as? UIMessagePart.Tool)?.toolCallId
+            })
+            guard !toolCallIDs.isEmpty else { return }
+            result[ChatMessageProjector.messageId(for: message)] = toolCallIDs
+        }
     }
 
     private static func imageAnchorAnnouncement(
+        messageID: String,
         toolCallID: String,
         messages: [UIMessage]
     ) -> String? {
-        for message in messages {
-            for part in message.parts {
-                guard let tool = part as? UIMessagePart.Tool,
-                      tool.toolName == "generate_image",
-                      tool.toolCallId == toolCallID else { continue }
-                if tool.output.contains(where: { $0 is UIMessagePart.Image }) {
-                    return IOSAppLocalization.string(
-                        "已定位到生成图片",
-                        defaultValue: "已定位到生成图片"
-                    )
-                }
-                return tool.output.isEmpty
-                    ? IOSAppLocalization.string(
-                        "已定位到正在生成的图片",
-                        defaultValue: "已定位到正在生成的图片"
-                    )
-                    : IOSAppLocalization.string(
-                        "已定位到图片生成失败结果",
-                        defaultValue: "已定位到图片生成失败结果"
-                    )
-            }
+        guard let message = messages.first(where: {
+            ChatMessageProjector.messageId(for: $0) == messageID
+        }),
+              let tool = message.parts.compactMap({ $0 as? UIMessagePart.Tool }).first(where: {
+                  $0.toolName == "generate_image" && $0.toolCallId == toolCallID
+              }) else {
+            return nil
         }
-        return nil
+        if tool.output.contains(where: { $0 is UIMessagePart.Image }) {
+            return IOSAppLocalization.string(
+                "已定位到生成图片",
+                defaultValue: "已定位到生成图片"
+            )
+        }
+        return tool.output.isEmpty
+            ? IOSAppLocalization.string(
+                "已定位到正在生成的图片",
+                defaultValue: "已定位到正在生成的图片"
+            )
+            : IOSAppLocalization.string(
+                "已定位到图片生成失败结果",
+                defaultValue: "已定位到图片生成失败结果"
+            )
     }
 
     private var shouldSettleNativeScrollAfterAttach: Bool {
@@ -948,10 +1009,15 @@ struct NativeChatTimelineView: View {
                     displaySettingSignature: displaySettingSignature,
                     generativeUiSettingSignature: generativeUiSettingSignature,
                     reasoningLevelLabel: reasoningLevelLabel,
-                    imageAccessibilityFocusToolCallID: imageAccessibilityFocusToolCallID,
+                    imageAccessibilityFocusToolCallID: consumedMessageAnchor?.messageID == messageId
+                        ? imageAccessibilityFocusToolCallID : nil,
                     onAction: onAction
                 )
                 .equatable()
+                .environment(
+                    \.chatIslandToolHighlight,
+                    islandToolHighlight?.messageID == messageId ? islandToolHighlight : nil
+                )
                 .saturation(entry.isCompactedHistory ? 0 : 1)
                 .opacity(entry.isCompactedHistory && entry.role != MessageRole.user ? 0.7 : 1)
                 .environment(workspaceStore)
@@ -991,6 +1057,7 @@ struct NativeChatTimelineView: View {
         case .pendingAssistant:
             ChatAssistantPendingResponseView()
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .chatLiveEntrance(key: "pending:\(entry.id)", isLive: true)
         case .visionRecognition:
             VisionRecognitionIndicator()
         case .contextMarker:
@@ -1698,6 +1765,8 @@ private struct ChatSwiftUIScrollGeometry: Equatable {
     var distanceToBottom: CGFloat = 0
     var visibleHeight: CGFloat = 1
     var contentHeight: CGFloat = 0
+    var topInset: CGFloat = 0
+    var bottomInset: CGFloat = 0
 }
 
 enum NativeTimelineMessageAnchorPolicy {
@@ -1706,7 +1775,8 @@ enum NativeTimelineMessageAnchorPolicy {
         consumed: ChatMessageAnchor?,
         currentConversationID: String?,
         availableMessageIDs: Set<String>,
-        availableImageToolCallIDs: Set<String> = []
+        availableImageToolCallIDsByMessageID: [String: Set<String>] = [:],
+        availableToolCallIDsByMessageID: [String: Set<String>]? = nil
     ) -> String? {
         guard let request,
               request != consumed,
@@ -1715,8 +1785,15 @@ enum NativeTimelineMessageAnchorPolicy {
             return nil
         }
         if let toolCallID = request.toolCallID {
-            guard availableImageToolCallIDs.contains(toolCallID) else { return nil }
-            return ChatImageGenerationAnchorTarget.id(toolCallID: toolCallID)
+            let isImageTool = availableImageToolCallIDsByMessageID[request.messageID]?.contains(toolCallID) == true
+            if isImageTool {
+                return ChatImageGenerationAnchorTarget.id(messageID: request.messageID, toolCallID: toolCallID)
+            }
+            guard let availableToolCallIDsByMessageID,
+                  availableToolCallIDsByMessageID[request.messageID]?.contains(toolCallID) == true else {
+                return nil
+            }
+            return ChatToolCallAnchorTarget.id(messageID: request.messageID, toolCallID: toolCallID)
         }
         return ChatTimelinePlanner.messageEntryIDPrefix + request.messageID
     }

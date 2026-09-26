@@ -803,7 +803,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
     }
 
     func testWebMountToolCatalogAndUnsupportedResult() {
-        XCTAssertEqual(IOSWebMountToolCatalog.supportedToolNames.count, 27)
+        XCTAssertEqual(IOSWebMountToolCatalog.supportedToolNames.count, 28)
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_run_goal"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_act"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_open"))
@@ -815,6 +815,7 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_screenshot"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_site_add"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_site_remove"))
+        XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_site_memory"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_click"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_tap"))
         XCTAssertTrue(IOSWebMountToolCatalog.supportedToolNames.contains("wm_type"))
@@ -1079,16 +1080,38 @@ final class IOSLocalToolExecutorTests: XCTestCase {
                 </div>
             "></iframe>
             """, baseURL: URL(string: "https://github.com/"))
+        var readyObservation: [String: Any]?
         for _ in 0..<60 {
-            if (try? await webView.evaluateJavaScript("document.getElementById('drive').contentDocument.getElementById('search') !== null")) as? Bool == true { break }
+            let searchExists = ((try? await webView.evaluateJavaScript(
+                "document.getElementById('drive').contentDocument.getElementById('search') !== null"
+            )) as? Bool) == true
+            if searchExists,
+               let observed = try? await runtime.observe(maxChars: 8_000, maxLinks: 20),
+               let candidates = observed["visual_candidates"] as? [[String: Any]],
+               candidates.contains(where: {
+                   $0["tag"] as? String == "svg" && ($0["ref"] as? String)?.isEmpty == false
+               }),
+               let elements = observed["interactive_elements"] as? [[String: Any]],
+               elements.contains(where: {
+                   $0["tag"] as? String == "ui-autocomplete-token-field"
+                       && ($0["ref"] as? String)?.isEmpty == false
+               }),
+               let snapshotId = observed["snapshot_id"] as? String,
+               !snapshotId.isEmpty {
+                readyObservation = observed
+                break
+            }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
+        let observation = try XCTUnwrap(
+            readyObservation,
+            "WebMount iframe fixture did not expose its SVG, widget ref, and snapshot within the existing timeout"
+        )
         let controller = IOSWebMountController(
             registry: IOSWebMountRegistry(userDefaults: isolatedDefaults()),
             settings: IOSWebMountSettings(userDefaults: isolatedDefaults()),
             runtime: runtime
         )
-        let observation = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
         let candidates = try XCTUnwrap(observation["visual_candidates"] as? [[String: Any]])
         let icon = try XCTUnwrap(candidates.first { $0["tag"] as? String == "svg" })
         let result = try jsonObject(await controller.execute(
@@ -2417,11 +2440,31 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(aborted["needs_user_action"] as? Bool, true)
         XCTAssertEqual(aborted["error_code"] as? String, "high_consequence_requires_approval")
         XCTAssertEqual(runtime.interactionCallCount, 1)
-        // F3：gate 字段必须顶到顶层——宿主审批卡只读顶层 needs_user_action。
+        // Gate details stay in the result so the caller can retry this step alone.
         XCTAssertEqual(result["needs_user_action"] as? Bool, true)
         XCTAssertEqual(result["error_code"] as? String, "high_consequence_requires_approval")
         XCTAssertEqual(result["target_ref"] as? String, "wm:act-gate:1")
         XCTAssertNotNil(result["retry_hint"], "应提示以单工具调用重发该步走审批流")
+
+        let executor = makeExecutor(webMountController: controller)
+        let currentSnapshot = try await runtime.state()["snapshot_id"] as? String ?? ""
+        let request = executor.executionRequest(
+            toolName: "wm_act",
+            operation: IOSWebMountController.json([
+                "session_id": runtime.snapshot.sessionId,
+                "snapshot_id": currentSnapshot,
+                "steps": [["action": "click", "target": "wm:act-gate:1"]]
+            ]),
+            isUserInitiated: true,
+            runId: "run-act-gate",
+            conversationId: "conversation-act-gate"
+        )
+        guard case .webMountResult(let batchOutput) = await executor.execute(request) else {
+            return XCTFail("Batch gate must return its partial result instead of an approval that replays the batch")
+        }
+        let batch = try jsonObject(batchOutput)
+        XCTAssertEqual(batch["error_code"] as? String, "high_consequence_requires_approval")
+        XCTAssertEqual(batch["needs_user_action"] as? Bool, true)
     }
 
     /// P1-1 回归：批量内 requires_human 步触发真实控制权移交后，审批卡的
@@ -2900,6 +2943,200 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertEqual(result["error_code"] as? String, "unknown_after_action")
         XCTAssertEqual(result["may_have_applied"] as? Bool, true)
         XCTAssertEqual(controller.sessionStore.record(sessionId: "timeout-session")?.needsReopen, true)
+    }
+
+    func testSiteMemoryApprovalWriteNextOpenSanitizationAndDeletion() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        controller.registry.setEnabled(id: "github", enabled: true)
+        let executor = makeExecutor(webMountController: controller)
+        let proposal = IOSWebMountController.json([
+            "host": "github.com", "action": "propose",
+            "changes": [[
+                "operation": "add", "kind": "pages", "name": "订单页",
+                "detail": "联系 alice@example.com，手机 13800138000、备用号 138 0013 8000 和 138-0013-8000，订单号 ABC123456789，版本 1.2?价格 19.9",
+                "url_pattern": "https://github.com/orders/ABC123456789?token=private&page=2"
+            ]]
+        ])
+        let policy = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [:], globalAutoApproveEnabled: true,
+            highRiskAutoApproveEnabled: true, execJavaScriptEnabled: false, webSearchEnabled: false
+        )
+        let pending = await executor.execute(executor.executionRequest(
+            toolName: "wm_site_memory", operation: proposal, isUserInitiated: false,
+            executionPolicy: policy
+        ))
+        guard case .needsUserAction = pending else { return XCTFail("Proposal must require the approval card") }
+        XCTAssertTrue(controller.registry.siteMemory(host: "github.com").isEmpty)
+        let preview = try XCTUnwrap(executor.webMountApprovalPreview(toolName: "wm_site_memory", input: proposal))
+        XCTAssertEqual(preview.siteMemoryChanges?.count, 1)
+        XCTAssertFalse((preview.siteMemoryChanges ?? []).joined().contains("alice@example.com"))
+        let approved = await executor.execute(executor.executionRequest(
+            toolName: "wm_site_memory", operation: proposal, isUserInitiated: true,
+            executionPolicy: policy
+        ))
+        guard case .webMountResult(let written) = approved else { return XCTFail("Approved proposal was not executed") }
+        XCTAssertEqual(try jsonObject(written)["ok"] as? Bool, true)
+        let entry = try XCTUnwrap(controller.registry.siteMemory(host: "github.com").first)
+        XCTAssertEqual(entry.source, .agent)
+        XCTAssertEqual(entry.urlPattern, "https://github.com/orders/[订单号已隐去]")
+        XCTAssertFalse(entry.detail.contains("alice@example.com"))
+        XCTAssertFalse(entry.detail.contains("13800138000"))
+        XCTAssertFalse(entry.detail.contains("138 0013 8000"))
+        XCTAssertFalse(entry.detail.contains("138-0013-8000"))
+        XCTAssertFalse(entry.detail.contains("ABC123456789"))
+        XCTAssertTrue(entry.detail.contains("版本 1.2?价格 19.9"))
+        let longEntries = (0..<5).map { index in
+            IOSWebMountSiteMemoryEntry(
+                id: "budget-\(index)", kind: .pages,
+                name: String(repeating: "N", count: 80),
+                detail: String(repeating: "D", count: 500),
+                urlPattern: "https://github.com/" + String(repeating: "x", count: 280),
+                locatorJSON: nil, updatedAtMillis: 1, source: .user
+            )
+        }
+        controller.registry.replaceSiteMemory(host: "github.com", entries: [entry] + longEntries)
+        let opened = try jsonObject(await controller.execute(
+            toolName: "wm_open", input: #"{"site_id":"github"}"#, isUserInitiated: true
+        ))
+        let memory = try XCTUnwrap(opened["site_memory"] as? [String: Any])
+        XCTAssertEqual(memory["untrusted_site_memory"] as? Bool, true)
+        XCTAssertEqual((memory["entries"] as? [[String: Any]])?.first?["id"] as? String, entry.id)
+        let summaryBudget = try XCTUnwrap(memory["summary_budget_chars"] as? Int)
+        XCTAssertLessThanOrEqual(IOSWebMountController.json(memory).count, summaryBudget)
+        XCTAssertTrue(controller.registry.deleteSiteMemoryEntry(host: "github.com", id: entry.id))
+        XCTAssertFalse(controller.registry.siteMemory(host: "github.com").contains { $0.id == entry.id })
+        controller.registry.replaceSiteMemory(host: "github.com", entries: [entry])
+        controller.registry.clearSiteMemory(host: "github.com")
+        XCTAssertTrue(controller.registry.siteMemory(host: "github.com").isEmpty)
+    }
+
+    func testSiteMemoryForWWWHostIsIncludedOnFirstOpen() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        controller.registry.setEnabled(id: "github", enabled: true)
+        let entry = IOSWebMountSiteMemoryEntry(
+            id: "github-memory", kind: .pages, name: "项目页", detail: "从项目菜单进入",
+            urlPattern: nil, locatorJSON: nil, updatedAtMillis: 1, source: .user
+        )
+        controller.registry.replaceSiteMemory(host: "github.com", entries: [entry])
+
+        let opened = try jsonObject(await controller.execute(
+            toolName: "wm_open",
+            input: #"{"site_id":"github","url":"https://www.github.com/login"}"#,
+            isUserInitiated: true
+        ))
+
+        let memory = try XCTUnwrap(opened["site_memory"] as? [String: Any], IOSWebMountController.json(opened))
+        XCTAssertEqual(memory["host"] as? String, "github.com")
+        XCTAssertEqual((memory["entries"] as? [[String: Any]])?.first?["id"] as? String, entry.id)
+        XCTAssertEqual(memory["untrusted_site_memory"] as? Bool, true)
+    }
+
+    func testRemovingAndReaddingSameHostDoesNotExposePriorSiteMemory() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let host = "site-memory-revisit.example"
+        let siteId = "user_memory_revisit"
+        let proposal = IOSWebMountController.json([
+            "host": host, "action": "propose",
+            "changes": [["operation": "add", "kind": "pitfalls", "name": "提示", "detail": "检查页面"]]
+        ])
+        let originalSite = IOSWebMountSite(
+            id: siteId, displayName: "Memory Revisit", homepageURL: "https://\(host)/",
+            authKind: .anonymous, loginCookieName: nil, nativeAdapterId: nil, iconKey: nil,
+            oauthProviderId: nil, allowedHosts: [host], enabled: true, addedAtMillis: 1
+        )
+        XCTAssertTrue(controller.registry.add(originalSite))
+        controller.settings.syncAllowedHosts(controller.registry.sites.flatMap(\.allowedHosts))
+        let originalBaseline = try XCTUnwrap(controller.siteMemoryApprovalBaseline(input: proposal))
+        let entry = IOSWebMountSiteMemoryEntry(
+            id: "old-memory", kind: .pitfalls, name: "旧页面提示", detail: "不要复用旧页面状态",
+            urlPattern: nil, locatorJSON: nil, updatedAtMillis: 1, source: .user
+        )
+        controller.registry.replaceSiteMemory(host: host, entries: [entry])
+
+        let removed = try jsonObject(await controller.execute(
+            toolName: "wm_site_remove",
+            input: IOSWebMountController.json(["site_id": siteId]),
+            isUserInitiated: true
+        ))
+        XCTAssertEqual(removed["removed"] as? Bool, true)
+        XCTAssertTrue(controller.registry.siteMemory(host: host).isEmpty)
+
+        let replacementSite = IOSWebMountSite(
+            id: siteId, displayName: "Memory Revisit", homepageURL: "https://\(host)/",
+            authKind: .anonymous, loginCookieName: nil, nativeAdapterId: nil, iconKey: nil,
+            oauthProviderId: nil, allowedHosts: [host], enabled: true, addedAtMillis: 2
+        )
+        XCTAssertTrue(controller.registry.add(replacementSite))
+        controller.settings.syncAllowedHosts(controller.registry.sites.flatMap(\.allowedHosts))
+        let replacementBaseline = try XCTUnwrap(controller.siteMemoryApprovalBaseline(input: proposal))
+        XCTAssertNotEqual(replacementBaseline, originalBaseline)
+        let opened = try jsonObject(await controller.execute(
+            toolName: "wm_open",
+            input: IOSWebMountController.json(["site_id": siteId]),
+            isUserInitiated: true
+        ))
+        XCTAssertNil(opened["site_memory"])
+    }
+
+    func testSiteMemoryHostLimitRejectsProposal() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let entries = (0..<IOSWebMountRegistry.maximumMemoryEntriesPerHost).map { index in
+            IOSWebMountSiteMemoryEntry(id: "entry-\(index)", kind: .pitfalls, name: "Item \(index)",
+                                       detail: "description", urlPattern: nil, locatorJSON: nil,
+                                       updatedAtMillis: 1, source: .user)
+        }
+        controller.registry.replaceSiteMemory(host: "github.com", entries: entries)
+        let result = try jsonObject(await controller.execute(
+            toolName: "wm_site_memory",
+            input: #"{"host":"github.com","action":"propose","changes":[{"operation":"add","kind":"pitfalls","name":"extra","detail":"extra"}]}"#,
+            isUserInitiated: true
+        ))
+        XCTAssertEqual(result["error_code"] as? String, "invalid_site_memory_proposal")
+        XCTAssertEqual(controller.registry.siteMemory(host: "github.com").count, 40)
+    }
+
+    func testSiteMemoryActionLocatorSurvivesLocalRead() async throws {
+        let controller = makeWebMountController(globalEnabled: true)
+        let locator: [String: Any] = [
+            "role": "button", "tag": "button", "name": "筛选",
+            "url_pattern": "https://github.com/issues?view=all",
+            "attributes": ["data-testid": "filter-button", "alice@example.com": "private"]
+        ]
+        let proposal = IOSWebMountController.json([
+            "host": "github.com", "action": "propose",
+            "changes": [["operation": "add", "kind": "actions", "name": "筛选",
+                         "detail": "用当前 ref 打开筛选", "locator": locator]]
+        ])
+        let written = try jsonObject(await controller.execute(
+            toolName: "wm_site_memory", input: proposal, isUserInitiated: true
+        ))
+        XCTAssertEqual(written["ok"] as? Bool, true)
+        let read = try jsonObject(await controller.execute(
+            toolName: "wm_site_memory", input: #"{"host":"github.com","action":"read"}"#,
+            isUserInitiated: true
+        ))
+        let entry = try XCTUnwrap((read["entries"] as? [[String: Any]])?.first)
+        let savedLocator = try XCTUnwrap(entry["locator"] as? [String: Any])
+        XCTAssertEqual(savedLocator["role"] as? String, "button")
+        XCTAssertEqual(savedLocator["url_pattern"] as? String, "https://github.com/issues")
+        XCTAssertEqual((savedLocator["attributes"] as? [String: Any])?["data-testid"] as? String, "filter-button")
+        XCTAssertFalse(try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: savedLocator), encoding: .utf8)).contains("alice@example.com"))
+    }
+
+    func testSiteMemoryDeletionAndClearPersist() {
+        let defaults = isolatedDefaults()
+        let registry = IOSWebMountRegistry(userDefaults: defaults)
+        let entry = IOSWebMountSiteMemoryEntry(id: "remembered", kind: .pitfalls,
+                                               name: "旧页面", detail: "先观察实际页面",
+                                               urlPattern: nil, locatorJSON: nil,
+                                               updatedAtMillis: 1, source: .user)
+        registry.replaceSiteMemory(host: "github.com", entries: [entry])
+        XCTAssertEqual(IOSWebMountRegistry(userDefaults: defaults).siteMemory(host: "github.com"), [entry])
+        XCTAssertTrue(registry.deleteSiteMemoryEntry(host: "github.com", id: entry.id))
+        XCTAssertTrue(IOSWebMountRegistry(userDefaults: defaults).siteMemory(host: "github.com").isEmpty)
+        registry.replaceSiteMemory(host: "github.com", entries: [entry])
+        registry.clearSiteMemory(host: "github.com")
+        XCTAssertTrue(IOSWebMountRegistry(userDefaults: defaults).siteMemory(host: "github.com").isEmpty)
     }
 
     func testWebMountObserveSnapshotAndScreenshotAreRedacted() async throws {

@@ -10,10 +10,12 @@ struct SubAgentConversationView: View {
     let chatViewModel: ChatViewModel?
 
     @Environment(IOSConversationStore.self) private var conversationStore
+    @Environment(ConversationActivityCenter.self) private var conversationActivityCenter: ConversationActivityCenter?
     @Environment(RouterPath.self) private var router
     @State private var messages: [UIMessage] = []
     @State private var signal = ChatMessageUpdateSignal()
     @State private var isLoading = true
+    @State private var isVisible = false
     @State private var loadError: String?
     @State private var retryRevision = 0
     @State private var actionError: IOSUserVisibleError?
@@ -206,7 +208,12 @@ struct SubAgentConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
         .toolbar(.visible, for: .navigationBar)
+        .onAppear { isVisible = true }
         .task(id: refreshKey) { await loadMessages() }
+        .onDisappear {
+            isVisible = false
+            conversationActivityCenter?.transcriptConversationDidDisappear(id: conversationId)
+        }
         .alert(item: $actionError) { error in
             Alert(title: Text(error.title), message: Text(error.message), dismissButton: .default(Text("好")))
         }
@@ -235,6 +242,11 @@ struct SubAgentConversationView: View {
         guard let loaded else {
             loadError = "这段会话已被删除或暂时不可用。"
             return
+        }
+        if isVisible {
+            conversationActivityCenter?.didOpenConversation(
+                id: conversationId, succeeded: true, isTranscript: true
+            )
         }
         loadError = nil
         let next = loaded.filter { $0.role != MessageRole.system }

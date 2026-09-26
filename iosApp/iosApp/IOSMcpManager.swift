@@ -39,6 +39,7 @@ final class IOSMcpManager {
     private var ambiguousServerNames: Set<String> = []
     private var sessionRecoveriesByServer: [String: SessionRecovery] = [:]
     private var sessionRecoveryGenerationByServer: [String: UInt64] = [:]
+    private var syncChainTail: Task<Void, Never>?
 
     private(set) var servers: [IOSMcpServerConfig] = []
     private(set) var tools: [IOSMcpDiscoveredTool] = []
@@ -90,7 +91,61 @@ final class IOSMcpManager {
         }
     }
 
+    /// Chat runs start this without awaiting it. Syncs run in order on one
+    /// chain, so an older config can never publish after a newer one, and
+    /// tool calls wait for the chain so they never race session invalidation.
     func syncAll(enabledOverride: Bool? = nil) async {
+        await enqueueSync {
+            await self.performSyncAll(enabledOverride: enabledOverride)
+        }
+    }
+
+    /// Publishes the persisted catalog once, without network, so a run that
+    /// starts before the first sync still sees the configured MCP tools.
+    func loadPersistedCatalogIfNeeded() {
+        guard servers.isEmpty, syncChainTail == nil else { return }
+        refreshServers()
+        tools = servers.filter(\.enabled).flatMap { server in
+            server.tools.map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) }
+        }
+    }
+
+    private func enqueueSync(_ operation: @escaping @MainActor () async -> Void) async {
+        let previous = syncChainTail
+        let task = Task { @MainActor in
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await operation()
+        }
+        syncChainTail = task
+        await withTaskCancellationHandler {
+            await task.value
+        } onCancel: {
+            task.cancel()
+        }
+        if syncChainTail == task {
+            syncChainTail = nil
+        }
+    }
+
+    /// Waits for the sync chain without cancelling it: a cancelled tool call
+    /// leaves at once while the sync keeps serving other callers.
+    private static func waitForSync(_ task: Task<Void, Never>) async throws {
+        let gate = IOSMcpSyncWaitGate()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                gate.install(continuation)
+                Task {
+                    await task.value
+                    gate.finish(.success(()))
+                }
+            }
+        } onCancel: {
+            gate.finish(.failure(CancellationError()))
+        }
+    }
+
+    private func performSyncAll(enabledOverride: Bool?) async {
         guard enabledOverride ?? isEnabled() else {
             disconnectAll()
             servers = []
@@ -99,7 +154,6 @@ final class IOSMcpManager {
             return
         }
         refreshServers()
-        tools = []
         let currentServerNames = Set(servers.map(\.name))
         for staleServerName in Array(clientsByServer.keys) where !currentServerNames.contains(staleServerName) {
             clientsByServer[staleServerName]?.disconnect()
@@ -113,14 +167,36 @@ final class IOSMcpManager {
             }
         }
 
-        for server in servers {
-            await sync(server: server)
+        // Servers are independent, so one slow server must not serialize the
+        // rest. The directory is published once, keeping the previous catalog
+        // visible to readers instead of an empty or partial one mid-sync.
+        let serverNames = servers.map(\.name)
+        let syncTasks = serverNames.map { name in
+            Task { @MainActor () -> [IOSMcpDiscoveredTool] in
+                guard let server = self.servers.first(where: { $0.name == name }) else { return [] }
+                return await self.sync(server: server)
+            }
         }
+        var refreshedTools: [IOSMcpDiscoveredTool] = []
+        await withTaskCancellationHandler {
+            for task in syncTasks {
+                refreshedTools.append(contentsOf: await task.value)
+            }
+        } onCancel: {
+            syncTasks.forEach { $0.cancel() }
+        }
+        tools = refreshedTools
     }
 
     /// Refreshes exactly one configured server. Management-tool tests must not
     /// contact every enabled MCP server as a side effect.
     func sync(serverName: String, enabledOverride: Bool? = nil) async {
+        await enqueueSync {
+            await self.performSync(serverName: serverName, enabledOverride: enabledOverride)
+        }
+    }
+
+    private func performSync(serverName: String, enabledOverride: Bool?) async {
         guard enabledOverride ?? isEnabled() else {
             disconnectAll()
             servers = []
@@ -130,8 +206,9 @@ final class IOSMcpManager {
         }
         refreshServers()
         guard let server = servers.first(where: { $0.name == serverName }) else { return }
+        let discovered = await sync(server: server)
         tools.removeAll { $0.serverName == serverName }
-        await sync(server: server)
+        tools.append(contentsOf: discovered)
     }
 
     func callTool(
@@ -142,6 +219,9 @@ final class IOSMcpManager {
     ) async throws -> String {
         guard enabledOverride ?? isEnabled() else {
             throw IOSMcpClientError.invalidResponse
+        }
+        if let syncChainTail {
+            try await Self.waitForSync(syncChainTail)
         }
         if servers.isEmpty || clientsByServer[serverName] == nil {
             await syncAll(enabledOverride: enabledOverride)
@@ -495,13 +575,15 @@ final class IOSMcpManager {
         return recovery.id == id && recovery.generation == generation
     }
 
-    private func sync(server: IOSMcpServerConfig) async {
+    /// Connects one server and returns its discovered tools; callers own
+    /// publishing them into `tools`.
+    private func sync(server: IOSMcpServerConfig) async -> [IOSMcpDiscoveredTool] {
         invalidateSessionRecovery(serverName: server.name, disconnectClient: true)
         guard server.enabled else {
             clientsByServer[server.name]?.disconnect()
             clientsByServer.removeValue(forKey: server.name)
             statusByServer[server.name] = .idle
-            return
+            return []
         }
 
         statusByServer[server.name] = .connecting
@@ -521,10 +603,11 @@ final class IOSMcpManager {
             if let index = servers.firstIndex(where: { $0.name == server.name }) {
                 servers[index] = server.withTools(mergedTools)
             }
-            tools.append(contentsOf: mergedTools.map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) })
             statusByServer[server.name] = .connected
+            return mergedTools.map { IOSMcpDiscoveredTool(serverName: server.name, tool: $0) }
         } catch {
             statusByServer[server.name] = .error(IOSWebMountRedactor.redactedText(error.localizedDescription))
+            return []
         }
     }
 
@@ -536,4 +619,31 @@ final class IOSMcpManager {
         reconnectAttempts[serverName] = nil
     }
     #endif
+}
+
+private final class IOSMcpSyncWaitGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var outcome: Result<Void, Error>?
+
+    func install(_ continuation: CheckedContinuation<Void, Error>) {
+        let ready: Result<Void, Error>? = lock.withLock {
+            guard let outcome else {
+                self.continuation = continuation
+                return nil
+            }
+            return outcome
+        }
+        if let ready { continuation.resume(with: ready) }
+    }
+
+    func finish(_ result: Result<Void, Error>) {
+        let waiting: CheckedContinuation<Void, Error>? = lock.withLock {
+            guard outcome == nil else { return nil }
+            outcome = result
+            defer { continuation = nil }
+            return continuation
+        }
+        waiting?.resume(with: result)
+    }
 }

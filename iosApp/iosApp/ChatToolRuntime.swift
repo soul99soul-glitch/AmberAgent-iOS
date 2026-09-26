@@ -1635,7 +1635,15 @@ final class ChatToolRuntime {
                 input: pending.toolCall.input,
                 runId: pending.runId
             ) == true
-        if allow, approvalRequest.requiresHumanHandoff, !handoffContextMatches {
+        if allow, pending.toolCall.toolName == "wm_site_memory",
+           (currentPreview?.host != approvalRequest.host
+            || currentPreview?.siteMemoryBaseline != approvalRequest.siteMemoryBaseline
+            || currentPreview?.siteMemoryChanges != approvalRequest.siteMemoryChanges) {
+            resultText = IOSWebMountController.json([
+                "ok": false, "tool": "wm_site_memory", "error_code": "stale_site_memory_proposal",
+                "reason": "站点记忆已变化，请重新提出修改。"
+            ])
+        } else if allow, approvalRequest.requiresHumanHandoff, !handoffContextMatches {
             resultText = IOSWebMountController.json([
                 "ok": false,
                 "tool": pending.toolCall.toolName,
@@ -1661,6 +1669,7 @@ final class ChatToolRuntime {
                 "ok": true,
                 "tool": pending.toolCall.toolName,
                 "status": "human_handoff_completed",
+                "handoff": true,
                 "requires_reobserve": true,
                 "message": "Foreground WebMount handoff completed; re-observe before continuing."
             ])
@@ -1692,9 +1701,20 @@ final class ChatToolRuntime {
                 "reason": "User denied WebMount foreground action."
             ])
         }
+        var recordedResultText = resultText
+        if let data = resultText.data(using: .utf8),
+           var result = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            if result["session_id"] == nil, let sessionId = approvalRequest.sessionId?.nilIfBlank {
+                result["session_id"] = sessionId
+            }
+            if result["target_label"] == nil, let target = approvalRequest.target?.nilIfBlank {
+                result["target_label"] = target
+            }
+            recordedResultText = IOSWebMountController.json(result)
+        }
         return messagesByFinishingToolCall(
             pending.toolCall,
-            outputText: resultText,
+            outputText: recordedResultText,
             in: pending.baseMessages
         )
     }

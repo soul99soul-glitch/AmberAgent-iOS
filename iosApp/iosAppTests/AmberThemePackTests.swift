@@ -337,6 +337,126 @@ final class AmberThemePackTests: XCTestCase {
         XCTAssertEqual(runtime.emptyArt, .character)
     }
 
+    func testCrossPlatformV1RecipeRoundTripsAndPatchesWithoutDroppingSlots() throws {
+        // Kept in field/value parity with android/test-fixtures/themes/cross-platform-v1.json.
+        let sharedRecipe = """
+        {
+          "format": "amber.theme.pack",
+          "version": 1,
+          "id": "cross-platform-v1-garden",
+          "displayName": "山雨入林 · 双端配方",
+          "paper": "paper",
+          "accentHex": "#315B42",
+          "inkHex": "#FFFFFF",
+          "canvasStyle": "paperGrain",
+          "brandMark": "serifWordmark",
+          "shortcutIconStyle": "phosphorFill",
+          "chromeTypeface": "rounded",
+          "canvasScope": "appWide",
+          "bubbleChrome": "soft",
+          "glassChrome": "quieter",
+          "emptyArt": "character",
+          "settingsChrome": true,
+          "launchBrand": "matchBrand",
+          "assetMode": "builtinOnly",
+          "immersivePolicy": "hidden",
+          "design": {
+            "light": {
+              "background": "#F5F7F4",
+              "surface": "#FFFFFF",
+              "foreground": "#17211A",
+              "mutedForeground": "#46584B",
+              "border": "#D3DDD4"
+            },
+            "dark": {
+              "background": "#121915",
+              "surface": "#1C2620",
+              "foreground": "#EAF2EB",
+              "mutedForeground": "#B4C5B7",
+              "border": "#39473D"
+            },
+            "gradient": {
+              "colors": ["#F7F9F5", "#DDEAD9"],
+              "darkColors": ["#17211A", "#243A2D"],
+              "angle": 38.123456789
+            },
+            "patterns": [
+              {
+                "kind": "dots",
+                "color": "#54725D",
+                "opacity": 0.123456789,
+                "spacing": 28.123456789,
+                "size": 1.5
+              },
+              {
+                "kind": "diagonal",
+                "color": "#6B8A72",
+                "opacity": 0.08,
+                "spacing": 36.0,
+                "size": 2.0
+              }
+            ],
+            "components": {
+              "cardRadius": 18.0,
+              "bubbleRadius": 16.0,
+              "controlRadius": 12.0,
+              "borderWidth": 1.0,
+              "shadowOpacity": 0.123456789,
+              "shadowRadius": 8.123456789,
+              "brandText": "林间琥珀",
+              "brandSize": 28.0,
+              "brandTracking": 1.123456789
+            }
+          }
+        }
+        """
+        let original = try AmberThemePackTransfer.decode(Data(sharedRecipe.utf8))
+        XCTAssertEqual(original.displayName, "山雨入林 · 双端配方")
+        XCTAssertEqual(original.design?.gradient?.angle ?? 0, 38.123456789, accuracy: 1e-12)
+        XCTAssertEqual(try AmberThemePackTransfer.decode(AmberThemePackTransfer.encode(original)), original)
+
+        let libraryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AmberThemePackCrossPlatform-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: libraryURL) }
+        let library = AmberThemePackLibrary(fileURL: libraryURL)
+        try library.upsert(original)
+        let service = IOSThemePackToolService(runtime: runtime, library: library)
+        defer { service.discardPreparedImport() }
+
+        let patched = try service.prepareImport(argumentsJSON: toolJSON([
+            "base_id": original.id,
+            "design": [
+                "patterns": [[
+                    "kind": "rings",
+                    "color": "#54725D",
+                    "opacity": 0.1,
+                    "spacing": 40.0,
+                    "size": 3.0,
+                ]],
+            ],
+        ]))
+
+        XCTAssertEqual(patched.id, original.id)
+        XCTAssertEqual(patched.canvasScope, "appWide")
+        XCTAssertEqual(patched.bubbleChrome, "soft")
+        XCTAssertEqual(patched.glassChrome, "quieter")
+        XCTAssertEqual(patched.emptyArt, "character")
+        XCTAssertEqual(patched.settingsChrome, true)
+        XCTAssertEqual(patched.launchBrand, "matchBrand")
+        XCTAssertEqual(patched.assetMode, "builtinOnly")
+        XCTAssertEqual(patched.immersivePolicy, "hidden")
+        XCTAssertEqual(patched.design?.light, original.design?.light)
+        XCTAssertEqual(patched.design?.dark, original.design?.dark)
+        XCTAssertEqual(patched.design?.gradient, original.design?.gradient)
+        XCTAssertEqual(patched.design?.components, original.design?.components)
+        XCTAssertEqual(patched.design?.patterns.map(\.kind), ["rings"], "patch arrays replace the old list")
+        XCTAssertEqual(try AmberThemePackTransfer.decode(AmberThemePackTransfer.encode(patched)), patched)
+        XCTAssertThrowsError(try service.prepareImport(argumentsJSON: toolJSON([
+            "base_id": original.id,
+            "settings_chrome": NSNull(),
+        ])), "iOS tool patches reject null for settings_chrome")
+    }
+
     func testExportIncludesOptionalSlotsAndLegacyImportDefaults() throws {
         runtime.apply(AmberThemePack.builtins.first { $0.id == "sit-terracotta" }!)
         let data = try AmberThemePackTransfer.encode(AmberThemePackTransfer.document(from: runtime))

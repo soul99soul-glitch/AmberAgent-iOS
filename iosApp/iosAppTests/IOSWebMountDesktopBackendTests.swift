@@ -59,6 +59,24 @@ final class IOSWebMountDesktopBackendTests: XCTestCase {
         )
     ]
 
+    func testDesktopFindRejectsLocatorWithoutCallingRemoteTool() async throws {
+        let client = DesktopMcpClientFake(tools: desktopTools)
+        let adapter = makeAdapter(client)
+        try await connect(adapter, sessionId: "locator-session")
+        let initialCalls = client.calls.count
+        let cases: [[String: Any]] = [
+            ["locator": ["role": "button"], "text": "Reply"],
+            ["locator": ["role": "button"], "selector": "button"],
+            ["locator": ["role": "button"]]
+        ]
+        for arguments in cases {
+            let output = await adapter.execute(toolName: "wm_find", arguments: arguments, logicalSessionId: "locator-session")
+            let object = try jsonObject(output)
+            XCTAssertEqual(object["error_code"] as? String, "mapping_unsupported")
+            XCTAssertEqual(client.calls.count, initialCalls)
+        }
+    }
+
     func testStreamableHTTPSConnectsListsToolsAndPreservesOpenProvenance() async throws {
         let client = DesktopMcpClientFake(tools: desktopTools)
         let adapter = makeAdapter(client)

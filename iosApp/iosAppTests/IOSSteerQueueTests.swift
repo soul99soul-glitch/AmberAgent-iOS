@@ -319,6 +319,7 @@ final class IOSSteerQueueTests: XCTestCase {
 
         // 新 ViewModel（冷启动）：reloadFromStore 时队列重新出现，不自动发送。
         let viewModel = makeViewModel(conversationStore: store, queueDirectory: base)
+        await viewModel.steerQueueLoadTask?.value
         XCTAssertEqual(viewModel.steerQueue.map(\.text), ["被杀前的排队消息"])
         XCTAssertEqual(
             viewModel.messages.filter { $0.role == MessageRole.user }.count,

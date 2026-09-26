@@ -30,6 +30,18 @@ import kotlin.test.assertTrue
  */
 class IosToolExposureBridgeTest {
 
+    @Test
+    fun siteMemoryProposalCannotAutoApproveWhileReadRemainsReadOnly() {
+        val tool = iosToolDeclarations(listOf("wm_site_memory")).single()
+        val read = tool.invocationPolicy("""{"host":"github.com","action":"read"}""")
+        val propose = tool.invocationPolicy("""{"host":"github.com","action":"propose"}""")
+        assertFalse(read.needsApproval)
+        assertFalse(read.mandatoryApproval)
+        assertTrue(propose.needsApproval)
+        assertTrue(propose.mandatoryApproval)
+        assertFalse(propose.autoApprovable)
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Pinned iOS product catalog used to verify lazy exposure. */
@@ -42,7 +54,7 @@ class IosToolExposureBridgeTest {
         "wm_stations", "wm_tab_list", "wm_tab_new", "wm_tab_close", "wm_open",
         "wm_state", "wm_observe", "wm_extract", "wm_get", "wm_visual_snapshot", "wm_visual_read",
         "wm_screenshot", "wm_back", "wm_forward", "wm_clear_session", "wm_site_add",
-        "wm_site_remove", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
+        "wm_site_remove", "wm_site_memory", "wm_click", "wm_tap", "wm_type", "wm_keys", "wm_scroll",
         "wm_select", "wm_find", "wm_wait",
         "mcp_call", "mcp_list", "mcp_test", "mcp_describe_tool", "mcp_import_from_skill",
         "skills_list", "use_skill", "skill_validate", "skill_import", "soul_import", "skill_enable", "skill_disable",

@@ -989,6 +989,11 @@ private struct AmberEmptyStateMark: View {
 
 // MARK: - Image attachment helpers
 
+// UIImage 不可变；后台任务只读取此实例以完成编码。
+private struct ChatImageEncodingInput: @unchecked Sendable {
+    let image: UIImage
+}
+
 /// Compresses an image into a self-contained `data:` URL (sent to the model) plus a small
 /// JPEG used only for the composer thumbnail. Downscaling keeps the persisted payload small.
 enum ChatImageEncoder {
@@ -1001,6 +1006,20 @@ enum ChatImageEncoder {
         let thumb = downscaled(image, maxDimension: maxThumbnailDimension)
         let previewData = thumb.jpegData(compressionQuality: 0.6) ?? jpeg
         return (dataUrl, previewData)
+    }
+
+    static func decodeAndEncodeOffMain(_ data: Data) async -> (dataUrl: String, previewData: Data)? {
+        await Task.detached(priority: .userInitiated) {
+            guard let image = UIImage(data: data) else { return nil }
+            return encode(image)
+        }.value
+    }
+
+    static func encodeOffMain(_ image: UIImage) async -> (dataUrl: String, previewData: Data)? {
+        let input = ChatImageEncodingInput(image: image)
+        return await Task.detached(priority: .userInitiated) {
+            encode(input.image)
+        }.value
     }
 
     static func sendJPEGData(_ image: UIImage) -> Data? {

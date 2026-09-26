@@ -1463,7 +1463,7 @@ enum HomeConversationIcon {
     /// 1) 置顶 → 图钉
     /// 2) 标题 LLM 写入的 preferredKey
     /// 3) 标题关键词表
-    /// 4) 标题稳定哈希
+    /// 4) 中性气泡 fallback
     static func icon(forTitle title: String, isPinned: Bool, preferredKey: String? = nil) -> HomePhosphor {
         if isPinned { return .pushPin }
         if let preferredKey,
@@ -1474,7 +1474,8 @@ enum HomeConversationIcon {
         if let mapped = semanticIcon(for: normalized) {
             return mapped
         }
-        return hashedIcon(for: title)
+        // 无语义命中时用中性气泡，不再按标题哈希抽取与内容无关的图标。
+        return fallback
     }
 
     /// 只认 `llmCatalog` 里的 slug；返回落盘用的规范化 key。
@@ -1594,19 +1595,6 @@ enum HomeConversationIcon {
             (.lightbulb, ["为什么", "怎么做", "如何", "解释", "原理"]),
         ]
         return mappings.first(where: { _, words in words.contains { normalized.contains($0) } })?.0
-    }
-
-    /// 无关键词时：用标题 utf8 稳定哈希映射到 **会话语义池**（llmCatalog），
-    /// 避免抽到 pin/gear 等 chrome 形看起来像「置顶/设置」。
-    private static func hashedIcon(for title: String) -> HomePhosphor {
-        let pool = llmCatalog.map(\.icon)
-        guard !pool.isEmpty else { return fallback }
-        var hash: UInt64 = 5381
-        for byte in title.utf8 {
-            hash = 127 &* hash &+ UInt64(byte)
-        }
-        let index = Int(hash % UInt64(pool.count))
-        return pool[index]
     }
 }
 
@@ -1845,8 +1833,9 @@ struct HomeContinueCardModel: Equatable {
                 updatedAt: project.updatedAt,
                 model: .init(
                     feature: .novel,
-                    title: localized("小说创作"),
-                    meta: formatted("%@ · %@", arguments: ["《\(project.name)》", state]),
+                    // 书名作首行：功能名已在下方快捷入口出现，这里只作副信息。
+                    title: formatted("《%@》", arguments: [project.name]),
+                    meta: formatted("%@ · %@", arguments: [localized("小说创作"), state]),
                     ctaTitle: localized(project.isRunning ? "查看" : "继续"),
                     destination: .resumeProject(project.id)
                 )
@@ -2350,7 +2339,7 @@ struct ConversationsView: View {
     @State private var searchFocusTask: Task<Void, Never>?
     /// 入场级联只播放一次：最晚一级 delay .22 + 时长 .48，0.9s 后全部按已入场处理。
     @State private var cascadeComplete = false
-    @ScaledMetric(relativeTo: .caption2) private var sectionLabelSize: CGFloat = 11
+    @ScaledMetric(relativeTo: .subheadline) private var sectionLabelSize: CGFloat = 15
 
     /// 本地标题过滤后的会话摘要（summaries 已按 updateAt 倒序/置顶优先）。
     private var filteredSummaries: [ConversationSummary] {
@@ -2400,7 +2389,7 @@ struct ConversationsView: View {
                 Text("会话")
                     // Section chrome from theme pack; list row layout frozen; chat body font independent.
                     .font(AmberChromeFont.system(size: sectionLabelSize, weight: .semibold))
-                    .tracking(0.11).foregroundStyle(AmberTheme.section)
+                    .foregroundStyle(AmberTheme.section)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 16).padding(.top, 26).padding(.bottom, 12)
                     .listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden).homeCascade(delay: 0.14, enabled: !cascadeComplete)
@@ -3320,7 +3309,7 @@ private struct ConversationSummaryRow: View {
 }
 
 private struct ConversationGeneratingRing: View {
-    @State private var start = Date()
+    @State private var isRotating = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @ViewBuilder
@@ -3328,10 +3317,18 @@ private struct ConversationGeneratingRing: View {
         if reduceMotion {
             ring.rotationEffect(.degrees(-90))
         } else {
-            TimelineView(.animation) { context in
-                ring
-                .rotationEffect(.degrees(rotationAngle(at: context.date)))
-            }
+            ring
+                .rotationEffect(.degrees(isRotating ? 270 : -90))
+                .animation(
+                    .linear(duration: 0.9).repeatForever(autoreverses: false),
+                    value: isRotating
+                )
+                .onAppear { isRotating = true }
+                .onDisappear {
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { isRotating = false }
+                }
         }
     }
 
@@ -3343,11 +3340,6 @@ private struct ConversationGeneratingRing: View {
                 style: StrokeStyle(lineWidth: 1.05, lineCap: .round)
             )
             .accessibilityHidden(true)
-    }
-
-    private func rotationAngle(at date: Date) -> Double {
-        let elapsed = date.timeIntervalSince(start)
-        return elapsed.truncatingRemainder(dividingBy: 0.9) / 0.9 * 360
     }
 }
 
@@ -3362,6 +3354,13 @@ enum HomeCurrentAvatarBreath {
     static let clipSize: CGFloat = 52
     /// 峰值再压一层，强度曲线仍 0…1。
     static let peakOpacity: Double = 0.55
+
+    /// Core Animation 按同一余弦曲线采样，避免 SwiftUI 每帧重算模糊视图。
+    static let opacityKeyframes: [NSNumber] = (0...60).map { index in
+        let elapsed = delaySeconds + Double(index) / 60 * periodSeconds
+        return NSNumber(value: intensity(elapsed: elapsed, reduceMotion: false) * peakOpacity)
+    }
+    static let opacityKeyTimes: [NSNumber] = (0...60).map { NSNumber(value: Double($0) / 60) }
 
     /// 0…1。Reduce Motion 时恒为 0。
     static func intensity(elapsed: TimeInterval, reduceMotion: Bool) -> Double {
@@ -3379,21 +3378,85 @@ private struct CurrentConversationAvatarGlow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { context in
-            let intensity = HomeCurrentAvatarBreath.intensity(
-                elapsed: context.date.timeIntervalSince(start),
-                reduceMotion: reduceMotion
-            )
+        // 显式观察主题输入；UIColor 动态颜色闭包本身不会触发 SwiftUI Observation。
+        let accentHex = AmberThemeRuntime.shared.accentHex
+        let paper = AmberThemeRuntime.shared.paper
+        AvatarGlowOpacityHost(
+            start: start,
+            reduceMotion: reduceMotion,
+            accentHex: accentHex,
+            paper: paper
+        ) {
             let diameter = 40 + HomeCurrentAvatarBreath.spread * 2
             // 单环 soft blur，去掉双层叠晕（叠晕在 accent 下易过曝）。
             Circle()
                 .fill(AmberTheme.activeAvatarGlow)
                 .frame(width: diameter, height: diameter)
                 .blur(radius: HomeCurrentAvatarBreath.blurRadius)
-                .opacity(intensity * HomeCurrentAvatarBreath.peakOpacity)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+}
+
+/// 用宿主 layer 驱动静态光晕的透明度，保留 SwiftUI 主题颜色和模糊效果。
+private struct AvatarGlowOpacityHost<Content: View>: UIViewControllerRepresentable {
+    let start: Date
+    let reduceMotion: Bool
+    let accentHex: UInt32
+    let paper: AmberThemeRuntime.Paper
+    let content: Content
+
+    init(
+        start: Date,
+        reduceMotion: Bool,
+        accentHex: UInt32,
+        paper: AmberThemeRuntime.Paper,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.start = start
+        self.reduceMotion = reduceMotion
+        self.accentHex = accentHex
+        self.paper = paper
+        self.content = content()
+    }
+
+    func makeUIViewController(context: Context) -> UIHostingController<Content> {
+        let controller = UIHostingController(rootView: content)
+        controller.safeAreaRegions = []
+        controller.view.backgroundColor = .clear
+        controller.view.isUserInteractionEnabled = false
+        updateOpacityAnimation(on: controller.view.layer)
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIHostingController<Content>, context: Context) {
+        controller.rootView = content
+        updateOpacityAnimation(on: controller.view.layer)
+    }
+
+    static func dismantleUIViewController(_ controller: UIHostingController<Content>, coordinator: ()) {
+        controller.view.layer.removeAnimation(forKey: "homeAvatarGlowBreath")
+    }
+
+    private func updateOpacityAnimation(on layer: CALayer) {
+        layer.removeAnimation(forKey: "homeAvatarGlowBreath")
+        layer.opacity = 0
+        guard !reduceMotion else { return }
+
+        let animation = CAKeyframeAnimation(keyPath: "opacity")
+        animation.values = HomeCurrentAvatarBreath.opacityKeyframes
+        animation.keyTimes = HomeCurrentAvatarBreath.opacityKeyTimes
+        animation.calculationMode = .linear
+        animation.duration = HomeCurrentAvatarBreath.periodSeconds
+        animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil)
+            + HomeCurrentAvatarBreath.delaySeconds
+            - Date().timeIntervalSince(start)
+        animation.repeatCount = .infinity
+        animation.fillMode = .both
+        animation.isRemovedOnCompletion = false
+        layer.add(animation, forKey: "homeAvatarGlowBreath")
     }
 }
 
@@ -4571,7 +4634,7 @@ private struct WorkspaceStatusBanner: View {
     }
 }
 
-private struct WorkspacePreviewBlock: View {
+struct WorkspacePreviewBlock: View {
     let text: String
     let emptyText: String
 

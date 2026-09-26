@@ -2,7 +2,7 @@ import Foundation
 import Shared
 
 /// 排队图（与 composer `PendingChatImage` 同构；preview 用 base64 落盘）。
-struct IOSSteerQueueImage: Codable, Equatable {
+struct IOSSteerQueueImage: Codable, Equatable, Sendable {
     let dataUrl: String
     let previewBase64: String
 
@@ -17,7 +17,7 @@ struct IOSSteerQueueImage: Codable, Equatable {
 }
 
 /// 排队选中文件预览（镜像 `SelectedDocumentReadResult`，供 sidecar Codable）。
-struct IOSSteerQueuedFile: Codable, Equatable {
+struct IOSSteerQueuedFile: Codable, Equatable, Sendable {
     let fileName: String
     let fileType: String
     let totalBytes: Int64
@@ -53,7 +53,7 @@ struct IOSSteerQueuedFile: Codable, Equatable {
 }
 
 /// 一条生成中排队的 steer 消息。旧 sidecar 仅有 text 时 images/selectedFile 缺省为空。
-struct IOSSteerQueueEntry: Codable, Equatable, Identifiable {
+struct IOSSteerQueueEntry: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let text: String
     let createdAt: Date
@@ -99,7 +99,7 @@ struct IOSSteerQueueEntry: Codable, Equatable, Identifiable {
 /// 写法沿用仓库 sidecar 先例（`IOSConversationStore` 的 list-previews.json）：
 /// `JSONEncoder` + `data.write(options: .atomic)`。纯文件 IO，无跨状态；内存队列的
 /// 唯一 owner 是 `ChatViewModel`，本类只维护磁盘镜像，进程死亡后队列不丢。
-final class IOSSteerQueueStore {
+final class IOSSteerQueueStore: @unchecked Sendable {
 
     /// 队列上限，对齐 Android `MAX_PENDING_USER_MESSAGES`（`PendingUserMessage.kt`）。
     static let maxPendingUserMessages = 20
@@ -117,7 +117,12 @@ final class IOSSteerQueueStore {
     }
 
     func load(conversationId: KotlinUuid?) -> [IOSSteerQueueEntry] {
-        guard let url = fileURL(for: conversationId) else { return [] }
+        guard let conversationId else { return [] }
+        return load(conversationId: conversationId.toHexDashString())
+    }
+
+    func load(conversationId: String) -> [IOSSteerQueueEntry] {
+        let url = directoryURL.appendingPathComponent("\(conversationId).json")
         guard let data = try? Data(contentsOf: url) else { return [] }
         return (try? JSONDecoder().decode([IOSSteerQueueEntry].self, from: data)) ?? []
     }

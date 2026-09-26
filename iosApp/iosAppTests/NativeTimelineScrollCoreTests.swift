@@ -295,35 +295,35 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             consumed: nil,
             currentConversationID: "conversation-b",
             availableMessageIDs: ["message-image"],
-            availableImageToolCallIDs: ["tool-image"]
+            availableImageToolCallIDsByMessageID: ["message-image": ["tool-image"]]
         ))
         XCTAssertNil(NativeTimelineMessageAnchorPolicy.targetEntryID(
             request: anchor,
             consumed: nil,
             currentConversationID: "conversation-a",
             availableMessageIDs: [],
-            availableImageToolCallIDs: ["tool-image"]
+            availableImageToolCallIDsByMessageID: ["message-image": ["tool-image"]]
         ))
         XCTAssertNil(NativeTimelineMessageAnchorPolicy.targetEntryID(
             request: anchor,
             consumed: nil,
             currentConversationID: "conversation-a",
             availableMessageIDs: ["message-image"],
-            availableImageToolCallIDs: []
+            availableImageToolCallIDsByMessageID: [:]
         ))
         XCTAssertEqual(NativeTimelineMessageAnchorPolicy.targetEntryID(
             request: anchor,
             consumed: nil,
             currentConversationID: "conversation-a",
             availableMessageIDs: ["message-image"],
-            availableImageToolCallIDs: ["tool-image"]
-        ), ChatImageGenerationAnchorTarget.id(toolCallID: "tool-image"))
+            availableImageToolCallIDsByMessageID: ["message-image": ["tool-image"]]
+        ), ChatImageGenerationAnchorTarget.id(messageID: "message-image", toolCallID: "tool-image"))
         XCTAssertNil(NativeTimelineMessageAnchorPolicy.targetEntryID(
             request: anchor,
             consumed: anchor,
             currentConversationID: "conversation-a",
             availableMessageIDs: ["message-image"],
-            availableImageToolCallIDs: ["tool-image"]
+            availableImageToolCallIDsByMessageID: ["message-image": ["tool-image"]]
         ))
 
         XCTAssertFalse(NativeTimelineMessageAnchorPolicy.canSchedule(
@@ -338,6 +338,50 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             nativeDriverActive: false,
             fallbackActive: true
         ))
+    }
+
+    func testRegularToolAnchorUsesOwningMessageWhenCallIDIsReusedByImage() {
+        let anchor = ChatMessageAnchor(
+            conversationID: "conversation-a",
+            messageID: "message-write",
+            toolCallID: "call_0"
+        )
+        let toolIDs = [
+            "message-write": Set(["call_0"]),
+            "message-image": Set(["call_0"])
+        ]
+        let imageIDs = ["message-image": Set(["call_0"])]
+
+        XCTAssertEqual(NativeTimelineMessageAnchorPolicy.targetEntryID(
+            request: anchor,
+            consumed: nil,
+            currentConversationID: "conversation-a",
+            availableMessageIDs: ["message-write", "message-image"],
+            availableImageToolCallIDsByMessageID: imageIDs,
+            availableToolCallIDsByMessageID: toolIDs
+        ), ChatToolCallAnchorTarget.id(messageID: "message-write", toolCallID: "call_0"))
+    }
+
+    func testImageToolAnchorUsesOwningMessageWhenCallIDIsReusedByRegularTool() {
+        let anchor = ChatMessageAnchor(
+            conversationID: "conversation-a",
+            messageID: "message-image",
+            toolCallID: "call_0"
+        )
+        let toolIDs = [
+            "message-write": Set(["call_0"]),
+            "message-image": Set(["call_0"])
+        ]
+        let imageIDs = ["message-image": Set(["call_0"])]
+
+        XCTAssertEqual(NativeTimelineMessageAnchorPolicy.targetEntryID(
+            request: anchor,
+            consumed: nil,
+            currentConversationID: "conversation-a",
+            availableMessageIDs: ["message-write", "message-image"],
+            availableImageToolCallIDsByMessageID: imageIDs,
+            availableToolCallIDsByMessageID: toolIDs
+        ), ChatImageGenerationAnchorTarget.id(messageID: "message-image", toolCallID: "call_0"))
     }
 
     @MainActor

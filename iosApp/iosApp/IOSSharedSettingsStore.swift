@@ -179,7 +179,10 @@ final class IOSSharedSettingsStore {
         let soulMigratedFromFactory = IosSettingsMutations.shared.isLegacyFactoryAgentSoulMarkdown(
             value: soulBeforeRebrand
         ) && soulAfterRebrand != soulBeforeRebrand
-        if migratedProviderPlaintext || migratedSearchPlaintext || soulMigratedFromFactory {
+        let beforeReasoningMigration = self.snapshot
+        self.snapshot = IosSettingsMutations.shared.migrateLegacyCodexGpt6Reasoning(settings: self.snapshot)
+        let reasoningMigrated = self.snapshot !== beforeReasoningMigration
+        if migratedProviderPlaintext || migratedSearchPlaintext || soulMigratedFromFactory || reasoningMigrated {
             restoreSnapshot(self.snapshot)
         }
     }

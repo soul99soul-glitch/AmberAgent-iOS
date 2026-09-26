@@ -572,6 +572,8 @@ final class ChatToolTimelineWidthOverflowTests: XCTestCase {
             action: "点击目标",
             consequence: "可能提交当前页面内容",
             screenshotRetentionWarning: nil,
+            siteMemoryChanges: nil,
+            siteMemoryBaseline: nil,
             requiresHumanHandoff: false,
             reason: "需要批准当前浏览器动作",
             sessionId: nil,

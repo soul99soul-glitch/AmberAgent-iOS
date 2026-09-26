@@ -1708,6 +1708,7 @@ struct ChatToolTimeline: View {
             Capsule(style: .continuous)
                 .stroke(state.stroke, lineWidth: 0.7)
         }
+        .chatIslandToolAnchorHighlight(toolCallID: step.id)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Capsule(style: .continuous))
         .accessibilityElement(children: .ignore)

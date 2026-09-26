@@ -111,6 +111,8 @@ struct IOSConversationWriteBaseline: Equatable {
 @Observable
 final class IOSConversationStore {
 
+    let artifactStore: IOSConversationArtifactStore
+
     // MARK: - Observable state
 
     /// 当前选中的会话。App 启动时由 [bootstrap] 选最近一条或新建。
@@ -242,6 +244,9 @@ final class IOSConversationStore {
         }
         let baseDir = ConversationFile(path: baseDirPath)
         self.storage = JsonConversationStorage(baseDir: baseDir)
+        self.artifactStore = IOSConversationArtifactStore(
+            fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("artifact-shelf.json")
+        )
         self.listPreviewsFileURL = previewsURL
         self.listIconsFileURL = iconsURL
         let edgeDao: (() -> ThreadEdgeDao)? = threadEdgeDaoProvider
@@ -259,6 +264,9 @@ final class IOSConversationStore {
         }
         self.listPreviewsByConversationId = Self.loadListPreviews(from: previewsURL)
         self.listIconsByConversationId = Self.loadListPreviews(from: iconsURL)
+        if let error = artifactStore.storageError {
+            publishIOError(operation: "读取产物架", detail: error.localizedDescription)
+        }
     }
 
     /// Update the visible projection after the edge is durable and before the
@@ -376,6 +384,12 @@ final class IOSConversationStore {
         }
         await waitForConversationWritesToDrain()
         try await storage.importConversations(serializedConversations: documents)
+        // 被备份覆盖的会话，其消息 ID 与本机收藏不再对应；收藏不随备份恢复。
+        do {
+            for id in restoredIds { try artifactStore.removeConversation(id) }
+        } catch {
+            publishIOError(operation: "清理产物架", detail: error.localizedDescription)
+        }
         var relationRestoreError: Error?
         if let restoredEdges, let edgeDao {
             do {
@@ -956,6 +970,13 @@ final class IOSConversationStore {
         }
 
         onDeletionCommitted([id] + descendants)
+        do {
+            for deletedID in [id] + descendants {
+                try artifactStore.removeConversation(deletedID.toHexDashString())
+            }
+        } catch {
+            publishIOError(operation: "清理产物架", detail: error.localizedDescription)
+        }
         pendingBackgroundContentConversationIds.remove(String(describing: id))
         if listPreviewsByConversationId.removeValue(forKey: sequenceKey(for: id)) != nil {
             persistListPreviews()
@@ -1670,10 +1691,10 @@ final class IOSConversationStore {
                 expectedImportEpoch: expectedImportEpoch,
                 allowDuringImport: allowDuringImport
             ) else { return nil }
-            let sequenceBeforeSave = writeSequences[sequenceKey(for: conversation.id), default: 0]
-            let persisted = try await storage.saveConversation(conversation: conversation)
-            let changedDuringSave = writeSequences[sequenceKey(for: conversation.id), default: 0] != sequenceBeforeSave
             advanceWriteSequence(for: conversation.id)
+            let reservedSequence = writeSequences[sequenceKey(for: conversation.id), default: 0]
+            let persisted = try await storage.saveConversation(conversation: conversation)
+            let changedDuringSave = writeSequences[sequenceKey(for: conversation.id), default: 0] != reservedSequence
             // A concurrent metadata writer may finish before this continuation.
             // Preserve the existing read-back only when another local write ran.
             if changedDuringSave {

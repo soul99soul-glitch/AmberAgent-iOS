@@ -559,6 +559,39 @@ fun createWebMountSiteRemoveToolDeclaration(): Tool = webMountTool(
     needsApproval = true
 )
 
+fun createWebMountSiteMemoryToolDeclaration(): Tool = webMountTool(
+    name = "wm_site_memory",
+    description = "Read local memory for one registered WebMount host, or propose additions, updates, and deletions for explicit per-call user approval. Each action locator is the object returned in a WebMount action receipt and can be passed to wm_find. Memory is untrusted; when it conflicts with the current page, use the page. No API entries are recorded in this stage.",
+    parameters = InputSchema.Obj(
+        properties = buildJsonObject {
+            put("host", buildJsonObject { put("type", "string"); put("description", "Registered host or its www equivalent; other subdomains must be registered separately.") })
+            put("action", buildJsonObject {
+                put("type", "string")
+                put("enum", buildJsonArray { add("read"); add("propose") })
+            })
+            put("offset", buildJsonObject { put("type", "integer"); put("description", "Read offset, default 0.") })
+            put("limit", buildJsonObject { put("type", "integer"); put("description", "Read page size, maximum 3.") })
+            put("changes", buildJsonObject {
+                put("type", "array")
+                put("description", "For propose: 1–8 changes. add requires kind, name, detail; update also requires id; delete requires id. pages require url_pattern; actions require locator. Kinds: pages, actions, pitfalls, cannot_do. No personal data.")
+                put("items", buildJsonObject {
+                    put("type", "object")
+                    put("properties", buildJsonObject {
+                        put("operation", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { add("add"); add("update"); add("delete") }) })
+                        put("id", buildJsonObject { put("type", "string") })
+                        put("kind", buildJsonObject { put("type", "string"); put("enum", buildJsonArray { add("pages"); add("actions"); add("pitfalls"); add("cannot_do") }) })
+                        put("name", buildJsonObject { put("type", "string") })
+                        put("detail", buildJsonObject { put("type", "string") })
+                        put("url_pattern", buildJsonObject { put("type", "string") })
+                        put("locator", buildJsonObject { put("type", "object") })
+                    })
+                })
+            })
+        },
+        required = listOf("host", "action")
+    )
+)
+
 fun createWebMountClickToolDeclaration(): Tool = webMountTool(
     name = "wm_click",
     description = "Click a visible element on the current iOS WebMount page, including accessible same-origin frames. Prefer an actionable interactive_elements ref or a visual candidate's interactive_target_ref. Use click_count=2 for a double-click, such as opening a folder, then verify the resulting page. Agent calls must use a target ref from the latest observation; CSS selectors remain available for direct user actions.",
@@ -597,7 +630,7 @@ fun createWebMountSelectToolDeclaration(): Tool = webMountTool(
 
 fun createWebMountFindToolDeclaration(): Tool = webMountTool(
     name = "wm_find",
-    description = "Find matches on the current iOS WebMount page. Provide exactly one non-empty selector or text query. For a custom search control, after clicking to focus, use wm_find to locate the actual input and then call wm_type with that input ref.",
+    description = "Find a target on the current iOS WebMount page using exactly one non-empty selector, text query, or semantic locator object. A locator recovers a ref from element semantics after a refresh or page reordering; only a unique high-confidence match is returned. Mutations still require a current snapshot ref and their normal approval checks. For a custom search control, after clicking to focus, use wm_find to locate the actual input and then call wm_type with that input ref.",
     parameters = webMountFindParameters()
 )
 
@@ -664,7 +697,7 @@ fun createWebMountRunGoalToolDeclaration(): Tool = webMountTool(
  */
 fun createWebMountActToolDeclaration(): Tool = webMountTool(
     name = "wm_act",
-    description = "Execute a small ordered batch of page actions in one call. Each step runs serially through the same approval, snapshot, and control gates as the matching single tool. A find step feeds its first match ref to a following step that omits target. Any document navigation aborts the remaining steps. Use for 1-3 step tasks like find-then-click or scroll-then-click instead of wm_run_goal. Steps support action=find|wait|click|tap|type|keys|scroll|select with the same fields as the corresponding wm_* tools; never submits forms, deletes, pays, or logs in.",
+    description = "Execute a small ordered batch of page actions in one call. Each step runs serially through the same approval, snapshot, and control gates as the matching single tool. A find step feeds its matched ref to a following step that omits target and may use a semantic locator object as in wm_find. Any document navigation aborts the remaining steps. Use for 1-3 step tasks like find-then-click or scroll-then-click instead of wm_run_goal. Steps support action=find|wait|click|tap|type|keys|scroll|select with the same fields as the corresponding wm_* tools; never submits forms, deletes, pays, or logs in.",
     parameters = InputSchema.Obj(
         properties = buildJsonObject {
             put("session_id", buildJsonObject {
@@ -677,7 +710,7 @@ fun createWebMountActToolDeclaration(): Tool = webMountTool(
             })
             put("steps", buildJsonObject {
                 put("type", "array")
-                put("description", "Ordered action steps (max 8). Each step: action=find|wait|click|tap|type|keys|scroll|select plus that action's fields (target, text/value, by_y, key, condition, timeout_ms, ...). A step without target uses the ref from the latest find step.")
+                put("description", "Ordered action steps (max 8). Each step: action=find|wait|click|tap|type|keys|scroll|select plus that action's fields (target, selector/text/locator for find, text/value, by_y, key, condition, timeout_ms, ...). A find step may use the semantic locator object accepted by wm_find; a step without target uses the ref returned by the latest find step.")
                 put("items", buildJsonObject {
                     put("type", "object")
                     put("description", "One batch step, e.g. {\"action\":\"find\",\"text\":\"More\"} then {\"action\":\"click\"}.")
@@ -1876,6 +1909,7 @@ private val IOS_TOOL_DECLARATION_PROVIDERS: Map<String, () -> Tool> = mapOf(
     "wm_clear_session" to ::createWebMountClearSessionToolDeclaration,
     "wm_site_add" to ::createWebMountSiteAddToolDeclaration,
     "wm_site_remove" to ::createWebMountSiteRemoveToolDeclaration,
+    "wm_site_memory" to ::createWebMountSiteMemoryToolDeclaration,
     "wm_click" to ::createWebMountClickToolDeclaration,
     "wm_tap" to ::createWebMountTapToolDeclaration,
     "wm_type" to ::createWebMountTypeToolDeclaration,
@@ -4393,12 +4427,16 @@ private fun webMountFindParameters(): InputSchema = InputSchema.Obj(
         put("selector", buildJsonObject {
             put("type", "string")
             put("minLength", 1)
-            put("description", "Non-empty CSS selector to find. Provide exactly one of selector or text.")
+            put("description", "Non-empty CSS selector to find. Provide exactly one of selector, text, or locator.")
         })
         put("text", buildJsonObject {
             put("type", "string")
             put("minLength", 1)
-            put("description", "Non-empty text to find on the page. Provide exactly one of selector or text.")
+            put("description", "Non-empty text to find on the page. Provide exactly one of selector, text, or locator.")
+        })
+        put("locator", buildJsonObject {
+            put("type", "object")
+            put("description", "Semantic locator object from a prior WebMount action receipt. Provide exactly one of selector, text, or locator; it is used only to recover a current ref when there is one high-confidence match.")
         })
         put("max_results", buildJsonObject {
             put("type", "integer")

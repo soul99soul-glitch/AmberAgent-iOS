@@ -302,6 +302,31 @@ struct WebMountToolApprovalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if request.siteMemoryChanges != nil {
+                ScrollView { approvalDetails }
+                    .frame(maxHeight: 520)
+            } else {
+                approvalDetails
+            }
+
+            WebMountDivider()
+
+            HStack(spacing: 10) {
+                denyButton
+                approveButton
+            }
+            .padding(12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
+        }
+    }
+
+    private var approvalDetails: some View {
+        VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(spacing: 7) {
                     Circle()
@@ -355,6 +380,21 @@ struct WebMountToolApprovalCard: View {
                     }
                 }
 
+                if let changes = request.siteMemoryChanges, !changes.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        approvalSectionLabel("将保存的条目变更")
+                        ForEach(Array(changes.enumerated()), id: \.offset) { _, change in
+                            Text(change)
+                                .font(.caption)
+                                .foregroundStyle(AmberTheme.foreground)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        }
+                    }
+                }
+
                 HStack(alignment: .top, spacing: 8) {
                     Circle()
                         .fill(request.requiresHumanHandoff ? AmberTheme.accentAmber : AmberTheme.accentGreen)
@@ -397,19 +437,6 @@ struct WebMountToolApprovalCard: View {
                 .accessibilityLabel(IOSAppLocalization.formatted("%@，不会批准或继续当前动作", arguments: [IOSAppLocalization.string(openSessionLabel)]))
             }
 
-            WebMountDivider()
-
-            HStack(spacing: 10) {
-                denyButton
-                approveButton
-            }
-            .padding(12)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(AmberTheme.borderSoft, lineWidth: 0.7)
         }
     }
 
@@ -434,6 +461,8 @@ struct WebMountToolApprovalCard: View {
         Button(action: onApprove) {
             Text(IOSAppLocalization.string(approveLabel))
                 .font(.body.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .background(AmberTheme.accent, in: RoundedRectangle(cornerRadius: 11, style: .continuous))

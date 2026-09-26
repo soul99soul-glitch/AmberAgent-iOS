@@ -139,6 +139,141 @@ final class IOSMcpManagerTests: XCTestCase {
         XCTAssertEqual(manager.statusByServer["docs"], .connected)
         XCTAssertEqual(manager.statusByServer["private"], .idle)
     }
+
+    func testSyncAllKeepsPreviousCatalogAndDoesNotSerializeBehindSlowServer() async throws {
+        let fastClient = FakeIOSMcpClient(tools: [IOSMcpTool(name: "search", description: nil)])
+        let slowClient = GatedIOSMcpClient(tools: [IOSMcpTool(name: "query", description: nil)])
+        let manager = IOSMcpManager(
+            serverProvider: {
+                [
+                    .streamableHTTP(name: "slow", url: "https://example.com/slow"),
+                    .streamableHTTP(name: "fast", url: "https://example.com/fast"),
+                ]
+            },
+            clientFactory: { config in
+                config.name == "slow" ? slowClient as IOSMcpClienting : fastClient
+            }
+        )
+        await manager.syncAll()
+        let catalog = manager.tools
+        XCTAssertEqual(catalog.map(\.id), ["slow::query", "fast::search"])
+
+        slowClient.setGated(true)
+        let fastListsBeforeResync = fastClient.listToolsCount
+        let resync = Task { @MainActor in await manager.syncAll() }
+        for _ in 0..<400 where !(slowClient.isWaiting && fastClient.listToolsCount > fastListsBeforeResync) {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+
+        // `slow` is listed first and is still blocked, so a second `fast`
+        // listing proves the servers are not synced one after another.
+        XCTAssertTrue(slowClient.isWaiting)
+        XCTAssertEqual(fastClient.listToolsCount, fastListsBeforeResync + 1)
+        XCTAssertEqual(manager.statusByServer["slow"], .connecting)
+        XCTAssertEqual(manager.tools, catalog)
+
+        slowClient.setGated(false)
+        await resync.value
+        XCTAssertEqual(manager.tools.map(\.id), ["slow::query", "fast::search"])
+        XCTAssertEqual(manager.statusByServer["slow"], .connected)
+    }
+
+    func testOverlappingSyncsPublishTheNewestConfig() async throws {
+        let fastClient = FakeIOSMcpClient(tools: [IOSMcpTool(name: "search", description: nil)])
+        let slowClient = GatedIOSMcpClient(tools: [IOSMcpTool(name: "query", description: nil)])
+        let config = McpServerListBox([
+            .streamableHTTP(name: "slow", url: "https://example.com/slow"),
+            .streamableHTTP(name: "fast", url: "https://example.com/fast"),
+        ])
+        let manager = IOSMcpManager(
+            serverProvider: { config.servers },
+            clientFactory: { server in
+                server.name == "slow" ? slowClient as IOSMcpClienting : fastClient
+            }
+        )
+
+        slowClient.setGated(true)
+        let olderSync = Task { @MainActor in await manager.syncAll() }
+        for _ in 0..<400 where !slowClient.isWaiting {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        config.servers = [.streamableHTTP(name: "fast", url: "https://example.com/fast")]
+        let newerSync = Task { @MainActor in await manager.syncAll() }
+        slowClient.setGated(false)
+        await olderSync.value
+        await newerSync.value
+
+        XCTAssertEqual(manager.tools.map(\.id), ["fast::search"])
+        XCTAssertNil(manager.statusByServer["slow"])
+    }
+
+    func testCancelledToolCallStopsWaitingForSlowSync() async throws {
+        let fastClient = FakeIOSMcpClient(tools: [IOSMcpTool(name: "search", description: nil)])
+        let slowClient = GatedIOSMcpClient(tools: [IOSMcpTool(name: "query", description: nil)])
+        let manager = IOSMcpManager(
+            serverProvider: {
+                [
+                    .streamableHTTP(name: "slow", url: "https://example.com/slow"),
+                    .streamableHTTP(name: "fast", url: "https://example.com/fast"),
+                ]
+            },
+            clientFactory: { config in
+                config.name == "slow" ? slowClient as IOSMcpClienting : fastClient
+            }
+        )
+        await manager.syncAll()
+
+        slowClient.setGated(true)
+        let backgroundSync = Task { @MainActor in await manager.syncAll() }
+        for _ in 0..<400 where !slowClient.isWaiting {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let call = Task { @MainActor in
+            try await manager.callTool(serverName: "fast", toolName: "search", arguments: [:])
+        }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        call.cancel()
+
+        do {
+            _ = try await call.value
+            XCTFail("A cancelled call must not wait for the slow sync or reach the server")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertTrue(slowClient.isWaiting)
+        XCTAssertEqual(fastClient.calledTools, [])
+
+        slowClient.setGated(false)
+        await backgroundSync.value
+    }
+
+    func testPersistedCatalogLoadsEnabledServersWithoutNetwork() {
+        let client = FakeIOSMcpClient(tools: [])
+        let manager = IOSMcpManager(
+            serverProvider: {
+                [
+                    IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/docs")
+                        .withTools([IOSMcpTool(name: "search", description: nil)]),
+                    IOSMcpServerConfig.sse(name: "off", url: "https://example.com/off", enabled: false)
+                        .withTools([IOSMcpTool(name: "query", description: nil)]),
+                ]
+            },
+            clientFactory: { _ in client }
+        )
+
+        manager.loadPersistedCatalogIfNeeded()
+
+        XCTAssertEqual(manager.tools.map(\.id), ["docs::search"])
+        XCTAssertFalse(client.didConnect)
+    }
+}
+
+private final class McpServerListBox {
+    var servers: [IOSMcpServerConfig]
+
+    init(_ servers: [IOSMcpServerConfig]) {
+        self.servers = servers
+    }
 }
 
 private final class FakeIOSMcpClient: IOSMcpClienting {
@@ -147,6 +282,7 @@ private final class FakeIOSMcpClient: IOSMcpClienting {
     var calledTools: [String] = []
     var didConnect = false
     var didDisconnect = false
+    var listToolsCount = 0
 
     init(tools: [IOSMcpTool], callOutput: String = "") {
         self.tools = tools
@@ -158,7 +294,10 @@ private final class FakeIOSMcpClient: IOSMcpClienting {
         return true
     }
 
-    func listTools() async throws -> [IOSMcpTool] { tools }
+    func listTools() async throws -> [IOSMcpTool] {
+        listToolsCount += 1
+        return tools
+    }
 
     func callTool(name: String, arguments: [String: Any]) async throws -> String {
         calledTools.append(name)
@@ -168,4 +307,47 @@ private final class FakeIOSMcpClient: IOSMcpClienting {
     func disconnect() {
         didDisconnect = true
     }
+}
+
+private final class GatedIOSMcpClient: IOSMcpClienting, @unchecked Sendable {
+    private let lock = NSLock()
+    private let tools: [IOSMcpTool]
+    private var gated = false
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    init(tools: [IOSMcpTool]) {
+        self.tools = tools
+    }
+
+    var isWaiting: Bool {
+        lock.withLock { waiter != nil }
+    }
+
+    func setGated(_ value: Bool) {
+        let released: CheckedContinuation<Void, Never>? = lock.withLock {
+            gated = value
+            guard !value else { return nil }
+            defer { waiter = nil }
+            return waiter
+        }
+        released?.resume()
+    }
+
+    func connect(config: IOSMcpServerConfig) async throws -> Bool { true }
+
+    func listTools() async throws -> [IOSMcpTool] {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let resumeNow: Bool = lock.withLock {
+                guard gated else { return true }
+                waiter = continuation
+                return false
+            }
+            if resumeNow { continuation.resume() }
+        }
+        return tools
+    }
+
+    func callTool(name: String, arguments: [String: Any]) async throws -> String { "" }
+
+    func disconnect() {}
 }

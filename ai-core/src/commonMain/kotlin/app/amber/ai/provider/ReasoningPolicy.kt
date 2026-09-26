@@ -292,7 +292,8 @@ fun Model.reasoningFamily(provider: ProviderSetting?): ReasoningFamily {
         id.isGrok46() || (provider.isXaiApiEndpoint() && id.contains("4.6")) -> ReasoningFamily.GROK_XHIGH
         id.isGrok45() || (provider.isXaiApiEndpoint() && id.contains("grok")) -> ReasoningFamily.GROK_HIGH
 
-        id.contains("gpt-5") || id.contains("codex") || Regex("\\bo\\d+").containsMatchIn(id) ->
+        id.contains("gpt-5") || id.contains("gpt-6-sol") || id.contains("gpt-6-luna") ||
+            id.contains("codex") || Regex("\\bo\\d+").containsMatchIn(id) ->
             ReasoningFamily.OPENAI
 
         ModelAbility.REASONING in abilities -> ReasoningFamily.GENERIC

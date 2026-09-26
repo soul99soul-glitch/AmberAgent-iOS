@@ -538,6 +538,7 @@ private final class IOSConversationCompactStore {
     private let directory: URL
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private var cache: [String: [IOSConversationCompact]] = [:]
 
     init() {
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
@@ -547,15 +548,26 @@ private final class IOSConversationCompactStore {
     }
 
     func load(conversationId: String) -> [IOSConversationCompact] {
+        if let cached = cache[conversationId] {
+            return cached
+        }
+
         let url = fileURL(conversationId: conversationId)
-        guard let data = try? Data(contentsOf: url) else { return [] }
-        return (try? decoder.decode([IOSConversationCompact].self, from: data)) ?? []
+        let compacts: [IOSConversationCompact]
+        if let data = try? Data(contentsOf: url) {
+            compacts = (try? decoder.decode([IOSConversationCompact].self, from: data)) ?? []
+        } else {
+            compacts = []
+        }
+        cache[conversationId] = compacts
+        return compacts
     }
 
     func save(_ compacts: [IOSConversationCompact], conversationId: String) throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try encoder.encode(compacts)
         try data.write(to: fileURL(conversationId: conversationId), options: .atomic)
+        cache[conversationId] = compacts
     }
 
     private func fileURL(conversationId: String) -> URL {

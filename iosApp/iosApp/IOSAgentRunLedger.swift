@@ -59,6 +59,36 @@ public struct IOSToolTransactionSnapshot: Sendable, Equatable {
     public let resultPayload: String?
 }
 
+struct IOSWebMountRunReport: Sendable, Equatable, Identifiable {
+    let id: String
+    let startedAtMillis: Int64
+    let isRunning: Bool
+    let durationMillis: Int64
+    let totalToolCalls: Int
+    let webMountToolCalls: Int
+    let failedToolCalls: Int
+    let rejectedToolCalls: Int
+    let userHandoffCount: Int
+    let steps: [IOSWebMountRunReportStep]
+}
+
+struct IOSWebMountRunReportStep: Sendable, Equatable, Identifiable {
+    let id: String
+    let timestampMillis: Int64?
+    let toolName: String
+    let targetSummary: String
+    let dispatched: Bool?
+    let pageChanged: Bool?
+    let goalVerified: Bool?
+    let errorCode: String?
+    let handedOffToUser: Bool
+    let pageDrift: Bool
+    let credentialRedacted: Bool
+    let unattributedPageActivity: Bool
+    let isFailure: Bool
+    let isRejected: Bool
+}
+
 /// Secret-free logical request identity for one provider round.
 /// Raw messages, prompts and credentials stay out of the durable ledger; their
 /// canonical bytes are reduced to SHA-256 digests before this value is written.
@@ -326,6 +356,20 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
 
     private let dao: AgentRuntimeDao
     private let store: RoomAgentEventStore
+
+    private struct RunCandidate: Sendable {
+        let runId: String
+        let startedAtMillis: Int64
+        let finishedAtMillis: Int64?
+    }
+
+    private struct ToolEvent: Sendable {
+        let type: String
+        let seq: Int64
+        let timestampMillis: Int64
+        let toolCallId: String?
+        let payload: String
+    }
 
     init(dao: AgentRuntimeDao = IosDatabaseFactory.shared.createDatabase().agentRuntimeDao()) {
         self.dao = dao
@@ -675,6 +719,299 @@ actor IOSAgentRunLedger: IOSAgentRunLedgering {
                 continuation.resume(returning: rows.compactMap(Self.snapshot))
             }
         }
+    }
+
+    /// Builds an on-device report from the durable run/tool records. Finished
+    /// sessions have no current ownerRunId, so historical association is made
+    /// by matching the session_id already returned by that run's wm_* calls.
+    func webMountRunReports(
+        sessionId: String,
+        ownerConversationId: String?,
+        ownerRunId: String?
+    ) async -> [IOSWebMountRunReport] {
+        guard let conversationId = ownerConversationId?.nilIfBlank else { return [] }
+        let nowMillis = Self.nowMillis()
+        let candidates = await runCandidates(conversationId: conversationId)
+        let orderedCandidates = candidates.sorted {
+            if $0.startedAtMillis == $1.startedAtMillis { return $0.runId > $1.runId }
+            return $0.startedAtMillis > $1.startedAtMillis
+        }
+        var reports: [IOSWebMountRunReport] = []
+
+        for candidate in orderedCandidates {
+            guard let transactions = await toolTransactions(runId: candidate.runId) else { continue }
+            let events = await toolEvents(runId: candidate.runId)
+            let steps = Self.projectToolSteps(transactions: transactions, events: events)
+            guard steps.contains(where: { $0.toolName.hasPrefix("wm_") }) else { continue }
+            let matchesCurrentOwner = candidate.runId == ownerRunId?.nilIfBlank
+            guard matchesCurrentOwner || Self.containsWebMountSession(
+                sessionId: sessionId,
+                transactions: transactions
+            ) else { continue }
+
+            let attributableWebMountSteps = steps.filter { step in
+                guard step.toolName.hasPrefix("wm_"),
+                      let transaction = transactions.first(where: { $0.toolCallId == step.id }) else {
+                    return false
+                }
+                return (Self.outputObject(transaction.resultPayload)?["session_id"] as? String) == sessionId
+            }
+            let attributableIDs = Set(attributableWebMountSteps.map(\.id))
+            let reportSteps = steps.filter { !$0.toolName.hasPrefix("wm_") || attributableIDs.contains($0.id) }
+
+            let endedAt = candidate.finishedAtMillis ?? nowMillis
+            let counts = Self.counts(in: attributableWebMountSteps)
+            reports.append(IOSWebMountRunReport(
+                id: candidate.runId,
+                startedAtMillis: candidate.startedAtMillis,
+                isRunning: candidate.finishedAtMillis == nil,
+                durationMillis: max(0, endedAt - candidate.startedAtMillis),
+                totalToolCalls: steps.count,
+                webMountToolCalls: attributableWebMountSteps.count,
+                failedToolCalls: counts.failed,
+                rejectedToolCalls: counts.rejected,
+                userHandoffCount: attributableWebMountSteps.filter(\.handedOffToUser).count,
+                steps: reportSteps
+            ))
+        }
+        return reports
+    }
+
+    private func runCandidates(conversationId: String) async -> [RunCandidate] {
+        await withCheckedContinuation { continuation in
+            dao.listAllRuns { rows, _ in
+                let candidates = (rows ?? []).compactMap { run -> RunCandidate? in
+                    guard IOSDurableRunStore.Descriptor.chatRecoveryAliases.contains(run.agentDescriptorId),
+                          run.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame else {
+                        return nil
+                    }
+                    return RunCandidate(
+                        runId: run.runId,
+                        startedAtMillis: run.startedAt,
+                        finishedAtMillis: run.finishedAt?.int64Value
+                    )
+                }
+                continuation.resume(returning: candidates)
+            }
+        }
+    }
+
+    private func toolEvents(runId: String) async -> [ToolEvent] {
+        await withCheckedContinuation { continuation in
+            dao.listEventsForRun(id: runId) { rows, error in
+                guard error == nil else {
+                    continuation.resume(returning: [])
+                    return
+                }
+                let events = (rows ?? []).compactMap { row -> ToolEvent? in
+                    let type = row.type
+                    let isRelevant = IOSToolCallLedgerClassifier.isStarted(type)
+                        || IOSToolCallLedgerClassifier.isFinished(type)
+                        || type == Self.toolPreparedEventType
+                        || type == Self.approvalDeniedEventType
+                        || type == Self.toolOutcomeUnknownEventType
+                        || type == Self.toolReconciledEventType
+                    guard isRelevant, row.toolCallId != nil else {
+                        return nil
+                    }
+                    return ToolEvent(
+                        type: row.type,
+                        seq: row.seq,
+                        timestampMillis: row.ts,
+                        toolCallId: row.toolCallId,
+                        payload: row.payload
+                    )
+                }
+                continuation.resume(returning: events)
+            }
+        }
+    }
+
+    private static func projectToolSteps(
+        transactions: [IOSToolTransactionSnapshot],
+        events: [ToolEvent]
+    ) -> [IOSWebMountRunReportStep] {
+        struct Call {
+            let id: String
+            var toolName: String
+            var timestampMillis: Int64?
+            var outcome: String?
+            var outcomeKind: String?
+            var errorCode: String?
+            var approvalDenied = false
+            var output: [String: Any]?
+        }
+
+        var calls: [String: Call] = [:]
+        for transaction in transactions {
+            calls[transaction.toolCallId] = Call(
+                id: transaction.toolCallId,
+                toolName: transaction.toolName,
+                timestampMillis: nil,
+                outcome: transaction.outcome,
+                outcomeKind: nil,
+                errorCode: nil,
+                output: Self.outputObject(transaction.resultPayload)
+            )
+        }
+        for event in events.sorted(by: { $0.seq < $1.seq }) {
+            guard let toolCallId = event.toolCallId else { continue }
+            let fields = Self.object(event.payload) ?? [:]
+            var call = calls[toolCallId] ?? Call(
+                id: toolCallId,
+                toolName: fields["toolName"] as? String ?? "未知工具",
+                timestampMillis: nil,
+                outcome: nil,
+                outcomeKind: nil,
+                errorCode: nil,
+                output: nil
+            )
+            if let toolName = fields["toolName"] as? String { call.toolName = toolName }
+            call.timestampMillis = min(call.timestampMillis ?? event.timestampMillis, event.timestampMillis)
+            if let outcome = fields["outcome"] as? String { call.outcome = outcome }
+            if let outcomeKind = fields["outcomeKind"] as? String { call.outcomeKind = outcomeKind }
+            if let errorCode = fields["errorCode"] as? String { call.errorCode = errorCode }
+            if event.type == Self.approvalDeniedEventType { call.approvalDenied = true }
+            calls[toolCallId] = call
+        }
+
+        return calls.values.map { call in
+            let output = call.output ?? [:]
+            let isHandoff = Self.boolValue("handoff", in: output) == true
+                || Self.boolValue("requires_human", in: output) == true
+            let status = Self.stringValue("status", in: output) ?? ""
+            let resultOutcome = Self.stringValue("outcome", in: output) ?? call.outcome ?? ""
+            let isRejected = call.approvalDenied || resultOutcome == "denied"
+                || status == "rejected" || status == "denied"
+                || Self.boolValue("denied", in: output) == true
+            let needsUserAction = Self.boolValue("needs_user_action", in: output) == true
+            let isFailure = !isRejected && !isHandoff && !needsUserAction && (
+                resultOutcome == "failed"
+                    || resultOutcome == "timed_out"
+                    || resultOutcome == "ambiguous"
+                    || call.outcomeKind == "error"
+                    || status == "failed"
+                    || status == "timed_out"
+                    || status == "ambiguous"
+                    || (Self.boolValue("ok", in: output) == false)
+                    || call.errorCode != nil
+                    || Self.stringValue("error_code", in: output)?.nilIfBlank != nil
+            )
+            return IOSWebMountRunReportStep(
+                id: call.id,
+                timestampMillis: call.timestampMillis,
+                toolName: call.toolName,
+                targetSummary: Self.targetSummary(toolName: call.toolName, output: output),
+                dispatched: Self.boolValue("dispatched", in: output),
+                pageChanged: Self.boolValue("page_changed", in: output),
+                goalVerified: Self.boolValue("goal_verified", in: output),
+                errorCode: Self.codeString(call.errorCode) ?? Self.codeString(Self.stringValue("error_code", in: output)),
+                handedOffToUser: isHandoff,
+                pageDrift: Self.hasPageDrift(in: output),
+                credentialRedacted: Self.boolValue("credential_redacted", in: output) == true,
+                unattributedPageActivity: Self.boolValue("unattributed_page_activity", in: output) == true,
+                isFailure: isFailure,
+                isRejected: isRejected
+            )
+        }
+        .sorted { lhs, rhs in
+            switch (lhs.timestampMillis, rhs.timestampMillis) {
+            case let (left?, right?) where left != right: return left < right
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return lhs.id < rhs.id
+            }
+        }
+    }
+
+    private static func counts(in steps: [IOSWebMountRunReportStep]) -> (failed: Int, rejected: Int) {
+        (steps.filter(\.isFailure).count, steps.filter(\.isRejected).count)
+    }
+
+    private static func containsWebMountSession(
+        sessionId: String,
+        transactions: [IOSToolTransactionSnapshot]
+    ) -> Bool {
+        transactions.contains { transaction in
+            transaction.toolName.hasPrefix("wm_")
+                && (outputObject(transaction.resultPayload)?["session_id"] as? String) == sessionId
+        }
+    }
+
+    private static func outputObject(_ payload: String?) -> [String: Any]? {
+        guard let payload,
+              let parts = try? IosToolOutputJsonBridge.shared.decode(json: payload) else { return nil }
+        let text = parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+        return object(text)
+    }
+
+    private static func object(_ string: String) -> [String: Any]? {
+        guard let data = string.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return value
+    }
+
+    private static func stringValue(_ key: String, in dictionary: [String: Any]) -> String? {
+        dictionary[key] as? String
+    }
+
+    private static func boolValue(_ key: String, in dictionary: [String: Any]) -> Bool? {
+        dictionary[key] as? Bool
+    }
+
+    private static func hasPageDrift(in dictionary: [String: Any]) -> Bool {
+        if let value = dictionary["page_drift"] {
+            if let boolean = value as? Bool { return boolean }
+            if let drift = value as? [String: Any] { return drift["changed"] as? Bool ?? !drift.isEmpty }
+            if let text = value as? String { return !text.isEmpty }
+        }
+        return false
+    }
+
+    private static func targetSummary(toolName: String, output: [String: Any]) -> String {
+        if ["wm_open", "wm_navigate"].contains(toolName),
+           let url = stringValue("url", in: output),
+           let redactedURL = IOSWebMountRedactor.redactedURL(url) {
+            return redactedURL
+        }
+        let labels = stringValues("target_label", in: output)
+            .map { IOSWebMountRedactor.redactedText($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !labels.isEmpty {
+            return "目标：" + String(labels.prefix(2).joined(separator: "、").prefix(60))
+        }
+        return switch toolName {
+        case "wm_open", "wm_navigate": "页面导航"
+        case "wm_extract": "页面正文"
+        case "wm_get": "页面元素"
+        case "wm_state": "页面状态"
+        case "wm_observe", "wm_snapshot", "wm_visual_snapshot": "页面观察"
+        case "wm_find": "页面目标"
+        case "wm_wait": "页面条件"
+        default: toolName.hasPrefix("wm_") ? "当前页面" : "—"
+        }
+    }
+
+    private static func stringValues(_ key: String, in dictionary: [String: Any]) -> [String] {
+        var values: [String] = []
+        func visit(_ value: Any) {
+            if let dictionary = value as? [String: Any] {
+                if let string = dictionary[key] as? String { values.append(string) }
+                for child in dictionary.keys.sorted().compactMap({ dictionary[$0] }) { visit(child) }
+            } else if let children = value as? [Any] {
+                children.forEach(visit)
+            }
+        }
+        visit(dictionary)
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
+    }
+
+    private static func codeString(_ value: String?) -> String? {
+        guard let value = value?.nilIfBlank else { return nil }
+        let code = String(value.prefix(64))
+        guard code.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "_.-".contains($0)) }) else { return nil }
+        return code
     }
 
     func transitionToolTransaction(

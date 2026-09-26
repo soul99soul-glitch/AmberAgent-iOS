@@ -730,4 +730,212 @@ final class IOSToolBoundaryTests: XCTestCase {
         )
     }
 
+    func testWebMountReportsIncludeEachSessionRunAndOnlyExplicitlyBoundWebMountSteps() async throws {
+        let db = makeDatabase()
+        let dao = db.agentRuntimeDao()
+        let store = IOSDurableRunStore(dao: dao)
+        let ledger = IOSAgentRunLedger(dao: dao)
+        let oldRunId = "webmount-report-old-\(UUID().uuidString)"
+        let newRunId = "webmount-report-new-\(UUID().uuidString)"
+
+        try await startReportRun(store: store, runId: oldRunId, conversationId: "report-chat", startedAt: 1_000)
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: oldRunId,
+            toolCallId: "old-wm",
+            toolName: "wm_observe",
+            output: #"{"ok":true,"session_id":"report-session","url":"https://example.com"}"#
+        )
+        try await finishReportRun(store: store, runId: oldRunId, at: 5_000)
+
+        try await startReportRun(store: store, runId: newRunId, conversationId: "report-chat", startedAt: 6_000)
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-click",
+            toolName: "wm_click",
+            output: #"{"ok":true,"session_id":"report-session","status":"verified","target_label":"提交","dispatched":true,"page_changed":true,"goal_verified":true,"unattributed_page_activity":true}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-get",
+            toolName: "wm_get",
+            output: #"{"ok":false,"session_id":"report-session","status":"failed","error_code":"page_drift","page_drift":true,"credential_redacted":true,"previous_url":"https://example.com/one","current_url":"https://example.com/two"}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-handoff",
+            toolName: "wm_type",
+            output: #"{"ok":true,"session_id":"report-session","status":"human_handoff_completed","handoff":true,"target_label":"Email"}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-denied",
+            toolName: "wm_click",
+            output: #"{"ok":false,"session_id":"report-session","denied":true,"policy":"user_denied"}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-open",
+            toolName: "wm_open",
+            output: #"{"ok":true,"session_id":"report-session","url":"https://example.com/search?token=secret-value"}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-other-session",
+            toolName: "wm_click",
+            output: #"{"ok":true,"session_id":"another-session","dispatched":true}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-nested-session",
+            toolName: "wm_tab_list",
+            output: #"{"tabs":[{"session_id":"report-session"}]}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-nested-receipt",
+            toolName: "wm_act",
+            output: #"{"ok":true,"session_id":"report-session","steps":[{"dispatched":true,"page_changed":true,"goal_verified":true,"error_code":"inner_failure"}]}"#
+        )
+        try await recordReportToolCall(
+            ledger: ledger,
+            runId: newRunId,
+            toolCallId: "new-search",
+            toolName: "search_web",
+            output: #"{"ok":true}"#,
+            effectClass: .networkRead
+        )
+        try await finishReportRun(store: store, runId: newRunId, at: 9_000)
+
+        let reports = await ledger.webMountRunReports(
+            sessionId: "report-session",
+            ownerConversationId: "report-chat",
+            ownerRunId: nil
+        )
+
+        XCTAssertEqual(reports.map(\.id), [newRunId, oldRunId])
+        let latest = try XCTUnwrap(reports.first)
+        XCTAssertEqual(latest.totalToolCalls, 9, "the total is run-wide")
+        XCTAssertEqual(latest.webMountToolCalls, 6, "only top-level matching session_id results belong to this session")
+        XCTAssertEqual(latest.failedToolCalls, 1)
+        XCTAssertEqual(latest.rejectedToolCalls, 1, "approval_denied is a refusal, not a second failure")
+        XCTAssertEqual(latest.userHandoffCount, 1)
+        XCTAssertEqual(latest.durationMillis, 3_000)
+        XCTAssertFalse(latest.isRunning)
+        XCTAssertFalse(latest.steps.contains { $0.id == "new-other-session" })
+        XCTAssertFalse(latest.steps.contains { $0.id == "new-nested-session" })
+        XCTAssertTrue(latest.steps.contains { $0.id == "new-search" }, "the run timeline includes non-WebMount context")
+
+        let click = try XCTUnwrap(latest.steps.first { $0.id == "new-click" })
+        XCTAssertEqual(click.targetSummary, "目标：提交")
+        XCTAssertEqual(click.dispatched, true)
+        XCTAssertEqual(click.pageChanged, true)
+        XCTAssertEqual(click.goalVerified, true)
+        XCTAssertTrue(click.unattributedPageActivity)
+
+        let get = try XCTUnwrap(latest.steps.first { $0.id == "new-get" })
+        XCTAssertEqual(get.errorCode, "page_drift")
+        XCTAssertTrue(get.pageDrift)
+        XCTAssertTrue(get.credentialRedacted)
+
+        let nestedReceipt = try XCTUnwrap(latest.steps.first { $0.id == "new-nested-receipt" })
+        XCTAssertNil(nestedReceipt.dispatched)
+        XCTAssertNil(nestedReceipt.pageChanged)
+        XCTAssertNil(nestedReceipt.goalVerified)
+        XCTAssertNil(nestedReceipt.errorCode)
+
+        let open = try XCTUnwrap(latest.steps.first { $0.id == "new-open" })
+        XCTAssertTrue(open.targetSummary.contains("example.com"))
+        XCTAssertFalse(open.targetSummary.contains("secret-value"))
+
+        XCTAssertEqual(reports.last?.durationMillis, 4_000)
+        XCTAssertEqual(reports.last?.webMountToolCalls, 1)
+
+        let policyDenial = await ChatToolOutputFormatter.webMountResultText(
+            for: toolPart(toolCallId: "denied-input", toolName: "wm_click", input: #"{"session_id":"report-session"}"#),
+            output: .denied("WebMount is disabled")
+        )
+        let policyDenialObject = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(policyDenial.utf8)) as? [String: Any])
+        XCTAssertEqual(policyDenialObject["session_id"] as? String, "report-session")
+    }
+
+    private func startReportRun(
+        store: IOSDurableRunStore,
+        runId: String,
+        conversationId: String,
+        startedAt: Int64
+    ) async throws {
+        let started = try await store.startChatRun(
+            runId: runId,
+            startedAt: startedAt,
+            inputDigest: "report-input",
+            conversationId: conversationId
+        )
+        XCTAssertTrue(started)
+    }
+
+    private func finishReportRun(store: IOSDurableRunStore, runId: String, at: Int64) async throws {
+        let finished = try await store.transition(
+            runId: runId,
+            expected: .running,
+            to: .completed,
+            at: at
+        )
+        XCTAssertTrue(finished)
+    }
+
+    private func recordReportToolCall(
+        ledger: IOSAgentRunLedger,
+        runId: String,
+        toolCallId: String,
+        toolName: String,
+        output: String,
+        effectClass: IOSToolEffectClass = .sideEffect,
+        approvalDenied: Bool = false
+    ) async throws {
+        let prepared = await ledger.recordToolCallPrepared(
+            runId: runId,
+            toolCallId: toolCallId,
+            toolName: toolName,
+            argsDigest: "digest-\(toolCallId)",
+            effectClass: effectClass
+        )
+        XCTAssertEqual(prepared, .ready)
+        let started = await ledger.recordToolCallStarted(
+            runId: runId,
+            toolCallId: toolCallId,
+            toolName: toolName,
+            argsDigest: "digest-\(toolCallId)",
+            effectClass: effectClass
+        )
+        XCTAssertTrue(started)
+        if approvalDenied {
+            await ledger.recordApprovalDenied(
+                runId: runId,
+                toolCallId: toolCallId,
+                toolName: toolName,
+                reason: "User denied the action.",
+                capabilityId: "web"
+            )
+        }
+        let payload = try XCTUnwrap(IosToolOutputJsonBridge.shared.encode(
+            parts: [UIMessagePart.Text(text: output, metadata: nil)]
+        ))
+        let finished = await ledger.recordToolCallTerminal(
+            runId: runId,
+            toolCallId: toolCallId,
+            outcome: approvalDenied ? "failed" : "completed",
+            resultPayload: payload
+        )
+        XCTAssertTrue(finished)
+    }
+
 }

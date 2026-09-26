@@ -432,7 +432,13 @@ struct ChatRuntimeContextBuilder {
     ) -> [UIMessage] {
         let result = memoryRecallResult(for: messages, override: memoryRecallOverride)
         guard let prompt = result.prompt else { return messages }
-        return [Self.systemMessageWithMemoryMetadata(prompt, ids: result.ids)] + messages
+        // Recall changes turn to turn, so it goes after the stable leading
+        // system fragments (soul, MCP catalog, orchestration, tool guidance).
+        // Prefix-matching prompt caches then keep reusing those fragments.
+        var prepared = messages
+        let insertionIndex = prepared.firstIndex { $0.role != MessageRole.system } ?? prepared.endIndex
+        prepared.insert(Self.systemMessageWithMemoryMetadata(prompt, ids: result.ids), at: insertionIndex)
+        return prepared
     }
 
     private static func systemMessageWithMemoryMetadata(_ text: String, ids: [Int32]) -> UIMessage {

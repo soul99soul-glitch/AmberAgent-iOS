@@ -450,30 +450,114 @@ struct NovelSessionRowModel: Identifiable, Equatable, Sendable {
     }
 }
 
+private enum NovelSessionRowLocation: Equatable, Sendable {
+    case historical(Int)
+    case activeRun(Int)
+}
+
 struct NovelSessionListModel: Equatable, Sendable {
     let sessionID: NovelSessionID
-    let rows: [NovelSessionRowModel]
+    let historicalRows: [NovelSessionRowModel]
+    let activeRunRows: [NovelSessionRowModel]
     let activeTailID: NovelMessageID?
+    /// Index of the active tail in `activeRunRows`, captured during projection.
+    let activeTailIndex: Int?
+    private let rowOrder: [NovelSessionRowLocation]
 
-    var historicalRows: [NovelSessionRowModel] {
-        guard let activeRunID else { return rows }
-        return rows.filter { $0.runID != activeRunID }
-    }
-
-    var activeRunRows: [NovelSessionRowModel] {
-        guard let activeRunID else { return [] }
-        return rows.filter { $0.runID == activeRunID }
-    }
-
-    private var activeRunID: NovelRunID? {
-        if let activeTailID {
-            return rows.first(where: { $0.id == activeTailID })?.runID
+    /// Compatibility view for projection callers and tests that need source order.
+    /// The stream update path reads the precomputed sections and tail directly.
+    var rows: [NovelSessionRowModel] {
+        rowOrder.map { location in
+            switch location {
+            case .historical(let index):
+                historicalRows[index]
+            case .activeRun(let index):
+                activeRunRows[index]
+            }
         }
-        // Keep the just-finished run in the active stack after the tail
-        // retires. Moving those rows into the history ForEach remounts the
-        // finished markdown bubble; merging both stacks into one VStack
-        // instead remeasures every historical chapter on each stream tick.
-        return rows.last(where: { $0.runID != nil })?.runID
+    }
+
+    var rowCount: Int { rowOrder.count }
+    var isEmpty: Bool { rowOrder.isEmpty }
+    var lastRowDigest: NovelSessionRowDigest? {
+        guard let location = rowOrder.last else { return nil }
+        switch location {
+        case .historical(let index): return historicalRows[index].digest
+        case .activeRun(let index): return activeRunRows[index].digest
+        }
+    }
+    var activeTailRow: NovelSessionRowModel? {
+        guard let activeTailIndex else { return nil }
+        return activeRunRows[activeTailIndex]
+    }
+
+    init(
+        sessionID: NovelSessionID,
+        rows: [NovelSessionRowModel],
+        activeTailID: NovelMessageID?
+    ) {
+        let activeRunID: NovelRunID? = {
+            if let activeTailID {
+                return rows.first(where: { $0.id == activeTailID })?.runID
+            }
+            // Keep the just-finished run in the active stack after the tail
+            // retires. Moving those rows into history remounts its markdown.
+            return rows.last(where: { $0.runID != nil })?.runID
+        }()
+        var historicalRows: [NovelSessionRowModel] = []
+        var activeRunRows: [NovelSessionRowModel] = []
+        var rowOrder: [NovelSessionRowLocation] = []
+        historicalRows.reserveCapacity(rows.count)
+        rowOrder.reserveCapacity(rows.count)
+        for row in rows {
+            if let activeRunID, row.runID == activeRunID {
+                rowOrder.append(.activeRun(activeRunRows.count))
+                activeRunRows.append(row)
+            } else {
+                rowOrder.append(.historical(historicalRows.count))
+                historicalRows.append(row)
+            }
+        }
+        self.init(
+            sessionID: sessionID,
+            historicalRows: historicalRows,
+            activeRunRows: activeRunRows,
+            activeTailID: activeTailID,
+            activeTailIndex: activeTailID.flatMap { tailID in
+                activeRunRows.firstIndex(where: { $0.id == tailID })
+            },
+            rowOrder: rowOrder
+        )
+    }
+
+    private init(
+        sessionID: NovelSessionID,
+        historicalRows: [NovelSessionRowModel],
+        activeRunRows: [NovelSessionRowModel],
+        activeTailID: NovelMessageID?,
+        activeTailIndex: Int?,
+        rowOrder: [NovelSessionRowLocation]
+    ) {
+        self.sessionID = sessionID
+        self.historicalRows = historicalRows
+        self.activeRunRows = activeRunRows
+        self.activeTailID = activeTailID
+        self.activeTailIndex = activeTailIndex
+        self.rowOrder = rowOrder
+    }
+
+    func replacingActiveTail(with row: NovelSessionRowModel) -> NovelSessionListModel {
+        guard let activeTailIndex else { return self }
+        var activeRunRows = activeRunRows
+        activeRunRows[activeTailIndex] = row
+        return NovelSessionListModel(
+            sessionID: sessionID,
+            historicalRows: historicalRows,
+            activeRunRows: activeRunRows,
+            activeTailID: activeTailID,
+            activeTailIndex: activeTailIndex,
+            rowOrder: rowOrder
+        )
     }
 }
 
@@ -720,18 +804,27 @@ enum NovelSessionPresentation {
     /// again at ~21 Hz.
     static func updatingTransientTail(
         in model: NovelSessionListModel,
-        with tail: NovelSessionTransientTail
+        with tail: NovelSessionTransientTail,
+        localAskUserResponse: NovelAskUserResponse?
     ) -> NovelSessionListModel? {
         guard model.activeTailID == tail.messageID,
-              let rowIndex = model.rows.firstIndex(where: { $0.id == tail.messageID }) else {
+              model.activeTailIndex != nil,
+              let current = model.activeTailRow else {
             return nil
         }
-        let current = model.rows[rowIndex]
         guard current.runID == tail.runID,
               current.transientPhase == tail.phase else { return nil }
+        var askUser = tail.askUser ?? current.askUser
+        if let currentAskUser = askUser,
+           currentAskUser.response == nil,
+           let localAskUserResponse {
+            askUser = NovelAskUserPresentation(
+                prompt: currentAskUser.prompt,
+                response: localAskUserResponse
+            )
+        }
 
-        var rows = model.rows
-        rows[rowIndex] = NovelSessionRowModel(
+        let updatedTail = NovelSessionRowModel(
             id: current.id,
             sequence: current.sequence,
             role: current.role,
@@ -746,7 +839,7 @@ enum NovelSessionPresentation {
             runStatus: current.runStatus,
             candidate: current.candidate,
             committedChange: current.committedChange,
-            askUser: tail.askUser ?? current.askUser,
+            askUser: askUser,
             archive: current.archive,
             transientPhase: current.transientPhase,
             actions: current.actions,
@@ -758,16 +851,12 @@ enum NovelSessionPresentation {
                 granularity: current.granularity,
                 candidate: current.candidate,
                 committedChange: current.committedChange,
-                askUser: tail.askUser ?? current.askUser,
+                askUser: askUser,
                 actions: current.actions
             ),
             lagAllowance: tail.lagAllowance
         )
-        return NovelSessionListModel(
-            sessionID: model.sessionID,
-            rows: rows,
-            activeTailID: model.activeTailID
-        )
+        return model.replacingActiveTail(with: updatedTail)
     }
 }
 

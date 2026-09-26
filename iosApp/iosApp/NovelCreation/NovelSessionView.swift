@@ -191,40 +191,37 @@ struct NovelSessionView: View {
     /// height flash). Cleared on session identity change. History always still
     /// renders markdown — this only chooses live vs cold markdown path.
     @State private var streamedMessageIDs: Set<String> = []
-    /// 活动尾行最近一拍透出的跟随滞后允许度（流式 1 → 终态排空连续衰减到 0），
-    /// 由 listSignalDidChange 维护、executeFollowCommand 消费。用 @State 是因为
-    /// 两个回调跨越不同的 body 求值，普通 struct 字段的写入会在下一次 body 重建
-    /// 时丢失。
-    @State private var activeTailLagAllowance: Double = 1
-
     var body: some View {
-        // Gate list projection until bind marks coreTranscript — avoids projecting a
-        // full large session while still idle/unbound.
-        let listModel = viewModel.loadStage >= .coreTranscript ? projectedListModel() : nil
-        let listSignal = makeListSignal(from: listModel)
+        NovelSessionTranscriptScope(
+            workspace: workspace,
+            viewModel: viewModel,
+            expandedArchiveIDs: expandedArchiveIDs,
+            onInitialRows: presentInitialRowsIfNeeded,
+            onSignalChange: handleListSignalChange
+        ) { listModel, listSignal in
+            ZStack {
+                AmberThemePageBackground(surface: .app)
+                if viewModel.loadStage < .coreTranscript {
+                    ProgressView("正在打开会话…")
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                } else {
+                    transcript(listModel: listModel, listSignal: listSignal)
 
-        ZStack {
-            AmberThemePageBackground(surface: .app)
-            if viewModel.loadStage < .coreTranscript {
-                ProgressView("正在打开会话…")
-                    .font(.footnote)
-                    .foregroundStyle(AmberTheme.muted)
-            } else {
-                transcript(listModel: listModel, listSignal: listSignal)
-            }
-
-            if followState.showsBottomButton, !(listModel?.rows.isEmpty ?? true) {
-                VStack {
-                    Spacer()
-                    ChatScrollToBottomButton {
-                        releaseSuspendedStreamingTail()
-                        dispatchFollowEvent(.explicitBottomRequested)
+                    if followState.showsBottomButton, !(listModel?.isEmpty ?? true) {
+                        VStack {
+                            Spacer()
+                            ChatScrollToBottomButton {
+                                releaseSuspendedStreamingTail()
+                                dispatchFollowEvent(.explicitBottomRequested)
+                            }
+                            .padding(.bottom, max(10, composerBarHeight + 10))
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.scale(scale: 0.7).combined(with: .opacity))
+                        .zIndex(10)
                     }
-                    .padding(.bottom, max(10, composerBarHeight + 10))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .transition(.scale(scale: 0.7).combined(with: .opacity))
-                .zIndex(10)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -242,7 +239,7 @@ struct NovelSessionView: View {
                 }
                 // Composer is usable after core; avoid building it during idle bind.
                 if viewModel.loadStage >= .coreTranscript {
-                    composer(listModel: listModel)
+                    composer()
                 }
             }
             .background {
@@ -265,14 +262,6 @@ struct NovelSessionView: View {
         }
         .task(id: bindingTaskID) {
             await runStagedSessionOpen()
-        }
-        .task(id: listSignal.sessionID) {
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            presentInitialRowsIfNeeded(listSignal)
-        }
-        .onChange(of: listSignal) { oldValue, newValue in
-            handleListSignalChange(from: oldValue, to: newValue)
         }
         .onDisappear {
             if let committed = composerInputController.committedText(),
@@ -333,7 +322,6 @@ struct NovelSessionView: View {
         listModel: NovelSessionListModel?,
         listSignal: NovelSessionListSignal
     ) -> some View {
-        let rows = listModel?.rows ?? []
         let historicalRows = listModel?.historicalRows ?? []
         let activeRunRows = listModel?.activeRunRows ?? []
         let historyStartIndex = NovelSessionHistoryWindowPolicy.startIndex(
@@ -345,7 +333,7 @@ struct NovelSessionView: View {
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if rows.isEmpty {
+                if listModel?.isEmpty ?? true {
                     Text("新的创作对话")
                         .font(.footnote.weight(.medium))
                         .foregroundStyle(AmberTheme.muted)
@@ -496,8 +484,12 @@ struct NovelSessionView: View {
                 )
             )
         } action: { oldValue, newValue in
-            latestAtBottom = newValue.isAtBottom
-            latestNearBottom = newValue.isNearBottom
+            if latestAtBottom != newValue.isAtBottom {
+                latestAtBottom = newValue.isAtBottom
+            }
+            if latestNearBottom != newValue.isNearBottom {
+                latestNearBottom = newValue.isNearBottom
+            }
             let followEvents = NovelSessionScrollGeometryPolicy.events(
                 previousContentHeight: oldValue.contentHeight,
                 currentContentHeight: newValue.contentHeight,
@@ -520,7 +512,7 @@ struct NovelSessionView: View {
                isLiveTailPhase(listSignal.activeTailPhase) || isSettlingTerminal,
                newValue.isNearBottom, !newValue.isAtBottom {
                 scrollDriver.submit(.streamContentGrew(
-                    lagAllowance: activeTailLagAllowance
+                    lagAllowance: viewModel.latestTailLagAllowance
                 ))
             }
         }
@@ -600,7 +592,7 @@ struct NovelSessionView: View {
         }
     }
 
-    private func composer(listModel: NovelSessionListModel?) -> some View {
+    private func composer() -> some View {
         VStack(spacing: 8) {
             if let transaction = viewModel.unresolvedBranchPolishTransactions.first {
                 polishRecoveryBanner(transaction)
@@ -643,7 +635,7 @@ struct NovelSessionView: View {
                 stalePlotBanner
             }
 
-            if let recovery = quickStartRecovery(listModel: listModel) {
+            if let recovery = quickStartRecovery() {
                 quickStartRecoveryBanner(recovery)
             }
 
@@ -1174,9 +1166,7 @@ struct NovelSessionView: View {
         )
     }
 
-    private func quickStartRecovery(
-        listModel: NovelSessionListModel?
-    ) -> NovelSessionQuickStartRecovery? {
+    private func quickStartRecovery() -> NovelSessionQuickStartRecovery? {
         guard workspace.projectSnapshot?.project.creationMode == .quickStart else { return nil }
         switch workspace.quickStartStatus {
         case .failed(let message):
@@ -1189,7 +1179,9 @@ struct NovelSessionView: View {
         case .refreshFailed(let message):
             return .reload(message: message)
         case .persistenceBlocked(let runID, let message):
-            let hasDurableRow = listModel?.rows.contains(where: { $0.runID == runID }) == true
+            let hasDurableRow = projectedListModel()?.rows.contains {
+                $0.runID == runID
+            } == true
             return hasDurableRow ? nil : .retryPersistence(runID: runID, message: message)
         case .idle, .starting, .generating, .awaitingUser:
             return nil
@@ -1454,24 +1446,6 @@ struct NovelSessionView: View {
         }
     }
 
-    private func makeListSignal(
-        from model: NovelSessionListModel?
-    ) -> NovelSessionListSignal {
-        let tail = model?.activeTailID.flatMap { tailID in
-            model?.rows.first(where: { $0.id == tailID })
-        }
-        return NovelSessionListSignal(
-            sessionID: model?.sessionID,
-            rowCount: model?.rows.count ?? 0,
-            activeTailID: model?.activeTailID,
-            activeTailDigest: tail?.digest,
-            activeTailPhase: tail?.transientPhase,
-            activeRunRowCount: model?.activeRunRows.count ?? 0,
-            lastRowDigest: model?.rows.last?.digest,
-            activeTailLagAllowance: tail?.lagAllowance ?? 1
-        )
-    }
-
     private var bindingTaskID: String {
         let branchID = workspace.selectedBranchID
         // Flip nosnap→snap when load finishes so open re-runs after a failed early bind.
@@ -1555,9 +1529,7 @@ struct NovelSessionView: View {
             modelWindowTokens: modelContext?.contextWindowTokens,
             estimatedInjectionTokens: estimatedTokens,
             // Ring badge only: true while this session is actively showing thinking.
-            supportsReasoning: viewModel.transientTail.map {
-                $0.isReasoningLive || !$0.reasoningContent.isEmpty
-            } ?? false
+            supportsReasoning: viewModel.transientTailChromeState.supportsReasoning
         )
     }
 
@@ -1761,7 +1733,6 @@ struct NovelSessionView: View {
         from oldValue: NovelSessionListSignal,
         to newValue: NovelSessionListSignal
     ) {
-        activeTailLagAllowance = newValue.activeTailLagAllowance
         guard oldValue.sessionID == newValue.sessionID else {
             releaseSuspendedStreamingTail(resetIdentity: true)
             historyWindowLimit = NovelSessionHistoryWindowPolicy.coldOpenLimit
@@ -1775,7 +1746,9 @@ struct NovelSessionView: View {
             return
         }
         if let activeTailID = newValue.activeTailID {
-            streamedMessageIDs.insert(activeTailID.description)
+            if !streamedMessageIDs.contains(activeTailID.description) {
+                streamedMessageIDs.insert(activeTailID.description)
+            }
             if streamingTailVisibility.messageID != activeTailID.description {
                 streamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState(
                     messageID: activeTailID.description,
@@ -1798,11 +1771,14 @@ struct NovelSessionView: View {
         // 刚完成的 run 钉在活动栈,退役不增加 historical 行数;下一轮开始时旧
         // 钉住行才进入 historical,由这里的增量吸收,不要再叠一层
         // `limitAfterActiveRunReturnsToHistory`(会把同一批行算两次)。
-        historyWindowLimit = NovelSessionHistoryWindowPolicy.limitAfterRowsAppended(
+        let nextHistoryWindowLimit = NovelSessionHistoryWindowPolicy.limitAfterRowsAppended(
             currentLimit: historyWindowLimit,
             previousRowCount: oldValue.rowCount - oldValue.activeRunRowCount,
             currentRowCount: newValue.rowCount - newValue.activeRunRowCount
         )
+        if nextHistoryWindowLimit != historyWindowLimit {
+            historyWindowLimit = nextHistoryWindowLimit
+        }
         if oldValue.activeTailID == nil, newValue.activeTailID != nil {
             dispatchFollowEvent(.streamStarted)
         } else if oldValue.activeTailID == newValue.activeTailID,
@@ -1880,7 +1856,9 @@ struct NovelSessionView: View {
             event: event,
             followEnabled: followGeneration
         )
-        followState = transition.state
+        if followState != transition.state {
+            followState = transition.state
+        }
         for command in transition.commands {
             executeFollowCommand(command)
         }
@@ -1920,7 +1898,7 @@ struct NovelSessionView: View {
                     //（随剩余积压连续衰减）：driver 收紧跟随时间常数，最后一拍
                     // 前视口已贴回底部，完成瞬间的钉底零跳变（与 Chat 同源）。
                     scrollDriver.submit(.streamContentGrew(
-                        lagAllowance: activeTailLagAllowance
+                        lagAllowance: viewModel.latestTailLagAllowance
                     ))
                 }
                 return
@@ -2181,9 +2159,55 @@ private struct NovelSessionListSignal: Equatable {
     let activeTailPhase: NovelSessionTransientTailPhase?
     let activeRunRowCount: Int
     let lastRowDigest: NovelSessionRowDigest?
-    /// 活动尾行的跟随滞后允许度（流式 1 → 终态排空连续衰减到 0），
-    /// streamContentGrew(lagAllowance:) 的透传载体（与 Chat 同源）。
-    let activeTailLagAllowance: Double
+}
+
+private struct NovelSessionTranscriptScope<Content: View>: View {
+    let workspace: NovelCreationViewModel
+    let viewModel: NovelSessionViewModel
+    let expandedArchiveIDs: Set<NovelMessageID>
+    let onInitialRows: (NovelSessionListSignal) -> Void
+    let onSignalChange: (NovelSessionListSignal, NovelSessionListSignal) -> Void
+    let content: (NovelSessionListModel?, NovelSessionListSignal) -> Content
+
+    var body: some View {
+        let listModel = viewModel.loadStage >= .coreTranscript ? projectedListModel() : nil
+        let listSignal = Self.makeListSignal(from: listModel)
+
+        content(listModel, listSignal)
+            .task(id: listSignal.sessionID) {
+                await Task.yield()
+                guard !Task.isCancelled else { return }
+                onInitialRows(listSignal)
+            }
+            .onChange(of: listSignal) { oldValue, newValue in
+                onSignalChange(oldValue, newValue)
+            }
+    }
+
+    private func projectedListModel() -> NovelSessionListModel? {
+        guard let project = workspace.projectSnapshot,
+              let branch = workspace.branchSnapshot else { return nil }
+        return viewModel.projectedListModel(
+            project: project,
+            branch: branch,
+            expandedArchiveIDs: expandedArchiveIDs
+        )
+    }
+
+    private static func makeListSignal(
+        from model: NovelSessionListModel?
+    ) -> NovelSessionListSignal {
+        let tail = model?.activeTailRow
+        return NovelSessionListSignal(
+            sessionID: model?.sessionID,
+            rowCount: model?.rowCount ?? 0,
+            activeTailID: model?.activeTailID,
+            activeTailDigest: tail?.digest,
+            activeTailPhase: tail?.transientPhase,
+            activeRunRowCount: model?.activeRunRows.count ?? 0,
+            lastRowDigest: model?.lastRowDigest
+        )
+    }
 }
 
 private struct NovelSessionScrollGeometrySignal: Equatable {

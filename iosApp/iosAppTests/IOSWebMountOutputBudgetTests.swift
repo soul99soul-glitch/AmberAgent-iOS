@@ -4,6 +4,31 @@ import Shared
 
 @MainActor
 final class IOSWebMountOutputBudgetTests: XCTestCase {
+    func testActionLocatorRemainsCompleteWhenWebMountOutputIsCapped() throws {
+        let locator: [String: Any] = [
+            "role": "button", "tag": "button",
+            "name": String(repeating: "Search result ", count: 12),
+            "text": "Open result", "ordinal": 2,
+            "attributes": ["data-testid": "open-result-2"],
+            "landmark": ["role": "navigation", "name": "Results"],
+            "url_pattern": "https://example.com/results"
+        ]
+        let raw = IOSWebMountController.json([
+            "ok": true, "tool": "wm_click", "session_id": "session-locator",
+            "snapshot_id": "document:1",
+            "action_receipt": ["locator": locator],
+            "final_observation": ["visible_text": String(repeating: "Unrelated page text. ", count: 400)]
+        ])
+        let parts = ChatToolOutputFormatter.cappedToolOutputParts(
+            [UIMessagePart.Text(text: raw, metadata: nil)], maxChars: 2_200
+        )
+        let output = try XCTUnwrap((parts.first as? UIMessagePart.Text)?.text)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any])
+        let receipt = try XCTUnwrap(object["action_receipt"] as? [String: Any])
+        XCTAssertEqual(IOSWebMountController.json(receipt["locator"] ?? [:]), IOSWebMountController.json(locator))
+        XCTAssertLessThanOrEqual(output.count, 2_200)
+    }
+
     func testWebMountCapPreservesMachineFieldsAndReportsDroppedEvidence() throws {
         let sessionID = "session-1234567890"
         let snapshotID = "document-1234567890:revision-42"

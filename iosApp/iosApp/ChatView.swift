@@ -7,8 +7,11 @@ import PhotosUI
 enum ChatTopBarLayout {
     static let controlsHeight: CGFloat = 54
     static let toolbarButtonDiameter: CGFloat = 38
-    /// Side chrome gutter for the centered island/mode capsule (~one 38pt button + gap).
-    static let islandSideGutter: CGFloat = 74
+    /// 每侧保留 44pt 命中区和 12pt 间距，鼓动后的岛也不能进入按钮区域。
+    static let islandSideGutter: CGFloat = 56
+    static func availableIslandWidth(in width: CGFloat) -> CGFloat {
+        min(islandMaxWidth, max(0, width - islandSideGutter * 2) / 1.06)
+    }
     /// Design max width for the activity / mode capsule shell.
     static let islandMaxWidth: CGFloat = 268
     /// Max title text width inside the island (shell − horizontal pad − optional orb).
@@ -33,17 +36,19 @@ private struct ChatListSummarySnapshot: Equatable {
     var firstUserTitleSeed: String?
     var activeToolStep: ChatToolStepModel?
     var failedToolStep: ChatToolStepModel?
+    var webMountRecentUserTurnStartMillis: Int64?
+    var browserTaskTitleCandidate: String?
 
-    // 手写 == 是有意的:只比较顶部活动岛实际渲染的字段。activeToolStep 的 tool 载荷
-    // (流式 output)被刻意排除,否则子代理流式输出的每个 chunk 都会刷新 summary;
-    // id 稳定不随 chunk 变化,纳入它以修正「视觉相同工具替换」时的 terminalHold 匹配。
-    // failedToolStep 只用于岛的失败终态匹配,比较其稳定 id 即可。
-    // 若 ChatToolStepModel 新增会影响岛屿渲染的字段,必须同步加进这里的比较。
+    // 手写 == 只比较 UI 使用的字段。activeToolStep 的流式 tool output 不参与比较，
+    // 避免每个 chunk 刷新根视图；稳定 id 保留给活动岛终态匹配。WebMount 摘要仅在
+    // 卡片展示值或会话保留边界变化时触发更新。
     static func == (lhs: ChatListSummarySnapshot, rhs: ChatListSummarySnapshot) -> Bool {
         lhs.hasMessages == rhs.hasMessages &&
             lhs.awaitingFirstAssistantChunk == rhs.awaitingFirstAssistantChunk &&
             lhs.lastAssistantHasOpenReasoning == rhs.lastAssistantHasOpenReasoning &&
             lhs.firstUserTitleSeed == rhs.firstUserTitleSeed &&
+            lhs.webMountRecentUserTurnStartMillis == rhs.webMountRecentUserTurnStartMillis &&
+            lhs.browserTaskTitleCandidate == rhs.browserTaskTitleCandidate &&
             lhs.activeToolStep?.id == rhs.activeToolStep?.id &&
             lhs.activeToolStep?.title == rhs.activeToolStep?.title &&
             lhs.activeToolStep?.detail == rhs.activeToolStep?.detail &&
@@ -114,6 +119,52 @@ private struct ChatMessageEditDraft: Identifiable {
     var id: String { messageId }
 }
 
+@MainActor
+private struct ChatContextControl: View {
+    let viewModel: ChatViewModel
+    @Binding var isPresented: Bool
+    let jevSummaryRunId: String?
+    let onOpen: () -> Void
+
+    var body: some View {
+        let snapshot = viewModel.contextSnapshot
+        ContextRingButton(
+            snapshot: snapshot,
+            compactState: viewModel.contextCompactState,
+            action: onOpen
+        )
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            ComposerContextPanel(
+                snapshot: snapshot,
+                jevRunSummary: jevSummaryRunId.map { IOSJevMetricsStore.runSummary(runId: $0) }
+            )
+            .presentationCompactAdaptation(.popover)
+        }
+    }
+}
+
+private struct ChatTimelineSignalHost<Content: View>: View {
+    let viewModel: ChatViewModel
+    let onSignalChange: (ChatMessageUpdateSignal) -> Void
+    let content: (ChatMessageUpdateSignal) -> Content
+
+    init(
+        viewModel: ChatViewModel,
+        onSignalChange: @escaping (ChatMessageUpdateSignal) -> Void,
+        @ViewBuilder content: @escaping (ChatMessageUpdateSignal) -> Content
+    ) {
+        self.viewModel = viewModel
+        self.onSignalChange = onSignalChange
+        self.content = content
+    }
+
+    var body: some View {
+        let signal = viewModel.messageUpdateSignal
+        content(signal)
+            .onChange(of: signal, perform: onSignalChange)
+    }
+}
+
 struct ChatView: View {
 
     let settingsStore: SettingsStore
@@ -129,6 +180,8 @@ struct ChatView: View {
     @State private var isImportingSelectedFile = false
     @State private var isAttachExpanded = false
     @State private var isCameraPresented = false
+    @State private var cameraPickerConversationId: String?
+    @State private var imageAttachmentTask: Task<Void, Never>?
     @State private var isPhotoPickerPresented = false
     @State private var showWebMountDesktopBackends = false
     @State private var focusedRemoteWebMountSessionId: String?
@@ -147,6 +200,9 @@ struct ChatView: View {
     @State private var viewportState = ChatViewportState()
     @State private var scrollToBottomTrigger = 0
     @State private var scrollToBottomSource: NativeTimelineBottomIntentSource = .button
+    @State private var chatSize: CGSize = .zero
+    @State private var requestedMessageAnchor: ChatMessageAnchor?
+    @State private var gateHighlightRequest: UUID?
     @State private var islandPresentation: ChatIslandPresentation?
     @State private var islandHoldToken = 0
     @State private var composerInputHeight: CGFloat = 40
@@ -154,9 +210,13 @@ struct ChatView: View {
     @State private var isSubAgentBarVisible = false
     @State private var composerInputController = ComposerInputController()
     @State private var chatListSummary = ChatListSummarySnapshot()
+    @State private var artifactShelf = ChatArtifactShelfState()
+    @State private var artifactShelfDismissRevision = 0
+    @State private var artifactShelfStripHeight: CGFloat = 0
     @State private var messageEditDraft: ChatMessageEditDraft?
     @State private var pendingDeleteMessageId: String?
     @Environment(IOSConversationStore.self) private var conversationStore
+    @Environment(ConversationActivityCenter.self) private var conversationActivityCenter
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
@@ -190,13 +250,21 @@ struct ChatView: View {
         ZStack {
             AmberThemePageBackground(surface: .app)
             messageList
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    Color.clear
+                        .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
+                        .allowsHitTesting(false)
+                }
+                .simultaneousGesture(TapGesture().onEnded { artifactShelfDismissRevision &+= 1 })
 
             if let record = compactWebMountSession {
                 VStack {
                     Spacer()
                     AgentBrowserTaskCompactBar(
                         record: record,
-                        runSummary: browserTaskRunSummary,
+                        runSummary: viewModel.isGenerationActiveForCurrentConversation
+                            ? chatListSummary.browserTaskTitleCandidate
+                            : nil,
                         onExpand: {
                             collapsedWebMountSessionId = nil
                             expandedWebMountSessionId = record.id
@@ -238,19 +306,16 @@ struct ChatView: View {
                     }
                     .transition(.opacity)
             }
+            // 面板需要参与正文区域命中测试，不能挂在仅顶栏高度的 safeAreaBar 内。
+            topBar.zIndex(20)
         }
+        .onGeometryChange(for: CGSize.self) { proxy in
+            CGSize(width: proxy.size.width,
+                   height: proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom)
+        } action: { chatSize = $0 }
         .animation(browserTaskVisibilityAnimation, value: compactWebMountSession?.id)
         .onChange(of: displayedWebMountSession?.ownerRunId) { _, _ in
             expandedWebMountSessionId = nil
-        }
-        .safeAreaBar(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                topBar
-                // 透明延伸只扩大 safeAreaBar 几何，不画自定义材质；模糊仍走原生 soft edge。
-                Color.clear
-                    .frame(height: ChatTopBarLayout.softEdgeExtension)
-                    .allowsHitTesting(false)
-            }
         }
         // Composer pinned to the bottom safe area via `.safeAreaInset` (NOT `.safeAreaBar`).
         // safeAreaBar added an adaptive Liquid Glass bar, but it caused two problems: (a) it
@@ -396,7 +461,8 @@ struct ChatView: View {
         }
         .fullScreenCover(isPresented: $isCameraPresented) {
             CameraPicker { image in
-                if let image { attachPickedImage(image) }
+                if let image { handleCameraImageSelection(image) }
+                else { cameraPickerConversationId = nil }
                 isCameraPresented = false
             }
             .ignoresSafeArea()
@@ -460,12 +526,12 @@ struct ChatView: View {
                   event.conversationId == currentConversationIdString else { return }
             syncIslandPresentation()
         }
-        .onChange(of: viewModel.messageUpdateSignal) { _, signal in
-            handleMessageUpdateSignal(signal)
-        }
         .onChange(of: isInputFocused) { wasFocused, isFocused in
             guard !wasFocused, isFocused else { return }
             handleComposerFocusStarted()
+        }
+        .onChange(of: viewModel.artifactUpdateSignal, initial: true) { _, signal in
+            refreshArtifactShelf(reason: signal.reason)
         }
         .onChange(of: sharedSettings.revision) { _, _ in
             handleSharedSettingsRevisionChange()
@@ -554,6 +620,9 @@ struct ChatView: View {
     }
 
     private func handleConversationSwitch() {
+        requestedMessageAnchor = nil
+        islandHoldToken &+= 1
+        islandPresentation = nil
         viewModel.reloadFromStore(reason: .conversationSwitch)
         refreshChatListSummary(resetTitleSeed: true)
     }
@@ -712,6 +781,7 @@ struct ChatView: View {
             )
             return
         }
+        cameraPickerConversationId = currentConversationIdString
         isCameraPresented = true
     }
 
@@ -719,14 +789,20 @@ struct ChatView: View {
         let selectionConversationId = photoPickerConversationId
         photoPickerConversationId = nil
         guard !items.isEmpty else { return }
-        Task {
+        let previousTask = imageAttachmentTask
+        let task = Task { @MainActor in
+            await previousTask?.value
+            guard !Task.isCancelled else { return }
+            guard selectionConversationId == currentConversationIdString else {
+                photoPickerItems = []
+                return
+            }
             var failedImageCount = 0
             for item in items {
                 let encoded: (dataUrl: String, previewData: Data)?
                 do {
-                    if let data = try await item.loadTransferable(type: Data.self),
-                       let image = UIImage(data: data) {
-                        encoded = ChatImageEncoder.encode(image)
+                    if let data = try await item.loadTransferable(type: Data.self) {
+                        encoded = await ChatImageEncoder.decodeAndEncodeOffMain(data)
                     } else {
                         encoded = nil
                     }
@@ -753,6 +829,7 @@ struct ChatView: View {
                 )
             }
         }
+        imageAttachmentTask = task
     }
 
     private var currentConversationIdString: String? {
@@ -819,7 +896,7 @@ struct ChatView: View {
 
     private var activeWebMountSession: IOSWebMountSessionRecord? {
         guard let conversationId = currentConversationIdString else { return nil }
-        let recentUserTurnStartMillis = webMountRecentUserTurnStartMillis
+        let recentUserTurnStartMillis = chatListSummary.webMountRecentUserTurnStartMillis
         return IOSWebMountController.shared.sessionStore.records
             .filter { record in
                 Self.webMountSessionIsRetained(
@@ -835,10 +912,6 @@ struct ChatView: View {
     /// Card retention follows the same user-turn boundary as tool exposure.
     /// Agent rounds and retries update activity inside this window without
     /// creating another user message, so they do not consume a turn.
-    private var webMountRecentUserTurnStartMillis: Int64? {
-        Self.webMountRecentUserTurnStartMillis(from: viewModel.messages)
-    }
-
     static func webMountRecentUserTurnStartMillis(from messages: [UIMessage]) -> Int64? {
         messages.reversed()
             .filter { $0.role == MessageRole.user }
@@ -880,9 +953,8 @@ struct ChatView: View {
             (record.ownerRunId?.nilIfBlank == nil && record.controlOwner != .user && expandedWebMountSessionId != record.id)
     }
 
-    private var browserTaskRunSummary: String? {
-        guard viewModel.isGenerationActiveForCurrentConversation,
-              let message = viewModel.messages.last(where: ChatMessageProjector.isConversationMessage),
+    private static func browserTaskTitleCandidate(messages: [UIMessage]) -> String? {
+        guard let message = messages.last(where: ChatMessageProjector.isConversationMessage),
               message.role == MessageRole.assistant,
               let tool = message.parts.compactMap({ $0 as? UIMessagePart.Tool })
                 .last(where: { $0.toolName.hasPrefix("wm_") }) else { return nil }
@@ -942,16 +1014,26 @@ struct ChatView: View {
         }
     }
 
-    /// Camera path (already on the main thread): compress + encode and attach.
-    private func attachPickedImage(_ image: UIImage) {
-        guard let encoded = ChatImageEncoder.encode(image) else {
-            viewModel.selectedFileContextError = IOSAppLocalization.string(
-                "图片处理失败。",
-                defaultValue: "图片处理失败。"
-            )
-            return
+    private func handleCameraImageSelection(_ image: UIImage) {
+        let selectionConversationId = cameraPickerConversationId
+        cameraPickerConversationId = nil
+        let previousTask = imageAttachmentTask
+        let task = Task { @MainActor in
+            await previousTask?.value
+            guard !Task.isCancelled,
+                  selectionConversationId == currentConversationIdString else { return }
+            let encoded = await ChatImageEncoder.encodeOffMain(image)
+            guard selectionConversationId == currentConversationIdString else { return }
+            guard let encoded else {
+                viewModel.selectedFileContextError = IOSAppLocalization.string(
+                    "图片处理失败。",
+                    defaultValue: "图片处理失败。"
+                )
+                return
+            }
+            viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
         }
-        viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
+        imageAttachmentTask = task
     }
 
     private var attachmentGlassPanel: some View {
@@ -981,29 +1063,152 @@ struct ChatView: View {
     }
 
     private var topBar: some View {
-        // Do not wrap side buttons + center island in AmberGlassGroup /
-        // GlassEffectContainer: sibling glass morph punches the middle capsule
-        // transparent over the transcript (same class as council 0489ad495).
-        ZStack(alignment: .bottom) {
-            HStack {
-                backToolbarButton
+        ChatTopBarView(
+            presentation: islandPresentation ?? .idle(topIslandState),
+            conversationID: currentConversationIdString,
+            hasMessages: chatListSummary.hasMessages,
+            isGenerating: viewModel.isGenerationActive,
+            notices: conversationActivityCenter.notices,
+            shelfHeight: chatSize.height * 0.55,
+            onBack: { router.goBack() },
+            onIslandTap: handleIslandTap,
+            onCancel: { viewModel.cancelGeneration() },
+            onOpenConversation: openActivityConversation,
+            onDismiss: { conversationActivityCenter.dismiss(conversationId: $0) },
+            onNewConversation: { Task { await viewModel.startNewConversation() } },
+            loadPreview: { id in
+                guard let message = await conversationActivityCenter.lastMessage(conversationId: id) else { return nil }
+                return message.toText().nilIfBlank
+            },
+            previewRevision: { id in
+                conversationStore.allSummaries.first(where: { $0.id.toHexDashString() == id })
+                    .map { String(describing: $0.updateAt) }
+            },
+            artifacts: artifactShelf.index,
+            snippets: currentConversationIdString.map {
+                ChatArtifactPinning.visibleSnippets(conversationStore.artifactStore.snippets(for: $0), messages: viewModel.messages)
+            } ?? [],
+            adoptedVersions: currentConversationIdString.map { conversationStore.artifactStore.adoptedVersions(for: $0) } ?? [:],
+            conversationTitle: conversationStore.currentConversation?.title ?? "对话成果",
+            onLocateSnippet: { snippet in
+                guard let id = currentConversationIdString,
+                      let anchor = ChatArtifactPinning.anchor(
+                        for: snippet, conversationID: id, messages: viewModel.messages
+                      ) else {
+                    showArtifactError("收藏的原消息不在当前分支中，无法定位。")
+                    return false
+                }
+                requestedMessageAnchor = anchor
+                return true
+            },
+            onUnpinSnippet: { snippetID in
+                updateArtifactShelf { store, id in try store.unpin(snippetID: snippetID, for: id) }
+            },
+            onAdoptVersion: { path, versionID in
+                updateArtifactShelf { store, id in try store.adopt(versionID: versionID, path: path, for: id) }
+            },
+            onContinueArtifact: continueFromArtifact,
+            artifactArrival: artifactShelf.arrival,
+            onLocateArtifact: { source in
+                guard let conversationID = currentConversationIdString,
+                      let anchor = ConversationArtifactIndex.anchor(
+                        for: source, conversationID: conversationID,
+                        messages: viewModel.messages, requestToken: UUID()
+                      ) else { return false }
+                requestedMessageAnchor = anchor
+                return true
+            },
+            dismissShelfRevision: artifactShelfDismissRevision,
+            onShelfStripHeightChange: { artifactShelfStripHeight = $0 }
+        )
+        .onAppear { syncIslandPresentation() }
+        .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
+    }
 
-                Spacer()
-
-                newChatToolbarButton
-            }
-
-            // Island already hugs inside ChatActivityIslandView; gutter only keeps
-            // the centered capsule clear of the side chips (not a stretch frame).
-            ChatActivityIslandView(presentation: islandPresentation ?? .idle(topIslandState))
-                .fixedSize(horizontal: true, vertical: false)
-                .padding(.horizontal, ChatTopBarLayout.islandSideGutter)
-                .allowsHitTesting(false)
-                .onAppear { syncIslandPresentation() }
-                .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
+    private func updateArtifactShelf(_ action: (IOSConversationArtifactStore, String) throws -> Void) {
+        guard let id = currentConversationIdString else { return }
+        do {
+            try action(conversationStore.artifactStore, id)
+        } catch {
+            showArtifactError(error.localizedDescription)
         }
-        .padding(.horizontal, 18)
-        .frame(height: ChatTopBarLayout.controlsHeight, alignment: .bottom)
+    }
+
+    private func pinArtifactSnippet(messageID: String, text: String, kind: ChatArtifactPinKind, codeLanguage: String?) {
+        guard let snippet = ChatArtifactPinning.snippet(
+            messageID: messageID, text: text, kind: kind, codeLanguage: codeLanguage, messages: viewModel.messages
+        ) else {
+            showArtifactError("原消息已不在当前分支中。")
+            return
+        }
+        updateArtifactShelf { store, id in
+            try store.pin(snippet, for: id)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    private func continueFromArtifact(_ action: ChatArtifactContinuation) async -> Bool {
+        guard !hasPendingComposerGate, !viewModel.currentConversationIsOrchestratedChild else {
+            showArtifactError("当前对话暂不可输入，请先完成待处理操作。")
+            return false
+        }
+        if let text = composerInputController.currentText() { viewModel.inputText = text }
+        do {
+            // 图片达到上限时由既有输入区错误提示说明，面板照常关闭以露出提示。
+            try await ChatArtifactComposerSupport.apply(action, to: viewModel)
+            isInputFocused = true
+            return true
+        } catch {
+            showArtifactError(error.localizedDescription)
+            return false
+        }
+    }
+
+    private func showArtifactError(_ message: String) {
+        conversationStore.publishUserVisibleError(IOSUserVisibleError(
+            title: "产物架", message: message, severity: .error
+        ))
+    }
+
+    private var pendingUserGateRequestID: String? {
+        [viewModel.pendingAskUser?.id, viewModel.pendingMemoryApproval?.id,
+         viewModel.pendingSearchApproval?.id, viewModel.pendingWebMountApproval?.id,
+         viewModel.pendingWorkspaceApproval?.id, viewModel.pendingIshHandoffApproval?.id,
+         viewModel.pendingMcpApproval?.id, viewModel.pendingCouncilApproval?.id,
+         viewModel.pendingRecipeApproval?.id, viewModel.pendingToolOutcomeUnknown?.toolCallId]
+            .compactMap { $0 }.first
+    }
+
+    private func handleIslandTap(_ presentation: ChatIslandPresentation) {
+        guard let conversationID = currentConversationIdString else { return }
+        switch ChatIslandNavigation.target(
+            for: presentation, conversationID: conversationID, messages: viewModel.messages,
+            pendingRequestID: pendingUserGateRequestID, requestToken: UUID()
+        ) {
+        case .none: break
+        case .bottom:
+            scrollToBottomSource = .button
+            scrollToBottomTrigger &+= 1
+        case .anchor(let anchor):
+            requestedMessageAnchor = anchor
+        case .pendingGate:
+            guard viewModel.hasPendingUserGate else { return }
+            dismissKeyboard()
+            gateHighlightRequest = UUID()
+        }
+    }
+
+    private func openActivityConversation(_ id: String) async -> Bool {
+        let opened = await openSubAgentSourceConversation(id)
+        conversationActivityCenter.didOpenConversation(
+            id: id, succeeded: opened, isTranscript: opened && currentConversationIdString != id
+        )
+        if !opened && conversationStore.lastUserVisibleError == nil {
+            conversationStore.publishUserVisibleError(IOSUserVisibleError(
+                title: "无法打开对话", message: "该对话已不存在或暂时无法读取。", severity: .warning
+            ))
+        }
+        return opened
     }
 
     private var topIslandState: ChatActivityIslandState {
@@ -1018,7 +1223,8 @@ struct ChatView: View {
                         ? IOSAppLocalization.string("确认操作结果", defaultValue: "确认操作结果")
                         : IOSAppLocalization.string("工具审批", defaultValue: "工具审批")),
                 systemImage: "checkmark.circle",
-                tint: .amber
+                tint: .amber,
+                toolID: pendingUserGateRequestID
             )
         }
 
@@ -1091,6 +1297,16 @@ struct ChatView: View {
         return .conversationTitle(conversationTitleForIsland)
     }
 
+    private func refreshArtifactShelf(reason: ChatMessageUpdateReason) {
+        let isReload = reason == .initialLoad || reason == .conversationSwitch || reason == .branchChange
+        artifactShelf.update(
+            ConversationArtifactIndex.make(from: viewModel.messages),
+            conversationID: currentConversationIdString,
+            isForegroundRunning: scenePhase == .active && viewModel.artifactUpdateWasRunning,
+            allowArrival: !isReload
+        )
+    }
+
     private func refreshChatListSummary(resetTitleSeed: Bool = false) {
         let messages = viewModel.messages
         var next = chatListSummary
@@ -1099,6 +1315,8 @@ struct ChatView: View {
         next.activeToolStep = activeToolStepForIsland(messages: messages)
         next.failedToolStep = failedToolStepForIsland(messages: messages)
         next.lastAssistantHasOpenReasoning = lastAssistantHasOpenReasoning(messages: messages)
+        next.webMountRecentUserTurnStartMillis = Self.webMountRecentUserTurnStartMillis(from: messages)
+        next.browserTaskTitleCandidate = Self.browserTaskTitleCandidate(messages: messages)
         if resetTitleSeed || next.firstUserTitleSeed == nil {
             next.firstUserTitleSeed = messages.first(where: { $0.role == MessageRole.user })?
                 .toText()
@@ -1172,11 +1390,11 @@ struct ChatView: View {
         let storedTitle = conversationStore.currentConversation?.title
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !storedTitle.isEmpty {
-            return compactIslandText(storedTitle, limit: 14)
+            return storedTitle.replacingOccurrences(of: "\n", with: " ")
         }
         if let firstUserText = chatListSummary.firstUserTitleSeed,
            !firstUserText.isEmpty {
-            return compactIslandText(firstUserText, limit: 14)
+            return firstUserText.replacingOccurrences(of: "\n", with: " ")
         }
         return "Amber"
     }
@@ -1198,58 +1416,36 @@ struct ChatView: View {
         }
     }
 
-    private var backToolbarButton: some View {
-        ChatToolbarIconButton(
-            systemImage: "chevron.left",
-            accessibilityLabel: "返回",
-            size: ChatTopBarLayout.toolbarButtonDiameter,
-            symbolSize: 18
-        ) {
-            router.goBack()
-        }
-    }
-
-    private var newChatToolbarButton: some View {
-        ChatToolbarIconButton(
-            systemImage: "square.and.pencil",
-            accessibilityLabel: "新建对话",
-            size: ChatTopBarLayout.toolbarButtonDiameter,
-            symbolSize: 16
-        ) {
-            // The VM knows whether a just-appended first bubble has not reached
-            // the Store yet; it preserves the existing empty-reuse behavior for
-            // every other New Chat tap.
-            Task { await viewModel.startNewConversation() }
-        }
-    }
-
     // MARK: - Message List
 
     private var messageList: some View {
-        NativeChatTimelineView(
-            signal: viewModel.messageUpdateSignal,
-            configurationIssue: configurationIssue,
-            isGenerationActive: viewModel.isGenerationActive,
-            isLoading: viewModel.isLoading,
-            isRecognizingImages: viewModel.isRecognizingImages,
-            contextCompactState: viewModel.contextCompactState,
-            contextCompactBoundaries: viewModel.contextCompactBoundaries,
-            followGeneration: followGeneration,
-            displaySetting: sharedSettings.displaySetting,
-            generativeUiSetting: sharedSettings.agentRuntime.generativeUi,
-            reasoningLevelLabel: composerReasoningLabel,
-            workspaceStore: workspaceStore,
-            scrollToBottomTrigger: scrollToBottomTrigger,
-            scrollToBottomSource: scrollToBottomSource,
-            messageAnchor: initialMessageAnchor,
-            currentConversationID: currentConversationIdString,
-            messagesProvider: { viewModel.messages },
-            variantInfoProvider: { index in viewModel.variantInfo(atMessageIndex: index) },
-            onAction: handleChatListAction,
-            onViewportStateChange: applyCollectionViewportState,
-            onDismissKeyboard: dismissKeyboard
-        )
-        .id(NativeChatTimelineSessionIdentity.viewID(conversationId: conversationStore.currentConversation?.id))
+        ChatTimelineSignalHost(viewModel: viewModel, onSignalChange: handleMessageUpdateSignal) { signal in
+            NativeChatTimelineView(
+                signal: signal,
+                configurationIssue: configurationIssue,
+                isGenerationActive: viewModel.isGenerationActive,
+                isLoading: viewModel.isLoading,
+                isRecognizingImages: viewModel.isRecognizingImages,
+                contextCompactState: viewModel.contextCompactState,
+                contextCompactBoundaries: viewModel.contextCompactBoundaries,
+                followGeneration: followGeneration,
+                displaySetting: sharedSettings.displaySetting,
+                generativeUiSetting: sharedSettings.agentRuntime.generativeUi,
+                reasoningLevelLabel: composerReasoningLabel,
+                workspaceStore: workspaceStore,
+                scrollToBottomTrigger: scrollToBottomTrigger,
+                scrollToBottomSource: scrollToBottomSource,
+                messageAnchor: requestedMessageAnchor ?? initialMessageAnchor,
+                currentConversationID: currentConversationIdString,
+                messagesProvider: { viewModel.messages },
+                variantInfoProvider: { index in viewModel.variantInfo(atMessageIndex: index) },
+                onAction: handleChatListAction,
+                onViewportStateChange: applyCollectionViewportState,
+                onDismissKeyboard: dismissKeyboard
+            )
+            .environment(\.chatArtifactPinAction, pinArtifactSnippet)
+            .id(NativeChatTimelineSessionIdentity.viewID(conversationId: conversationStore.currentConversation?.id))
+        }
     }
 
     private var isStreamingFollowActive: Bool {
@@ -1268,7 +1464,7 @@ struct ChatView: View {
 
     // MARK: - Input Bar
 
-    private var inputBar: some View {
+    private var pendingUserGateCards: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let descriptor = viewModel.pendingToolOutcomeUnknown {
                 ToolOutcomeUnknownCard(
@@ -1421,6 +1617,23 @@ struct ChatView: View {
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge)
+                .stroke(AmberTheme.accentAmber.opacity(gateHighlightRequest == nil ? 0 : 0.85), lineWidth: 2)
+                .allowsHitTesting(false)
+        }
+        .task(id: gateHighlightRequest) {
+            guard gateHighlightRequest != nil else { return }
+            do { try await Task.sleep(for: .seconds(1.4)) } catch { return }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { gateHighlightRequest = nil }
+        }
+    }
+
+    private var inputBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if viewModel.hasPendingUserGate { pendingUserGateCards }
 
             if let record = displayedWebMountSession,
                !webMountSessionIsCompact(record) {
@@ -1625,21 +1838,12 @@ struct ChatView: View {
                                     .presentationCompactAdaptation(.popover)
                                 }
 
-                                ContextRingButton(
-                                    snapshot: viewModel.contextSnapshot,
-                                    compactState: viewModel.contextCompactState
-                                ) {
-                                    toggleComposerPanel(.context)
-                                }
-                                .popover(isPresented: popoverBinding(for: .context), arrowEdge: .bottom) {
-                                    ComposerContextPanel(
-                                        snapshot: viewModel.contextSnapshot,
-                                        jevRunSummary: jevSummaryRunId.map {
-                                            IOSJevMetricsStore.runSummary(runId: $0)
-                                        }
-                                    )
-                                        .presentationCompactAdaptation(.popover)
-                                }
+                                ChatContextControl(
+                                    viewModel: viewModel,
+                                    isPresented: popoverBinding(for: .context),
+                                    jevSummaryRunId: jevSummaryRunId,
+                                    onOpen: { toggleComposerPanel(.context) }
+                                )
                             }
                         }
                         .padding(.horizontal, 2)
@@ -1816,11 +2020,13 @@ struct ChatView: View {
     }
 
     private var composerModelLabel: String {
-        composerCurrentModelID.isEmpty ? "未选择模型" : composerCurrentModelID
+        let modelId = composerCurrentModelID
+        return modelId.isEmpty ? "未选择模型" : modelId
     }
 
     private var composerCurrentModelID: String {
-        viewModel.contextSnapshot.modelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelId = sharedSettings.snapshot.getCurrentChatModel()?.modelId ?? settingsStore.modelId
+        return modelId.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var composerCurrentModelSelection: String {

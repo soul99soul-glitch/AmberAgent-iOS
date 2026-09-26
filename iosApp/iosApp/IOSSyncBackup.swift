@@ -53,6 +53,8 @@ struct IOSSyncBackup {
         "index.json",
         "list-previews.json",
         "list-icons.json",
+        // 产物架收藏按设备保存，不进入备份。
+        "artifact-shelf.json",
         threadEdgesEntry,
     ]
     private static let healthToolName = "health_summary_read"

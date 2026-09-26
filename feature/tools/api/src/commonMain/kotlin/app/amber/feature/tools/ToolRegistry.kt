@@ -333,6 +333,17 @@ fun Tool.invocationPolicy(input: JsonElement?): ToolInvocationPolicy {
             concurrencySafe = false
         }
 
+        "wm_site_memory" -> {
+            val proposing = input.stringValue("action") == "propose"
+            mutates = proposing
+            risk = if (proposing) ToolRisk.Sensitive else ToolRisk.Normal
+            riskExplicit = true
+            needsApproval = proposing
+            mandatoryApprovalEffective = proposing
+            autoApprovable = !proposing
+            concurrencySafe = !proposing
+        }
+
         "wm_profile_synthesize" -> {
             // Writes a Site Profile to the user-imported namespace. Reversible
             // (profile deleted with the site or by re-synthesizing). The profile

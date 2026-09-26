@@ -101,7 +101,10 @@ struct CouncilChatRuntimeView: View {
     @State private var isImportingSelectedFile = false
     @State private var isPhotoPickerPresented = false
     @State private var photoPickerItems: [PhotosPickerItem] = []
+    @State private var photoPickerRoomGeneration: UInt64?
     @State private var isCameraPresented = false
+    @State private var cameraRoomGeneration: UInt64?
+    @State private var imageAttachmentTask: Task<Void, Never>?
 
     init(
         settingsStore: SettingsStore,
@@ -205,7 +208,10 @@ struct CouncilChatRuntimeView: View {
         }
         .fullScreenCover(isPresented: $isCameraPresented) {
             CameraPicker { image in
-                if let image { attachPickedImage(image) }
+                if let image, let generation = cameraRoomGeneration {
+                    attachPickedImage(image, roomGeneration: generation)
+                }
+                cameraRoomGeneration = nil
                 isCameraPresented = false
             }
             .ignoresSafeArea()
@@ -359,30 +365,13 @@ struct CouncilChatRuntimeView: View {
 
     private var transcript: some View {
         ScrollView {
-            // 用非 lazy 的 VStack:议会转录是有界的(轮数 1-5 × 席位数),一次性渲染可接受,
-            // 也避免 LazyVStack 回收行导致的重解析/高度跳变。
-            VStack(spacing: 12) {
-                ForEach(viewModel.messages) { message in
-                    CouncilMessageRow(
-                        message: message,
-                        onTapDetail: { viewModel.showCurrentDetail() },
-                        onRestart: { viewModel.restart(withObjective: $0) }
-                    )
-                    // Equatable:流式逐 token 改的是最后一条,只让那一行重渲染,
-                    // 其余已完成气泡不再随整个 messages 数组变化而重算 body。
-                    .equatable()
-                    .id(message.id)
+            CouncilTranscriptMessagesView(viewModel: viewModel) {
+                // 新房间/历史重放不继承上一房间的“用户暂停跟随”状态。
+                followPaused = false
+                if isNativeScrollDriverActive {
+                    scrollDriver.submit(.conversationReset)
                 }
-
-                // 永久存在的物理底锚。留白只改变自身高度,不会在消息切换时从旧行
-                // 删除再插到新行；异步 Markdown 二次增高也始终以同一个内容尾部为目标。
-                Color.clear
-                    .frame(height: viewModel.isRunning
-                        ? ChatLayout.followBottomGap
-                        : ChatLayout.bottomRestGap)
-                    .id(CouncilTranscriptFollowPolicy.bottomAnchorID)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+                scheduleTerminalBottomSettle(terminalRun: false)
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -498,14 +487,6 @@ struct CouncilChatRuntimeView: View {
             if wasRunning, !isRunning {
                 scheduleTerminalBottomSettle()
             }
-        }
-        .onChange(of: viewModel.messages.first?.id) { _, _ in
-            // 新房间/历史重放不继承上一房间的“用户暂停跟随”状态。
-            followPaused = false
-            if isNativeScrollDriverActive {
-                scrollDriver.submit(.conversationReset)
-            }
-            scheduleTerminalBottomSettle(terminalRun: false)
         }
     }
 
@@ -738,7 +719,7 @@ struct CouncilChatRuntimeView: View {
                 ComposerAttachmentGlassPanel(
                     isDisabled: viewModel.isRunning || viewModel.isPreparingMaterials,
                     onCamera: presentCamera,
-                    onPhotos: { isPhotoPickerPresented = true },
+                    onPhotos: presentPhotoPicker,
                     onFiles: { isImportingSelectedFile = true },
                     onDismiss: { isAttachExpanded = false }
                 )
@@ -829,35 +810,59 @@ struct CouncilChatRuntimeView: View {
             )
             return
         }
+        cameraRoomGeneration = viewModel.attachmentRoomGeneration
         isCameraPresented = true
     }
 
-    private func attachPickedImage(_ image: UIImage) {
-        guard let encoded = ChatImageEncoder.encode(image) else {
-            viewModel.attachmentErrorMessage = IOSAppLocalization.string(
-                "图片处理失败。",
-                defaultValue: "图片处理失败。"
-            )
-            return
+    private func presentPhotoPicker() {
+        photoPickerRoomGeneration = viewModel.attachmentRoomGeneration
+        isPhotoPickerPresented = true
+    }
+
+    private func attachPickedImage(_ image: UIImage, roomGeneration: UInt64) {
+        let previousTask = imageAttachmentTask
+        let task = Task { @MainActor in
+            await previousTask?.value
+            guard !Task.isCancelled,
+                  viewModel.attachmentRoomGeneration == roomGeneration else { return }
+            let encoded = await ChatImageEncoder.encodeOffMain(image)
+            guard viewModel.attachmentRoomGeneration == roomGeneration else { return }
+            guard let encoded else {
+                viewModel.attachmentErrorMessage = IOSAppLocalization.string(
+                    "图片处理失败。",
+                    defaultValue: "图片处理失败。"
+                )
+                return
+            }
+            viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
         }
-        viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
+        imageAttachmentTask = task
     }
 
     private func handlePhotoPickerSelection(_ items: [PhotosPickerItem]) {
-        guard !items.isEmpty else { return }
-        Task {
+        let roomGeneration = photoPickerRoomGeneration
+        photoPickerRoomGeneration = nil
+        guard !items.isEmpty, let roomGeneration else { return }
+        let previousTask = imageAttachmentTask
+        let task = Task { @MainActor in
+            await previousTask?.value
+            guard !Task.isCancelled,
+                  viewModel.attachmentRoomGeneration == roomGeneration else { return }
             var failed = 0
             for item in items {
                 let encoded: (dataUrl: String, previewData: Data)?
                 do {
-                    if let data = try await item.loadTransferable(type: Data.self),
-                       let image = UIImage(data: data) {
-                        encoded = ChatImageEncoder.encode(image)
+                    if let data = try await item.loadTransferable(type: Data.self) {
+                        encoded = await ChatImageEncoder.decodeAndEncodeOffMain(data)
                     } else {
                         encoded = nil
                     }
                 } catch {
                     encoded = nil
+                }
+                guard viewModel.attachmentRoomGeneration == roomGeneration else {
+                    photoPickerItems = []
+                    return
                 }
                 guard let encoded else {
                     failed += 1
@@ -866,6 +871,7 @@ struct CouncilChatRuntimeView: View {
                 viewModel.addPendingImage(dataUrl: encoded.dataUrl, previewData: encoded.previewData)
             }
             photoPickerItems = []
+            guard viewModel.attachmentRoomGeneration == roomGeneration else { return }
             if failed > 0 {
                 viewModel.attachmentErrorMessage = IOSAppLocalization.formatted(
                     "有 %lld 张图片处理失败。",
@@ -874,6 +880,7 @@ struct CouncilChatRuntimeView: View {
                 )
             }
         }
+        imageAttachmentTask = task
     }
 
     private func handleSelectedFileImport(_ result: Result<[URL], Error>) {
@@ -896,6 +903,42 @@ struct CouncilChatRuntimeView: View {
         }
     }
 
+}
+
+private struct CouncilTranscriptMessagesView: View {
+    let viewModel: CouncilChatViewModel
+    let onFirstMessageChanged: () -> Void
+
+    var body: some View {
+        // 用非 lazy 的 VStack:议会转录是有界的(轮数 1-5 × 席位数),一次性渲染可接受,
+        // 也避免 LazyVStack 回收行导致的重解析/高度跳变。
+        VStack(spacing: 12) {
+            ForEach(viewModel.messages) { message in
+                CouncilMessageRow(
+                    message: message,
+                    onTapDetail: { viewModel.showCurrentDetail() },
+                    onRestart: { viewModel.restart(withObjective: $0) }
+                )
+                // Equatable:流式逐 token 改的是最后一条,只让那一行重渲染,
+                // 其余已完成气泡不再随整个 messages 数组变化而重算 body。
+                .equatable()
+                .id(message.id)
+            }
+
+            // 永久存在的物理底锚。留白只改变自身高度,不会在消息切换时从旧行
+            // 删除再插到新行；异步 Markdown 二次增高也始终以同一个内容尾部为目标。
+            Color.clear
+                .frame(height: viewModel.isRunning
+                    ? ChatLayout.followBottomGap
+                    : ChatLayout.bottomRestGap)
+                .id(CouncilTranscriptFollowPolicy.bottomAnchorID)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .onChange(of: viewModel.messages.first?.id) { _, _ in
+            onFirstMessageChanged()
+        }
+    }
 }
 
 private struct CouncilMessageRow: View, Equatable {
@@ -1750,7 +1793,21 @@ struct CouncilHomeResumeContext: Equatable {
 final class CouncilChatViewModel {
     var inputText = ""
     var selectedMode: CouncilDiscussionMode = .freeChat
-    var messages: [CouncilChatMessage]
+    var messages: [CouncilChatMessage] {
+        didSet {
+            guard messages.count != oldValue.count else { return }
+            let nextDiscussionRound = Self.calculateDiscussionRound(in: messages)
+            if discussionRound != nextDiscussionRound {
+                discussionRound = nextDiscussionRound
+            }
+            let nextHasCouncilMessages = !messages.isEmpty
+            if hasCouncilMessages != nextHasCouncilMessages {
+                hasCouncilMessages = nextHasCouncilMessages
+            }
+        }
+    }
+    private(set) var discussionRound: Int
+    private(set) var hasCouncilMessages: Bool
     var isRunning = false
     /// 流式拍恒为 1；终态排空拍随剩余积压连续衰减到 0（与 Chat/小说同源）。
     /// 视图在提交 `streamContentGrew(lagAllowance:)` 时携带，驱动据此收紧 τ_eff。
@@ -1782,6 +1839,7 @@ final class CouncilChatViewModel {
     @ObservationIgnored private var materialsPreparationTask: Task<Void, Never>?
     /// Bumped on cancel / reset / openArchive so late file/vision completions cannot start a discussion.
     @ObservationIgnored private var materialsPrepGeneration: UInt64 = 0
+    @ObservationIgnored fileprivate private(set) var attachmentRoomGeneration: UInt64 = 0
     /// 后台期间等讨论跑完、跑完就还执行权的那个任务。
     @ObservationIgnored private var keepAliveReleaseTask: Task<Void, Never>?
     @ObservationIgnored private var activeDiscussionID: UUID?
@@ -1826,7 +1884,10 @@ final class CouncilChatViewModel {
         self.archiveStore = archiveStore
         self.visionRecognizer = visionRecognizer
         self.durableRunStore = durableRunStore
-        self.messages = restoredRoom?.messages.map { $0.restored() } ?? []
+        let initialMessages = restoredRoom?.messages.map { $0.restored() } ?? []
+        self.messages = initialMessages
+        self.discussionRound = Self.calculateDiscussionRound(in: initialMessages)
+        self.hasCouncilMessages = !initialMessages.isEmpty
         if let restoredRoom {
             currentTaskId = restoredRoom.taskId.trimmedNilIfBlank
             currentObjective = restoredRoom.objective
@@ -2110,7 +2171,7 @@ final class CouncilChatViewModel {
 
     /// 当前讨论轮次：只数真正的「第 N 轮」轮次分隔，不把开场 / 主持调研 / 席位组建 /
     /// 轮末点评 / 主持总结等阶段胶囊也算进轮次（否则开场阶段就会误显示「第 6 轮」）。
-    var discussionRound: Int {
+    private static func calculateDiscussionRound(in messages: [CouncilChatMessage]) -> Int {
         let roundMarkers = messages.filter {
             $0.kind == .divider
                 && $0.body.range(of: #"^第\s*\d+\s*轮$"#, options: .regularExpression) != nil
@@ -2426,6 +2487,7 @@ final class CouncilChatViewModel {
 
     /// 从「最近讨论」重开一场历史议会,把归档快照还原成只读对话。
     func openArchive(taskId: String) {
+        attachmentRoomGeneration &+= 1
         // 切换到只读重放前,先取消节流任务,避免它在 currentTaskId 切换后再次触发写入;
         // stopAndCheckpoint 会对仍在进行的讨论做一次同步检查点。
         // 同时作废材料准备世代,防止「识别中点开历史」后迟到 vision 结果开跑。
@@ -2868,7 +2930,7 @@ final class CouncilChatViewModel {
             && (roomStateOverride == "就绪" || currentFinalTopic.trimmedNilIfBlank != nil)
             && currentTaskId != nil
             && currentObjective.trimmedNilIfBlank != nil
-            && !messages.isEmpty
+            && hasCouncilMessages
     }
 
     private func makeDetail(status: String) -> CouncilDiscussionDetail {
@@ -2981,6 +3043,7 @@ final class CouncilChatViewModel {
     }
 
     private func resetRoom() {
+        attachmentRoomGeneration &+= 1
         stopAndCheckpointActiveDiscussion()
         // 取消运行中的议会后,被 cancel 的 async 任务不会再走到末尾的 isRunning=false,
         // 这里显式复位,确保「重开」后输入框/发送键立刻回到就绪态。

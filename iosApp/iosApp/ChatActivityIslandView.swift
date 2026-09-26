@@ -300,11 +300,18 @@ enum ChatIslandPresentationReducer {
 
 struct ChatActivityIslandView: View {
     let presentation: ChatIslandPresentation
+    var maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth
+    var conversationKey: String? = nil
+    var announcement: ConversationActivityNotice? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(IOSDisplayPreferenceKeys.activityIslandEdgeGlow) private var activityIslandEdgeGlow = false
 
-    init(presentation: ChatIslandPresentation) {
+    init(presentation: ChatIslandPresentation, maxWidth: CGFloat = ChatTopBarLayout.islandMaxWidth,
+         conversationKey: String? = nil, announcement: ConversationActivityNotice? = nil) {
         self.presentation = presentation
+        self.maxWidth = maxWidth
+        self.conversationKey = conversationKey
+        self.announcement = announcement
     }
 
     /// 兼容既有调用（wiring canary / 预览）：纯态直接包装，无停留行为。
@@ -313,7 +320,7 @@ struct ChatActivityIslandView: View {
     }
 
     private var state: ChatActivityIslandState {
-        presentation.displayedState
+        announcement.map { ChatActivityIslandState.conversationTitle($0.title) } ?? presentation.displayedState
     }
 
     private var glintActive: Bool {
@@ -345,10 +352,13 @@ struct ChatActivityIslandView: View {
     }
 
     private var accessibilitySummary: String {
+        if let announcement {
+            return "\(announcement.title)，\(announcement.kind.statusTitle)"
+        }
         if let detail = state.detail, !detail.isEmpty {
-            "\(state.title)，\(detail)"
+            return "\(state.title)，\(detail)"
         } else {
-            state.title
+            return state.title
         }
     }
 
@@ -368,7 +378,29 @@ struct ChatActivityIslandView: View {
         }
     }
 
+    @ViewBuilder
     private var islandContent: some View {
+        if let announcement {
+            HStack(spacing: 5) {
+                Text("◉").foregroundStyle(announcement.kind.tint).fixedSize()
+                Text(announcement.title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(announcement.kind.statusTitle)
+                    .foregroundStyle(announcement.kind.tint)
+                    .fixedSize()
+                    .layoutPriority(1)
+            }
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundStyle(AmberTheme.foreground)
+            .frame(width: max(0, maxWidth - 26))
+        } else {
+            regularIslandContent
+        }
+    }
+
+    private var regularIslandContent: some View {
         HStack(spacing: 9) {
             if let orb = ChatActivityIslandMapping.orbState(
                 kind: state.kind,
@@ -385,15 +417,26 @@ struct ChatActivityIslandView: View {
                 .transition(.opacity)
             }
 
-            Text(state.title)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(AmberTheme.foreground)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                // Cap long titles only; short titles stay content-width (no min stretch).
-                .frame(maxWidth: ChatTopBarLayout.islandTitleMaxWidth, alignment: .leading)
-                .contentTransition(.opacity)
-                .modifier(IslandTitleGlint(isActive: glintActive))
+            ZStack {
+                Text(state.title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(AmberTheme.foreground)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Cap long titles only; short titles stay content-width (no min stretch).
+                    .frame(maxWidth: min(ChatTopBarLayout.islandTitleMaxWidth,
+                                         max(0, maxWidth - 26 - (state.kind == .title ? 0 : 33))),
+                           alignment: .leading)
+                    .contentTransition(.opacity)
+                    .modifier(IslandTitleGlint(isActive: glintActive))
+                    .id(conversationKey)
+                    .transition(reduceMotion ? .opacity : .asymmetric(
+                        insertion: .move(edge: .trailing).combined(with: .opacity),
+                        removal: .move(edge: .leading).combined(with: .opacity)
+                    ))
+            }
+            .clipped()
+            .animation(reduceMotion ? .easeInOut(duration: 0.18) : .easeInOut(duration: 0.25), value: conversationKey)
         }
         // Intrinsic HStack size = orb + title (+ spacing); parent fixedSize locks it.
         .fixedSize(horizontal: true, vertical: false)

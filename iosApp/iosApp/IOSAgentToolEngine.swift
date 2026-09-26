@@ -145,6 +145,15 @@ public extension IOSAgentStreamingProvider {
     func supportsStreaming(providerSetting: ProviderSetting) -> Bool { true }
 }
 
+/// Process-wide KMP providers. Each provider lazily owns its Ktor client, so a
+/// fresh instance per run or call re-pays DNS/TCP/TLS on every request. The
+/// providers hold no per-request state, and Ktor clients are safe to share.
+public enum IOSSharedKmpProviders {
+    nonisolated(unsafe) public static let openAI = OpenAIKmpProvider()
+    nonisolated(unsafe) public static let claude = ClaudeKmpProvider()
+    nonisolated(unsafe) static let openAIBackgroundTransport = OpenAIResponsesBackgroundTransport()
+}
+
 /// Wraps the real KMP providers behind `IOSAgentTextProvider`. Routes to
 /// `OpenAIKmpProvider` or `ClaudeKmpProvider` based on the provider's sealed
 /// type, so sub-agents/councils can run on either protocol.
@@ -160,8 +169,8 @@ public struct OpenAIKmpProviderAdapter: IOSAgentTextProvider, IOSAgentStreamingP
     private let grokGenerator: GrokGenerator
 
     public init(
-        openAIProvider: OpenAIKmpProvider = OpenAIKmpProvider(),
-        claudeProvider: ClaudeKmpProvider = ClaudeKmpProvider()
+        openAIProvider: OpenAIKmpProvider = IOSSharedKmpProviders.openAI,
+        claudeProvider: ClaudeKmpProvider = IOSSharedKmpProviders.claude
     ) {
         self.openAIProvider = openAIProvider
         self.claudeProvider = claudeProvider
@@ -175,8 +184,8 @@ public struct OpenAIKmpProviderAdapter: IOSAgentTextProvider, IOSAgentStreamingP
     }
 
     init(
-        openAIProvider: OpenAIKmpProvider = OpenAIKmpProvider(),
-        claudeProvider: ClaudeKmpProvider = ClaudeKmpProvider(),
+        openAIProvider: OpenAIKmpProvider = IOSSharedKmpProviders.openAI,
+        claudeProvider: ClaudeKmpProvider = IOSSharedKmpProviders.claude,
         grokGenerator: @escaping GrokGenerator
     ) {
         self.openAIProvider = openAIProvider

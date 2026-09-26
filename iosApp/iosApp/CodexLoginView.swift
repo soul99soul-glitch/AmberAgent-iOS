@@ -19,15 +19,15 @@ final class CodexLoginModel: ObservableObject {
 
     let providerId: String
     private let client: IOSCodexOAuthClient
-    private let persistModels: ([(modelId: String, displayName: String)]) -> Void
+    private let onModelsFetched: ([(modelId: String, displayName: String)]) -> Void
     private var loginTask: Task<Void, Never>?
 
     init(
         providerId: String,
-        persistModels: @escaping ([(modelId: String, displayName: String)]) -> Void
+        onModelsFetched: @escaping ([(modelId: String, displayName: String)]) -> Void
     ) {
         self.providerId = providerId
-        self.persistModels = persistModels
+        self.onModelsFetched = onModelsFetched
         self.client = IOSCodexOAuthClient(providerId: providerId)
         if let tokens = IOSCodexAuthStore.load(providerId: providerId) {
             phase = .signedIn(email: tokens.email, plan: tokens.planType)
@@ -73,7 +73,7 @@ final class CodexLoginModel: ObservableObject {
         restorePersistedPhase()
     }
 
-    /// Refetches codex models and persists them (signed-in "刷新模型").
+    /// Refetches codex models and reports them as candidates for the provider page.
     func refreshModels() {
         Task { await applyModels() }
     }
@@ -85,8 +85,8 @@ final class CodexLoginModel: ObservableObject {
         defer { isRefreshingModels = false }
         do {
             let models = try await client.fetchCodexModelsOrThrow()
-            persistModels(models)
-            modelRefreshMessage = "已刷新 Codex 模型，并补充 GPT Image 生图预设。"
+            onModelsFetched(models)
+            modelRefreshMessage = "已刷新 Codex 聊天模型；GPT Image 生图预设可在模型页单独添加。"
         } catch {
             modelRefreshMessage = "模型刷新失败：\(error.localizedDescription)"
         }
@@ -122,18 +122,14 @@ struct CodexLoginView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
 
-    /// Persists the fetched codex chat models onto the provider.
-    let persistModels: ([(modelId: String, displayName: String)]) -> Void
-
     init(
         providerId: String,
         onAuthModeChange: @escaping (OpenAIAuthMode) -> Void,
-        persistModels: @escaping ([(modelId: String, displayName: String)]) -> Void
+        onModelsFetched: @escaping ([(modelId: String, displayName: String)]) -> Void
     ) {
         self.providerId = providerId
         self.onAuthModeChange = onAuthModeChange
-        self.persistModels = persistModels
-        _model = StateObject(wrappedValue: CodexLoginModel(providerId: providerId, persistModels: persistModels))
+        _model = StateObject(wrappedValue: CodexLoginModel(providerId: providerId, onModelsFetched: onModelsFetched))
     }
 
     var body: some View {

@@ -86,15 +86,15 @@ struct ProviderDetailView: View {
                 providerId: providerId,
                 onAuthModeChange: { mode in
                     _ = sharedSettings.setOpenAIAuthMode(providerId: providerId, authMode: mode)
+                    availableModels = []
+                    fetchState = .idle
                     if isCurrentProvider {
                         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
                     }
                 },
-                persistModels: { models in
-                    _ = sharedSettings.mergeCodexModels(providerId: providerId, discovered: models)
-                    if isCurrentProvider {
-                        sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
-                    }
+                onModelsFetched: { models in
+                    availableModels = IOSCodexModelCatalog.models(discovered: models)
+                    selectedTab = .models
                 }
             )
         }
@@ -194,6 +194,11 @@ struct ProviderDetailView: View {
 
     private var providerName: String {
         provider?.name ?? "服务商"
+    }
+
+    private var isCodexProvider: Bool {
+        guard let provider else { return false }
+        return IOSCodexProviderResolver.isCodexProvider(provider)
     }
 
     private var currentModel: Model? {
@@ -855,7 +860,7 @@ struct ProviderDetailView: View {
                 modelActions
 
                 if !availableModels.isEmpty {
-                    AmberSectionLabel(text: "可用模型")
+                    AmberSectionLabel(text: isCodexProvider ? "可用聊天模型与 GPT Image 生图预设" : "可用模型")
                     AmberFormGroup {
                         ForEach(Array(availableModels.enumerated()), id: \.offset) { index, model in
                             let enabledModel = enabledModels.first {
@@ -1120,8 +1125,7 @@ struct ProviderDetailView: View {
                         providerId: IOSCodexProviderResolver.providerKey(openAI)
                     ).fetchCodexModelsOrThrow()
                     models = IOSCodexModelCatalog.models(discovered: discovered)
-                    _ = sharedSettings.mergeCodexModels(providerId: providerId, discovered: discovered)
-                    successMessage = "已获取 Codex 聊天模型，并补充 GPT Image 2.5 / 2 生图预设。"
+                    successMessage = "已获取 Codex 聊天模型；GPT Image 生图预设可在下方单独添加。"
                 } else if IOSGrokWebProviderResolver.isGrokWebProvider(provider),
                           let openAI = provider as? ProviderSetting.OpenAI,
                           IOSGrokOAuthAuthStore.load(providerId: IOSGrokWebProviderResolver.providerKey(openAI)) != nil {

@@ -29,6 +29,9 @@ enum IOSRecipePrimitiveCatalog {
             .contains(tool) {
             return .ish
         }
+        // Recipe steps run with isUserInitiated after their own gate. Site-memory
+        // proposals need the dedicated card showing each change on every call.
+        if tool == "wm_site_memory" { return .unsupported }
         if IOSWebMountToolCatalog.supportedToolNames.contains(tool) { return .webMount }
         if tool == "memory_tool" { return .memory }
         if tool == "session_search" || tool == "session_read" { return .sessionRead }

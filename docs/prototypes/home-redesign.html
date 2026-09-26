@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amber 首页 Redesign 原型</title>
+<style>
+  :root {
+    --sans: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    --serif: "Songti SC", "STSong", "Noto Serif SC", "Source Han Serif SC", serif;
+    --mono: "SF Mono", ui-monospace, Menlo, monospace;
+  }
+  .paper {
+    --bg: #EEE7DA; --bg-dot: rgba(60,45,25,.07);
+    --ink: #1E1A15; --ink-2: #5E574D; --ink-3: #9A9185;
+    --line: rgba(38,30,20,.09); --line-strong: rgba(38,30,20,.16);
+    --accent: #B4603A; --accent-soft: rgba(180,96,58,.12);
+    --field: rgba(255,252,246,.72); --field-edge: rgba(38,30,20,.10);
+    --shadow: 0 10px 30px rgba(60,40,20,.10), 0 1px 2px rgba(60,40,20,.08);
+  }
+  .dark {
+    --bg: #17151A; --bg-dot: rgba(255,255,255,.035);
+    --ink: #EDE6DA; --ink-2: #ADA59A; --ink-3: #6E685F;
+    --line: rgba(255,255,255,.07); --line-strong: rgba(255,255,255,.13);
+    --accent: #E08A5C; --accent-soft: rgba(224,138,92,.14);
+    --field: rgba(255,255,255,.07); --field-edge: rgba(255,255,255,.10);
+    --shadow: 0 10px 30px rgba(0,0,0,.5), 0 1px 2px rgba(0,0,0,.4);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #D9D4CC; font-family: var(--sans);
+    min-height: 100vh; padding: 40px 24px 60px;
+    display: flex; flex-direction: column; align-items: center; gap: 28px;
+  }
+  .bar { display: flex; gap: 10px; align-items: center; font: 500 13px var(--sans); color: #4a453e; }
+  .bar button {
+    font: inherit; border: 1px solid rgba(0,0,0,.12); background: #fff8; padding: 6px 12px;
+    border-radius: 999px; cursor: pointer; color: inherit;
+  }
+  .bar button.on { background: #1E1A15; color: #F3EDE2; border-color: #1E1A15; }
+  .stage { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; }
+  .cap { text-align: center; font: 500 12px var(--mono); color: #6b655c; margin-top: 14px; letter-spacing: .04em; }
+
+  /* ---------- phone ---------- */
+  .phone {
+    width: 393px; height: 852px; border-radius: 54px; overflow: hidden; position: relative;
+    background: var(--bg); color: var(--ink);
+    box-shadow: 0 0 0 11px #111, 0 0 0 12px #333, 0 40px 80px rgba(0,0,0,.25);
+  }
+  .phone::before { /* dot-paper texture */
+    content: ""; position: absolute; inset: 0; pointer-events: none;
+    background-image: radial-gradient(var(--bg-dot) 1px, transparent 1.2px);
+    background-size: 14px 14px;
+  }
+  .island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 124px; height: 36px; background: #000; border-radius: 20px; z-index: 5; }
+  .status { position: absolute; top: 0; left: 0; right: 0; height: 54px; display: flex; justify-content: space-between; align-items: center; padding: 6px 34px 0 44px; font: 600 16px var(--sans); z-index: 4; }
+  .status .r { display: flex; gap: 6px; align-items: center; }
+  .scroll { position: absolute; inset: 0; overflow-y: auto; padding: 62px 0 150px; scrollbar-width: none; }
+  .scroll::-webkit-scrollbar { display: none; }
+
+  /* header */
+  .head { padding: 10px 22px 0; display: flex; justify-content: space-between; align-items: flex-start; }
+  .wordmark { display: block; }
+  .dateline { margin-top: 10px; font: 500 11px var(--mono); letter-spacing: .08em; color: var(--ink-3); text-transform: uppercase; }
+  .avatar {
+    width: 38px; height: 38px; border-radius: 50%; flex: none; margin-top: 2px;
+    background: conic-gradient(from 200deg, #2c4c7c, #d9772f, #c8433b, #3b6a8f, #e0b25a, #2c4c7c);
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 2.5px var(--line-strong);
+  }
+
+  /* continue */
+  .continue { margin: 30px 22px 0; display: block; color: inherit; text-decoration: none; }
+  .kicker { display: flex; align-items: center; gap: 10px; font: 500 11px var(--mono); letter-spacing: .1em; color: var(--ink-3); text-transform: uppercase; }
+  .kicker::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
+  .cont-body { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 14px; }
+  .cont-type { font: 500 13px var(--sans); color: var(--ink-2); }
+  .cont-title { font: 600 30px/1.15 var(--serif); letter-spacing: .01em; margin-top: 4px; margin-left: -.42em; }
+  .cont-meta { margin-top: 8px; font: 12.5px var(--sans); font-variant-numeric: tabular-nums; color: var(--ink-3); }
+  .progress { margin-top: 14px; height: 2px; background: var(--line); border-radius: 2px; overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 38%; background: var(--ink); opacity: .8; }
+  .arrow {
+    width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line-strong);
+    display: grid; place-items: center; flex: none; margin-bottom: 6px;
+  }
+
+  /* tools */
+  .tools { margin: 26px 22px 0; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  .tool {
+    flex: none; display: flex; align-items: center; gap: 7px; padding: 8px 13px 8px 11px;
+    border-radius: 999px; border: 1px solid var(--line-strong); font: 500 13.5px var(--sans); color: var(--ink);
+  }
+  .tool svg { opacity: .75; }
+
+  /* list */
+  .group { margin-top: 34px; }
+  .group-label { padding: 0 22px 6px; display: flex; justify-content: space-between; font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+  .row { position: relative; padding: 14px 22px 14px 38px; display: block; }
+  .row + .row::before { content: ""; position: absolute; top: 0; left: 38px; right: 22px; height: 1px; background: var(--line); }
+  .row-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .title { font: 600 17px/1.3 var(--sans); letter-spacing: -.005em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .serif-titles .title { font: 600 18px/1.3 var(--serif); }
+  .time { font: 12px var(--sans); font-variant-numeric: tabular-nums; color: var(--ink-3); flex: none; }
+  .preview { margin-top: 3px; font: 14px/1.45 var(--sans); color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+  .dot { position: absolute; left: 20px; top: 22px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .dot.live { animation: breathe 2.4s ease-in-out infinite; box-shadow: 0 0 0 0 var(--accent-soft); }
+  @keyframes breathe { 50% { box-shadow: 0 0 0 6px var(--accent-soft); } }
+  .row.current .title { color: var(--ink); }
+  .row .tag { font: 500 10.5px var(--mono); color: var(--accent); letter-spacing: .06em; margin-left: 8px; }
+  .pin { position: absolute; left: 19px; top: 19px; color: var(--ink-3); }
+
+  /* bottom composer (B) */
+  .dock {
+    position: absolute; left: 0; right: 0; bottom: 0; height: 150px; z-index: 3; pointer-events: none;
+    background: linear-gradient(to bottom, transparent, var(--bg) 55%);
+  }
+  .composer {
+    position: absolute; left: 16px; right: 16px; bottom: 34px; z-index: 4;
+    height: 56px; border-radius: 28px; padding: 0 8px 0 20px;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--field); border: 1px solid var(--field-edge);
+    backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: var(--shadow);
+  }
+  .composer .ph { flex: 1; font: 16px var(--sans); color: var(--ink-3); }
+  .composer .ico { width: 36px; height: 36px; display: grid; place-items: center; color: var(--ink-2); }
+  .send { width: 40px; height: 40px; border-radius: 50%; background: var(--ink); color: var(--bg); display: grid; place-items: center; }
+  .home-ind { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; border-radius: 3px; background: var(--ink); opacity: .85; z-index: 6; }
+
+  /* capsule (A) */
+  .capsule {
+    position: absolute; right: 22px; bottom: 34px; z-index: 4; height: 50px; padding: 0 20px 0 16px; border-radius: 25px;
+    background: var(--ink); color: var(--bg); display: flex; align-items: center; gap: 8px; font: 600 15px var(--sans);
+    box-shadow: var(--shadow);
+  }
+  .variant-a .composer { display: none; }
+  .variant-b .capsule { display: none; }
+  .variant-a .dock { height: 110px; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span>底部操作：</span>
+    <button data-v="b" class="on">B · 输入条</button>
+    <button data-v="a">A · 墨色胶囊</button>
+    <span style="width:14px"></span>
+    <span>会话标题：</span>
+    <button data-t="sans" class="on">黑体</button>
+    <button data-t="serif">宋体</button>
+  </div>
+  <div class="stage" id="stage"></div>
+
+<template id="screen">
+  <div class="phone">
+    <div class="island"></div>
+    <div class="status">
+      <span>16:08</span>
+      <span class="r">
+        <svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+        <svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.1-1.2A10.4 10.4 0 0 0 8 .6 10.4 10.4 0 0 0 .9 3.4L2 4.6a8.8 8.8 0 0 1 6-2.4Zm0 3.3c1.4 0 2.7.5 3.7 1.4l1.1-1.2A7.1 7.1 0 0 0 8 3.9a7.1 7.1 0 0 0-4.8 1.8l1.1 1.2c1-.9 2.3-1.4 3.7-1.4Zm0 3.3c-.6 0-1.1.2-1.5.6L8 11l1.5-1.6c-.4-.4-.9-.6-1.5-.6Z"/></svg>
+        <svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="13" height="9" rx="2" fill="currentColor"/><rect x="25" y="4.5" width="1.5" height="4" rx=".75" fill="currentColor" opacity=".4"/></svg>
+      </span>
+    </div>
+
+    <div class="scroll">
+      <div class="head">
+        <div>
+          <svg class="wordmark" data-wordmark></svg>
+          <div class="dateline">Thu · 25 Sep · 7 threads this week</div>
+        </div>
+        <div class="avatar"></div>
+      </div>
+
+      <a class="continue" href="#">
+        <div class="kicker">继续</div>
+        <div class="cont-body">
+          <div>
+            <div class="cont-type">小说创作</div>
+            <div class="cont-title">《赵大来了》</div>
+            <div class="cont-meta">第 12 章 · 候选稿 2 · 2 天前</div>
+          </div>
+          <div class="arrow">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg>
+          </div>
+        </div>
+        <div class="progress"><i></i></div>
+      </a>
+
+      <div class="tools">
+        <span class="tool"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5h4.5A1.5 1.5 0 0 1 8 5v8.5a1.5 1.5 0 0 0-1.5-1.5H2zM14 3.5H9.5A1.5 1.5 0 0 0 8 5v8.5A1.5 1.5 0 0 1 9.5 12H14z"/></svg>深度阅读</span>
+        <span class="tool"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2.5 13.5 5 6 12.5H3.5V10z"/></svg>小说创作</span>
+        <span class="tool"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="5" cy="6" r="2"/><circle cx="11" cy="6" r="2"/><path d="M1.5 13c.5-2 2-3 3.5-3s3 1 3.5 3M7.5 13c.5-2 2-3 3.5-3s3 1 3.5 3"/></svg>模型议会</span>
+        <span class="tool"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>小应用</span>
+        <span class="tool"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg>站点</span>
+      </div>
+
+      <div class="group">
+        <div class="group-label"><span>今天</span></div>
+        <a class="row current">
+          <span class="dot live"></span>
+          <div class="row-top"><span class="title">春江花月夜哲思<span class="tag">生成中</span></span><span class="time">09:14</span></div>
+          <div class="preview">「江畔何人初见月」其实是在问：个体的有限，如何面对时间的无限……</div>
+        </a>
+        <a class="row">
+          <div class="row-top"><span class="title">北宋白月光</span><span class="time">昨天</span></div>
+          <div class="preview">如果以苏轼为原型，这个角色的遗憾应该落在「不合时宜」上。</div>
+        </a>
+      </div>
+
+      <div class="group">
+        <div class="group-label"><span>本周</span></div>
+        <a class="row">
+          <div class="row-top"><span class="title">宋仁宗天圣四年</span><span class="time">周二</span></div>
+          <div class="preview">天圣四年（1026），刘太后仍垂帘听政，仁宗十七岁……</div>
+        </a>
+        <a class="row">
+          <div class="row-top"><span class="title">宋太祖谥号</span><span class="time">周二</span></div>
+          <div class="preview">「启运立极英武睿文神德圣功至明大孝皇帝」，共十六字。</div>
+        </a>
+        <a class="row">
+          <div class="row-top"><span class="title">用 SVG 画一个鹈鹕骑自行车</span><span class="time">周一</span></div>
+          <div class="preview">已生成 pelican-bike.svg · 1 个附件</div>
+        </a>
+        <a class="row">
+          <span class="pin"><svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M10 1 15 6l-2 1-3 3 .5 4L9 15.5 5.5 12 1.5 16 0 14.5 4 10.5.5 7 2 5.5l4 .5 3-3z"/></svg></span>
+          <div class="row-top"><span class="title">mac 与 Synara 连接</span><span class="time">9/20</span></div>
+          <div class="preview">握手成功，下一步是把 Mac 端工作区挂到这台 iPhone 上。</div>
+        </a>
+      </div>
+
+      <div class="group">
+        <div class="group-label"><span>更早</span></div>
+        <a class="row">
+          <div class="row-top"><span class="title">Jev 网页循环负加速</span><span class="time">9/20</span></div>
+          <div class="preview">问题出在 requestAnimationFrame 里重复叠加了 delta。</div>
+        </a>
+        <a class="row">
+          <div class="row-top"><span class="title">Jev 启用状态</span><span class="time">9/19</span></div>
+          <div class="preview">shadow 对比已开启，今日 34 次决策中 31 次一致。</div>
+        </a>
+      </div>
+    </div>
+
+    <div class="dock"></div>
+    <div class="composer">
+      <span class="ico"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M10 4v12M4 10h12"/></svg></span>
+      <span class="ph">问 Amber 点什么…</span>
+      <span class="ico"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="6" y="1.5" width="6" height="10" rx="3"/><path d="M3 9a6 6 0 0 0 12 0M9 15v2"/></svg></span>
+      <span class="send"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5"/></svg></span>
+    </div>
+    <div class="capsule">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2.5 13.5 5 6 12.5H3.5V10z"/></svg>新对话
+    </div>
+    <div class="home-ind"></div>
+  </div>
+</template>
+
+<script>
+  // 5x7 点阵字标（方点，贴近现有 AMBER 标）
+  const GLYPHS = {
+    A: ["01110","10001","10001","11111","10001","10001","10001"],
+    M: ["10001","11011","10101","10101","10001","10001","10001"],
+    B: ["11110","10001","10001","11110","10001","10001","11110"],
+    E: ["11111","10000","10000","11110","10000","10000","11111"],
+    R: ["11110","10001","10001","11110","10100","10010","10001"],
+  };
+  function drawWordmark(svg) {
+    const cell = 4.2, dot = 3.2, gap = 1;
+    const word = "AMBER", ns = "http://www.w3.org/2000/svg";
+    const w = word.length * 5 + (word.length - 1) * gap;
+    svg.setAttribute("width", w * cell); svg.setAttribute("height", 7 * cell);
+    svg.setAttribute("viewBox", `0 0 ${w * cell} ${7 * cell}`);
+    [...word].forEach((ch, i) => GLYPHS[ch].forEach((row, y) => [...row].forEach((b, x) => {
+      if (b !== "1") return;
+      const r = document.createElementNS(ns, "rect");
+      r.setAttribute("x", (i * (5 + gap) + x) * cell); r.setAttribute("y", y * cell);
+      r.setAttribute("width", dot); r.setAttribute("height", dot); r.setAttribute("rx", .4);
+      r.setAttribute("fill", "currentColor"); svg.appendChild(r);
+    })));
+  }
+
+  const stage = document.getElementById("stage");
+  const tpl = document.getElementById("screen");
+  [["paper", "Light · 暖纸"], ["dark", "Dark"]].forEach(([theme, label]) => {
+    const wrap = document.createElement("div");
+    const node = tpl.content.cloneNode(true);
+    node.querySelector(".phone").classList.add(theme, "variant-b");
+    drawWordmark(node.querySelector("[data-wordmark]"));
+    wrap.appendChild(node);
+    const cap = document.createElement("div"); cap.className = "cap"; cap.textContent = label;
+    wrap.appendChild(cap); stage.appendChild(wrap);
+  });
+
+  document.querySelectorAll("[data-v]").forEach(b => b.onclick = () => {
+    document.querySelectorAll("[data-v]").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll(".phone").forEach(p => {
+      p.classList.toggle("variant-a", b.dataset.v === "a");
+      p.classList.toggle("variant-b", b.dataset.v === "b");
+    });
+  });
+  document.querySelectorAll("[data-t]").forEach(b => b.onclick = () => {
+    document.querySelectorAll("[data-t]").forEach(x => x.classList.toggle("on", x === b));
+    document.querySelectorAll(".phone").forEach(p => p.classList.toggle("serif-titles", b.dataset.t === "serif"));
+  });
+</script>
+</body>
+</html>

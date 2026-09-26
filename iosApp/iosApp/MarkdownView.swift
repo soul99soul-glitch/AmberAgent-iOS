@@ -190,6 +190,7 @@ struct AmberMarkdownView: View {
     let markdown: String
     var displaySetting: DisplaySetting? = nil
     var style: MarkdownStyle = .standard
+    @Environment(\.chatArtifactCodeBlockPinAction) private var codeBlockPinAction
 
     var body: some View {
         let resolved = AmberMarkdownAstCache.shared.result(for: markdown)
@@ -330,13 +331,15 @@ struct AmberMarkdownView: View {
     private func renderCodeBlock(_ node: PackedAstNode, source: String) -> some View {
         let code = codeBlockText(from: node, source: source)
         let lang = node.codeLang()
+        let showsWidgetPreview = lang.map { ["svg", "html"].contains($0.lowercased()) } == true
         return CodeBlockView(
             language: lang ?? "",
             code: code,
             autoWrap: displaySetting?.codeBlockAutoWrap ?? true,
             autoCollapse: displaySetting?.codeBlockAutoCollapse ?? false,
-            headerAccessory: lang.map { ["svg", "html"].contains($0.lowercased()) } == true
-                ? AnyView(WidgetCodePreviewButton(code: code)) : nil
+            headerAccessory: showsWidgetPreview || codeBlockPinAction != nil
+                ? AnyView(ChatCodeBlockHeaderAccessory(code: code, language: lang, showsWidgetPreview: showsWidgetPreview))
+                : nil
         )
         .textSelection(.enabled)
     }

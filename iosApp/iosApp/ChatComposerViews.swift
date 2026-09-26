@@ -1248,27 +1248,7 @@ struct ComposerPendingImageStrip: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(items) { item in
-                        ZStack(alignment: .topTrailing) {
-                            if let ui = UIImage(data: item.previewData) {
-                                Image(uiImage: ui)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 56, height: 56)
-                                    .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
-                            }
-                            Button {
-                                onRemove(item.id)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 16))
-                                    .foregroundStyle(.white, .black.opacity(0.45))
-                                    .padding(3)
-                                    .frame(width: 44, height: 44)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("移除图片")
-                        }
+                        ComposerPendingImageThumbnail(item: item, onRemove: onRemove)
                     }
                 }
                 .padding(.horizontal, 2)
@@ -1277,6 +1257,50 @@ struct ComposerPendingImageStrip: View {
                 ComposerAttachmentStatusLabel(status: status)
             }
         }
+    }
+}
+
+private struct ComposerPendingImageThumbnail: View {
+    let item: ComposerPendingImageStrip.Item
+    let onRemove: (UUID) -> Void
+    @StateObject private var preview: ComposerPendingImagePreview
+
+    init(item: ComposerPendingImageStrip.Item, onRemove: @escaping (UUID) -> Void) {
+        self.item = item
+        self.onRemove = onRemove
+        _preview = StateObject(wrappedValue: ComposerPendingImagePreview(data: item.previewData))
+    }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if let ui = preview.image {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 56, height: 56)
+                    .clipShape(RoundedRectangle(cornerRadius: AmberTheme.radiusXLarge, style: .continuous))
+            }
+            Button {
+                onRemove(item.id)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.white, .black.opacity(0.45))
+                    .padding(3)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("移除图片")
+        }
+    }
+}
+
+private final class ComposerPendingImagePreview: ObservableObject {
+    let image: UIImage?
+
+    init(data: Data) {
+        image = UIImage(data: data)
     }
 }
 

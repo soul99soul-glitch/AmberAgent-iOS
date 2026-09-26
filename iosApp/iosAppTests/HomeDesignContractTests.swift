@@ -48,13 +48,12 @@ final class HomeDesignContractTests: XCTestCase {
             .pushPin,
             "置顶会话必须优先显示实心图钉"
         )
-        // Unmapped titles hash into the full glyph set (not fixed chatCircle).
+        // 无语义命中的标题统一用中性气泡，不按哈希抽取无关图标。
         let unmapped = "梁圣和牢梁的区别是什么"
-        let hashed = HomeConversationIcon.icon(forTitle: unmapped, isPinned: false)
         XCTAssertEqual(
-            hashed,
             HomeConversationIcon.icon(forTitle: unmapped, isPinned: false),
-            "同一无匹配标题必须稳定映射到同一图标"
+            HomeConversationIcon.fallback,
+            "无匹配标题必须显示中性气泡"
         )
         XCTAssertEqual(
             HomeConversationIcon.icon(forTitle: unmapped, isPinned: false, preferredKey: "crown"),
@@ -70,14 +69,6 @@ final class HomeDesignContractTests: XCTestCase {
             HomeConversationIcon.canonicalLLMKey("listChecks"),
             "非 catalog 的 enum 名不应当作 LLM key"
         )
-        // 哈希池只用 llmCatalog，不应落到 pushPin
-        for sample in ["梁圣和牢梁的区别是什么", "无关紧要的闲聊标题xyz", "asdfqwer1234"] {
-            XCTAssertNotEqual(
-                HomeConversationIcon.icon(forTitle: sample, isPinned: false),
-                .pushPin,
-                "未映射标题哈希不应抽到图钉"
-            )
-        }
         XCTAssertEqual(HomeConversationIcon.fallback, .chatCircle, "fallback 常量仍为实心气泡")
     }
 
@@ -181,11 +172,10 @@ final class HomeDesignContractTests: XCTestCase {
             novelProjects: [older, newer],
             now: now
         ))
-        XCTAssertEqual(resumed.title, "小说创作", "首行标题应保持为当前任务所属功能")
+        XCTAssertEqual(resumed.title, "《\(newer.name)》", "首行标题应为最近项目的书名")
         XCTAssertEqual(resumed.ctaTitle, "继续", "有项目时 CTA 应为继续")
         XCTAssertEqual(resumed.destination, .resumeProject(newerID), "应选择最近更新的有效项目")
-        XCTAssertTrue(resumed.meta.contains("《"), "继续说明必须使用书名号")
-        XCTAssertTrue(resumed.meta.contains(newer.name), "继续说明必须包含最近项目的名称")
+        XCTAssertTrue(resumed.meta.hasPrefix("小说创作"), "副信息应标明所属功能")
 
         let degraded = HomeNovelProjectRef(
             id: NovelProjectID(UUID(uuidString: "00000000-0000-0000-0000-000000000003")!),
@@ -203,7 +193,7 @@ final class HomeDesignContractTests: XCTestCase {
             now: now
         ))
         XCTAssertEqual(mixed.destination, .resumeProject(olderID), "更新更晚的损坏项目不能遮蔽有效项目")
-        XCTAssertTrue(mixed.meta.contains(older.name), "混合项目时说明必须指向有效项目")
+        XCTAssertEqual(mixed.title, "《\(older.name)》", "混合项目时首行必须指向有效项目")
     }
 
     func testContinueModelUsesStableCrossFeaturePriority() throws {

@@ -217,7 +217,11 @@ private final class ChatConversationRunState {
     var approvalTriageToken: Int = 0
     var contextCompactState: ChatContextCompactState = .idle
     var pendingAssistantRegeneration: PendingAssistantRegeneration?
-    var steerQueue: [IOSSteerQueueEntry] = []
+    var steerQueue: [IOSSteerQueueEntry] = [] {
+        didSet { steerQueueRevision &+= 1 }
+    }
+    var steerQueueRevision = 0
+    var steerQueueLoaded = true
     var waitingForChildRunId: String?
     var childResultWakeTask: Task<Void, Never>?
 
@@ -328,6 +332,8 @@ final class ChatViewModel {
     var reasoningLevel: ReasoningLevel = .off
     var messageRevision: Int = 0
     var messageUpdateSignal = ChatMessageUpdateSignal()
+    var artifactUpdateSignal = ChatMessageUpdateSignal()
+    var artifactUpdateWasRunning = false
     /// token 聚合只在结构性消息事件后重算；流式 delta 不改 usage，跳过 O(n) 扫描。
     @ObservationIgnored private var tokenRevision: Int = 0
     @ObservationIgnored private var cachedTokenSnapshot: ChatContextSnapshot?
@@ -455,6 +461,7 @@ final class ChatViewModel {
     }
     /// 磁盘镜像（Documents/steer-queue/{conversationId}.json），进程死亡后队列不丢。
     @ObservationIgnored private let steerQueueStore: IOSSteerQueueStore
+    @ObservationIgnored private(set) var steerQueueLoadTask: Task<Void, Never>?
     /// P1-b: mailbox 信封访问层（Room 即真相，无内存态；drain 事务化 exactly-once）。
     @ObservationIgnored private let mailboxStore: IOSMailboxStore
     /// P1-d: mailbox 活动广播（wait_agent 事件源；steer 打断 wait 的信号点）。
@@ -1625,6 +1632,14 @@ final class ChatViewModel {
             reason: reason,
             lagAllowance: lagAllowance
         )
+        // 独立保留产物刷新信号，避免工具结果与后续文字 chunk 合并上屏时丢失。
+        switch reason {
+        case .initialLoad, .conversationSwitch, .branchChange, .toolResultAppended:
+            artifactUpdateWasRunning = reason == .toolResultAppended && isGenerationActiveForCurrentConversation
+            artifactUpdateSignal = messageUpdateSignal
+        default:
+            break
+        }
         // token usage 只在结构性事件后变化；streamDelta/toolDelta 不改 usage。
         switch reason {
         case .streamDelta, .toolDelta:
@@ -1643,7 +1658,25 @@ final class ChatViewModel {
             let storedMessages = store.currentMessages
             messages = messagesByTerminatingStaleSearches(in: storedMessages, store: store) ?? storedMessages
             contextCompactState = .idle
-            steerQueue = steerQueueStore.load(conversationId: currentConversationId)
+            let state = selectedRun.state
+            state.steerQueueLoaded = false
+            state.steerQueueRevision &+= 1
+            let revision = state.steerQueueRevision
+            if let conversationId = state.conversationId?.toHexDashString() {
+                let queueStore = steerQueueStore
+                steerQueueLoadTask = Task { @MainActor [weak self] in
+                    let loaded = await Task.detached(priority: .utility) {
+                        queueStore.load(conversationId: conversationId)
+                    }.value
+                    guard let self, state.steerQueueRevision == revision else { return }
+                    state.steerQueue = loaded
+                    state.steerQueueLoaded = true
+                }
+            } else {
+                state.steerQueue = []
+                state.steerQueueLoaded = true
+                steerQueueLoadTask = nil
+            }
         }
         conversationRuns = conversationRuns.filter { _, run in
             run === selectedRun || run.host?.isRunning == true
@@ -2311,6 +2344,7 @@ final class ChatViewModel {
         let selectedFile = pendingSelectedFilePreview
         guard !trimmed.isEmpty || !images.isEmpty || selectedFile != nil else { return false }
         guard isGenerationActive else { return false }
+        ensureSteerQueueLoaded(state: currentRun.state)
         guard steerQueue.count < IOSSteerQueueStore.maxPendingUserMessages else { return false }
         currentRun.state.clearChildResultWait()
         steerQueue.append(IOSSteerQueueEntry(
@@ -2356,6 +2390,7 @@ final class ChatViewModel {
     }
 
     private func drainSteerQueue(state: ChatConversationRunState) -> [UIMessage] {
+        ensureSteerQueueLoaded(state: state)
         guard !state.steerQueue.isEmpty else { return [] }
         let entries = state.steerQueue
         state.steerQueue = []
@@ -2394,6 +2429,7 @@ final class ChatViewModel {
     }
 
     private func handleSteerQueueAtRunTerminal(state: ChatConversationRunState, autoContinue: Bool) {
+        ensureSteerQueueLoaded(state: state)
         guard !state.steerQueue.isEmpty else { return }
         if autoContinue {
             sendNextSteerQueueEntry(state: state)
@@ -2452,6 +2488,7 @@ final class ChatViewModel {
     }
 
     private func restoreSteerQueueLeftoverToComposer(state: ChatConversationRunState) {
+        ensureSteerQueueLoaded(state: state)
         guard !state.steerQueue.isEmpty else { return }
         let textOnly = state.steerQueue.filter { !$0.hasAttachments }
         let withAttachments = state.steerQueue.filter(\.hasAttachments)
@@ -2622,6 +2659,12 @@ final class ChatViewModel {
 
     private func persistSteerQueue() {
         steerQueueStore.persist(steerQueue, for: currentConversationId)
+    }
+
+    private func ensureSteerQueueLoaded(state: ChatConversationRunState) {
+        guard !state.steerQueueLoaded else { return }
+        state.steerQueue = steerQueueStore.load(conversationId: state.conversationId)
+        state.steerQueueLoaded = true
     }
 
     private static func imageEditToolInput(

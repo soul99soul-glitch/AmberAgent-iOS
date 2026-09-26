@@ -1,7 +1,6 @@
 import SwiftUI
 import Shared
 import SwiftStreamingMarkdown
-import Photos
 
 enum ChatMarkdownOpenURLPolicy {
     static func url(from raw: String) -> URL? {
@@ -129,6 +128,7 @@ struct MessageBubbleView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
+    @Environment(\.chatArtifactPinAction) private var artifactPinAction
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
@@ -204,6 +204,22 @@ struct MessageBubbleView: View {
                 dismissButton: .default(Text("好"))
             )
         }
+        .environment(\.chatArtifactCodeBlockPinAction, codeBlockPinAction)
+        .environment(\.swiftStreamingMarkdownCodeBlockHeaderAccessory, codeBlockHeaderAccessory)
+    }
+
+    /// 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
+    private var codeBlockHeaderAccessory: ((String, String?) -> AnyView?)? {
+        guard artifactPinAction != nil else { return nil }
+        return { code, language in
+            AnyView(ChatCodeBlockHeaderAccessory(code: code, language: language, showsWidgetPreview: false))
+        }
+    }
+
+    private var codeBlockPinAction: ChatArtifactCodeBlockPinAction? {
+        guard let artifactPinAction else { return nil }
+        let messageID = ChatMessageProjector.messageId(for: message)
+        return { code, language in artifactPinAction(messageID, code, .code, language) }
     }
 
     // MARK: - Annotations (URL citations)
@@ -341,6 +357,13 @@ struct MessageBubbleView: View {
             }
             Divider()
         }
+        if let artifactPinAction {
+            Button {
+                artifactPinAction(ChatMessageProjector.messageId(for: message), message.toText(), .message, nil)
+            } label: {
+                Label("收进产物架", systemImage: "pin")
+            }
+        }
         Button {
             UIPasteboard.general.string = message.toText()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -393,6 +416,7 @@ struct MessageBubbleView: View {
                             onGenerativeWidgetAction: onGenerativeWidgetAction
                         )
                     }
+                    .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
                 }
             } else if let reasoning = part as? UIMessagePart.Reasoning {
                 ChatReasoningCard(
@@ -403,6 +427,7 @@ struct MessageBubbleView: View {
                     levelLabel: reasoningLevelLabel,
                     autoCloseThinking: displaySetting?.autoCloseThinking ?? true
                 )
+                .chatLiveEntrance(key: reasoningEntranceKey(partIndex: partIndex), isLive: isLiveTail)
             } else if let image = part as? UIMessagePart.Image {
                 if isUser {
                     ChatUserImageTile(urlString: image.url)
@@ -429,16 +454,25 @@ struct MessageBubbleView: View {
                 ChatToolPartRow(tool: tool, localeIdentifier: locale.identifier,
                     onTap: { toolDetailTarget = ToolDetailTarget(tool: tool) })
                     .equatable()
+                    .id(ChatToolCallAnchorTarget.id(
+                        messageID: ChatMessageProjector.messageId(for: message),
+                        toolCallID: tool.toolCallId
+                    ))
+                    .chatLiveEntrance(key: "tool:\(tool.toolCallId)", isLive: isLiveTail)
                 if tool.toolName == "generate_image" {
                     let images = tool.output.compactMap { $0 as? UIMessagePart.Image }
                     if !images.isEmpty {
                         ChatGeneratedImageGrid(
                             images: images,
+                            toolCallID: tool.toolCallId,
                             toolInput: tool.input,
                             onModify: onModifyGeneratedImage,
                             allowsModify: !isChatGenerationActive
                         )
-                            .id(ChatImageGenerationAnchorTarget.id(toolCallID: tool.toolCallId))
+                            .id(ChatImageGenerationAnchorTarget.id(
+                                messageID: ChatMessageProjector.messageId(for: message),
+                                toolCallID: tool.toolCallId
+                            ))
                             .accessibilityElement(children: .contain)
                             .accessibilityLabel("图片已生成")
                             .accessibilityFocused(
@@ -447,8 +481,15 @@ struct MessageBubbleView: View {
                             )
                             .transition(.opacity)
                     } else if tool.output.isEmpty {
-                        ChatGeneratedImageLoadingPlaceholder(toolInput: tool.input)
-                            .id(ChatImageGenerationAnchorTarget.id(toolCallID: tool.toolCallId))
+                        ChatGeneratedImageLoadingPlaceholder(
+                            toolInput: tool.input,
+                            isAnimating: isGenerating && isLastMessage,
+                            toolCallID: tool.toolCallId
+                        )
+                            .id(ChatImageGenerationAnchorTarget.id(
+                                messageID: ChatMessageProjector.messageId(for: message),
+                                toolCallID: tool.toolCallId
+                            ))
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("正在生成图片")
                             .accessibilityFocused(
@@ -459,9 +500,13 @@ struct MessageBubbleView: View {
                     } else {
                         ChatGeneratedImageFailureCard(
                             reason: ChatToolOutputFormatter.imageFailureReason(from: tool.output)
-                                ?? "图片生成工具没有返回图片。"
+                                ?? "图片生成工具没有返回图片。",
+                            toolCallID: tool.toolCallId
                         )
-                        .id(ChatImageGenerationAnchorTarget.id(toolCallID: tool.toolCallId))
+                        .id(ChatImageGenerationAnchorTarget.id(
+                            messageID: ChatMessageProjector.messageId(for: message),
+                            toolCallID: tool.toolCallId
+                        ))
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel(
                             "图片生成失败：" + (
@@ -501,7 +546,18 @@ struct MessageBubbleView: View {
                 autoCloseThinking: displaySetting?.autoCloseThinking ?? true
             )
             .transition(.opacity)
+            .chatLiveEntrance(key: thinkingEntranceKey, isLive: true)
         }
+    }
+
+    private var isLiveTail: Bool { isGenerating && isLastMessage }
+
+    /// 占位思考卡与首个真实思考卡共用 key：占位被真实卡替换时不重播入场。
+    private var thinkingEntranceKey: String { "\(message.id):thinking" }
+
+    private func reasoningEntranceKey(partIndex: Int) -> String {
+        let firstReasoningIndex = message.parts.firstIndex { $0 is UIMessagePart.Reasoning }
+        return partIndex == firstReasoningIndex ? thinkingEntranceKey : "\(message.id):reasoning:\(partIndex)"
     }
 
     private var hasVisibleAssistantContent: Bool {
@@ -2728,6 +2784,7 @@ private enum WorkspaceSaveAlert: Identifiable {
 
 private struct ChatGeneratedImageGrid: View {
     let images: [UIMessagePart.Image]
+    var toolCallID: String? = nil
     var toolInput: String?
     var onModify: (String, String, String) -> Void = { _, _, _ in }
     var allowsModify: Bool = true
@@ -2745,7 +2802,8 @@ private struct ChatGeneratedImageGrid: View {
                             urlString: image.url,
                             display: display,
                             onModify: onModify,
-                            allowsModify: allowsModify
+                            allowsModify: allowsModify,
+                            toolCallID: toolCallID
                         )
                     }
                 }
@@ -2757,7 +2815,8 @@ private struct ChatGeneratedImageGrid: View {
                                 urlString: image.url,
                                 display: display,
                                 onModify: onModify,
-                                allowsModify: allowsModify
+                                allowsModify: allowsModify,
+                                toolCallID: toolCallID
                             )
                                 .frame(width: display.multiCardWidth)
                         }
@@ -2781,6 +2840,8 @@ private struct ChatGeneratedImageGrid: View {
 
 private struct ChatGeneratedImageLoadingPlaceholder: View {
     let toolInput: String
+    let isAnimating: Bool
+    let toolCallID: String
 
     private var display: ChatGeneratedImageRequestDisplay {
         ChatGeneratedImageRequestDisplay(toolInput: toolInput)
@@ -2801,24 +2862,46 @@ private struct ChatGeneratedImageLoadingPlaceholder: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(0..<display.requestedCount, id: \.self) { _ in
-                        ChatGeneratedImageDotPlaceholder(aspectRatio: display.aspectRatio)
+                        ChatGeneratedImageDotPlaceholder(
+                            aspectRatio: display.aspectRatio,
+                            isAnimating: isAnimating
+                        )
                             .frame(width: display.multiCardWidth)
+                            .chatIslandToolAnchorHighlight(
+                                toolCallID: toolCallID,
+                                cornerRadius: AmberTheme.radiusXLarge
+                            )
                     }
                 }
                 .padding(.trailing, 16)
             }
         } else if let maxWidth = display.singleCardMaxWidth {
-            ChatGeneratedImageDotPlaceholder(aspectRatio: display.aspectRatio)
+            ChatGeneratedImageDotPlaceholder(
+                aspectRatio: display.aspectRatio,
+                isAnimating: isAnimating
+            )
                 .frame(maxWidth: maxWidth, alignment: .leading)
+                .chatIslandToolAnchorHighlight(
+                    toolCallID: toolCallID,
+                    cornerRadius: AmberTheme.radiusXLarge
+                )
         } else {
-            ChatGeneratedImageDotPlaceholder(aspectRatio: display.aspectRatio)
+            ChatGeneratedImageDotPlaceholder(
+                aspectRatio: display.aspectRatio,
+                isAnimating: isAnimating
+            )
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .chatIslandToolAnchorHighlight(
+                    toolCallID: toolCallID,
+                    cornerRadius: AmberTheme.radiusXLarge
+                )
         }
     }
 }
 
 private struct ChatGeneratedImageFailureCard: View {
     let reason: String
+    let toolCallID: String
 
     var body: some View {
         HStack {
@@ -2841,6 +2924,7 @@ private struct ChatGeneratedImageFailureCard: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(AmberTheme.accentRed.opacity(0.20), lineWidth: 0.5)
             }
+            .chatIslandToolAnchorHighlight(toolCallID: toolCallID, cornerRadius: 10)
         }
         .padding(.top, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -3060,6 +3144,7 @@ private struct ChatGeneratedImageTile: View {
     var display = ChatGeneratedImageRequestDisplay(toolInput: nil)
     var onModify: (String, String, String) -> Void = { _, _, _ in }
     var allowsModify: Bool = true
+    var toolCallID: String? = nil
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
 
     private var canModify: Bool { allowsModify && messageEditingAllowed }
@@ -3192,6 +3277,10 @@ private struct ChatGeneratedImageTile: View {
                 }
             }
         }
+        .chatIslandToolAnchorHighlight(
+            toolCallID: toolCallID,
+            cornerRadius: AmberTheme.radiusXLarge
+        )
         .fullScreenCover(item: $previewTarget) { target in
             ChatGeneratedImagePreview(urlString: target.urlString, image: target.image)
         }
@@ -3214,7 +3303,7 @@ private struct ChatGeneratedImageTile: View {
         saveState = .saving
         Task {
             do {
-                try await Self.writeImageToPhotoLibrary(urlString)
+                try await ChatGeneratedImagePhotoWriter.write(urlString)
                 await MainActor.run {
                     saveState = .saved
                     AmberHaptics.trigger(.success)
@@ -3229,93 +3318,6 @@ private struct ChatGeneratedImageTile: View {
         }
     }
 
-    private nonisolated static func writeImageToPhotoLibrary(_ urlString: String) async throws {
-        let resolvedStatus = await photoAuthorizationStatus()
-        guard resolvedStatus == .authorized || resolvedStatus == .limited else {
-            throw ChatGeneratedImagePhotoSaveError.notAuthorized
-        }
-
-        let source = try photoSaveSourceURL(from: urlString)
-        defer {
-            if source.removeAfterSave {
-                try? FileManager.default.removeItem(at: source.url)
-            }
-        }
-
-        try await saveImageFileToPhotoLibrary(source.url)
-    }
-
-    @MainActor
-    private static func photoAuthorizationStatus() async -> PHAuthorizationStatus {
-        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
-        guard status == .notDetermined else { return status }
-        return await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-    }
-
-    private nonisolated static func photoSaveSourceURL(from urlString: String) throws -> PhotoSaveSource {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if let resolvedURL = IOSImageGenerationRepository.resolvedImageURL(from: trimmed),
-           resolvedURL.isFileURL {
-            guard FileManager.default.fileExists(atPath: resolvedURL.path) else {
-                throw ChatGeneratedImagePhotoSaveError.missingImageFile
-            }
-            return PhotoSaveSource(url: resolvedURL, removeAfterSave: false)
-        }
-
-        let data = try IOSImageGenerationRepository.imageData(from: trimmed)
-        guard !data.isEmpty else {
-            throw ChatGeneratedImagePhotoSaveError.invalidImage
-        }
-
-        let temporaryURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("amber-generated-\(UUID().uuidString)")
-            .appendingPathExtension(imageFileExtension(for: data))
-        try data.write(to: temporaryURL, options: [.atomic])
-        return PhotoSaveSource(url: temporaryURL, removeAfterSave: true)
-    }
-
-    private nonisolated static func saveImageFileToPhotoLibrary(_ fileURL: URL) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            PHPhotoLibrary.shared().performChanges {
-                let request = PHAssetCreationRequest.forAsset()
-                let options = PHAssetResourceCreationOptions()
-                options.shouldMoveFile = false
-                request.addResource(with: .photo, fileURL: fileURL, options: options)
-            } completionHandler: { success, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else if success {
-                    continuation.resume()
-                } else {
-                    continuation.resume(throwing: ChatGeneratedImagePhotoSaveError.unknown)
-                }
-            }
-        }
-    }
-
-    private nonisolated static func imageFileExtension(for data: Data) -> String {
-        if data.starts(with: [0xFF, 0xD8, 0xFF]) {
-            return "jpg"
-        }
-        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
-            return "png"
-        }
-        if data.starts(with: [0x47, 0x49, 0x46]) {
-            return "gif"
-        }
-        if data.count >= 12,
-           data[0] == 0x52, data[1] == 0x49, data[2] == 0x46, data[3] == 0x46,
-           data[8] == 0x57, data[9] == 0x45, data[10] == 0x42, data[11] == 0x50 {
-            return "webp"
-        }
-        return "png"
-    }
-}
-
-private struct PhotoSaveSource {
-    let url: URL
-    let removeAfterSave: Bool
 }
 
 private enum ChatGeneratedImagePhotoSaveState: Equatable {
@@ -3345,26 +3347,6 @@ private struct ChatGeneratedImageSaveAlert: Identifiable {
     let message: String
 }
 
-private enum ChatGeneratedImagePhotoSaveError: LocalizedError {
-    case notAuthorized
-    case missingImageFile
-    case invalidImage
-    case unknown
-
-    var errorDescription: String? {
-        switch self {
-        case .notAuthorized:
-            "没有相册写入权限。请在系统设置里允许 AmberAgent 添加照片。"
-        case .missingImageFile:
-            "当前图片文件已经不存在。重装 App 会删除 App 沙盒内的历史图片，需要重新生成后再保存。"
-        case .invalidImage:
-            "当前图片文件无法解码，可能已经被系统或重装流程删除。"
-        case .unknown:
-            "系统相册没有返回明确原因。"
-        }
-    }
-}
-
 private struct ChatGeneratedImagePreviewTarget: Identifiable {
     let id = UUID()
     let urlString: String
@@ -3377,7 +3359,7 @@ private struct ChatGeneratedImageEditTarget: Identifiable {
     let aspectRatio: String
 }
 
-private struct ChatGeneratedImagePreview: View {
+struct ChatGeneratedImagePreview: View {
     let urlString: String
     @Environment(\.dismiss) private var dismiss
     @State private var dataImageState: ChatDataImageLoadState = .loading

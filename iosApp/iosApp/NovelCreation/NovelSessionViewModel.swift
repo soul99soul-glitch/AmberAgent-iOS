@@ -283,6 +283,21 @@ private struct NovelSessionProjectionCacheKey: Equatable {
 private struct NovelSessionProjectionCacheEntry {
     let key: NovelSessionProjectionCacheKey
     let model: NovelSessionListModel
+    let localAskUserRevision: UInt64
+}
+
+struct NovelSessionTailChromeState: Equatable {
+    let runID: NovelRunID?
+    let phase: NovelSessionTransientTailPhase?
+    let supportsReasoning: Bool
+
+    init(_ tail: NovelSessionTransientTail?) {
+        runID = tail?.runID
+        phase = tail?.phase
+        supportsReasoning = tail.map {
+            $0.isReasoningLive || !$0.reasoningContent.isEmpty
+        } ?? false
+    }
 }
 
 private struct NovelCharacterIdentityMentionsCacheKey: Equatable {
@@ -304,7 +319,19 @@ final class NovelSessionViewModel {
     var mode: NovelSessionMode = .discussPlan
     var granularity: NovelGenerationGranularity = .wholeChapter
     private(set) var binding: NovelSessionBinding?
-    private(set) var transientTail: NovelSessionTransientTail?
+    private(set) var transientTail: NovelSessionTransientTail? {
+        didSet {
+            let next = NovelSessionTailChromeState(transientTail)
+            if transientTailChromeState != next {
+                transientTailChromeState = next
+            }
+            latestTailLagAllowance = transientTail?.lagAllowance ?? 1
+        }
+    }
+    /// Low-frequency presentation facts for chrome outside the transcript. The
+    /// stream body remains observed only by the transcript child.
+    private(set) var transientTailChromeState = NovelSessionTailChromeState(nil)
+    @ObservationIgnored private(set) var latestTailLagAllowance: Double = 1
     private(set) var sessionStartingRunID: NovelRunID?
     private(set) var isPerformingAction = false
     /// 正在采用润色版的候选 ID：气泡据此显示加载指示器。
@@ -334,12 +361,15 @@ final class NovelSessionViewModel {
     @ObservationIgnored private var lastRetryDraft: NovelSessionRunDraft?
     @ObservationIgnored private var lastRetryRunID: NovelRunID?
     @ObservationIgnored private var transientRunRecord: NovelActiveRunRecord?
-    @ObservationIgnored private var terminalAwaitingRefresh = false
+    private var terminalAwaitingRefresh = false
     @ObservationIgnored private var cancelledStartRunIDs: Set<NovelRunID> = []
     private(set) var answeringAskUserMessageID: NovelMessageID?
     /// Session-local card close after 写入正文. Not a durable message; leaving
     /// the project drops it. Avoids starting a follow-up model turn that locks the UI.
-    private var locallyResolvedAskUser: [NovelMessageID: NovelAskUserResponse] = [:]
+    private var locallyResolvedAskUser: [NovelMessageID: NovelAskUserResponse] = [:] {
+        didSet { localAskUserRevision &+= 1 }
+    }
+    private var localAskUserRevision: UInt64 = 0
     @ObservationIgnored private var sessionActionOwnerID: UUID?
     @ObservationIgnored private var polishRetryTask: Task<Void, Never>?
     @ObservationIgnored private var polishRetryTaskBinding: NovelSessionBinding?
@@ -707,17 +737,29 @@ final class NovelSessionViewModel {
             transientTail: transientTail
         )
         if let cached = projectionCache, cached.key == key {
-            guard let tail = transientTail else {
-                return overlayLocalAskUserAnswers(cached.model)
+            let updatedModel: NovelSessionListModel?
+            if let tail = transientTail {
+                updatedModel = NovelSessionPresentation.updatingTransientTail(
+                    in: cached.model,
+                    with: tail,
+                    localAskUserResponse: locallyResolvedAskUser[tail.messageID]
+                )
+            } else {
+                updatedModel = cached.model
             }
-            if let updated = NovelSessionPresentation.updatingTransientTail(
-                in: cached.model,
-                with: tail
-            ) {
-                projectionCache = NovelSessionProjectionCacheEntry(key: key, model: updated)
-                return overlayLocalAskUserAnswers(updated)
+            if let updatedModel {
+                let overlaid = cached.localAskUserRevision == localAskUserRevision
+                    ? updatedModel
+                    : overlayLocalAskUserAnswers(updatedModel)
+                projectionCache = NovelSessionProjectionCacheEntry(
+                    key: key,
+                    model: overlaid,
+                    localAskUserRevision: localAskUserRevision
+                )
+                return overlaid
             }
         }
+
         #if DEBUG
         fullProjectionBuildCountForTesting += 1
         #endif
@@ -727,8 +769,13 @@ final class NovelSessionViewModel {
             expandedArchiveIDs: expandedArchiveIDs,
             transientTail: transientTail
         ))
-        projectionCache = NovelSessionProjectionCacheEntry(key: key, model: model)
-        return overlayLocalAskUserAnswers(model)
+        let overlaid = overlayLocalAskUserAnswers(model)
+        projectionCache = NovelSessionProjectionCacheEntry(
+            key: key,
+            model: overlaid,
+            localAskUserRevision: localAskUserRevision
+        )
+        return overlaid
     }
 
     private func overlayLocalAskUserAnswers(_ model: NovelSessionListModel) -> NovelSessionListModel {
@@ -807,7 +854,12 @@ final class NovelSessionViewModel {
         #if DEBUG
         fullProjectionBuildCountForTesting += 1
         #endif
-        projectionCache = NovelSessionProjectionCacheEntry(key: key, model: model)
+        let overlaid = overlayLocalAskUserAnswers(model)
+        projectionCache = NovelSessionProjectionCacheEntry(
+            key: key,
+            model: overlaid,
+            localAskUserRevision: localAskUserRevision
+        )
     }
 
     var currentChapterVersions: [NovelChapterVersionRecord] {
@@ -867,12 +919,14 @@ final class NovelSessionViewModel {
 
     var activeRunID: NovelRunID? {
         if terminalAwaitingRefresh { return nil }
-        if let tail = transientTail {
-            switch tail.phase {
+        if let runID = transientTailChromeState.runID {
+            switch transientTailChromeState.phase {
             case .waitingForFirstToken, .streaming:
-                return tail.runID
+                return runID
             case .persistenceBlocked, .terminalAwaitingRefresh, .interrupted, .failed:
                 return nil
+            case nil:
+                break
             }
         }
         return activeRun?.id ?? boundQuickStartStartingRun?.id
@@ -888,7 +942,7 @@ final class NovelSessionViewModel {
 
     var isStreaming: Bool {
         guard !terminalAwaitingRefresh else { return false }
-        return switch transientTail?.phase {
+        return switch transientTailChromeState.phase {
         case .waitingForFirstToken, .streaming: true
         case .persistenceBlocked, .terminalAwaitingRefresh, .interrupted, .failed, nil: false
         }
@@ -952,7 +1006,7 @@ final class NovelSessionViewModel {
     }
 
     var canRetryPendingTerminal: Bool {
-        guard case .persistenceBlocked = transientTail?.phase else { return false }
+        guard case .persistenceBlocked = transientTailChromeState.phase else { return false }
         return access == .readWrite && !workspace.requiresReload && !isPerformingAction
     }
 
@@ -2572,7 +2626,7 @@ extension NovelSessionViewModel {
     /// this, the generation strip collapses ~28pt before the tail retires.
     var isTerminalPresenting: Bool {
         if terminalAwaitingRefresh { return true }
-        if case .terminalAwaitingRefresh = transientTail?.phase { return true }
+        if case .terminalAwaitingRefresh = transientTailChromeState.phase { return true }
         return false
     }
 }

@@ -492,6 +492,73 @@ final class IOSWebMountRuntimeEvidenceTests: XCTestCase {
         }
     }
 
+    func testRunReportLayoutInLightDarkAndLargeText() async throws {
+        let report = IOSWebMountRunReport(
+            id: "layout-run",
+            startedAtMillis: 1_790_000_000_000,
+            isRunning: false,
+            durationMillis: 125_000,
+            totalToolCalls: 12,
+            webMountToolCalls: 7,
+            failedToolCalls: 1,
+            rejectedToolCalls: 1,
+            userHandoffCount: 1,
+            steps: [IOSWebMountRunReportStep(
+                id: "layout-step",
+                timestampMillis: 1_790_000_001_000,
+                toolName: "wm_click",
+                targetSummary: "目标：一个很长的搜索结果标题，用来检查窄屏与大字号下的换行和截断位置",
+                dispatched: true,
+                pageChanged: false,
+                goalVerified: false,
+                errorCode: "postcondition_not_met",
+                handedOffToUser: true,
+                pageDrift: true,
+                credentialRedacted: true,
+                unattributedPageActivity: true,
+                isFailure: true,
+                isRejected: false
+            )]
+        )
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousWindow?.makeKey()
+        }
+        for (name, width, typeSize, colorScheme) in [
+            ("run-report-light", 393.0, DynamicTypeSize.large, ColorScheme.light),
+            ("run-report-dark", 393.0, DynamicTypeSize.large, ColorScheme.dark),
+            ("run-report-large-text", 320.0, DynamicTypeSize.accessibility3, ColorScheme.light)
+        ] {
+            let size = CGSize(width: width, height: 852)
+            let sheet = WebMountRunReportSheet(sessionRecord: nil, onClose: {})
+            let host = UIHostingController(rootView: NavigationStack {
+                sheet.reportContent([report])
+                    .background(AmberTheme.surface2)
+                    .navigationTitle("运行报告")
+            }
+            .environment(\.dynamicTypeSize, typeSize)
+            .environment(\.colorScheme, colorScheme))
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            window.frame = CGRect(origin: .zero, size: size)
+            host.view.frame = window.bounds
+            try await Task.sleep(nanoseconds: 350_000_000)
+            host.view.layoutIfNeeded()
+            XCTAssertLessThanOrEqual(host.sizeThatFits(in: size).width, size.width + 1, name)
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                host.view.drawHierarchy(in: CGRect(origin: .zero, size: size), afterScreenUpdates: true)
+            }
+            let attachment = XCTAttachment(image: image)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+    }
+
     private func waitForPresentation(_ condition: () -> Bool) async throws {
         for _ in 0..<100 {
             if condition() { return }

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amber 首页 Redesign v2 · iOS 原生秩序</title>
+<style>
+  :root {
+    --sans: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    --display: -apple-system, "SF Pro Display", "PingFang SC", sans-serif;
+    --serif: "Songti SC", "STSong", serif;
+  }
+  .light {
+    --bg: #F3EFE8; --card: #FFFDFA; --card-2: #F7F3EC;
+    --label: #1C1914; --label-2: rgba(60,52,40,.62); --label-3: rgba(60,52,40,.36);
+    --sep: rgba(60,50,35,.13);
+    --tint: #B85C33; --tint-soft: rgba(184,92,51,.12); --tint-ink: #9A4722;
+    --fill: rgba(120,105,85,.10);
+    --glass: rgba(255,253,249,.66); --glass-edge: rgba(255,255,255,.9); --glass-line: rgba(60,50,35,.10);
+    --card-shadow: 0 1px 2px rgba(60,45,25,.05);
+    --glass-shadow: 0 8px 28px rgba(50,35,15,.14), 0 1px 3px rgba(50,35,15,.08);
+  }
+  .dark {
+    --bg: #0E0D0F; --card: #1C1B1E; --card-2: #232226;
+    --label: #F2EDE6; --label-2: rgba(235,228,218,.6); --label-3: rgba(235,228,218,.32);
+    --sep: rgba(255,255,255,.09);
+    --tint: #E3875A; --tint-soft: rgba(227,135,90,.16); --tint-ink: #F0A27B;
+    --fill: rgba(255,255,255,.08);
+    --glass: rgba(40,38,44,.62); --glass-edge: rgba(255,255,255,.14); --glass-line: rgba(255,255,255,.08);
+    --card-shadow: none;
+    --glass-shadow: 0 8px 28px rgba(0,0,0,.5);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #D6D2CB; font-family: var(--sans); -webkit-font-smoothing: antialiased;
+    min-height: 100vh; padding: 36px 24px 56px;
+    display: flex; flex-direction: column; align-items: center; gap: 26px;
+  }
+  .stage { display: flex; gap: 40px; flex-wrap: wrap; justify-content: center; }
+  .cap { text-align: center; font: 500 12px var(--sans); color: #6b655c; margin-top: 14px; }
+
+  .phone {
+    width: 393px; height: 852px; border-radius: 54px; overflow: hidden; position: relative;
+    background: var(--bg); color: var(--label);
+    box-shadow: 0 0 0 11px #111, 0 0 0 12px #333, 0 40px 80px rgba(0,0,0,.25);
+  }
+  .island { position: absolute; top: 11px; left: 50%; transform: translateX(-50%); width: 124px; height: 36px; background: #000; border-radius: 20px; z-index: 9; }
+  .status { position: absolute; top: 0; left: 0; right: 0; height: 54px; display: flex; justify-content: space-between; align-items: center; padding: 6px 34px 0 46px; font: 600 16px var(--sans); z-index: 8; }
+  .status .r { display: flex; gap: 6px; align-items: center; }
+  .scroll { position: absolute; inset: 0; overflow-y: auto; padding: 54px 0 130px; scrollbar-width: none; }
+  .scroll::-webkit-scrollbar { display: none; }
+
+  /* glass */
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(22px) saturate(1.6); -webkit-backdrop-filter: blur(22px) saturate(1.6);
+    box-shadow: inset 0 0.5px 0 var(--glass-edge), 0 0 0 0.5px var(--glass-line), var(--glass-shadow);
+  }
+
+  /* nav: large title */
+  .nav { height: 44px; display: flex; justify-content: flex-end; align-items: center; padding: 0 16px; gap: 10px; }
+  .gbtn { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; color: var(--label); }
+  .gbtn.avatar { padding: 3px; }
+  .gbtn.avatar i { width: 100%; height: 100%; border-radius: 50%; background: conic-gradient(from 200deg, #2c4c7c, #d9772f, #c8433b, #3b6a8f, #e0b25a, #2c4c7c); }
+  .large { padding: 2px 20px 0; display: flex; align-items: flex-end; justify-content: space-between; }
+  .large .sub { font: 400 15px var(--sans); color: var(--label-2); margin-top: 8px; }
+
+  /* section header (iOS 26 app style: title3 bold + chevron) */
+  .sh { display: flex; align-items: center; gap: 4px; padding: 0 20px 10px; font: 700 20px var(--display); letter-spacing: .01em; }
+  .sh svg { color: var(--label-3); margin-top: 1px; }
+  .sh .aux { margin-left: auto; font: 400 15px var(--sans); color: var(--tint); letter-spacing: 0; }
+
+  .card { background: var(--card); border-radius: 26px; margin: 0 16px; box-shadow: var(--card-shadow); }
+
+  /* hero: Books-like continue */
+  .hero { padding: 16px; display: flex; gap: 16px; }
+  .cover {
+    width: 76px; height: 108px; flex: none; border-radius: 5px 9px 9px 5px; position: relative; overflow: hidden;
+    background: linear-gradient(160deg, #C9764A, #8E3C1E);
+    box-shadow: 0 6px 16px rgba(110,45,15,.28), 0 1px 2px rgba(0,0,0,.2);
+    color: #FBEBDC; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .cover::before { content: ""; position: absolute; left: 5px; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.18); }
+  .cover b { font: 600 17px/1.12 var(--serif); writing-mode: vertical-rl; letter-spacing: .12em; }
+  .cover small { position: absolute; bottom: 7px; font: 500 7px var(--sans); letter-spacing: .2em; opacity: .7; }
+  .hero-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .eyebrow { font: 600 13px var(--sans); color: var(--tint-ink); }
+  .hero-title { font: 700 20px/1.25 var(--display); margin-top: 3px; }
+  .hero-meta { font: 400 14px var(--sans); color: var(--label-2); margin-top: 3px; }
+  .bar { margin-top: auto; display: flex; align-items: center; gap: 8px; font: 500 12px var(--sans); color: var(--label-3); font-variant-numeric: tabular-nums; }
+  .bar .track { flex: 1; height: 4px; border-radius: 2px; background: var(--fill); overflow: hidden; }
+  .bar .track i { display: block; height: 100%; width: 62%; background: var(--tint); border-radius: 2px; }
+  .hero-actions { display: flex; gap: 8px; padding: 0 16px 16px; }
+  .pill { height: 38px; border-radius: 19px; padding: 0 16px; display: inline-flex; align-items: center; gap: 6px; font: 600 15px var(--sans); }
+  .pill.primary { background: var(--tint); color: #fff; flex: 1; justify-content: center; }
+  .pill.secondary { background: var(--fill); color: var(--label); }
+
+  /* tools: 4-up tiles */
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 0 16px; }
+  .tile { background: var(--card); border-radius: 22px; height: 84px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; box-shadow: var(--card-shadow); }
+  .tile .ic { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; color: #fff; }
+  .tile span { font: 500 12.5px var(--sans); color: var(--label); }
+
+  /* inset grouped list */
+  .gh { padding: 0 36px 7px; font: 400 13px var(--sans); color: var(--label-2); }
+  .list { overflow: hidden; }
+  .row { display: flex; align-items: center; gap: 12px; padding-left: 16px; min-height: 68px; position: relative; }
+  .row .ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; flex: none; background: var(--fill); color: var(--label-2); }
+  .row .ic.hot { background: var(--tint-soft); color: var(--tint); }
+  .row .body { flex: 1; min-width: 0; padding: 11px 16px 11px 0; align-self: stretch; display: flex; flex-direction: column; justify-content: center; position: relative; }
+  .row + .row .body::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: .5px; background: var(--sep); }
+  .row .top { display: flex; align-items: baseline; gap: 8px; }
+  .row .t { font: 600 16px/1.3 var(--sans); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .time { font: 400 14px var(--sans); color: var(--label-3); font-variant-numeric: tabular-nums; flex: none; }
+  .row .p { font: 400 14px/1.35 var(--sans); color: var(--label-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .live { display: inline-flex; align-items: center; gap: 5px; font: 600 12px var(--sans); color: var(--tint); flex: none; }
+  .live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--tint); animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  .gap-l { height: 30px; } .gap-m { height: 22px; }
+
+  /* iOS 26 bottom bar: search field + compose */
+  .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 120px; z-index: 5; pointer-events: none; background: linear-gradient(to bottom, transparent, var(--bg) 70%); opacity: .9; }
+  .bottom { position: absolute; left: 16px; right: 16px; bottom: 30px; display: flex; gap: 10px; z-index: 6; }
+  .search { flex: 1; height: 48px; border-radius: 24px; display: flex; align-items: center; gap: 8px; padding: 0 16px; color: var(--label-2); font: 400 17px var(--sans); }
+  .search .mic { margin-left: auto; }
+  .compose { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; color: var(--tint); }
+  .home-ind { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; border-radius: 3px; background: var(--label); z-index: 9; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage"></div>
+
+<template id="screen">
+<div class="phone">
+  <div class="island"></div>
+  <div class="status">
+    <span>16:08</span>
+    <span class="r">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>
+      <svg width="16" height="12" viewBox="0 0 16 12" fill="currentColor"><path d="M8 2.2c2.3 0 4.4.9 6 2.4l1.1-1.2A10.4 10.4 0 0 0 8 .6 10.4 10.4 0 0 0 .9 3.4L2 4.6a8.8 8.8 0 0 1 6-2.4Zm0 3.3c1.4 0 2.7.5 3.7 1.4l1.1-1.2A7.1 7.1 0 0 0 8 3.9a7.1 7.1 0 0 0-4.8 1.8l1.1 1.2c1-.9 2.3-1.4 3.7-1.4Zm0 3.3c-.6 0-1.1.2-1.5.6L8 11l1.5-1.6c-.4-.4-.9-.6-1.5-.6Z"/></svg>
+      <svg width="27" height="13" viewBox="0 0 27 13"><rect x=".5" y=".5" width="23" height="12" rx="3.5" fill="none" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="13" height="9" rx="2" fill="currentColor"/><rect x="25" y="4.5" width="1.5" height="4" rx=".75" fill="currentColor" opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <div class="scroll">
+    <div class="nav">
+      <span class="gbtn glass"><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10.3 2.8h3.4l.5 2.6 1.9 1.1 2.5-.9 1.7 2.9-2 1.7v2.2l2 1.7-1.7 2.9-2.5-.9-1.9 1.1-.5 2.6h-3.4l-.5-2.6-1.9-1.1-2.5.9-1.7-2.9 2-1.7v-2.2l-2-1.7 1.7-2.9 2.5.9 1.9-1.1z"/><circle cx="12" cy="12" r="3"/></svg></span>
+      <span class="gbtn glass avatar"><i></i></span>
+    </div>
+    <div class="large">
+      <div>
+        <svg data-wordmark></svg>
+        <div class="sub">下午好，今天有 1 个任务在运行</div>
+      </div>
+    </div>
+
+    <div class="gap-l"></div>
+    <div class="sh">继续创作<span class="aux">全部作品</span></div>
+    <div class="card">
+      <div class="hero">
+        <div class="cover"><b>赵大来了</b><small>AMBER</small></div>
+        <div class="hero-main">
+          <div class="eyebrow">小说创作</div>
+          <div class="hero-title">赵大来了</div>
+          <div class="hero-meta">第 12 章 · 2 份候选稿待选</div>
+          <div class="bar"><span class="track"><i></i></span>62%</div>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <span class="pill primary"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M11 2.5 13.5 5 6 12.5H3.5V10z"/></svg>继续写作</span>
+        <span class="pill secondary">查看候选稿</span>
+      </div>
+    </div>
+
+    <div class="gap-m"></div>
+    <div class="tiles">
+      <div class="tile"><span class="ic" style="background:#C46A3E"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M2 3.5h4.5A1.5 1.5 0 0 1 8 5v8.5a1.5 1.5 0 0 0-1.5-1.5H2zM14 3.5H9.5A1.5 1.5 0 0 0 8 5v8.5A1.5 1.5 0 0 1 9.5 12H14z"/></svg></span><span>深度阅读</span></div>
+      <div class="tile"><span class="ic" style="background:#8C6A45"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="5" cy="6" r="2"/><circle cx="11" cy="6" r="2"/><path d="M1.5 13c.5-2 2-3 3.5-3s3 1 3.5 3M7.5 13c.5-2 2-3 3.5-3s3 1 3.5 3"/></svg></span><span>模型议会</span></div>
+      <div class="tile"><span class="ic" style="background:#6B7359"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="5" height="5" rx="1.3"/><rect x="9" y="2" width="5" height="5" rx="1.3"/><rect x="2" y="9" width="5" height="5" rx="1.3"/><rect x="9" y="9" width="5" height="5" rx="1.3"/></svg></span><span>小应用</span></div>
+      <div class="tile"><span class="ic" style="background:#56697A"><svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/></svg></span><span>站点</span></div>
+    </div>
+
+    <div class="gap-l"></div>
+    <div class="sh">会话<svg width="9" height="14" viewBox="0 0 9 14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l5 5-5 5"/></svg></div>
+    <div class="gh">今天</div>
+    <div class="card list">
+      <div class="row">
+        <span class="ic hot"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M9 1.5 10.6 7.4 16.5 9l-5.9 1.6L9 16.5l-1.6-5.9L1.5 9l5.9-1.6z"/></svg></span>
+        <div class="body"><div class="top"><span class="t">春江花月夜哲思</span><span class="live">生成中</span></div><div class="p">「江畔何人初见月」其实是在问个体与时间……</div></div>
+      </div>
+      <div class="row">
+        <span class="ic"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M9 1.5 10.6 7.4 16.5 9l-5.9 1.6L9 16.5l-1.6-5.9L1.5 9l5.9-1.6z"/></svg></span>
+        <div class="body"><div class="top"><span class="t">北宋白月光</span><span class="time">09:12</span></div><div class="p">如果以苏轼为原型，遗憾应该落在「不合时宜」</div></div>
+      </div>
+    </div>
+
+    <div class="gap-m"></div>
+    <div class="gh">本周</div>
+    <div class="card list">
+      <div class="row">
+        <span class="ic"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M9 1.5 10.6 7.4 16.5 9l-5.9 1.6L9 16.5l-1.6-5.9L1.5 9l5.9-1.6z"/></svg></span>
+        <div class="body"><div class="top"><span class="t">宋仁宗天圣四年</span><span class="time">周二</span></div><div class="p">天圣四年（1026），刘太后仍垂帘听政……</div></div>
+      </div>
+      <div class="row">
+        <span class="ic"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><path d="M9 1.5 10.6 7.4 16.5 9l-5.9 1.6L9 16.5l-1.6-5.9L1.5 9l5.9-1.6z"/></svg></span>
+        <div class="body"><div class="top"><span class="t">宋太祖谥号</span><span class="time">周二</span></div><div class="p">「启运立极英武睿文神德圣功至明大孝皇帝」</div></div>
+      </div>
+      <div class="row">
+        <span class="ic"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.5" y="3" width="13" height="12" rx="2.5"/><circle cx="6.5" cy="7" r="1.3" fill="currentColor" stroke="none"/><path d="m3 13.5 4-4 3 3 2-2 3.5 3.5"/></svg></span>
+        <div class="body"><div class="top"><span class="t">用 SVG 画一个鹈鹕骑自行车</span><span class="time">周一</span></div><div class="p">pelican-bike.svg</div></div>
+      </div>
+      <div class="row">
+        <span class="ic"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 5-4 4 4 4M12 5l4 4-4 4"/></svg></span>
+        <div class="body"><div class="top"><span class="t">mac 与 Synara 连接</span><span class="time">9/20</span></div><div class="p">握手成功，下一步挂载 Mac 端工作区</div></div>
+      </div>
+      <div class="row">
+        <span class="ic"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 5-4 4 4 4M12 5l4 4-4 4"/></svg></span>
+        <div class="body"><div class="top"><span class="t">Jev 网页循环负加速</span><span class="time">9/20</span></div><div class="p">问题出在 rAF 里重复叠加了 delta</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="fade"></div>
+  <div class="bottom">
+    <div class="search glass">
+      <svg width="17" height="17" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="8" cy="8" r="5.5"/><path d="m12.2 12.2 3.8 3.8"/></svg>
+      搜索
+      <svg class="mic" width="15" height="17" viewBox="0 0 16 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="5" y="1.5" width="6" height="10" rx="3"/><path d="M2 9a6 6 0 0 0 12 0M8 15v2"/></svg>
+    </div>
+    <div class="compose glass"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3.5H5.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V12"/><path d="M16.5 2.8a1.8 1.8 0 0 1 2.6 2.6L11 13.5l-3.3.8.8-3.3z"/></svg></div>
+  </div>
+  <div class="home-ind"></div>
+</div>
+</template>
+
+<script>
+  const GLYPHS = {
+    A: ["01110","10001","10001","11111","10001","10001","10001"],
+    M: ["10001","11011","10101","10101","10001","10001","10001"],
+    B: ["11110","10001","10001","11110","10001","10001","11110"],
+    E: ["11111","10000","10000","11110","10000","10000","11111"],
+    R: ["11110","10001","10001","11110","10100","10010","10001"],
+  };
+  function drawWordmark(svg) {
+    const cell = 5, dot = 3.9, gap = 1, word = "AMBER", ns = "http://www.w3.org/2000/svg";
+    const w = word.length * 5 + (word.length - 1) * gap;
+    svg.setAttribute("width", w * cell); svg.setAttribute("height", 7 * cell);
+    svg.setAttribute("viewBox", `0 0 ${w * cell} ${7 * cell}`);
+    [...word].forEach((ch, i) => GLYPHS[ch].forEach((row, y) => [...row].forEach((b, x) => {
+      if (b !== "1") return;
+      const r = document.createElementNS(ns, "rect");
+      r.setAttribute("x", (i * (5 + gap) + x) * cell); r.setAttribute("y", y * cell);
+      r.setAttribute("width", dot); r.setAttribute("height", dot); r.setAttribute("rx", .5);
+      r.setAttribute("fill", "currentColor"); svg.appendChild(r);
+    })));
+  }
+  const stage = document.getElementById("stage"), tpl = document.getElementById("screen");
+  [["light", "Light"], ["dark", "Dark"]].forEach(([theme, label]) => {
+    const wrap = document.createElement("div"), node = tpl.content.cloneNode(true);
+    node.querySelector(".phone").classList.add(theme);
+    drawWordmark(node.querySelector("[data-wordmark]"));
+    wrap.appendChild(node);
+    const cap = document.createElement("div"); cap.className = "cap"; cap.textContent = label;
+    wrap.appendChild(cap); stage.appendChild(wrap);
+  });
+</script>
+</body>
+</html>

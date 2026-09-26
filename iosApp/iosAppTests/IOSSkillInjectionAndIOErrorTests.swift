@@ -82,6 +82,40 @@ final class IOSSkillInjectionAndIOErrorTests: XCTestCase {
         XCTAssertTrue(systemText.contains("use_skill"))
     }
 
+    func testMemoryRecallFollowsStableLeadingSystemFragments() throws {
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IOSMemoryInjectionOrder-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        var builder = ChatRuntimeContextBuilder(
+            sharedSettings: sharedSettings,
+            mcpTools: [],
+            miniAppRepository: IOSMiniAppRepository(baseDirectory: tempRoot),
+            miniAppRuntimeEnabled: false
+        )
+        builder.skillFileStore = IOSSkillFileStore(baseDirectory: tempRoot)
+
+        let prepared = builder.injectingRuntimeContext(
+            into: [
+                UIMessage.companion.system(prompt: "stable orchestration guidance"),
+                UIMessage.companion.user(prompt: "hello"),
+            ],
+            coalesceSystemMessages: false,
+            memoryRecallOverride: ChatMemoryContextBuilder.RecallResult(
+                prompt: "per-turn recalled memory",
+                records: []
+            )
+        )
+
+        let texts = prepared.map { $0.toText() }
+        let guidanceIndex = try XCTUnwrap(texts.firstIndex { $0.contains("stable orchestration guidance") })
+        let memoryIndex = try XCTUnwrap(texts.firstIndex { $0.contains("per-turn recalled memory") })
+        XCTAssertEqual(memoryIndex, guidanceIndex + 1)
+        XCTAssertEqual(prepared[memoryIndex + 1].role, MessageRole.user)
+    }
+
     func testRuntimeSystemMessagesAreCoalescedForSingleSystemProviders() {
         let prepared = ChatRuntimeContextBuilder.coalescingSystemMessages([
             UIMessage.companion.system(prompt: "assistant persona"),
