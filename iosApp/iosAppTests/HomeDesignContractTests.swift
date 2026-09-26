@@ -540,11 +540,7 @@ final class HomeDesignContractTests: XCTestCase {
             source.contains(".padding(.trailing, homeNewChatCapsuleTrailingInset)"),
             "浮层必须挂 trailing inset 常量，不能回退硬编码 16"
         )
-        // 视觉层级：新对话=强调色混色玻璃；Continue CTA=浅强调色+主墨字（非黑底白字）。
-        XCTAssertTrue(
-            source.contains(".amberProminentGlass(cornerRadius: height / 2, tint: AmberTheme.accent)"),
-            "右下新对话必须用 accent 混色玻璃，不能回退中性 homeGlassControl"
-        )
+        // Continue CTA 保持浅强调色底，与原生 prominent 新对话按钮区分。
         XCTAssertTrue(
             source.contains("hovering || pressed ? AmberTheme.avatarActive : AmberTheme.accentTint"),
             "Continue CTA 必须浅强调色底"

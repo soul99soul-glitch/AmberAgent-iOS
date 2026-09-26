@@ -1012,19 +1012,21 @@ private struct AmberGlassModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let control = content
+            .contentShape(shape)
 
         if #available(iOS 26.0, *) {
             if interactive {
-                content
+                control
                     .background(AmberTheme.glass.opacity(0.35), in: shape)
-                    .glassEffect(.regular.interactive(), in: .rect(cornerRadius: cornerRadius))
+                    .glassEffect(.regular.interactive(), in: shape)
             } else {
-                content
+                control
                     .background(AmberTheme.glass.opacity(0.35), in: shape)
-                    .glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+                    .glassEffect(.regular, in: shape)
             }
         } else {
-            content
+            control
                 .background(.ultraThinMaterial, in: shape)
                 .overlay {
                     shape
@@ -1042,22 +1044,24 @@ private struct AmberProminentGlassModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let control = content
+            .contentShape(shape)
 
         if #available(iOS 26.0, *) {
             // Solid accent fill + a full-tint glass sheen so prominent buttons (the new-chat FAB,
             // prominent icon/pill buttons) actually read as the standard accent instead of the
             // washed-out 0.24/0.34-opacity tint they had before.
             if interactive {
-                content
+                control
                     .background(tint, in: shape)
-                    .glassEffect(.regular.tint(tint).interactive(), in: .rect(cornerRadius: cornerRadius))
+                    .glassEffect(.regular.tint(tint).interactive(), in: shape)
             } else {
-                content
+                control
                     .background(tint, in: shape)
-                    .glassEffect(.regular.tint(tint), in: .rect(cornerRadius: cornerRadius))
+                    .glassEffect(.regular.tint(tint), in: shape)
             }
         } else {
-            content
+            control
                 .background(tint, in: shape)
                 .shadow(color: tint.opacity(0.32), radius: 18, y: 4)
         }
@@ -1075,6 +1079,43 @@ extension View {
         interactive: Bool = true
     ) -> some View {
         modifier(AmberProminentGlassModifier(cornerRadius: AmberTheme.controlRadius(cornerRadius), tint: tint, interactive: interactive))
+    }
+}
+
+/// A button's tint, glass silhouette and press deformation must have one owner.
+/// Keep raw glass modifiers for surfaces; native button styles own button feedback.
+private struct AmberGlassButtonModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    var prominent = false
+    var tint: Color = AmberTheme.accent
+    var borderShape: ButtonBorderShape? = nil
+    var sizing: ButtonSizing = .flexible
+
+    func body(content: Content) -> some View {
+        Group {
+            if prominent {
+                content.buttonStyle(.glassProminent).tint(tint)
+            } else {
+                content.buttonStyle(.glass)
+            }
+        }
+        .buttonBorderShape(borderShape ?? .roundedRectangle(radius: AmberTheme.controlRadius(cornerRadius)))
+        .buttonSizing(sizing)
+    }
+}
+
+private extension View {
+    func amberGlassButton(
+        cornerRadius: CGFloat,
+        prominent: Bool = false,
+        tint: Color = AmberTheme.accent,
+        borderShape: ButtonBorderShape? = nil,
+        sizing: ButtonSizing = .flexible
+    ) -> some View {
+        modifier(AmberGlassButtonModifier(
+            cornerRadius: cornerRadius, prominent: prominent, tint: tint,
+            borderShape: borderShape, sizing: sizing
+        ))
     }
 }
 
@@ -1108,30 +1149,23 @@ struct AmberGlassIconButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            styledLabel
+        Button {
+            AmberHaptics.trigger(.lightImpact)
+            action()
+        } label: {
+            iconLabel
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
+        .amberGlassButton(cornerRadius: size / 2, prominent: prominent, tint: tint)
+        .controlSize(.mini)
+        .frame(width: size, height: size)
         .accessibilityLabel(accessibilityLabel)
-    }
-
-    @ViewBuilder
-    private var styledLabel: some View {
-        if prominent {
-            iconLabel
-                .amberProminentGlass(cornerRadius: size / 2, tint: tint)
-        } else {
-            iconLabel
-                .amberGlass(cornerRadius: size / 2)
-        }
     }
 
     private var iconLabel: some View {
         Image(systemName: systemImage)
             .font(.system(size: symbolSize, weight: .semibold))
             .foregroundStyle(prominent ? Color.white : tint)
-            .frame(width: size, height: size)
-            .contentShape(Circle())
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -1177,35 +1211,25 @@ struct AmberGlassCircleButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            styledLabel
+        Button {
+            AmberHaptics.trigger(.lightImpact)
+            action()
+        } label: {
+            iconLabel
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
+        .buttonStyle(.glass)
+        .buttonBorderShape(.circle)
+        .controlSize(.mini)
+        .buttonSizing(.flexible)
+        .frame(width: size, height: size)
         .accessibilityLabel(accessibilityLabel)
-    }
-
-    @ViewBuilder
-    private var styledLabel: some View {
-        if #available(iOS 26.0, *) {
-            iconLabel
-                .background(AmberTheme.glass.opacity(0.16), in: Circle())
-                .glassEffect(.regular.interactive(), in: Circle())
-        } else {
-            iconLabel
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay {
-                    Circle()
-                        .stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
-                }
-        }
     }
 
     private var iconLabel: some View {
         Image(systemName: systemImage)
             .font(.system(size: symbolSize, weight: .semibold))
             .foregroundStyle(tint)
-            .frame(width: size, height: size)
-            .contentShape(Circle())
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -2196,8 +2220,7 @@ private extension View {
     func homeCascade(delay: Double, enabled: Bool = true) -> some View { modifier(HomeCascade(delay: delay, enabled: enabled)) }
 }
 
-/// 首页控制层专用中性玻璃（搜索胶囊 / 展开条 / 齿轮）。
-/// 右下「新对话」走 `amberProminentGlass`，不经此 modifier。
+/// 首页展开搜索条的中性玻璃表面；按钮使用原生玻璃按钮样式。
 /// iOS 26+：原生 Liquid Glass（skill: 真 `glassEffect`，轻垫底保证暖灰画布上可读，不做假 solid chip）。
 /// 更早系统：ultraThinMaterial + E 版描边/投影回退。
 private struct HomeGlassControlModifier: ViewModifier {
@@ -2214,16 +2237,18 @@ private struct HomeGlassControlModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let control = content
+            .contentShape(shape)
         if #available(iOS 26.0, *) {
             // 垫底极轻：帮助折射；强度由主题 glassChrome 弱控。
-            content
+            control
                 .background(AmberTheme.homeGlassTop.opacity(padOpacity), in: shape)
                 .glassEffect(
                     interactive ? .regular.interactive() : .regular,
-                    in: .rect(cornerRadius: cornerRadius)
+                    in: shape
                 )
         } else {
-            content
+            control
                 .background(.ultraThinMaterial, in: shape)
                 .background(
                     LinearGradient(
@@ -2265,7 +2290,7 @@ private extension View {
     }
 }
 
-/// 首页齿轮钮：38 圆形玻璃 + Phosphor 实心图标（与内页 AmberGlassCircleButton 隔离）。
+/// 首页齿轮钮保持原生圆形轮廓，主题圆角不参与系统按钮的按压形变。
 private struct HomeGlassCircleButton: View {
     let icon: HomePhosphor
     let accessibilityLabel: String
@@ -2277,14 +2302,17 @@ private struct HomeGlassCircleButton: View {
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            AmberHaptics.trigger(.lightImpact)
+            action()
+        } label: {
             HomePhosphorIcon(icon, size: iconSize)
                 .foregroundStyle(tint)
-                .frame(width: size, height: size)
-                .contentShape(Circle())
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
-        .homeGlassControl(cornerRadius: size / 2, interactive: false)
+        .amberGlassButton(cornerRadius: size / 2, borderShape: .circle, sizing: .fitted)
+        .controlSize(.mini)
+        .frame(width: size, height: size)
         .modifier(HomeOptionalGlassEffectID(id: glassEffectID, namespace: glassNamespace))
         .accessibilityLabel(accessibilityLabel)
     }
@@ -2553,11 +2581,12 @@ struct ConversationsView: View {
     /// 首页右下「新对话」浮层胶囊。
     /// skill 门禁：
     /// - taste：主强调动作；强调色混色玻璃 + on-accent 墨，压过 Continue 浅色 CTA
-    /// - liquid glass：`amberProminentGlass`（accent 垫底 + `.regular.tint`），非中性 `homeGlassControl`
+    /// - liquid glass：原生 prominent 按钮统一处理强调色、玻璃与按压形变
     /// - ui-patterns：拇指区 bottomTrailing 真浮层；非 top 难够、非 inset 假底栏
     private var homeNewChatCapsule: some View {
         let height = homeNewChatCapsuleHeight
         return Button {
+            AmberHaptics.trigger(.lightImpact)
             startNewConversation()
         } label: {
             HStack(spacing: 6) {
@@ -2568,12 +2597,15 @@ struct ConversationsView: View {
                     .tracking(0.2)
                     .foregroundStyle(AmberTheme.fabInk)
             }
-            .padding(.horizontal, 14)
-            .frame(height: height)
-            .contentShape(Capsule())
+            .frame(maxHeight: .infinity)
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
-        .amberProminentGlass(cornerRadius: height / 2, tint: AmberTheme.accent)
+        .amberGlassButton(
+            cornerRadius: height / 2, prominent: true, tint: AmberTheme.accent,
+            borderShape: .capsule, sizing: .fitted
+        )
+        .controlSize(.regular)
+        .frame(height: height)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel("新建聊天")
         .accessibilityAddTraits(.isButton)
     }
@@ -2645,6 +2677,7 @@ struct ConversationsView: View {
 
     private var homeSearchCapsuleButton: some View {
         Button {
+            AmberHaptics.trigger(.lightImpact)
             expandSearch()
         } label: {
             HStack(spacing: 6) {
@@ -2654,11 +2687,13 @@ struct ConversationsView: View {
                     .tracking(0.26)
             }
             .foregroundStyle(AmberTheme.muted)
-            .frame(width: 78, height: 38)
-            .contentShape(Capsule())
+            .frame(maxHeight: .infinity)
         }
-        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .lightImpact))
-        .homeGlassControl(cornerRadius: 19, interactive: false)
+        .amberGlassButton(cornerRadius: 19, borderShape: .capsule, sizing: .fitted)
+        .controlSize(.mini)
+        .frame(minWidth: 78)
+        .frame(height: 38)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel("搜索")
         .accessibilityAddTraits(.isButton)
     }
