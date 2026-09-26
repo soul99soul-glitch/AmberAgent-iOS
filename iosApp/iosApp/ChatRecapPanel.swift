@@ -74,6 +74,7 @@ struct ChatRecapPanel: View {
             if isLoading {
                 HStack(spacing: 10) {
                     ProgressView()
+                        .frame(width: 24)
                     Text(recap == nil ? "正在整理回顾…" : "正在更新回顾…")
                         .font(.subheadline)
                         .foregroundStyle(AmberTheme.muted)

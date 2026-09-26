@@ -102,15 +102,7 @@ struct ChatTopBarView: View {
                 }
 
                 island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
-                    .popover(isPresented: Binding(
-                        get: { panel == .recap },
-                        set: { if !$0 && panel == .recap { panel = nil } }
-                    ), arrowEdge: .top) {
-                        recapPanel
-                            .frame(width: min(340, geometry.size.width))
-                            .presentationCompactAdaptation(.popover)
-                            .presentationBackground(AmberTheme.background)
-                    }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.island = $0 }
 
                 if flightVisible, !reduceMotion {
                     Circle()
@@ -129,31 +121,12 @@ struct ChatTopBarView: View {
             .frame(height: ChatTopBarLayout.controlsHeight, alignment: .bottom)
             .overlay(alignment: .topTrailing) {
                 if panel == .shelf || panel == .notices {
-                    dockPanel
+                    panelChrome(dockPanel)
                         .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
-                        .clipShape(RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous))
-                        .background {
-                            RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous)
-                                .fill(AmberTheme.background)
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous)
-                                        .strokeBorder(AmberTheme.border, lineWidth: 0.5)
-                                }
-                                .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 5)
-                        }
-                        .contentShape(RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous))
-                        // Blank panel space must not activate the timeline underneath.
-                        .onTapGesture { }
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
                         .frame(height: shelfHeight, alignment: .top)
                         .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
                         .padding(.top, ChatTopBarLayout.controlsHeight + 8)
-                        .transition(reduceMotion ? .opacity : .asymmetric(
-                            insertion: .scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity),
-                            // 收起用缓出而非展开的弹簧，避免末段骤然消失。
-                            removal: .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
-                                .animation(.easeOut(duration: 0.22))
-                        ))
+                        .transition(panelTransition(anchor: .topTrailing))
                 } else if panel == .shelfCollapsed {
                     ChatArtifactShelfStrip(
                         title: locatedArtifactTitle,
@@ -168,6 +141,16 @@ struct ChatTopBarView: View {
                     .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
                     .padding(.top, ChatTopBarLayout.controlsHeight + 8)
                     .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .top) {
+                if panel == .recap {
+                    // 与停靠位面板同一套外观；左右与两侧按钮外缘对齐，从岛下方展开。
+                    panelChrome(recapPanel)
+                        .frame(width: geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter))
+                        .frame(height: shelfHeight, alignment: .top)
+                        .padding(.top, ChatTopBarLayout.controlsHeight + 8)
+                        .transition(panelTransition(anchor: .top))
                 }
             }
             .overlay(alignment: .topTrailing) {
@@ -188,7 +171,7 @@ struct ChatTopBarView: View {
         }
         .padding(.horizontal, 18)
         .onChange(of: panel, initial: true) { _, panel in
-            tapRegions.isPanelOpen = panel == .shelf || panel == .shelfCollapsed || panel == .notices
+            tapRegions.isPanelOpen = panel != nil
             if !tapRegions.isPanelOpen { tapRegions.panel = .null }
         }
         .onChange(of: arrivalInput, initial: true) { old, input in
@@ -280,7 +263,7 @@ struct ChatTopBarView: View {
             }
         }
         .onChange(of: dismissShelfRevision) { _, _ in
-            if panel == .shelf || panel == .shelfCollapsed || panel == .notices { panel = nil }
+            panel = nil
         }
         .onDisappear {
             resetArrivalMotion()
@@ -438,13 +421,38 @@ struct ChatTopBarView: View {
             if panel == .shelf { artifactShelf }
             else { noticeList }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isModal)
-        .accessibilityAction(.escape) { panel = nil }
-        .task {
-            await Task.yield()
-            UIAccessibility.post(notification: .screenChanged, argument: nil)
-        }
+    }
+
+    private func panelChrome(_ content: some View) -> some View {
+        let shape = RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous)
+        return content
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityAction(.escape) { panel = nil }
+            .task {
+                await Task.yield()
+                UIAccessibility.post(notification: .screenChanged, argument: nil)
+            }
+            .clipShape(shape)
+            .background {
+                shape
+                    .fill(AmberTheme.background)
+                    .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: 0.5) }
+                    .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 5)
+            }
+            .contentShape(shape)
+            // Blank panel space must not activate the timeline underneath.
+            .onTapGesture { }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
+    }
+
+    private func panelTransition(anchor: UnitPoint) -> AnyTransition {
+        reduceMotion ? .opacity : .asymmetric(
+            insertion: .scale(scale: 0.92, anchor: anchor).combined(with: .opacity),
+            // 收起用缓出而非展开的弹簧，避免末段骤然消失。
+            removal: .scale(scale: 0.96, anchor: anchor).combined(with: .opacity)
+                .animation(.easeOut(duration: 0.22))
+        )
     }
 
     private func resetArrivalMotion() {
@@ -536,10 +544,11 @@ private struct ChatTopBarNoticeRow: View {
 /// 面板展开/收起动画的逐帧几何变化不会触发聊天页重算。
 final class ChatDockTapRegions {
     var dock = CGRect.null
+    var island = CGRect.null
     var panel = CGRect.null
     var isPanelOpen = false
 
     func contains(_ point: CGPoint) -> Bool {
-        dock.contains(point) || panel.contains(point)
+        dock.contains(point) || island.contains(point) || panel.contains(point)
     }
 }
