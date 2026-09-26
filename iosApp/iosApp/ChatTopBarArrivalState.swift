@@ -21,6 +21,26 @@ struct ChatTopBarArrivalState: Equatable {
         }
     }
 
+    static let recapHintTitle = "再聊几轮就能回顾"
+    var recapHintDeadline: Date?
+
+    @discardableResult
+    mutating func didTapIneligibleTitle(at now: Date = .now) -> Bool {
+        guard announcement == nil else { return false }
+        recapHintDeadline = now.addingTimeInterval(1.8)
+        return true
+    }
+
+    mutating func expireRecapHint(at now: Date = .now) {
+        if let recapHintDeadline, now >= recapHintDeadline { self.recapHintDeadline = nil }
+    }
+
+    func islandPresentation(_ original: ChatIslandPresentation) -> ChatIslandPresentation {
+        guard recapHintDeadline != nil, announcement == nil,
+              original.displayedState.kind == .title else { return original }
+        return .idle(.conversationTitle(Self.recapHintTitle))
+    }
+
     private var previousInput: Input?
     var justLeftConversationID: String?
     var arrival: ConversationActivityNotice?
@@ -36,9 +56,13 @@ struct ChatTopBarArrivalState: Equatable {
             }
             arrival = nil
             announcement = nil
+            recapHintDeadline = nil
             return nil
         }
-        if input.isGenerating { announcement = nil }
+        if input.isGenerating {
+            announcement = nil
+            recapHintDeadline = nil
+        }
         let previousKeys = previousInput.notices.map(Key.init)
         let newNotices = input.notices.filter { !previousKeys.contains(Key($0)) }
         let candidate = newNotices.first {
@@ -50,6 +74,7 @@ struct ChatTopBarArrivalState: Equatable {
         guard let candidate else { return nil }
         arrival = candidate
         announcement = input.isGenerating ? nil : candidate
+        if announcement != nil { recapHintDeadline = nil }
         return candidate
     }
 }

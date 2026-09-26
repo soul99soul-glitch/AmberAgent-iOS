@@ -7,6 +7,76 @@ import Observation
 
 @MainActor
 final class ChatTopBarLayoutTests: XCTestCase {
+    func testIneligibleIslandTapShowsHintThenRestoresTitle() async throws {
+        let original = ChatIslandPresentation.idle(.conversationTitle("两轮讨论"))
+        let now = Date()
+        var state = ChatTopBarArrivalState()
+        _ = state.update(.init(conversationID: "hint-test", isAwaitingUser: false,
+                               isGenerating: false, notices: []))
+        XCTAssertEqual(state.islandPresentation(original), original)
+        XCTAssertTrue(state.didTapIneligibleTitle(at: now))
+        XCTAssertEqual(state.islandPresentation(original).displayedState.title, "再聊几轮就能回顾")
+        state.expireRecapHint(at: now.addingTimeInterval(1.7))
+        XCTAssertEqual(state.islandPresentation(original).displayedState.title, "再聊几轮就能回顾")
+
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.screen.bounds
+        window.overrideUserInterfaceStyle = .light
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKey()
+        }
+        let topBar = ChatTopBarView(
+            presentation: original, conversationID: "hint-test", hasMessages: true,
+            isGenerating: false, notices: [], shelfHeight: scene.screen.bounds.height * 0.55,
+            onBack: {}, onIslandTap: { _ in }, onCancel: {}, onOpenConversation: { _ in true },
+            onDismiss: { _ in }, onNewConversation: {}, loadPreview: { _ in nil },
+            previewRevision: { _ in nil }, recapEligible: false, arrivalState: state
+        )
+        window.rootViewController = UIHostingController(rootView:
+            ZStack(alignment: .top) {
+                AmberTheme.background.ignoresSafeArea()
+                Text("刚开始的讨论，也有回应。")
+                    .foregroundStyle(AmberTheme.muted)
+                    .padding(.top, ChatTopBarLayout.controlsHeight + 24)
+                topBar
+            }
+            .environment(\.locale, Locale(identifier: "zh_Hans"))
+            .environment(\.dynamicTypeSize, .large)
+        )
+        window.makeKeyAndVisible()
+        try await Task.sleep(for: .milliseconds(400))
+        window.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "island-recap-hint"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let directory = URL(fileURLWithPath: "/tmp/amber-topbar", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try XCTUnwrap(image.pngData()).write(to: directory.appendingPathComponent("island-recap-hint.png"), options: .atomic)
+
+        state.expireRecapHint(at: now.addingTimeInterval(1.8))
+        XCTAssertEqual(state.islandPresentation(original), original)
+        state.didTapIneligibleTitle(at: now)
+        let arrivalNotice = notice("hint-notice", title: "报告", kind: .completed)
+        _ = state.update(.init(conversationID: "hint-test", isAwaitingUser: false,
+                               isGenerating: false, notices: [arrivalNotice]))
+        XCTAssertNil(state.recapHintDeadline, "播报到达即取消提示")
+        XCTAssertFalse(state.didTapIneligibleTitle(at: now), "播报期间不覆盖标题")
+        _ = state.update(.init(conversationID: "hint-next", isAwaitingUser: false,
+                               isGenerating: false, notices: []))
+        state.didTapIneligibleTitle(at: now)
+        _ = state.update(.init(conversationID: "hint-third", isAwaitingUser: false,
+                               isGenerating: false, notices: []))
+        XCTAssertNil(state.recapHintDeadline, "切换对话即取消提示")
+    }
+
     func testTopBarLayoutsAndCaptureEvidence() async throws {
         let suite = "ChatTopBarLayout.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -80,6 +150,7 @@ final class ChatTopBarLayoutTests: XCTestCase {
         let window = UIWindow(windowScene: scene)
         window.overrideUserInterfaceStyle = .light
         defer {
+            window.rootViewController?.dismiss(animated: false)
             window.isHidden = true
             window.rootViewController = nil
             previous?.makeKey()
@@ -129,9 +200,17 @@ final class ChatTopBarLayoutTests: XCTestCase {
             show(content, width: width, height: height)
         }
 
-        func capture(_ name: String) async {
+        func capture(_ name: String, flashScrollIndicators: Bool = false) async {
             try? await Task.sleep(for: .milliseconds(900))
             window.layoutIfNeeded()
+            if flashScrollIndicators {
+                func flash(in view: UIView) {
+                    (view as? UIScrollView)?.flashScrollIndicators()
+                    view.subviews.forEach { flash(in: $0) }
+                }
+                flash(in: window)
+                try? await Task.sleep(for: .milliseconds(100))
+            }
             let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
                 _ = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
@@ -144,6 +223,9 @@ final class ChatTopBarLayoutTests: XCTestCase {
             let path = directory.appendingPathComponent("\(name).png")
             if let data = image.pngData() {
                 try? data.write(to: path, options: [.atomic])
+                if name == "topbar-satellite-multiple-expanded" {
+                    try? data.write(to: directory.appendingPathComponent("dockpanel-notices.png"), options: [.atomic])
+                }
             }
             print("CHAT_TOPBAR_EVIDENCE \(path.path)")
         }
@@ -189,14 +271,21 @@ final class ChatTopBarLayoutTests: XCTestCase {
         showTopBarPreview(fixture: ChatTopBarLayoutFixture(notices: []), panel: .shelf)
         await capture("topbar-shelf-empty-panel")
 
-        showTopBarPreview(fixture: ChatTopBarLayoutFixture(notices: [awaiting, completed]), panel: .notices)
+        let compactNotices = ChatTopBarLayoutFixture(notices: [awaiting, completed])
+        showTopBarPreview(fixture: compactNotices, panel: .notices)
         await capture("topbar-satellite-multiple-expanded")
+        XCTAssertGreaterThan(compactNotices.panelHeight, 100)
+        XCTAssertLessThan(compactNotices.panelHeight, 300, "两条提醒应按内容收高")
 
         let manyNotices = (0...100).map { index in
             notice("badge-\(index)", title: "提醒 \(index)", kind: .completed)
         }
         showTopBarPreview(fixture: ChatTopBarLayoutFixture(notices: manyNotices), width: 375, height: 812)
         await capture("topbar-narrow375-satellite-99plus")
+        let overflowingNotices = ChatTopBarLayoutFixture(notices: manyNotices)
+        showTopBarPreview(fixture: overflowingNotices, panel: .notices, width: 375, height: 812)
+        await capture("topbar-notices-overflow", flashScrollIndicators: true)
+        XCTAssertLessThanOrEqual(overflowingNotices.panelHeight, 812 * 0.55 + 1)
 
         for (name, statusNotice) in [
             ("awaiting", awaiting),
@@ -308,6 +397,8 @@ final class ChatTopBarLayoutTests: XCTestCase {
 @MainActor
 @Observable
 private final class ChatTopBarLayoutFixture {
+    @ObservationIgnored let tapRegions = ChatDockTapRegions()
+    var panelHeight: CGFloat { tapRegions.panel.isNull ? 0 : tapRegions.panel.height }
     var notices: [ConversationActivityNotice]
 
     init(notices: [ConversationActivityNotice] = []) {
@@ -351,10 +442,11 @@ private struct ChatTopBarLayoutPreview: View {
                 onIslandTap: { _ in },
                 onCancel: {},
                 onOpenConversation: { _ in true },
-                onDismiss: { _ in },
+                onDismiss: { id in fixture.notices.removeAll { $0.conversationId == id } },
                 onNewConversation: {},
                 loadPreview: { _ in nil },
                 previewRevision: { _ in nil },
+                tapRegions: fixture.tapRegions,
                 panel: panel
             )
         }

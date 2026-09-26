@@ -76,6 +76,27 @@
 3. 多选：存到相册 / 文件、分享；"导出成果报告"：Markdown（采用版本 + 收藏片段 + 来源轮次）。
 4. 多版本卡"采用"标记，未采用版本变淡（持久化同 1 的 store）。
 
+## Phase 5 — 活动岛「回顾」（2026-09-26 追加）
+
+目标：空闲时点岛，从岛向下展开本对话的结构化回顾；关键节点可点击跳回时间线。生成中点岛的行为（跳到现场）与长按停止**不变**。
+
+1. **触发与门槛**：岛处于 `.title`（空闲）且当前分支用户消息 ≥3 条 → 点岛展开回顾卡片；不足门槛维持无动作。再次点岛 / 点卡片外 / 下拉收起。
+2. **内容（`ConversationRecap`）**：
+   - `overview`：一段话（做了什么、结果、未解决的点），不超过约 120 字；
+   - `nodes`：3–8 个关键节点 `{ kind(.decision/.milestone/.failure/.artifact), title, messageRef }`；
+   - `nextSteps`：0–3 条待办，点一下填进输入框（不自动发送）。
+   - 元数据：`conversationId`、`coveredThroughMessageID`（生成时最后一条消息）、分支标识、`generatedAt`。
+3. **生成**：
+   - 复用辅助模型链路（`titleModelId` → 当前聊天模型回退，同 `generateConversationTitle` / `ConversationListPreviewGenerator`），`writeBaseline` / `canApplyAuxiliaryResult` 防旧写；结果必须写回发起它的对话。
+   - 时机：每轮 run 正常结束且过门槛时后台生成（同对话去抖，进行中不重复发起）；从未生成过的对话，点开时现场生成并显示加载态。
+   - 增量：已有回顾时，输入 = 旧回顾 + `coveredThroughMessageID` 之后的新消息；否则输入最近消息（有上下文压缩摘要时拼入摘要）。
+   - 输出 JSON；解析失败 → 卡片显示失败与"重试"，不静默。
+4. **跳转**：喂给模型的每条消息带短编号（如 `m12`），节点只能引用编号；本地映射回 messageID，编号不在当前分支的节点显示为不可点。点节点 → 卡片收起 → 走现有 `ChatMessageAnchor` 定位并高亮该消息。不用 `scrollTo(y:)` / 写 `contentOffset`。
+5. **过时**：回顾之后有新消息或切了分支 → 卡片顶部"有新内容 · 刷新"，内容仍显示旧版；刷新走增量生成。
+6. **持久化**：iOS 侧按对话的小型 JSON store（同 `artifact-shelf.json` 的放置与删除清理方式），不进备份（与产物架一致）。
+7. **视觉**：卡片从岛的位置下展（玻璃样式，与产物架面板同一套圆角/边距），宽度与产物架面板对齐，按内容收高、最大 55% 屏高可滚动；节点行前有 kind 图标，失败为红色；Reduce Motion 下淡入淡出。
+8. 测试：门槛、编号映射与越界、增量输入拼装、过时判定、JSON 解析失败、防旧写；截图：加载态 / 正常 / 过时 / 失败。
+
 ---
 
 ## 每个 Phase 的验收
@@ -688,3 +709,320 @@ xcodebuild -quiet -xctestrun /tmp/amber-phase4-tests.xctestrun \
 本轮两项流式门禁均通过；上一轮失败的长文与表格门禁属于时序抖动，没有改动相关代码。
 
 重拍截图（同一构建）：`phase4-panel-snippets-iphone17pro.png`、`phase4-panel-snippets-375.png`、`phase4-panel-snippets-dark.png`、`phase4-version-unadopted.png`（最新版正文与 2/2 一致）、`phase4-multiselect-iphone17pro.png`、`phase4-multiselect-375.png`（勾选圈在左上，多选时隐藏逐项分享与采用）、`phase4-composer-continue.png`（新增代码块消息，头部"复制"旁显示图钉按钮；角标 1 为过滤后的片段数）。未 commit；未修改无关 WIP。
+
+## Phase 5 实现记录（2026-09-26）
+
+### 实现与文件
+
+- 新增 `iosApp/iosApp/ConversationRecap.swift`：回顾模型、3 条用户消息门槛、当前分支编号、增量输入、过时判断和 JSON 解析。首次取最近 32 条有效消息，并拼入可用的压缩摘要；工具名称、输入和文本回执也进入输入。已有回顾沿覆盖点追加新消息；换分支或覆盖点消失时，保留旧回顾作为待校正上下文，附当前分支最近消息，旧节点按来源 ID 重编号，不存在的来源不进入引用映射。
+- 新增 `iosApp/iosApp/ConversationRecapGenerator.swift`：复用 `titleModelId → 当前聊天模型` 和辅助请求参数；正常完成后按对话 300ms 去抖，进行中不重复请求；点开首次生成、刷新和重试共用入口。请求显式接收现有 `sharedSettings`，按发起对话捕获消息、分支和 `writeBaseline`，结果通过 token 和 `canApplyAuxiliaryResult` 后写回原对话。持久化的压缩边界覆盖冷开与后台路径。
+- 新增 `iosApp/iosApp/IOSConversationRecapStore.swift`：在 `conversations/conversation-recaps.json` 按对话保存小型 JSON。
+- 新增 `iosApp/iosApp/ChatRecapPanel.swift`：从岛下展的玻璃卡片，340pt 最大宽度、16pt 内边距、现有主题圆角，内容收高且最多 55% 屏高；节点图标、红色失败节点、不可定位说明、待办填入输入框、失败重试与过时刷新。标题区下拉、再次点岛、点外部或关闭按钮收起；Reduce Motion 下淡入淡出。
+- 修改 `iosApp/iosApp/ChatTopBarView.swift`、`ChatView.swift`：只在点下时显示 `.title` 且过门槛时打开回顾；保留播报、活动定位、长按停止、侧边玻璃独立以及用户已有的产物架原生 popover 改动。节点定位复用 `ChatMessageAnchor`；待办不自动发送。
+- 修改 `iosApp/iosApp/ChatCollectionMessageList.swift`：普通消息 anchor 定位完成后高亮 1.2 秒，沿用既有居中定位与历史窗口机制，没有像素滚动或高度补偿。
+- 修改 `iosApp/iosApp/ChatViewModel.swift`、`IOSChatBackgroundGenerationCoordinator.swift`：前台以及后台两条正常完成路径调度回顾。前台入口在原有纯文本检查之前，覆盖纯工具/图片成功结果；失败、取消不在这些成功入口内。
+- 修改 `iosApp/iosApp/IOSConversationStore.swift`、`IOSSyncBackup.swift`：删除提交后清理本对话及后代，恢复后清理被覆盖对话并使旧请求失效；有旧回顾/请求的恢复场景留下可见重试说明。回顾 JSON 与产物架一致不进备份。
+- 新增测试 `iosApp/iosAppTests/ConversationRecapTests.swift`（6 项）、`IOSConversationRecapStoreTests.swift`（8 项）、`ChatRecapLayoutTests.swift`（1 项）：门槛、编号与越界、工具与摘要增量、跨分支重编号、过时、JSON 失败、按原对话写回、恢复/删除防旧写、清理、备份排除、去抖/去重及四态截图与面板尺寸。
+- `iosApp/project.yml` 的 `path: iosApp` / `path: iosAppTests` 已覆盖这些新文件；运行 `xcodegen generate --spec iosApp/project.yml`，并核实生成工程包含全部 7 个新增 Swift 文件，无需重复添加显式 source 条目。
+
+### 构建与命令
+
+```bash
+xcodegen generate --spec iosApp/project.yml
+xcodebuild -quiet -disableAutomaticPackageResolution \
+  -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
+  EXCLUDED_SOURCE_FILE_NAMES=ChatToolTimelineWidthOverflowTests.swift build-for-testing
+```
+
+构建通过，日志 `/tmp/amber-phase5-build-final.log`（exit 0）。首次构建发现本轮 `toHexDashString()` 被误写为方法 key path，已改成闭包后通过。仅按任务要求排除 `ChatToolTimelineWidthOverflowTests.swift`，未修改该文件。
+
+用户要求避免多余测试后，保留已经通过的结果，只补尚未完成的新增逻辑、顶栏/产物架相关测试及三组滚动；不再运行 Home 或重跑已通过的消息投影/缓存。补测复用构建产物：
+
+```bash
+xcodebuild -quiet \
+  -xctestrun /Users/arquiel/Library/Developer/Xcode/DerivedData/AmberAgent-dszqlrkdzmllcpgtkmzneptukbka/Build/Products/iosApp_iphonesimulator26.5-arm64.xctestrun \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  -parallel-testing-enabled NO -collect-test-diagnostics never \
+  -only-testing:iosAppTests/ConversationRecapTests \
+  -only-testing:iosAppTests/IOSConversationRecapStoreTests \
+  -only-testing:iosAppTests/ChatTopBarArrivalTests \
+  -only-testing:iosAppTests/ChatTopBarDockTests \
+  -only-testing:iosAppTests/ChatTopBarLayoutTests \
+  -only-testing:iosAppTests/ConversationActivityCenterTests \
+  -only-testing:iosAppTests/ConversationArtifactIndexTests \
+  -only-testing:iosAppTests/IOSConversationArtifactStoreTests \
+  -only-testing:iosAppTests/IOSSubAgentActivityLayoutTests \
+  -only-testing:iosAppTests/IOSP1BackupTests \
+  -only-testing:iosAppTests/ChatSwiftUIStreamReplayTests \
+  -only-testing:iosAppTests/NativeTimelineScrollCoreTests \
+  -only-testing:iosAppTests/ChatViewportPolicyTests \
+  -resultBundlePath /tmp/amber-phase5-required.xcresult test-without-building
+```
+
+### 测试结果
+
+按同一最终源码的各类最后一次有效结果合并，要求范围内 **221/222**；这是分批结果，不是一次全绿的总回归。
+
+| 范围 | 结果 | 证据 |
+| --- | --- | --- |
+| 新增逻辑与存储 | 14/14 | `/tmp/amber-phase5-required.xcresult` |
+| 新增回顾四态布局/截图 | 1/1 | `/tmp/amber-phase5-tests.xcresult`，iOS 27.0 |
+| 产物架 Actions / AnchorLayout / Integration / ShelfLayout / ShelfState / TextDiff | 12/12、1/1、3/3、2/2、3/3、5/5 | 首轮已通过，未重复跑 |
+| IslandNavigation / IslandPresentation | 8/8、26/26 | 首轮已通过，未重复跑 |
+| Arrival / Dock / TopBarLayout / ActivityCenter / SubAgentLayout | 7/7、5/5、1/1、13/13、3/3 | 最后补测 |
+| ArtifactIndex / ArtifactStore / P1Backup | 10/10、4/4、9/9 | 最后补测 |
+| ChatSwiftUIStreamReplayTests | 35/36 | 最后补测 |
+| NativeTimelineScrollCoreTests / ChatViewportPolicyTests | 55/55、4/4 | 最后补测 |
+
+最后补测使用 iPhone 17 Pro / iOS 26.5（`E26720E3-CBE3-4178-A469-1DFA9154395A`），160/161，日志 `/tmp/amber-phase5-required.log`。唯一失败为 `ChatSwiftUIStreamReplayTests.testLongProseViewportFollowStaysLineSizedAtTwentyFourKB`：第 1773 行断言测得 36，门槛 24。该既有长文时序测试在本计划前面的记录中也有失败历史；本轮未修改相关实现或阈值，未做因果隔离，因此不声明根因。按照不多余测试的要求，没有再次重跑刷绿。
+
+过程记录：原始 `name=iPhone 17 Pro` 命令自动选到 iOS 27.0。首轮日志缓冲被误判为停滞而中断，完整结果实际为 178/180；两项失败为 `testContinuousProseGrowthStaysLineSizedWhileFollowingBottom` 和 `testEveryGenerationTerminalReleasesBottomOwnershipAfterLateLayoutSettle`，二者最后在 iOS 26.5 均通过。首轮的 61 项本任务相关已通过结果被保留；额外执行过的消息投影 93/93、缓存 12/12 不计入上表要求范围，也未再次运行。后续一条 iOS 26.5 命令被对话中断，另一条在用户要求收窄后停止，均不计为测试通过。最终仅补尚未完成的要求项，没有继续运行 Home 或扩展用例。
+
+### 截图与视觉检查
+
+测试夹具渲染生产 `ChatTopBarView` 和 `ChatRecapPanel`，iPhone 17 Pro / iOS 27.0；与最终源码一致。截图已由主代理逐张打开查看，不以成功写文件代替视觉检查。
+
+- `/tmp/amber-topbar/phase5-loading.png`
+- `/tmp/amber-topbar/phase5-normal.png`
+- `/tmp/amber-topbar/phase5-stale.png`
+- `/tmp/amber-topbar/phase5-failure.png`
+
+检查：岛与两侧圆按钮独立、无重叠；卡片从岛下方展开，宽度、左右内边距、标题与关闭按钮位置一致。加载与失败态按内容收高；正常与过时态达到 55% 上限，其余节点/待办保留在 ScrollView 中。长节点自然换行，失败节点为红色；刷新、重试文字完整。测试另实测 340pt 与 300pt 面板宽度及 55% 高度上限，没有尺寸溢出。
+
+### 遗留与范围
+
+- 上述 1 项既有长文时序门禁失败，未改阈值或扩展排查。
+- 真实 provider 的回顾质量、真机手感及 VoiceOver 实际朗读未验收；辅助请求和原对话写回通过注入 provider 的单元测试验证，截图只证明模拟器布局。
+- 独立 review 确认并修复了跨分支旧引用、异步分支错标、冷开压缩摘要遗漏及恢复后的空白卡片路径。没有遗留已确认的 Phase 5 功能缺陷。
+- 保留进入任务时所有无关 WIP；逐文件比对确认产物架面板、首页及其既有测试的原 diff 未改变。未修改 `ChatToolTimelineWidthOverflowTests.swift`；未 commit。
+
+## Phase 5 review 修复（2026-09-26）
+
+仅处理独立 review 指出的 11 项；保留本轮开始时的无关 WIP，不 commit。
+
+| # | 修复 | 处理 |
+| --- | --- | --- |
+| 1 | 解析过严 | 使用现有 `IOSDeepReadDraftGenerator.extractJSONObject` 提取围栏/前后说明中的 JSON；未知 kind 仅丢弃该节点，有效节点保留前 8 条、至少 1 条；补解析用例。 |
+| 2 | 输入无上限 | 每条消息总长最多 1500 字符，工具输入/输出各最多 300；首次和增量 transcript 都最多最近 32 条；补长度与增量用例。 |
+| 3 | 面板透底 | 删除卡片上的自定义 glassEffect 背景，复用原生 popover，设置不透明 `AmberTheme.background`。 |
+| 4 | 边缘与系统行为 | popover 挂在岛上、箭头朝上，与产物架同宽 340；iPhone 保持 popover，删除自定义外点捕获层和下拉手势，使用系统外点关闭与模态无障碍行为。 |
+| 5 | 流式重算 | 生成中短路全部回顾相关输入；空闲时只计算一次 currentRecap；删除额外消息 ID Set。 |
+| 6 | 首次点开沿用后台失败 | 没有已存回顾且不在加载时，点开总是请求生成，不再被旧 error 阻止。 |
+| 7 | 待办覆盖草稿 | 先取输入控制器的当前草稿，非空则换行追加，空时直接填入；仍不发送。 |
+| 8 | 命中区 | 刷新和重试的 label 内设置 minHeight 44 与 Rectangle contentShape。 |
+| 9 | 无障碍 | 节点忽略装饰子视图，朗读“中文类型：标题”，可定位时给出“定位到原消息”hint；缺失来源给出不可定位说明。 |
+| 10 | 对齐、滚动提示与高亮 | 节点按 firstTextBaseline 对齐，移除额外 6pt 竖向 padding，保留 44pt；添加与产物架一致的 canScrollDown 底部渐隐；恢复 panel 状态动画，使产物架细条淡入淡出；高亮从时间线整行移到实际消息内容。 |
+| 11 | 重复判定与转发 | 保留引用投影置 nil 和点击时的可见错误，删除面板 currentMessageIDs；删 generator 的 eligible/isStale 包装，调用 Logic。 |
+
+本轮修改：`ConversationRecap.swift`、`ConversationRecapGenerator.swift`、`ChatRecapPanel.swift`、`ChatTopBarView.swift`、`ChatView.swift`、`ChatCollectionMessageList.swift`、`MessageBubbleView.swift`、`ChatIslandNavigation.swift`；测试为 `ConversationRecapTests.swift`、`ChatRecapLayoutTests.swift`。未修改其他已有 WIP。
+
+### 命令
+
+构建与测试合在一次 `xcodebuild test` 中完成，固定 iPhone 17 Pro / OS 26.5，仅选择 Phase 5 三类测试、ChatTopBar/ChatArtifact 九类测试与三组滚动测试。仍按用户要求排除既有编译问题文件 `ChatToolTimelineWidthOverflowTests.swift`，未修改该文件。
+
+```bash
+xcodegen generate --spec iosApp/project.yml
+xcodebuild -quiet -disableAutomaticPackageResolution \
+  -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  -parallel-testing-enabled NO -collect-test-diagnostics never \
+  EXCLUDED_SOURCE_FILE_NAMES=ChatToolTimelineWidthOverflowTests.swift \
+  -only-testing:iosAppTests/ConversationRecapTests \
+  -only-testing:iosAppTests/IOSConversationRecapStoreTests \
+  -only-testing:iosAppTests/ChatRecapLayoutTests \
+  -only-testing:iosAppTests/ChatTopBarArrivalTests \
+  -only-testing:iosAppTests/ChatTopBarDockTests \
+  -only-testing:iosAppTests/ChatTopBarLayoutTests \
+  -only-testing:iosAppTests/ChatArtifactActionsTests \
+  -only-testing:iosAppTests/ChatArtifactAnchorLayoutTests \
+  -only-testing:iosAppTests/ChatArtifactIntegrationTests \
+  -only-testing:iosAppTests/ChatArtifactShelfLayoutTests \
+  -only-testing:iosAppTests/ChatArtifactShelfStateTests \
+  -only-testing:iosAppTests/ChatArtifactTextDiffTests \
+  -only-testing:iosAppTests/ChatSwiftUIStreamReplayTests \
+  -only-testing:iosAppTests/NativeTimelineScrollCoreTests \
+  -only-testing:iosAppTests/ChatViewportPolicyTests \
+  -resultBundlePath /tmp/amber-phase5-review.xcresult test
+
+```
+
+### 结果
+
+构建成功；同一次 iPhone 17 Pro / iOS 26.5（`E26720E3-CBE3-4178-A469-1DFA9154395A`）回归为 **152 通过、1 失败、0 跳过**。结果包 `/tmp/amber-phase5-review.xcresult`，日志 `/tmp/amber-phase5-review.log`。
+
+| 范围 | 结果 |
+| --- | --- |
+| ConversationRecapTests | 10/10（本轮新增 4 项解析与输入限额用例） |
+| IOSConversationRecapStoreTests / ChatRecapLayoutTests | 8/8、1/1 |
+| ChatTopBarArrival / Dock / Layout | 7/7、5/5、1/1 |
+| ChatArtifactActions / AnchorLayout / Integration | 12/12、1/1、3/3 |
+| ChatArtifactShelfLayout / ShelfState / TextDiff | 2/2、3/3、5/5 |
+| ChatSwiftUIStreamReplayTests | 35/36 |
+| NativeTimelineScrollCoreTests / ChatViewportPolicyTests | 55/55、4/4 |
+
+唯一失败：`ChatSwiftUIStreamReplayTests.testPerfGrowingTableStreamingKeepsDisplayLinkResponsive`，80 行长表格流式期间帧间隔 p95 为 **46.4527ms > 40ms**。该性能门禁在前面阶段有失败历史；本轮不改相关阈值、不重复刷绿，未做因果隔离，不能据此认定根因。上一轮失败的 24KB 长文测试本次通过。
+
+### 重拍截图与检查
+
+四张均由本轮构建在 **iPhone 17 Pro / iOS 26.5** 用测试夹具重新生成，主代理已逐张打开查看：
+
+- `/tmp/amber-topbar/phase5-loading.png`
+- `/tmp/amber-topbar/phase5-normal.png`
+- `/tmp/amber-topbar/phase5-stale.png`
+- `/tmp/amber-topbar/phase5-failure.png`
+
+原生 popover 箭头对准岛，宽度/背景与产物架使用同一配置，系统负责外部遮罩与边距；卡片内未见正文透底。正常态节点和两条待办可见，长失败节点自然换行、箭头对齐首行；过时态底部渐隐可见，表示仍有可滚动内容。加载/失败态按内容收高，重试按钮完整。没有额外制作截图状态或扩大测试范围。
+
+`git diff --check` 通过。除本节列出的修复文件与计划记录外，开始本轮时的其余 WIP 保持原样；未 commit。
+
+
+## 停靠位面板改自绘（2026-09-27）
+
+### 修改
+
+- `ChatTopBarView.swift`：移除停靠位上的系统 popover，产物架与多条提醒列表共用右上 overlay 容器。背景为 `RoundedRectangle(cornerRadius: AmberTheme.homeCardRadius, style: .continuous)`，不透明 `AmberTheme.background`、0.5pt `AmberTheme.border` 描边，以及黑色 0.12 / radius 12 / y 5 的轻阴影；不使用 glassEffect 或带尖角的 Shape。
+- 宽度沿用 `min(340, geometry.size.width - (44 - toolbarButtonDiameter))`，右侧 padding 沿用 `(44 - toolbarButtonDiameter) / 2`，顶部为 controlsHeight + 8。产物架定位后的 shelfCollapsed 使用相同宽度和右侧计算，原有定位、测量 inset、下拉恢复与关闭接线保留。展开使用 topTrailing scale + opacity，Reduce Motion 使用 opacity。
+- `ChatView.swift`：把原先仅挂在消息列表的点按观察移到页面级 `SpatialTapGesture`，与现有手势同时识别；按实测全局边界排除面板和停靠位本身，其余点按发出关闭信号。不增加全屏透明命中层，不用拖动手势截获时间线滚动。面板空白区单独接收点按，避免误触下方消息；停靠位再次点按可收起面板。
+- 自绘容器增加 `.isModal`、VoiceOver escape 关闭动作和 screenChanged 通知。面板内容、产物架 header、导出/详情 sheet 等均保持原样。
+- 回顾的岛上原生 popover 保持原配置；`ChatRecapPanel.swift` 与本轮开始时字节一致，保留用户删除 x / ↗、24pt 图标列及“接下来”行对齐的改动，没有恢复 onClose 参数。
+- 仅在现有 `ChatArtifactShelfLayoutTests.swift`、`ChatTopBarLayoutTests.swift`、`ChatRecapLayoutTests.swift` 的截图保存处增加 dockpanel 文件名；没有新增测试类、重复截图等待或扩展测试矩阵。
+
+### 命令与结果
+
+```bash
+xcodegen generate --spec iosApp/project.yml
+xcodebuild -quiet -disableAutomaticPackageResolution \
+  -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  -parallel-testing-enabled NO -collect-test-diagnostics never \
+  EXCLUDED_SOURCE_FILE_NAMES=ChatToolTimelineWidthOverflowTests.swift \
+  -only-testing:iosAppTests/ConversationRecapTests \
+  -only-testing:iosAppTests/IOSConversationRecapStoreTests \
+  -only-testing:iosAppTests/ChatRecapLayoutTests \
+  -only-testing:iosAppTests/ChatTopBarArrivalTests \
+  -only-testing:iosAppTests/ChatTopBarDockTests \
+  -only-testing:iosAppTests/ChatTopBarLayoutTests \
+  -only-testing:iosAppTests/ChatArtifactActionsTests \
+  -only-testing:iosAppTests/ChatArtifactAnchorLayoutTests \
+  -only-testing:iosAppTests/ChatArtifactIntegrationTests \
+  -only-testing:iosAppTests/ChatArtifactShelfLayoutTests \
+  -only-testing:iosAppTests/ChatArtifactShelfStateTests \
+  -only-testing:iosAppTests/ChatArtifactTextDiffTests \
+  -only-testing:iosAppTests/ChatSwiftUIStreamReplayTests \
+  -only-testing:iosAppTests/NativeTimelineScrollCoreTests \
+  -only-testing:iosAppTests/ChatViewportPolicyTests \
+  -resultBundlePath /tmp/amber-dockpanel.xcresult test
+```
+
+构建通过；同一轮固定 iPhone 17 Pro / iOS 26.5（`E26720E3-CBE3-4178-A469-1DFA9154395A`）测试为 **151 通过、2 失败、0 跳过**。结果包 `/tmp/amber-dockpanel.xcresult`，日志 `/tmp/amber-dockpanel.log`。仍仅在编译命令中排除既有问题文件 `ChatToolTimelineWidthOverflowTests.swift`，未修改它。
+
+| 范围 | 结果 |
+| --- | --- |
+| ChatTopBar Arrival / Dock / Layout | 7/7、5/5、1/1 |
+| ChatArtifact Actions / AnchorLayout / Integration | 12/12、1/1、3/3 |
+| ChatArtifact ShelfLayout / ShelfState / TextDiff | 2/2、3/3、5/5 |
+| ChatRecapLayout / ConversationRecap / IOSConversationRecapStore | 1/1、10/10、8/8 |
+| NativeTimelineScrollCore / ChatViewportPolicy | 55/55、4/4 |
+| ChatSwiftUIStreamReplay | 34/36 |
+
+失败名与证据：
+
+1. `ChatSwiftUIStreamReplayTests.testLongProseViewportFollowStaysLineSizedAtTwentyFourKB`：可见文本发布次数 42 < 45。
+2. `ChatSwiftUIStreamReplayTests.testPerfGrowingTableStreamingKeepsDisplayLinkResponsive`：帧间隔 p95 为 54.9387ms > 40ms。
+
+两项都是此前出现过的既有时序门禁；本轮未隔离因果，不认定根因，也没有修改滚动实现、阈值或重复跑测刷绿。
+
+### 截图检查
+
+以下四张均为本轮构建在 iPhone 17 Pro / iOS 26.5 上用现有夹具重新生成，主代理已逐张打开查看：
+
+- `/tmp/amber-topbar/dockpanel-shelf.png`：有内容的产物架。
+- `/tmp/amber-topbar/dockpanel-empty.png`：空态。
+- `/tmp/amber-topbar/dockpanel-notices.png`：多条提醒列表。
+- `/tmp/amber-topbar/dockpanel-recap.png`：回顾正常态。
+
+检查结果：两种停靠位面板右上角均为连续圆角，没有尖角；右缘对齐停靠位圆形按钮，顶部有间隔，阴影轻且连续，正文仅在面板外可见，没有透入面板内部。空态按内容收高；提醒列表沿用原内容和最大 320pt 滚动区。回顾仍保留居中尖角和用户修改后的图标/文字布局。截图和单元测试不代替真机 VoiceOver 操作验收。
+
+`git diff --check` 通过；本轮之外的 WIP 保留，未 commit。
+
+
+## 未达门槛点岛提示（2026-09-27）
+
+### 实现
+
+- `ChatTopBarView.swift`：点下时显示 `.title`、未达到回顾门槛且当前未生成时，触发提示、`UIImpactFeedbackGenerator(style: .light)` 和 VoiceOver announcement“再聊几轮就能回顾”。已达门槛的展开/收起与生成中的原导航分支保持原样。
+- 提示复用现有 `ChatActivityIslandView` 的标题渲染与过渡，临时标题为“再聊几轮就能回顾”；轻鼓复用 `islandScale` 的 1.06 倍、0.2s / 0.65 弹簧，160ms 后用原 0.32s / 0.8 弹簧恢复。Reduce Motion 下跳过鼓动。未达门槛的 accessibilityHint 改为“再聊几轮后可展开对话回顾”。
+- `ChatTopBarArrivalState.swift`：在现有岛播报状态中记录提示的 1.8 秒截止时间；到期后移除临时标题、恢复当前对话标题。提醒播报优先并取消提示，播报期间不再插入提示；切换对话、开始生成或离开页面时清掉提示，旧动画任务不回写新播报的缩放。
+- `ChatTopBarLayoutTests.swift`：仅增加 `testIneligibleIslandTapShowsHintThenRestoresTitle` 一项，覆盖提示事件→标题替换→1.8 秒到期恢复，并检查播报优先/切换取消。同一测试使用该事件后的状态渲染生产顶栏并保存截图；这是状态单元断言与布局夹具，不把它表述为真机点击、触感或 VoiceOver 实测。
+
+### 命令与结果
+
+```bash
+xcodegen generate --spec iosApp/project.yml
+xcodebuild -quiet -disableAutomaticPackageResolution \
+  -project iosApp/AmberAgent.xcodeproj -scheme iosApp \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  -parallel-testing-enabled NO -collect-test-diagnostics never \
+  EXCLUDED_SOURCE_FILE_NAMES=ChatToolTimelineWidthOverflowTests.swift \
+  -only-testing:iosAppTests/ChatTopBarArrivalTests \
+  -only-testing:iosAppTests/ChatTopBarDockTests \
+  -only-testing:iosAppTests/ChatTopBarLayoutTests \
+  -only-testing:iosAppTests/ChatIslandNavigationTests \
+  -only-testing:iosAppTests/ChatIslandPresentationTests \
+  -only-testing:iosAppTests/ChatSwiftUIStreamReplayTests \
+  -only-testing:iosAppTests/NativeTimelineScrollCoreTests \
+  -only-testing:iosAppTests/ChatViewportPolicyTests \
+  -resultBundlePath /tmp/amber-island-hint.xcresult test
+```
+
+构建通过。固定 iPhone 17 Pro / iOS 26.5（`E26720E3-CBE3-4178-A469-1DFA9154395A`）单轮 **143 通过、0 失败、0 跳过**；未扩展到无关存储、产物或 Home 测试。
+
+| 测试 | 结果 |
+| --- | --- |
+| ChatTopBarArrival / Dock / Layout | 7/7、5/5、2/2（含新增用例） |
+| ChatIslandNavigation / ChatIslandPresentation | 8/8、26/26 |
+| ChatSwiftUIStreamReplay / NativeTimelineScrollCore / ChatViewportPolicy | 36/36、55/55、4/4 |
+
+日志 `/tmp/amber-island-hint.log`，结果包 `/tmp/amber-island-hint.xcresult`。仍只在命令中排除既有编译问题文件 `ChatToolTimelineWidthOverflowTests.swift`，未修改该文件。未修改滚动实现或测试阈值，通过后没有重复跑测。
+
+### 截图
+
+`/tmp/amber-topbar/island-recap-hint.png`，由本轮构建的 iPhone 17 Pro / iOS 26.5 夹具生成。主代理已打开查看：“再聊几轮就能回顾”完整显示，无省略号、无裁切，岛与两侧按钮无重叠。
+
+只修改上述三个 Swift 文件及本计划记录；无关 WIP 保留，未 commit。真机触感和 VoiceOver 实际播读未验收。
+
+
+## 面板收高与内边距修正（2026-09-27）
+
+- 提醒列表测量 header 与行内容高度，滚动区取 `min(内容高度, shelfHeight - header - 间距 - 上下 padding)`，两条提醒不再占满固定 320pt，长列表仍限制在 shelfHeight 内滚动。
+- 提醒列表、产物架、回顾统一删除多余的 12pt trailing scrollContent margin，使用外层左右各 16pt 内边距；提醒 header 的“清除”胶囊与状态文字右缘对齐。
+- 核对产物架后确认，旧的额外 top 8pt / available -8 已不存在。本次把普通态的底部 16pt 从滚动区外移入滚动内容，scrollHeight 不再重复扣除这段 padding；视口和渐隐延伸至面板底边，并按现有圆角裁剪内容。内容不足时总高度保持贴合，空态与多选底栏的原有留白保留。
+- 只修改 `ChatTopBarView.swift`、`ChatArtifactShelfPanel.swift`、`ChatRecapPanel.swift`，并调整现有 `ChatArtifactActionsTests` 高度断言、`ChatTopBarLayoutTests` 的少量/溢出提醒高度检查；没有新增测试类或扩展矩阵。
+
+验证命令（脚本内是 xcodegen + xcodebuild test，固定 iPhone 17 Pro / OS=26.5）：
+
+```bash
+zsh /tmp/amber-panel-fit-tests.sh
+```
+
+选择的相关测试仅为 `ChatTopBarLayoutTests`、`ChatArtifactActionsTests`、`ChatArtifactShelfLayoutTests`、`ChatArtifactAnchorLayoutTests`、`ChatRecapLayoutTests`，以及指定三组 `ChatSwiftUIStreamReplayTests` / `NativeTimelineScrollCoreTests` / `ChatViewportPolicyTests`。继续只在编译命令中排除 `ChatToolTimelineWidthOverflowTests.swift`，未修改该文件。
+
+构建通过；单轮 **111 通过、2 失败、0 跳过**。相关测试 **18/18**，三组滚动分别 **34/36、55/55、4/4**。结果包 `/tmp/amber-panel-fit.xcresult`，日志 `/tmp/amber-panel-fit.log`。失败：
+
+- `ChatSwiftUIStreamReplayTests.testLongProseViewportFollowStaysLineSizedAtTwentyFourKB`：发布次数 34 < 45。
+- `ChatSwiftUIStreamReplayTests.testPerfGrowingTableStreamingKeepsDisplayLinkResponsive`：长表格追加停顿指标 97.9628ms > 80ms。
+
+两项均为此前出现过的时序门禁；未隔离因果，不认定根因，不修改阈值或重复刷绿。
+
+本轮重新生成并逐张查看：`/tmp/amber-topbar/dockpanel-shelf.png`、`dockpanel-empty.png`、`dockpanel-notices.png`、`phase5-normal.png`（均在同一目录）。检查确认：提醒列表下方大块空白消失，右侧 header/状态对齐；文件卡片左右内边距相等，底部操作行完整，下一组内容在面板底边渐隐；空态正常，回顾正文宽度恢复且无裁切。保留原有圆角、右缘位置、不透明背景以及用户的回顾图标列/去箭头改动。
+
+`git diff --check` 通过；无关 WIP 保持原样，未 commit。
+
+## 停靠位面板卡顿与收起动画（2026-09-27）
+
+- 原因：面板/停靠位用 `onGeometryChange(.global)` 把区域写入 ChatTopBarView 的 `@State` 并回调到 ChatView 的 `@State dockInteractionRegions`；展开/收起的 scale 过渡与停靠位弹跳期间逐帧变化，导致整个聊天页逐帧重算（其中 `visibleSnippets`、回顾门槛、过时判定都遍历全部消息），长对话明显卡顿。页面级点按也在面板未打开时每次递增 `artifactShelfDismissRevision`，引发一次整页重算。
+- 修复：新增非观察的 `ChatDockTapRegions`（ChatTopBarView.swift），几何回调直接写入，点按时读取；只有面板打开时点外部才递增关闭信号。
+- 收起：改为非对称过渡，收起用 0.96 缩放 + 淡出、`easeOut(0.22)`，展开保持原弹簧。
+- 圆角：停靠位面板改为 `ChatTopBarLayout.dockPanelCornerRadius = 30`，与岛上回顾 popover 一致；回顾与产物架的横向内边距移入滚动内容，滚动条贴面板右缘。
+- 验证：ChatTopBar Layout/Dock/Arrival、ChatArtifact ShelfLayout/Integration/AnchorLayout、ChatRecapLayout 通过（iPhone 17 Pro / iOS 26.5）。两项流式计时门禁在 HEAD 基线（worktree 构建）同样失败（表格 p95 40.6–79ms、长文 2/3 失败），确认非本轮引入。

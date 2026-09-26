@@ -342,6 +342,7 @@ struct NativeChatTimelineView: View {
     @State private var consumedMessageAnchor: ChatMessageAnchor?
     @State private var scheduledMessageAnchor: ChatMessageAnchor?
     @State private var imageAccessibilityFocusToolCallID: String?
+    @State private var highlightedMessageAnchor: ChatMessageAnchor?
     @State private var islandToolHighlight: ChatIslandToolHighlight?
     @State private var islandToolHighlightTask: Task<Void, Never>?
     @State private var historyStartIndex: Int?
@@ -597,7 +598,13 @@ struct NativeChatTimelineView: View {
                 consumeExternalScrollToBottomTriggerIfNeeded()
                 scrollToMessageAnchorIfAvailable()
             }
+            .task(id: highlightedMessageAnchor) {
+                guard highlightedMessageAnchor != nil else { return }
+                do { try await Task.sleep(for: .seconds(1.2)) } catch { return }
+                highlightedMessageAnchor = nil
+            }
             .onDisappear {
+                highlightedMessageAnchor = nil
                 isNativeScrollSurfaceVisible = false
                 historyRevealAnchor = nil
                 nativeUserScrollActive = false
@@ -880,6 +887,9 @@ struct NativeChatTimelineView: View {
                 requestToken: request.requestToken
             )
         }
+        if request.toolCallID == nil, request.requestToken != nil {
+            highlightedMessageAnchor = request
+        }
         ChatImageGenerationResumeConsumption.markViewedIfCompleted(
             anchor: request,
             messages: currentMessages,
@@ -1017,6 +1027,11 @@ struct NativeChatTimelineView: View {
                 .environment(
                     \.chatIslandToolHighlight,
                     islandToolHighlight?.messageID == messageId ? islandToolHighlight : nil
+                )
+                .environment(
+                    \.chatMessageAnchorHighlighted,
+                    highlightedMessageAnchor?.conversationID == currentConversationID &&
+                        highlightedMessageAnchor?.messageID == messageId
                 )
                 .saturation(entry.isCompactedHistory ? 0 : 1)
                 .opacity(entry.isCompactedHistory && entry.role != MessageRole.user ? 0.7 : 1)

@@ -74,6 +74,17 @@ extension EnvironmentValues {
     }
 }
 
+private struct ChatMessageAnchorHighlightEnvironmentKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var chatMessageAnchorHighlighted: Bool {
+        get { self[ChatMessageAnchorHighlightEnvironmentKey.self] }
+        set { self[ChatMessageAnchorHighlightEnvironmentKey.self] = newValue }
+    }
+}
+
 struct ChatIslandToolAnchorHighlightModifier: ViewModifier {
     let toolCallID: String?
     var cornerRadius: CGFloat? = nil

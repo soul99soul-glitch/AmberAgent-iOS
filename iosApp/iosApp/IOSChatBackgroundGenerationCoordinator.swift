@@ -2796,6 +2796,11 @@ final class IOSChatBackgroundGenerationCoordinator {
                     store: job.conversationStore,
                     settings: settings
                 )
+                job.conversationStore.recapGenerator.schedule(
+                    conversationID: job.conversationId,
+                    messages: finalMessages,
+                    settings: settings
+                )
             }
         } else {
             WatchTaskCoordinator.shared.publish(
@@ -3547,6 +3552,11 @@ final class IOSChatBackgroundGenerationCoordinator {
                     conversationId: job.conversationId,
                     messages: completedMessages,
                     store: job.conversationStore,
+                    settings: settings
+                )
+                job.conversationStore.recapGenerator.schedule(
+                    conversationID: job.conversationId,
+                    messages: completedMessages,
                     settings: settings
                 )
             }

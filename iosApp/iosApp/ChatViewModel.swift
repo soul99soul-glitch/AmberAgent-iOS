@@ -2950,6 +2950,17 @@ final class ChatViewModel {
               state.pendingCouncilApproval == nil,
               state.pendingAskUser == nil,
               state.pendingRecipeApproval == nil else { return }
+        if let conversationId = state.conversationId {
+            let compactSummary = state.contextCompactState.status == .completed
+                ? state.contextCompactState.summary
+                : nil
+            conversationStore?.recapGenerator.schedule(
+                conversationID: conversationId,
+                messages: state.messages,
+                settings: sharedSettings,
+                compactSummary: compactSummary
+            )
+        }
         guard let last = state.messages.last, last.role == MessageRole.assistant,
               !last.toText().trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 

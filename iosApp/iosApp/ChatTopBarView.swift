@@ -1,10 +1,13 @@
 import SwiftUI
 import UIKit
 
-enum ChatTopBarPanel: Equatable {
+enum ChatTopBarPanel: Hashable, Identifiable {
     case shelf
     case shelfCollapsed
     case notices
+    case recap
+
+    var id: Self { self }
 }
 
 struct ChatTopBarView: View {
@@ -34,11 +37,22 @@ struct ChatTopBarView: View {
     var onLocateArtifact: (ConversationArtifactIndex.Source) -> Bool = { _ in false }
     var dismissShelfRevision = 0
     var onShelfStripHeightChange: (CGFloat) -> Void = { _ in }
+    var tapRegions = ChatDockTapRegions()
+
+    var recapEligible = false
+    var recap: ConversationRecap? = nil
+    var recapLoading = false
+    var recapFailure: String? = nil
+    var recapStale = false
+    var onOpenRecap: () -> Void = {}
+    var onRefreshRecap: () -> Void = {}
+    var onLocateRecapNode: (ConversationRecap.Node) -> Bool = { _ in false }
+    var onRecapNextStep: (String) -> Bool = { _ in false }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pressedPresentation: ChatIslandPresentation?
     @State var panel: ChatTopBarPanel? = nil
-    @State private var arrivalState = ChatTopBarArrivalState()
+    @State var arrivalState = ChatTopBarArrivalState()
     @State private var pressedAnnouncementID: String?
     @State private var islandScale: CGFloat = 1
     @State private var flightProgress: CGFloat = 0
@@ -48,6 +62,8 @@ struct ChatTopBarView: View {
     @State private var artifactFlightID: String?
     @State private var dockScale: CGFloat = 1
     @State private var locatedArtifactTitle = "产物架"
+    @State private var noticeHeaderHeight: CGFloat = 0
+    @State private var noticeRowsHeight: CGFloat?
 
     private var arrivalInput: ChatTopBarArrivalState.Input {
         .init(conversationID: conversationID,
@@ -82,11 +98,15 @@ struct ChatTopBarView: View {
                         onOpenShelf: { panel = .shelf }
                     )
                     .scaleEffect(reduceMotion ? 1 : dockScale)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.dock = $0 }
                 }
 
                 island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))
-                    .popover(isPresented: panelBinding(.notices), arrowEdge: .top) {
-                        noticeList
+                    .popover(isPresented: Binding(
+                        get: { panel == .recap },
+                        set: { if !$0 && panel == .recap { panel = nil } }
+                    ), arrowEdge: .top) {
+                        recapPanel
                             .frame(width: min(340, geometry.size.width))
                             .presentationCompactAdaptation(.popover)
                             .presentationBackground(AmberTheme.background)
@@ -108,26 +128,32 @@ struct ChatTopBarView: View {
             }
             .frame(height: ChatTopBarLayout.controlsHeight, alignment: .bottom)
             .overlay(alignment: .topTrailing) {
-                if panel == .shelf {
-                    ChatArtifactShelfPanel(
-                        artifacts: artifacts, maxHeight: shelfHeight,
-                        onLocate: locateArtifact, onClose: { panel = nil },
-                        snippets: snippets, adoptedVersions: adoptedVersions,
-                        conversationTitle: conversationTitle,
-                        onLocateSnippet: { snippet in
-                            guard onLocateSnippet(snippet) else { return }
-                            locatedArtifactTitle = "产物架 · 第 \(snippet.turn) 轮"
-                            panel = .shelfCollapsed
-                        },
-                        onUnpinSnippet: onUnpinSnippet,
-                        onAdoptVersion: onAdoptVersion,
-                        onContinue: onContinueArtifact
-                    )
-                    .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
-                    .frame(height: shelfHeight, alignment: .top)
-                    .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
-                    .padding(.top, ChatTopBarLayout.controlsHeight)
-                    .transition(reduceMotion ? .opacity : .scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity))
+                if panel == .shelf || panel == .notices {
+                    dockPanel
+                        .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
+                        .clipShape(RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous))
+                        .background {
+                            RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous)
+                                .fill(AmberTheme.background)
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous)
+                                        .strokeBorder(AmberTheme.border, lineWidth: 0.5)
+                                }
+                                .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 5)
+                        }
+                        .contentShape(RoundedRectangle(cornerRadius: ChatTopBarLayout.dockPanelCornerRadius, style: .continuous))
+                        // Blank panel space must not activate the timeline underneath.
+                        .onTapGesture { }
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
+                        .frame(height: shelfHeight, alignment: .top)
+                        .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
+                        .padding(.top, ChatTopBarLayout.controlsHeight + 8)
+                        .transition(reduceMotion ? .opacity : .asymmetric(
+                            insertion: .scale(scale: 0.92, anchor: .topTrailing).combined(with: .opacity),
+                            // 收起用缓出而非展开的弹簧，避免末段骤然消失。
+                            removal: .scale(scale: 0.96, anchor: .topTrailing).combined(with: .opacity)
+                                .animation(.easeOut(duration: 0.22))
+                        ))
                 } else if panel == .shelfCollapsed {
                     ChatArtifactShelfStrip(
                         title: locatedArtifactTitle,
@@ -138,6 +164,7 @@ struct ChatTopBarView: View {
                     }
                     .onDisappear { onShelfStripHeightChange(0) }
                     .frame(width: min(340, geometry.size.width - (44 - ChatTopBarLayout.toolbarButtonDiameter)))
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.panel = $0 }
                     .padding(.trailing, (44 - ChatTopBarLayout.toolbarButtonDiameter) / 2)
                     .padding(.top, ChatTopBarLayout.controlsHeight + 8)
                     .transition(.opacity)
@@ -160,6 +187,10 @@ struct ChatTopBarView: View {
             }
         }
         .padding(.horizontal, 18)
+        .onChange(of: panel, initial: true) { _, panel in
+            tapRegions.isPanelOpen = panel == .shelf || panel == .shelfCollapsed || panel == .notices
+            if !tapRegions.isPanelOpen { tapRegions.panel = .null }
+        }
         .onChange(of: arrivalInput, initial: true) { old, input in
             if old.conversationID != input.conversationID {
                 panel = nil
@@ -202,6 +233,17 @@ struct ChatTopBarView: View {
             }
             do { try await Task.sleep(for: .seconds(reduceMotion ? 2.5 : 1.94)) } catch { return }
         }
+        .task(id: arrivalState.recapHintDeadline) {
+            guard let deadline = arrivalState.recapHintDeadline else { return }
+            if !reduceMotion {
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.65)) { islandScale = 1.06 }
+                do { try await Task.sleep(for: .milliseconds(160)) } catch { return }
+                guard arrivalState.recapHintDeadline == deadline else { return }
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { islandScale = 1 }
+            }
+            do { try await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow))) } catch { return }
+            arrivalState.expireRecapHint()
+        }
         .task(id: artifactArrival?.id) {
             guard !Task.isCancelled else { return }
             artifactFlightID = artifactArrival?.id
@@ -225,13 +267,26 @@ struct ChatTopBarView: View {
             withAnimation(.spring(response: 0.24, dampingFraction: 0.7)) { dockScale = 1 }
         }
         .animation(reduceMotion ? .easeOut(duration: 0.16) : .spring(response: 0.3, dampingFraction: 0.85), value: panel)
+        .onChange(of: isGenerating) { _, generating in
+            if generating {
+                if panel == .recap { panel = nil }
+                islandScale = 1
+            }
+        }
+        .onChange(of: presentation.displayedState.kind) { _, kind in
+            if kind != .title {
+                arrivalState.recapHintDeadline = nil
+                if arrivalState.arrival == nil { islandScale = 1 }
+            }
+        }
         .onChange(of: dismissShelfRevision) { _, _ in
-            if panel == .shelf || panel == .shelfCollapsed { panel = nil }
+            if panel == .shelf || panel == .shelfCollapsed || panel == .notices { panel = nil }
         }
         .onDisappear {
             resetArrivalMotion()
             arrivalState.arrival = nil
             arrivalState.announcement = nil
+            arrivalState.recapHintDeadline = nil
             pressedPresentation = nil
             pressedAnnouncementID = nil
         }
@@ -247,7 +302,7 @@ struct ChatTopBarView: View {
     }
 
     private func island(maxWidth: CGFloat) -> some View {
-        ChatActivityIslandView(presentation: presentation, maxWidth: maxWidth,
+        ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,
                                conversationKey: conversationID, announcement: announcement)
             .frame(height: 44)
             .contentShape(Capsule())
@@ -258,7 +313,7 @@ struct ChatTopBarView: View {
                 pressedPresentation = nil
                 pressedAnnouncementID = nil
                 if let announcedID { open(announcedID) }
-                else if let held { onIslandTap(held) }
+                else if let held { tapIsland(held) }
             }
             .onLongPressGesture(minimumDuration: 0.45, pressing: { pressing in
                 if pressing {
@@ -275,11 +330,11 @@ struct ChatTopBarView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityIdentifier("topbar-island")
             .accessibilityHint(announcement != nil ? "轻点进入播报的对话"
-                                : (presentation.displayedState.kind == .title ? "当前对话"
+                                : (presentation.displayedState.kind == .title ? (recapEligible ? "轻点展开对话回顾" : "再聊几轮后可展开对话回顾")
                                    : (isGenerating ? "轻点定位当前活动，长按停止生成" : "轻点定位当前活动")))
             .accessibilityAction {
                 if let announcement { open(announcement.conversationId) }
-                else { onIslandTap(presentation) }
+                else { tapIsland(presentation) }
             }
             .accessibilityActions {
                 if isGenerating {
@@ -291,15 +346,40 @@ struct ChatTopBarView: View {
             }
     }
 
+    private func tapIsland(_ held: ChatIslandPresentation) {
+        if held.displayedState.kind == .title, panel == .recap {
+            panel = nil
+        } else if held.displayedState.kind == .title, recapEligible {
+            panel = .recap
+            onOpenRecap()
+        } else if held.displayedState.kind == .title, !isGenerating {
+            if arrivalState.didTapIneligibleTitle() {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                UIAccessibility.post(notification: .announcement, argument: ChatTopBarArrivalState.recapHintTitle)
+            }
+        } else {
+            onIslandTap(held)
+        }
+    }
+
     private var noticeList: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("对话提醒").font(.headline)
                 Spacer()
-                Button("关闭", systemImage: "xmark") { panel = nil }
-                    .labelStyle(.iconOnly)
-                    .frame(width: 44, height: 44)
+                Button("清除") {
+                    for notice in notices { onDismiss(notice.conversationId) }
+                    arrivalState.arrival = nil
+                    arrivalState.announcement = nil
+                    panel = nil
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.small)
+                .frame(minHeight: 44)
+                .accessibilityIdentifier("topbar-notices-clear")
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { noticeHeaderHeight = $0 }
             ScrollView {
                 VStack(spacing: 4) {
                     ForEach(notices) { notice in
@@ -307,16 +387,64 @@ struct ChatTopBarView: View {
                                             onDismiss: { onDismiss(notice.conversationId) })
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { noticeRowsHeight = $0 }
             }
-            .frame(maxHeight: 320)
+            .frame(height: min(noticeRowsHeight ?? noticeAvailableHeight, noticeAvailableHeight))
+            .scrollBounceBehavior(.basedOnSize)
         }
         .padding(16)
         .foregroundStyle(AmberTheme.foreground)
         .accessibilityIdentifier("topbar-notice-list")
     }
 
-    private func panelBinding(_ target: ChatTopBarPanel) -> Binding<Bool> {
-        Binding(get: { panel == target }, set: { panel = $0 ? target : nil })
+    private var noticeAvailableHeight: CGFloat {
+        max(0, shelfHeight - noticeHeaderHeight - 12 - 32)
+    }
+
+    private var recapPanel: some View {
+        ChatRecapPanel(
+            recap: recap, isLoading: recapLoading, failure: recapFailure,
+            isStale: recapStale, maxHeight: shelfHeight, onRefresh: onRefreshRecap,
+            onLocate: { node in
+                if onLocateRecapNode(node) { panel = nil }
+            },
+            onNextStep: { step in
+                if onRecapNextStep(step) { panel = nil }
+            }
+        )
+    }
+
+    private var artifactShelf: some View {
+        ChatArtifactShelfPanel(
+            artifacts: artifacts, maxHeight: shelfHeight,
+            onLocate: locateArtifact, onClose: { panel = nil },
+            snippets: snippets, adoptedVersions: adoptedVersions,
+            conversationTitle: conversationTitle,
+            onLocateSnippet: { snippet in
+                guard onLocateSnippet(snippet) else { return }
+                locatedArtifactTitle = "产物架 · 第 \(snippet.turn) 轮"
+                panel = .shelfCollapsed
+            },
+            onUnpinSnippet: onUnpinSnippet,
+            onAdoptVersion: onAdoptVersion,
+            onContinue: onContinueArtifact
+        )
+    }
+
+    private var dockPanel: some View {
+        Group {
+            if panel == .shelf { artifactShelf }
+            else { noticeList }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
+        .accessibilityAction(.escape) { panel = nil }
+        .task {
+            await Task.yield()
+            UIAccessibility.post(notification: .screenChanged, argument: nil)
+        }
     }
 
     private func resetArrivalMotion() {
@@ -332,6 +460,10 @@ struct ChatTopBarView: View {
     }
 
     private func tapDock() {
+        if panel == .shelf || panel == .notices {
+            panel = nil
+            return
+        }
         switch dockState {
         case .hidden: break
         case .shelf: panel = .shelf
@@ -396,6 +528,18 @@ private struct ChatTopBarNoticeRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(notice.title)，\(notice.kind.statusTitle)，\(notice.preview ?? "")")
-        .accessibilityAction(named: Text("关闭提醒"), onDismiss)
+        .accessibilityAction(named: Text("清除提醒"), onDismiss)
+    }
+}
+
+/// 停靠位与其面板的屏幕区域，只在点按时读取。不作为视图状态，
+/// 面板展开/收起动画的逐帧几何变化不会触发聊天页重算。
+final class ChatDockTapRegions {
+    var dock = CGRect.null
+    var panel = CGRect.null
+    var isPanelOpen = false
+
+    func contains(_ point: CGPoint) -> Bool {
+        dock.contains(point) || panel.contains(point)
     }
 }

@@ -14,6 +14,7 @@ final class ChatArtifactShelfLayoutTests: XCTestCase {
         let window = UIWindow(windowScene: scene)
         window.overrideUserInterfaceStyle = .light
         defer {
+            window.rootViewController?.dismiss(animated: false)
             window.isHidden = true
             window.rootViewController = nil
             previous?.makeKey()
@@ -47,6 +48,13 @@ final class ChatArtifactShelfLayoutTests: XCTestCase {
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             if let data = image.pngData() {
                 try? data.write(to: directory.appendingPathComponent("\(name).png"), options: [.atomic])
+                let dockName = [
+                    "phase3-panel-artifacts-iphone17pro": "dockpanel-shelf",
+                    "phase3-panel-empty-iphone17pro": "dockpanel-empty"
+                ][name]
+                if let dockName {
+                    try? data.write(to: directory.appendingPathComponent("\(dockName).png"), options: [.atomic])
+                }
             }
             print("CHAT_ARTIFACT_SHELF_EVIDENCE \(directory.appendingPathComponent("\(name).png").path)")
         }
@@ -116,6 +124,7 @@ final class ChatArtifactShelfLayoutTests: XCTestCase {
         let window = UIWindow(windowScene: scene)
         window.overrideUserInterfaceStyle = .light
         defer {
+            window.rootViewController?.dismiss(animated: false)
             window.isHidden = true
             window.rootViewController = nil
             previous?.makeKey()

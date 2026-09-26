@@ -244,8 +244,8 @@ final class ChatArtifactActionsTests: XCTestCase {
         let normal = ChatArtifactShelfPanel.scrollHeight(
             maxHeight: 500, headerHeight: 44, footerHeight: 90, sectionsHeight: 1_000, isSelecting: false
         )
-        XCTAssertEqual(selecting, 500 - 44 - 90 - 28 - 32 - 8)
-        XCTAssertEqual(normal, 500 - 44 - 14 - 32 - 8)
+        XCTAssertEqual(selecting, 500 - 44 - 90 - 28 - 32)
+        XCTAssertEqual(normal, 500 - 44 - 14 - 16, "普通态底部留白位于滚动内容内，不重复扣除")
     }
 
     /// 代码块不再挂自己的 contextMenu（否则长按代码会吞掉整条消息菜单），收藏走 headerAccessory。

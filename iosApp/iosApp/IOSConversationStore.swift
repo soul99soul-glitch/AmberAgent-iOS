@@ -112,11 +112,26 @@ struct IOSConversationWriteBaseline: Equatable {
 final class IOSConversationStore {
 
     let artifactStore: IOSConversationArtifactStore
+    let recapStore: IOSConversationRecapStore
+
+    /// Shared by the foreground panel and background completion callbacks.
+    /// The generator holds this store as unowned to keep ownership one-way.
+    @ObservationIgnored lazy var recapGenerator: ConversationRecapGenerator = {
+        ConversationRecapGenerator(
+            conversationStore: self,
+            recapStore: recapStore,
+            textProvider: OpenAIKmpProviderAdapter()
+        )
+    }()
 
     // MARK: - Observable state
 
     /// 当前选中的会话。App 启动时由 [bootstrap] 选最近一条或新建。
     private(set) var currentConversation: Conversation?
+
+    var currentRecapBranchID: String? {
+        currentConversation.map { ConversationRecap.branchIdentifier(for: $0) }
+    }
 
     /// 会话摘要列表（按 updateAt 倒序、置顶优先，由 KMP 层排序）。
     private(set) var summaries: [ConversationSummary] = []
@@ -247,6 +262,9 @@ final class IOSConversationStore {
         self.artifactStore = IOSConversationArtifactStore(
             fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("artifact-shelf.json")
         )
+        self.recapStore = IOSConversationRecapStore(
+            fileURL: URL(fileURLWithPath: baseDirPath).appendingPathComponent("conversation-recaps.json")
+        )
         self.listPreviewsFileURL = previewsURL
         self.listIconsFileURL = iconsURL
         let edgeDao: (() -> ThreadEdgeDao)? = threadEdgeDaoProvider
@@ -267,6 +285,22 @@ final class IOSConversationStore {
         if let error = artifactStore.storageError {
             publishIOError(operation: "读取产物架", detail: error.localizedDescription)
         }
+        if let error = recapStore.storageError {
+            publishIOError(operation: "读取回顾", detail: error.localizedDescription)
+        }
+    }
+
+    /// Resolve the selected-variant fingerprint for a live or background-owned
+    /// conversation without consulting the currently selected conversation.
+    func branchIdentifier(for conversationID: KotlinUuid, messages: [UIMessage]? = nil) async -> String? {
+        if let currentConversation, currentConversation.id == conversationID {
+            return ConversationRecap.branchIdentifier(for: currentConversation, messages: messages)
+        }
+        guard let conversation = await conversationForMessageMutation(
+            id: conversationID,
+            operation: "读取回顾分支"
+        ) else { return nil }
+        return ConversationRecap.branchIdentifier(for: conversation, messages: messages)
     }
 
     /// Update the visible projection after the edge is durable and before the
@@ -385,10 +419,19 @@ final class IOSConversationStore {
         await waitForConversationWritesToDrain()
         try await storage.importConversations(serializedConversations: documents)
         // 被备份覆盖的会话，其消息 ID 与本机收藏不再对应；收藏不随备份恢复。
+        recapGenerator.invalidate(
+            conversationIDs: Array(restoredIds),
+            reason: "对话已恢复，请重新生成回顾。"
+        )
         do {
             for id in restoredIds { try artifactStore.removeConversation(id) }
         } catch {
             publishIOError(operation: "清理产物架", detail: error.localizedDescription)
+        }
+        do {
+            for id in restoredIds { try recapStore.removeConversation(id) }
+        } catch {
+            publishIOError(operation: "清理回顾", detail: error.localizedDescription)
         }
         var relationRestoreError: Error?
         if let restoredEdges, let edgeDao {
@@ -970,12 +1013,21 @@ final class IOSConversationStore {
         }
 
         onDeletionCommitted([id] + descendants)
+        let deletedConversationKeys = ([id] + descendants).map { $0.toHexDashString() }
+        recapGenerator.invalidate(conversationIDs: deletedConversationKeys)
         do {
             for deletedID in [id] + descendants {
                 try artifactStore.removeConversation(deletedID.toHexDashString())
             }
         } catch {
             publishIOError(operation: "清理产物架", detail: error.localizedDescription)
+        }
+        do {
+            for conversationID in deletedConversationKeys {
+                try recapStore.removeConversation(conversationID)
+            }
+        } catch {
+            publishIOError(operation: "清理回顾", detail: error.localizedDescription)
         }
         pendingBackgroundContentConversationIds.remove(String(describing: id))
         if listPreviewsByConversationId.removeValue(forKey: sequenceKey(for: id)) != nil {

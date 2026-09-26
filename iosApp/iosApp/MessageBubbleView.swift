@@ -129,6 +129,7 @@ struct MessageBubbleView: View {
     @Environment(\.locale) private var locale
     @Environment(\.chatMessageEditingAllowed) private var messageEditingAllowed
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
+    @Environment(\.chatMessageAnchorHighlighted) private var chatMessageAnchorHighlighted
     @State private var workspaceSaveAlert: WorkspaceSaveAlert?
     @State private var toolDetailTarget: ToolDetailTarget?
     @AccessibilityFocusState private var focusedGeneratedImageToolCallID: String?
@@ -161,7 +162,7 @@ struct MessageBubbleView: View {
                                 .accessibilityIdentifier("chat.mailbox.source")
                         }
                         variantSwitcher
-                        messageParts
+                        messagePartsWithAnchorHighlight
                     }
                     .frame(maxWidth: ChatLayout.userMaxWidth, alignment: .trailing)
                 }
@@ -179,7 +180,7 @@ struct MessageBubbleView: View {
                     }
                     variantSwitcher
                     fallbackThinkingCard
-                    messageParts
+                    messagePartsWithAnchorHighlight
                     annotationsBlock
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -534,6 +535,29 @@ struct MessageBubbleView: View {
                 onOpenSubagentConversation: onOpenSubagentConversation
             )
         }
+    }
+
+    private var messagePartsWithAnchorHighlight: some View {
+        messageParts
+            .overlay {
+                if chatMessageAnchorHighlighted {
+                    Group {
+                        if isUser {
+                            ChatUserBubble.bubbleShape
+                                .stroke(AmberTheme.accentAmber, lineWidth: 2)
+                        } else {
+                            RoundedRectangle(cornerRadius: AmberTheme.radiusMedium, style: .continuous)
+                                .stroke(AmberTheme.accentAmber, lineWidth: 2)
+                        }
+                    }
+                    .shadow(color: AmberTheme.accentAmber.opacity(0.5), radius: 7)
+                    .allowsHitTesting(false)
+                }
+            }
+            .animation(
+                reduceMotion ? nil : .easeOut(duration: 0.18),
+                value: chatMessageAnchorHighlighted
+            )
     }
 
     @ViewBuilder

@@ -199,6 +199,7 @@ final class ChatArtifactAnchorLayoutTests: XCTestCase {
         ))
         window.makeKeyAndVisible()
         defer {
+            window.rootViewController?.dismiss(animated: false)
             window.isHidden = true
             window.rootViewController = nil
             previousWindow?.makeKey()

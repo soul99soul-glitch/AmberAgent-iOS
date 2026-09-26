@@ -33,13 +33,16 @@ struct ChatArtifactShelfPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: sectionSpacing) {
             header
+                .padding(.horizontal, contentPadding)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
 
             if artifactItemCount == 0 {
                 emptyState
+                    .padding(.horizontal, contentPadding)
             } else {
                 ScrollView(.vertical) {
                     shelfSections
+                        .padding(.horizontal, contentPadding)
                         .fixedSize(horizontal: false, vertical: true)
                         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sectionsHeight = $0 }
                 }
@@ -64,16 +67,12 @@ struct ChatArtifactShelfPanel: View {
 
             if isSelecting {
                 selectionActions
+                    .padding(.horizontal, contentPadding)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
             }
         }
-        .padding(contentPadding)
-        .padding(.top, 8)
-        .background {
-            ChatArtifactShelfShape(cornerRadius: AmberTheme.homeCardRadius)
-                .fill(AmberTheme.background)
-                .modifier(ChatArtifactShelfGlass())
-        }
+        .padding(.top, contentPadding)
+        .padding(.bottom, artifactItemCount == 0 || isSelecting ? contentPadding : 0)
         .accessibilityIdentifier("chat-artifact-shelf")
         .fullScreenCover(item: $selectedImage) { image in
             ChatGeneratedImagePreview(urlString: image.url, image: nil)
@@ -117,7 +116,10 @@ struct ChatArtifactShelfPanel: View {
         guard let maxHeight else { return sectionsHeight }
         let gaps = sectionSpacing * (isSelecting ? 2 : 1)
         let footer = isSelecting ? footerHeight : 0
-        let available = max(0, maxHeight - headerHeight - footer - gaps - contentPadding * 2 - 8)
+        // Without a footer, the viewport reaches the panel edge. Its bottom
+        // breathing room is scrollable content, not a blank strip below the fade.
+        let outerPadding = contentPadding * (isSelecting ? 2 : 1)
+        let available = max(0, maxHeight - headerHeight - footer - gaps - outerPadding)
         return min(sectionsHeight ?? available, available)
     }
 
@@ -136,7 +138,7 @@ struct ChatArtifactShelfPanel: View {
                 snippetsSection
             }
         }
-        .padding(.bottom, 2)
+        .padding(.bottom, 2 + (isSelecting ? 0 : contentPadding))
     }
 
     private var artifactItemCount: Int { artifacts.count + snippets.count }
@@ -1181,56 +1183,5 @@ private struct ChatArtifactDetailSheet: View {
                     .textSelection(.enabled)
             }
         }
-    }
-}
-
-private struct ChatArtifactShelfGlass: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.0, *) {
-            content.glassEffect(.regular, in: ChatArtifactShelfShape(cornerRadius: AmberTheme.homeCardRadius))
-        } else {
-            content
-                .background(.ultraThinMaterial, in: ChatArtifactShelfShape(cornerRadius: AmberTheme.homeCardRadius))
-                .overlay {
-                    ChatArtifactShelfShape(cornerRadius: AmberTheme.homeCardRadius)
-                        .stroke(AmberTheme.border.opacity(0.28), lineWidth: 0.5)
-                }
-                .shadow(color: .black.opacity(0.08), radius: 16, y: 6)
-        }
-    }
-}
-
-
-private struct ChatArtifactShelfShape: Shape {
-    let cornerRadius: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let top = rect.minY + 8
-        // 面板右缘与圆形停靠位齐平，尖角的中心距右缘恰为按钮半径。
-        let arrowX = rect.maxX - ChatTopBarLayout.toolbarButtonDiameter / 2
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX + cornerRadius, y: top))
-        path.addLine(to: CGPoint(x: arrowX - 9, y: top))
-        path.addQuadCurve(to: CGPoint(x: arrowX - 2, y: top - 7),
-                          control: CGPoint(x: arrowX - 5, y: top - 2))
-        path.addQuadCurve(to: CGPoint(x: arrowX + 2, y: top - 7),
-                          control: CGPoint(x: arrowX, y: top - 9))
-        path.addQuadCurve(to: CGPoint(x: arrowX + 8, y: top + 2),
-                          control: CGPoint(x: arrowX + 4, y: top - 5))
-        path.addCurve(to: CGPoint(x: rect.maxX, y: top + cornerRadius),
-                      control1: CGPoint(x: rect.maxX - 1, y: top + 5),
-                      control2: CGPoint(x: rect.maxX, y: top + cornerRadius - 8))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY),
-                          control: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius),
-                          control: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: top + cornerRadius))
-        path.addQuadCurve(to: CGPoint(x: rect.minX + cornerRadius, y: top),
-                          control: CGPoint(x: rect.minX, y: top))
-        path.closeSubpath()
-        return path
     }
 }

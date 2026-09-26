@@ -7,6 +7,8 @@ import PhotosUI
 enum ChatTopBarLayout {
     static let controlsHeight: CGFloat = 54
     static let toolbarButtonDiameter: CGFloat = 38
+    /// 停靠位自绘面板与岛上回顾的系统 popover 圆角保持一致。
+    static let dockPanelCornerRadius: CGFloat = 30
     /// 每侧保留 44pt 命中区和 12pt 间距，鼓动后的岛也不能进入按钮区域。
     static let islandSideGutter: CGFloat = 56
     static func availableIslandWidth(in width: CGFloat) -> CGFloat {
@@ -212,6 +214,7 @@ struct ChatView: View {
     @State private var chatListSummary = ChatListSummarySnapshot()
     @State private var artifactShelf = ChatArtifactShelfState()
     @State private var artifactShelfDismissRevision = 0
+    @State private var dockTapRegions = ChatDockTapRegions()
     @State private var artifactShelfStripHeight: CGFloat = 0
     @State private var messageEditDraft: ChatMessageEditDraft?
     @State private var pendingDeleteMessageId: String?
@@ -255,7 +258,6 @@ struct ChatView: View {
                         .frame(height: ChatTopBarLayout.controlsHeight + ChatTopBarLayout.softEdgeExtension + artifactShelfStripHeight)
                         .allowsHitTesting(false)
                 }
-                .simultaneousGesture(TapGesture().onEnded { artifactShelfDismissRevision &+= 1 })
 
             if let record = compactWebMountSession {
                 VStack {
@@ -471,6 +473,13 @@ struct ChatView: View {
 
     var body: some View {
         chatContent
+        .simultaneousGesture(SpatialTapGesture(coordinateSpace: .global).onEnded { tap in
+            // Observe taps alongside the existing controls/scroll views; do not
+            // place a full-screen hit-test layer over the timeline.
+            if dockTapRegions.isPanelOpen, !dockTapRegions.contains(tap.location) {
+                artifactShelfDismissRevision &+= 1
+            }
+        })
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .onDisappear {
@@ -1071,7 +1080,12 @@ struct ChatView: View {
     }
 
     private var topBar: some View {
-        ChatTopBarView(
+        let generating = viewModel.isGenerationActive
+        let recap = generating ? nil : currentRecap
+        let recapLoading = !generating && (currentConversationIdString.map {
+            conversationStore.recapGenerator.isLoading(for: $0)
+        } ?? false)
+        return ChatTopBarView(
             presentation: islandPresentation ?? .idle(topIslandState),
             conversationID: currentConversationIdString,
             hasMessages: chatListSummary.hasMessages,
@@ -1127,10 +1141,78 @@ struct ChatView: View {
                 return true
             },
             dismissShelfRevision: artifactShelfDismissRevision,
-            onShelfStripHeightChange: { artifactShelfStripHeight = $0 }
+            onShelfStripHeightChange: { artifactShelfStripHeight = $0 },
+            tapRegions: dockTapRegions,
+            recapEligible: !generating && ConversationRecapLogic.eligible(messages: viewModel.messages),
+            recap: recap,
+            recapLoading: recapLoading,
+            recapFailure: generating ? nil : currentConversationIdString.flatMap { conversationStore.recapGenerator.error(for: $0) },
+            recapStale: recap.map {
+                ConversationRecapLogic.isStale(
+                    recap: $0, messages: viewModel.messages, branchID: conversationStore.currentRecapBranchID ?? ""
+                )
+            } ?? false,
+            onOpenRecap: {
+                if recap == nil, !recapLoading {
+                    requestRecap()
+                }
+            },
+            onRefreshRecap: requestRecap,
+            onLocateRecapNode: locateRecapNode,
+            onRecapNextStep: fillRecapNextStep
         )
         .onAppear { syncIslandPresentation() }
         .onChange(of: topIslandState) { _, _ in syncIslandPresentation() }
+    }
+
+    private var currentRecap: ConversationRecap? {
+        currentConversationIdString.flatMap {
+            conversationStore.recapGenerator.recap(for: $0, messages: viewModel.messages)
+        }
+    }
+
+    private func requestRecap() {
+        guard let id = conversationStore.currentConversation?.id else {
+            showRecapError("对话已不存在，无法生成回顾。")
+            return
+        }
+        let messages = viewModel.messages
+        let summary = viewModel.contextCompactState.summary
+        Task {
+            await conversationStore.recapGenerator.request(
+                conversationID: id, messages: messages, settings: sharedSettings, compactSummary: summary
+            )
+        }
+    }
+
+    private func locateRecapNode(_ node: ConversationRecap.Node) -> Bool {
+        guard let id = currentConversationIdString,
+              let messageID = node.messageID,
+              viewModel.messages.contains(where: { ChatMessageProjector.messageId(for: $0) == messageID }) else {
+            showRecapError("原消息不在当前分支中，无法定位。")
+            return false
+        }
+        requestedMessageAnchor = ChatMessageAnchor(
+            conversationID: id, messageID: messageID, requestToken: UUID()
+        )
+        return true
+    }
+
+    private func fillRecapNextStep(_ step: String) -> Bool {
+        guard !hasPendingComposerGate, !viewModel.currentConversationIsOrchestratedChild else {
+            showRecapError("当前对话暂不可输入，请先完成待处理操作。")
+            return false
+        }
+        let draft = composerInputController.currentText() ?? viewModel.inputText
+        viewModel.fillInputFromSuggestion(draft.isEmpty ? step : draft + "\n" + step)
+        isInputFocused = true
+        return true
+    }
+
+    private func showRecapError(_ message: String) {
+        conversationStore.publishUserVisibleError(IOSUserVisibleError(
+            title: "回顾", message: message, severity: .error
+        ))
     }
 
     private func updateArtifactShelf(_ action: (IOSConversationArtifactStore, String) throws -> Void) {
