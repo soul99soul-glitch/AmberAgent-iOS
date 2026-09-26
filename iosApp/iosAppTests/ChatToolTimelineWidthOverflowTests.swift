@@ -816,17 +816,26 @@ final class ChatToolGlyphMappingTests: XCTestCase {
         )
     }
 
-    func testSubAgentPixelSpritesHaveTwentyDistinctRPGCharacters() {
-        XCTAssertEqual(ChatSubAgentPixelSpriteLibrary.spriteCount, 20)
+    func testSubAgentPixelSpritesHaveTwentyFourDistinctRPGCharacters() {
+        XCTAssertEqual(ChatSubAgentPixelSpriteLibrary.spriteCount, 24)
         XCTAssertEqual(
             ChatSubAgentPixelSpriteLibrary.spriteNames,
             ["勇者", "魔王", "鸟人", "猪头人", "巫师", "骑士", "骷髅", "史莱姆", "蘑菇怪", "外星人",
-             "龙", "猫妖", "狐狸", "南瓜怪", "独眼巨人", "机器人", "树精", "幽灵", "石头人", "章鱼"]
+             "龙", "猫妖", "狐狸", "南瓜怪", "独眼巨人", "机器人", "树精", "幽灵", "石头人", "章鱼",
+             "精灵", "忍者", "天使", "蝙蝠"]
         )
         let signatures = Set((0..<ChatSubAgentPixelSpriteLibrary.spriteCount).map {
             ChatSubAgentPixelSpriteLibrary.spriteSignature(for: $0)
         })
-        XCTAssertEqual(signatures.count, 20, "20 款 RPG 像素角色必须是实际不同的行数据")
+        XCTAssertEqual(signatures.count, 24, "24 款 RPG 像素角色必须是实际不同的行数据")
+        for index in 0..<ChatSubAgentPixelSpriteLibrary.spriteCount {
+            let rows = ChatSubAgentPixelSpriteLibrary.spriteRows(for: index)
+            XCTAssertEqual(rows.count, 16)
+            XCTAssertTrue(
+                rows.allSatisfy { $0.utf8.count == 16 },
+                "\(ChatSubAgentPixelSpriteLibrary.spriteNames[index]) 每行必须正好 16 格，缺格会让角色缺一列"
+            )
+        }
 
         let sam = ChatSubAgentPixelSpriteLibrary.spriteIndex(for: "dynamic:sam")
         let nora = ChatSubAgentPixelSpriteLibrary.spriteIndex(for: "dynamic:nora_4")
@@ -864,8 +873,8 @@ final class ChatToolGlyphMappingTests: XCTestCase {
     func testSubAgentSpriteMotionPersonalitiesAreStable() {
         // 重装角色呼吸蹲、轻快角色跳、悬浮角色飘 —— 锁定性格表防止无意改动。
         let names = ChatSubAgentPixelSpriteLibrary.spriteNames
-        let hopNames: Set = ["勇者", "鸟人", "骷髅", "猫妖", "狐狸"]
-        let floatNames: Set = ["巫师", "外星人", "机器人", "幽灵", "章鱼"]
+        let hopNames: Set = ["勇者", "鸟人", "骷髅", "猫妖", "狐狸", "精灵", "忍者"]
+        let floatNames: Set = ["巫师", "外星人", "机器人", "幽灵", "章鱼", "天使", "蝙蝠"]
         for (index, name) in names.enumerated() {
             let sequence = ChatSubAgentPixelSpriteLibrary.stepSequence(forSprite: index)
             if hopNames.contains(name) {
@@ -876,7 +885,7 @@ final class ChatToolGlyphMappingTests: XCTestCase {
                 XCTAssertEqual(sequence, [0, 1, 1, 0], "\(name) 应为呼吸蹲循环")
             }
         }
-        XCTAssertEqual(names.count, 20)
+        XCTAssertEqual(names.count, 24)
     }
 
     func testSubAgentRunCycleTempoAndPhaseVaryByIdentity() {

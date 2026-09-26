@@ -739,7 +739,7 @@ allowed-tools: tool_search provider_config_status provider_config_apply provider
 - **禁止**用 `workspace_file_write` 改 plist / 设置文件。
 - **禁止**跨 provider 默认复制 key，除非用户明确说「同一个 key 也用于 X」。
 - **禁止**打开 high-risk 自动批准、exec JS、沙箱 root 等高风险开关。
-- MiMo 等 `chat_streaming_supported=false` 的壳可配置/出现在设置列表，但当前 iOS 聊天链仍不能当主对话引擎。
+- MiMo 支持 OpenAI 兼容聊天；API Key 与 Coding Plan 使用对应的认证方式和地址。以 `chat_streaming_supported` 和配置检查结果判断服务商是否可用。
 - 写密钥必须等用户批准；后台 run 不能写配置。
 - 声称「无法改设置」之前先 `tool_search`「配置提供商」。
 """#

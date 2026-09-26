@@ -483,11 +483,16 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
                 for: request
             )
         }
+        let queryArgs = #"{"query":"wm_click 点击网页按钮","limit":1}"#
+        let referenceBridge = makeBridge()
+        XCTAssertFalse(referenceBridge.visibleTools().map(\.name).contains("wm_click"))
+        _ = referenceBridge.executeToolSearch(argumentsJson: queryArgs)
+        XCTAssertTrue(referenceBridge.visibleTools().map(\.name).contains("wm_click"), "回归输入必须命中原本隐藏的工具")
 
         let ungatedTransport = JevStubTransport { request in (response(request), self.httpResponse(status: 200)) }
         let ungated = await execute(
             makeService(settings: makeSettings(mode: .active), transport: ungatedTransport),
-            argumentsJson: args, bridge: makeBridge(), identity: identity()
+            argumentsJson: queryArgs, bridge: makeBridge(), identity: identity()
         )
         let ungatedObject = try! JSONSerialization.jsonObject(with: ungated.data(using: .utf8)!) as! [String: Any]
         XCTAssertEqual((ungatedObject["expanded_tools"] as! [String]).first, "wm_click", "无阈值：高分低置信候选领先")
@@ -495,13 +500,19 @@ final class IOSJevToolDiscoveryTests: XCTestCase {
         var gated = makeSettings(mode: .active)
         gated.policy.toolDiscoveryMinConfidence = 0.5
         let gatedTransport = JevStubTransport { request in (response(request), self.httpResponse(status: 200)) }
+        let gatedBridge = makeBridge()
+        let initiallyVisible = Set(gatedBridge.visibleTools().map(\.name))
         let output = await execute(
             makeService(settings: gated, transport: gatedTransport),
-            argumentsJson: args, bridge: makeBridge(), identity: identity()
+            argumentsJson: queryArgs, bridge: gatedBridge, identity: identity()
         )
         let object = try! JSONSerialization.jsonObject(with: output.data(using: .utf8)!) as! [String: Any]
         let expanded = object["expanded_tools"] as! [String]
         XCTAssertEqual(expanded.first, "workspace_file_write", "低置信高分候选被弃权，次候选顶上")
         XCTAssertFalse(expanded.contains("wm_click"), "被弃权候选不进入暴露集合")
+        XCTAssertEqual(
+            Set(gatedBridge.visibleTools().map(\.name)), initiallyVisible.union(expanded),
+            "下一轮实际声明只能新增最终搜索结果，不能提前暴露关键词回退候选"
+        )
     }
 }

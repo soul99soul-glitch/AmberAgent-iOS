@@ -6102,14 +6102,10 @@ final class ChatToolRuntime {
                 metadata: nil
             )]
         }
-        let resolvedToolCall = UIMessagePart.Tool(
-            toolCallId: toolCall.toolCallId,
-            toolName: toolCall.toolName,
+        let resolvedToolCall = PromptTranscript.shared.doCopyTool(
+            tool: toolCall,
             input: enrichedInput,
-            output: toolCall.output,
-            approvalState: toolCall.approvalState,
-            streamIndex: toolCall.streamIndex,
-            metadata: toolCall.metadata
+            output: toolCall.output
         )
 
         do {
@@ -7020,16 +7016,12 @@ final class ChatToolRuntime {
                 } else {
                     persistedInput = toolPart.input
                 }
-                return UIMessagePart.Tool(
-                    toolCallId: toolPart.toolCallId,
-                    toolName: toolPart.toolName,
+                // 工具输出统一收口：总文本超上限就地截断（JSON 形态保形），
+                // 防止 Exa 全文等巨量输出被持久化进会话。
+                return PromptTranscript.shared.doCopyTool(
+                    tool: toolPart,
                     input: persistedInput,
-                    // 工具输出统一收口：总文本超上限就地截断（JSON 形态保形），
-                    // 防止 Exa 全文等巨量输出被持久化进会话。
-                    output: ChatToolOutputFormatter.cappedToolOutputParts(outputParts),
-                    approvalState: toolPart.approvalState,
-                    streamIndex: toolPart.streamIndex,
-                    metadata: nil
+                    output: ChatToolOutputFormatter.cappedToolOutputParts(outputParts)
                 )
             }
 

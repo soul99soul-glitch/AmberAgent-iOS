@@ -1449,7 +1449,7 @@ enum ChatToolOutputFormatter {
         if texts.count == 1,
            let only = texts.first,
            let capped = cappedStructuredJSON(only.text, maxChars: maxChars) {
-            return [UIMessagePart.Text(text: capped, metadata: only.metadata)]
+            return [PromptTranscript.shared.doCopyText(part: only, text: capped)]
         }
         return cappedPlainTextParts(parts, maxChars: maxChars)
     }
@@ -1680,15 +1680,15 @@ enum ChatToolOutputFormatter {
             let keep = String(text.text.prefix(remaining))
             droppedChars += text.text.count - keep.count
             remaining -= keep.count
-            result.append(UIMessagePart.Text(text: keep, metadata: text.metadata))
+            result.append(PromptTranscript.shared.doCopyText(part: text, text: keep))
         }
         guard droppedChars > 0, let lastTextIndex = result.indices.last(where: { result[$0] is UIMessagePart.Text }) else {
             return result
         }
         let last = result[lastTextIndex] as! UIMessagePart.Text
-        let marked = UIMessagePart.Text(
-            text: last.text + IOSToolOutputLimits.truncationMarker(droppedChars: droppedChars),
-            metadata: last.metadata
+        let marked = PromptTranscript.shared.doCopyText(
+            part: last,
+            text: last.text + IOSToolOutputLimits.truncationMarker(droppedChars: droppedChars)
         )
         result[lastTextIndex] = marked
         return result

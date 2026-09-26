@@ -2,6 +2,7 @@ package shared
 
 import app.amber.core.agent.utils.JsonInstant
 import app.amber.core.settings.Settings
+import app.amber.core.settings.migrateLegacyProviderEndpoints
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 
@@ -12,5 +13,7 @@ object IosSettingsJsonBridge {
     // @Throws 必须声明：Kotlin/Native 不会把未声明的异常桥接成 Swift NSError，
     // 否则损坏的 settings JSON 会让进程 SIGABRT 而非回退默认配置（见 IOSSharedSettingsStore 的 try?）。
     @Throws(Throwable::class)
-    fun decode(json: String): Settings = JsonInstant.decodeFromString(json)
+    fun decode(json: String): Settings = migrateLegacyProviderEndpoints(
+        JsonInstant.decodeFromString(json),
+    )
 }

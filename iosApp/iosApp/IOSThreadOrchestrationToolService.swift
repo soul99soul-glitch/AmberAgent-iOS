@@ -724,8 +724,10 @@ final class IOSThreadOrchestrationToolService {
            (questionLimit >= 2
                || jevSettings.effectiveMode(for: .subagentIntent) == .off
                || !jevSettings.canSend(useCase: .subagentIntent, required: [.selectedTaskText, .toolMetadata])),
-           !Self.hasAgentConfigurationArguments(arguments),
-           Self.orchestrationConfiguration(from: sourceConversation.currentMessages)?.roleId == nil {
+           Self.shouldRequestJevSubAgentIntent(
+               arguments: arguments,
+               inheritedConfiguration: Self.orchestrationConfiguration(from: sourceConversation.currentMessages)
+           ) {
             let parentRequest = sourceConversation.currentMessages.reversed()
                 .first { $0.role == MessageRole.user }?.toText()
             if let part = IOSJevSubAgentIntentService.makeBatchPart(
@@ -1190,13 +1192,17 @@ final class IOSThreadOrchestrationToolService {
             || skillNamesArgument.present
 
         let inheritedBase = roleArgument == nil ? inherited : nil
-        // Jev 意图路由建议仅在显式/继承角色缺位且允许动态子代理时补位
+        // Jev 意图路由建议仅在没有显式定义、也没有继承配置时补位
         // （服务侧已做目录校验与置信门）。!allowDynamic 时一律 explorer：
         // 该开关关闭的是"子代理形态的裁量权"，Jev 建议同属裁量源，不让位。
         // 对齐回执（标注）不受此限，照常产出。
+        let canApplyJevRoleSuggestion = Self.shouldRequestJevSubAgentIntent(
+            arguments: arguments,
+            inheritedConfiguration: inheritedBase
+        )
         let effectiveRoleId = roleArgument
             ?? inheritedBase?.roleId
-            ?? (allowDynamic ? jevSuggestedRoleId : nil)
+            ?? (allowDynamic && canApplyJevRoleSuggestion ? jevSuggestedRoleId : nil)
             ?? (allowDynamic ? nil : "explorer")
         let role = effectiveRoleId.flatMap(IOSSubAgentRoleCatalog.resolve)
 
@@ -1440,6 +1446,13 @@ final class IOSThreadOrchestrationToolService {
             poolSelectionSnapshot: poolSelectionSnapshot,
             poolSelectionCandidates: poolSelectionCandidates
         ))
+    }
+
+    static func shouldRequestJevSubAgentIntent(
+        arguments: [String: Any],
+        inheritedConfiguration: IOSOrchestrationAgentConfiguration?
+    ) -> Bool {
+        !Self.hasAgentConfigurationArguments(arguments) && inheritedConfiguration == nil
     }
 
     private static func optionalTrimmedString(_ value: Any?) -> String? {

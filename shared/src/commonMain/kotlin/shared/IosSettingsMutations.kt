@@ -11,6 +11,8 @@ import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.GoogleAuthMode
 import app.amber.ai.provider.GOOGLE_API_KEY_DEFAULT_BASE_URL
+import app.amber.ai.provider.MIMO_API_DEFAULT_BASE_URL
+import app.amber.ai.provider.MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.defaultApiBaseUrl
 import app.amber.ai.provider.fixedBaseUrl
@@ -47,6 +49,20 @@ import app.amber.feature.subagent.SubAgentOverride
 import app.amber.feature.subagent.SubAgentPoolModel
 import app.amber.search.SearchServiceOptions
 import app.amber.tts.provider.TTSProviderSetting
+
+private val MIMO_TOKEN_PLAN_ENDPOINTS = setOf(
+    MIMO_TOKEN_PLAN_DEFAULT_BASE_URL,
+    "https://token-plan-sgp.xiaomimimo.com/v1",
+    "https://token-plan-ams.xiaomimimo.com/v1",
+).map(String::normalizeMimoEndpoint).toSet()
+
+private fun String.normalizeMimoEndpoint(): String = trim().trimEnd('/').lowercase()
+
+private fun isMimoTokenPlanEndpoint(baseUrl: String): Boolean =
+    baseUrl.normalizeMimoEndpoint() in MIMO_TOKEN_PLAN_ENDPOINTS
+
+private fun isMimoPublicApiEndpoint(baseUrl: String): Boolean =
+    baseUrl.normalizeMimoEndpoint() == MIMO_API_DEFAULT_BASE_URL.normalizeMimoEndpoint()
 
 /**
  * Swift-facing typed mutations over the real KMP [Settings] data class.
@@ -291,6 +307,20 @@ object IosSettingsMutations {
     ): String {
         if (mode == OpenAIAuthMode.CODEX_OAUTH) {
             return provider.baseUrl
+        }
+        if (mode == OpenAIAuthMode.MIMO_CODING_PLAN) {
+            return when {
+                isMimoTokenPlanEndpoint(provider.baseUrl) -> provider.baseUrl
+                provider.brand == OpenAIBrand.MIMO && !isMimoPublicApiEndpoint(provider.baseUrl) ->
+                    provider.baseUrl
+                else -> MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
+            }
+        }
+        if (mode == OpenAIAuthMode.API_KEY &&
+            provider.authMode == OpenAIAuthMode.MIMO_CODING_PLAN &&
+            isMimoTokenPlanEndpoint(provider.baseUrl)
+        ) {
+            return MIMO_API_DEFAULT_BASE_URL
         }
         val pinned = mode.fixedBaseUrl()
         if (pinned != null) {

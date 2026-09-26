@@ -8,20 +8,9 @@ enum ProviderRouteKind: String, Hashable {
     case responseAPIPreset
     case endpointConfirmationPreset
 
-    /// A preset provider whose protocol can actually run in the iOS chat chain
-    /// today, so its API Key is worth editing and it can be set as current.
-    /// OpenAI-compatible/Responses API (non-MiMo-placeholder), Claude, and
-    /// Gemini (API Key or Antigravity OAuth) qualify. MiMo-placeholder does not.
+    /// Share the runtime capability policy with chat and provider activation.
     static func isEditablePreset(_ preset: ProviderSetting) -> Bool {
-        if let openAI = preset as? ProviderSetting.OpenAI {
-            if openAI.brand === OpenAIBrand.mimo { return false }
-            return true
-        }
-        if preset is ProviderSetting.Claude { return true }
-        if let google = preset as? ProviderSetting.Google {
-            return IOSGeminiProviderResolver.supportsChat(google)
-        }
-        return false
+        ChatProviderConfiguration.supportsChatStreaming(preset)
     }
 }
 
@@ -123,7 +112,7 @@ struct ProvidersView: View {
 
     private var sharedProviders: [ProviderSetting] {
         _ = sharedSettings.revision
-        // Settings list must show every stored provider (including MiMo shells).
+        // Settings list must show every stored provider, even when not configured.
         // Chat streaming eligibility is enforced at chat/model-picker time, not here —
         // otherwise agent-configured or placeholder brands "disappear" while still in settings.
         return sharedSettings.snapshot.providers

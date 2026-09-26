@@ -276,7 +276,7 @@ struct ChatRuntimeContextBuilder {
     static func soulSystemMessage(markdown: String) -> UIMessage? {
         let soul = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !soul.isEmpty else { return nil }
-        return UIMessage.companion.system(prompt: """
+        return PromptTranscript.shared.sectionMessage(name: "soul", text: """
         **Amber Soul / agents.md**
         The following app-level behavior guide is injected into every conversation:
         <agents_md>
@@ -318,7 +318,7 @@ struct ChatRuntimeContextBuilder {
         Use Workspace write, edit, move, or delete tools only when the current task explicitly authorizes the corresponding file operation. Progress questions, clarifications, and context compaction do not by themselves revoke that authorization; respect any explicit cancellation or change of scope.
         Use Workspace read, list, or search tools when the current task concerns existing Workspace files or artifacts, or needs inspection to complete an authorized file operation. The host enforces required permissions and approvals.
         """
-        return [UIMessage.companion.system(prompt: prompt)] + messages
+        return [PromptTranscript.shared.sectionMessage(name: "workspace", text: prompt)] + messages
     }
 
     private func messagesByInjectingSkillContext(_ messages: [UIMessage]) -> [UIMessage] {
@@ -350,7 +350,7 @@ struct ChatRuntimeContextBuilder {
         \(entries.joined(separator: "\n"))
         </available_skills>
         """
-        return [UIMessage.companion.system(prompt: prompt)] + messages
+        return [PromptTranscript.shared.sectionMessage(name: "skills", text: prompt)] + messages
     }
 
     private static func escapeSkillCatalogText(_ raw: String) -> String {
@@ -365,7 +365,7 @@ struct ChatRuntimeContextBuilder {
         let systemPrompt = sharedSettings.snapshot.getCurrentAssistant().systemPrompt
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !systemPrompt.isEmpty else { return messages }
-        return [UIMessage.companion.system(prompt: systemPrompt)] + messages
+        return [PromptTranscript.shared.sectionMessage(name: "system", text: systemPrompt)] + messages
     }
 
     // MCP catalog injection: directory + on-demand schema (G2). The directory
@@ -422,7 +422,7 @@ struct ChatRuntimeContextBuilder {
         if omittedCount > 0 {
             prompt += "\n(另有 \(omittedCount) 个工具未列出；可用 mcp_list 查询完整目录，用 mcp_describe_tool 获取任意工具的 schema。)"
         }
-        return [UIMessage.companion.system(prompt: prompt)] + messages
+        return [PromptTranscript.shared.sectionMessage(name: "mcp", text: prompt)] + messages
     }
 
     @MainActor
@@ -445,14 +445,17 @@ struct ChatRuntimeContextBuilder {
         let payload: [[String: Any]] = [[
             "type": "text",
             "text": text,
-            "metadata": [Self.memoryCitationMetadataKey: Array(Set(ids)).sorted().map { Int($0) }]
+            "metadata": [
+                Self.memoryCitationMetadataKey: Array(Set(ids)).sorted().map { Int($0) },
+                PromptTranscriptKt.PROMPT_SECTION_METADATA: "memory",
+            ]
         ]]
         guard let data = try? JSONSerialization.data(withJSONObject: payload),
               let json = String(data: data, encoding: .utf8),
               let parts = try? IosToolOutputJsonBridge.shared.decode(json: json) else {
             return UIMessage.companion.system(prompt: text)
         }
-        let base = UIMessage.companion.system(prompt: text)
+        let base = PromptTranscript.shared.sectionMessage(name: "memory", text: text)
         return base.doCopy(
             id: base.id,
             role: base.role,
@@ -500,12 +503,6 @@ struct ChatRuntimeContextBuilder {
     private func messagesByInjectingMiniAppInstruction(_ messages: [UIMessage]) -> [UIMessage] {
         guard miniAppRuntimeEnabled else { return messages }
         guard let turn = Self.miniAppTurnContext(in: messages) else { return messages }
-        let message = messages[turn.currentUserIndex]
-        guard let textIndex = message.parts.lastIndex(where: { $0 is UIMessagePart.Text }),
-              let textPart = message.parts[textIndex] as? UIMessagePart.Text else {
-            return messages
-        }
-
         let continuationInstruction = turn.isContinuation
             ? """
             上一次 MiniApp JSON 因输出上限被截断。不要续写残缺片段；请从 { 开始重新输出一个更紧凑、完整、可解析的单个 JSON 对象。
@@ -513,24 +510,7 @@ struct ChatRuntimeContextBuilder {
             """
             : ""
         let instruction = continuationInstruction + miniAppInstruction(for: turn.requestText)
-        var updatedParts = message.parts
-        updatedParts[textIndex] = UIMessagePart.Text(
-            text: textPart.text.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + instruction,
-            metadata: textPart.metadata
-        )
-        var updatedMessages = messages
-        updatedMessages[turn.currentUserIndex] = UIMessage(
-            id: message.id,
-            role: message.role,
-            parts: updatedParts,
-            annotations: message.annotations,
-            createdAt: message.createdAt,
-            finishedAt: message.finishedAt,
-            modelId: message.modelId,
-            usage: message.usage,
-            translation: message.translation
-        )
-        return updatedMessages
+        return [PromptTranscript.shared.sectionMessage(name: "miniApp", text: instruction)] + messages
     }
 
     static func miniAppTurnContext(in messages: [UIMessage]) -> MiniAppTurnContext? {

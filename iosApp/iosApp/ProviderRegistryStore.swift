@@ -145,22 +145,9 @@ final class ProviderRegistryStore {
         Self.id(of: provider) == selectedProviderId
     }
 
-    /// Whether this provider can be faithfully used by the current iOS chat chain.
-    /// OpenAI-compatible/Responses API and Claude have KMP executors; Gemini has a
-    /// native Swift executor (API Key / Antigravity OAuth); MiMo's bundled base is
-    /// a placeholder.
+    /// Whether the current iOS chat chain supports this provider's protocol.
     func canActivate(_ provider: ProviderSetting) -> Bool {
-        if let openAI = provider as? ProviderSetting.OpenAI {
-            if openAI.brand === OpenAIBrand.mimo { return false }
-            return true
-        }
-        if provider is ProviderSetting.Claude {
-            return true
-        }
-        if let google = provider as? ProviderSetting.Google {
-            return IOSGeminiProviderResolver.supportsChat(google)
-        }
-        return false
+        ChatProviderConfiguration.supportsChatStreaming(provider)
     }
 
     /// A provider can become the active chat provider only when it is both
@@ -282,9 +269,8 @@ final class ProviderRegistryStore {
         // If an existing ACTIVATABLE provider already matches the current Base URL, adopt
         // it as the selection and stash the user's current key under that provider.
         // Re-projecting then yields the exact same baseUrl/apiKey the app already uses (no
-        // behavior change). Require canActivate so a current Base URL that happens to equal
-        // a Google/xAI/MiMo seed does not strand the key on a provider the UI can never
-        // project; such cases fall through to a real custom OpenAI-compatible provider.
+        // behavior change). Unsupported protocols fall through to a custom
+        // OpenAI-compatible provider instead of stranding the existing key.
         if let match = providers.first(where: {
             canActivate($0) && Self.baseURL(of: $0).trimmingCharacters(in: .whitespacesAndNewlines) == currentBase
         }) {

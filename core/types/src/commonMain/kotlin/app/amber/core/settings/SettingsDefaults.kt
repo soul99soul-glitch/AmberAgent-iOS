@@ -4,6 +4,10 @@ package app.amber.core.settings
 
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.ProviderSetting
+import app.amber.ai.provider.LEGACY_MIMO_API_DEFAULT_BASE_URL
+import app.amber.ai.provider.MIMO_API_DEFAULT_BASE_URL
+import app.amber.ai.provider.MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
+import app.amber.ai.provider.OpenAIAuthMode
 
 // Pure-Kotlin seed and consistency passes exposed through Shared.framework so
 // iOS can build a seeded Settings snapshot without a platform storage layer.
@@ -15,6 +19,31 @@ import app.amber.ai.provider.ProviderSetting
 // DEFAULT_SYSTEM_TTS_ID, REMOVED_DEFAULT_TTS_PROVIDER_IDS,
 // withAmberAgentAssistantBranding, ProviderSetting, OpenAIBrand,
 // TTSProviderSetting.copyProvider, AgentRuntimeSetting.memoryWorker.
+
+/**
+ * Repair the exact MiMo endpoint emitted by the pre-brand provider seed.
+ * User-edited endpoints remain untouched; all credentials, models and auth fields are
+ * carried by the provider copy unchanged.
+ */
+public fun migrateLegacyProviderEndpoints(settings: Settings): Settings {
+    val providers = settings.providers.map { provider ->
+        if (provider is ProviderSetting.OpenAI &&
+            (provider.id == MimoProviderIdRef || provider.brand == OpenAIBrand.MIMO) &&
+            provider.baseUrl == LEGACY_MIMO_API_DEFAULT_BASE_URL
+        ) {
+            provider.copy(
+                baseUrl = if (provider.authMode == OpenAIAuthMode.MIMO_CODING_PLAN) {
+                    MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
+                } else {
+                    MIMO_API_DEFAULT_BASE_URL
+                },
+            )
+        } else {
+            provider
+        }
+    }
+    return if (providers == settings.providers) settings else settings.copy(providers = providers)
+}
 
 /**
  * Phase 2 — per-load backfill / seed / branding.

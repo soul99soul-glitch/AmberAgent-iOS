@@ -62,6 +62,23 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         XCTAssertEqual(viewModel.inputText, "do not append yet")
     }
 
+    func testSuggestionFillsDraftWithoutSendingAndRejectsLateSuggestions() {
+        let viewModel = ChatViewModel(settingsStore: SettingsStore(), autoGenerateResponses: false)
+        let token = viewModel.beginSuggestionRequestForTesting()
+        viewModel.chatSuggestions = ["继续讲解", "给个例子"]
+        viewModel.inputText = "旧草稿"
+
+        viewModel.fillInputFromSuggestion("给个例子")
+
+        XCTAssertEqual(viewModel.inputText, "给个例子")
+        XCTAssertTrue(viewModel.chatSuggestions.isEmpty)
+        XCTAssertTrue(viewModel.messages.isEmpty, "选择建议不应创建消息或自动发送")
+        XCTAssertFalse(viewModel.isGenerationActive)
+        viewModel.applySuggestionsForTesting(["迟到建议"], requestToken: token, conversationId: nil)
+        XCTAssertTrue(viewModel.chatSuggestions.isEmpty)
+        XCTAssertEqual(viewModel.inputText, "给个例子")
+    }
+
     func testOlderSuggestionRequestCannotOverwriteNewerResult() {
         let viewModel = ChatViewModel(
             settingsStore: SettingsStore(),
@@ -992,11 +1009,14 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         viewModel.sendMessage()
 
         let uploadMessages = viewModel.preparedUploadMessagesForTesting(viewModel.messages)
-        let userText = textContent(of: try XCTUnwrap(uploadMessages.last { $0.role == MessageRole.user }))
-        XCTAssertTrue(userText.contains("AmberAgent MiniApp V3"))
-        XCTAssertTrue(userText.contains("Schema:"))
-        XCTAssertTrue(userText.contains(#""permissions""#))
-        XCTAssertTrue(userText.contains(#""html""#))
+        let miniAppInstruction = uploadMessages
+            .filter { $0.role == MessageRole.system }
+            .map { $0.toText() }
+            .first { $0.contains("AmberAgent MiniApp V3") }
+        XCTAssertNotNil(miniAppInstruction)
+        XCTAssertTrue(miniAppInstruction?.contains("Schema:") == true)
+        XCTAssertTrue(miniAppInstruction?.contains(#""permissions""#) == true)
+        XCTAssertTrue(miniAppInstruction?.contains(#""html""#) == true)
     }
 
     func testMemoryToolCreateEditDeletePersistsAndFeedsPrompt() throws {

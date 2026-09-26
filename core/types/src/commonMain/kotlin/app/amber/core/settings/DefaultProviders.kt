@@ -6,6 +6,7 @@ import app.amber.ai.provider.Model
 import app.amber.ai.provider.ModelType
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.ProviderSetting
+import app.amber.ai.provider.MIMO_API_DEFAULT_BASE_URL
 import app.amber.core.model.QuickMessage
 import kotlin.uuid.Uuid
 
@@ -94,9 +95,9 @@ val SeedRoutingQuickMessages: List<QuickMessage> = listOf(
 
 val DEFAULT_AUTO_MODEL_ID = Uuid.parse("b7055fb4-39f9-4042-a88a-0d80ed76cf08")
 
-// Exposed so the per-load migration in PreferencesStore can target these two
-// specific providers when backfilling the seeded image models. The other
-// brand-IDs below remain private — they have no migration tied to them.
+// Exposed so per-load migrations can target the seeded OpenAI/Gemini providers
+// for image backfills and the MiMo endpoint correction below. The other
+// brand-IDs remain private because they have no migration tied to them.
 val OpenAIProviderIdRef = Uuid.parse("1eeea727-9ee5-4cae-93e6-6fb01a4d051e")
 val GeminiProviderIdRef = Uuid.parse("6ab18148-c138-4394-a46f-1cd8c8ceaa6d")
 private val OpenAIProviderId = OpenAIProviderIdRef
@@ -109,7 +110,8 @@ private val XAIProviderId = Uuid.parse("ff3cde7e-0f65-43d7-8fb2-6475c99f5990")
 // removed-zhipu uuid) so users who explicitly removed the previous Zhipu entry don't get
 // it resurrected.
 private val ZhipuProviderId = Uuid.parse("9f3a6b2c-7d4e-4810-9a2f-3e8b5d142c01")
-private val MimoProviderId = Uuid.parse("9f3a6b2c-7d4e-4810-9a2f-3e8b5d142c02")
+val MimoProviderIdRef = Uuid.parse("9f3a6b2c-7d4e-4810-9a2f-3e8b5d142c02")
+private val MimoProviderId = MimoProviderIdRef
 private val MiniMaxProviderId = Uuid.parse("9f3a6b2c-7d4e-4810-9a2f-3e8b5d142c03")
 
 val REMOVED_DEFAULT_PROVIDER_IDS = setOf(
@@ -200,7 +202,7 @@ val DEFAULT_PROVIDERS = listOf(
     ProviderSetting.OpenAI(
         id = MimoProviderId,
         name = "小米 MiMo",
-        baseUrl = "https://api.xiaomi.com/v1",  // placeholder API base; user can override
+        baseUrl = MIMO_API_DEFAULT_BASE_URL,
         apiKey = "",
         enabled = false,
         brand = OpenAIBrand.MIMO,

@@ -145,17 +145,9 @@ enum ChatProviderConfiguration {
     }
 
     static func supportsChatStreaming(_ provider: ProviderSetting) -> Bool {
-        if let openAI = provider as? ProviderSetting.OpenAI {
-            // Codex OAuth speaks the Responses API via an OAuth bearer; it's
-            // supported through the codex request path (token injected at
-            // request time) even though it implies useResponseApi.
-            if IOSCodexProviderResolver.isCodexProvider(openAI) { return true }
-            // KMP OpenAI provider owns both chat-completions and Responses API
-            // routing via the provider setting. MiMo's seeded endpoint is still
-            // a placeholder, so keep it out until it has a real runnable config.
-            if openAI.brand === OpenAIBrand.mimo { return false }
-            return true
-        }
+        // The KMP OpenAI executor handles compatible brands (including MiMo),
+        // chat completions, and Responses. Credentials/endpoints are checked separately.
+        if provider is ProviderSetting.OpenAI { return true }
         if let google = provider as? ProviderSetting.Google {
             // Native Swift Gemini transport: API Key (non-Vertex) or Antigravity
             // OAuth. Vertex/service-account and the Android-only Code Assist

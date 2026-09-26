@@ -137,10 +137,10 @@ final class IOSSubAgentActivityLayoutTests: XCTestCase {
             XCTAssertTrue(window.drawHierarchy(in: window.bounds, afterScreenUpdates: true))
         }
         let attachment = XCTAttachment(image: image)
-        attachment.name = "subagent-avatar-gallery-20"
+        attachment.name = "subagent-avatar-gallery-24"
         attachment.lifetime = .keepAlways
         add(attachment)
-        let path = FileManager.default.temporaryDirectory.appendingPathComponent("subagent-avatar-gallery-20.png")
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent("subagent-avatar-gallery-24.png")
         try XCTUnwrap(image.pngData()).write(to: path)
         print("SUBAGENT_AVATAR_GALLERY_EVIDENCE \(path.path)")
     }

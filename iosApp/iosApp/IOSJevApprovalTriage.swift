@@ -103,7 +103,11 @@ final class IOSJevApprovalTriageService {
     static func parameterSummary(fields: [String: String]) -> String? {
         let summaries = fields.keys.sorted().compactMap { key -> String? in
             guard !isSensitiveField(key), let value = fields[key] else { return nil }
-            let boundedValue = String(value.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+            let boundedValue = String(
+                IOSWebMountRedactor.redactedText(value)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .prefix(80)
+            )
             guard !boundedValue.isEmpty else { return nil }
             return "\(String(key.prefix(48)))=\(boundedValue)"
         }

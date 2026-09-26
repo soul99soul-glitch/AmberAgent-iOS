@@ -230,6 +230,29 @@ final class IOSToolRecoveryTests: XCTestCase {
         XCTAssertEqual(result, messages, "an already-resolved or missing toolCallId must be left completely untouched")
     }
 
+    func testApplyPreservesPromptTranscriptMetadataWhenReplacingToolOutput() {
+        let user = UIMessage.companion.user(prompt: "继续")
+        let request = PromptTranscript.shared.prepare(
+            canonicalMessages: [user],
+            preparedMessages: [
+                PromptTranscript.shared.sectionMessage(name: "system", text: "继承的提示"),
+                user,
+            ],
+            tools: []
+        )
+        let recorded = PromptTranscript.shared.recordResponse(
+            message: toolCallMessage(toolCallId: "tc-1", toolName: "ask_user"),
+            request: request
+        )
+        XCTAssertNotNil(PromptTranscript.shared.event(message: recorded))
+
+        let recovered = IOSToolCallRecoveryApplier.apply(["tc-1": .markUnknown], to: [recorded])
+        XCTAssertNotNil(
+            PromptTranscript.shared.event(message: try! XCTUnwrap(recovered.first)),
+            "tool-result recovery must retain the prompt transition metadata on the assistant message"
+        )
+    }
+
     // MARK: - Layer 2: integration (real Room ledger + real IOSConversationStore)
 
     @MainActor

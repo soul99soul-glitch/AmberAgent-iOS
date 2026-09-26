@@ -1676,14 +1676,10 @@ enum IOSToolCallRecoveryApplier {
                       toolPart.toolCallId == toolCallId else { return part }
                 didReplace = true
                 didChangeMessage = true
-                return UIMessagePart.Tool(
-                    toolCallId: toolPart.toolCallId,
-                    toolName: toolPart.toolName,
+                return PromptTranscript.shared.doCopyTool(
+                    tool: toolPart,
                     input: toolPart.input,
-                    output: output,
-                    approvalState: toolPart.approvalState,
-                    streamIndex: toolPart.streamIndex,
-                    metadata: nil
+                    output: output
                 )
             }
             guard didChangeMessage else { return message }

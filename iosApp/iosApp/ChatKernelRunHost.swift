@@ -1858,11 +1858,27 @@ final class ChatKernelRunHost {
         // 注入开销估算基于 canonical 输入（无投影），保证压缩预算口径与
         // 原行为一致（等价于 Phase 1 之前 Host 的估算方式）。
         let runtimeBaseline = messagesByInjectingRuntimeContext(requestMessages)
+        let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
+            setting: provider,
+            model: effectiveParams.model
+        )
         let runtimeOverheadTokens = max(
             IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimeBaseline) -
                 IOSContextCompactionCoordinator.estimatedTokensForRequest(requestMessages),
             0
         )
+        let requestSystemIds = Set(requestMessages.filter { $0.role == MessageRole.system }.map { $0.id })
+        let runtimeFragments = runtimeBaseline.filter {
+            $0.role == MessageRole.system && !requestSystemIds.contains($0.id)
+        }
+        let historyOverhead: (([UIMessage]) -> Int)? = transcriptCapabilities.systemUpdates ? { retained in
+            let fresh = runtimeFragments + retained
+            let replayed = PromptTranscript.shared.prepare(
+                canonicalMessages: messages, preparedMessages: fresh, tools: effectiveParams.tools
+            ).messages
+            return max(IOSContextCompactionCoordinator.estimatedTokensForRequest(replayed)
+                - IOSContextCompactionCoordinator.estimatedTokensForRequest(fresh), 0)
+        } : nil
 
         let preparedUploadMessages: [UIMessage]
         do {
@@ -1873,6 +1889,7 @@ final class ChatKernelRunHost {
                 params: effectiveParams,
                 fallbackProvider: provider,
                 promptOverheadTokens: runtimeOverheadTokens,
+                additionalHistoryOverhead: historyOverhead,
                 onEvent: { [weak self] event in
                     guard let self,
                           ChatContextCompactEventRouter.shouldApply(
@@ -1933,11 +1950,37 @@ final class ChatKernelRunHost {
         )
         let finalizedUploadMessages: [UIMessage]
         do {
+            let transcriptMessages = transcriptCapabilities.systemUpdates
+                ? PromptTranscript.shared.prepare(
+                    canonicalMessages: messages,
+                    preparedMessages: runtimePreparedMessages,
+                    tools: effectiveParams.tools
+                ).messages
+                : runtimePreparedMessages
+            let transitionOverhead = max(
+                IOSContextCompactionCoordinator.estimatedTokensForRequest(transcriptMessages)
+                    - IOSContextCompactionCoordinator.estimatedTokensForRequest(runtimePreparedMessages), 0
+            )
             finalizedUploadMessages = try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
                 runtimePreparedMessages,
                 settings: settings,
-                params: effectiveParams
+                params: effectiveParams,
+                additionalOverheadTokens: transitionOverhead
             )
+            if transcriptCapabilities.systemUpdates {
+                // Rebuild after fitting so covered transitions become a checkpoint.
+                // Validate without allowing the fitter to move inline system events.
+                _ = try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
+                    PromptTranscript.shared.prepare(
+                        canonicalMessages: messages,
+                        preparedMessages: finalizedUploadMessages,
+                        tools: effectiveParams.tools
+                    ).messages,
+                    settings: settings,
+                    params: effectiveParams,
+                    preserveMessageOrder: true
+                )
+            }
         } catch {
             if currentRunId == runId {
                 applyCompactEvent(.failed(message: (error as NSError).localizedDescription))
@@ -1948,7 +1991,12 @@ final class ChatKernelRunHost {
                 arguments: [(error as NSError).localizedDescription]
             ))
         }
-        let finalUploadMessages = ChatRuntimeContextBuilder.coalescingSystemMessages(finalizedUploadMessages)
+        // Native transcript endpoints need named system sections intact so the
+        // engine can emit only the changed section. Legacy/custom endpoints
+        // keep the historical single-system-message shape.
+        let finalUploadMessages = transcriptCapabilities.systemUpdates
+            ? finalizedUploadMessages
+            : ChatRuntimeContextBuilder.coalescingSystemMessages(finalizedUploadMessages)
         // 召回标记(P2-b):不 force,去抖生效(CG-C :2049-2050)。
         bindings.recordMemoryUsage(selectedMemoryIds, false)
         refreshBackgroundHandoff(

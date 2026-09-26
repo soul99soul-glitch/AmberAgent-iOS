@@ -1,6 +1,9 @@
 package app.amber.ai.provider.claude
 
 import app.amber.ai.core.MessageRole
+import app.amber.ai.core.PromptToolDeclaration
+import app.amber.ai.core.PromptTranscript
+import app.amber.ai.core.PromptTranscriptEvent
 import app.amber.ai.core.ReasoningLevel
 import app.amber.ai.core.Tool
 import app.amber.ai.provider.Model
@@ -43,6 +46,28 @@ class ClaudeKmpProviderMessageTest {
         modelId = "claude-sonnet-4-5",
         displayName = "Claude Sonnet 4.5",
         abilities = listOf(ModelAbility.REASONING, ModelAbility.TOOL),
+    )
+
+    private fun nativeModel(): Model = Model(
+        modelId = "claude-opus-5",
+        displayName = "Claude Opus 5",
+        abilities = listOf(ModelAbility.REASONING, ModelAbility.TOOL),
+    )
+
+    private fun promptTool(name: String, description: String): PromptToolDeclaration = PromptToolDeclaration(
+        name = name,
+        description = description,
+        parameters = app.amber.ai.core.InputSchema.Obj(
+            properties = buildJsonObject {},
+            required = emptyList(),
+        ),
+    )
+
+    private fun executableTool(declaration: PromptToolDeclaration): Tool = Tool(
+        name = declaration.name,
+        description = declaration.description,
+        parameters = { declaration.parameters },
+        execute = { emptyList() },
     )
 
     @Test
@@ -321,6 +346,134 @@ class ClaudeKmpProviderMessageTest {
         val cache = toolObj["cache_control"]
         assertNotNull(cache)
         assertEquals("ephemeral", cache.jsonObject.getValue("type").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `native transcript keeps prefix and emits deferred tool changes in place`() {
+        val initialTool = promptTool("read_file", "Read a file")
+        val lateTool = promptTool("write_file", "Write a file")
+        val initial = PromptTranscript.message(
+            PromptTranscriptEvent(
+                initial = true,
+                sections = mapOf("rules" to "base rules"),
+                toolsAdded = listOf(initialTool),
+            ),
+        )
+        val update = PromptTranscript.message(
+            PromptTranscriptEvent(
+                sections = mapOf("mode" to "strict mode"),
+                toolsAdded = listOf(lateTool),
+                toolsRemoved = listOf(initialTool.name),
+            ),
+        )
+        val body = provider.callBuildMessageRequest(
+            claudeSetting.copy(promptCaching = true),
+            listOf(
+                initial,
+                UIMessage.user("start"),
+                UIMessage.assistant("first answer"),
+                UIMessage.user("continue"),
+                update,
+                UIMessage.assistant("second answer"),
+            ),
+            TextGenerationParams(
+                model = nativeModel(),
+                tools = listOf(executableTool(lateTool)),
+            ),
+        )
+
+        val system = body["system"]!!.jsonArray
+        assertEquals(1, system.size)
+        assertTrue(system.single().jsonObject["text"]!!.jsonPrimitive.content.contains("base rules"))
+        assertEquals(
+            "ephemeral",
+            system.single().jsonObject["cache_control"]!!.jsonObject["type"]!!.jsonPrimitive.content,
+        )
+
+        val tools = body["tools"]!!.jsonArray
+        assertEquals(listOf("read_file", "__amber_deferred_placeholder__", "write_file"), tools.map {
+            it.jsonObject["name"]!!.jsonPrimitive.content
+        })
+        assertEquals("ephemeral", tools[0].jsonObject["cache_control"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertTrue(tools[1].jsonObject["defer_loading"]!!.jsonPrimitive.boolean)
+        assertTrue(tools[2].jsonObject["defer_loading"]!!.jsonPrimitive.boolean)
+        assertNull(tools[2].jsonObject["cache_control"])
+
+        val messages = body["messages"]!!.jsonArray
+        assertEquals(listOf("user", "assistant", "user", "system", "assistant"), messages.map {
+            it.jsonObject["role"]!!.jsonPrimitive.content
+        })
+        val updateContent = messages[3].jsonObject["content"]!!.jsonArray
+        assertEquals("tool_removal", updateContent[1].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("tool_addition", updateContent[2].jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("read_file", updateContent[1].jsonObject["tool"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+        assertEquals("write_file", updateContent[2].jsonObject["tool"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `native transcript falls back to current tools for schema redefinition`() {
+        val oldTool = promptTool("lookup", "Old lookup")
+        val newTool = promptTool("lookup", "New lookup")
+        val body = provider.callBuildMessageRequest(
+            claudeSetting,
+            listOf(
+                PromptTranscript.message(
+                    PromptTranscriptEvent(
+                        initial = true,
+                        sections = mapOf("rules" to "base rules"),
+                        toolsAdded = listOf(oldTool),
+                    ),
+                ),
+                UIMessage.user("start"),
+                PromptTranscript.message(
+                    PromptTranscriptEvent(
+                        sections = mapOf("mode" to "strict mode"),
+                        toolsAdded = listOf(newTool),
+                    ),
+                ),
+                UIMessage.assistant("answer"),
+            ),
+            TextGenerationParams(model = nativeModel(), tools = listOf(executableTool(newTool))),
+        )
+
+        val tools = body["tools"]!!.jsonArray
+        assertEquals(1, tools.size)
+        assertEquals("lookup", tools.single().jsonObject["name"]!!.jsonPrimitive.content)
+        assertNull(tools.single().jsonObject["defer_loading"])
+        assertNull(tools.single().jsonObject["cache_control"])
+        val update = body["messages"]!!.jsonArray.first { it.jsonObject["role"]!!.jsonPrimitive.content == "system" }
+        assertEquals(1, update.jsonObject["content"]!!.jsonArray.size)
+        assertEquals("text", update.jsonObject["content"]!!.jsonArray.single().jsonObject["type"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `non Anthropic endpoint collapses transcript and sends current tools`() {
+        val oldTool = promptTool("lookup", "Old lookup")
+        val newTool = promptTool("write", "Write")
+        val body = provider.callBuildMessageRequest(
+            claudeSetting.copy(baseUrl = "https://proxy.example/v1"),
+            listOf(
+                PromptTranscript.message(
+                    PromptTranscriptEvent(
+                        initial = true,
+                        sections = mapOf("rules" to "base rules"),
+                        toolsAdded = listOf(oldTool),
+                    ),
+                ),
+                UIMessage.user("start"),
+                PromptTranscript.message(PromptTranscriptEvent(sections = mapOf("mode" to "strict mode"))),
+                UIMessage.assistant("answer"),
+            ),
+            TextGenerationParams(model = nativeModel(), tools = listOf(executableTool(newTool))),
+        )
+
+        assertEquals(1, body["system"]!!.jsonArray.size)
+        assertTrue(body["system"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content.contains("strict mode"))
+        assertTrue(body["messages"]!!.jsonArray.none {
+            it.jsonObject["role"]?.jsonPrimitive?.content == "system"
+        })
+        assertEquals("write", body["tools"]!!.jsonArray.single().jsonObject["name"]!!.jsonPrimitive.content)
+        assertNull(body["tools"]!!.jsonArray.single().jsonObject["defer_loading"])
     }
 }
 

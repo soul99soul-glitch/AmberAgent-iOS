@@ -152,7 +152,7 @@ fun OpenAIAuthMode.fixedBaseUrl(): String? = when (this) {
     OpenAIAuthMode.CODEX_OAUTH -> "https://chatgpt.com/backend-api/codex"
     OpenAIAuthMode.ZHIPU_CODING_PLAN -> "https://open.bigmodel.cn/api/coding/paas/v4"
     OpenAIAuthMode.KIMI_CODING_PLAN -> "https://api.kimi.com/coding/v1"
-    OpenAIAuthMode.MIMO_CODING_PLAN -> "https://token-plan-cn.xiaomimimo.com/v1"
+    OpenAIAuthMode.MIMO_CODING_PLAN -> MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
     OpenAIAuthMode.MINIMAX_TOKEN_PLAN -> "https://api.minimaxi.com/v1"
 }
 
@@ -177,9 +177,16 @@ fun OpenAIBrand.defaultApiBaseUrl(): String = when (this) {
     OpenAIBrand.DEEPSEEK -> "https://api.deepseek.com/v1"
     OpenAIBrand.ZHIPU -> "https://open.bigmodel.cn/api/paas/v4"
     OpenAIBrand.KIMI -> "https://api.moonshot.cn/v1"
-    OpenAIBrand.MIMO -> "https://api.xiaomi.com/v1"
+    OpenAIBrand.MIMO -> MIMO_API_DEFAULT_BASE_URL
     OpenAIBrand.MINIMAX -> "https://api.minimaxi.com/v1"
 }
+
+/** Official Xiaomi MiMo OpenAI-compatible endpoints. */
+const val MIMO_API_DEFAULT_BASE_URL: String = "https://api.xiaomimimo.com/v1"
+const val MIMO_TOKEN_PLAN_DEFAULT_BASE_URL: String = "https://token-plan-cn.xiaomimimo.com/v1"
+
+/** Endpoint emitted by older AmberAgent builds; only this exact value is migrated. */
+const val LEGACY_MIMO_API_DEFAULT_BASE_URL: String = "https://api.xiaomi.com/v1"
 
 /**
  * Versioned client User-Agents used as Coding Plan header disguises.

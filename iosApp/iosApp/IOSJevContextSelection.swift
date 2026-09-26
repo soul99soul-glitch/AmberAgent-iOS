@@ -849,19 +849,15 @@ final class IOSJevContextSelectionService {
                     cursor = block.range.upperBound
                 }
                 projected += original[cursor..<original.endIndex]
-                newParts.append(UIMessagePart.Text(text: projected, metadata: text.metadata))
+                newParts.append(PromptTranscript.shared.doCopyText(part: text, text: projected))
             } else {
                 newParts.append(part)
             }
         }
-        let projectedTool = UIMessagePart.Tool(
-            toolCallId: toolPart.toolCallId,
-            toolName: toolPart.toolName,
+        let projectedTool = PromptTranscript.shared.doCopyTool(
+            tool: toolPart,
             input: toolPart.input,
-            output: newParts,
-            approvalState: toolPart.approvalState,
-            streamIndex: toolPart.streamIndex,
-            metadata: toolPart.metadata
+            output: newParts
         )
         var updated = messages
         let message = messages[messageIndex]

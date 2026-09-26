@@ -11,6 +11,35 @@ import XCTest
 /// 3. `fitMessagesToTokenBudget` 截尾丢弃消息时,注入侧必须可见(不得静默)。
 @MainActor
 final class IOSContextCompactionCoordinatorTests: XCTestCase {
+    func testNativeTranscriptBudgetValidationNeverMovesSystemUpdates() throws {
+        let defaults = UserDefaults(suiteName: "TranscriptBudget-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults).snapshot
+        let model = Model(
+            modelId: "gpt-5.4", displayName: "test", id: KotlinUuid.companion.random(),
+            type: .chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: KotlinInt(value: 8_000), providerOverwrite: nil
+        )
+        let params = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [],
+            reasoningLevel: .off, customHeaders: [], customBody: []
+        )
+        let messages = [
+            UIMessage.companion.system(prompt: "initial"),
+            UIMessage.companion.user(prompt: "question"),
+            UIMessage.companion.system(prompt: "update"),
+        ]
+        let coordinator = IOSContextCompactionCoordinator()
+        let valid = try coordinator.finalizedMessagesForRequest(
+            messages, settings: settings, params: params, preserveMessageOrder: true
+        )
+        XCTAssertEqual(valid.map { $0.id }, messages.map { $0.id })
+        XCTAssertThrowsError(try coordinator.finalizedMessagesForRequest(
+            messages, settings: settings, params: params,
+            additionalOverheadTokens: 10_000, preserveMessageOrder: true
+        ))
+    }
+
     func testRequestSystemMessagesDoNotInvalidateSavedCompaction() async throws {
         let provider = SuccessfulCompactProvider()
         let coordinator = IOSContextCompactionCoordinator(textProvider: provider)
@@ -40,10 +69,19 @@ final class IOSContextCompactionCoordinatorTests: XCTestCase {
             UIMessage.companion.user(prompt: String(repeating: "x", count: 1_400))
         }
         let firstSystem = UIMessage.companion.system(prompt: "Request-only guidance")
+        var sawCompactedHistory = false
         let first = try await coordinator.prepareMessagesForRequest(
             uploadMessages: [firstSystem] + history, conversationId: conversationId,
-            settings: settings, params: params, fallbackProvider: fallback
+            settings: settings, params: params, fallbackProvider: fallback,
+            additionalHistoryOverhead: { retained in
+                let includesOldPromptTransitions = retained.contains { $0.id == history[0].id }
+                if !includesOldPromptTransitions { sawCompactedHistory = true }
+                // The pre-compaction transition history alone exceeded the window.
+                // Keeping that stale estimate after checkpointing would reject this request.
+                return includesOldPromptTransitions ? 15_000 : 0
+            }
         )
+        XCTAssertTrue(sawCompactedHistory)
         XCTAssertTrue(first.contains { $0.id == firstSystem.id })
         let boundaries = coordinator.timelineBoundaries(conversationId: conversationId, messages: history)
         XCTAssertEqual(boundaries.count, 1)

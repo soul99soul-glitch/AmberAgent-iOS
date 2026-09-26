@@ -178,6 +178,37 @@ struct ComposerDockSendButton: View {
     }
 }
 
+/// The composer is inset, but suggestions scroll through the screen edges.
+struct ChatSuggestionStrip: View {
+    let suggestions: [String]
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(Array(suggestions.prefix(4).enumerated()), id: \.offset) { index, suggestion in
+                    Button { onSelect(suggestion) } label: {
+                        Text(suggestion)
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
+                            .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .frame(height: 26)
+                    }
+                    .buttonStyle(.plain)
+                    .amberGlass(cornerRadius: 13, interactive: false)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("chat-suggestion-\(index)")
+                }
+            }
+            .padding(.vertical, 3)
+        }
+        .contentMargins(.horizontal, ChatLayout.contentHorizontalInset, for: .scrollContent)
+        .padding(.horizontal, -ChatLayout.contentHorizontalInset)
+    }
+}
+
 @MainActor
 final class ComposerInputController {
     weak var textView: UITextView?
@@ -231,11 +262,7 @@ struct ComposerInputTextView: UIViewRepresentable {
         textView.isEditable = isEnabled
         textView.isSelectable = isEnabled
         textView.returnKeyType = sendOnEnter ? .send : .default
-        if !isEnabled, textView.isFirstResponder {
-            textView.resignFirstResponder()
-        } else if isFocused.wrappedValue, !textView.isFirstResponder {
-            textView.becomeFirstResponder()
-        }
+        context.coordinator.updateFocus(for: textView)
         context.coordinator.updateHeight(for: textView)
     }
 
@@ -257,6 +284,7 @@ struct ComposerInputTextView: UIViewRepresentable {
         private var lastMeasuredFont: UIFont?
         private var lastMeasuredInsets: UIEdgeInsets = .zero
         private var measurementRevision = 0
+        private var focusUpdateScheduled = false
 
         init(parent: ComposerInputTextView) {
             self.parent = parent
@@ -289,6 +317,27 @@ struct ComposerInputTextView: UIViewRepresentable {
             }
             parent.onSubmit()
             return false
+        }
+
+        func updateFocus(for textView: UITextView) {
+            let needsFocus = parent.isEnabled && parent.isFocused.wrappedValue && !textView.isFirstResponder
+            let needsResign = !parent.isEnabled && textView.isFirstResponder
+            guard needsFocus || needsResign, !focusUpdateScheduled else { return }
+            focusUpdateScheduled = true
+            // UIKit changes the responder chain synchronously. Doing that inside
+            // updateUIView re-enters SwiftUI's AttributeGraph update on device.
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self else { return }
+                self.focusUpdateScheduled = false
+                guard let textView, self.controller.textView === textView,
+                      textView.window != nil else { return }
+                if !self.parent.isEnabled, textView.isFirstResponder {
+                    textView.resignFirstResponder()
+                } else if self.parent.isEnabled, self.parent.isFocused.wrappedValue,
+                          !textView.isFirstResponder {
+                    textView.becomeFirstResponder()
+                }
+            }
         }
 
         func updateHeight(for textView: UITextView) {

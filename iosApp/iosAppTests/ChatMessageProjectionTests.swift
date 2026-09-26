@@ -133,6 +133,163 @@ final class ChatMessageProjectionTests: XCTestCase {
         XCTAssertEqual(view.measurements, 4, "宽度和字体变化仍要重新测量")
     }
 
+    private final class FocusProbeTextView: UITextView {
+        var focusCalls = 0
+        var resignCalls = 0
+        private var hasInputFocus = false
+        override var isFirstResponder: Bool { hasInputFocus }
+        override func becomeFirstResponder() -> Bool {
+            focusCalls += 1
+            hasInputFocus = true
+            return true
+        }
+        override func resignFirstResponder() -> Bool {
+            resignCalls += 1
+            hasInputFocus = false
+            return true
+        }
+    }
+
+    func testComposerFocusRunsAfterUpdateAndHonorsCancelledOrDetachedRequests() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        window.rootViewController = UIViewController()
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; previous?.makeKey() }
+        let view = FocusProbeTextView(frame: CGRect(x: 0, y: 0, width: 300, height: 40))
+        window.rootViewController!.view.addSubview(view)
+        let controller = ComposerInputController()
+        controller.textView = view
+        var focused = true
+        let input = ComposerInputTextView(
+            text: .constant("建议内容"), height: .constant(40),
+            isFocused: Binding(get: { focused }, set: { focused = $0 }),
+            isEnabled: true, sendOnEnter: false, controller: controller, onSubmit: {}
+        )
+        let coordinator = input.makeCoordinator()
+        coordinator.updateFocus(for: view)
+        XCTAssertEqual(view.focusCalls, 0, "不能在 UIViewRepresentable 的更新栈内同步获取焦点")
+        focused = false
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(view.focusCalls, 0, "已撤销的聚焦请求不能弹起键盘")
+
+        focused = true
+        for _ in 0..<10 { coordinator.updateFocus(for: view) }
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(view.focusCalls, 1, "同一轮视图更新只需处理一次焦点")
+        coordinator.parent.isEnabled = false
+        let previousResigns = view.resignCalls
+        coordinator.updateFocus(for: view)
+        XCTAssertEqual(view.resignCalls, previousResigns)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(view.resignCalls, previousResigns + 1)
+
+        coordinator.parent.isEnabled = true
+        coordinator.updateFocus(for: view)
+        controller.textView = nil
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(view.focusCalls, 1, "已拆除的输入框不能被排队操作重新聚焦")
+    }
+
+    @MainActor
+    private final class SuggestionComposerModel: ObservableObject {
+        @Published var focused = false
+        @Published var height: CGFloat = 40
+        let controller = ComposerInputController()
+        let viewModel: ChatViewModel
+        init() {
+            let defaults = UserDefaults(suiteName: "SuggestionComposer-\(UUID().uuidString)")!
+            viewModel = ChatViewModel(
+                settingsStore: SettingsStore(userDefaults: defaults),
+                sharedSettings: IOSSharedSettingsStore(userDefaults: defaults),
+                autoGenerateResponses: false
+            )
+            viewModel.chatSuggestions = [
+                "给我一个可以直接照着操作的完整例子",
+                "进一步解释这个结论的依据与适用条件",
+                "给我一个可以直接照着操作的完整例子",
+                "整理一下接下来最值得尝试的几步",
+            ]
+        }
+    }
+
+    private struct SuggestionComposerHarness: View {
+        @ObservedObject var model: SuggestionComposerModel
+        var body: some View {
+            VStack(spacing: 8) {
+                Spacer()
+                if !model.viewModel.chatSuggestions.isEmpty {
+                    ChatSuggestionStrip(suggestions: model.viewModel.chatSuggestions) { suggestion in
+                        model.viewModel.fillInputFromSuggestion(suggestion)
+                        model.focused = true
+                    }
+                }
+                ComposerInputTextView(
+                    text: Binding(get: { model.viewModel.inputText }, set: { model.viewModel.inputText = $0 }),
+                    height: $model.height, isFocused: $model.focused,
+                    isEnabled: true, sendOnEnter: false, controller: model.controller, onSubmit: {}
+                )
+                .frame(height: model.height)
+            }
+            .padding(.horizontal, ChatLayout.contentHorizontalInset)
+            .padding(.bottom, 8)
+            .animation(.easeOut(duration: 0.2), value: model.viewModel.chatSuggestions.isEmpty)
+        }
+    }
+
+    func testSuggestionStripReachesScreenEdgesAndDraftRemainsEditableAfterFilling() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previous = scene.windows.first(where: \.isKeyWindow)
+        let model = SuggestionComposerModel()
+        let host = UIHostingController(rootView: SuggestionComposerHarness(model: model))
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = host
+        window.backgroundColor = .systemBackground
+        window.makeKeyAndVisible()
+        defer {
+            host.view.endEditing(true)
+            window.isHidden = true
+            window.rootViewController = nil
+            previous?.makeKey()
+        }
+        try await Task.sleep(for: .milliseconds(350))
+        host.view.layoutIfNeeded()
+        func horizontalScroll(in view: UIView) -> UIScrollView? {
+            if let scroll = view as? UIScrollView, !(scroll is UITextView),
+               scroll.contentSize.width > scroll.bounds.width + 1 { return scroll }
+            return view.subviews.compactMap { horizontalScroll(in: $0) }.first
+        }
+        let scroll = try XCTUnwrap(horizontalScroll(in: host.view))
+        let viewport = scroll.convert(scroll.bounds, to: window)
+        XCTAssertEqual(viewport.minX, window.bounds.minX, accuracy: 1)
+        XCTAssertEqual(viewport.maxX, window.bounds.maxX, accuracy: 1, "滚动裁切边界必须是屏幕边缘，而不是输入框内边距")
+        scroll.setContentOffset(CGPoint(x: 120, y: 0), animated: false)
+        try await Task.sleep(for: .milliseconds(100))
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "suggestions-at-screen-edge"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        let evidence = FileManager.default.temporaryDirectory.appendingPathComponent("suggestions-at-screen-edge.png")
+        try XCTUnwrap(image.pngData()).write(to: evidence)
+        print("SUGGESTION_EVIDENCE \(evidence.path)")
+
+        let suggestion = try XCTUnwrap(model.viewModel.chatSuggestions.last)
+        model.viewModel.fillInputFromSuggestion(suggestion)
+        model.focused = true
+        try await Task.sleep(for: .milliseconds(500))
+        let input = try XCTUnwrap(model.controller.textView)
+        XCTAssertEqual(input.text, suggestion)
+        XCTAssertTrue(input.isFirstResponder)
+        XCTAssertTrue(model.viewModel.messages.isEmpty)
+        input.insertText("！")
+        XCTAssertEqual(model.viewModel.inputText, suggestion + "！", "填入后输入框必须仍能响应编辑")
+    }
+
     private final class VisibilityProbeModel: ObservableObject {
         @Published var active = true
         var creations = 0
