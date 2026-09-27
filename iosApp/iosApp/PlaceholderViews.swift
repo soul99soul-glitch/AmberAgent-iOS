@@ -2465,13 +2465,15 @@ struct ConversationsView: View {
 
             // 右下拇指区：内容贴合胶囊浮在内容上（局部琥珀；非满幅条）。
             // trailing 28（非卡边 16）：相对会话外框内缩 12pt，避免胶囊右缘与卡边相切。
+            // 视觉位置不变：外扩的热区从 inset 里扣回。
             homeNewChatCapsule
-                .padding(.trailing, homeNewChatCapsuleTrailingInset)
+                .padding(.trailing, homeNewChatCapsuleTrailingInset - homeNewChatCapsuleHitSlop)
                 .padding(
                     .bottom,
-                    dynamicTypeSize.isAccessibilitySize
+                    (dynamicTypeSize.isAccessibilitySize
                         ? 12
-                        : max(homeNewChatCapsuleBottomInset - geometry.safeAreaInsets.bottom, 12)
+                        : max(homeNewChatCapsuleBottomInset - geometry.safeAreaInsets.bottom, 12))
+                        - homeNewChatCapsuleHitSlop
                 )
                 .homeCascade(delay: 0.22, enabled: !cascadeComplete)
         }
@@ -2573,6 +2575,9 @@ struct ConversationsView: View {
     /// 相对屏底 inset（拇指区）。
     private var homeNewChatCapsuleBottomInset: CGFloat { 52 }
 
+    /// 胶囊四周额外触控热区；玻璃外观不变，只扩大可点范围（贴角浮层易点偏）。
+    private var homeNewChatCapsuleHitSlop: CGFloat { 10 }
+
     /// 列表底留白：胶囊高 + 余量（只滚空白，不铺实色栏）。
     private var homeNewChatCapsuleListClearance: CGFloat {
         homeNewChatCapsuleHeight + 36
@@ -2585,10 +2590,7 @@ struct ConversationsView: View {
     /// - ui-patterns：拇指区 bottomTrailing 真浮层；非 top 难够、非 inset 假底栏
     private var homeNewChatCapsule: some View {
         let height = homeNewChatCapsuleHeight
-        return Button {
-            AmberHaptics.trigger(.lightImpact)
-            startNewConversation()
-        } label: {
+        return Button(action: triggerHomeNewChat) {
             HStack(spacing: 6) {
                 HomePhosphorIcon(.pencil, size: 14)
                     .foregroundStyle(AmberTheme.fabInk)
@@ -2608,6 +2610,15 @@ struct ConversationsView: View {
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityLabel("新建聊天")
         .accessibilityAddTraits(.isButton)
+        // 胶囊外的一圈透明热区：点在玻璃边缘外侧也能新建；玻璃内仍由按钮自身处理按压形变。
+        .padding(homeNewChatCapsuleHitSlop)
+        .contentShape(Capsule())
+        .onTapGesture(perform: triggerHomeNewChat)
+    }
+
+    private func triggerHomeNewChat() {
+        AmberHaptics.trigger(.lightImpact)
+        startNewConversation()
     }
 
     /// E 版 + Liquid Glass skill：
