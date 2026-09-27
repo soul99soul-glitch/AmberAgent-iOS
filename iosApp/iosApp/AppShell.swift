@@ -638,6 +638,9 @@ struct AppShell: View {
             rootRouter.path = [.settings, .weather]
         case .appleIntegrations:
             rootRouter.path = [.settings, .appleIntegrations]
+        case .gatewayPair(let payload):
+            MacGatewayStore.shared.receivePairingLink(payload)
+            rootRouter.path = [.settings, .macGateway]
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = nil
@@ -879,6 +882,7 @@ enum Route: Hashable {
     case weather
     case appleIntegrations
     case appleWatch
+    case macGateway
     case subscription
     case capabilities
     case memoryEdit(recordId: Int?, text: String, scope: String, pinned: Bool)
@@ -1023,6 +1027,8 @@ private extension View {
                     sharedSettings: sharedSettings,
                     conversationStore: conversationStore
                 )
+            case .macGateway:
+                MacGatewaySettingsView()
             case .subscription:
                 IOSSubscriptionView(store: storeCoordinator)
             case .capabilities:

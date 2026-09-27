@@ -57,6 +57,7 @@ final class IOSReleaseConfigurationTests: XCTestCase {
         )
         XCTAssertEqual(stable["com.apple.developer.applesignin"] as? [String], ["Default"])
         XCTAssertEqual(stable["aps-environment"] as? String, "$(APS_ENVIRONMENT)")
+        XCTAssertEqual(stable["com.apple.developer.usernotifications.time-sensitive"] as? Bool, true)
         XCTAssertEqual(
             stable["com.apple.developer.devicecheck.appattest-environment"] as? String,
             "$(APP_ATTEST_ENVIRONMENT)"

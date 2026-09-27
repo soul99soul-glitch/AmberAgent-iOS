@@ -464,6 +464,7 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
             actionHandler: WatchTaskCoordinator.shared
         )
         IOSChatBackgroundGenerationCoordinator.shared.prepareForApplicationLaunch()
+        MacGatewayStore.shared.applicationDidFinishLaunching()
         return true
     }
 
@@ -499,6 +500,7 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
         Task { await IOSBackendServicesCoordinator.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken) }
+        MacGatewayStore.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)
     }
 
     func application(
@@ -506,5 +508,6 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
         IOSBackendServicesCoordinator.shared.didFailRemoteNotificationRegistration(error)
+        MacGatewayStore.shared.didFailToRegisterForRemoteNotifications(error)
     }
 }

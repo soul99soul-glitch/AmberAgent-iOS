@@ -13,6 +13,8 @@ enum IOSAppDeepLink {
         case weather
         case appleIntegrations
         case agentActivity(AgentActivityDeepLink.Target)
+        /// `amber://gateway/pair?p=<base64url>` from the `amber-gateway pair` QR code.
+        case gatewayPair(payload: String)
     }
 
     static func parse(
@@ -51,6 +53,11 @@ enum IOSAppDeepLink {
             return .weather
         case ("settings", ["apple-integrations"]) where queryItems.isEmpty:
             return .appleIntegrations
+        case ("gateway", ["pair"]):
+            guard queryItems.count == 1, queryItems[0].name == "p",
+                  let payload = queryItems[0].value,
+                  isSafeIdentifier(payload, maxLength: MacGatewayPairingPayload.maximumLinkLength) else { return nil }
+            return .gatewayPair(payload: payload)
         default:
             return nil
         }
@@ -89,6 +96,11 @@ enum IOSAppDeepLink {
         case .appleIntegrations:
             components.host = "settings"
             components.path = "/apple-integrations"
+        case .gatewayPair(let payload):
+            guard isSafeIdentifier(payload, maxLength: MacGatewayPairingPayload.maximumLinkLength) else { return nil }
+            components.host = "gateway"
+            components.path = "/pair"
+            components.queryItems = [URLQueryItem(name: "p", value: payload)]
         case .agentActivity(let target):
             return AgentActivityDeepLink.makeURL(
                 runId: target.runId,

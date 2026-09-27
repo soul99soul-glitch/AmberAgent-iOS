@@ -3930,7 +3930,8 @@ struct SettingsHomeView: View {
                 route: .language
             ),
             .init(title: "显示与字体", systemImage: "slider.horizontal.3", route: .displayFont),
-            .init(title: "Apple Watch", systemImage: "applewatch", route: .appleWatch)
+            .init(title: "Apple Watch", systemImage: "applewatch", route: .appleWatch),
+            .init(title: "Mac Gateway", systemImage: "desktopcomputer", route: .macGateway)
         ]
     }
 

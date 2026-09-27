@@ -17,6 +17,21 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(webView.contains("deviceCapabilities?.close()"))
     }
 
+    /// Mac Gateway 闭环：设置入口 → 路由 → 页面；深链进入确认；APNs token 与启动注册转发到 store。
+    func testMacGatewayIsReachableFromSettingsDeepLinkAndPushRegistration() throws {
+        let home = try source("iosApp/PlaceholderViews.swift")
+        let shell = try source("iosApp/AppShell.swift")
+        let delegate = try source("iosApp/IOSLocalNotifications.swift")
+
+        XCTAssertTrue(home.contains("route: .macGateway"))
+        XCTAssertTrue(shell.contains("case .macGateway:\n                MacGatewaySettingsView()"))
+        XCTAssertTrue(shell.contains("MacGatewayStore.shared.receivePairingLink(payload)"))
+        XCTAssertTrue(shell.contains("rootRouter.path = [.settings, .macGateway]"))
+        XCTAssertTrue(delegate.contains("MacGatewayStore.shared.applicationDidFinishLaunching()"))
+        XCTAssertTrue(delegate.contains("MacGatewayStore.shared.didRegisterForRemoteNotifications(deviceToken: deviceToken)"))
+        XCTAssertTrue(delegate.contains("MacGatewayStore.shared.didFailToRegisterForRemoteNotifications(error)"))
+    }
+
     private func source(_ relativePath: String) throws -> String {
         let testsDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let iosAppRoot = testsDir.deletingLastPathComponent()
