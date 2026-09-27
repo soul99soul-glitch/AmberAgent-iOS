@@ -106252,6 +106252,42 @@
           }
         }
       }
+    },
+    "正在创建": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Creating" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在创建" } }
+      }
+    },
+    "正在接受…": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Accepting…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在接受…" } }
+      }
+    },
+    "接受剧情状态失败": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Could not accept plot state" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "接受剧情状态失败" } }
+      }
+    },
+    "撤销处理结果": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Undo result" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "撤销处理结果" } }
+      }
+    },
+    "正在切换": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Switching" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在切换" } }
+      }
+    },
+    "正在撤销": {
+      "localizations": {
+        "en": { "stringUnit": { "state": "translated", "value": "Undoing" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在撤销" } }
+      }
     }
   },
   "version": "1.0"

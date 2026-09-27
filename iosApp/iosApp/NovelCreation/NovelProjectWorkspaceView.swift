@@ -25,8 +25,30 @@ struct NovelProjectWorkspaceView: View {
     @State private var hasCompletedInitialNavigation = false
     @State private var routedProjectLoadFailure: String?
     @State private var modelPolicyFailure: String?
+    @State private var stalePlotAcceptanceError: String?
+    @State private var pendingModelSelectionID: String?
+    @State private var isFallbackModelPolicySubmitting = false
     @State private var sheetTransitionTask: Task<Void, Never>?
     @State private var sheetTransitionToken: UUID?
+    @State private var collectionSheetInputs: CollectionSheetInputs?
+    @State private var isAcceptingStalePlot = false
+
+    private struct CollectionSheetInputs {
+        let candidateID: NovelCandidateID
+        let snapshotKey: CollectionSheetSnapshotKey
+        let paragraphs: [NovelParagraphRecord]
+        let chapters: [NovelSessionChapterOption]
+        let nextChapterOrdinal: Int
+        let regenerationTarget: NovelSessionChapterOption?
+        let suggestedGranularity: NovelGenerationGranularity
+    }
+
+    private struct CollectionSheetSnapshotKey: Equatable {
+        let projectRevision: Int64
+        let branchID: NovelBranchID?
+        let branchWorkingRevision: Int64?
+        let branchHeadCheckpointID: NovelCheckpointID?
+    }
 
     init(
         viewModel: NovelCreationViewModel,
@@ -65,6 +87,12 @@ struct NovelProjectWorkspaceView: View {
             if hasCompletedInitialNavigation {
                 viewModel.scheduleAutomaticStateSyncIfNeeded()
             }
+        }
+        .onChange(of: collectionSheetSnapshotKey) { _, snapshotKey in
+            guard case .collectCandidate(let candidateID) = activeSheet else { return }
+            guard collectionSheetInputs?.candidateID != candidateID
+                    || collectionSheetInputs?.snapshotKey != snapshotKey else { return }
+            prepareCollectionSheetInputs(for: candidateID, snapshotKey: snapshotKey)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
@@ -127,7 +155,9 @@ struct NovelProjectWorkspaceView: View {
         .toolbarBackground(AmberTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar { workspaceToolbar }
-        .sheet(item: $activeSheet, content: sheetContent)
+        .sheet(item: $activeSheet, onDismiss: {
+            collectionSheetInputs = nil
+        }, content: sheetContent)
         .navigationDestination(item: $chapterReaderRoute) { route in
             NovelChapterReaderView(
                 viewModel: viewModel,
@@ -150,6 +180,14 @@ struct NovelProjectWorkspaceView: View {
             Button("取消", role: .cancel) {}
         } message: {
             Text("当前损坏的主文件会被保留用于排查，上一个有效版本将成为新的可写版本。")
+        }
+        .alert("接受剧情状态失败", isPresented: Binding(
+            get: { stalePlotAcceptanceError != nil },
+            set: { if !$0 { stalePlotAcceptanceError = nil } }
+        )) {
+            Button("知道了", role: .cancel) { stalePlotAcceptanceError = nil }
+        } message: {
+            Text(stalePlotAcceptanceError ?? "请重试。")
         }
         .task(id: hasCompletedInitialNavigation) {
             guard hasCompletedInitialNavigation else { return }
@@ -198,7 +236,7 @@ struct NovelProjectWorkspaceView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("项目控制")
-            .disabled(!hasLoadedRoutedProject || isSessionTransitionBusy)
+            .disabled(!hasLoadedRoutedProject || isBindingTransitionBusy)
         }
 
         ToolbarItem(id: NovelCreationToolbarID.settings, placement: .topBarTrailing) {
@@ -218,7 +256,7 @@ struct NovelProjectWorkspaceView: View {
         .padding(.bottom, 8)
         .frame(maxWidth: .infinity)
         .background(AmberTheme.background)
-        .disabled(isSessionTransitionBusy)
+        .disabled(isBindingTransitionBusy)
     }
 
     /// Status strips share the canvas color and only use ink/hairlines for emphasis,
@@ -387,10 +425,27 @@ struct NovelProjectWorkspaceView: View {
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(AmberTheme.foreground2)
                     .fixedSize(horizontal: false, vertical: true)
-                    Button("确认无碍，按正文接受") {
+                    Button {
+                        guard !isAcceptingStalePlot else { return }
+                        stalePlotAcceptanceError = nil
+                        isAcceptingStalePlot = true
                         Task { @MainActor in
+                            defer { isAcceptingStalePlot = false }
                             await viewModel.acceptStalePlot()
+                            stalePlotAcceptanceError = viewModel.errorMessage
                         }
+                    } label: {
+                        Text("确认无碍，按正文接受")
+                            .opacity(isStalePlotAcceptInFlight ? 0 : 1)
+                            .overlay {
+                                if isStalePlotAcceptInFlight {
+                                    HStack(spacing: 5) {
+                                        ProgressView().controlSize(.small)
+                                        Text("正在接受…")
+                                    }
+                                    .lineLimit(1)
+                                }
+                            }
                     }
                     .font(.footnote.weight(.semibold))
                     .buttonStyle(.bordered)
@@ -401,8 +456,7 @@ struct NovelProjectWorkspaceView: View {
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
                     .disabled(
-                        viewModel.isPerforming || viewModel.requiresReload ||
-                            viewModel.projectSnapshot?.access != .readWrite
+                        isStalePlotAcceptInFlight || !viewModel.canMutate
                     )
                 }
             }
@@ -448,7 +502,13 @@ struct NovelProjectWorkspaceView: View {
                 inputBudgetTokens: $sessionInputBudgetTokens,
                 composerInputController: sessionComposerInputController,
                 onOpenModel: { activeSheet = .modelPicker(.creation) },
-                onOpenCollection: { activeSheet = .collectCandidate($0) },
+                onOpenCollection: { candidateID in
+                    prepareCollectionSheetInputs(
+                        for: candidateID,
+                        snapshotKey: collectionSheetSnapshotKey
+                    )
+                    activeSheet = .collectCandidate(candidateID)
+                },
                 onOpenManualRewrite: { activeSheet = .manualRewrite($0) },
                 onFork: { activeSheet = .forkCheckpoint($0) },
                 onOpenSettingProposals: openSettingProposals,
@@ -518,7 +578,10 @@ struct NovelProjectWorkspaceView: View {
                 onFallback: {
                     selectModelPolicy(.global, for: purpose)
                 },
-                dismissesAfterFallback: false
+                dismissesAfterFallback: false,
+                pendingSelectionID: pendingModelSelectionID,
+                isSelectionInFlight: isModelPolicySubmitting,
+                isFallbackInFlight: isFallbackModelPolicySubmitting
             ) { option in
                 selectFixedModel(option, for: purpose)
             }
@@ -557,43 +620,40 @@ struct NovelProjectWorkspaceView: View {
             )
 
         case .collectCandidate(let candidateID):
-            NovelCollectCandidateSheet(
-                paragraphs: sessionViewModel.paragraphs(candidateID: candidateID),
-                chapters: chapterOptions,
-                nextChapterOrdinal: sessionViewModel.currentChapterVersions.count + 1,
-                regenerationTarget: sessionViewModel
-                    .regenerationTargetChapterID(for: candidateID)
-                    .flatMap { chapterID in
-                        chapterOptions.first { $0.selection.chapterID == chapterID }
-                    },
-                suggestedGranularity: sessionViewModel.collectionGranularity(
-                    for: candidateID
-                ),
-                onCompleted: { target in
-                    // 「归档讨论」的语义是「这一章写完了」。替换已有章节是修订,
-                    // 不是新写一章,而且该章首次写成时多半已经归档过一次,
-                    // 再弹一次会在同一章下产生第二条归档记录。
-                    if case .replaceChapter = target { return }
-                    guard sessionViewModel.collectionGranularity(for: candidateID) == .wholeChapter else {
-                        return
+            if let inputs = collectionSheetInputs,
+               inputs.candidateID == candidateID {
+                NovelCollectCandidateSheet(
+                    paragraphs: inputs.paragraphs,
+                    chapters: inputs.chapters,
+                    nextChapterOrdinal: inputs.nextChapterOrdinal,
+                    regenerationTarget: inputs.regenerationTarget,
+                    suggestedGranularity: inputs.suggestedGranularity,
+                    onCompleted: { target in
+                        // 「归档讨论」的语义是「这一章写完了」。替换已有章节是修订,
+                        // 不是新写一章,而且该章首次写成时多半已经归档过一次,
+                        // 再弹一次会在同一章下产生第二条归档记录。
+                        if case .replaceChapter = target { return }
+                        guard sessionViewModel.collectionGranularity(for: candidateID) == .wholeChapter else {
+                            return
+                        }
+                        transition(to: .discussionArchiveOffer(chapterID(for: target)))
                     }
-                    transition(to: .discussionArchiveOffer(chapterID(for: target)))
+                ) { selection, target in
+                    let succeeded = await sessionViewModel.collectCandidate(
+                        candidateID,
+                        selection: selection,
+                        target: target
+                    )
+                    if succeeded { return .completed }
+                    if sessionViewModel.branchPendingOperations.contains(where: {
+                        $0.candidateID == candidateID
+                    }) {
+                        return .pending(message: "旧版收录仍有剧情状态同步任务，请返回后重试。")
+                    }
+                    return .failed(
+                        message: sessionViewModel.errorMessage ?? "收录没有完成，请检查项目状态后重试。"
+                    )
                 }
-            ) { selection, target in
-                let succeeded = await sessionViewModel.collectCandidate(
-                    candidateID,
-                    selection: selection,
-                    target: target
-                )
-                if succeeded { return .completed }
-                if sessionViewModel.branchPendingOperations.contains(where: {
-                    $0.candidateID == candidateID
-                }) {
-                    return .pending(message: "旧版收录仍有剧情状态同步任务，请返回后重试。")
-                }
-                return .failed(
-                    message: sessionViewModel.errorMessage ?? "收录没有完成，请检查项目状态后重试。"
-                )
             }
 
         case .manualRewrite(let candidateID):
@@ -756,11 +816,8 @@ struct NovelProjectWorkspaceView: View {
         return count == 0 ? value.title : "\(value.title) · \(count)"
     }
 
-    private var isSessionTransitionBusy: Bool {
-        sessionViewModel.isPerformingAction ||
-            (viewModel.isPerforming &&
-                viewModel.stateSyncActivity == nil &&
-                !sessionViewModel.isStarting)
+    private var isBindingTransitionBusy: Bool {
+        viewModel.isLoading
     }
 
     private var currentStateSyncActivity: NovelStateSyncActivity? {
@@ -821,6 +878,12 @@ struct NovelProjectWorkspaceView: View {
     }
 
     private var chapterOptions: [NovelSessionChapterOption] {
+        chapterOptions(for: sessionViewModel.currentChapterVersions)
+    }
+
+    private func chapterOptions(
+        for currentVersions: [NovelChapterVersionRecord]
+    ) -> [NovelSessionChapterOption] {
         // 已废弃的章不参与收录:注入侧早已把它们排除出生成上下文
         // (NovelInjectionPlanner 取「最后一个未废弃的选择」),收录侧若还列着它们,
         // 就会出现「并入当前章」把新文并进一个已废弃章的情况。
@@ -830,7 +893,7 @@ struct NovelProjectWorkspaceView: View {
                 .filter { $0.discardedAt != nil }
                 .map(\.id)
         )
-        return sessionViewModel.currentChapterVersions.enumerated().compactMap { index, version in
+        return currentVersions.enumerated().compactMap { index, version in
             guard !discarded.contains(version.chapterID) else { return nil }
             return NovelSessionChapterOption(
                 selection: NovelChapterSelection(
@@ -841,6 +904,43 @@ struct NovelProjectWorkspaceView: View {
                 ordinal: index + 1
             )
         }
+    }
+
+    private var collectionSheetSnapshotKey: CollectionSheetSnapshotKey {
+        let branch = viewModel.branchSnapshot?.branch
+        return CollectionSheetSnapshotKey(
+            projectRevision: viewModel.projectSnapshot?.project.revision ?? -1,
+            branchID: branch?.id,
+            branchWorkingRevision: branch?.workingRevision,
+            branchHeadCheckpointID: branch?.headCheckpointID
+        )
+    }
+
+    private func prepareCollectionSheetInputs(
+        for candidateID: NovelCandidateID,
+        snapshotKey: CollectionSheetSnapshotKey
+    ) {
+        let currentVersions = sessionViewModel.currentChapterVersions
+        let chapters = chapterOptions(for: currentVersions)
+        let regenerationTarget: NovelSessionChapterOption? = sessionViewModel
+            .candidate(id: candidateID)
+            .flatMap { candidate in
+                guard candidate.kind == .prose,
+                      let sourceVersionID = candidate.sourceChapterVersionID,
+                      let chapterID = currentVersions.first(where: {
+                          $0.id == sourceVersionID
+                      })?.chapterID else { return nil }
+                return chapters.first { $0.selection.chapterID == chapterID }
+        }
+        collectionSheetInputs = CollectionSheetInputs(
+            candidateID: candidateID,
+            snapshotKey: snapshotKey,
+            paragraphs: sessionViewModel.paragraphs(candidateID: candidateID),
+            chapters: chapters,
+            nextChapterOrdinal: currentVersions.count + 1,
+            regenerationTarget: regenerationTarget,
+            suggestedGranularity: sessionViewModel.collectionGranularity(for: candidateID)
+        )
     }
 
     private func chapterID(for target: NovelCollectionTarget) -> NovelChapterID {
@@ -907,8 +1007,19 @@ struct NovelProjectWorkspaceView: View {
     }
 
     private func selectModelPolicy(_ policy: NovelProjectModelPolicy, for purpose: NovelModelRole) {
+        guard !isModelPolicySubmitting else { return }
         modelPolicyFailure = nil
+        switch policy {
+        case .global:
+            isFallbackModelPolicySubmitting = true
+        case .fixed(_, let modelID):
+            pendingModelSelectionID = modelID
+        }
         Task { @MainActor in
+            defer {
+                pendingModelSelectionID = nil
+                isFallbackModelPolicySubmitting = false
+            }
             if await viewModel.setModelPolicy(policy, for: purpose) {
                 activeSheet = nil
             } else {
@@ -918,6 +1029,14 @@ struct NovelProjectWorkspaceView: View {
                 )
             }
         }
+    }
+
+    private var isModelPolicySubmitting: Bool {
+        pendingModelSelectionID != nil || isFallbackModelPolicySubmitting
+    }
+
+    private var isStalePlotAcceptInFlight: Bool {
+        isAcceptingStalePlot || viewModel.isAcceptingStalePlot
     }
 
     private func transition(to sheet: NovelWorkspaceSheet) {

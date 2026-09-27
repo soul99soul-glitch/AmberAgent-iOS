@@ -12,12 +12,15 @@ struct NovelBranchesView: View {
     let viewModel: NovelCreationViewModel
     let isSelectionDisabled: Bool
     let onSelect: (NovelBranchID) -> Void
+    @Binding var pendingSelectionID: NovelBranchID?
     let onRename: (NovelBranchRecord) -> Void
     let onFork: (NovelBranchRecord) -> Void
     let onEditOverride: (NovelMaterialRecord) -> Void
 
     @State private var pendingDelete: NovelBranchDeleteCandidate?
     @State private var pendingUndoCheckpointID: NovelCheckpointID?
+    @State private var undoingCheckpointID: NovelCheckpointID?
+    @State private var undoFailureMessage: String?
 
     var body: some View {
         List {
@@ -59,13 +62,20 @@ struct NovelBranchesView: View {
             Button(undoTitle, role: .destructive) {
                 let checkpointID = pendingUndoCheckpointID
                 pendingUndoCheckpointID = nil
+                guard undoingCheckpointID == nil else { return }
+                guard let checkpointID,
+                      viewModel.branchSnapshot?.branch.headCheckpointID == checkpointID else {
+                    undoFailureMessage = "当前分支已经变化，请重新选择撤销操作。"
+                    return
+                }
+                undoingCheckpointID = checkpointID
+                viewModel.clearError()
                 Task {
-                    guard let checkpointID,
-                          viewModel.branchSnapshot?.branch.headCheckpointID == checkpointID else {
-                        viewModel.presentError(NovelError.invalidInput("当前分支已经变化，请重新选择撤销操作。"))
-                        return
-                    }
+                    defer { undoingCheckpointID = nil }
                     await viewModel.undoBranchHead()
+                    if let message = viewModel.presentedMessage {
+                        undoFailureMessage = message
+                    }
                 }
             }
             Button("取消", role: .cancel) { pendingUndoCheckpointID = nil }
@@ -78,30 +88,44 @@ struct NovelBranchesView: View {
         Section("剧情分支") {
             ForEach(viewModel.activeBranches, id: \.id) { branch in
                 let isSelected = branch.id == viewModel.selectedBranchID
+                let isPending = branch.id == pendingSelectionID
                 let isMain = branch.id == viewModel.projectSnapshot?.project.mainBranchID
                 Button {
+                    guard branch.id != viewModel.selectedBranchID,
+                          pendingSelectionID == nil else { return }
+                    pendingSelectionID = branch.id
                     onSelect(branch.id)
                 } label: {
                     NovelBranchRow(
                         branch: branch,
-                        isSelected: isSelected,
-                        isMain: isMain
+                        isSelected: isSelected || isPending,
+                        isMain: isMain,
+                        isPending: isPending
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(isSelectionDisabled)
+                .disabled(isSelectionDisabled || pendingSelectionID != nil)
                 .accessibilityLabel(branch.name)
-                .accessibilityValue(branchAccessibilityValue(branch, isMain: isMain))
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
+                .accessibilityValue(branchAccessibilityValue(
+                    branch,
+                    isMain: isMain,
+                    isPending: isPending
+                ))
+                .accessibilityAddTraits(isSelected || isPending ? .isSelected : [])
             }
         }
     }
 
-    private func branchAccessibilityValue(_ branch: NovelBranchRecord, isMain: Bool) -> String {
+    private func branchAccessibilityValue(
+        _ branch: NovelBranchRecord,
+        isMain: Bool,
+        isPending: Bool
+    ) -> String {
         var values: [String] = []
         if isMain { values.append(localized("主分支")) }
         values.append(localized(branch.syncStatus.displayName))
         if branch.activeRunID != nil { values.append(localized("生成中")) }
+        if isPending { values.append(localized("正在切换")) }
         return values.joined(separator: ", ")
     }
 
@@ -138,9 +162,22 @@ struct NovelBranchesView: View {
                 Button {
                     pendingUndoCheckpointID = branch.headCheckpointID
                 } label: {
-                    Label(undoTitle, systemImage: "arrow.uturn.backward")
+                    HStack(spacing: 8) {
+                        Label(undoTitle, systemImage: "arrow.uturn.backward")
+                            .lineLimit(1)
+                        ZStack {
+                            if undoingCheckpointID != nil {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                        .frame(width: 16, height: 16)
+                        .accessibilityHidden(true)
+                    }
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .disabled(undoBlockReason != nil)
+                .disabled(undoBlockReason != nil || undoingCheckpointID != nil)
+                .accessibilityValue(undoingCheckpointID == nil ? "" : localized("正在撤销"))
 
                 Button(role: .destructive) {
                     pendingDelete = NovelBranchDeleteCandidate(branch: branch)
@@ -162,6 +199,14 @@ struct NovelBranchesView: View {
                 } else {
                     Text("撤销只会回到上一个存档点，不删除历史记录。")
                 }
+            }
+            .alert(Text(verbatim: localized("撤销处理结果")), isPresented: Binding(
+                get: { undoFailureMessage != nil },
+                set: { if !$0 { undoFailureMessage = nil } }
+            )) {
+                Button("好") { undoFailureMessage = nil }
+            } message: {
+                Text(undoFailureMessage ?? localized("请稍后重试。"))
             }
         }
     }
@@ -386,6 +431,7 @@ private struct NovelBranchRow: View {
     let branch: NovelBranchRecord
     let isSelected: Bool
     let isMain: Bool
+    let isPending: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -409,10 +455,19 @@ private struct NovelBranchRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if isSelected {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(AmberTheme.accent)
+            HStack(spacing: 4) {
+                if isPending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 16, height: 16)
+                        .accessibilityHidden(true)
+                }
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AmberTheme.accent)
+                }
             }
+            .frame(width: 40, alignment: .trailing)
         }
         .frame(minHeight: 52)
         .contentShape(Rectangle())

@@ -31,6 +31,84 @@ final class NovelSessionReplayTests: XCTestCase {
         ))
     }
 
+    func testIncrementalPresentationBufferMatchesStatelessPacer() {
+        let runID = NovelRunID()
+        let messageID = NovelMessageID()
+        let bindingToken = UUID()
+        var buffer = NovelSessionPresentationBuffer(
+            runID: runID,
+            messageID: messageID,
+            bindingToken: bindingToken,
+            baseContent: "已显示"
+        )
+        var referenceDisplayed = "已显示"
+
+        func drain(
+            mode: NovelSessionPresentationPacer.Mode = .streaming,
+            fixedAdvance: Int? = nil
+        ) {
+            var ticks = 0
+            while true {
+                let expected = NovelSessionPresentationPacer.step(
+                    displayedContent: referenceDisplayed,
+                    targetContent: buffer.targetContent,
+                    mode: mode,
+                    fixedTerminalAdvance: fixedAdvance
+                )
+                let actual = buffer.step(mode: mode, fixedTerminalAdvance: fixedAdvance)
+                XCTAssertEqual(actual, expected)
+                referenceDisplayed = expected.content
+                if expected.isCaughtUp { return }
+                ticks += 1
+                if ticks >= 100 {
+                    XCTFail("Incremental pacer did not catch up.")
+                    return
+                }
+            }
+        }
+
+        for chunk in [
+            "文本",
+            "e",
+            "\u{301}",
+            "🇺",
+            "🇸",
+            "👩",
+            "\u{200D}",
+            "💻",
+            String(repeating: "长", count: 240),
+        ] {
+            buffer.append(chunk)
+            drain()
+        }
+
+        buffer.replace(with: "重写后分段" + String(repeating: "替", count: 90))
+        drain()
+        buffer.append("追加在重写之后")
+        drain()
+
+        // Append after a paced step, while the displayed index is inside the
+        // target. Appending must leave that earlier index usable.
+        buffer.replace(with: referenceDisplayed + String(repeating: "积", count: 700))
+        let expectedFirstStep = NovelSessionPresentationPacer.step(
+            displayedContent: referenceDisplayed,
+            targetContent: buffer.targetContent
+        )
+        let actualFirstStep = buffer.step()
+        XCTAssertEqual(actualFirstStep, expectedFirstStep)
+        XCTAssertFalse(actualFirstStep.isCaughtUp)
+        referenceDisplayed = expectedFirstStep.content
+
+        for chunk in [
+            String(repeating: "突", count: 80),
+            String(repeating: "发", count: 120),
+            String(repeating: "流", count: 160),
+        ] {
+            buffer.append(chunk)
+        }
+        drain()
+    }
+
     func testFullTextPaginationPreservesGraphemeBoundariesAndSource() {
         let composed = "e\u{301}"
         let family = "👨‍👩‍👧‍👦"
@@ -312,6 +390,33 @@ final class NovelSessionReplayTests: XCTestCase {
         )
         XCTAssertTrue(step.content.hasPrefix(body))
         XCTAssertFalse(step.content.hasPrefix("```"))
+    }
+
+    func testTerminalPacingDropsLeadingWhitespaceBeforeAdvancingPlainProse() {
+        let raw = "\n　" + String(repeating: "旧巷落雨。", count: 40)
+        let visible = String(repeating: "旧巷落雨。", count: 40)
+        let target = NovelPromptCatalog.normalizedCandidateProse(
+            raw + String(repeating: "续", count: 80)
+        )
+        XCTAssertEqual(
+            NovelSessionPresentationPacer.presentationContent(raw, runKind: .prose),
+            visible
+        )
+        XCTAssertTrue(target.hasPrefix(visible))
+        let base = NovelSessionPresentationPacer.terminalPacingBase(
+            displayedContent: raw,
+            targetContent: target,
+            runKind: .prose
+        )
+        XCTAssertEqual(base, visible)
+        let first = NovelSessionPresentationPacer.terminalStep(
+            displayedContent: raw,
+            targetContent: target,
+            runKind: .prose,
+            fixedTerminalAdvance: 12
+        )
+        XCTAssertTrue(first.content.hasPrefix(visible))
+        XCTAssertLessThan(first.content.count, target.count)
     }
 
     func testTranscriptUsesEagerStacksForWindowedHistory() throws {

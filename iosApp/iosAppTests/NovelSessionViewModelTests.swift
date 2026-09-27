@@ -241,6 +241,32 @@ final class NovelSessionViewModelTests: XCTestCase {
         )
     }
 
+    func testStartedRefreshDoesNotBlockFollowingRunEvents() async throws {
+        let delta = "started 刷新等待时仍应收到正文"
+        let harness = try await makeHarness(
+            scripts: [NovelModelScript(steps: [.delta(delta), .pause])],
+            usesSnapshotGate: true
+        )
+        let gate = try XCTUnwrap(harness.snapshotGate)
+        await gate.blockNextSnapshot()
+        harness.session.mode = .discussPlan
+
+        let didStart = await harness.session.send(text: "继续讨论")
+        XCTAssertTrue(didStart)
+        let startedRefreshBlocked = await eventually {
+            await gate.snapshotIsBlocked()
+        }
+        XCTAssertTrue(startedRefreshBlocked)
+
+        let followingDeltaPublished = await eventually(timeout: 3) {
+            harness.session.transientTail?.content == delta
+        }
+        XCTAssertTrue(followingDeltaPublished)
+
+        await gate.resumeBlockedSnapshot()
+        await harness.session.stop()
+    }
+
     func testComposerIntentRemembersWriteAPassageAndDoesNotSnapBackToWholeChapter() async throws {
         let defaults = UserDefaults(suiteName: "session-composer-\(UUID().uuidString)")!
         let repository = InMemoryNovelProjectRepository()
@@ -304,6 +330,29 @@ final class NovelSessionViewModelTests: XCTestCase {
         let reloadedSession = NovelSessionViewModel(workspace: reloadedWorkspace)
         await reloadedSession.bindToCurrentSelection()
         XCTAssertTrue(reloadedSession.resolvedPendingCharacterIdentityMentions.isEmpty)
+    }
+
+    func testIdentityCardRefreshesWhenSelectionTokenChangesDuringSave() async throws {
+        let harness = try await makeHarness(
+            document: try documentWithUnresolvedCharacterMention("瘦子"),
+            scripts: [],
+            usesSnapshotGate: true
+        )
+        let gate = try XCTUnwrap(harness.snapshotGate)
+        await gate.blockNextPerform()
+        let saveTask = Task { @MainActor in
+            await harness.session.ignoreCharacterIdentityMention("瘦子")
+        }
+        let blocked = await eventually { await gate.performIsBlocked() }
+        try await harness.workspace.refreshCurrentSelection(
+            projectID: harness.projectID,
+            refreshProjectList: false
+        )
+        await gate.resumeBlockedPerform()
+        XCTAssertTrue(blocked)
+        let saved = await saveTask.value
+        XCTAssertTrue(saved)
+        XCTAssertTrue(harness.session.resolvedPendingCharacterIdentityMentions.isEmpty)
     }
 
     func testCustomCharacterIdentityClarificationClosesItAndPersistsTheAnswer() async throws {
@@ -705,6 +754,49 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(harness.session.durableMessages[3].content, "那就先强化他保护家人的选择。")
     }
 
+    func testFailedAskUserAnswerRestoresCachedCard() async throws {
+        let prompt = NovelAskUserPrompt(question: "下一步去哪？", options: ["城门", "码头"])
+        let repository = NovelSessionFailingRepository()
+        let harness = try await makeHarness(
+            repository: repository,
+            scripts: [NovelModelScript(steps: [.askUser(prompt, preface: "先确定方向。")])]
+        )
+        harness.session.mode = .discussPlan
+        let started = await harness.session.send(text: "继续规划")
+        XCTAssertTrue(started)
+        let didAsk = await eventually {
+            !harness.session.isRunning && harness.session.canSend &&
+                harness.session.durableMessages.last?.interaction == .askUser(prompt)
+        }
+        XCTAssertTrue(didAsk)
+        let promptID = try XCTUnwrap(harness.session.durableMessages.last?.id)
+
+        func cardResponse() throws -> NovelAskUserResponse? {
+            let list = try XCTUnwrap(harness.session.projectedListModel(
+                project: XCTUnwrap(harness.workspace.projectSnapshot),
+                branch: XCTUnwrap(harness.workspace.branchSnapshot)
+            ))
+            return list.rows.first(where: { $0.id == promptID })?.askUser?.response
+        }
+        XCTAssertNil(try cardResponse()) // Populate the projection cache before the answer.
+
+        await repository.blockNextCommit()
+        await repository.failNextCommits(1)
+        let answerTask = Task { @MainActor in
+            await harness.session.answerAskUser(promptMessageID: promptID, answer: "城门")
+        }
+        let commitBlocked = await eventually { await repository.commitIsBlocked() }
+        let optimisticAnswer = try? cardResponse()?.answer
+        await repository.resumeBlockedCommit()
+        XCTAssertTrue(commitBlocked)
+        XCTAssertEqual(optimisticAnswer, "城门")
+
+        let answered = await answerTask.value
+        XCTAssertFalse(answered)
+        XCTAssertNil(harness.session.answeringAskUserMessageID)
+        XCTAssertNil(try cardResponse(), "失败后已缓存的已回答投影必须撤回。")
+    }
+
     func testGhostwritePlanApprovalPersistsPlanAndStartsSelectedBatch() async throws {
         var document = try NovelTestFixtures.document()
         for (kind, title, content) in [
@@ -996,6 +1088,44 @@ final class NovelSessionViewModelTests: XCTestCase {
             "proposalCount=\(harness.workspace.projectSnapshot?.settingProposals.count ?? -1) isRunning=\(harness.session.isRunning) tailPhase=\(String(describing: harness.session.transientTail?.phase)) startingRun=\(String(describing: harness.workspace.quickStartStartingRun?.id)) workspaceError=\(String(describing: harness.workspace.errorMessage))"
         )
         XCTAssertEqual(harness.session.durableMessages[2].content, "失去记忆")
+    }
+
+    func testSuspendedTailPresentationHoldsPublishesThenCatchesUpOnResume() async throws {
+        let longBody = String(repeating: "长章正文。", count: 2_000)
+        let harness = try await makeHarness(scripts: [NovelModelScript(steps: [
+            .delta(longBody),
+            .pause,
+            .complete,
+        ])])
+        harness.session.mode = .writeProse
+        harness.session.granularity = .wholeChapter
+
+        let didStart = await harness.session.send(text: "生成这一整章")
+        XCTAssertTrue(didStart)
+        let sawPacedPrefix = await eventually {
+            guard let content = harness.session.transientTail?.content else { return false }
+            return !content.isEmpty && content.count < longBody.count / 2
+        }
+        XCTAssertTrue(sawPacedPrefix)
+
+        harness.session.setTailPresentationSuspended(true)
+        let frozen = try XCTUnwrap(harness.session.transientTail?.content)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(harness.session.transientTail?.content, frozen)
+
+        harness.session.setTailPresentationSuspended(false)
+        let resumed = try XCTUnwrap(harness.session.transientTail?.content)
+        XCTAssertGreaterThan(resumed.count, frozen.count)
+        XCTAssertTrue(longBody.hasPrefix(resumed))
+        let caughtUp = await eventually(timeout: 20) {
+            harness.session.transientTail?.content == longBody
+        }
+        XCTAssertTrue(caughtUp)
+
+        let runID = try XCTUnwrap(harness.session.activeRunID)
+        await harness.adapter.resume(runID: runID)
+        let didFinish = await eventually(timeout: 20) { !harness.session.isRunning }
+        XCTAssertTrue(didFinish)
     }
 
     func testWholeChapterUsesOneMonotonicTransientTailThenPersistsCandidate() async throws {
@@ -1317,6 +1447,85 @@ final class NovelSessionViewModelTests: XCTestCase {
             "A content-only tail revision must update one row without rebuilding every durable row."
         )
         XCTAssertEqual(updated.rows.last?.content, harness.session.transientTail?.content)
+        await harness.session.stop()
+    }
+
+    func testSendingBlocksCachedDurableActionsBeforeStartedRefresh() async throws {
+        var document = try documentWithChapter().document
+        let candidateID = NovelCandidateID()
+        let messageID = NovelMessageID()
+        let content = "Mara crossed the quiet hall."
+        document.sessions[0].messages = [NovelSessionMessageRecord(
+            id: messageID,
+            sequence: 0,
+            role: .assistant,
+            mode: .writeProse,
+            kind: .proseCandidate,
+            content: content,
+            createdAt: document.project.updatedAt,
+            runID: nil,
+            candidateID: candidateID
+        )]
+        document.sessions[0].revision = 1
+        document.candidates.append(NovelCandidateRecord(
+            id: candidateID,
+            kind: .prose,
+            branchID: document.branches[0].id,
+            sessionID: document.sessions[0].id,
+            sourceMessageID: messageID,
+            baseCheckpointID: document.branches[0].headCheckpointID,
+            baseHeadRevision: document.branches[0].headRevision,
+            status: .available,
+            content: content,
+            sourceChapterVersionID: nil,
+            collectedCheckpointID: nil,
+            createdAt: document.project.updatedAt
+        ))
+        try NovelDocumentValidator.validate(document)
+        let harness = try await makeHarness(
+            document: document,
+            scripts: [NovelModelScript(steps: [.pause])],
+            usesSnapshotGate: true
+        )
+        let gate = try XCTUnwrap(harness.snapshotGate)
+        let before = harness.session.projectedListModel(
+            project: try XCTUnwrap(harness.workspace.projectSnapshot),
+            branch: try XCTUnwrap(harness.workspace.branchSnapshot)
+        )
+        XCTAssertNil(before?.rows.flatMap(\.actions).first(where: {
+            $0.action == .collectProse(candidateID)
+        })?.blocker)
+
+        await gate.blockNextSnapshot()
+        harness.session.mode = .discussPlan
+        let sent = await harness.session.send(text: "继续讨论")
+        let refreshBlocked = await eventually { await gate.snapshotIsBlocked() }
+        let project = harness.workspace.projectSnapshot
+        let branch = harness.workspace.branchSnapshot
+        let tail = harness.session.transientTail
+        let cached = project.flatMap { project in
+            branch.flatMap { branch in
+                harness.session.projectedListModel(project: project, branch: branch)
+            }
+        }
+        let full = project.flatMap { project in
+            branch.map { branch in
+                NovelSessionPresentation.project(NovelSessionProjectionInput(
+                    project: project,
+                    branch: branch,
+                    transientTail: tail
+                ))
+            }
+        }
+        await gate.resumeBlockedSnapshot()
+
+        XCTAssertTrue(sent)
+        XCTAssertTrue(refreshBlocked)
+        XCTAssertNotNil(tail)
+        XCTAssertEqual(cached, full)
+        XCTAssertEqual(cached?.rows.flatMap(\.actions).first(where: {
+            $0.action == .collectProse(candidateID)
+        })?.blocker, .generationRunning)
         await harness.session.stop()
     }
 
@@ -1687,6 +1896,111 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(document.candidates.first?.content, run.partialContent)
         let cancelledRunIDs = await harness.adapter.cancelledRunIDs
         XCTAssertTrue(cancelledRunIDs.contains(runID))
+    }
+
+    func testUserStopFreezesVisibleTailUntilDurableProjectionIsWarm() async throws {
+        let partial = String(repeating: "Mara crossed the archive. ", count: 80)
+        let harness = try await makeHarness(
+            scripts: [NovelModelScript(steps: [.delta(partial), .pause])],
+            usesSnapshotGate: true,
+            terminalQuietDelay: 0.8
+        )
+        let gate = try XCTUnwrap(harness.snapshotGate)
+        harness.session.mode = .writeProse
+        let started = await harness.session.send(text: "续写这一章")
+        XCTAssertTrue(started)
+        let pacerHasBacklog = await eventually {
+            guard let visible = harness.session.transientTail?.content else { return false }
+            return !visible.isEmpty && visible.count < partial.count
+        }
+        XCTAssertTrue(pacerHasBacklog)
+        let tailBeforeStop = try XCTUnwrap(harness.session.transientTail)
+        let runID = tailBeforeStop.runID
+
+        await gate.blockInterruptReturn()
+        let stopTask = Task { @MainActor in await harness.session.stop() }
+        let interruptIsBlocked = await eventually {
+            await gate.interruptReturnIsBlocked()
+        }
+        XCTAssertTrue(interruptIsBlocked)
+        XCTAssertTrue(harness.session.isStopping)
+        XCTAssertFalse(harness.session.canStop)
+        XCTAssertEqual(harness.session.transientTail?.runID, runID)
+        XCTAssertEqual(harness.session.transientTail?.content, tailBeforeStop.content)
+        XCTAssertEqual(harness.session.transientTail?.phase, .interrupted)
+        XCTAssertTrue(harness.session.isTerminalPresenting)
+
+        try await Task.sleep(for: .milliseconds(140))
+        XCTAssertEqual(harness.session.transientTail?.content, tailBeforeStop.content)
+
+        await gate.resumeBlockedInterruptReturn()
+        await stopTask.value
+        let durableContent = try XCTUnwrap(harness.workspace.branchSnapshot?.session.messages.first {
+            $0.id == tailBeforeStop.messageID
+        }?.content)
+        XCTAssertFalse(harness.session.isStopping)
+        XCTAssertEqual(harness.session.transientTail?.content, durableContent)
+        XCTAssertEqual(harness.session.transientTail?.phase, .interrupted)
+        XCTAssertEqual(
+            harness.workspace.projectSnapshot?.activeRuns.first(where: { $0.id == runID })?.status,
+            .interrupted
+        )
+        let warmed = try XCTUnwrap(harness.session.projectedListModel(
+            project: try XCTUnwrap(harness.workspace.projectSnapshot),
+            branch: try XCTUnwrap(harness.workspace.branchSnapshot)
+        ))
+        XCTAssertEqual(warmed.activeTailRow?.content, durableContent)
+
+        let retired = await eventually(timeout: 3) { harness.session.transientTail == nil }
+        XCTAssertTrue(retired, "The frozen tail should hand off after the durable projection quiet window.")
+        let afterRetirement = try XCTUnwrap(harness.session.projectedListModel(
+            project: try XCTUnwrap(harness.workspace.projectSnapshot),
+            branch: try XCTUnwrap(harness.workspace.branchSnapshot)
+        ))
+        XCTAssertEqual(
+            afterRetirement.rows.first { $0.id == tailBeforeStop.messageID }?.content,
+            durableContent
+        )
+    }
+
+    func testRetryIsBusyBeforeStartCompletesAndRejectsSecondTap() async throws {
+        let failure = NovelModelFailure(code: "retryable", message: "暂时失败", isRetryable: true)
+        let harness = try await makeHarness(
+            scripts: [
+                NovelModelScript(steps: [.fail(failure)]),
+                NovelModelScript(steps: [.delta("重试已启动"), .pause]),
+            ],
+            usesAttachGate: true
+        )
+        let gate = try XCTUnwrap(harness.attachGate)
+        harness.session.mode = .writeProse
+        let started = await harness.session.send(text: "续写")
+        XCTAssertTrue(started)
+        let failed = await eventually {
+            harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed
+        }
+        XCTAssertTrue(failed)
+        let runID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.last?.id)
+
+        await gate.blockNextStart()
+        let retryTask = Task { @MainActor in
+            await harness.session.retryGeneration(runID: runID)
+        }
+        let retryStartIsBlocked = await eventually {
+            await gate.startIsBlocked()
+        }
+        XCTAssertTrue(retryStartIsBlocked)
+        XCTAssertEqual(harness.session.retryingRunID, runID)
+        XCTAssertTrue(harness.session.isBusy)
+        let repeatedTap = await harness.session.retryGeneration(runID: runID)
+        XCTAssertFalse(repeatedTap)
+
+        await gate.resumeBlockedStart()
+        let retryStarted = await retryTask.value
+        XCTAssertTrue(retryStarted)
+        let requests = await harness.adapter.requests
+        XCTAssertEqual(requests.count, 2)
+        await harness.session.stop()
     }
 
     func testInterruptedProseCanBeCollectedThenUndoneWithoutLeavingRetryAction() async throws {
@@ -2380,7 +2694,6 @@ final class NovelSessionViewModelTests: XCTestCase {
         }
         await firstBind.value
         await secondBind.value
-
         await harness.adapter.resume(runID: runID)
         let receivedDelta = await eventually {
             harness.session.transientTail?.phase == .streaming
@@ -3038,19 +3351,27 @@ final class NovelSessionViewModelTests: XCTestCase {
         }
         XCTAssertTrue(collectionSynchronized)
 
-        let synchronizedProject = try XCTUnwrap(harness.workspace.projectSnapshot)
-        let synchronizedBranch = try XCTUnwrap(harness.workspace.branchSnapshot)
-        let rawHeadID = synchronizedBranch.branch.headCheckpointID
-        let undoAction = harness.session.projectedListModel(
-            project: synchronizedProject,
-            branch: synchronizedBranch
-        )?.rows.flatMap(\.actions).first { action in
-            guard case .undoCommittedChange(let checkpointID, .prose) = action.action else {
-                return false
-            }
-            return checkpointID == rawHeadID
+        let rawHeadID = try XCTUnwrap(harness.workspace.branchSnapshot?.branch.headCheckpointID)
+        let undoReady = await eventually {
+            guard let project = harness.workspace.projectSnapshot,
+                  let branch = harness.workspace.branchSnapshot,
+                  let action = harness.session.projectedListModel(
+                      project: project,
+                      branch: branch
+                  )?.rows.flatMap(\.actions).first(where: { action in
+                      guard case .undoCommittedChange(let checkpointID, .prose) = action.action else {
+                          return false
+                      }
+                      return checkpointID == rawHeadID
+                  }) else { return false }
+            return action.blocker == nil
         }
-        XCTAssertNil(undoAction?.blocker)
+        XCTAssertTrue(
+            undoReady,
+            "tail=\(String(describing: harness.session.transientTail?.phase)) " +
+                "activeRun=\(String(describing: harness.session.activeRunID)) " +
+                "branchRun=\(String(describing: harness.workspace.branchSnapshot?.branch.activeRunID))"
+        )
 
         await harness.workspace.undoBranchHead()
         await harness.session.bindToCurrentSelection()

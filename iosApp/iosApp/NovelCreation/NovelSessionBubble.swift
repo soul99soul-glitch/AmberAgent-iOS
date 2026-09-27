@@ -29,6 +29,10 @@ struct NovelSessionBubble: View {
     let polishTransactionStatus: NovelPolishTransactionStatus?
     /// 该候选正在被采用（漂移检查模型调用中）。
     let isAdoptingPolish: Bool
+    var retryingRunID: NovelRunID? = nil
+    var cloningCandidateID: NovelCandidateID? = nil
+    var undoingCheckpointID: NovelCheckpointID? = nil
+    var isStopping: Bool = false
     let committedChange: NovelSessionCommittedChangeSummary?
     let askUser: NovelAskUserPresentation?
     var isSubmittingChapterRevision: Bool = false
@@ -48,26 +52,6 @@ struct NovelSessionBubble: View {
             assistantBubble
         case .system:
             systemMessage
-        }
-    }
-
-    /// Candidate manuscript should never render as Chat code cards when the model
-    /// mistakenly wraps it in ```html / ```markdown fences.
-    ///
-    /// Streaming tails already enter the buffer pre-normalized (same string the
-    /// pacer advances). Only durable/completed rows still need a full strip.
-    private static func displayMarkdown(
-        _ content: String,
-        kind: NovelSessionMessageKind,
-        isStreaming: Bool
-    ) -> String {
-        switch kind {
-        case .proseCandidate, .polishCandidate, .interruptedDraft:
-            return isStreaming
-                ? content
-                : NovelPromptCatalog.normalizedCandidateProse(content)
-        case .discussion, .userInput, .error:
-            return content
         }
     }
 
@@ -120,13 +104,8 @@ struct NovelSessionBubble: View {
                     // Always parse markdown — never show raw `**` / `#` markers.
                     // Match Chat: isStreaming drives animation; hasEverStreamed (from
                     // parent sticky IDs) keeps block renderer across complete.
-                    let markdown = Self.displayMarkdown(
-                        displayedContent,
-                        kind: kind,
-                        isStreaming: isStreaming
-                    )
                     NovelSessionWindowedMarkdown(
-                        fullText: markdown,
+                        fullText: displayedContent,
                         messageID: messageID,
                         isStreaming: isStreaming,
                         hasEverStreamed: hasEverStreamed,
@@ -158,7 +137,9 @@ struct NovelSessionBubble: View {
 
     @ViewBuilder
     private var statusLine: some View {
-        if case .some(.persistenceBlocked) = transientPhase {
+        if isStopping {
+            EmptyView()
+        } else if case .some(.persistenceBlocked) = transientPhase {
             Label(localized("回复已生成，等待重试保存"), systemImage: "externaldrive.badge.exclamationmark")
                 .foregroundStyle(AmberTheme.foreground2)
         } else if transientPhase == .terminalAwaitingRefresh {
@@ -216,6 +197,9 @@ struct NovelSessionBubble: View {
     }
 
     private var emptyAssistantText: String {
+        if isStopping {
+            return localized("正在停止…")
+        }
         if representsFailure {
             return localized("生成失败，未输出正文")
         }
@@ -265,6 +249,9 @@ struct NovelSessionBubble: View {
         NovelSessionActionButtons(
             actions: effectiveActions,
             granularity: granularity,
+            retryingRunID: retryingRunID,
+            cloningCandidateID: cloningCandidateID,
+            undoingCheckpointID: undoingCheckpointID,
             retryingPolishTransactionID: retryingPolishTransactionID,
             onCancelPolishRetry: onCancelPolishRetry,
             onAction: onAction
@@ -272,7 +259,8 @@ struct NovelSessionBubble: View {
     }
 
     private var effectiveActions: [NovelSessionRowActionAvailability] {
-        actions.map { item in
+        guard !isStopping else { return [] }
+        return actions.map { item in
             guard item.blocker == nil,
                   item.action.requiresMutation,
                   let runtimeActionBlocker else { return item }
@@ -435,10 +423,16 @@ private struct NovelSessionWindowedMarkdown: View {
         self.hasEverStreamed = hasEverStreamed
         self.showsFullTextEntry = showsFullTextEntry
         self.fullTextTitle = fullTextTitle
-        // A live tail is rebuilt for every paced delta. Do not eagerly count the
-        // whole accumulated chapter on each discarded value-type View instance;
-        // onAppear/onChange feeds the retained state incrementally instead.
-        _window = State(initialValue: isStreaming ? ChatTextWindow() : ChatTextWindow(fullText))
+        // A live tail is rebuilt for every paced delta. Seed its bounded window
+        // from the visible suffix so the first frame already contains the reply,
+        // without counting the accumulated chapter on each view instance.
+        let initialWindow: ChatTextWindow
+        if isStreaming {
+            initialWindow = ChatTextWindow(String(fullText.suffix(ChatTextWindow.limit)))
+        } else {
+            initialWindow = ChatTextWindow(fullText)
+        }
+        _window = State(initialValue: initialWindow)
     }
 
     var body: some View {
@@ -639,6 +633,9 @@ private struct NovelSessionFullTextSheet: View {
 private struct NovelSessionActionButtons: View {
     let actions: [NovelSessionRowActionAvailability]
     let granularity: NovelGenerationGranularity?
+    let retryingRunID: NovelRunID?
+    let cloningCandidateID: NovelCandidateID?
+    let undoingCheckpointID: NovelCheckpointID?
     let retryingPolishTransactionID: NovelPendingOperationID?
     let onCancelPolishRetry: () -> Void
     let onAction: (NovelSessionRowAction) -> Void
@@ -708,18 +705,48 @@ private struct NovelSessionActionButtons: View {
         _ item: NovelSessionRowActionAvailability,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            Label(
-                item.action.displayTitle(granularity: granularity),
-                systemImage: item.action.systemImage
-            )
-            .font(.footnote.weight(.semibold))
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
+        let isInFlight = isInFlight(item.action)
+        return Button(action: action) {
+            HStack(spacing: 6) {
+                ZStack {
+                    Image(systemName: item.action.systemImage)
+                        .font(.system(size: 14, weight: .semibold))
+                        .opacity(isInFlight ? 0 : 1)
+                    if isInFlight {
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                .frame(width: 18, height: 18)
+                Text(item.action.displayTitle(granularity: granularity))
+                    .font(.footnote.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(isInFlight ? inFlightTitle(for: item.action) : item.action.displayTitle(granularity: granularity))
         }
         .controlSize(.small)
-        .disabled(!item.isEnabled)
+        .disabled(!item.isEnabled || isInFlight)
         .accessibilityHint(item.blocker.map { localized($0.displayName) } ?? "")
+    }
+
+    private func isInFlight(_ action: NovelSessionRowAction) -> Bool {
+        switch action {
+        case .retryGeneration(let runID): retryingRunID == runID
+        case .cloneCollectedProse(let candidateID): cloningCandidateID == candidateID
+        case .undoCommittedChange(let checkpointID, _): undoingCheckpointID == checkpointID
+        default: false
+        }
+    }
+
+    private func inFlightTitle(for action: NovelSessionRowAction) -> String {
+        switch action {
+        case .retryGeneration: localized("正在重新生成")
+        case .cloneCollectedProse: localized("正在再次收录")
+        case .undoCommittedChange(_, let kind):
+            localized(kind == .polish ? "正在撤销润色" : "正在撤销收录")
+        default: action.displayTitle(granularity: granularity)
+        }
     }
 }
 

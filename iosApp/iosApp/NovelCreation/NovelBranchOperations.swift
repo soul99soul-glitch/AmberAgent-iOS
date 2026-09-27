@@ -73,6 +73,19 @@ enum NovelBranchSemantics {
         return .needsSync
     }
 
+    static func syncStatus(
+        for checkpoint: NovelBranchCheckpointRecord,
+        checkpointByID: [NovelCheckpointID: NovelBranchCheckpointRecord]
+    ) -> NovelBranchSyncStatus {
+        guard checkpoint.kind == .collection,
+              let parentID = checkpoint.parentCheckpointID,
+              let parent = checkpointByID[parentID],
+              checkpoint.stateSnapshotID == parent.stateSnapshotID else {
+            return .synchronized
+        }
+        return .needsSync
+    }
+
     static func canUndoHead(
         _ checkpoint: NovelBranchCheckpointRecord,
         branch: NovelBranchRecord,
@@ -83,6 +96,18 @@ enum NovelBranchSemantics {
             branch.workingChapterSelections == checkpoint.chapterSelections &&
             branch.overrideRevisionIDs == checkpoint.branchOverrideRevisionIDs &&
             syncStatus(for: checkpoint, checkpoints: checkpoints) == .needsSync
+    }
+
+    static func canUndoHead(
+        _ checkpoint: NovelBranchCheckpointRecord,
+        branch: NovelBranchRecord,
+        checkpointByID: [NovelCheckpointID: NovelBranchCheckpointRecord]
+    ) -> Bool {
+        if branch.syncStatus == .synchronized { return true }
+        return branch.syncStatus == .needsSync &&
+            branch.workingChapterSelections == checkpoint.chapterSelections &&
+            branch.overrideRevisionIDs == checkpoint.branchOverrideRevisionIDs &&
+            syncStatus(for: checkpoint, checkpointByID: checkpointByID) == .needsSync
     }
 
     static func undoTarget(
@@ -115,6 +140,30 @@ enum NovelBranchSemantics {
             return directParent
         }
         return undoTarget(for: checkpoint, checkpoints: checkpoints)
+    }
+
+    static func undoTarget(
+        for checkpoint: NovelBranchCheckpointRecord,
+        checkpointByID: [NovelCheckpointID: NovelBranchCheckpointRecord]
+    ) -> NovelBranchCheckpointRecord? {
+        guard let parentID = checkpoint.parentCheckpointID,
+              let parent = checkpointByID[parentID] else { return nil }
+        guard checkpoint.kind == .manualSync,
+              syncStatus(for: parent, checkpointByID: checkpointByID) == .needsSync,
+              let grandparentID = parent.parentCheckpointID,
+              let grandparent = checkpointByID[grandparentID] else { return parent }
+        return grandparent
+    }
+
+    static func undoTarget(
+        for checkpoint: NovelBranchCheckpointRecord,
+        branch: NovelBranchRecord,
+        checkpointByID: [NovelCheckpointID: NovelBranchCheckpointRecord]
+    ) -> NovelBranchCheckpointRecord? {
+        guard let parentID = checkpoint.parentCheckpointID,
+              let directParent = checkpointByID[parentID] else { return nil }
+        if branch.forkOrigin?.checkpointID == directParent.id { return directParent }
+        return undoTarget(for: checkpoint, checkpointByID: checkpointByID)
     }
 
     static func workingManuscriptChapters(

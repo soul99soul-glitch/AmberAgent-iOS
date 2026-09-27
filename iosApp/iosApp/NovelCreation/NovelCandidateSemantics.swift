@@ -61,6 +61,37 @@ enum NovelCandidateSemantics {
         return true
     }
 
+    static func collectionBaseMatches(
+        _ candidate: NovelCandidateRecord,
+        targetCheckpointID: NovelCheckpointID,
+        targetHeadRevision: Int64,
+        checkpointByID: [NovelCheckpointID: NovelBranchCheckpointRecord],
+        sourceMessage: NovelSessionMessageRecord?
+    ) -> Bool {
+        if candidate.baseCheckpointID == targetCheckpointID,
+           candidate.baseHeadRevision == targetHeadRevision {
+            return true
+        }
+
+        // A pointer-only relink may advance HEAD without changing the manuscript.
+        // A real manual sync after an edit must make the older candidate stale.
+        guard candidate.kind == .prose,
+              candidate.clonedFromCandidateID == nil,
+              targetHeadRevision == candidate.baseHeadRevision + 1,
+              sourceMessage != nil,
+              let checkpoint = checkpointByID[targetCheckpointID],
+              let base = checkpointByID[candidate.baseCheckpointID],
+              checkpoint.kind == .manualSync,
+              checkpoint.createdOnBranchID == candidate.branchID,
+              checkpoint.parentCheckpointID == candidate.baseCheckpointID,
+              checkpoint.baseHeadRevision == candidate.baseHeadRevision,
+              checkpoint.chapterSelections == base.chapterSelections,
+              checkpoint.branchOverrideRevisionIDs == base.branchOverrideRevisionIDs else {
+            return false
+        }
+        return true
+    }
+
     static func cloneBaseMatches(
         _ candidate: NovelCandidateRecord,
         currentCheckpointID: NovelCheckpointID,
@@ -101,6 +132,32 @@ enum NovelCandidateSemantics {
             targetCheckpointID: currentCheckpointID,
             targetHeadRevision: collection.baseHeadRevision,
             checkpoints: checkpoints,
+            sourceMessage: sourceMessage
+        )
+    }
+
+    static func cloneBaseMatches(
+        _ candidate: NovelCandidateRecord,
+        currentCheckpointID: NovelCheckpointID,
+        checkpointByID: [NovelCheckpointID: NovelBranchCheckpointRecord],
+        sourceMessage: NovelSessionMessageRecord?
+    ) -> Bool {
+        if candidate.baseCheckpointID == currentCheckpointID {
+            return true
+        }
+        guard let collectedCheckpointID = candidate.collectedCheckpointID,
+              let collection = checkpointByID[collectedCheckpointID],
+              collection.kind == .collection,
+              collection.createdOnBranchID == candidate.branchID,
+              collection.sourceCandidateID == candidate.id,
+              collection.parentCheckpointID == currentCheckpointID else {
+            return false
+        }
+        return collectionBaseMatches(
+            candidate,
+            targetCheckpointID: currentCheckpointID,
+            targetHeadRevision: collection.baseHeadRevision,
+            checkpointByID: checkpointByID,
             sourceMessage: sourceMessage
         )
     }

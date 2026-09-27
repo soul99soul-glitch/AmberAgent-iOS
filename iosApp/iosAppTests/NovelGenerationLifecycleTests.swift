@@ -2,6 +2,37 @@ import XCTest
 @testable import iosApp
 
 final class NovelGenerationLifecycleTests: XCTestCase {
+    func testRunStartAndTerminalNotifyProjectObservers() async throws {
+        let document = try NovelTestFixtures.document()
+        let harness = try await makeHarness(
+            document: document,
+            scripts: [NovelModelScript(steps: [.delta("完成正文"), .complete])]
+        )
+        let mutations = await harness.creation.mutationEvents()
+        let startedNotice = expectation(description: "run start project mutation")
+        let terminalNotice = expectation(description: "run terminal project mutation")
+        let observer = Task {
+            var count = 0
+            for await event in mutations {
+                guard event.projectID == document.project.id else { continue }
+                count += 1
+                if count == 1 { startedNotice.fulfill() }
+                if count == 2 {
+                    terminalNotice.fulfill()
+                    return
+                }
+            }
+        }
+
+        let run = try await harness.creation.start(
+            makeRequest(document: document, kind: .discussion)
+        )
+        let events = await capturedEvents(run.events)
+        XCTAssertTrue(events.contains { if case .completed = $0 { true } else { false } })
+        await fulfillment(of: [startedNotice, terminalNotice], timeout: 2)
+        observer.cancel()
+    }
+
     func testDiscussionDoesNotImposeAnOutputLimit() async throws {
         let document = try NovelTestFixtures.document()
         let harness = try await makeHarness(
@@ -236,6 +267,26 @@ final class NovelGenerationLifecycleTests: XCTestCase {
                 XCTAssertEqual(final.candidates[0].sourceChapterVersionID, fixture.1)
             }
         }
+    }
+
+    func testProseCompletionKeepsDurableLeadingTrim() async throws {
+        let document = try NovelTestFixtures.document()
+        let raw = "\n　Mara entered the archive.\n"
+        let expected = "Mara entered the archive."
+        let harness = try await makeHarness(
+            document: document,
+            scripts: [NovelModelScript(steps: [.delta(raw), .complete])]
+        )
+        let events = await capturedEvents(try await harness.creation.start(
+            makeRequest(document: document, kind: .prose, granularity: .continuation)
+        ).events)
+        guard case .completed(let snapshot) = events.last else {
+            return XCTFail("Expected completed prose run")
+        }
+        let persisted = try await harness.repository.document(document.project.id)
+        XCTAssertEqual(snapshot.message.content, expected)
+        XCTAssertEqual(persisted.sessions[0].messages.last?.content, expected)
+        XCTAssertEqual(persisted.candidates.first?.content, expected)
     }
 
     func testEmptyProviderCompletionClosesAsFailureInsteadOfBlockingPersistence() async throws {

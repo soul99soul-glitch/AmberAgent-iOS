@@ -248,7 +248,10 @@ actor DefaultNovelCreation: NovelCreation {
     var generationStartRunIDsByProject: [NovelProjectID: NovelRunID] = [:]
     var preStartInterruptions: [NovelRunID: NovelCancelRunCommand] = [:]
     var generationWriteProjectIDs: Set<NovelProjectID> = []
+    var generationWriteWaiters: [NovelProjectID: [CheckedContinuation<Void, Never>]] = [:]
     var generationRuntimes: [NovelRunID: NovelRunRuntime] = [:]
+    var recoverySidecarFlushes: [NovelRunID: Task<Bool, Never>] = [:]
+    var recoverySidecarFlushPending: Set<NovelRunID> = []
     var lifecycleReadProjectIDs: Set<NovelProjectID> = []
     var pendingLifecycleOperationsByProject: [
         NovelProjectID: Set<NovelOperationID>
@@ -256,6 +259,7 @@ actor DefaultNovelCreation: NovelCreation {
     var blockedLifecycleProjectIDs: Set<NovelProjectID> = []
     var didRecoverGenerationState = false
     var isRecoveringGenerationState = false
+    var generationRecoveryWaiters: [CheckedContinuation<Void, Never>] = []
     var recoveringGenerationProjectID: NovelProjectID?
     var recoveredGenerationProjectIDs: Set<NovelProjectID> = []
     var isReconcilingLifecycleOperations = false
@@ -653,7 +657,7 @@ actor DefaultNovelCreation: NovelCreation {
 
     private var mutationContinuations: [UUID: AsyncStream<NovelProjectMutationEvent>.Continuation] = [:]
 
-    func mutationEvents() -> AsyncStream<NovelProjectMutationEvent> {
+    func mutationEvents() async -> AsyncStream<NovelProjectMutationEvent> {
         let id = UUID()
         return AsyncStream { continuation in
             mutationContinuations[id] = continuation
@@ -676,12 +680,14 @@ actor DefaultNovelCreation: NovelCreation {
 
     func publishMutation(
         projectID: NovelProjectID,
-        operationID: NovelOperationID
+        operationID: NovelOperationID,
+        refreshesSelection: Bool = true
     ) {
         guard !mutationContinuations.isEmpty else { return }
         let event = NovelProjectMutationEvent(
             projectID: projectID,
-            operationID: operationID
+            operationID: operationID,
+            refreshesSelection: refreshesSelection
         )
         for continuation in mutationContinuations.values {
             continuation.yield(event)
@@ -873,9 +879,13 @@ actor DefaultNovelCreation: NovelCreation {
             return reduced.outcome
         }
 
+        let transition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+            from: loaded.document,
+            to: reduced.document
+        )
         let committed = try await repository.commitProject(
-            reduced.document,
-            expectedRevision: loaded.document.project.revision
+            transition,
+            authorization: nil
         )
         guard committed.document == reduced.document ||
               committed.document == NovelWorkspaceProjectStore.persistableAtRest(reduced.document) else {
@@ -991,8 +1001,16 @@ actor DefaultNovelCreation: NovelCreation {
 
     func waitForGenerationWrite(projectID: NovelProjectID) async {
         while generationWriteProjectIDs.contains(projectID) {
-            await Task.yield()
+            await withCheckedContinuation { continuation in
+                generationWriteWaiters[projectID, default: []].append(continuation)
+            }
         }
+    }
+
+    func finishGenerationWrite(projectID: NovelProjectID) {
+        generationWriteProjectIDs.remove(projectID)
+        let waiters = generationWriteWaiters.removeValue(forKey: projectID) ?? []
+        waiters.forEach { $0.resume() }
     }
 
     func mutationIsInFlight(projectID: NovelProjectID) -> Bool {

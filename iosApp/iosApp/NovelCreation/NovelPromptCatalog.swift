@@ -1674,10 +1674,13 @@ enum NovelPromptCatalog {
     ///
     /// - If the whole string is one closed fence, returns the inner body.
     /// - If streaming still has only an opening fence of a common wrapper language, drops that line.
-    /// - Otherwise returns the original text unchanged.
+    /// - Otherwise returns the text with surrounding whitespace removed.
     static func normalizedCandidateProse(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }
+        guard trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") else {
+            return trimmed
+        }
 
         let lines = trimmed.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         guard let first = lines.first else { return trimmed }
@@ -1704,13 +1707,17 @@ enum NovelPromptCatalog {
         return trimmed
     }
 
-    /// Streaming prose is overwhelmingly plain text. Avoid splitting and copying the
-    /// whole growing chapter on every presentation tick unless its first visible line
-    /// can actually be a Markdown fence.
+    /// Match durable prose's leading trim without touching the raw manuscript.
+    /// Keep trailing whitespace during streaming so a partial line does not retract.
     static func normalizedStreamingCandidateProse(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        if !first.isWhitespace {
+            guard text.hasPrefix("```") || text.hasPrefix("~~~") else { return text }
+            return normalizedCandidateProse(text)
+        }
         let firstVisible = text.drop { $0.isWhitespace }
         guard firstVisible.hasPrefix("```") || firstVisible.hasPrefix("~~~") else {
-            return text
+            return String(firstVisible)
         }
         return normalizedCandidateProse(text)
     }

@@ -181,6 +181,8 @@ struct NovelSessionView: View {
     @State private var pendingRecoveryAbandonTransactionIDs: [NovelPendingOperationID] = []
     @State private var recoveryAbandonTask: Task<Void, Never>?
     @State private var pendingUndo: NovelPendingCommittedUndo?
+    @State private var isAcceptingStalePlot = false
+    @State private var stalePlotAcceptanceError: String?
     /// Start with cold-open window; staged open expands to steady after first layout.
     @State private var historyWindowLimit = NovelSessionHistoryWindowPolicy.coldOpenLimit
     @State private var expandedArchiveIDs: Set<NovelMessageID> = []
@@ -226,7 +228,7 @@ struct NovelSessionView: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                if NovelSessionComposerPolicy.showsGenerationStatus(
+                if viewModel.isStopping || NovelSessionComposerPolicy.showsGenerationStatus(
                     isRunning: viewModel.isRunning,
                     isTerminalPresenting: viewModel.isTerminalPresenting,
                     activeRunKind: viewModel.activeRunKind,
@@ -272,6 +274,10 @@ struct NovelSessionView: View {
             terminalSettleTask?.cancel()
             cancelExplicitBottomAnimation()
             scrollDriver.invalidate()
+            viewModel.setTailPresentationSuspended(false)
+        }
+        .onChange(of: holdsFrozenStreamingTail, initial: true) { _, frozen in
+            viewModel.setTailPresentationSuspended(frozen)
         }
         .onChange(of: followGeneration) { _, enabled in
             scrollDriver.setAutomaticFollowEnabled(enabled)
@@ -303,13 +309,11 @@ struct NovelSessionView: View {
                 let request = pendingUndo
                 pendingUndo = nil
                 Task { @MainActor in
-                    guard let request,
-                          workspace.branchSnapshot?.branch.headCheckpointID == request.checkpointID else {
-                        workspace.presentError(NovelError.invalidInput("当前分支已经变化，请重新选择要撤销的记录。"))
-                        return
-                    }
-                    await workspace.undoBranchHead()
-                    await viewModel.bindToCurrentSelection()
+                    guard let request else { return }
+                    _ = await viewModel.undoCommittedChange(
+                        checkpointID: request.checkpointID,
+                        kind: request.kind
+                    )
                 }
             }
             Button("取消", role: .cancel) { pendingUndo = nil }
@@ -330,6 +334,13 @@ struct NovelSessionView: View {
         )
         let visibleHistoricalRows = historicalRows.dropFirst(historyStartIndex)
         let hiddenHistoryCount = historyStartIndex
+        let languageCode = IOSAppLanguagePreference.selected().resolvedLanguage().rawValue
+        let rowAskUserBlocker = askUserBlocker
+        let rowRuntimeActionBlocker = NovelSessionComposerPolicy.runtimeActionBlocker(
+            requiresReload: workspace.requiresReload,
+            hasRefreshError: viewModel.hasRefreshError,
+            isBusy: viewModel.isBusy
+        )
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -366,7 +377,13 @@ struct NovelSessionView: View {
                     if !visibleHistoricalRows.isEmpty {
                         VStack(alignment: .leading, spacing: 14) {
                             ForEach(visibleHistoricalRows) { row in
-                                transcriptRow(row, activeTailID: listModel?.activeTailID)
+                                transcriptRow(
+                                    row,
+                                    activeTailID: listModel?.activeTailID,
+                                    languageCode: languageCode,
+                                    askUserBlocker: rowAskUserBlocker,
+                                    runtimeActionBlocker: rowRuntimeActionBlocker
+                                )
                             }
                         }
                     }
@@ -380,7 +397,13 @@ struct NovelSessionView: View {
                     if !activeRunRows.isEmpty {
                         VStack(alignment: .leading, spacing: 14) {
                             ForEach(activeRunRows) { row in
-                                transcriptRow(row, activeTailID: listModel?.activeTailID)
+                                transcriptRow(
+                                    row,
+                                    activeTailID: listModel?.activeTailID,
+                                    languageCode: languageCode,
+                                    askUserBlocker: rowAskUserBlocker,
+                                    runtimeActionBlocker: rowRuntimeActionBlocker
+                                )
                             }
                         }
                     }
@@ -525,7 +548,10 @@ struct NovelSessionView: View {
 
     private func transcriptRow(
         _ row: NovelSessionRowModel,
-        activeTailID: NovelMessageID?
+        activeTailID: NovelMessageID?,
+        languageCode: String,
+        askUserBlocker: NovelSessionActionBlocker?,
+        runtimeActionBlocker: NovelSessionActionBlocker?
     ) -> some View {
         let messageID = row.id.description
         let tracksStreamingTail = row.id == activeTailID ||
@@ -548,19 +574,17 @@ struct NovelSessionView: View {
 
         return NovelSessionRowView(
             row: renderedRow,
-            languageCode: IOSAppLanguagePreference.selected()
-                .resolvedLanguage()
-                .rawValue,
+            languageCode: languageCode,
             // Live tail + IDs that streamed this visit — not every assistant bubble.
             hasEverStreamed: hasEverStreamed,
             adoptingPolishCandidateID: viewModel.adoptingPolishCandidateID,
+            retryingRunID: viewModel.retryingRunID,
+            cloningCandidateID: viewModel.cloningCandidateID,
+            undoingCheckpointID: viewModel.undoingCheckpointID,
+            isStopping: viewModel.stoppingRunID == row.runID,
             isSubmittingChapterRevision: viewModel.answeringAskUserMessageID == row.id,
             askUserBlocker: askUserBlocker,
-            runtimeActionBlocker: NovelSessionComposerPolicy.runtimeActionBlocker(
-                requiresReload: workspace.requiresReload,
-                hasRefreshError: viewModel.hasRefreshError,
-                isBusy: viewModel.isBusy
-            ),
+            runtimeActionBlocker: runtimeActionBlocker,
             polishRetryTransactionID: viewModel.polishRetryTransactionID,
             onAction: handleRowAction,
             onCancelPolishRetry: viewModel.cancelPolishRetry,
@@ -593,135 +617,116 @@ struct NovelSessionView: View {
     }
 
     private func composer() -> some View {
-        VStack(spacing: 8) {
-            if let transaction = viewModel.unresolvedBranchPolishTransactions.first {
-                polishRecoveryBanner(transaction)
-            }
-
-            if let projectID = workspace.selectedProjectID,
-               let branchID = workspace.selectedBranchID,
-               let activity = workspace.stateSyncActivity,
-               activity.projectID == projectID,
-               activity.branchID == branchID {
-                stateSyncProgressBanner(activity)
-            } else if let projectID = workspace.selectedProjectID,
-                      let branchID = workspace.selectedBranchID,
-                      workspace.canCancelAutomaticStateSync(
-                          projectID: projectID,
-                          branchID: branchID
-                      ) ||
-                      workspace.isStateSyncStopping(
-                          projectID: projectID,
-                          branchID: branchID
-                      ) {
-                // Preparing / stopping before activity is published, or after Stop
-                // while teardown finishes — keep Stop reachable and block explained.
-                stateSyncLightweightBanner(projectID: projectID, branchID: branchID)
-            } else if let projectID = workspace.selectedProjectID,
-                      let branchID = workspace.selectedBranchID,
-                      let failure = workspace.stateSyncRecoveryMessage(
-                          projectID: projectID,
-                          branchID: branchID
-                      ) {
-                automaticStateSyncFailureBanner(
-                    failure,
-                    projectID: projectID,
-                    branchID: branchID
-                )
-            } else if !viewModel.retryableBranchPendingOperations.isEmpty && !viewModel.isBusy {
-                synchronizationBanner
-            } else if workspace.hasStalePlot && !viewModel.needsSync && !viewModel.isBusy
-                        && !viewModel.isRunning {
-                stalePlotBanner
-            }
-
-            if let recovery = quickStartRecovery() {
-                quickStartRecoveryBanner(recovery)
-            }
-
-            if let error = viewModel.errorMessage,
-               error != viewModel.ghostwriteContinueBlockerMessage {
-                errorBanner(error)
-            }
-
-            // 代笔状态条：中断/失败后主界面也能直接「继续」，不必打开管理面板。
-            if let ghostwrite = viewModel.ghostwriteProgress {
-                ghostwriteStatusBar(ghostwrite)
-            }
-
-            HStack(alignment: .bottom, spacing: 8) {
-                HStack(alignment: .center, spacing: 6) {
-                    ZStack(alignment: .leading) {
-                        ComposerInputTextView(
-                            text: $inputText,
-                            height: $composerInputHeight,
-                            isFocused: inputFocusBinding,
-                            isEnabled: viewModel.access == .readWrite && !viewModel.isRunning,
-                            sendOnEnter: sendOnEnter,
-                            controller: composerInputController,
-                            onSubmit: send
-                        )
-                        .frame(height: max(44, composerInputHeight))
-
-                        if inputText.isEmpty {
-                            Text(inputPlaceholder)
-                                .font(.body)
-                                .foregroundStyle(AmberTheme.muted)
-                                .allowsHitTesting(false)
-                        }
-                    }
-                    .frame(minHeight: 44)
-                }
-                .padding(.leading, 18)
-                .padding(.trailing, 18)
-                // 与 Chat 一致：内容行 44 + 上下 5 → 外高 54，对齐发送键。
-                .padding(.vertical, 5)
-                .composerDockGlass(cornerRadius: 27)
-
-                ComposerDockSendButton(
-                    isLoading: viewModel.isRunning && viewModel.canStop,
-                    sendEnabled: sendEnabled,
-                    diameter: 54,
-                    onSend: send,
-                    onStop: stop
-                )
-            }
-
-            if showsComposerMeta {
-                composerMetaControls
-                    .transition(
-                        accessibilityReduceMotion
-                            ? .identity
-                            : .move(edge: .top).combined(with: .opacity)
-                    )
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
-        .background {
-            LinearGradient(
-                colors: [AmberTheme.background.opacity(0.78), AmberTheme.background],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .ignoresSafeArea()
-        }
-        .animation(
-            accessibilityReduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.86),
-            value: showsComposerMeta
+        NovelSessionComposerDock(
+            chrome: composerChrome,
+            inputText: $inputText,
+            inputHeight: $composerInputHeight,
+            isInputFocused: $isInputFocused,
+            isContextPanelPresented: $isContextPanelPresented,
+            placeholder: inputPlaceholder,
+            isInputEnabled: viewModel.access == .readWrite && !viewModel.isRunning,
+            sendOnEnter: sendOnEnter,
+            canSend: viewModel.canSend,
+            isRunning: viewModel.isRunning,
+            isStopping: viewModel.isStopping,
+            canStop: viewModel.canStop,
+            injectionOverrides: injectionOverrides,
+            meta: composerMetaValues,
+            controller: composerInputController,
+            reduceMotion: accessibilityReduceMotion,
+            onSend: send,
+            onStop: stop,
+            onOpenModel: onOpenModel,
+            onArchiveDiscussion: onArchiveDiscussion,
+            onSetIntent: viewModel.setComposerIntent
         )
     }
 
+    @ViewBuilder
+    private var composerChrome: some View {
+        if let transaction = viewModel.unresolvedBranchPolishTransactions.first {
+            polishRecoveryBanner(transaction)
+        }
+
+        if let projectID = workspace.selectedProjectID,
+           let branchID = workspace.selectedBranchID,
+           let activity = workspace.stateSyncActivity,
+           activity.projectID == projectID,
+           activity.branchID == branchID {
+            stateSyncProgressBanner(activity)
+        } else if let projectID = workspace.selectedProjectID,
+                  let branchID = workspace.selectedBranchID,
+                  workspace.canCancelAutomaticStateSync(
+                      projectID: projectID,
+                      branchID: branchID
+                  ) ||
+                  workspace.isStateSyncStopping(
+                      projectID: projectID,
+                      branchID: branchID
+                  ) {
+            // Preparing / stopping before activity is published, or after Stop
+            // while teardown finishes — keep Stop reachable and block explained.
+            stateSyncLightweightBanner(projectID: projectID, branchID: branchID)
+        } else if let projectID = workspace.selectedProjectID,
+                  let branchID = workspace.selectedBranchID,
+                  let failure = workspace.stateSyncRecoveryMessage(
+                      projectID: projectID,
+                      branchID: branchID
+                  ) {
+            automaticStateSyncFailureBanner(
+                failure,
+                projectID: projectID,
+                branchID: branchID
+            )
+        } else if !viewModel.retryableBranchPendingOperations.isEmpty && !viewModel.isBusy {
+            synchronizationBanner
+        } else if workspace.hasStalePlot && !viewModel.needsSync &&
+                    (!viewModel.isBusy || isAcceptingStalePlot || workspace.isAcceptingStalePlot) &&
+                    !viewModel.isRunning {
+            stalePlotBanner
+        }
+
+        if let recovery = quickStartRecovery() {
+            quickStartRecoveryBanner(recovery)
+        }
+
+        if let error = viewModel.errorMessage,
+           error != viewModel.ghostwriteContinueBlockerMessage {
+            errorBanner(error)
+        }
+
+        // 代笔状态条：中断/失败后主界面也能直接「继续」，不必打开管理面板。
+        if let ghostwrite = viewModel.ghostwriteProgress {
+            ghostwriteStatusBar(ghostwrite)
+        }
+
+    }
+
     private var stalePlotBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        let isInFlight = isAcceptingStalePlot || workspace.isAcceptingStalePlot
+        return VStack(alignment: .leading, spacing: 8) {
             Label("改过前面的章节后，后面的剧情指针可能过期。后文以正文为准。", systemImage: "clock.arrow.circlepath")
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(AmberTheme.foreground2)
                 .fixedSize(horizontal: false, vertical: true)
-            Button("按正文接受") {
+            Button {
+                guard !isAcceptingStalePlot, !workspace.isAcceptingStalePlot else { return }
+                isAcceptingStalePlot = true
+                stalePlotAcceptanceError = nil
                 Task { @MainActor in
+                    workspace.clearError()
                     await workspace.acceptStalePlot()
+                    stalePlotAcceptanceError = workspace.errorMessage
+                    isAcceptingStalePlot = false
+                }
+            } label: {
+                ZStack {
+                    Text("按正文接受")
+                        .opacity(isInFlight ? 0 : 1)
+                    if isInFlight {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
                 }
             }
             .buttonStyle(.bordered)
@@ -731,9 +736,16 @@ struct NovelSessionView: View {
             .frame(minHeight: 44)
             .contentShape(Rectangle())
             .disabled(
-                viewModel.isBusy || workspace.requiresReload ||
-                    viewModel.access != .readWrite
+                isInFlight || viewModel.isBusy || !workspace.canMutate
             )
+            .accessibilityLabel(isInFlight ? "正在按正文接受剧情" : "按正文接受")
+            if let stalePlotAcceptanceError {
+                Text(NovelPresentation.localizedCachedErrorMessage(stalePlotAcceptanceError))
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.accentRed)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 22)
+            }
         }
     }
 
@@ -1016,7 +1028,21 @@ struct NovelSessionView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if viewModel.hasRefreshError
+            if viewModel.isRetryingLastTerminal {
+                Button {
+                    // The retry owns this control until its durable start result is known.
+                } label: {
+                    ZStack {
+                        Text("重试").opacity(0)
+                        ProgressView().controlSize(.small)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(minWidth: 44, minHeight: 44)
+                .disabled(true)
+                .accessibilityLabel("正在重新生成")
+            } else if viewModel.hasRefreshError
                 || NovelPresentation.shouldOfferReload(for: message)
                 || displayedMessage.contains("重新载入")
                 || displayedMessage.contains("刷新后") {
@@ -1226,93 +1252,6 @@ struct NovelSessionView: View {
         }
     }
 
-    private var composerMetaControls: some View {
-        HStack(spacing: 8) {
-            Button(action: onOpenModel) {
-                Text(composerModelLabel)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(1)
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .composerDockGlass(cornerRadius: 15)
-            }
-            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .disabled(controlsDisabled)
-            .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
-
-            Spacer(minLength: 0)
-
-            Menu {
-                Picker("创作方式", selection: composerIntentBinding) {
-                    Section("构思") {
-                        ForEach(NovelComposerIntent.discussionOptions) { intent in
-                            Text(intent.title).tag(intent)
-                        }
-                    }
-                    Section("写正文") {
-                        ForEach(NovelComposerIntent.proseOptions) { intent in
-                            Text(intent.title)
-                                .tag(intent)
-                                .disabled(viewModel.needsSync)
-                        }
-                    }
-                }
-                if viewModel.needsSync {
-                    Text("剧情同步完成后可写正文")
-                }
-                Divider()
-                Button("归档当前讨论", systemImage: "archivebox") {
-                    onArchiveDiscussion()
-                }
-                .disabled(
-                    !viewModel.hasArchivableDiscussion ||
-                        viewModel.needsSync ||
-                        viewModel.isBusy
-                )
-            } label: {
-                Text(currentComposerIntent.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .padding(.horizontal, 12)
-                    .frame(height: 30)
-                    .composerDockGlass(cornerRadius: 15)
-            }
-            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-            .frame(minWidth: 44, minHeight: 44)
-            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .disabled(controlsDisabled)
-            .accessibilityLabel("创作方式，当前 \(currentComposerIntent.title)")
-
-            ContextRingButton(
-                snapshot: contextRingSnapshot,
-                compactState: .idle,
-                action: { isContextPanelPresented.toggle() }
-            )
-            .disabled(controlsDisabled)
-            .popover(isPresented: $isContextPanelPresented, arrowEdge: .bottom) {
-                ComposerContextPanel(
-                    snapshot: contextRingSnapshot,
-                    novelInjection: contextPanelModel
-                )
-                    .presentationCompactAdaptation(.popover)
-            }
-        }
-        .padding(.horizontal, 2)
-        .padding(.top, 2)
-    }
-
-    private var controlsDisabled: Bool {
-        viewModel.access != .readWrite ||
-            workspace.requiresReload ||
-            viewModel.isRunning ||
-            viewModel.isBusy
-    }
-
     private func projectedListModel() -> NovelSessionListModel? {
         guard let project = workspace.projectSnapshot,
               let branch = workspace.branchSnapshot else { return nil }
@@ -1376,74 +1315,11 @@ struct NovelSessionView: View {
         }
     }
 
-    @ViewBuilder
     private var identityCardsSection: some View {
-        // Hoist shared work out of ForEach: choices used to be rebuilt
-        // once per mention on every body pass (N cards × materials).
-        let identityMentions = viewModel.pendingCharacterIdentityMentions
-        let identityChoices = viewModel.characterIdentityChoices
-        let visibleIdentityMentions = Array(
-            identityMentions.prefix(NovelSessionViewModel.maxVisibleCharacterIdentityCards)
+        NovelSessionIdentityCardsView(
+            viewModel: viewModel,
+            onAcceptSettingProposal: onAcceptSettingProposal
         )
-        let hiddenIdentityCount = max(
-            0,
-            identityMentions.count - visibleIdentityMentions.count
-        )
-        ForEach(visibleIdentityMentions) { mention in
-            let activeProposal = viewModel.activeCharacterProposal(for: mention.name)
-            let recommended = viewModel.recommendedCharacterIdentityChoice(for: mention.name)
-            NovelCharacterIdentityQuestionCard(
-                mention: mention,
-                choices: identityChoices,
-                recommended: recommended,
-                activeProposal: activeProposal,
-                relatedProposalCount: viewModel.relatedCharacterProposalCount(
-                    for: mention.name
-                ),
-                isDisabled: viewModel.isBusy || viewModel.isRunning,
-                onSelect: { materialID in
-                    Task { @MainActor in
-                        _ = await viewModel.associateCharacterAlias(
-                            mention.name,
-                            with: materialID
-                        )
-                    }
-                },
-                onIgnore: {
-                    Task { @MainActor in
-                        _ = await viewModel.ignoreCharacterIdentityMention(mention.name)
-                    }
-                },
-                onClarify: { clarification in
-                    Task { @MainActor in
-                        _ = await viewModel.clarifyCharacterIdentityMention(
-                            mention.name,
-                            clarification: clarification
-                        )
-                    }
-                },
-                onGenerate: { guidance in
-                    Task { @MainActor in
-                        _ = await viewModel.startCharacterProposal(
-                            for: mention.name,
-                            guidance: guidance
-                        )
-                    }
-                },
-                onOpenProposal: {
-                    if let activeProposal {
-                        onAcceptSettingProposal(activeProposal)
-                    }
-                }
-            )
-        }
-        if hiddenIdentityCount > 0 {
-            Text("还有 \(hiddenIdentityCount) 个未确认称谓，处理上方条目后会继续出现。")
-                .font(.footnote)
-                .foregroundStyle(AmberTheme.muted)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.top, 2)
-        }
     }
 
     private var bindingTaskID: String {
@@ -1469,32 +1345,6 @@ struct NovelSessionView: View {
             phase
     }
 
-    private var composerIntentBinding: Binding<NovelComposerIntent> {
-        Binding(
-            get: {
-                if viewModel.needsSync {
-                    return .discuss
-                }
-                return NovelComposerIntent(mode: viewModel.mode, granularity: viewModel.granularity)
-            },
-            set: { intent in
-                viewModel.setComposerIntent(intent)
-            }
-        )
-    }
-
-    private var currentComposerIntent: NovelComposerIntent {
-        composerIntentBinding.wrappedValue
-    }
-
-    private var showsComposerMeta: Bool {
-        isInputFocused ||
-            isContextPanelPresented ||
-            !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-            injectionOverrides != .none ||
-            viewModel.isRunning
-    }
-
     private var currentCreationModelPolicy: NovelProjectModelPolicy {
         guard let project = workspace.projectSnapshot?.project else { return .global }
         let configured = project.configuredModelPolicy(for: .creation)
@@ -1504,58 +1354,50 @@ struct NovelSessionView: View {
         return configured
     }
 
-    private var composerModelLabel: String {
-        guard workspace.projectSnapshot?.project != nil else {
-            return IOSAppLocalization.string("选择模型", defaultValue: "选择模型")
+    private var composerMetaValues: NovelSessionComposerMetaValues {
+        _ = sharedSettings.revision
+        let modelPolicy = currentCreationModelPolicy
+        let modelLabel: String
+        if workspace.projectSnapshot?.project == nil {
+            modelLabel = IOSAppLocalization.string("选择模型", defaultValue: "选择模型")
+        } else {
+            modelLabel = NovelPresentation.modelDisplayName(
+                for: modelPolicy,
+                sharedSettings: sharedSettings
+            )
         }
-        _ = sharedSettings.revision
-        return NovelPresentation.modelDisplayName(
-            for: currentCreationModelPolicy,
-            sharedSettings: sharedSettings
-        )
-    }
-
-    private var contextRingSnapshot: ChatContextSnapshot {
-        _ = sharedSettings.revision
-        let receipt = latestContextReceipt
-        let estimatedTokens = receipt?.estimatedInputTokens ?? 0
+        let receipt = viewModel.latestContextReceipt
         let modelContext = NovelPresentation.creationModelContext(
-            for: currentCreationModelPolicy,
+            for: modelPolicy,
             sharedSettings: sharedSettings
         )
-        return NovelSessionContextRing.snapshot(
+        let contextSnapshot = NovelSessionContextRing.snapshot(
             messageCount: viewModel.durableMessages.count,
-            modelId: modelContext?.modelId ?? composerModelLabel,
+            modelId: modelContext?.modelId ?? modelLabel,
             modelWindowTokens: modelContext?.contextWindowTokens,
-            estimatedInjectionTokens: estimatedTokens,
-            // Ring badge only: true while this session is actively showing thinking.
+            estimatedInjectionTokens: receipt?.estimatedInputTokens ?? 0,
             supportsReasoning: viewModel.transientTailChromeState.supportsReasoning
         )
-    }
-
-    private var contextPanelModel: NovelInjectionPanelModel {
-        NovelInjectionPanelPresentation.project(latestContextReceipt)
-    }
-
-    private var latestContextReceipt: NovelInjectionReceiptRecord? {
-        guard let project = workspace.projectSnapshot,
-              let branchID = viewModel.binding?.branchID ?? workspace.selectedBranchID else { return nil }
-        return project.injectionReceipts
-            .filter { $0.branchID == branchID && $0.factTransaction == nil }
-            .max { $0.createdAt < $1.createdAt }
-    }
-
-    private var inputFocusBinding: Binding<Bool> {
-        Binding(get: { isInputFocused }, set: { isInputFocused = $0 })
+        let needsSync = viewModel.needsSync
+        let currentIntent = needsSync
+            ? NovelComposerIntent.discuss
+            : NovelComposerIntent(mode: viewModel.mode, granularity: viewModel.granularity)
+        return NovelSessionComposerMetaValues(
+            modelLabel: modelLabel,
+            contextSnapshot: contextSnapshot,
+            contextPanel: NovelInjectionPanelPresentation.project(receipt),
+            currentIntent: currentIntent,
+            needsSync: needsSync,
+            hasArchivableDiscussion: viewModel.hasArchivableDiscussion,
+            isBusy: viewModel.isBusy,
+            controlsDisabled: viewModel.access != .readWrite ||
+                workspace.requiresReload || viewModel.isRunning || viewModel.isBusy
+        )
     }
 
     private var sendOnEnter: Bool {
         _ = sharedSettings.revision
         return sharedSettings.displaySetting.sendOnEnter
-    }
-
-    private var sendEnabled: Bool {
-        sendEnabled(for: inputText)
     }
 
     private func sendEnabled(for text: String) -> Bool {
@@ -1663,14 +1505,33 @@ struct NovelSessionView: View {
             }
         }
         dismissKeyboard()
+        // 气泡由 installTail 即时上屏；输入框同步清空，不等 durable start 落盘。
+        // 启动失败时若用户尚未重新输入，则把原文放回，不静默丢稿。
+        inputText = ""
         Task { @MainActor in
             let started = await viewModel.send(
                 text: committed,
                 injectionOverrides: overrides,
                 inputBudgetTokens: budget
             )
-            guard started else { return }
-            inputText = ""
+            guard started else {
+                if let draftOwner {
+                    workspace.restoreComposerDraftAfterFailedSend(
+                        NovelComposerDraft(
+                            text: committed,
+                            injectionOverrides: overrides,
+                            inputBudgetTokens: budget
+                        ),
+                        owner: draftOwner
+                    )
+                }
+                if workspace.selectedProjectID == draftOwner?.projectID,
+                   workspace.selectedBranchID == draftOwner?.branchID,
+                   inputText.isEmpty {
+                    inputText = committed
+                }
+                return
+            }
             injectionOverrides = .none
             inputBudgetTokens = 16_000
             if let draftOwner {
@@ -2061,6 +1922,15 @@ struct NovelSessionView: View {
         }
     }
 
+    /// 视图正为不可见的流式尾部显示冻结快照：此时 VM 的逐拍发布不会带来可见变化。
+    private var holdsFrozenStreamingTail: Bool {
+        guard !isFollowingBottom,
+              let messageID = streamingTailVisibility.messageID,
+              streamingTailVisibility.isVisible == false,
+              suspendedStreamingTailRow?.id.description == messageID else { return false }
+        return true
+    }
+
     private func releaseSuspendedStreamingTail(resetIdentity: Bool = false) {
         suspendedStreamingTailRow = nil
         if resetIdentity {
@@ -2077,6 +1947,9 @@ struct NovelSessionView: View {
     /// **替换原章**,若沿用整章文案会显示「收录后成为新章」,与实际行为相反。
     private var generationStatusText: String {
         // Same owner copy as bubble terminal chrome — do not invent a second story.
+        if viewModel.isStopping {
+            return IOSAppLocalization.string("正在停止…", defaultValue: "正在停止…")
+        }
         if viewModel.isTerminalPresenting {
             return IOSAppLocalization.string("正在保存创作记录", defaultValue: "正在保存创作记录")
         }
@@ -2107,6 +1980,7 @@ struct NovelSessionView: View {
     }
 
     private var generationStatusIcon: String {
+        if viewModel.isStopping { return "arrow.triangle.2.circlepath" }
         if viewModel.isTerminalPresenting {
             return "arrow.triangle.2.circlepath"
         }
@@ -2248,6 +2122,10 @@ private struct NovelSessionRowView: View, Equatable {
     /// True only for the row that actually streamed in this presentation.
     var hasEverStreamed: Bool = false
     let adoptingPolishCandidateID: NovelCandidateID?
+    let retryingRunID: NovelRunID?
+    let cloningCandidateID: NovelCandidateID?
+    let undoingCheckpointID: NovelCheckpointID?
+    let isStopping: Bool
     let isSubmittingChapterRevision: Bool
     let askUserBlocker: NovelSessionActionBlocker?
     let runtimeActionBlocker: NovelSessionActionBlocker?
@@ -2262,6 +2140,10 @@ private struct NovelSessionRowView: View, Equatable {
             lhs.languageCode == rhs.languageCode &&
             lhs.hasEverStreamed == rhs.hasEverStreamed &&
             lhs.adoptingPolishCandidateID == rhs.adoptingPolishCandidateID &&
+            lhs.retryingRunID == rhs.retryingRunID &&
+            lhs.cloningCandidateID == rhs.cloningCandidateID &&
+            lhs.undoingCheckpointID == rhs.undoingCheckpointID &&
+            lhs.isStopping == rhs.isStopping &&
             lhs.isSubmittingChapterRevision == rhs.isSubmittingChapterRevision &&
             lhs.askUserBlocker == rhs.askUserBlocker &&
             lhs.runtimeActionBlocker == rhs.runtimeActionBlocker &&
@@ -2291,6 +2173,10 @@ private struct NovelSessionRowView: View, Equatable {
                     && row.candidate?.sourceChapterVersionID != nil,
                 polishTransactionStatus: row.candidate?.polishTransactionStatus,
                 isAdoptingPolish: row.candidate?.id == adoptingPolishCandidateID,
+                retryingRunID: retryingRunID,
+                cloningCandidateID: cloningCandidateID,
+                undoingCheckpointID: undoingCheckpointID,
+                isStopping: isStopping,
                 committedChange: row.committedChange,
                 askUser: row.askUser,
                 isSubmittingChapterRevision: isSubmittingChapterRevision,
@@ -2359,6 +2245,278 @@ private struct NovelDiscussionArchiveCard: View {
             .amberGlass(cornerRadius: 8, interactive: true)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct NovelSessionComposerMetaValues {
+    let modelLabel: String
+    let contextSnapshot: ChatContextSnapshot
+    let contextPanel: NovelInjectionPanelModel
+    let currentIntent: NovelComposerIntent
+    let needsSync: Bool
+    let hasArchivableDiscussion: Bool
+    let isBusy: Bool
+    let controlsDisabled: Bool
+}
+
+private struct NovelSessionComposerDock<Chrome: View>: View {
+    let chrome: Chrome
+    @Binding var inputText: String
+    @Binding var inputHeight: CGFloat
+    @Binding var isInputFocused: Bool
+    @Binding var isContextPanelPresented: Bool
+    let placeholder: String
+    let isInputEnabled: Bool
+    let sendOnEnter: Bool
+    let canSend: Bool
+    let isRunning: Bool
+    let isStopping: Bool
+    let canStop: Bool
+    let injectionOverrides: NovelInjectionOverrides
+    let meta: NovelSessionComposerMetaValues
+    let controller: ComposerInputController
+    let reduceMotion: Bool
+    let onSend: () -> Void
+    let onStop: () -> Void
+    let onOpenModel: () -> Void
+    let onArchiveDiscussion: () -> Void
+    let onSetIntent: (NovelComposerIntent) -> Void
+
+    private var showsMeta: Bool {
+        isInputFocused || isContextPanelPresented ||
+            !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            injectionOverrides != .none || isRunning || isStopping
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            chrome
+
+            HStack(alignment: .bottom, spacing: 8) {
+                HStack(alignment: .center, spacing: 6) {
+                    ZStack(alignment: .leading) {
+                        ComposerInputTextView(
+                            text: $inputText,
+                            height: $inputHeight,
+                            isFocused: $isInputFocused,
+                            isEnabled: isInputEnabled,
+                            sendOnEnter: sendOnEnter,
+                            controller: controller,
+                            onSubmit: onSend
+                        )
+                        .frame(height: max(44, inputHeight))
+
+                        if inputText.isEmpty {
+                            Text(placeholder)
+                                .font(.body)
+                                .foregroundStyle(AmberTheme.muted)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .frame(minHeight: 44)
+                }
+                .padding(.leading, 18)
+                .padding(.trailing, 18)
+                // 与 Chat 一致：内容行 44 + 上下 5 → 外高 54，对齐发送键。
+                .padding(.vertical, 5)
+                .composerDockGlass(cornerRadius: 27)
+
+                ComposerDockSendButton(
+                    isLoading: isRunning && canStop,
+                    isStopping: isStopping,
+                    sendEnabled: NovelSessionComposerPolicy.canSubmit(
+                        canSend: canSend,
+                        text: inputText
+                    ),
+                    diameter: 54,
+                    onSend: onSend,
+                    onStop: onStop
+                )
+            }
+
+            if showsMeta {
+                NovelSessionComposerMetaControls(
+                    values: meta,
+                    isContextPanelPresented: $isContextPanelPresented,
+                    onOpenModel: onOpenModel,
+                    onArchiveDiscussion: onArchiveDiscussion,
+                    onSetIntent: onSetIntent
+                )
+                .transition(
+                    reduceMotion
+                        ? .identity
+                        : .move(edge: .top).combined(with: .opacity)
+                )
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .background {
+            LinearGradient(
+                colors: [AmberTheme.background.opacity(0.78), AmberTheme.background],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        }
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.26, dampingFraction: 0.86),
+            value: showsMeta
+        )
+    }
+}
+
+private struct NovelSessionComposerMetaControls: View {
+    let values: NovelSessionComposerMetaValues
+    @Binding var isContextPanelPresented: Bool
+    let onOpenModel: () -> Void
+    let onArchiveDiscussion: () -> Void
+    let onSetIntent: (NovelComposerIntent) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onOpenModel) {
+                Text(values.modelLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(1)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .composerDockGlass(cornerRadius: 15)
+            }
+            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .disabled(values.controlsDisabled)
+            .accessibilityLabel("切换模型，当前 \(values.modelLabel)")
+
+            Spacer(minLength: 0)
+
+            Menu {
+                Picker("创作方式", selection: Binding(
+                    get: { values.currentIntent },
+                    set: { intent in onSetIntent(intent) }
+                )) {
+                    Section("构思") {
+                        ForEach(NovelComposerIntent.discussionOptions) { intent in
+                            Text(intent.title).tag(intent)
+                        }
+                    }
+                    Section("写正文") {
+                        ForEach(NovelComposerIntent.proseOptions) { intent in
+                            Text(intent.title)
+                                .tag(intent)
+                                .disabled(values.needsSync)
+                        }
+                    }
+                }
+                if values.needsSync {
+                    Text("剧情同步完成后可写正文")
+                }
+                Divider()
+                Button("归档当前讨论", systemImage: "archivebox") {
+                    onArchiveDiscussion()
+                }
+                .disabled(
+                    !values.hasArchivableDiscussion ||
+                        values.needsSync || values.isBusy
+                )
+            } label: {
+                Text(values.currentIntent.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.foreground2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 12)
+                    .frame(height: 30)
+                    .composerDockGlass(cornerRadius: 15)
+            }
+            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+            .frame(minWidth: 44, minHeight: 44)
+            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .disabled(values.controlsDisabled)
+            .accessibilityLabel("创作方式，当前 \(values.currentIntent.title)")
+
+            ContextRingButton(
+                snapshot: values.contextSnapshot,
+                compactState: .idle,
+                action: { isContextPanelPresented.toggle() }
+            )
+            .disabled(values.controlsDisabled)
+            .popover(isPresented: $isContextPanelPresented, arrowEdge: .bottom) {
+                ComposerContextPanel(
+                    snapshot: values.contextSnapshot,
+                    novelInjection: values.contextPanel
+                )
+                    .presentationCompactAdaptation(.popover)
+            }
+        }
+        .padding(.horizontal, 2)
+        .padding(.top, 2)
+    }
+}
+
+private struct NovelSessionIdentityCardsView: View {
+    let viewModel: NovelSessionViewModel
+    let onAcceptSettingProposal: (NovelSettingProposalRecord) -> Void
+
+    var body: some View {
+        let facts = viewModel.characterIdentityCardFacts
+        let choices = viewModel.characterIdentityChoices
+        let hiddenCount = max(0, viewModel.pendingCharacterIdentityMentions.count - facts.count)
+
+        ForEach(facts, id: \.mention.id) { card in
+            NovelCharacterIdentityQuestionCard(
+                mention: card.mention,
+                choices: choices,
+                recommended: card.recommended,
+                activeProposal: card.activeProposal,
+                relatedProposalCount: card.relatedProposalCount,
+                isDisabled: viewModel.isBusy || viewModel.isRunning,
+                onSelect: { materialID in
+                    Task { @MainActor in
+                        _ = await viewModel.associateCharacterAlias(
+                            card.mention.name,
+                            with: materialID
+                        )
+                    }
+                },
+                onIgnore: {
+                    Task { @MainActor in
+                        _ = await viewModel.ignoreCharacterIdentityMention(card.mention.name)
+                    }
+                },
+                onClarify: { clarification in
+                    Task { @MainActor in
+                        _ = await viewModel.clarifyCharacterIdentityMention(
+                            card.mention.name,
+                            clarification: clarification
+                        )
+                    }
+                },
+                onGenerate: { guidance in
+                    Task { @MainActor in
+                        _ = await viewModel.startCharacterProposal(
+                            for: card.mention.name,
+                            guidance: guidance
+                        )
+                    }
+                },
+                onOpenProposal: {
+                    if let activeProposal = card.activeProposal {
+                        onAcceptSettingProposal(activeProposal)
+                    }
+                }
+            )
+        }
+        if hiddenCount > 0 {
+            Text("还有 \(hiddenCount) 个未确认称谓，处理上方条目后会继续出现。")
+                .font(.footnote)
+                .foregroundStyle(AmberTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 2)
+        }
     }
 }
 

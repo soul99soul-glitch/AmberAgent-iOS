@@ -248,6 +248,35 @@ final class NovelCreationViewModelTests: XCTestCase {
         )
     }
 
+    func testFailedSendRestoresOnlyAnEmptyOwnerDraft() {
+        let viewModel = NovelCreationViewModel(
+            creation: DefaultNovelCreation(repository: InMemoryNovelProjectRepository())
+        )
+        let owner = NovelComposerDraftOwner(projectID: NovelProjectID(), branchID: NovelBranchID())
+        let submitted = NovelComposerDraft(
+            text: "刚提交的原文",
+            injectionOverrides: .none,
+            inputBudgetTokens: 24_000
+        )
+        viewModel.restoreComposerDraftAfterFailedSend(submitted, owner: owner)
+        XCTAssertEqual(
+            viewModel.composerDraft(projectID: owner.projectID, branchID: owner.branchID),
+            submitted
+        )
+
+        let newer = NovelComposerDraft(
+            text: "等待时重新输入的内容",
+            injectionOverrides: .none,
+            inputBudgetTokens: 16_000
+        )
+        viewModel.saveComposerDraft(newer, projectID: owner.projectID, branchID: owner.branchID)
+        viewModel.restoreComposerDraftAfterFailedSend(submitted, owner: owner)
+        XCTAssertEqual(
+            viewModel.composerDraft(projectID: owner.projectID, branchID: owner.branchID),
+            newer
+        )
+    }
+
     func testProjectSelectionDoesNotSwitchWhileAnotherProjectOperationIsRunning() async throws {
         let repository = InMemoryNovelProjectRepository()
         let firstDocument = try NovelTestFixtures.document()
@@ -1134,7 +1163,7 @@ final class NovelCreationViewModelTests: XCTestCase {
         var document = try NovelTestFixtures.document()
         let now = document.project.updatedAt
         var ids: [NovelProposalID] = []
-        for title in ["粮仓", "马厩", "殿前司"] {
+        for title in ["边境王朝", "宗门誓约", "殿前司"] {
             let id = NovelProposalID()
             ids.append(id)
             document.settingProposals.append(NovelSettingProposalRecord(

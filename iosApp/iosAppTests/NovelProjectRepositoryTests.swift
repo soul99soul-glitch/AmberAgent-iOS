@@ -194,8 +194,27 @@ final class NovelProjectRepositoryTests: XCTestCase {
         let third = try renamed(second, name: "Version Three")
         _ = try await repository.commitProject(third, expectedRevision: 2)
 
+        let currentLayoutURL = layoutURL(root: root, id: first.project.id)
+        let currentLayoutData = try Data(contentsOf: currentLayoutURL)
+        let currentLayout = try JSONDecoder().decode(
+            NovelProjectShardedStorage.LayoutV2.self,
+            from: currentLayoutData
+        )
+        let previousLayout = try JSONDecoder().decode(
+            NovelProjectShardedStorage.LayoutV2.self,
+            from: Data(contentsOf: previousLayoutURL(root: root, id: first.project.id))
+        )
+        let projectSection = NovelProjectShardedStorage.SectionKey.project.rawValue
+        let currentDigest = try XCTUnwrap(currentLayout.sections[projectSection]?.digest)
+        let previousDigest = try XCTUnwrap(previousLayout.sections[projectSection]?.digest)
+        XCTAssertNotEqual(currentDigest, previousDigest)
+        let currentBlob = NovelProjectShardedStorage.blobURL(
+            in: packageDirectory(root: root, id: first.project.id),
+            digest: currentDigest
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: currentBlob.path))
         try Data("corrupt".utf8).write(
-            to: layoutURL(root: root, id: first.project.id),
+            to: currentLayoutURL,
             options: [.atomic]
         )
         let degraded = try await NovelFileProjectRepository(rootDirectory: root)
@@ -205,6 +224,127 @@ final class NovelProjectRepositoryTests: XCTestCase {
         guard case .degradedPrevious = degraded.access else {
             return XCTFail("Expected the previous validated project in degraded mode.")
         }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: currentBlob.path))
+
+        try currentLayoutData.write(to: currentLayoutURL, options: [.atomic])
+        let recovered = try await NovelFileProjectRepository(rootDirectory: root)
+            .loadProject(id: first.project.id)
+        XCTAssertEqual(recovered.document, third)
+    }
+
+    func testValidatedWorkspaceCommitUsesTransitionAndFallsBackOnNewerDiskRevision() async throws {
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = try NovelTestFixtures.document()
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        _ = try await repository.createProject(original, workspaceNative: true)
+
+        let loaded = try await repository.loadProject(id: original.project.id).document
+        let firstNext = try renamed(loaded, name: "Validated transition")
+        let firstTransition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+            from: loaded,
+            to: firstNext
+        )
+        let firstCommit = try await repository.commitProject(
+            firstTransition,
+            authorization: nil
+        )
+        XCTAssertEqual(firstCommit.document.project.name, "Validated transition")
+
+        // A second repository advances the durable layout after this actor has
+        // cached the prior sections. The transition path must fall back to a
+        // disk load and reject the stale write instead of overwriting the newer
+        // project revision.
+        let staleBase = firstCommit.document
+        let staleNext = try renamed(staleBase, name: "Must stay stale")
+        let staleTransition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+            from: staleBase,
+            to: staleNext
+        )
+        let concurrentRepository = NovelFileProjectRepository(rootDirectory: root)
+        let concurrentBase = try await concurrentRepository
+            .loadProject(id: original.project.id).document
+        let concurrentNext = try renamed(concurrentBase, name: "Concurrent commit")
+        _ = try await concurrentRepository.commitProject(
+            concurrentNext,
+            expectedRevision: concurrentBase.project.revision
+        )
+
+        await NovelXCTAssertThrowsErrorAsync(
+            try await repository.commitProject(staleTransition, authorization: nil)
+        ) { error in
+            guard let novelError = error as? NovelError,
+                  case .staleProjectRevision(expected: 2, actual: 3) = novelError else {
+                return XCTFail("Expected stale revision after fast-path fallback, got: \(error)")
+            }
+        }
+        let final = try await NovelFileProjectRepository(rootDirectory: root)
+            .loadProject(id: original.project.id)
+        XCTAssertEqual(final.document.project.name, "Concurrent commit")
+        XCTAssertEqual(final.document.project.revision, 3)
+    }
+
+    func testColdWorkspaceLoadWithMissingCheckoutLeavesFingerprintUnseeded() async throws {
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let document = try NovelBranchTestFixtures.documentWithCollectedCandidate()
+        let creator = NovelFileProjectRepository(rootDirectory: root)
+        _ = try await creator.createProject(document, workspaceNative: true)
+
+        let checkout = NovelWorkspaceAuthority.checkoutDirectory(
+            in: packageDirectory(root: root, id: document.project.id)
+        )
+        try FileManager.default.removeItem(at: checkout)
+
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        let loaded = try await repository.loadProject(id: document.project.id).document
+        XCTAssertFalse(FileManager.default.fileExists(atPath: checkout.path))
+
+        let next = try renamed(loaded, name: "Commit restores missing checkout")
+        let transition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+            from: loaded,
+            to: next
+        )
+        let committed = try await repository.commitProject(transition, authorization: nil)
+
+        XCTAssertTrue(
+            NovelWorkspaceAuthority.worktreeCoversWorkingManuscript(
+                committed.document,
+                checkoutDirectory: checkout
+            ),
+            "The first commit must publish when load could not confirm a checkout."
+        )
+    }
+
+    func testDeletingAndReinstallingProjectInvalidatesWorkspaceMarkerCache() async throws {
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let document = try NovelTestFixtures.document()
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        let projectDirectory = packageDirectory(root: root, id: document.project.id)
+
+        _ = try await repository.createProject(document, workspaceNative: true)
+        XCTAssertTrue(NovelWorkspaceProjectStore.isWorkspaceNative(projectDirectory: projectDirectory))
+        try await repository.deleteProject(
+            id: document.project.id,
+            expectedRevision: document.project.revision
+        )
+
+        _ = try await repository.createProject(document, workspaceNative: false)
+        XCTAssertFalse(NovelWorkspaceProjectStore.isWorkspaceNative(projectDirectory: projectDirectory))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: layoutURL(root: root, id: document.project.id).path))
+
+        try await repository.deleteProject(
+            id: document.project.id,
+            expectedRevision: document.project.revision
+        )
+        _ = try await repository.createProject(document, workspaceNative: true)
+        XCTAssertTrue(NovelWorkspaceProjectStore.isWorkspaceNative(projectDirectory: projectDirectory))
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: NovelProjectShardedStorage.layoutURL(
+                in: NovelWorkspaceProjectStore.engineDirectory(in: projectDirectory)
+            ).path
+        ))
     }
 
     func testFailureBeforePrimaryInstallLeavesOfficialDocumentUnchanged() async throws {
@@ -401,6 +541,14 @@ final class NovelProjectRepositoryTests: XCTestCase {
         XCTAssertEqual(restoredSidecars, [second])
 
         await NovelXCTAssertThrowsErrorAsync(try await restarted.writeRecoverySidecar(first)) { error in
+            guard let novelError = error as? NovelError,
+                  case .invalidRecovery = novelError else {
+                return XCTFail("Expected invalidRecovery, got \(error)")
+            }
+        }
+        let third = recovery(projectID: projectID, runID: runID, sequence: 3, content: "three")
+        try await NovelFileProjectRepository(rootDirectory: root).writeRecoverySidecar(third)
+        await NovelXCTAssertThrowsErrorAsync(try await repository.writeRecoverySidecar(second)) { error in
             guard let novelError = error as? NovelError,
                   case .invalidRecovery = novelError else {
                 return XCTFail("Expected invalidRecovery, got \(error)")

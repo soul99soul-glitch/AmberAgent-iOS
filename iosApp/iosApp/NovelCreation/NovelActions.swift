@@ -1704,6 +1704,17 @@ enum NovelRunEvent: Sendable {
 struct NovelProjectMutationEvent: Sendable, Equatable {
     let projectID: NovelProjectID
     let operationID: NovelOperationID
+    let refreshesSelection: Bool
+
+    init(
+        projectID: NovelProjectID,
+        operationID: NovelOperationID,
+        refreshesSelection: Bool = true
+    ) {
+        self.projectID = projectID
+        self.operationID = operationID
+        self.refreshesSelection = refreshesSelection
+    }
 }
 
 protocol NovelCreation: Sendable {

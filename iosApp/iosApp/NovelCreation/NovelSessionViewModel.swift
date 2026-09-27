@@ -78,7 +78,11 @@ struct NovelSessionPresentationBuffer {
     let runID: NovelRunID
     let messageID: NovelMessageID
     let bindingToken: UUID
-    private(set) var targetContent: String
+    private var cursor: NovelSessionPresentationPacer.Cursor
+
+    var targetContent: String { cursor.targetContent }
+    var targetCharacterCount: Int { cursor.targetCharacterCount }
+    var displayedCharacterCount: Int { cursor.displayedCharacterCount }
 
     init(
         runID: NovelRunID,
@@ -89,15 +93,25 @@ struct NovelSessionPresentationBuffer {
         self.runID = runID
         self.messageID = messageID
         self.bindingToken = bindingToken
-        self.targetContent = baseContent
+        cursor = NovelSessionPresentationPacer.Cursor(
+            displayedContent: baseContent,
+            targetContent: baseContent
+        )
     }
 
     mutating func append(_ text: String) {
-        targetContent += text
+        cursor.appendTarget(text)
     }
 
     mutating func replace(with text: String) {
-        targetContent = text
+        cursor.replaceTarget(text)
+    }
+
+    mutating func step(
+        mode: NovelSessionPresentationPacer.Mode = .streaming,
+        fixedTerminalAdvance: Int? = nil
+    ) -> NovelSessionPresentationPacer.Step {
+        cursor.step(mode: mode, fixedTerminalAdvance: fixedTerminalAdvance)
     }
 
     func matches(
@@ -130,6 +144,142 @@ enum NovelSessionPresentationPacer {
     struct Step: Equatable {
         let content: String
         let isCaughtUp: Bool
+    }
+
+    /// Holds the character counts and the next target index across 48ms ticks.
+    /// Appends only count the new chunk and a possible joining grapheme at the
+    /// boundary; replacement output is re-anchored once on its next step.
+    struct Cursor {
+        private(set) var targetContent: String
+        private(set) var displayedContent: String
+        private(set) var targetCharacterCount: Int
+        private(set) var displayedCharacterCount: Int
+        private var displayedTargetIndex: String.Index
+        private var alignedWithTarget: Bool
+        private var sharedPrefixCharacterCount: Int
+        private var needsReanchor = false
+
+        var backlogCount: Int {
+            max(0, targetCharacterCount - displayedCharacterCount)
+        }
+
+        var terminalDrainStartBacklog: Int {
+            alignedWithTarget ? backlogCount : targetCharacterCount
+        }
+
+        init(displayedContent: String, targetContent: String) {
+            self.targetContent = targetContent
+            self.displayedContent = displayedContent
+            targetCharacterCount = targetContent.count
+            displayedCharacterCount = displayedContent.count
+            if targetContent.hasPrefix(displayedContent) {
+                alignedWithTarget = true
+                sharedPrefixCharacterCount = displayedCharacterCount
+                displayedTargetIndex = targetContent.index(
+                    targetContent.startIndex,
+                    offsetBy: displayedCharacterCount
+                )
+            } else {
+                alignedWithTarget = false
+                sharedPrefixCharacterCount = displayedContent.commonPrefix(
+                    with: targetContent
+                ).count
+                displayedTargetIndex = targetContent.index(
+                    targetContent.startIndex,
+                    offsetBy: sharedPrefixCharacterCount
+                )
+            }
+        }
+
+        mutating func appendTarget(_ text: String) {
+            guard !text.isEmpty else { return }
+            let appendedCharacterCount: Int
+            if let lastCharacter = targetContent.last {
+                // Appending can merge the old final grapheme with the new first
+                // scalar (combining marks, emoji modifiers, and joiner chains).
+                appendedCharacterCount = (String(lastCharacter) + text).count - 1
+            } else {
+                appendedCharacterCount = text.count
+            }
+            targetContent.append(text)
+            targetCharacterCount += appendedCharacterCount
+            if appendedCharacterCount != text.count {
+                // The old end index may now sit inside a newly formed grapheme.
+                alignedWithTarget = false
+                needsReanchor = true
+            }
+        }
+
+        mutating func replaceTarget(_ text: String) {
+            guard targetContent != text else { return }
+            targetContent = text
+            targetCharacterCount = text.count
+            alignedWithTarget = false
+            needsReanchor = true
+        }
+
+        mutating func step(
+            mode: Mode = .streaming,
+            fixedTerminalAdvance: Int? = nil
+        ) -> Step {
+            if needsReanchor {
+                sharedPrefixCharacterCount = displayedContent.commonPrefix(
+                    with: targetContent
+                ).count
+                displayedTargetIndex = targetContent.index(
+                    targetContent.startIndex,
+                    offsetBy: sharedPrefixCharacterCount
+                )
+                alignedWithTarget = false
+                needsReanchor = false
+            }
+
+            if alignedWithTarget, backlogCount == 0 {
+                displayedCharacterCount = targetCharacterCount
+                displayedContent = targetContent
+                displayedTargetIndex = targetContent.endIndex
+                return Step(content: targetContent, isCaughtUp: true)
+            }
+
+            let advanceBudget: (Int) -> Int = { backlog in
+                switch mode {
+                case .streaming:
+                    return NovelSessionPresentationPacer.textAdvance(backlogCount: backlog)
+                case .terminalDrain:
+                    return StreamPresentationPacingPolicy.terminalTextAdvance(
+                        backlogCount: backlog,
+                        fixedAdvance: fixedTerminalAdvance
+                    )
+                }
+            }
+
+            let nextIndex: String.Index
+            if alignedWithTarget {
+                let advance = min(backlogCount, advanceBudget(backlogCount))
+                nextIndex = targetContent.index(displayedTargetIndex, offsetBy: advance)
+                displayedCharacterCount += advance
+            } else {
+                let backlog = max(0, targetCharacterCount - sharedPrefixCharacterCount)
+                let advance = max(
+                    advanceBudget(backlog),
+                    NovelSessionPresentationPacer.minimumTextAdvance
+                )
+                let nextCount = min(targetCharacterCount, sharedPrefixCharacterCount + advance)
+                nextIndex = targetContent.index(
+                    displayedTargetIndex,
+                    offsetBy: nextCount - sharedPrefixCharacterCount
+                )
+                displayedCharacterCount = nextCount
+                alignedWithTarget = true
+            }
+
+            displayedTargetIndex = nextIndex
+            displayedContent = String(targetContent[..<nextIndex])
+            return Step(
+                content: displayedContent,
+                isCaughtUp: displayedCharacterCount == targetCharacterCount
+            )
+        }
     }
 
     static func textAdvance(backlogCount: Int) -> Int {
@@ -227,9 +377,26 @@ private struct NovelSessionProjectionTailKey: Equatable {
     let branchID: NovelBranchID
     let sessionID: NovelSessionID
     let runID: NovelRunID
-    let startingUserContent: String?
+    let userMessageID: NovelMessageID
     let messageID: NovelMessageID
-    let phase: NovelSessionTransientTailPhase
+    let candidateID: NovelCandidateID?
+    let mode: NovelSessionMode
+    let granularity: NovelGenerationGranularity?
+    let kind: NovelSessionMessageKind
+    let startedAt: Date
+
+    init(_ tail: NovelSessionTransientTail) {
+        branchID = tail.branchID
+        sessionID = tail.sessionID
+        runID = tail.runID
+        userMessageID = tail.userMessageID
+        messageID = tail.messageID
+        candidateID = tail.candidateID
+        mode = tail.mode
+        granularity = tail.granularity
+        kind = tail.kind
+        startedAt = tail.startedAt
+    }
 }
 
 private struct NovelSessionProjectionCacheKey: Equatable {
@@ -246,7 +413,7 @@ private struct NovelSessionProjectionCacheKey: Equatable {
     let sessionID: NovelSessionID
     let sessionRevision: Int64
     let expandedArchiveIDs: Set<NovelMessageID>
-    let transientTail: NovelSessionProjectionTailKey?
+    let hasLiveTail: Bool
 
     init(
         project: NovelProjectSnapshot,
@@ -267,22 +434,21 @@ private struct NovelSessionProjectionCacheKey: Equatable {
         sessionID = branch.session.id
         sessionRevision = branch.session.revision
         self.expandedArchiveIDs = expandedArchiveIDs
-        self.transientTail = transientTail.map {
-            NovelSessionProjectionTailKey(
-                branchID: $0.branchID,
-                sessionID: $0.sessionID,
-                runID: $0.runID,
-                startingUserContent: $0.startingUserContent,
-                messageID: $0.messageID,
-                phase: $0.phase
-            )
-        }
+        hasLiveTail = NovelSessionProjectionInput.hasLiveTail(
+            transientTail,
+            branchID: branch.branch.id,
+            sessionID: branch.session.id
+        )
     }
 }
 
 private struct NovelSessionProjectionCacheEntry {
     let key: NovelSessionProjectionCacheKey
+    let durableProjection: NovelSessionPreparedProjection
     let model: NovelSessionListModel
+    let tailKey: NovelSessionProjectionTailKey?
+    let tailStartingUserContent: String?
+    let tailRenderRevision: UInt64?
     let localAskUserRevision: UInt64
 }
 
@@ -313,6 +479,18 @@ private struct NovelCharacterIdentityMentionsCacheEntry {
     let value: [NovelCharacterIdentityMention]
 }
 
+struct NovelCharacterIdentityCardFacts {
+    let mention: NovelCharacterIdentityMention
+    let recommended: (material: NovelMaterialRecord, title: String)?
+    let activeProposal: NovelSettingProposalRecord?
+    let relatedProposalCount: Int
+}
+
+private struct NovelCharacterIdentityCardsCacheEntry {
+    let key: NovelCharacterIdentityMentionsCacheKey
+    let value: [NovelCharacterIdentityCardFacts]
+}
+
 @MainActor
 @Observable
 final class NovelSessionViewModel {
@@ -334,6 +512,10 @@ final class NovelSessionViewModel {
     @ObservationIgnored private(set) var latestTailLagAllowance: Double = 1
     private(set) var sessionStartingRunID: NovelRunID?
     private(set) var isPerformingAction = false
+    private(set) var stoppingRunID: NovelRunID?
+    private(set) var retryingRunID: NovelRunID?
+    private(set) var cloningCandidateID: NovelCandidateID?
+    private(set) var undoingCheckpointID: NovelCheckpointID?
     /// 正在采用润色版的候选 ID：气泡据此显示加载指示器。
     private(set) var adoptingPolishCandidateID: NovelCandidateID?
     private(set) var operationErrorMessage: String?
@@ -360,6 +542,7 @@ final class NovelSessionViewModel {
     @ObservationIgnored private var currentRunDraft: NovelSessionRunDraft?
     @ObservationIgnored private var lastRetryDraft: NovelSessionRunDraft?
     @ObservationIgnored private var lastRetryRunID: NovelRunID?
+    @ObservationIgnored private var lastStartFailure: Error?
     @ObservationIgnored private var transientRunRecord: NovelActiveRunRecord?
     private var terminalAwaitingRefresh = false
     @ObservationIgnored private var cancelledStartRunIDs: Set<NovelRunID> = []
@@ -396,10 +579,25 @@ final class NovelSessionViewModel {
     /// 代笔 pipeline 自己发起整章时短暂置真，避免 `isGhostwriting` 折进 `isBusy` 挡掉自己的 start。
     @ObservationIgnored var isGhostwriteStartingRun = false
     @ObservationIgnored private var projectionCache: NovelSessionProjectionCacheEntry?
+    @ObservationIgnored private var projectionBuildTask: Task<Bool, Never>?
+    @ObservationIgnored private var projectionBuildKey: NovelSessionProjectionCacheKey?
+    @ObservationIgnored private var projectionBuildID: UUID?
+    @ObservationIgnored private var projectionExpandedArchiveIDs: Set<NovelMessageID> = []
+    private var projectionRevision: UInt64 = 0
     @ObservationIgnored private var pendingCharacterIdentityMentionsCache:
         NovelCharacterIdentityMentionsCacheEntry?
+    @ObservationIgnored private var characterIdentityCardsCache:
+        NovelCharacterIdentityCardsCacheEntry?
     @ObservationIgnored private var characterIdentityChoicesCache:
-        (projectRevision: Int64, configRevision: Int64, value: [(material: NovelMaterialRecord, title: String)])?
+        (projectRevision: Int64, configRevision: Int64, branchID: NovelBranchID,
+         stateSnapshotID: NovelStateSnapshotID,
+         value: [(material: NovelMaterialRecord, title: String)])?
+    @ObservationIgnored private var latestContextReceiptCache:
+        (projectID: NovelProjectID, revision: Int64, branchID: NovelBranchID,
+         value: NovelInjectionReceiptRecord?)?
+    @ObservationIgnored private var archivableDiscussionCache:
+        (sessionID: NovelSessionID, revision: Int64, archiveCursor: NovelSessionCursor?,
+         value: Bool)?
     /// Session-open staging: body must not pull secondary chrome until this advances.
     private(set) var loadStage: NovelSessionLoadStage = .idle
 #if DEBUG
@@ -410,6 +608,8 @@ final class NovelSessionViewModel {
     /// Only the strict terminal decoder is allowed to commit proposal records.
     @ObservationIgnored private var quickStartStructuredContent: String?
     @ObservationIgnored private var characterProposalStructuredContent: String?
+    @ObservationIgnored private var quickStartStructuredPresentationDirty = false
+    @ObservationIgnored private var characterProposalStructuredPresentationDirty = false
     @ObservationIgnored private var presentationFlushTask: Task<Void, Never>?
     /// 思考流 48ms 拍合并（与正文 presentationFlush 同源时钟）：网络 chunk 先并入
     /// pendingReasoningText，每拍一次合并进 row.reasoningContent。卡片内优化
@@ -420,6 +620,9 @@ final class NovelSessionViewModel {
     @ObservationIgnored private var reasoningFlushTask: Task<Void, Never>?
     @ObservationIgnored private var reasoningFlushToken = UUID()
     @ObservationIgnored private var pendingReasoningText: String?
+    /// 视图已为不可见的流式尾部持有冻结快照时为真：逐拍发布只会让转录区
+    /// 整体重算却不产生可见变化。节拍游标照常推进，恢复时一次发布。
+    @ObservationIgnored private var isTailPresentationSuspended = false
     /// Once visible output has started, later thought deltas must not reopen
     /// the live thinking card (Gemini 3.7 / tool-loop often emit thoughts after
     /// the reply is already on screen).
@@ -436,6 +639,27 @@ final class NovelSessionViewModel {
     @ObservationIgnored private let batchPolishCandidateTimeout: TimeInterval
 
     private static let presentationFlushDelayNanos: UInt64 = 48_000_000
+
+    /// 由会话视图按其冻结快照状态驱动。恢复时立即发布屏外累积的正文节拍与思考，
+    /// 与未暂停时回到可见区看到的内容一致。
+    func setTailPresentationSuspended(_ suspended: Bool) {
+        guard isTailPresentationSuspended != suspended else { return }
+        isTailPresentationSuspended = suspended
+        guard !suspended, let current = transientTail else { return }
+        let token = bindingToken
+        if pendingReasoningText != nil {
+            flushPendingReasoning(runID: current.runID, token: token, finishing: false)
+        }
+        if presentationBuffer != nil
+            || quickStartStructuredPresentationDirty
+            || characterProposalStructuredPresentationDirty {
+            flushPendingPresentation(
+                runID: current.runID,
+                messageID: current.messageID,
+                token: token
+            )
+        }
+    }
 
     init(
         workspace: NovelCreationViewModel,
@@ -526,15 +750,39 @@ final class NovelSessionViewModel {
     var hasArchivableDiscussion: Bool {
         guard snapshotMatchesBinding,
               let session = workspace.branchSnapshot?.session else { return false }
+        if let cached = archivableDiscussionCache,
+           cached.sessionID == session.id,
+           cached.revision == session.revision,
+           cached.archiveCursor == session.archiveCursor {
+            return cached.value
+        }
         let previousSequence: Int64 = switch session.archiveCursor {
         case .through(let sequence): sequence
         case .empty, nil: -1
         }
-        return session.messages.contains {
+        let value = session.messages.contains {
             $0.sequence > previousSequence &&
                 $0.mode == .discussPlan &&
                 ($0.kind == .userInput || $0.kind == .discussion)
         }
+        archivableDiscussionCache = (session.id, session.revision, session.archiveCursor, value)
+        return value
+    }
+
+    var latestContextReceipt: NovelInjectionReceiptRecord? {
+        guard let project = workspace.projectSnapshot,
+              let branchID = binding?.branchID ?? workspace.selectedBranchID else { return nil }
+        if let cached = latestContextReceiptCache,
+           cached.projectID == project.project.id,
+           cached.revision == project.project.revision,
+           cached.branchID == branchID {
+            return cached.value
+        }
+        let value = project.injectionReceipts
+            .filter { $0.branchID == branchID && $0.factTransaction == nil }
+            .max { $0.createdAt < $1.createdAt }
+        latestContextReceiptCache = (project.project.id, project.project.revision, branchID, value)
+        return value
     }
 
     /// Presentation-facing list: empty until secondary chrome stage so open layout
@@ -625,12 +873,15 @@ final class NovelSessionViewModel {
 
     var resolvedCharacterIdentityChoices: [(material: NovelMaterialRecord, title: String)] {
         guard snapshotMatchesBinding,
-              let project = workspace.projectSnapshot else { return [] }
+              let project = workspace.projectSnapshot,
+              let branch = workspace.branchSnapshot else { return [] }
         let rev = project.project.revision
         let config = project.project.configRevision
         if let cached = characterIdentityChoicesCache,
            cached.projectRevision == rev,
-           cached.configRevision == config {
+           cached.configRevision == config,
+           cached.branchID == branch.branch.id,
+           cached.stateSnapshotID == branch.currentState.id {
             return cached.value
         }
         // Titles only — do not expand proposal/history aliases here.
@@ -640,12 +891,42 @@ final class NovelSessionViewModel {
                       let revision = NovelPresentation.effectiveRevision(
                           for: material,
                           project: project,
-                          branch: workspace.branchSnapshot
+                          branch: branch
                       ) else { return nil }
                 return (material, revision.title)
             }
             .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-        characterIdentityChoicesCache = (rev, config, value)
+        characterIdentityChoicesCache = (rev, config, branch.branch.id, branch.currentState.id, value)
+        return value
+    }
+
+    var characterIdentityCardFacts: [NovelCharacterIdentityCardFacts] {
+        guard loadStage >= .secondaryChrome,
+              snapshotMatchesBinding,
+              let project = workspace.projectSnapshot,
+              let branch = workspace.branchSnapshot else { return [] }
+        let state = branch.currentState
+        let key = NovelCharacterIdentityMentionsCacheKey(
+            projectRevision: project.project.revision,
+            configRevision: project.project.configRevision,
+            branchID: branch.branch.id,
+            stateSnapshotID: state.id,
+            unresolvedNames: state.unresolvedEntityNames
+        )
+        if let cached = characterIdentityCardsCache, cached.key == key {
+            return cached.value
+        }
+        let value = resolvedPendingCharacterIdentityMentions
+            .prefix(Self.maxVisibleCharacterIdentityCards)
+            .map { mention in
+                NovelCharacterIdentityCardFacts(
+                    mention: mention,
+                    recommended: recommendedCharacterIdentityChoice(for: mention.name),
+                    activeProposal: activeCharacterProposal(for: mention.name),
+                    relatedProposalCount: relatedCharacterProposalCount(for: mention.name)
+                )
+            }
+        characterIdentityCardsCache = NovelCharacterIdentityCardsCacheEntry(key: key, value: value)
         return value
     }
 
@@ -679,6 +960,7 @@ final class NovelSessionViewModel {
         if stage == .idle {
             loadStage = .idle
             pendingCharacterIdentityMentionsCache = nil
+            characterIdentityCardsCache = nil
             characterIdentityChoicesCache = nil
             return
         }
@@ -693,6 +975,7 @@ final class NovelSessionViewModel {
         if stage >= .secondaryChrome {
             _ = resolvedPendingCharacterIdentityMentions
             _ = resolvedCharacterIdentityChoices
+            _ = characterIdentityCardFacts
         }
     }
 
@@ -730,52 +1013,84 @@ final class NovelSessionViewModel {
     ) -> NovelSessionListModel? {
         guard binding?.projectID == project.project.id,
               binding?.branchID == branch.branch.id else { return nil }
+        // The detached durable build announces installation through this observed
+        // revision; the cache itself stays observation-ignored at streaming cadence.
+        _ = projectionRevision
+        projectionExpandedArchiveIDs = expandedArchiveIDs
         let key = NovelSessionProjectionCacheKey(
             project: project,
             branch: branch,
             expandedArchiveIDs: expandedArchiveIDs,
             transientTail: transientTail
         )
-        if let cached = projectionCache, cached.key == key {
-            let updatedModel: NovelSessionListModel?
-            if let tail = transientTail {
-                updatedModel = NovelSessionPresentation.updatingTransientTail(
-                    in: cached.model,
-                    with: tail,
-                    localAskUserResponse: locallyResolvedAskUser[tail.messageID]
-                )
+        if let cached = projectionCache {
+            let tailKey = transientTail.map(NovelSessionProjectionTailKey.init)
+            if cached.key == key,
+               cached.tailKey == tailKey,
+               cached.tailStartingUserContent == transientTail?.startingUserContent,
+               cached.tailRenderRevision == transientTail?.renderRevision,
+               cached.localAskUserRevision == localAskUserRevision {
+                return cached.model
+            }
+            let model: NovelSessionListModel
+            if let tail = transientTail,
+               cached.tailKey == tailKey,
+               cached.tailStartingUserContent == tail.startingUserContent,
+               cached.localAskUserRevision == localAskUserRevision,
+               let patched = NovelSessionPresentation.updatingTransientTail(
+                   in: cached.model,
+                   with: tail,
+                   input: cached.model.activeTailRow?.transientPhase == tail.phase
+                       ? nil
+                       : NovelSessionProjectionInput(
+                           project: project,
+                           branch: branch,
+                           expandedArchiveIDs: expandedArchiveIDs,
+                           transientTail: tail
+                       ),
+                   prepared: cached.durableProjection,
+                   localAskUserResponse: locallyResolvedAskUser[tail.messageID]
+               ) {
+                model = cached.model.activeTailRow?.transientPhase == tail.phase
+                    ? patched
+                    : overlayLocalAskUserAnswers(patched)
             } else {
-                updatedModel = cached.model
-            }
-            if let updatedModel {
-                let overlaid = cached.localAskUserRevision == localAskUserRevision
-                    ? updatedModel
-                    : overlayLocalAskUserAnswers(updatedModel)
-                projectionCache = NovelSessionProjectionCacheEntry(
-                    key: key,
-                    model: overlaid,
-                    localAskUserRevision: localAskUserRevision
+                let input = NovelSessionProjectionInput(
+                    project: project,
+                    branch: branch,
+                    expandedArchiveIDs: expandedArchiveIDs,
+                    transientTail: transientTail
                 )
-                return overlaid
+                model = overlayLocalAskUserAnswers(
+                    NovelSessionPresentation.applyingTransientTail(
+                        to: cached.durableProjection,
+                        input: input
+                    )
+                )
             }
+            let visibleModel = key.hasLiveTail && !cached.key.hasLiveTail
+                ? NovelSessionPresentation.blockingDurableActionsForLiveTail(
+                    in: model,
+                    access: project.access,
+                    lifecycle: branch.branch.lifecycle
+                )
+                : model
+            projectionCache = NovelSessionProjectionCacheEntry(
+                key: cached.key,
+                durableProjection: cached.durableProjection,
+                model: visibleModel,
+                tailKey: tailKey,
+                tailStartingUserContent: transientTail?.startingUserContent,
+                tailRenderRevision: transientTail?.renderRevision,
+                localAskUserRevision: localAskUserRevision
+            )
+            if cached.key != key {
+                scheduleProjectionCache(project: project, branch: branch, key: key)
+            }
+            return visibleModel
         }
-
-        #if DEBUG
-        fullProjectionBuildCountForTesting += 1
-        #endif
-        let model = NovelSessionPresentation.project(NovelSessionProjectionInput(
-            project: project,
-            branch: branch,
-            expandedArchiveIDs: expandedArchiveIDs,
-            transientTail: transientTail
-        ))
-        let overlaid = overlayLocalAskUserAnswers(model)
-        projectionCache = NovelSessionProjectionCacheEntry(
-            key: key,
-            model: overlaid,
-            localAskUserRevision: localAskUserRevision
-        )
-        return overlaid
+        scheduleProjectionCache(project: project, branch: branch, key: key)
+        return nil
     }
 
     private func overlayLocalAskUserAnswers(_ model: NovelSessionListModel) -> NovelSessionListModel {
@@ -825,41 +1140,122 @@ final class NovelSessionViewModel {
 
     /// Build the session list model off the main actor, then install the cache.
     /// Call before advancing to `.coreTranscript` on cold open.
+    @discardableResult
     private func warmProjectionCache(
         project: NovelProjectSnapshot,
         branch: NovelBranchSnapshot,
         expandedArchiveIDs: Set<NovelMessageID>
-    ) async {
-        let key = NovelSessionProjectionCacheKey(
-            project: project,
-            branch: branch,
-            expandedArchiveIDs: expandedArchiveIDs,
-            transientTail: transientTail
-        )
-        if let cached = projectionCache, cached.key == key {
-            return
+    ) async -> Bool {
+        let expectedToken = bindingToken
+        projectionExpandedArchiveIDs = expandedArchiveIDs
+        var currentProject = project
+        var currentBranch = branch
+        while true {
+            guard !Task.isCancelled, bindingToken == expectedToken else { return false }
+            let key = NovelSessionProjectionCacheKey(
+                project: currentProject,
+                branch: currentBranch,
+                expandedArchiveIDs: projectionExpandedArchiveIDs,
+                transientTail: transientTail
+            )
+            if projectionCache?.key == key { return true }
+            scheduleProjectionCache(project: currentProject, branch: currentBranch, key: key)
+            guard let task = projectionBuildTask else { return false }
+            if await task.value { return true }
+            guard !Task.isCancelled,
+                  bindingToken == expectedToken,
+                  let nextProject = workspace.projectSnapshot,
+                  let nextBranch = workspace.branchSnapshot,
+                  binding?.projectID == nextProject.project.id,
+                  binding?.branchID == nextBranch.branch.id,
+                  snapshotMatchesBinding else { return false }
+            // An archive expansion or newer durable snapshot superseded the
+            // in-flight build. The same key may already have a replacement
+            // build (expand then collapse); keep waiting for the current one.
+            currentProject = nextProject
+            currentBranch = nextBranch
         }
+    }
+
+    private func cancelProjectionBuild() {
+        projectionBuildTask?.cancel()
+        projectionBuildTask = nil
+        projectionBuildKey = nil
+        projectionBuildID = nil
+    }
+
+    private func scheduleProjectionCache(
+        project: NovelProjectSnapshot,
+        branch: NovelBranchSnapshot,
+        key: NovelSessionProjectionCacheKey
+    ) {
+        guard projectionBuildKey != key || projectionBuildTask == nil else { return }
+        projectionBuildTask?.cancel()
+        let buildID = UUID()
+        let token = bindingToken
+        projectionBuildKey = key
+        projectionBuildID = buildID
         let input = NovelSessionProjectionInput(
             project: project,
             branch: branch,
-            expandedArchiveIDs: expandedArchiveIDs,
-            transientTail: transientTail
+            expandedArchiveIDs: key.expandedArchiveIDs,
+            transientTail: nil,
+            hasLiveTail: key.hasLiveTail
         )
-        let model = await Task.detached(priority: .userInitiated) {
-            NovelSessionPresentation.project(input)
-        }.value
-        // Drop result if the user switched sessions while projecting.
-        guard binding?.projectID == project.project.id,
-              binding?.branchID == branch.branch.id else { return }
-        #if DEBUG
-        fullProjectionBuildCountForTesting += 1
-        #endif
-        let overlaid = overlayLocalAskUserAnswers(model)
-        projectionCache = NovelSessionProjectionCacheEntry(
-            key: key,
-            model: overlaid,
-            localAskUserRevision: localAskUserRevision
-        )
+        projectionBuildTask = Task { @MainActor [weak self] in
+            let durableModel = await Task.detached(priority: .userInitiated) {
+                NovelSessionPresentation.prepareDurable(input)
+            }.value
+            guard let self else { return false }
+            defer {
+                if self.projectionBuildID == buildID {
+                    self.projectionBuildTask = nil
+                    self.projectionBuildKey = nil
+                    self.projectionBuildID = nil
+                }
+            }
+            guard !Task.isCancelled,
+                  self.projectionBuildID == buildID,
+                  self.bindingToken == token,
+                  self.binding?.projectID == project.project.id,
+                  self.binding?.branchID == branch.branch.id,
+                  let currentProject = self.workspace.projectSnapshot,
+                  let currentBranch = self.workspace.branchSnapshot,
+                  self.workspace.selectedProjectID == key.projectID,
+                  self.workspace.selectedBranchID == key.branchID,
+                  NovelSessionProjectionCacheKey(
+                      project: currentProject,
+                      branch: currentBranch,
+                      expandedArchiveIDs: self.projectionExpandedArchiveIDs,
+                      transientTail: self.transientTail
+                  ) == key else { return false }
+            let currentInput = NovelSessionProjectionInput(
+                project: currentProject,
+                branch: currentBranch,
+                expandedArchiveIDs: key.expandedArchiveIDs,
+                transientTail: self.transientTail
+            )
+            let model = self.overlayLocalAskUserAnswers(
+                NovelSessionPresentation.applyingTransientTail(
+                    to: durableModel,
+                    input: currentInput
+                )
+            )
+            self.projectionCache = NovelSessionProjectionCacheEntry(
+                key: key,
+                durableProjection: durableModel,
+                model: model,
+                tailKey: self.transientTail.map(NovelSessionProjectionTailKey.init),
+                tailStartingUserContent: self.transientTail?.startingUserContent,
+                tailRenderRevision: self.transientTail?.renderRevision,
+                localAskUserRevision: self.localAskUserRevision
+            )
+            #if DEBUG
+            self.fullProjectionBuildCountForTesting += 1
+            #endif
+            self.projectionRevision &+= 1
+            return true
+        }
     }
 
     var currentChapterVersions: [NovelChapterVersionRecord] {
@@ -949,9 +1345,18 @@ final class NovelSessionViewModel {
     }
 
     var isBusy: Bool {
-        isStarting || terminalAwaitingRefresh || isPerformingAction ||
+        isStarting || terminalAwaitingRefresh || stoppingRunID != nil ||
+            retryingRunID != nil || cloningCandidateID != nil || undoingCheckpointID != nil ||
+            isPerformingAction ||
             workspace.isPerforming || isBatchPolishing ||
             (isGhostwriting && !isGhostwriteStartingRun)
+    }
+
+    var isStopping: Bool { stoppingRunID != nil }
+
+    var isRetryingLastTerminal: Bool {
+        guard let retryingRunID else { return false }
+        return retryingRunID == lastRetryRunID
     }
 
     /// 批量整章润色是否正在进行。派生自进度阶段,随 `batchPolishProgress` 一起被观察;
@@ -988,7 +1393,7 @@ final class NovelSessionViewModel {
     }
 
     var canStop: Bool {
-        activeRunID != nil && access == .readWrite && !isPerformingAction
+        activeRunID != nil && access == .readWrite && !isPerformingAction && stoppingRunID == nil
     }
 
     var canRetryLastTerminal: Bool {
@@ -1038,6 +1443,7 @@ final class NovelSessionViewModel {
             await cancelBatchPolishForBindingChange(from: binding)
             await cancelGhostwriteForBindingChange(from: binding)
             detachConsumer()
+            cancelProjectionBuild()
             // 切 binding 即作废旧 token:顺带取消可能仍在静窗里等待的 tail 退役任务。
             terminalTailRetirementTask?.cancel()
             terminalTailRetirementTask = nil
@@ -1045,6 +1451,10 @@ final class NovelSessionViewModel {
             binding = next
             transientTail = nil
             transientRunRecord = nil
+            stoppingRunID = nil
+            retryingRunID = nil
+            cloningCandidateID = nil
+            undoingCheckpointID = nil
             terminalAwaitingRefresh = false
             currentRunDraft = nil
             lastRetryDraft = nil
@@ -1062,6 +1472,7 @@ final class NovelSessionViewModel {
         }
         consumerAttachmentDesired = true
         hydrateTerminalState()
+        let expectedToken = bindingToken
         // Project off the main actor while still at .idle so the open spinner can
         // animate; sync project() on MainActor was freezing the scene (watchdog).
         await warmProjectionCache(
@@ -1069,11 +1480,11 @@ final class NovelSessionViewModel {
             branch: branch,
             expandedArchiveIDs: expandedArchiveIDs
         )
-        guard binding == next else { return }
+        guard binding == next, bindingToken == expectedToken else { return }
         advanceLoadStage(to: .coreTranscript)
         // Ghostwrite restore / run attach after first core frame is allowed to commit.
         await Task.yield()
-        guard binding == next else { return }
+        guard binding == next, bindingToken == expectedToken else { return }
         await restoreGhostwriteProgressIfNeeded(for: next)
         _ = await resumeGhostwriteAfterBackgroundInterruptionIfNeeded()
         let currentActiveRun = activeRun
@@ -1166,7 +1577,37 @@ final class NovelSessionViewModel {
             return false
         }
         answeringAskUserMessageID = promptMessageID
-        defer { answeringAskUserMessageID = nil }
+        // 卡片先本地收口为已回答，不等写盘 / durable refresh；失败时撤回，
+        // 让卡片回到可重试状态（错误文案由各分支写入 operationErrorMessage）。
+        let optimisticResponse = NovelAskUserResponse(
+            promptMessageID: promptMessageID,
+            answer: answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        let hadLocalResponse = locallyResolvedAskUser[promptMessageID] != nil
+        if !hadLocalResponse {
+            locallyResolvedAskUser[promptMessageID] = optimisticResponse
+        }
+        let answered = await resolveAskUser(
+            prompt: prompt,
+            promptMessage: promptMessage,
+            promptMessageID: promptMessageID,
+            answer: answer
+        )
+        answeringAskUserMessageID = nil
+        if !answered, !hadLocalResponse,
+           locallyResolvedAskUser[promptMessageID] == optimisticResponse {
+            locallyResolvedAskUser[promptMessageID] = nil
+            // 投影下次从未叠加本地回答的 durable base 重建卡片。
+        }
+        return answered
+    }
+
+    private func resolveAskUser(
+        prompt: NovelAskUserPrompt,
+        promptMessage: NovelSessionMessageRecord,
+        promptMessageID: NovelMessageID,
+        answer: String
+    ) async -> Bool {
         if let proposal = prompt.ghostwritePlan {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if let chapterCount = NovelGhostwritePlanApproval.approvedChapterCount(from: trimmed) {
@@ -1452,6 +1893,8 @@ final class NovelSessionViewModel {
             operationErrorMessage = "目标角色已经不存在。"
             return false
         }
+        let expectedBinding = binding
+        let expectedToken = bindingToken
         await workspace.saveMaterial(
             materialID: material.id,
             kind: .character,
@@ -1459,10 +1902,15 @@ final class NovelSessionViewModel {
             content: revision.content,
             tags: revision.tags,
             injectionMode: revision.injectionMode,
-            aliases: material.aliases + [alias]
+            aliases: material.aliases + [alias],
+            refreshProjectList: false
         )
         operationErrorMessage = workspace.errorMessage
-        _ = await refreshDurable(binding: binding, token: bindingToken)
+        if workspace.errorMessage == nil,
+           workspace.selectedProjectID == project.project.id,
+           workspace.projectSnapshot?.project.revision == project.project.revision {
+            _ = await refreshDurable(binding: expectedBinding, token: expectedToken)
+        }
         return workspace.errorMessage == nil
     }
 
@@ -1484,12 +1932,21 @@ final class NovelSessionViewModel {
             operationErrorMessage = "请先输入人物身份说明。"
             return false
         }
+        let expectedBinding = binding
+        let expectedToken = bindingToken
+        let previousProject = workspace.projectSnapshot?.project
         let succeeded = await workspace.clarifyCharacterIdentity(
             mention: mention,
-            clarification: normalized
+            clarification: normalized,
+            refreshProjectList: false
         )
         operationErrorMessage = workspace.errorMessage
-        _ = await refreshDurable(binding: binding, token: bindingToken)
+        if succeeded, workspace.errorMessage == nil,
+           let previousProject,
+           workspace.selectedProjectID == previousProject.id,
+           workspace.projectSnapshot?.project.revision == previousProject.revision {
+            _ = await refreshDurable(binding: expectedBinding, token: expectedToken)
+        }
         return succeeded && workspace.errorMessage == nil
     }
 
@@ -1594,32 +2051,19 @@ final class NovelSessionViewModel {
             operationErrorMessage = "没有可重试的生成，请重新发送。"
             return false
         }
-        // One refresh clears stale revision/snapshot before exact retry — the
-        // common "状态不匹配" after a failed stream that still left UI on an old
-        // config revision.
-        if !(await refresh()) {
-            if operationErrorMessage == nil {
-                operationErrorMessage = "无法刷新项目状态，请退出后重新进入再试。"
-            }
-            return false
-        }
-        let ok = await retryGeneration(runID: runID)
-        if !ok, operationErrorMessage == nil {
-            operationErrorMessage = "暂时无法按原请求重试。请重新发送，或重新载入项目后再试。"
-        }
-        return ok
+        return await retryGeneration(runID: runID)
     }
 
     @discardableResult
     func retryGeneration(runID: NovelRunID) async -> Bool {
-        // Same as retryLastTerminal: refresh first so expected revisions match
-        // disk after a failed stream left the UI on an older snapshot.
-        if !(await refresh()) {
-            if operationErrorMessage == nil {
-                operationErrorMessage = "无法刷新项目状态，请退出后重新进入再试。"
-            }
+        guard retryingRunID == nil else { return false }
+        guard !isBusy else {
+            operationErrorMessage = "当前还有操作在进行，请稍候再试。"
             return false
         }
+        retryingRunID = runID
+        defer { retryingRunID = nil }
+
         guard let run = workspace.projectSnapshot?.activeRuns.first(where: {
             $0.id == runID && $0.branchID == binding?.branchID &&
                 ($0.status == .failed || $0.status == .interrupted)
@@ -1659,7 +2103,36 @@ final class NovelSessionViewModel {
         if let granularity = draft.granularity {
             self.granularity = granularity
         }
-        return await start(draft)
+        let started = await start(draft, retryingRunID: runID)
+        guard !started, Self.isRevisionMismatch(lastStartFailure) else { return started }
+
+        // Retry against the current snapshot only when the first start was
+        // rejected by an explicit revision mismatch. Other failures keep their
+        // original error and do not trigger a refresh/replay.
+        let expectedBinding = binding
+        let token = bindingToken
+        guard await refreshDurable(binding: expectedBinding, token: token),
+              binding == expectedBinding,
+              bindingToken == token,
+              let refreshedRun = workspace.projectSnapshot?.activeRuns.first(where: {
+                  $0.id == runID && $0.branchID == binding?.branchID &&
+                      ($0.status == .failed || $0.status == .interrupted)
+              }), isEligibleForExactRetry(refreshedRun),
+              let refreshedDraft = self.draft(for: refreshedRun) else {
+            if operationErrorMessage == nil {
+                operationErrorMessage = "项目状态已变化，无法按原请求重试。请重新发送。"
+            }
+            return false
+        }
+        if refreshedDraft.mode != mode { mode = refreshedDraft.mode }
+        if let granularity = refreshedDraft.granularity {
+            self.granularity = granularity
+        }
+        let retried = await start(refreshedDraft, retryingRunID: runID)
+        if !retried, operationErrorMessage == nil {
+            operationErrorMessage = "项目刷新后仍无法按原请求重试。请重新发送。"
+        }
+        return retried
     }
 
     func retryPendingTerminal() async {
@@ -1887,12 +2360,18 @@ final class NovelSessionViewModel {
     }
 
     func cloneCollectedProse(_ candidateID: NovelCandidateID) async -> NovelCandidateID? {
+        guard cloningCandidateID == nil else { return nil }
         guard let project = workspace.projectSnapshot,
               let branch = workspace.branchSnapshot,
               let source = candidate(id: candidateID),
               source.kind == .prose,
               source.status == .collected,
-              snapshotMatchesBinding else { return nil }
+              snapshotMatchesBinding else {
+            operationErrorMessage = "这条收录记录已变化，无法再次收录。请重新载入后再试。"
+            return nil
+        }
+        cloningCandidateID = candidateID
+        defer { cloningCandidateID = nil }
         let clonedID = NovelCandidateID()
         let outcome = await perform(.cloneCandidate(NovelCloneCandidateCommand(
             context: mutationContext(project: project, branch: branch),
@@ -1901,10 +2380,69 @@ final class NovelSessionViewModel {
             sourceCandidateID: candidateID,
             candidateID: clonedID
         )))
-        guard case .candidateCloned(_, _, candidateID, let actualID, _) = outcome,
-              candidateID == source.id,
-              actualID == clonedID else { return nil }
+        guard case .candidateCloned(_, _, let sourceCandidateID, let actualID, _) = outcome,
+              sourceCandidateID == source.id,
+              actualID == clonedID else {
+            if operationErrorMessage == nil {
+                operationErrorMessage = "无法再次收录这段正文，请重新载入后重试。"
+            }
+            return nil
+        }
         return clonedID
+    }
+
+    func undoCommittedChange(
+        checkpointID: NovelCheckpointID,
+        kind: NovelCandidateKind
+    ) async -> Bool {
+        guard undoingCheckpointID == nil else { return false }
+        guard let project = workspace.projectSnapshot,
+              let branch = workspace.branchSnapshot,
+              snapshotMatchesBinding,
+              branch.branch.headCheckpointID == checkpointID else {
+            operationErrorMessage = "当前分支已经变化，请重新选择要撤销的记录。"
+            return false
+        }
+        undoingCheckpointID = checkpointID
+        defer { undoingCheckpointID = nil }
+        guard beginAction() else {
+            operationErrorMessage = workspace.requiresReload
+                ? "项目需要重新载入，无法撤销这次\(kind == .polish ? "润色" : "收录")。"
+                : "有其他操作进行中，无法撤销这次\(kind == .polish ? "润色" : "收录")。"
+            return false
+        }
+        defer { endAction() }
+        do {
+            let outcome = try await workspace.performSessionAction(.undoBranchHead(
+                NovelUndoBranchHeadCommand(
+                    context: mutationContext(project: project, branch: branch),
+                    projectID: project.project.id,
+                    branchID: branch.branch.id,
+                    expectedWorkingRevision: branch.branch.workingRevision
+                )
+            ))
+            let refreshed = await refreshDurable(binding: binding, token: bindingToken)
+            guard refreshed else { return false }
+            guard case .branchHeadMoved(
+                let projectID,
+                let branchID,
+                let fromCheckpointID,
+                _,
+                _,
+                _
+            ) = outcome,
+                  projectID == project.project.id,
+                  branchID == branch.branch.id,
+                  fromCheckpointID == checkpointID else {
+                operationErrorMessage = "撤销没有完成，请重新载入项目后再试。"
+                return false
+            }
+            operationErrorMessage = nil
+            return true
+        } catch {
+            operationErrorMessage = describe(error)
+            return false
+        }
     }
 
     @discardableResult
@@ -2508,7 +3046,10 @@ final class NovelSessionViewModel {
             $0.id == runID && $0.branchID == expectedBinding.branchID
         }
         if let durableRun, durableRun.status != .running {
-            if transientTail?.runID == runID { clearTransientTail() }
+            await clearTransientTailAfterDurableProjection(
+                runID: runID,
+                token: bindingToken
+            )
             return
         }
         await stop(reason: reason)
@@ -2632,6 +3173,16 @@ extension NovelSessionViewModel {
 }
 
 private extension NovelSessionViewModel {
+    static func isRevisionMismatch(_ error: Error?) -> Bool {
+        guard let error = error as? NovelError else { return false }
+        return switch error {
+        case .staleProjectRevision, .staleConfigRevision, .staleBranchHeadRevision:
+            true
+        default:
+            false
+        }
+    }
+
     var snapshotMatchesBinding: Bool {
         guard let binding,
               workspace.selectedProjectID == binding.projectID,
@@ -2697,7 +3248,8 @@ private extension NovelSessionViewModel {
     /// Human-readable gate reason when generation cannot start. `nil` means open.
     func startBlockerMessage(
         kind: NovelRunKind,
-        granularity: NovelGenerationGranularity? = nil
+        granularity: NovelGenerationGranularity? = nil,
+        allowingRetryRunID: NovelRunID? = nil
     ) -> String? {
         guard snapshotMatchesBinding else {
             return "项目状态尚未对齐，请先点「重新载入」。"
@@ -2714,7 +3266,8 @@ private extension NovelSessionViewModel {
         if terminalAwaitingRefresh {
             return "上一轮结果还在保存，请稍候再试或点「重新载入」。"
         }
-        if isBusy && !isBatchStartingRun {
+        let isRetryStart = allowingRetryRunID != nil && allowingRetryRunID == retryingRunID
+        if isBusy && !isBatchStartingRun && !isRetryStart {
             return "当前还有操作在进行，请稍候。"
         }
         if isRunning {
@@ -2781,7 +3334,11 @@ private extension NovelSessionViewModel {
     }
 
     @discardableResult
-    func start(_ draft: NovelSessionRunDraft) async -> Bool {
+    func start(
+        _ draft: NovelSessionRunDraft,
+        retryingRunID: NovelRunID? = nil
+    ) async -> Bool {
+        lastStartFailure = nil
         if draft.userText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             operationErrorMessage = "请求内容为空，请重新输入后再试。"
             return false
@@ -2790,7 +3347,11 @@ private extension NovelSessionViewModel {
             operationErrorMessage = "模型输入预算无效，请检查项目模型设置后重试。"
             return false
         }
-        if let blocker = startBlockerMessage(kind: draft.kind, granularity: draft.granularity) {
+        if let blocker = startBlockerMessage(
+            kind: draft.kind,
+            granularity: draft.granularity,
+            allowingRetryRunID: retryingRunID
+        ) {
             operationErrorMessage = blocker
             return false
         }
@@ -2879,6 +3440,7 @@ private extension NovelSessionViewModel {
             let run = try await workspace.startSessionRun(request)
             guard !cancelledStartRunIDs.contains(request.id) else { return false }
             currentRunDraft = draft
+            lastStartFailure = nil
             operationErrorMessage = nil
             refreshErrorMessage = nil
             lastFailure = nil
@@ -2892,16 +3454,19 @@ private extension NovelSessionViewModel {
             }
             return true
         } catch {
-            transientTail = previousTail
-            transientRunRecord = previousRunRecord
-            terminalAwaitingRefresh = previousTerminalAwaitingRefresh
-            if let previousTail,
-               !previousTerminalAwaitingRefresh,
-               !isActiveTailPhase(previousTail.phase) {
-                // installTail cancels the old quiet-window task. If the new run
-                // fails before it starts, restore that terminal tail's retirement
-                // as well as its visible state so it can still hand off to durable.
-                retireTerminalTransientTail(runID: previousTail.runID, token: bindingToken)
+            lastStartFailure = error
+            if stoppingRunID != request.id {
+                transientTail = previousTail
+                transientRunRecord = previousRunRecord
+                terminalAwaitingRefresh = previousTerminalAwaitingRefresh
+                if let previousTail,
+                   !previousTerminalAwaitingRefresh,
+                   !isActiveTailPhase(previousTail.phase) {
+                    // installTail cancels the old quiet-window task. If the new run
+                    // fails before it starts, restore that terminal tail's retirement
+                    // as well as its visible state so it can still hand off to durable.
+                    retireTerminalTransientTail(runID: previousTail.runID, token: bindingToken)
+                }
             }
             if cancelledStartRunIDs.contains(request.id) {
                 operationErrorMessage = nil
@@ -2940,8 +3505,27 @@ private extension NovelSessionViewModel {
             if draft.ghostwritePlanID != nil {
                 advanceGhostwriteBackgroundProgress(by: 1)
             }
-            _ = await refreshDurable(binding: binding, token: token)
-            adoptDurableRunRecord(runID: runID)
+            guard let expectedBinding = binding else { return }
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.binding == expectedBinding,
+                      self.bindingToken == token,
+                      !self.terminalAwaitingRefresh,
+                      let tail = self.transientTail,
+                      tail.runID == runID,
+                      self.isActiveTailPhase(tail.phase) else { return }
+                let refreshed = await self.refreshDurable(
+                    binding: expectedBinding,
+                    token: token,
+                    onlyIfRunStillActive: runID
+                )
+                guard refreshed,
+                      self.binding == expectedBinding,
+                      self.bindingToken == token,
+                      !self.terminalAwaitingRefresh,
+                      self.transientTail?.runID == runID else { return }
+                self.adoptDurableRunRecord(runID: runID)
+            }
         case .reasoningDelta(let text):
             if draft.ghostwritePlanID != nil, !text.isEmpty {
                 advanceGhostwriteBackgroundProgress(by: Int64(text.utf8.count))
@@ -2972,6 +3556,7 @@ private extension NovelSessionViewModel {
                 enqueuePresentationReplacement(text, runID: runID, token: token)
             }
         case .completed(let snapshot):
+            if stoppingRunID == runID { return }
             markReasoningFinishedIfNeeded(runID: runID, token: token)
             attachAskUserIfNeeded(from: snapshot)
             guard await publishTerminalPresentation(
@@ -2986,6 +3571,7 @@ private extension NovelSessionViewModel {
             let refreshed = await refreshDurable(binding: binding, token: token)
             if refreshed { retireTerminalTransientTail(runID: runID, token: token) }
         case .interrupted(let snapshot):
+            if stoppingRunID == runID { return }
             markReasoningFinishedIfNeeded(runID: runID, token: token)
             guard await publishTerminalPresentation(
                 runID: runID,
@@ -3001,6 +3587,7 @@ private extension NovelSessionViewModel {
             let refreshed = await refreshDurable(binding: binding, token: token)
             if refreshed { retireTerminalTransientTail(runID: runID, token: token) }
         case .failed(let failure):
+            if stoppingRunID == runID { return }
             markReasoningFinishedIfNeeded(runID: runID, token: token)
             guard await publishTerminalPresentation(
                 runID: runID,
@@ -3018,6 +3605,7 @@ private extension NovelSessionViewModel {
             let refreshed = await refreshDurable(binding: binding, token: token)
             if refreshed { retireTerminalTransientTail(runID: runID, token: token) }
         case .persistenceBlocked(let failure):
+            if stoppingRunID == runID { return }
             markReasoningFinishedIfNeeded(runID: runID, token: token)
             guard await publishTerminalPresentation(
                 runID: runID,
@@ -3088,8 +3676,11 @@ private extension NovelSessionViewModel {
                   binding == expectedBinding,
                   bindingToken == expectedToken,
                   transientTail?.runID == run.id else { return }
-            clearTransientTail()
             refreshErrorMessage = describe(error)
+            await clearTransientTailAfterDurableProjection(
+                runID: run.id,
+                token: expectedToken
+            )
         }
     }
 
@@ -3159,24 +3750,62 @@ private extension NovelSessionViewModel {
     }
 
     @discardableResult
-    func refreshDurable(binding expected: NovelSessionBinding?, token: UUID) async -> Bool {
+    func refreshDurable(
+        binding expected: NovelSessionBinding?,
+        token: UUID,
+        onlyIfRunStillActive runID: NovelRunID? = nil,
+        retireTerminalTail: Bool = true
+    ) async -> Bool {
         guard let expected,
               binding == expected,
               bindingToken == token,
               workspace.selectedProjectID == expected.projectID,
               workspace.selectedBranchID == expected.branchID else { return false }
         do {
-            try await workspace.refreshCurrentSelection(projectID: expected.projectID)
+            try await workspace.refreshCurrentSelection(
+                projectID: expected.projectID,
+                refreshProjectList: false
+            )
             guard binding == expected,
                   bindingToken == token,
                   snapshotMatchesBinding else { return false }
+            if let runID {
+                // A started refresh may finish after the terminal event began
+                // draining. Only the terminal consumer may retire that tail.
+                guard !terminalAwaitingRefresh,
+                      let tail = transientTail,
+                      tail.runID == runID,
+                      isActiveTailPhase(tail.phase),
+                      workspace.projectSnapshot?.activeRuns.first(where: {
+                          $0.id == runID
+                      })?.status == .running else { return false }
+            }
+            guard let project = workspace.projectSnapshot,
+                  let branch = workspace.branchSnapshot,
+                  await warmProjectionCache(
+                      project: project,
+                      branch: branch,
+                      expandedArchiveIDs: projectionExpandedArchiveIDs
+                  ),
+                  binding == expected,
+                  bindingToken == token,
+                  snapshotMatchesBinding else { return false }
+            if let runID {
+                guard !terminalAwaitingRefresh,
+                      transientTail?.runID == runID,
+                      workspace.projectSnapshot?.activeRuns.first(where: {
+                          $0.id == runID
+                      })?.status == .running else { return false }
+            }
             refreshErrorMessage = nil
             hydrateTerminalState()
-            if terminalAwaitingRefresh,
+            if retireTerminalTail,
+               terminalAwaitingRefresh,
                let tail = transientTail,
                workspace.projectSnapshot?.activeRuns.first(where: { $0.id == tail.runID })?.status != .running {
                 retireTerminalTransientTail(runID: tail.runID, token: token)
-            } else if terminalAwaitingRefresh,
+            } else if retireTerminalTail,
+                      terminalAwaitingRefresh,
                       transientTail == nil,
                       workspace.branchSnapshot?.branch.activeRunID == nil {
                 terminalAwaitingRefresh = false
@@ -3319,7 +3948,7 @@ private extension NovelSessionViewModel {
     }
 
     private func scheduleReasoningFlush(runID: NovelRunID, token: UUID) {
-        guard reasoningFlushTask == nil else { return }
+        guard reasoningFlushTask == nil, stoppingRunID != runID else { return }
         let flushToken = UUID()
         reasoningFlushToken = flushToken
         reasoningFlushTask = Task { @MainActor [weak self] in
@@ -3344,8 +3973,10 @@ private extension NovelSessionViewModel {
         reasoningFlushTask?.cancel()
         reasoningFlushTask = nil
         guard bindingToken == token,
+              stoppingRunID != runID,
               let current = transientTail,
               current.runID == runID else { return }
+        if isTailPresentationSuspended, !finishing { return }
         let pending = pendingReasoningText
         pendingReasoningText = nil
         if pending == nil, !finishing { return }
@@ -3450,7 +4081,7 @@ private extension NovelSessionViewModel {
         messageID: NovelMessageID,
         token: UUID
     ) {
-        guard presentationFlushTask == nil else { return }
+        guard presentationFlushTask == nil, stoppingRunID != runID else { return }
         presentationFlushTask = Task { @MainActor [weak self] in
             do {
                 try await Task.sleep(nanoseconds: Self.presentationFlushDelayNanos)
@@ -3473,29 +4104,38 @@ private extension NovelSessionViewModel {
         token: UUID
     ) {
         guard bindingToken == token,
+              stoppingRunID != runID,
               let current = transientTail,
               current.runID == runID,
-              current.messageID == messageID,
-              let buffer = presentationBuffer,
-              buffer.matches(
-                  runID: runID,
-                  messageID: messageID,
-                  bindingToken: token
-              ) else {
+              current.messageID == messageID else {
             cancelPendingPresentation()
             return
         }
-        let step = NovelSessionPresentationPacer.step(
-            displayedContent: current.content,
-            targetContent: buffer.targetContent
-        )
+        if isTailPresentationSuspended {
+            // 屏外：只推进节拍游标，不解析结构化输出、不写 transientTail。
+            if var buffer = presentationBuffer,
+               buffer.matches(runID: runID, messageID: messageID, bindingToken: token) {
+                let step = buffer.step()
+                presentationBuffer = buffer
+                if !step.isCaughtUp {
+                    schedulePresentationFlush(runID: runID, messageID: messageID, token: token)
+                }
+            }
+            return
+        }
+        publishDirtyStructuredPresentation(for: current, token: token)
+        guard var buffer = presentationBuffer,
+              buffer.matches(runID: runID, messageID: messageID, bindingToken: token) else {
+            return
+        }
+        let step = buffer.step()
+        presentationBuffer = buffer
         if step.content != current.content || current.phase != .streaming {
             updateTail(content: step.content, phase: .streaming)
         }
-        if step.isCaughtUp {
-            // Buffer target fully revealed; drop so the next delta starts a fresh base.
-            presentationBuffer = nil
-        } else {
+        // Keep a caught-up cursor so the next delta can append at its existing
+        // target index instead of rebuilding counts and grapheme positions.
+        if !step.isCaughtUp {
             // Keep absolute target and keep draining on the 48ms clock.
             schedulePresentationFlush(
                 runID: runID,
@@ -3511,8 +4151,9 @@ private extension NovelSessionViewModel {
     ) {
         guard bindingToken == token,
               let current = transientTail,
-              current.runID == runID,
-              current.phase != .streaming || !current.content.isEmpty else { return }
+              current.runID == runID else { return }
+        presentationBuffer = nil
+        guard current.phase != .streaming || !current.content.isEmpty else { return }
         updateTail(content: "", phase: .streaming)
     }
 
@@ -3525,7 +4166,8 @@ private extension NovelSessionViewModel {
               bindingToken == token,
               transientTail?.runID == runID else { return }
         quickStartStructuredContent = (quickStartStructuredContent ?? "") + text
-        publishQuickStartPresentation(runID: runID, token: token)
+        quickStartStructuredPresentationDirty = true
+        scheduleStructuredPresentationFlush(runID: runID, token: token)
     }
 
     func replaceQuickStartStructuredContent(
@@ -3536,7 +4178,8 @@ private extension NovelSessionViewModel {
         guard bindingToken == token,
               transientTail?.runID == runID else { return }
         quickStartStructuredContent = text
-        publishQuickStartPresentation(runID: runID, token: token)
+        quickStartStructuredPresentationDirty = true
+        scheduleStructuredPresentationFlush(runID: runID, token: token)
     }
 
     func appendCharacterProposalStructuredDelta(
@@ -3546,7 +4189,8 @@ private extension NovelSessionViewModel {
     ) {
         guard transientTail?.runID == runID, bindingToken == token else { return }
         characterProposalStructuredContent = (characterProposalStructuredContent ?? "") + text
-        publishCharacterProposalStreamingPresentation(runID: runID, token: token)
+        characterProposalStructuredPresentationDirty = true
+        scheduleStructuredPresentationFlush(runID: runID, token: token)
     }
 
     func replaceCharacterProposalStructuredContent(
@@ -3556,24 +4200,38 @@ private extension NovelSessionViewModel {
     ) {
         guard transientTail?.runID == runID, bindingToken == token else { return }
         characterProposalStructuredContent = text
-        publishCharacterProposalStreamingPresentation(runID: runID, token: token)
+        characterProposalStructuredPresentationDirty = true
+        scheduleStructuredPresentationFlush(runID: runID, token: token)
     }
 
-    func publishCharacterProposalStreamingPresentation(runID: NovelRunID, token: UUID) {
-        let presentation = NovelQuickStartStreamingPresentation.characterProposalMarkdown(
-            from: characterProposalStructuredContent ?? ""
-        )
-        enqueuePresentationReplacement(presentation, runID: runID, token: token)
+    func scheduleStructuredPresentationFlush(runID: NovelRunID, token: UUID) {
+        guard let current = transientTail, current.runID == runID else { return }
+        schedulePresentationFlush(runID: runID, messageID: current.messageID, token: token)
     }
 
-    func publishQuickStartPresentation(runID: NovelRunID, token: UUID) {
-        let markdown = NovelQuickStartStreamingPresentation.markdown(
-            from: quickStartStructuredContent ?? ""
-        )
-        if markdown.isEmpty {
-            publishQuickStartStreamingPhaseIfNeeded(runID: runID, token: token)
-        } else {
-            enqueuePresentationReplacement(markdown, runID: runID, token: token)
+    func publishDirtyStructuredPresentation(
+        for current: NovelSessionTransientTail,
+        token: UUID
+    ) {
+        if quickStartStructuredPresentationDirty, transientRunRecord?.kind == .quickStart {
+            quickStartStructuredPresentationDirty = false
+            let markdown = NovelQuickStartStreamingPresentation.markdown(
+                from: quickStartStructuredContent ?? ""
+            )
+            if markdown.isEmpty {
+                publishQuickStartStreamingPhaseIfNeeded(runID: current.runID, token: token)
+            } else {
+                preparePresentationBuffer(for: current, token: token)
+                presentationBuffer?.replace(with: markdown)
+            }
+        } else if characterProposalStructuredPresentationDirty,
+                  transientRunRecord?.kind == .characterProposal {
+            characterProposalStructuredPresentationDirty = false
+            let markdown = NovelQuickStartStreamingPresentation.characterProposalMarkdown(
+                from: characterProposalStructuredContent ?? ""
+            )
+            preparePresentationBuffer(for: current, token: token)
+            presentationBuffer?.replace(with: markdown)
         }
     }
 
@@ -3585,6 +4243,8 @@ private extension NovelSessionViewModel {
     ) async -> Bool {
         presentationFlushTask?.cancel()
         presentationFlushTask = nil
+        quickStartStructuredPresentationDirty = false
+        characterProposalStructuredPresentationDirty = false
         guard bindingToken == token,
               let current = transientTail,
               current.runID == runID else {
@@ -3631,12 +4291,11 @@ private extension NovelSessionViewModel {
             targetContent: targetContent,
             runKind: transientRunRecord?.kind
         )
-        let initialBacklog: Int
-        if targetContent.hasPrefix(initialBase) {
-            initialBacklog = targetContent.count - initialBase.count
-        } else {
-            initialBacklog = targetContent.count
-        }
+        var terminalCursor = NovelSessionPresentationPacer.Cursor(
+            displayedContent: initialBase,
+            targetContent: targetContent
+        )
+        let initialBacklog = terminalCursor.terminalDrainStartBacklog
         let drainAdvance = NovelSessionPresentationPacer.terminalDrainAdvance(
             backlogCount: initialBacklog
         )
@@ -3644,10 +4303,8 @@ private extension NovelSessionViewModel {
               bindingToken == token,
               let visibleTail = transientTail,
               visibleTail.runID == runID {
-            let step = NovelSessionPresentationPacer.terminalStep(
-                displayedContent: visibleTail.content,
-                targetContent: targetContent,
-                runKind: transientRunRecord?.kind,
+            let step = terminalCursor.step(
+                mode: .terminalDrain,
                 fixedTerminalAdvance: drainAdvance
             )
             if step.isCaughtUp {
@@ -3657,7 +4314,7 @@ private extension NovelSessionViewModel {
                 didPublishTerminal = true
                 return true
             }
-            let remainingBacklog = max(0, targetContent.count - step.content.count)
+            let remainingBacklog = terminalCursor.backlogCount
             let allowance = StreamPresentationPacingPolicy.lagAllowance(
                 remainingBacklog: remainingBacklog,
                 drainStartBacklog: initialBacklog
@@ -3702,6 +4359,14 @@ private extension NovelSessionViewModel {
         startingUserContent: String? = nil,
         phase: NovelSessionTransientTailPhase
     ) {
+        let nextRenderRevision: UInt64
+        if let previous = transientTail,
+           previous.runID == run.id,
+           previous.messageID == run.messageID {
+            nextRenderRevision = max(renderRevision, previous.renderRevision &+ 1)
+        } else {
+            nextRenderRevision = renderRevision
+        }
         // 新 run 开始:取消上一场可能仍在静窗里等待的 tail 退役任务。
         terminalTailRetirementTask?.cancel()
         terminalTailRetirementTask = nil
@@ -3711,11 +4376,13 @@ private extension NovelSessionViewModel {
         characterProposalStructuredContent = run.kind == .characterProposal
             ? run.partialContent
             : nil
+        quickStartStructuredPresentationDirty = false
+        characterProposalStructuredPresentationDirty = false
         transientRunRecord = run
         transientTail = NovelSessionTransientTail(
             run: run,
             content: NovelSessionPresentationPacer.presentationContent(content, runKind: run.kind),
-            renderRevision: renderRevision,
+            renderRevision: nextRenderRevision,
             startingUserContent: startingUserContent,
             phase: phase
         )
@@ -3775,9 +4442,39 @@ private extension NovelSessionViewModel {
         reasoningClosedAfterVisibleOutput = false
         quickStartStructuredContent = nil
         characterProposalStructuredContent = nil
+        quickStartStructuredPresentationDirty = false
+        characterProposalStructuredPresentationDirty = false
         transientTail = nil
         transientRunRecord = nil
+        stoppingRunID = nil
         terminalAwaitingRefresh = false
+    }
+
+    func clearTransientTailAfterDurableProjection(
+        runID: NovelRunID,
+        token: UUID
+    ) async {
+        guard let expected = binding,
+              bindingToken == token,
+              transientTail?.runID == runID,
+              snapshotMatchesBinding,
+              let project = workspace.projectSnapshot,
+              let branch = workspace.branchSnapshot else { return }
+        // Batch/ghostwrite cleanup also runs from cancelled tasks. Keep the
+        // durable handoff alive after that caller is cancelled.
+        let warmed = await Task { @MainActor [weak self] in
+            guard let self else { return false }
+            return await self.warmProjectionCache(
+                  project: project,
+                  branch: branch,
+                  expandedArchiveIDs: self.projectionExpandedArchiveIDs
+            )
+        }.value
+        guard warmed,
+              binding == expected,
+              bindingToken == token,
+              transientTail?.runID == runID else { return }
+        clearTransientTail()
     }
 
     /// 终态(完成/中断/失败)且 durable 刷新成功后的 tail 退役:不立即清空,而是保留到
@@ -3818,6 +4515,8 @@ private extension NovelSessionViewModel {
     ) async -> Bool {
         guard let bound = binding,
               let runID = explicitRunID ?? activeRunID else { return true }
+        let token = bindingToken
+        if reason == .user, stoppingRunID == runID { return false }
         guard !isPerformingAction,
               !workspace.isPerforming || isStarting else { return false }
         let isCancellingSessionStart = sessionStartingRunID == runID
@@ -3834,6 +4533,15 @@ private extension NovelSessionViewModel {
             cancelledStartRunIDs.insert(runID)
         }
         isPerformingAction = true
+        let isUserStop = reason == .user
+        if isUserStop {
+            stoppingRunID = runID
+            terminalAwaitingRefresh = true
+            pausePresentationForStop()
+            if transientTail?.runID == runID {
+                updateTail(phase: .interrupted)
+            }
+        }
         defer {
             if let actionOwnerID {
                 workspace.releaseSessionOperation(ownerID: actionOwnerID)
@@ -3861,13 +4569,65 @@ private extension NovelSessionViewModel {
             operationErrorMessage = describe(error)
             if isCancellingSessionStart {
                 cancelledStartRunIDs.remove(runID)
+            }
+            if isUserStop {
+                let refreshed = await refreshDurable(
+                    binding: bound,
+                    token: token,
+                    retireTerminalTail: false
+                )
+                guard binding == bound, bindingToken == token else { return false }
+                let remainsRunning = refreshed &&
+                    workspace.projectSnapshot?.activeRuns.contains(where: {
+                        $0.id == runID && $0.status == .running
+                    }) == true
+                if remainsRunning {
+                    resumePresentationAfterFailedStop(runID: runID)
+                    if consumerTask == nil, let activeRun {
+                        await attach(to: activeRun)
+                    }
+                } else if refreshed {
+                    return await finishStoppedRunPresentation(runID: runID, token: token)
+                } else {
+                    resumePresentationAfterFailedStop(runID: runID)
+                    if consumerTask == nil, let activeRun {
+                        await attach(to: activeRun)
+                    }
+                }
+            } else if isCancellingSessionStart {
                 _ = await refreshDurable(binding: bound, token: bindingToken)
                 await bindToCurrentSelection()
             }
             return false
         }
-        if transientTail?.runID == runID {
+        if !isUserStop, transientTail?.runID == runID {
             clearTransientTail()
+        }
+        if isUserStop {
+            guard binding == bound, bindingToken == token else { return false }
+            let refreshed = await refreshDurable(
+                binding: bound,
+                token: token,
+                retireTerminalTail: false
+            )
+            guard binding == bound, bindingToken == token else { return false }
+            let runIsTerminal = workspace.projectSnapshot?.activeRuns.contains(where: {
+                $0.id == runID && $0.status == .running
+            }) != true
+            if refreshed,
+               runIsTerminal,
+               workspace.branchSnapshot?.branch.activeRunID == nil {
+                return await finishStoppedRunPresentation(runID: runID, token: token)
+            }
+            if refreshed {
+                resumePresentationAfterFailedStop(runID: runID)
+                if operationErrorMessage == nil {
+                    operationErrorMessage = "生成仍在运行，请稍候后重试停止。"
+                }
+            } else {
+                stoppingRunID = nil
+            }
+            return false
         }
         currentRunDraft = nil
         guard snapshotMatchesBinding else { return true }
@@ -3877,6 +4637,74 @@ private extension NovelSessionViewModel {
             workspace.projectSnapshot?.activeRuns.contains(where: {
                 $0.id == runID && $0.status == .running
             }) != true
+    }
+
+    private func finishStoppedRunPresentation(runID: NovelRunID, token: UUID) async -> Bool {
+        guard bindingToken == token,
+              let run = workspace.projectSnapshot?.activeRuns.first(where: { $0.id == runID }),
+              run.status != .running,
+              workspace.branchSnapshot?.branch.activeRunID == nil else { return false }
+        let durableContent: String = switch run.kind {
+        case .quickStart:
+            NovelQuickStartStreamingPresentation.markdown(from: run.partialContent)
+        case .characterProposal:
+            NovelQuickStartStreamingPresentation.characterProposalMarkdown(from: run.partialContent)
+        case .discussion, .prose, .regenerate, .polish:
+            workspace.branchSnapshot?.session.messages.first(where: {
+                $0.id == run.messageID
+            })?.content ?? run.partialContent
+        }
+        if transientTail?.runID == runID {
+            guard await publishTerminalPresentation(
+                runID: runID,
+                token: token,
+                authoritativeContent: durableContent,
+                phase: .interrupted
+            ) else { return false }
+        }
+        guard bindingToken == token else { return false }
+        currentRunDraft = nil
+        stoppingRunID = nil
+        operationErrorMessage = nil
+        retireTerminalTransientTail(runID: runID, token: token)
+        return true
+    }
+
+    private func pausePresentationForStop() {
+        presentationFlushTask?.cancel()
+        presentationFlushTask = nil
+        reasoningFlushTask?.cancel()
+        reasoningFlushTask = nil
+        reasoningFlushToken = UUID()
+    }
+
+    private func resumePresentationAfterFailedStop(runID: NovelRunID) {
+        guard transientTail?.runID == runID else {
+            stoppingRunID = nil
+            terminalAwaitingRefresh = false
+            return
+        }
+        stoppingRunID = nil
+        terminalAwaitingRefresh = false
+        let tail = transientTail
+        updateTail(phase: tail?.content.isEmpty == true ? .waitingForFirstToken : .streaming)
+        if let tail, let buffer = presentationBuffer,
+           buffer.matches(
+               runID: runID,
+               messageID: tail.messageID,
+               bindingToken: bindingToken
+           ), buffer.displayedCharacterCount < buffer.targetCharacterCount {
+            schedulePresentationFlush(
+                runID: runID,
+                messageID: tail.messageID,
+                token: bindingToken
+            )
+        } else if quickStartStructuredPresentationDirty || characterProposalStructuredPresentationDirty {
+            scheduleStructuredPresentationFlush(runID: runID, token: bindingToken)
+        }
+        if pendingReasoningText != nil {
+            scheduleReasoningFlush(runID: runID, token: bindingToken)
+        }
     }
 
     func releaseSessionStartOwnership(runID: NovelRunID) {
@@ -3891,8 +4719,13 @@ private extension NovelSessionViewModel {
         await cancelBatchPolishForBindingChange(from: binding)
         await cancelGhostwriteForBindingChange(from: binding)
         detachConsumer()
+        cancelProjectionBuild()
         bindingToken = UUID()
         binding = nil
+        stoppingRunID = nil
+        retryingRunID = nil
+        cloningCandidateID = nil
+        undoingCheckpointID = nil
         clearTransientTail()
         currentRunDraft = nil
         lastRetryDraft = nil
@@ -4963,7 +5796,10 @@ extension NovelSessionViewModel {
             $0.id == runID && $0.branchID == expectedBinding.branchID
         }
         if let durableRun, durableRun.status != .running {
-            if transientTail?.runID == runID { clearTransientTail() }
+            await clearTransientTailAfterDurableProjection(
+                runID: runID,
+                token: bindingToken
+            )
             return
         }
         guard durableRun?.status == .running || activeRunID == runID else { return }

@@ -655,6 +655,18 @@ struct NovelSessionProjectionInput: Equatable, Sendable {
     let access: NovelProjectLoadAccess
     let expandedArchiveIDs: Set<NovelMessageID>
     let transientTail: NovelSessionTransientTail?
+    let hasLiveTail: Bool
+
+    static func hasLiveTail(
+        _ tail: NovelSessionTransientTail?,
+        branchID: NovelBranchID,
+        sessionID: NovelSessionID
+    ) -> Bool {
+        guard let tail,
+              tail.branchID == branchID,
+              tail.sessionID == sessionID else { return false }
+        return tail.phase == .waitingForFirstToken || tail.phase == .streaming
+    }
 
     init(
         branch: NovelBranchRecord,
@@ -672,7 +684,8 @@ struct NovelSessionProjectionInput: Equatable, Sendable {
         hasConfirmedChapterPlan: Bool = false,
         access: NovelProjectLoadAccess,
         expandedArchiveIDs: Set<NovelMessageID> = [],
-        transientTail: NovelSessionTransientTail?
+        transientTail: NovelSessionTransientTail?,
+        hasLiveTail: Bool? = nil
     ) {
         self.branch = branch
         self.session = session
@@ -690,13 +703,19 @@ struct NovelSessionProjectionInput: Equatable, Sendable {
         self.access = access
         self.expandedArchiveIDs = expandedArchiveIDs
         self.transientTail = transientTail
+        self.hasLiveTail = hasLiveTail ?? Self.hasLiveTail(
+            transientTail,
+            branchID: branch.id,
+            sessionID: session.id
+        )
     }
 
     init(
         project: NovelProjectSnapshot,
         branch: NovelBranchSnapshot,
         expandedArchiveIDs: Set<NovelMessageID> = [],
-        transientTail: NovelSessionTransientTail?
+        transientTail: NovelSessionTransientTail?,
+        hasLiveTail: Bool? = nil
     ) {
         let discardedChapterIDs = Set(project.chapters.lazy.filter {
             $0.discardedAt != nil
@@ -719,14 +738,35 @@ struct NovelSessionProjectionInput: Equatable, Sendable {
             hasConfirmedChapterPlan: project.confirmedChapterPlan(for: branch.branch.id) != nil,
             access: project.access,
             expandedArchiveIDs: expandedArchiveIDs,
-            transientTail: transientTail
+            transientTail: transientTail,
+            hasLiveTail: hasLiveTail
         )
     }
+}
+
+struct NovelSessionPreparedProjection: Sendable {
+    let model: NovelSessionListModel
+    fileprivate let index: NovelSessionProjectionIndex
 }
 
 enum NovelSessionPresentation {
     static func project(_ input: NovelSessionProjectionInput) -> NovelSessionListModel {
         let index = NovelSessionProjectionIndex(input: input)
+        return project(input, index: index)
+    }
+
+    static func prepareDurable(_ input: NovelSessionProjectionInput) -> NovelSessionPreparedProjection {
+        let index = NovelSessionProjectionIndex(input: input)
+        return NovelSessionPreparedProjection(
+            model: project(input, index: index),
+            index: index
+        )
+    }
+
+    private static func project(
+        _ input: NovelSessionProjectionInput,
+        index: NovelSessionProjectionIndex
+    ) -> NovelSessionListModel {
         let messages = input.session.messages.sorted { lhs, rhs in
             if lhs.sequence != rhs.sequence { return lhs.sequence < rhs.sequence }
             return lhs.id.description < rhs.id.description
@@ -799,12 +839,114 @@ enum NovelSessionPresentation {
         )
     }
 
+    /// The durable projection is built off the main actor. A new run only needs
+    /// its two transient rows, even while a newer durable revision is building.
+    static func applyingTransientTail(
+        to durable: NovelSessionPreparedProjection,
+        input: NovelSessionProjectionInput
+    ) -> NovelSessionListModel {
+        guard let tail = input.transientTail,
+              tail.branchID == input.branch.id,
+              tail.sessionID == input.session.id else { return durable.model }
+        var rows = durable.model.rows.filter { $0.id != tail.messageID }
+        if let startingUserContent = tail.startingUserContent,
+           !rows.contains(where: { $0.id == tail.userMessageID }) {
+            rows.append(startingUserRow(
+                tail: tail,
+                content: startingUserContent,
+                sequence: Int64(rows.count)
+            ))
+        }
+        rows.append(transientRow(
+            tail: tail,
+            sequence: Int64(rows.count),
+            input: input,
+            index: durable.index
+        ))
+        return NovelSessionListModel(
+            sessionID: input.session.id,
+            rows: rows,
+            activeTailID: tail.messageID
+        )
+    }
+
+    /// While a detached live-tail projection is building, block mutations on
+    /// the cached durable rows immediately. Their content and order stay put.
+    static func blockingDurableActionsForLiveTail(
+        in model: NovelSessionListModel,
+        access: NovelProjectLoadAccess,
+        lifecycle: NovelBranchLifecycle
+    ) -> NovelSessionListModel {
+        var changed = false
+        let rows = model.rows.map { row -> NovelSessionRowModel in
+            guard !row.isTransient, !row.actions.isEmpty else { return row }
+            let actions = row.actions.map { availability -> NovelSessionRowActionAvailability in
+                if case .viewSettingProposals = availability.action { return availability }
+                if availability.blocker == .failureNotRetryable { return availability }
+                let blocker: NovelSessionActionBlocker = if access != .readWrite {
+                    .projectReadOnly
+                } else if lifecycle != .active {
+                    .branchInactive
+                } else {
+                    .generationRunning
+                }
+                return NovelSessionRowActionAvailability(
+                    action: availability.action,
+                    blocker: blocker
+                )
+            }
+            guard actions != row.actions else { return row }
+            changed = true
+            return NovelSessionRowModel(
+                id: row.id,
+                sequence: row.sequence,
+                role: row.role,
+                mode: row.mode,
+                granularity: row.granularity,
+                kind: row.kind,
+                content: row.content,
+                reasoningContent: row.reasoningContent,
+                isReasoningLive: row.isReasoningLive,
+                createdAt: row.createdAt,
+                runID: row.runID,
+                runStatus: row.runStatus,
+                candidate: row.candidate,
+                committedChange: row.committedChange,
+                askUser: row.askUser,
+                archive: row.archive,
+                transientPhase: row.transientPhase,
+                actions: actions,
+                digest: digest(
+                    messageID: row.id,
+                    transientRevision: nil,
+                    transientPhase: nil,
+                    runStatus: row.runStatus,
+                    granularity: row.granularity,
+                    candidate: row.candidate,
+                    committedChange: row.committedChange,
+                    askUser: row.askUser,
+                    actions: actions
+                ),
+                lagAllowance: row.lagAllowance
+            )
+        }
+        return changed
+            ? NovelSessionListModel(
+                sessionID: model.sessionID,
+                rows: rows,
+                activeTailID: model.activeTailID
+            )
+            : model
+    }
+
     /// A paced stream changes only the transient row's content/revision. Reuse the
     /// already-projected durable rows instead of sorting/indexing the whole session
     /// again at ~21 Hz.
     static func updatingTransientTail(
         in model: NovelSessionListModel,
         with tail: NovelSessionTransientTail,
+        input: NovelSessionProjectionInput?,
+        prepared: NovelSessionPreparedProjection,
         localAskUserResponse: NovelAskUserResponse?
     ) -> NovelSessionListModel? {
         guard model.activeTailID == tail.messageID,
@@ -812,8 +954,17 @@ enum NovelSessionPresentation {
               let current = model.activeTailRow else {
             return nil
         }
-        guard current.runID == tail.runID,
-              current.transientPhase == tail.phase else { return nil }
+        guard current.runID == tail.runID else { return nil }
+        if current.transientPhase != tail.phase {
+            guard let input else { return nil }
+            let row = transientRow(
+                tail: tail,
+                sequence: current.sequence,
+                input: input,
+                index: prepared.index
+            )
+            return model.replacingActiveTail(with: row)
+        }
         var askUser = tail.askUser ?? current.askUser
         if let currentAskUser = askUser,
            currentAskUser.response == nil,
@@ -834,14 +985,14 @@ enum NovelSessionPresentation {
             content: presentedContent(for: tail),
             reasoningContent: tail.reasoningContent,
             isReasoningLive: tail.isReasoningLive,
-            createdAt: current.createdAt,
+            createdAt: tail.startedAt,
             runID: current.runID,
             runStatus: current.runStatus,
             candidate: current.candidate,
             committedChange: current.committedChange,
             askUser: askUser,
             archive: current.archive,
-            transientPhase: current.transientPhase,
+            transientPhase: tail.phase,
             actions: current.actions,
             digest: digest(
                 messageID: tail.messageID,
@@ -857,6 +1008,26 @@ enum NovelSessionPresentation {
             lagAllowance: tail.lagAllowance
         )
         return model.replacingActiveTail(with: updatedTail)
+    }
+
+    static func durableDisplayContent(
+        for kind: NovelSessionMessageKind,
+        runKind: NovelRunKind?,
+        content: String
+    ) -> String {
+        switch kind {
+        case .proseCandidate, .polishCandidate:
+            return NovelPromptCatalog.normalizedCandidateProse(content)
+        case .interruptedDraft:
+            switch runKind {
+            case .prose, .regenerate, .polish:
+                return NovelPromptCatalog.normalizedCandidateProse(content)
+            case .quickStart, .characterProposal, .discussion, nil:
+                return content
+            }
+        case .discussion, .userInput, .error:
+            return content
+        }
     }
 }
 
@@ -1020,13 +1191,14 @@ private extension NovelSessionPresentation {
     }
 }
 
-private struct NovelSessionCollectedCheckpointKey: Hashable {
+fileprivate struct NovelSessionCollectedCheckpointKey: Hashable, Sendable {
     let checkpointID: NovelCheckpointID
     let candidateID: NovelCandidateID
 }
 
-private struct NovelSessionProjectionIndex {
+fileprivate struct NovelSessionProjectionIndex: Sendable {
     let candidatesBySourceMessageID: [NovelMessageID: [NovelCandidateRecord]]
+    let messageByID: [NovelMessageID: NovelSessionMessageRecord]
     let pendingCandidateIDs: Set<NovelCandidateID>
     let polishCandidateIDs: Set<NovelCandidateID>
     let pendingByCandidateID: [NovelCandidateID: NovelPendingOperationRecord]
@@ -1149,13 +1321,16 @@ private struct NovelSessionProjectionIndex {
             eventByID[event.id] = event
         }
         self.eventByID = eventByID
+        var messageByID: [NovelMessageID: NovelSessionMessageRecord] = [:]
         var askResponses: [NovelMessageID: NovelAskUserResponse] = [:]
         for message in input.session.messages {
+            if messageByID[message.id] == nil { messageByID[message.id] = message }
             guard case .some(.askUserAnswer(let response)) = message.interaction else { continue }
             if askResponses[response.promptMessageID] == nil {
                 askResponses[response.promptMessageID] = response
             }
         }
+        self.messageByID = messageByID
         askUserResponseByPromptMessageID = askResponses
         self.workingChapterVersionIDs = Set(input.branch.workingChapterSelections.map(\.versionID))
     }
@@ -1264,6 +1439,11 @@ private extension NovelSessionPresentation {
         } else {
             presentedContent = message.content
         }
+        let displayContent = NovelSessionPresentation.durableDisplayContent(
+            for: message.kind,
+            runKind: run?.kind,
+            content: presentedContent
+        )
         let digest = digest(
             messageID: message.id,
             transientRevision: nil,
@@ -1282,7 +1462,7 @@ private extension NovelSessionPresentation {
             mode: message.mode,
             granularity: run?.granularity,
             kind: message.kind,
-            content: presentedContent,
+            content: displayContent,
             createdAt: message.createdAt,
             runID: message.runID,
             runStatus: runStatus,
@@ -1347,7 +1527,6 @@ private extension NovelSessionPresentation {
         }
         let askUser = tail.askUser ?? durableAskUser(
             messageID: tail.messageID,
-            input: input,
             index: index
         )
         return NovelSessionRowModel(
@@ -1385,10 +1564,9 @@ private extension NovelSessionPresentation {
 
     static func durableAskUser(
         messageID: NovelMessageID,
-        input: NovelSessionProjectionInput,
         index: NovelSessionProjectionIndex
     ) -> NovelAskUserPresentation? {
-        guard let message = input.session.messages.first(where: { $0.id == messageID }),
+        guard let message = index.messageByID[messageID],
               case .some(.askUser(let prompt)) = message.interaction else {
             return nil
         }
@@ -1646,10 +1824,8 @@ private extension NovelSessionPresentation {
                NovelCandidateSemantics.cloneBaseMatches(
                    candidate,
                    currentCheckpointID: input.branch.headCheckpointID,
-                   checkpoints: input.checkpoints,
-                   sourceMessage: input.session.messages.first {
-                       $0.id == candidate.sourceMessageID
-                   }
+                   checkpointByID: index.checkpointByID,
+                   sourceMessage: index.messageByID[candidate.sourceMessageID]
                ) {
                 result.append(availability(
                     .cloneCollectedProse(candidate.id),
@@ -1683,7 +1859,7 @@ private extension NovelSessionPresentation {
               let target = NovelBranchSemantics.undoTarget(
                   for: head,
                   branch: input.branch,
-                  checkpoints: input.checkpoints
+                  checkpointByID: index.checkpointByID
               ) else {
             return false
         }
@@ -1837,14 +2013,12 @@ private extension NovelSessionPresentation {
         if requiresCurrentBase {
             let baseMatches: Bool
             if candidate.kind == .prose {
-                let sourceMessage = input.session.messages.first {
-                    $0.id == candidate.sourceMessageID
-                }
+                let sourceMessage = index.messageByID[candidate.sourceMessageID]
                 baseMatches = NovelCandidateSemantics.collectionBaseMatches(
                     candidate,
                     targetCheckpointID: input.branch.headCheckpointID,
                     targetHeadRevision: input.branch.headRevision,
-                    checkpoints: input.checkpoints,
+                    checkpointByID: index.checkpointByID,
                     sourceMessage: sourceMessage
                 )
             } else {
@@ -1876,10 +2050,7 @@ private extension NovelSessionPresentation {
     ) -> NovelSessionActionBlocker? {
         if input.access != .readWrite { return .projectReadOnly }
         if input.branch.lifecycle != .active { return .branchInactive }
-        if let tail = input.transientTail,
-           tail.branchID == input.branch.id,
-           tail.sessionID == input.session.id,
-           tail.phase == .waitingForFirstToken || tail.phase == .streaming {
+        if input.hasLiveTail {
             return .generationRunning
         }
         if (input.branch.activeRunID != nil && input.branch.activeRunID != excludingRunID) ||
@@ -1949,13 +2120,12 @@ private extension NovelSessionPresentation {
             return blocker
         }
         guard input.branch.syncStatus == .needsSync else { return nil }
-        guard let head = input.checkpoints.first(where: {
-            $0.id == input.branch.headCheckpointID
-        }), NovelBranchSemantics.canUndoHead(
-            head,
-            branch: input.branch,
-            checkpoints: input.checkpoints
-        ) else {
+        guard let head = index.checkpointByID[input.branch.headCheckpointID],
+              NovelBranchSemantics.canUndoHead(
+                  head,
+                  branch: input.branch,
+                  checkpointByID: index.checkpointByID
+              ) else {
             return .branchNeedsSync
         }
         return nil
@@ -2036,7 +2206,33 @@ private extension NovelSessionPresentation {
     }
 
     static func actionToken(_ availability: NovelSessionRowActionAvailability) -> String {
-        "\(availability.action):\(availability.blocker?.rawValue ?? "enabled")"
+        let actionToken: String = switch availability.action {
+        case .collectProse(let candidateID): "collect-prose:\(candidateID)"
+        case .adoptPolish(let candidateID): "adopt-polish:\(candidateID)"
+        case .retryGeneration(let runID): "retry-generation:\(runID)"
+        case .retryTerminalPersistence(let runID): "retry-terminal-persistence:\(runID)"
+        case .retryPending(let operationID): "retry-pending:\(operationID)"
+        case .retryPolish(let operationID): "retry-polish:\(operationID)"
+        case .abandonPolish(let operationID): "abandon-polish:\(operationID)"
+        case .convertPolishToManualRewrite(let candidateID, let versionID):
+            "convert-polish-to-manual-rewrite:\(candidateID):\(versionID)"
+        case .cloneCollectedProse(let candidateID): "clone-collected-prose:\(candidateID)"
+        case .forkFromCheckpoint(let checkpointID): "fork-from-checkpoint:\(checkpointID)"
+        case .viewSettingProposals(let route):
+            "view-setting-proposals:\(settingProposalRouteToken(route))"
+        case .undoCommittedChange(let checkpointID, let kind):
+            "undo-committed-change:\(checkpointID):\(kind.rawValue)"
+        }
+        return "\(actionToken):\(availability.blocker?.rawValue ?? "enabled")"
+    }
+
+    static func settingProposalRouteToken(_ route: NovelSettingProposalRoute) -> String {
+        switch route {
+        case .characters: "characters"
+        case .world: "world"
+        case .story: "story"
+        case .more: "more"
+        }
     }
 }
 

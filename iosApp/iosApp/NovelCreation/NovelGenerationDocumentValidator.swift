@@ -197,6 +197,11 @@ enum NovelGenerationDocumentValidator {
         _ document: NovelProjectDocumentV1,
         issues: inout [String]
     ) {
+        let materialRevisionsByID = Dictionary(
+            document.materialRevisions.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var revisionSHA256ByID: [NovelMaterialRevisionID: String] = [:]
         for receipt in document.injectionReceipts {
             if receipt.projectID != document.project.id ||
                 !document.branches.contains(where: { $0.id == receipt.branchID }) {
@@ -237,15 +242,17 @@ enum NovelGenerationDocumentValidator {
                 issues.append("Injection receipt \(receipt.id) has an invalid section record.")
             }
             for decision in receipt.materialDecisions {
-                guard let revision = document.materialRevisions.first(where: {
-                    $0.id == decision.revisionID && $0.materialID == decision.materialID
-                }) else {
+                guard let revision = materialRevisionsByID[decision.revisionID],
+                      revision.materialID == decision.materialID else {
                     issues.append("Injection receipt \(receipt.id) references a missing material revision.")
                     continue
                 }
+                let contentSHA256 = revisionSHA256ByID[revision.id]
+                    ?? NovelDocumentValidator.sha256(revision.content)
+                revisionSHA256ByID[revision.id] = contentSHA256
                 if decision.estimatedTokens < 0 ||
                     !NovelDocumentValidator.isSHA256(decision.contentSHA256) ||
-                    decision.contentSHA256 != NovelDocumentValidator.sha256(revision.content) {
+                    decision.contentSHA256 != contentSHA256 {
                     issues.append("Injection receipt \(receipt.id) has invalid material evidence.")
                 }
             }
@@ -265,9 +272,8 @@ enum NovelGenerationDocumentValidator {
                           let decision = receipt.materialDecisions.first(where: {
                               $0.materialID == item.materialID && $0.included
                           }),
-                          let revision = document.materialRevisions.first(where: {
-                              $0.id == decision.revisionID && $0.materialID == item.materialID
-                          }),
+                          let revision = materialRevisionsByID[decision.revisionID],
+                          revision.materialID == item.materialID,
                           material.kind == item.kind,
                           revision.title == item.title else {
                         issues.append("Injection receipt \(receipt.id) has invalid material display evidence.")

@@ -71,6 +71,8 @@ struct NovelProjectListView: View {
     @State private var isImportingPackage = false
     @State private var isPreparingImportPreview = false
     @State private var deletingProjectID: NovelProjectID?
+    @State private var actionProjectSelectionID: NovelProjectID?
+    @State private var actionProjectSelectionTask: Task<Bool, Never>?
 
     var body: some View {
         Group {
@@ -137,7 +139,9 @@ struct NovelProjectListView: View {
                     onOpen(projectID)
                 }
             case .rename(let project):
-                NovelProjectRenameSheet(viewModel: viewModel, project: project)
+                NovelProjectRenameSheet(viewModel: viewModel, project: project) {
+                    await ensureProjectSelectedForAction(project)
+                }
             case .importPackage(let data, let preview):
                 NovelProjectImportSheet(
                     viewModel: viewModel,
@@ -306,16 +310,14 @@ struct NovelProjectListView: View {
                                 onOpen(project.id)
                             }
                         } label: {
-                            NovelProjectRow(project: project)
+                            NovelProjectRow(
+                                project: project,
+                                isDeleting: deletingProjectID == project.id
+                            )
                         }
                         .buttonStyle(.plain)
 
-                        if deletingProjectID == project.id {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(AmberTheme.accent)
-                                .accessibilityLabel("正在删除项目")
-                        } else if project.loadError != nil {
+                        if project.loadError != nil && deletingProjectID != project.id {
                             Button("重新读取") {
                                 retryOpening(project)
                             }
@@ -325,7 +327,7 @@ struct NovelProjectListView: View {
                             .contentShape(Rectangle())
                         }
                     }
-                    .disabled(viewModel.isProjectSelectionBlocked)
+                    .disabled(viewModel.isProjectSelectionBlocked || deletingProjectID != nil)
                     .listRowInsets(EdgeInsets(top: 6, leading: 22, bottom: 6, trailing: 22))
                     .listRowBackground(AmberTheme.background)
                     .listRowSeparatorTint(AmberTheme.borderSoft)
@@ -412,11 +414,8 @@ struct NovelProjectListView: View {
     }
 
     private func prepareRename(_ project: NovelProjectSummary) {
-        Task { @MainActor in
-            await viewModel.selectProject(project.id)
-            guard viewModel.projectSnapshot?.project.id == project.id else { return }
-            activeSheet = .rename(project)
-        }
+        activeSheet = .rename(project)
+        startProjectSelectionForAction(project)
     }
 
     private func retryOpening(_ project: NovelProjectSummary) {
@@ -429,24 +428,20 @@ struct NovelProjectListView: View {
     }
 
     private func prepareDelete(_ project: NovelProjectSummary) {
+        pendingDelete = NovelProjectDeleteCandidate(project: project)
         if project.loadError != nil {
-            pendingDelete = NovelProjectDeleteCandidate(project: project)
             return
         }
-        Task { @MainActor in
-            await viewModel.selectProject(project.id)
-            guard viewModel.projectSnapshot?.project.id == project.id else { return }
-            pendingDelete = NovelProjectDeleteCandidate(project: project)
-        }
+        startProjectSelectionForAction(project)
     }
 
     private func delete(_ project: NovelProjectSummary) {
+        guard deletingProjectID == nil else { return }
+        deletingProjectID = project.id
         Task { @MainActor in
-            guard deletingProjectID == nil else { return }
-            deletingProjectID = project.id
             defer { deletingProjectID = nil }
             if project.loadError == nil {
-                guard viewModel.selectedProjectID == project.id else { return }
+                guard await ensureProjectSelectedForAction(project) else { return }
                 if hasRunningRun(for: project.id) {
                     guard await viewModel.stopActiveRunsForProjectOperation(
                         projectID: project.id
@@ -455,6 +450,50 @@ struct NovelProjectListView: View {
             }
             await viewModel.deleteProject(project)
         }
+    }
+
+    private func startProjectSelectionForAction(_ project: NovelProjectSummary) {
+        guard project.loadError == nil else { return }
+        if viewModel.projectSnapshot?.project.id == project.id {
+            actionProjectSelectionID = nil
+            actionProjectSelectionTask = nil
+            return
+        }
+        viewModel.clearError()
+        actionProjectSelectionID = project.id
+        actionProjectSelectionTask = Task { @MainActor in
+            await viewModel.selectProject(project.id)
+        }
+    }
+
+    private func ensureProjectSelectedForAction(_ project: NovelProjectSummary) async -> Bool {
+        guard project.loadError == nil else { return false }
+        if viewModel.projectSnapshot?.project.id != project.id {
+            if actionProjectSelectionID == project.id,
+               let actionProjectSelectionTask {
+                _ = await actionProjectSelectionTask.value
+                self.actionProjectSelectionID = nil
+                self.actionProjectSelectionTask = nil
+            } else {
+                viewModel.clearError()
+                if !(await viewModel.selectProject(project.id)) {
+                    if viewModel.errorMessage == nil {
+                        viewModel.presentError(NovelError.projectNotFound(project.id))
+                    }
+                    return false
+                }
+            }
+        }
+        guard let snapshot = viewModel.projectSnapshot,
+              snapshot.project.id == project.id else {
+            viewModel.presentError(NovelError.projectNotFound(project.id))
+            return false
+        }
+        if actionProjectSelectionID == project.id {
+            actionProjectSelectionID = nil
+            actionProjectSelectionTask = nil
+        }
+        return true
     }
 
     private func hasRunningRun(for projectID: NovelProjectID) -> Bool {
@@ -466,6 +505,9 @@ struct NovelProjectListView: View {
     private func deleteConfirmationMessage(for project: NovelProjectSummary) -> String {
         if project.loadError != nil {
             return "项目当前无法读取。删除后无法从应用内恢复，请确认不再需要重新读取或导入备份。"
+        }
+        if viewModel.projectSnapshot?.project.id != project.id {
+            return "确认后会检查项目状态。如果仍在生成，会先停止并保存终止状态，再删除项目。项目包未导出时无法恢复。"
         }
         if hasRunningRun(for: project.id) {
             return "Agent 正在生成。将先停止生成并保存终止状态，再删除项目。项目包未导出时无法恢复。"
@@ -511,14 +553,24 @@ struct NovelProjectListView: View {
 
 private struct NovelProjectRow: View {
     let project: NovelProjectSummary
+    var isDeleting = false
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: project.loadError != nil
-                ? "exclamationmark.triangle"
-                : project.isDegraded ? "exclamationmark.book.closed" : "text.book.closed")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(project.isDegraded ? AmberTheme.accentAmber : AmberTheme.accent)
+            Group {
+                if isDeleting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(AmberTheme.accent)
+                        .accessibilityLabel("正在删除项目")
+                } else {
+                    Image(systemName: project.loadError != nil
+                        ? "exclamationmark.triangle"
+                        : project.isDegraded ? "exclamationmark.book.closed" : "text.book.closed")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(project.isDegraded ? AmberTheme.accentAmber : AmberTheme.accent)
+                }
+            }
                 .frame(width: 36, height: 36)
                 .background(AmberTheme.accentTint, in: RoundedRectangle(cornerRadius: 8))
 
@@ -555,6 +607,7 @@ private struct NovelProjectRow: View {
         .frame(minHeight: 44)
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
+        .accessibilityValue(isDeleting ? "正在删除项目" : "")
     }
 }
 
@@ -589,6 +642,7 @@ private struct NovelProjectCreateSheet: View {
     @State private var coreIdea = ""
     @State private var isConfirmingDiscard = false
     @State private var validationMessage: String?
+    @State private var isSubmitting = false
     @State private var imeBank = NovelIMEFieldBank()
 
     var body: some View {
@@ -640,6 +694,7 @@ private struct NovelProjectCreateSheet: View {
                     }
                 }
             }
+            .disabled(isSubmitting)
             .scrollContentBackground(.hidden)
             .background(AmberTheme.background)
             .navigationTitle("新建小说")
@@ -649,7 +704,7 @@ private struct NovelProjectCreateSheet: View {
                     Button("取消") {
                         NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }
                     }
-                        .disabled(viewModel.isPerforming)
+                        .disabled(viewModel.isPerforming || isSubmitting)
                         .confirmationDialog(
                             "放弃新建小说？",
                             isPresented: $isConfirmingDiscard,
@@ -662,10 +717,30 @@ private struct NovelProjectCreateSheet: View {
                         }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("创建") {
+                    Button {
                         NovelTextInputCommitter.perform(fieldBank: imeBank) { create() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Group {
+                                if isSubmitting {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(AmberTheme.accent)
+                                } else {
+                                    Color.clear
+                                }
+                            }
+                            .frame(width: 14, height: 14)
+                            Text(IOSAppLocalization.string(
+                                isSubmitting ? "正在创建" : "创建",
+                                defaultValue: isSubmitting ? "正在创建" : "创建"
+                            ))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                        }
+                        .frame(width: 96)
                     }
-                        .disabled(viewModel.isProjectSelectionBlocked)
+                    .disabled(viewModel.isProjectSelectionBlocked || isSubmitting)
                 }
             }
         }
@@ -688,6 +763,7 @@ private struct NovelProjectCreateSheet: View {
     }
 
     private func create() {
+        guard !isSubmitting else { return }
         guard canCreate else {
             validationMessage = mode == .quickStart
                 ? "请填写小说名称、题材和核心想法。"
@@ -695,14 +771,20 @@ private struct NovelProjectCreateSheet: View {
             return
         }
         validationMessage = nil
+        isSubmitting = true
         Task { @MainActor in
+            viewModel.clearError()
             guard let projectID = await viewModel.createProject(
                 name: name,
                 branchName: "主线",
                 mode: mode,
                 genre: genre,
                 coreIdea: coreIdea
-            ) else { return }
+            ) else {
+                isSubmitting = false
+                validationMessage = viewModel.errorMessage ?? "项目没有创建成功，请稍后重试。"
+                return
+            }
             dismiss()
             onCreated(projectID)
         }
@@ -723,15 +805,21 @@ struct NovelProjectRenameSheet: View {
     let viewModel: NovelCreationViewModel
     let currentName: String
     let canRename: Bool
+    private let prepareSelection: (() async -> Bool)?
     @State private var name: String
     @State private var isSubmitting = false
     @State private var failureMessage: String?
     @State private var imeBank = NovelIMEFieldBank()
 
-    init(viewModel: NovelCreationViewModel, project: NovelProjectSummary) {
+    init(
+        viewModel: NovelCreationViewModel,
+        project: NovelProjectSummary,
+        prepareSelection: (() async -> Bool)? = nil
+    ) {
         self.viewModel = viewModel
         self.currentName = project.name
         self.canRename = !project.isDegraded
+        self.prepareSelection = prepareSelection
         self._name = State(initialValue: project.name)
     }
 
@@ -739,6 +827,7 @@ struct NovelProjectRenameSheet: View {
         self.viewModel = viewModel
         self.currentName = currentName
         self.canRename = canRename
+        self.prepareSelection = nil
         self._name = State(initialValue: currentName)
     }
 
@@ -809,6 +898,11 @@ struct NovelProjectRenameSheet: View {
         failureMessage = nil
         Task { @MainActor in
             viewModel.clearError()
+            if let prepareSelection, !(await prepareSelection()) {
+                isSubmitting = false
+                failureMessage = viewModel.errorMessage ?? "项目未能读取，请关闭后重试。"
+                return
+            }
             let saved = await viewModel.renameProject(committedName)
             isSubmitting = false
             guard saved else {

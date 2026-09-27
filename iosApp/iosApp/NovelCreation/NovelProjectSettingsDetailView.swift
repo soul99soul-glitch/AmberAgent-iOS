@@ -63,6 +63,11 @@ struct NovelProjectSettingsDetailView: View {
     @State private var isLoadingProject = true
     @State private var projectLoadFailure: String?
     @State private var modelPolicyFailure: String?
+    @State private var submittingModelPurpose: NovelModelRole?
+    @State private var pendingModelSelectionID: String?
+    @State private var isFallbackModelPending = false
+    @State private var exportingKind: NovelProjectExportKind?
+    @State private var selectingBranchID: NovelBranchID?
     @State private var pendingBranchSelection: NovelBranchID?
 
     var body: some View {
@@ -119,20 +124,29 @@ struct NovelProjectSettingsDetailView: View {
             }
 
             Section {
-                Button(action: exportProject) {
-                    Label("导出项目包", systemImage: "archivebox")
-                }
-                .disabled(currentProject == nil || viewModel.isPerforming || hasRunningRun)
+                exportButton(
+                    "导出项目包",
+                    systemImage: "archivebox",
+                    kind: .project,
+                    isEnabled: currentProject != nil && !viewModel.isPerforming && !hasRunningRun,
+                    action: exportProject
+                )
 
-                Button(action: exportMarkdown) {
-                    Label("导出正文", systemImage: "square.and.arrow.up")
-                }
-                .disabled(currentProject == nil || viewModel.isPerforming)
+                exportButton(
+                    "导出正文",
+                    systemImage: "square.and.arrow.up",
+                    kind: .markdown,
+                    isEnabled: currentProject != nil && !viewModel.isPerforming,
+                    action: exportMarkdown
+                )
 
-                Button(action: exportWorkspace) {
-                    Label("导出工作区", systemImage: "folder")
-                }
-                .disabled(currentProject == nil || viewModel.isPerforming)
+                exportButton(
+                    "导出工作区",
+                    systemImage: "folder",
+                    kind: .workspace,
+                    isEnabled: currentProject != nil && !viewModel.isPerforming,
+                    action: exportWorkspace
+                )
             } header: {
                 Text("管理")
             } footer: {
@@ -192,7 +206,7 @@ struct NovelProjectSettingsDetailView: View {
         NovelModelPolicyRow(
             purpose: purpose,
             value: modelName(for: purpose),
-            isDisabled: currentProject == nil || !viewModel.canMutate,
+            isDisabled: currentProject == nil || !viewModel.canMutate || submittingModelPurpose != nil,
             action: { activeSheet = .modelPicker(purpose) }
         )
     }
@@ -210,7 +224,10 @@ struct NovelProjectSettingsDetailView: View {
                     defaultValue: "跟随小说默认"
                 ),
                 onFallback: { setModelPolicy(.global, for: purpose) },
-                dismissesAfterFallback: false
+                dismissesAfterFallback: false,
+                pendingSelectionID: submittingModelPurpose == purpose ? pendingModelSelectionID : nil,
+                isSelectionInFlight: submittingModelPurpose == purpose,
+                isFallbackInFlight: submittingModelPurpose == purpose && isFallbackModelPending
             ) { option in
                 setFixedModel(option, for: purpose)
             }
@@ -246,6 +263,7 @@ struct NovelProjectSettingsDetailView: View {
                     viewModel: viewModel,
                     isSelectionDisabled: viewModel.isProjectSelectionBlocked,
                     onSelect: requestBranchSelection,
+                    pendingSelectionID: $selectingBranchID,
                     onRename: { transition(to: .renameBranch($0)) },
                     onFork: { transition(to: .forkBranch($0)) },
                     onEditOverride: { transition(to: .branchOverride($0)) }
@@ -330,8 +348,22 @@ struct NovelProjectSettingsDetailView: View {
     }
 
     private func setModelPolicy(_ policy: NovelProjectModelPolicy, for purpose: NovelModelRole) {
+        guard submittingModelPurpose == nil else { return }
         modelPolicyFailure = nil
+        submittingModelPurpose = purpose
+        if case .fixed(_, let modelID) = policy {
+            pendingModelSelectionID = modelID
+            isFallbackModelPending = false
+        } else {
+            pendingModelSelectionID = nil
+            isFallbackModelPending = true
+        }
         Task { @MainActor in
+            defer {
+                submittingModelPurpose = nil
+                pendingModelSelectionID = nil
+                isFallbackModelPending = false
+            }
             if await viewModel.setModelPolicy(policy, for: purpose) {
                 activeSheet = nil
             } else {
@@ -369,14 +401,25 @@ struct NovelProjectSettingsDetailView: View {
     }
 
     private func requestBranchSelection(_ branchID: NovelBranchID) {
-        guard branchID != viewModel.selectedBranchID else { return }
+        guard branchID != viewModel.selectedBranchID else {
+            if selectingBranchID == branchID { selectingBranchID = nil }
+            return
+        }
+        guard selectingBranchID == nil || selectingBranchID == branchID else { return }
+        selectingBranchID = branchID
         Task { @MainActor in
+            viewModel.clearError()
             let result = await viewModel.selectBranch(
                 branchID,
                 stoppingActiveRun: false
             )
+            if selectingBranchID == branchID {
+                selectingBranchID = nil
+            }
             if result == .requiresStoppingActiveRun {
                 pendingBranchSelection = branchID
+            } else if result == .failed, viewModel.errorMessage == nil {
+                viewModel.presentError(NovelError.invalidInput("分支没有切换成功，请重试。"))
             }
         }
     }
@@ -384,37 +427,88 @@ struct NovelProjectSettingsDetailView: View {
     private func selectPendingBranch() {
         guard let branchID = pendingBranchSelection else { return }
         pendingBranchSelection = nil
+        selectingBranchID = branchID
         Task { @MainActor in
-            await viewModel.selectBranch(branchID, stoppingActiveRun: true)
+            viewModel.clearError()
+            let result = await viewModel.selectBranch(branchID, stoppingActiveRun: true)
+            if selectingBranchID == branchID {
+                selectingBranchID = nil
+            }
+            if result == .failed, viewModel.errorMessage == nil {
+                viewModel.presentError(NovelError.invalidInput("分支没有切换成功，请重试。"))
+            }
         }
     }
 
+    private func exportButton(
+        _ title: String,
+        systemImage: String,
+        kind: NovelProjectExportKind,
+        isEnabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Group {
+                    if exportingKind == kind {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(AmberTheme.accent)
+                    } else {
+                        Image(systemName: systemImage)
+                    }
+                }
+                .frame(width: 16, height: 16)
+
+                Text(title)
+                    .lineLimit(1)
+            }
+        }
+        .disabled(!isEnabled || exportingKind != nil)
+    }
+
     private func exportMarkdown() {
+        guard exportingKind == nil else { return }
+        exportingKind = .markdown
         Task { @MainActor in
             guard let artifact = await viewModel.exportBranchMarkdown() else {
+                exportingKind = nil
                 return
             }
             markdownDocument = NovelMarkdownFileDocument(markdown: artifact.markdown)
             markdownFileName = artifact.fileName
+            exportingKind = nil
             isExportingMarkdown = true
         }
     }
 
     private func exportWorkspace() {
+        guard exportingKind == nil else { return }
+        exportingKind = .workspace
         Task { @MainActor in
-            guard let artifact = await viewModel.exportWorkspace() else { return }
+            guard let artifact = await viewModel.exportWorkspace() else {
+                exportingKind = nil
+                return
+            }
             workspaceDocument = NovelWorkspaceFolderDocument(files: artifact.files)
             workspaceFileName = artifact.fileName
+            exportingKind = nil
             isExportingWorkspace = true
         }
     }
 
     private func exportProject() {
+        guard exportingKind == nil else { return }
+        exportingKind = .project
         Task { @MainActor in
-            guard let artifact = await viewModel.exportProjectPackage() else { return }
+            guard let artifact = await viewModel.exportProjectPackage() else {
+                exportingKind = nil
+                return
+            }
             projectDocument = NovelProjectFileDocument(data: artifact.data)
             let stem = NovelPresentation.fileName(artifact.projectName, fallback: "Novel")
             projectFileName = "\(stem).ambernovel"
+            exportingKind = nil
             isExportingProject = true
         }
     }
@@ -424,6 +518,12 @@ struct NovelProjectSettingsDetailView: View {
             viewModel.presentError(error)
         }
     }
+}
+
+private enum NovelProjectExportKind: Equatable {
+    case project
+    case markdown
+    case workspace
 }
 
 private enum NovelProjectSettingsDetailSheet: Identifiable {

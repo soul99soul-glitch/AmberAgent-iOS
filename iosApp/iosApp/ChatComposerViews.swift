@@ -139,6 +139,7 @@ struct ChatScrollToBottomButton: View {
 /// 内部可见(非 private),以便模型议会等其他页面复用同一颗原生发送键。
 struct ComposerDockSendButton: View {
     var isLoading: Bool
+    var isStopping: Bool = false
     var sendEnabled: Bool
     var diameter: CGFloat = 54
     let onSend: () -> Void
@@ -148,21 +149,32 @@ struct ComposerDockSendButton: View {
 
     var body: some View {
         Button {
+            if isStopping { return }
             if isLoading { onStop() } else { onSend() }
         } label: {
-            Image(systemName: isLoading ? "stop.fill" : "arrow.up")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(iconColor)
-                .frame(width: diameter, height: diameter)
-                .contentShape(Circle())
-                .modifier(ComposerDockCircleGlass(tint: glassTint))
-                .contentTransition(.symbolEffect(.replace.downUp))
+            ZStack {
+                Image(systemName: isLoading ? "stop.fill" : "arrow.up")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(iconColor)
+                    .opacity(isStopping ? 0 : 1)
+                // 只在停止中挂载：透明的 ProgressView 仍会持续动画并逐帧重绘玻璃按钮。
+                if isStopping {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(AmberTheme.muted)
+                }
+            }
+            .frame(width: diameter, height: diameter)
+            .contentShape(Circle())
+            .modifier(ComposerDockCircleGlass(tint: glassTint))
         }
         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.88, haptic: isLoading ? .mediumImpact : .lightImpact))
         .disabled(!isActionable)
+        .disabled(isStopping)
         .animation(.easeOut(duration: 0.18), value: isLoading)
+        .animation(.easeOut(duration: 0.18), value: isStopping)
         .animation(.easeOut(duration: 0.18), value: sendEnabled)
-        .accessibilityLabel(isLoading ? "停止生成" : "发送消息")
+        .accessibilityLabel(isStopping ? "正在停止生成" : (isLoading ? "停止生成" : "发送消息"))
     }
 
     private var iconColor: Color {
@@ -508,6 +520,9 @@ struct ComposerModelSheet: View {
     let fallbackTitle: String?
     let onFallback: (() -> Void)?
     let dismissesAfterFallback: Bool
+    let pendingSelectionID: String?
+    let isSelectionInFlight: Bool
+    let isFallbackInFlight: Bool
     let onPick: (ComposerModelOption) -> Void
 
     @State private var expandedProviderIDs: Set<String>
@@ -524,6 +539,9 @@ struct ComposerModelSheet: View {
         fallbackTitle: String? = nil,
         onFallback: (() -> Void)? = nil,
         dismissesAfterFallback: Bool = true,
+        pendingSelectionID: String? = nil,
+        isSelectionInFlight: Bool = false,
+        isFallbackInFlight: Bool = false,
         onPick: @escaping (ComposerModelOption) -> Void
     ) {
         self.sharedSettings = sharedSettings
@@ -532,6 +550,9 @@ struct ComposerModelSheet: View {
         self.fallbackTitle = fallbackTitle
         self.onFallback = onFallback
         self.dismissesAfterFallback = dismissesAfterFallback
+        self.pendingSelectionID = pendingSelectionID
+        self.isSelectionInFlight = isSelectionInFlight
+        self.isFallbackInFlight = isFallbackInFlight
         self.onPick = onPick
         let selectedProviderID = Self.selectedProviderID(
             for: currentModel,
@@ -561,6 +582,7 @@ struct ComposerModelSheet: View {
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
                 .accessibilityLabel("关闭模型选择")
+                .disabled(isSelectionInFlight)
             }
             .padding(.horizontal, 20)
             .padding(.top, 18)
@@ -577,7 +599,20 @@ struct ComposerModelSheet: View {
                             dismiss()
                         }
                     } label: {
-                        Label(fallbackTitle, systemImage: "arrow.trianglehead.2.clockwise.rotate.90")
+                        Label {
+                            Text(fallbackTitle)
+                        } icon: {
+                            ZStack {
+                                Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                                    .opacity(isFallbackInFlight ? 0 : 1)
+                                if isFallbackInFlight {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(AmberTheme.accent)
+                                }
+                            }
+                            .frame(width: 18, height: 18)
+                        }
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(AmberTheme.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -586,6 +621,7 @@ struct ComposerModelSheet: View {
                             .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 14))
                     }
                     .buttonStyle(.plain)
+                    .disabled(isSelectionInFlight)
                     .padding(.horizontal, 16)
                     .padding(.top, 14)
                 }
@@ -612,6 +648,8 @@ struct ComposerModelSheet: View {
                                 provider: provider,
                                 currentModel: currentModel,
                                 isExpanded: expandedProviderIDs.contains(provider.id),
+                                pendingSelectionID: pendingSelectionID,
+                                isSelectionInFlight: isSelectionInFlight,
                                 onToggle: {
                                     toggleProvider(provider.id)
                                 },
@@ -640,6 +678,7 @@ struct ComposerModelSheet: View {
             .scrollIndicators(.hidden)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .interactiveDismissDisabled(isSelectionInFlight)
         .onAppear {
             expandedProviderIDs = Set([Self.selectedProviderID(for: currentModel, providers: providers)])
         }
@@ -666,6 +705,8 @@ struct ComposerProviderGroupView: View {
     let provider: ComposerProviderGroup
     let currentModel: String
     let isExpanded: Bool
+    let pendingSelectionID: String?
+    let isSelectionInFlight: Bool
     let onToggle: () -> Void
     let onPick: (ComposerModelOption) -> Void
 
@@ -707,7 +748,9 @@ struct ComposerProviderGroupView: View {
 
                         ComposerModelRow(
                             model: model,
-                            isSelected: model.matches(currentModel)
+                            isSelected: model.matches(currentModel),
+                            isPending: model.id == pendingSelectionID,
+                            isDisabled: isSelectionInFlight
                         ) {
                             onPick(model)
                         }
@@ -727,6 +770,8 @@ struct ComposerProviderGroupView: View {
 struct ComposerModelRow: View {
     let model: ComposerModelOption
     let isSelected: Bool
+    var isPending = false
+    var isDisabled = false
     let action: () -> Void
 
     var body: some View {
@@ -749,10 +794,19 @@ struct ComposerModelRow: View {
 
                 Spacer(minLength: 8)
 
-                if isSelected {
+                if isPending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(AmberTheme.accent)
+                        .frame(width: 16, height: 16)
+                } else if isSelected {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(AmberTheme.accent)
+                        .frame(width: 16, height: 16)
+                } else {
+                    Color.clear
+                        .frame(width: 16, height: 16)
                 }
             }
             .padding(.leading, 36)
@@ -761,8 +815,9 @@ struct ComposerModelRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
         .accessibilityLabel("选择模型 \(model.name)")
-        .accessibilityValue(isSelected ? "已选" : "未选")
+        .accessibilityValue(isPending ? "正在保存" : isSelected ? "已选" : "未选")
     }
 }
 

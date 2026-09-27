@@ -602,14 +602,10 @@ struct NovelChapterReaderView: View {
         startingAction = .regenerate
         Task { @MainActor in
             defer { startingAction = nil }
-            let started = await sessionViewModel.startWholeChapterRegeneration(chapterID: chapterID)
-            guard started else {
-                failureMessage = sessionViewModel.errorMessage ?? localized("重新生成没有开始，请稍后重试。")
-                return
-            }
-            dismiss()
-            onPolishStarted()
+            _ = await sessionViewModel.startWholeChapterRegeneration(chapterID: chapterID)
         }
+        dismiss()
+        onPolishStarted()
     }
 
     private func startPolish() {
@@ -617,14 +613,10 @@ struct NovelChapterReaderView: View {
         startingAction = .polish
         Task { @MainActor in
             defer { startingAction = nil }
-            let started = await sessionViewModel.startWholeChapterPolish(chapterID: chapterID)
-            guard started else {
-                failureMessage = sessionViewModel.errorMessage ?? localized("润色没有开始，请稍后重试。")
-                return
-            }
-            dismiss()
-            onPolishStarted()
+            _ = await sessionViewModel.startWholeChapterPolish(chapterID: chapterID)
         }
+        dismiss()
+        onPolishStarted()
     }
 
     private func setChapterDiscarded(_ isDiscarded: Bool) {

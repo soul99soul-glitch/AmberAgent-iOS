@@ -177,6 +177,8 @@ struct NovelCharacterPagesView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(viewModel.pendingMaterialDeletionIDs.contains(material.id))
+        .opacity(viewModel.pendingMaterialDeletionIDs.contains(material.id) ? 0.55 : 1)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 pendingDelete = NovelCharacterDeleteCandidate(material: material, title: title)

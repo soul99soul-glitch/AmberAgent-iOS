@@ -466,6 +466,10 @@ enum NovelProjectShardedStorage {
         // Preserve previous layout for restorePrevious before overwriting current.
         let layoutURL = layoutURL(in: packageDirectory)
         let previousLayoutURL = previousLayoutURL(in: packageDirectory)
+        let digestsDiscardedFromPrevious = referencedDigests(
+            in: previousLayoutURL,
+            fileManager: fileManager
+        )
         if fileManager.fileExists(atPath: layoutURL.path) {
             if fileManager.fileExists(atPath: previousLayoutURL.path) {
                 try fileManager.removeItem(at: previousLayoutURL)
@@ -500,11 +504,15 @@ enum NovelProjectShardedStorage {
             try fileManager.moveItem(at: layoutTemp, to: layoutURL)
         }
 
-        try garbageCollectBlobs(
-            in: packageDirectory,
-            fileManager: fileManager,
-            keep: referencedDigests(packageDirectory: packageDirectory, fileManager: fileManager)
-        )
+        if let digestsDiscardedFromPrevious,
+           let previousDigests = referencedDigests(in: previousLayoutURL, fileManager: fileManager) {
+            let currentDigests = Set(prepared.layout.sections.values.map(\.digest))
+            let retainedDigests = currentDigests.union(previousDigests)
+            for digest in digestsDiscardedFromPrevious.subtracting(retainedDigests)
+            where isBlobDigest(digest) {
+                try? fileManager.removeItem(at: blobURL(in: packageDirectory, digest: digest))
+            }
+        }
 
         return prepared.sections
     }
@@ -592,6 +600,14 @@ enum NovelProjectShardedStorage {
                 )
             }
         }
+        if layoutFileName == Self.layoutFileName,
+           let keep = referencedDigests(packageDirectory: packageDirectory, fileManager: fileManager) {
+            try? garbageCollectBlobs(
+                in: packageDirectory,
+                fileManager: fileManager,
+                keep: keep
+            )
+        }
         return (document, cache)
     }
 
@@ -623,21 +639,37 @@ enum NovelProjectShardedStorage {
     private static func referencedDigests(
         packageDirectory: URL,
         fileManager: FileManager
-    ) -> Set<String> {
+    ) -> Set<String>? {
         var digests: Set<String> = []
         let decoder = JSONDecoder()
         for name in [layoutFileName, previousLayoutFileName] {
-            let url = packageDirectory.appendingPathComponent(name)
-            guard fileManager.fileExists(atPath: url.path),
-                  let data = try? Data(contentsOf: url),
-                  let layout = try? decoder.decode(LayoutV2.self, from: data) else {
-                continue
-            }
-            for ref in layout.sections.values {
-                digests.insert(ref.digest)
-            }
+            guard let layoutDigests = referencedDigests(
+                in: packageDirectory.appendingPathComponent(name),
+                fileManager: fileManager,
+                decoder: decoder
+            ) else { return nil }
+            digests.formUnion(layoutDigests)
         }
         return digests
+    }
+
+    private static func referencedDigests(
+        in layoutURL: URL,
+        fileManager: FileManager,
+        decoder: JSONDecoder = JSONDecoder()
+    ) -> Set<String>? {
+        guard fileManager.fileExists(atPath: layoutURL.path) else { return [] }
+        guard let data = try? Data(contentsOf: layoutURL),
+              let layout = try? decoder.decode(LayoutV2.self, from: data) else {
+            return nil
+        }
+        return Set(layout.sections.values.map(\.digest))
+    }
+
+    private static func isBlobDigest(_ digest: String) -> Bool {
+        digest.utf8.count == 64 && digest.utf8.allSatisfy {
+            (48...57).contains($0) || (97...102).contains($0)
+        }
     }
 
     private static func garbageCollectBlobs(
@@ -660,4 +692,3 @@ enum NovelProjectShardedStorage {
         }
     }
 }
-

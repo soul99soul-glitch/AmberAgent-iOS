@@ -60,9 +60,21 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         let expectedRevision: Int64
     }
 
-    private struct RecoveryFileIdentity: Equatable {
+    private struct RecoveryFileIdentity: Hashable {
         let projectID: NovelProjectID
         let runID: NovelRunID
+    }
+
+    private struct RecoveryFileStamp: Equatable {
+        let fileNumber: UInt64
+        let byteCount: UInt64
+        let modifiedAt: Date
+    }
+
+    private struct CachedRecoverySidecar {
+        let sequence: Int64
+        let partialSHA256: String
+        let stamp: RecoveryFileStamp
     }
 
     private struct LifecycleFileIdentity: Equatable {
@@ -89,6 +101,11 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
     /// also churns on activeRunID/updatedAt, which must NOT trigger a full
     /// tree publish.
     private var pointerFingerprints: [NovelProjectID: String] = [:]
+    /// The workspace marker is immutable during ordinary project operations.
+    /// Cache its decoded mode per actor and invalidate it at marker lifecycle boundaries.
+    private var workspaceNativeByProject: [NovelProjectID: Bool] = [:]
+    private var cachedRecoverySidecars: [RecoveryFileIdentity: CachedRecoverySidecar] = [:]
+    private var directoriesEnsured = false
 
     init(
         rootDirectory: URL,
@@ -194,6 +211,9 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         guard !projectExistsOnDisk(projectID) else {
             throw NovelError.projectAlreadyExists(projectID)
         }
+        sectionCaches[projectID] = nil
+        pointerFingerprints[projectID] = nil
+        workspaceNativeByProject[projectID] = nil
         try failIfRequested(.beforePrimaryInstall)
         do {
             try writeShardedProject(document)
@@ -244,6 +264,9 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         guard !projectExistsOnDisk(projectID) else {
             throw NovelError.projectAlreadyExists(projectID)
         }
+        sectionCaches[projectID] = nil
+        pointerFingerprints[projectID] = nil
+        workspaceNativeByProject[projectID] = nil
         let project = packageURL(for: projectID)
         do {
             sectionCaches[projectID] = try NovelWorkspaceProjectStore.writeEngineSections(
@@ -261,6 +284,8 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                 "Could not create workspace novel project: \(error)"
             )
         }
+        workspaceNativeByProject[projectID] = true
+        pointerFingerprints[projectID] = pointerFingerprint(document)
         if isReinstallingDeletedProject {
             do {
                 try fileManager.removeItem(at: tombstoneURL(for: projectID))
@@ -445,6 +470,12 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         }
         try failIfRequested(.beforePrimaryInstall)
 
+        // Replacement can rewrite append-mostly sections under the same IDs;
+        // those fingerprints are sound for reducer transitions, not imports.
+        sectionCaches[projectID] = nil
+        pointerFingerprints[projectID] = nil
+        workspaceNativeByProject[projectID] = nil
+
         do {
             try writeShardedProject(document)
         } catch {
@@ -470,6 +501,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         } catch {
             throw NovelError.storageIndeterminate(projectID)
         }
+        workspaceNativeByProject[projectID] = nil
         upsertIndexBestEffort(document: document)
         return NovelLoadedProject(document: document, access: .readWrite)
     }
@@ -733,38 +765,65 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         }
         try NovelDocumentValidator.validateRecovery(sidecar)
         let url = recoveryURL(projectID: sidecar.projectID, runID: sidecar.runID)
+        let identity = RecoveryFileIdentity(projectID: sidecar.projectID, runID: sidecar.runID)
         if fileManager.fileExists(atPath: url.path) {
-            let current: NovelRecoverySidecarV1?
-            do {
-                current = try readRecoverySidecar(
-                    at: url,
-                    expected: RecoveryFileIdentity(
-                        projectID: sidecar.projectID,
-                        runID: sidecar.runID
-                    )
+            let cached = cachedRecoverySidecars[identity]
+            let stamp = recoveryFileStamp(at: url)
+            if let cached, cached.stamp == stamp,
+               cached.sequence > sidecar.sequence {
+                throw NovelError.invalidRecovery("Recovery sequence cannot move backwards.")
+            }
+            if let cached, cached.stamp == stamp,
+               cached.sequence == sidecar.sequence,
+               cached.partialSHA256 != sidecar.partialSHA256 {
+                throw NovelError.invalidRecovery(
+                    "A recovery sequence cannot be reused with different content."
                 )
-            } catch {
-                quarantineInvalidRecovery(at: url)
-                current = nil
             }
-            if let current {
-                if current.sequence > sidecar.sequence {
-                    throw NovelError.invalidRecovery("Recovery sequence cannot move backwards.")
+            if cached == nil || cached?.stamp != stamp || cached?.sequence == sidecar.sequence {
+                cachedRecoverySidecars[identity] = nil
+                let current: NovelRecoverySidecarV1?
+                do {
+                    current = try readRecoverySidecar(at: url, expected: identity)
+                } catch {
+                    quarantineInvalidRecovery(at: url)
+                    current = nil
                 }
-                if current.sequence == sidecar.sequence {
-                    guard current == sidecar else {
-                        throw NovelError.invalidRecovery(
-                            "A recovery sequence cannot be reused with different content."
-                        )
+                if let current {
+                    if current.sequence > sidecar.sequence {
+                        throw NovelError.invalidRecovery("Recovery sequence cannot move backwards.")
                     }
-                    return
+                    if current.sequence == sidecar.sequence {
+                        guard current == sidecar else {
+                            throw NovelError.invalidRecovery(
+                                "A recovery sequence cannot be reused with different content."
+                            )
+                        }
+                        if let stamp = recoveryFileStamp(at: url) {
+                            cachedRecoverySidecars[identity] = CachedRecoverySidecar(
+                                sequence: current.sequence,
+                                partialSHA256: current.partialSHA256,
+                                stamp: stamp
+                            )
+                        }
+                        return
+                    }
                 }
             }
+        } else {
+            cachedRecoverySidecars[identity] = nil
         }
         try failIfRequested(.beforeRecoveryWrite)
         let data = try makeEncoder().encode(sidecar)
         try data.write(to: url, options: [.atomic])
         try failIfRequested(.afterRecoveryWrite)
+        if let stamp = recoveryFileStamp(at: url) {
+            cachedRecoverySidecars[identity] = CachedRecoverySidecar(
+                sequence: sidecar.sequence,
+                partialSHA256: sidecar.partialSHA256,
+                stamp: stamp
+            )
+        }
     }
 
     func removeRecoverySidecar(projectID: NovelProjectID, runID: NovelRunID) async throws {
@@ -774,6 +833,9 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         if fileManager.fileExists(atPath: url.path) {
             try fileManager.removeItem(at: url)
         }
+        cachedRecoverySidecars[
+            RecoveryFileIdentity(projectID: projectID, runID: runID)
+        ] = nil
     }
 
     func loadGhostwriteBatchProgress(
@@ -827,18 +889,20 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
     /// ledger and object library in `.amber/`. Legacy projects keep the
     /// sharded package at the project root.
     private func isWorkspaceNative(_ projectID: NovelProjectID) -> Bool {
-        NovelWorkspaceProjectStore.isWorkspaceNative(
+        if let cached = workspaceNativeByProject[projectID] {
+            return cached
+        }
+        let isNative = NovelWorkspaceProjectStore.isWorkspaceNative(
             projectDirectory: packageURL(for: projectID),
             fileManager: fileManager
         )
+        workspaceNativeByProject[projectID] = isNative
+        return isNative
     }
 
     private func engineStorageDirectory(for projectID: NovelProjectID) -> URL {
         let project = packageURL(for: projectID)
-        guard NovelWorkspaceProjectStore.isWorkspaceNative(
-            projectDirectory: project,
-            fileManager: fileManager
-        ) else { return project }
+        guard isWorkspaceNative(projectID) else { return project }
         return NovelWorkspaceProjectStore.engineDirectory(in: project)
     }
 
@@ -1042,6 +1106,20 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         }
     }
 
+    private func recoveryFileStamp(at url: URL) -> RecoveryFileStamp? {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let fileNumber = attributes[.systemFileNumber] as? NSNumber,
+              let byteCount = attributes[.size] as? NSNumber,
+              let modifiedAt = attributes[.modificationDate] as? Date else {
+            return nil
+        }
+        return RecoveryFileStamp(
+            fileNumber: fileNumber.uint64Value,
+            byteCount: byteCount.uint64Value,
+            modifiedAt: modifiedAt
+        )
+    }
+
     private func quarantineInvalidRecovery(at url: URL) {
         let destination = recoveryDirectory.appendingPathComponent(
             ".invalid-recovery-\(UUID().uuidString.lowercased()).sidecar"
@@ -1054,6 +1132,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
     }
 
     private func ensureDirectories() throws {
+        guard !directoriesEnsured else { return }
         do {
             try fileManager.createDirectory(
                 at: projectDirectory,
@@ -1079,6 +1158,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                 at: ghostwriteProgressDirectory,
                 withIntermediateDirectories: true
             )
+            directoriesEnsured = true
         } catch {
             throw NovelError.storageUnavailable("Could not prepare novel storage: \(error)")
         }
@@ -1153,6 +1233,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
             urls.append(replacementMarkerURL(for: projectID))
             sectionCaches[projectID] = nil
             pointerFingerprints[projectID] = nil
+            workspaceNativeByProject[projectID] = nil
         } else {
             // Replacement cleanup keeps the new primary package; drop legacy previous monofile only.
         }
@@ -1516,11 +1597,27 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
             // mutate the tree.
             let project = packageURL(for: projectID)
             if reconcileWorkspace {
+                // A prior fingerprint can no longer be trusted until this
+                // load confirms that the checkout still represents the book.
+                pointerFingerprints[projectID] = nil
                 let reconciled = try NovelWorkspaceProjectStore.reconcileBookTree(
                     document: normalized,
                     projectDirectory: project,
                     fileManager: fileManager
                 )
+                let checkout = NovelWorkspaceAuthority.checkoutDirectory(in: project)
+                if NovelWorkspaceProjectStore.isWorkspaceNative(
+                    projectDirectory: project,
+                    fileManager: fileManager
+                ), NovelWorkspaceAuthority.worktreeCoversWorkingManuscript(
+                    reconciled,
+                    checkoutDirectory: checkout,
+                    fileManager: fileManager
+                ) {
+                    // An unmarked or incomplete checkout keeps this nil for
+                    // the next book write.
+                    pointerFingerprints[projectID] = pointerFingerprint(reconciled)
+                }
                 NovelWorkspaceProjectStore.healLedgerIfNeeded(
                     document: reconciled,
                     projectDirectory: project,
@@ -1535,6 +1632,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                         projectDirectory: project,
                         fileManager: fileManager
                     )
+                    workspaceNativeByProject[projectID] = nil
                 }
                 return reconciled
             }
@@ -1546,6 +1644,7 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         // open; rollback keeps `legacy-package/` beside the workspace.
         if automaticWorkspaceMigration, shouldMigrateLegacyProject(projectID) {
             let project = packageURL(for: projectID)
+            workspaceNativeByProject[projectID] = nil
             do {
                 try NovelWorkspaceProjectStore.migrateLegacyProject(
                     document: normalized,
@@ -1553,6 +1652,8 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                     fileManager: fileManager
                 )
                 sectionCaches[projectID] = nil
+                workspaceNativeByProject[projectID] = true
+                pointerFingerprints[projectID] = pointerFingerprint(normalized)
                 Self.logger.error(
                     "Legacy novel project migrated to workspace-native: \(projectID.description, privacy: .public)"
                 )
@@ -1568,8 +1669,12 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                     projectDirectory: packageURL(for: projectID),
                     fileManager: fileManager
                 ) {
+                    sectionCaches[projectID] = nil
+                    workspaceNativeByProject[projectID] = true
+                    pointerFingerprints[projectID] = pointerFingerprint(normalized)
                     return NovelWorkspaceProjectStore.persistableAtRest(normalized)
                 }
+                workspaceNativeByProject[projectID] = false
                 // The legacy chain persists the FULL document — return it.
                 return normalized
             }
@@ -1915,14 +2020,17 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
         }
     }
 
-    private func writeIndexBestEffort(_ summaries: [NovelProjectSummary]) {
+    private func writeIndexBestEffort(
+        _ summaries: [NovelProjectSummary],
+        manifestEntries: [IndexManifestV1.Entry]? = nil
+    ) {
         do {
             try failIfRequested(.beforeIndexWrite)
             let sorted = summaries.sorted(by: NovelProjectSummary.listOrder)
             let index = IndexV1(schemaVersion: 1, projects: sorted)
             let manifest = IndexManifestV1(
                 schemaVersion: 1,
-                entries: sorted.map { fileSignatureEntry(for: $0.id) }
+                entries: manifestEntries ?? sorted.map { fileSignatureEntry(for: $0.id) }
             )
             try makeEncoder().encode(index).write(to: indexURL, options: [.atomic])
             try makeEncoder().encode(manifest).write(to: indexManifestURL, options: [.atomic])
@@ -1961,6 +2069,23 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
             if let index = try? readIndex() {
                 projects = index.projects.filter { !deleted.contains($0.id) && $0.id != summary.id }
                 projects.append(summary)
+                if let manifest = try? readIndexManifest(),
+                   Set(manifest.entries.map(\.projectID)).count == manifest.entries.count,
+                   Set(manifest.entries.map(\.projectID)) == Set(index.projects.map(\.id)) {
+                    let entriesByID = Dictionary(
+                        uniqueKeysWithValues: manifest.entries.map { ($0.projectID, $0) }
+                    )
+                    let sortedProjects = projects.sorted(by: NovelProjectSummary.listOrder)
+                    let patchedEntries = sortedProjects.map { project in
+                        if project.id == summary.id {
+                            return fileSignatureEntry(for: project.id)
+                        }
+                        return entriesByID[project.id] ?? fileSignatureEntry(for: project.id)
+                    }
+                    writeIndexBestEffort(sortedProjects, manifestEntries: patchedEntries)
+                } else {
+                    writeIndexBestEffort(projects)
+                }
             } else {
                 projects = try scanProjectSummaries()
                 if let idx = projects.firstIndex(where: { $0.id == summary.id }) {
@@ -1968,8 +2093,8 @@ actor NovelFileProjectRepository: NovelProjectPersisting {
                 } else if !deleted.contains(summary.id) {
                     projects.append(summary)
                 }
+                writeIndexBestEffort(projects)
             }
-            writeIndexBestEffort(projects)
         } catch {
             try? fileManager.removeItem(at: indexURL)
             try? fileManager.removeItem(at: indexManifestURL)

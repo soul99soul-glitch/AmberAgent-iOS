@@ -284,9 +284,13 @@ extension DefaultNovelCreation {
 
         let committed: NovelLoadedProject
         do {
+            let transition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+                from: loaded.document,
+                to: reduced.document
+            )
             committed = try await repository.commitProject(
-                reduced.document,
-                expectedRevision: loaded.document.project.revision
+                transition,
+                authorization: nil
             )
         } catch {
             if requiresRepositoryReconciliation(error) {
@@ -664,7 +668,9 @@ extension DefaultNovelCreation {
                 return
             }
             while isRecoveringGenerationState {
-                await Task.yield()
+                await withCheckedContinuation { continuation in
+                    generationRecoveryWaiters.append(continuation)
+                }
             }
             return try await recoverGenerationStateIfNeeded(
                 requiredProjectID: requiredProjectID,
@@ -685,6 +691,9 @@ extension DefaultNovelCreation {
         defer {
             recoveringGenerationProjectID = nil
             isRecoveringGenerationState = false
+            let waiters = generationRecoveryWaiters
+            generationRecoveryWaiters.removeAll()
+            waiters.forEach { $0.resume() }
         }
 
         isReconcilingLifecycleOperations = true
@@ -1054,6 +1063,12 @@ private extension DefaultNovelCreation {
             throw NovelError.storageIndeterminate(request.projectID)
         }
 
+        publishMutation(
+            projectID: request.projectID,
+            operationID: request.operationID,
+            refreshesSelection: false
+        )
+
         let run = makeRuntimeAndStream(
             run: runRecord,
             projectID: request.projectID,
@@ -1083,7 +1098,7 @@ private extension DefaultNovelCreation {
         }
 
         // The durable marker is in place and the provider is about to start.
-        await updateBackgroundLease(
+        updateBackgroundLease(
             runID: request.id,
             completed: 1,
             subtitle: IOSAppLocalization.string(
@@ -1112,9 +1127,9 @@ private extension DefaultNovelCreation {
         runID: NovelRunID,
         completed: Int64,
         subtitle: String
-    ) async {
-        await MainActor.run {
-            let leaseID = novelRunBackgroundLeaseID(for: runID)
+    ) {
+        let leaseID = novelRunBackgroundLeaseID(for: runID)
+        Task { @MainActor in
             BackgroundGenerationKeepAlive.shared.updateProgress(
                 leaseID,
                 completed: completed,
@@ -1526,8 +1541,8 @@ private extension DefaultNovelCreation {
     }
 
     func consumeModelEvent(_ event: NovelModelEvent, runID: NovelRunID) async {
-        guard var runtime = generationRuntimes[runID],
-              runtime.terminalClaim == nil else {
+        guard generationRuntimes[runID] != nil,
+              generationRuntimes[runID]?.terminalClaim == nil else {
             return
         }
         switch event {
@@ -1538,8 +1553,8 @@ private extension DefaultNovelCreation {
             // touching manuscript partialContent / sidecar body.
             guard !text.isEmpty else { return }
             broadcast(.reasoningDelta(text), runID: runID)
-            if runtime.partialContent.isEmpty {
-                await updateBackgroundLease(
+            if generationRuntimes[runID]?.partialContent.isEmpty == true {
+                updateBackgroundLease(
                     runID: runID,
                     completed: 1,
                     subtitle: IOSAppLocalization.string(
@@ -1550,11 +1565,10 @@ private extension DefaultNovelCreation {
             }
         case .textDelta(let text):
             guard !text.isEmpty else { return }
-            let isFirstVisibleContent = runtime.partialContent.isEmpty
-            runtime.partialContent += text
-            generationRuntimes[runID] = runtime
+            let isFirstVisibleContent = generationRuntimes[runID]?.partialContent.isEmpty == true
+            generationRuntimes[runID]?.partialContent.append(contentsOf: text)
             if isFirstVisibleContent {
-                await updateBackgroundLease(
+                updateBackgroundLease(
                     runID: runID,
                     completed: 2,
                     subtitle: IOSAppLocalization.string(
@@ -1566,11 +1580,12 @@ private extension DefaultNovelCreation {
             broadcast(.delta(text), runID: runID)
             _ = await flushRecoverySidecar(runID: runID, force: false)
         case .textReplacement(let text):
+            guard var runtime = generationRuntimes[runID] else { return }
             let isFirstVisibleContent = runtime.partialContent.isEmpty && !text.isEmpty
             runtime.partialContent = text
             generationRuntimes[runID] = runtime
             if isFirstVisibleContent {
-                await updateBackgroundLease(
+                updateBackgroundLease(
                     runID: runID,
                     completed: 2,
                     subtitle: IOSAppLocalization.string(
@@ -1582,9 +1597,9 @@ private extension DefaultNovelCreation {
             broadcast(.replaced(text), runID: runID)
             _ = await flushRecoverySidecar(runID: runID, force: false)
         case .usage(let usage):
-            runtime.usage = usage
-            generationRuntimes[runID] = runtime
+            generationRuntimes[runID]?.usage = usage
         case .responseFrame(let frame):
+            guard var runtime = generationRuntimes[runID] else { return }
             let mustPersistFirstCursor = runtime.responseCursor == nil
             if let current = runtime.responseCursor {
                 guard current.responseID == frame.cursor.responseID else {
@@ -1615,7 +1630,7 @@ private extension DefaultNovelCreation {
                 case .textDelta(let text):
                     guard !text.isEmpty else { continue }
                     shouldUpdateVisibleLease = shouldUpdateVisibleLease || runtime.partialContent.isEmpty
-                    runtime.partialContent += text
+                    runtime.partialContent.append(contentsOf: text)
                     presentationEvents.append(.delta(text))
                 case .textReplacement(let text):
                     shouldUpdateVisibleLease = shouldUpdateVisibleLease ||
@@ -1634,7 +1649,7 @@ private extension DefaultNovelCreation {
             generationRuntimes[runID] = runtime
             presentationEvents.forEach { broadcast($0, runID: runID) }
             if shouldUpdateVisibleLease {
-                await updateBackgroundLease(
+                updateBackgroundLease(
                     runID: runID,
                     completed: 2,
                     subtitle: IOSAppLocalization.string(
@@ -1643,7 +1658,7 @@ private extension DefaultNovelCreation {
                     )
                 )
             } else if hasReasoningOnlyActivity {
-                await updateBackgroundLease(
+                updateBackgroundLease(
                     runID: runID,
                     completed: 1,
                     subtitle: IOSAppLocalization.string(
@@ -1677,8 +1692,7 @@ private extension DefaultNovelCreation {
                 }
             }
         case .responseDisconnected:
-            runtime.isDetachedForBackground = true
-            generationRuntimes[runID] = runtime
+            generationRuntimes[runID]?.isDetachedForBackground = true
             _ = await flushRecoverySidecar(runID: runID, force: true)
         case .askUser(let prompt, let preface):
             await awaitUser(runID, prompt: prompt, preface: preface)
@@ -1837,7 +1851,7 @@ private extension DefaultNovelCreation {
         runtime.terminalClaim = claim
         generationRuntimes[runID] = runtime
 
-        await updateBackgroundLease(
+        updateBackgroundLease(
             runID: runID,
             completed: 3,
             subtitle: IOSAppLocalization.string("保存结果", defaultValue: "保存结果")
@@ -1865,7 +1879,7 @@ private extension DefaultNovelCreation {
                 projectID: runtime.projectID,
                 runID: runID
             )
-            await updateBackgroundLease(
+            updateBackgroundLease(
                 runID: runID,
                 completed: 4,
                 subtitle: IOSAppLocalization.string("已保存", defaultValue: "已保存")
@@ -2186,7 +2200,16 @@ private extension DefaultNovelCreation {
     }
 
     func flushRecoverySidecar(runID: NovelRunID, force: Bool) async -> Bool {
-        guard var runtime = generationRuntimes[runID] else { return false }
+        if force {
+            while let inFlight = recoverySidecarFlushes[runID] {
+                _ = await inFlight.value
+            }
+        } else if recoverySidecarFlushes[runID] != nil {
+            recoverySidecarFlushPending.insert(runID)
+            return true
+        }
+
+        guard let runtime = generationRuntimes[runID] else { return false }
         let timestamp = now()
         let byteCount = runtime.partialContent.utf8.count
         let bytesAdded = max(0, byteCount - runtime.lastSidecarByteCount)
@@ -2196,6 +2219,23 @@ private extension DefaultNovelCreation {
             return true
         }
 
+        let task = Task { [self] in
+            let result = await writeRecoverySidecarNow(runID: runID)
+            recoverySidecarFlushes[runID] = nil
+            if recoverySidecarFlushPending.remove(runID) != nil {
+                _ = await flushRecoverySidecar(runID: runID, force: false)
+            }
+            return result
+        }
+        recoverySidecarFlushes[runID] = task
+        if force { return await task.value }
+        return true
+    }
+
+    func writeRecoverySidecarNow(runID: NovelRunID) async -> Bool {
+        guard var runtime = generationRuntimes[runID] else { return false }
+        let timestamp = now()
+        let byteCount = runtime.partialContent.utf8.count
         runtime.sidecarSequence += 1
         runtime.lastSidecarAt = timestamp
         runtime.lastSidecarByteCount = byteCount
@@ -2248,7 +2288,7 @@ private extension DefaultNovelCreation {
         }
         await waitForGenerationWrite(projectID: projectID)
         generationWriteProjectIDs.insert(projectID)
-        defer { generationWriteProjectIDs.remove(projectID) }
+        defer { finishGenerationWrite(projectID: projectID) }
 
         var lastError: Error?
         for _ in 0..<3 {
@@ -2261,9 +2301,13 @@ private extension DefaultNovelCreation {
                 return reduced.result
             }
             do {
+                let transition = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+                    from: loaded.document,
+                    to: reduced.document
+                )
                 let committed = try await repository.commitProject(
-                    reduced.document,
-                    expectedRevision: loaded.document.project.revision
+                    transition,
+                    authorization: nil
                 )
                 guard committed.document == reduced.document ||
                     committed.document == NovelWorkspaceProjectStore.persistableAtRest(reduced.document) else {
@@ -2273,6 +2317,13 @@ private extension DefaultNovelCreation {
                     committed,
                     id: projectID,
                     allowsRollback: false
+                )
+                // Run/terminal writes bypass NovelAction.perform, so notify
+                // project-list observers after the durable project revision lands.
+                publishMutation(
+                    projectID: projectID,
+                    operationID: NovelOperationID(),
+                    refreshesSelection: false
                 )
                 return reduced.result
             } catch {

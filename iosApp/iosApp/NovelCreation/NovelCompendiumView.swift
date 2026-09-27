@@ -230,6 +230,8 @@ private struct NovelMaterialCategoryView: View {
             NovelMaterialRow(material: material, revision: revision)
         }
         .buttonStyle(.plain)
+        .disabled(viewModel.pendingMaterialDeletionIDs.contains(material.id))
+        .opacity(viewModel.pendingMaterialDeletionIDs.contains(material.id) ? 0.55 : 1)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 pendingDelete = NovelCompendiumMaterialDeleteCandidate(
@@ -285,6 +287,8 @@ private struct NovelStoryCompendiumView: View {
                             NovelMaterialRow(material: material, revision: revision)
                         }
                         .buttonStyle(.plain)
+                        .disabled(viewModel.pendingMaterialDeletionIDs.contains(material.id))
+                        .opacity(viewModel.pendingMaterialDeletionIDs.contains(material.id) ? 0.55 : 1)
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button(role: .destructive) {
                                 pendingDelete = NovelCompendiumMaterialDeleteCandidate(
@@ -414,6 +418,8 @@ private struct NovelCompendiumMoreView: View {
                         NovelMaterialRow(material: material, revision: revision)
                     }
                     .buttonStyle(.plain)
+                    .disabled(viewModel.pendingMaterialDeletionIDs.contains(material.id))
+                    .opacity(viewModel.pendingMaterialDeletionIDs.contains(material.id) ? 0.55 : 1)
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
                             pendingDelete = NovelCompendiumMaterialDeleteCandidate(
@@ -739,10 +745,24 @@ struct NovelSettingProposalRejectAllButton: View {
     let viewModel: NovelCreationViewModel
 
     var body: some View {
-        Button("拒绝全部待确认", role: .destructive) {
+        Button(role: .destructive) {
+            guard !viewModel.isRejectingAllSettingProposals else { return }
             Task { await viewModel.rejectActiveSettingProposals() }
+        } label: {
+            HStack(spacing: 8) {
+                Text("拒绝全部待确认")
+                Spacer(minLength: 8)
+                if viewModel.isRejectingAllSettingProposals {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Color.clear.frame(width: 12, height: 12)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         }
         .disabled(!viewModel.canMutate)
+        .opacity(viewModel.isRejectingAllSettingProposals ? 0.65 : 1)
         .accessibilityLabel("拒绝全部待确认设定建议")
         .accessibilityHint("拒绝当前分支上所有分类的待确认设定建议，不会写入资料")
     }
@@ -754,6 +774,7 @@ struct NovelCompendiumProposalCard: View {
     let onAccept: () -> Void
 
     var body: some View {
+        let isRejecting = viewModel.pendingSettingProposalIDs.contains(proposal.id)
         VStack(alignment: .leading, spacing: 10) {
             Text(proposal.title)
                 .font(.body.weight(.semibold))
@@ -763,11 +784,24 @@ struct NovelCompendiumProposalCard: View {
                 .lineLimit(4)
             HStack(spacing: 12) {
                 Spacer()
-                Button("拒绝", role: .destructive) {
+                Button(role: .destructive) {
+                    guard !isRejecting else { return }
                     Task { await viewModel.resolveProposal(proposal.id, resolution: .reject) }
+                } label: {
+                    Text("拒绝")
+                        .lineLimit(1)
+                        .opacity(isRejecting ? 0 : 1)
+                        .overlay {
+                            if isRejecting {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityHidden(true)
+                            }
+                        }
                 }
                 .buttonStyle(.bordered)
                 .frame(minHeight: 44)
+                .disabled(!viewModel.canMutate || isRejecting)
                 .contentShape(Rectangle())
                 Button("确认并写入", action: onAccept)
                     .buttonStyle(.borderedProminent)
@@ -777,6 +811,7 @@ struct NovelCompendiumProposalCard: View {
         }
         .padding(.vertical, 6)
         .disabled(!viewModel.canMutate)
+        .opacity(isRejecting ? 0.55 : 1)
     }
 }
 

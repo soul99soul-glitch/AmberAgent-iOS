@@ -129,6 +129,26 @@ final class NovelCreationPresentationTests: XCTestCase {
         )
     }
 
+    func testInterruptedDraftOnlyNormalizesManuscriptRunKinds() {
+        let discussion = "```markdown\n先讨论人物动机。\n```"
+        XCTAssertEqual(
+            NovelSessionPresentation.durableDisplayContent(
+                for: .interruptedDraft,
+                runKind: .discussion,
+                content: discussion
+            ),
+            discussion
+        )
+        XCTAssertEqual(
+            NovelSessionPresentation.durableDisplayContent(
+                for: .interruptedDraft,
+                runKind: .prose,
+                content: discussion
+            ),
+            "先讨论人物动机。"
+        )
+    }
+
     func testStateSyncFailureMessageKeepsActionableDetail() {
         XCTAssertEqual(
             NovelPresentation.stateSyncFailureMessage(for: NovelError.invalidInput(
@@ -1492,6 +1512,50 @@ final class NovelCreationPresentationTests: XCTestCase {
         XCTAssertFalse(viewModel.canMutate)
     }
 
+    func testRefreshCurrentSelectionPatchesProjectSummaryWithoutReadingProjectList() async throws {
+        let repository = InMemoryNovelProjectRepository()
+        let document = try NovelTestFixtures.document()
+        let otherDocument = try NovelTestFixtures.document()
+        _ = try await repository.createProject(document)
+        _ = try await repository.createProject(otherDocument)
+        let base = DefaultNovelCreation(repository: repository)
+        let creation = ProjectListReadGuardNovelCreation(
+            base: base,
+            rejectsProjectListReads: true
+        )
+        let viewModel = NovelCreationViewModel(creation: creation)
+        viewModel.projects = [
+            NovelProjectSummary(document: document),
+            NovelProjectSummary(document: otherDocument)
+        ].sorted(by: NovelProjectSummary.listOrder)
+        viewModel.selectedProjectID = document.project.id
+        viewModel.selectedBranchID = document.project.mainBranchID
+
+        _ = try await base.perform(NovelTestFixtures.renameAction(
+            document: document,
+            name: "已更新的项目卡片"
+        ))
+
+        let refreshed = try await viewModel.refreshCurrentSelection(
+            projectID: document.project.id,
+            refreshProjectList: false
+        )
+
+        XCTAssertTrue(refreshed)
+        let selectedSummary = try XCTUnwrap(viewModel.projects.first {
+            $0.id == document.project.id
+        })
+        let refreshedProject = try XCTUnwrap(viewModel.projectSnapshot)
+        XCTAssertEqual(selectedSummary.name, "已更新的项目卡片")
+        XCTAssertEqual(selectedSummary.revision, refreshedProject.project.revision)
+        XCTAssertEqual(selectedSummary.updatedAt, refreshedProject.project.updatedAt)
+        XCTAssertEqual(
+            selectedSummary.hasRunningRun,
+            refreshedProject.activeRuns.contains(where: { $0.status == .running })
+        )
+        XCTAssertEqual(viewModel.projects, viewModel.projects.sorted(by: NovelProjectSummary.listOrder))
+    }
+
     func testLateProjectSnapshotCannotReplaceNewerSelection() async throws {
         let repository = InMemoryNovelProjectRepository()
         let firstDocument = try NovelTestFixtures.document()
@@ -1515,6 +1579,54 @@ final class NovelCreationPresentationTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedProjectID, secondDocument.project.id)
         XCTAssertEqual(viewModel.projectSnapshot?.project.id, secondDocument.project.id)
         XCTAssertEqual(viewModel.branchSnapshot?.projectID, secondDocument.project.id)
+    }
+}
+
+private actor ProjectListReadGuardNovelCreation: NovelCreation {
+    let base: any NovelCreation
+    let rejectsProjectListReads: Bool
+
+    init(
+        base: any NovelCreation,
+        rejectsProjectListReads: Bool = false
+    ) {
+        self.base = base
+        self.rejectsProjectListReads = rejectsProjectListReads
+    }
+
+    func snapshot(_ scope: NovelSnapshotScope) async throws -> NovelSnapshot {
+        if case .projects = scope, rejectsProjectListReads {
+            throw NovelError.invalidInput("Unexpected project list refresh.")
+        }
+        return try await base.snapshot(scope)
+    }
+
+    func perform(_ action: NovelAction) async throws -> NovelOutcome {
+        try await base.perform(action)
+    }
+
+    func start(_ request: NovelRunRequest) async throws -> NovelRun {
+        try await base.start(request)
+    }
+
+    func interruptForBackground(
+        projectID: NovelProjectID,
+        deadline: Date,
+        runID: NovelRunID?
+    ) async {
+        await base.interruptForBackground(
+            projectID: projectID,
+            deadline: deadline,
+            runID: runID
+        )
+    }
+
+    func cancelInFlightBackgroundMutations(projectID: NovelProjectID) async {
+        await base.cancelInFlightBackgroundMutations(projectID: projectID)
+    }
+
+    func retryPendingTerminal(runID: NovelRunID) async throws {
+        try await base.retryPendingTerminal(runID: runID)
     }
 }
 

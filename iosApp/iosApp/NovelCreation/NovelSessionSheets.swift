@@ -1,3 +1,4 @@
+import Observation
 import SwiftUI
 
 struct NovelSessionChapterOption: Identifiable, Equatable {
@@ -947,6 +948,186 @@ struct NovelSessionForkSheet: View {
     }
 }
 
+@MainActor
+@Observable
+private final class NovelWritingContextFieldState {
+    var planPlacement: String
+    var planGoal: String
+    var planMustHappen: String
+    var planMustNotHappen: String
+    var planEndingHook: String
+    var planVisibleFacts: String
+    var upcomingArcBeats: String
+
+    @ObservationIgnored private(set) var planFieldsDirty = false
+    @ObservationIgnored private(set) var arcFieldsDirty = false
+    @ObservationIgnored private(set) var planEditRevision = 0
+    @ObservationIgnored private(set) var arcEditRevision = 0
+    @ObservationIgnored private var isReloadingPlanFields = false
+    @ObservationIgnored private var isReloadingArcFields = false
+    @ObservationIgnored let fieldBank = NovelIMEFieldBank()
+
+    init(plan: NovelChapterPlanRecord?, arc: NovelUpcomingArcRecord?) {
+        planPlacement = plan?.outlinePlacement ?? ""
+        planGoal = plan?.goalAndConflict ?? ""
+        planMustHappen = plan?.mustHappen.joined(separator: "\n") ?? ""
+        planMustNotHappen = plan?.mustNotHappen.joined(separator: "\n") ?? ""
+        planEndingHook = plan?.endingHook ?? ""
+        planVisibleFacts = plan?.visibleFacts.joined(separator: "\n") ?? ""
+        upcomingArcBeats = arc?.beats.joined(separator: "\n") ?? ""
+    }
+
+    func reloadPlan(_ plan: NovelChapterPlanRecord?) {
+        isReloadingPlanFields = true
+        planPlacement = plan?.outlinePlacement ?? ""
+        planGoal = plan?.goalAndConflict ?? ""
+        planMustHappen = plan?.mustHappen.joined(separator: "\n") ?? ""
+        planMustNotHappen = plan?.mustNotHappen.joined(separator: "\n") ?? ""
+        planEndingHook = plan?.endingHook ?? ""
+        planVisibleFacts = plan?.visibleFacts.joined(separator: "\n") ?? ""
+        planFieldsDirty = false
+        isReloadingPlanFields = false
+    }
+
+    func reloadArc(_ arc: NovelUpcomingArcRecord?) {
+        isReloadingArcFields = true
+        upcomingArcBeats = arc?.beats.joined(separator: "\n") ?? ""
+        arcFieldsDirty = false
+        isReloadingArcFields = false
+    }
+
+    func markPlanClean(ifUnchangedSince revision: Int) {
+        guard planEditRevision == revision else { return }
+        planFieldsDirty = false
+    }
+
+    func markArcClean(ifUnchangedSince revision: Int) {
+        guard arcEditRevision == revision else { return }
+        arcFieldsDirty = false
+    }
+
+    func markPlanEdited() {
+        if !isReloadingPlanFields {
+            planEditRevision += 1
+            planFieldsDirty = true
+        }
+    }
+
+    func markArcEdited() {
+        if !isReloadingArcFields {
+            arcEditRevision += 1
+            arcFieldsDirty = true
+        }
+    }
+}
+
+@MainActor
+private final class NovelGhostwriteReadinessIssuesCache {
+    private struct Key: Equatable {
+        let projectRevision: Int64
+        let branchID: NovelBranchID
+    }
+
+    private var key: Key?
+    private var cachedIssues: [NovelGhostwriteReadinessIssue] = []
+
+    func issues(for workspace: NovelCreationViewModel) -> [NovelGhostwriteReadinessIssue] {
+        guard let project = workspace.projectSnapshot,
+              let branchID = workspace.selectedBranchID else { return [.branchNeedsSync] }
+        let nextKey = Key(projectRevision: project.project.revision, branchID: branchID)
+        if key == nextKey { return cachedIssues }
+
+        let issues = workspace.ghostwriteReadinessIssues(requireChapterPlan: false)
+        key = nextKey
+        cachedIssues = issues
+        return issues
+    }
+}
+
+private struct NovelWritingContextFieldRow: View {
+    let title: String
+    @Bindable var fields: NovelWritingContextFieldState
+    let field: Field
+    let placeholder: String
+    let isEnabled: Bool
+    let minHeight: CGFloat
+
+    enum Field: Equatable {
+        case goal
+        case mustHappen
+        case mustNotHappen
+        case endingHook
+        case visibleFacts
+        case upcomingArc
+    }
+
+    private var textBinding: Binding<String> {
+        let source: Binding<String>
+        switch field {
+        case .goal: source = $fields.planGoal
+        case .mustHappen: source = $fields.planMustHappen
+        case .mustNotHappen: source = $fields.planMustNotHappen
+        case .endingHook: source = $fields.planEndingHook
+        case .visibleFacts: source = $fields.planVisibleFacts
+        case .upcomingArc: source = $fields.upcomingArcBeats
+        }
+        return Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                source.wrappedValue = newValue
+                if field == .upcomingArc {
+                    fields.markArcEdited()
+                } else {
+                    fields.markPlanEdited()
+                }
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.footnote).foregroundStyle(AmberTheme.muted)
+            NovelIMETextEditor(
+                text: textBinding,
+                placeholder: IOSAppLocalization.string(placeholder, defaultValue: placeholder),
+                isEnabled: isEnabled,
+                minHeight: minHeight,
+                bank: fields.fieldBank
+            )
+            .frame(minHeight: minHeight)
+        }
+    }
+}
+
+private struct NovelWritingContextPlacementFieldRow: View {
+    @Bindable var fields: NovelWritingContextFieldState
+    let isEnabled: Bool
+
+    private var textBinding: Binding<String> {
+        let source = $fields.planPlacement
+        return Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                source.wrappedValue = newValue
+                fields.markPlanEdited()
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("与总纲的位置").font(.footnote).foregroundStyle(AmberTheme.muted)
+            NovelIMETextField(
+                text: textBinding,
+                placeholder: IOSAppLocalization.string("例如：第 3 章", defaultValue: "例如：第 3 章"),
+                isEnabled: isEnabled,
+                bank: fields.fieldBank
+            )
+            .frame(minHeight: 36)
+        }
+    }
+}
+
 struct NovelWritingContextSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -965,13 +1146,8 @@ struct NovelWritingContextSheet: View {
     @State private var materialChoices: [NovelMaterialID: MaterialChoice]
     @State private var previewSignature: String?
     @State private var selectedMode: NovelCollaborationMode
-    @State private var planPlacement: String
-    @State private var planGoal: String
-    @State private var planMustHappen: String
-    @State private var planMustNotHappen: String
-    @State private var planEndingHook: String
-    @State private var planVisibleFacts: String
-    @State private var upcomingArcBeats: String
+    @State private var writingContextFields: NovelWritingContextFieldState
+    @State private var ghostwriteReadinessCache = NovelGhostwriteReadinessIssuesCache()
     @State private var modeSwitchMessage: String?
     @State private var planMessage: String?
     @State private var isPresentingGhostwriteRevision = false
@@ -981,12 +1157,11 @@ struct NovelWritingContextSheet: View {
     @State private var confirmClearPlan = false
     @State private var confirmClearArc = false
     @State private var confirmCancelGhostwriteBatch = false
-    /// UIKit-backed plan/arc fields; save flushes marked text into bindings here.
-    @State private var planFieldBank = NovelIMEFieldBank()
-    @State private var planFieldsDirty = false
-    @State private var arcFieldsDirty = false
-    @State private var isReloadingPlanFields = false
-    @State private var isReloadingArcFields = false
+    @State private var isSavingCollaborationMode = false
+    @State private var savingChapterPlanStatus: NovelChapterPlanStatus?
+    @State private var savingChapterPlanRevision: Int?
+    @State private var chapterPlanSaveTask: Task<Bool, Never>?
+    @State private var isSavingUpcomingArc = false
     /// 根据前文生成草稿本章计划（模型调用中）。
     @State private var isProposingPlanDraft = false
 
@@ -1027,23 +1202,11 @@ struct NovelWritingContextSheet: View {
         let existingPlan = workspace.selectedBranchID.flatMap {
             workspace.projectSnapshot?.chapterPlan(for: $0)
         }
-        self._planPlacement = State(initialValue: existingPlan?.outlinePlacement ?? "")
-        self._planGoal = State(initialValue: existingPlan?.goalAndConflict ?? "")
-        self._planMustHappen = State(
-            initialValue: existingPlan?.mustHappen.joined(separator: "\n") ?? ""
-        )
-        self._planMustNotHappen = State(
-            initialValue: existingPlan?.mustNotHappen.joined(separator: "\n") ?? ""
-        )
-        self._planEndingHook = State(initialValue: existingPlan?.endingHook ?? "")
-        self._planVisibleFacts = State(
-            initialValue: existingPlan?.visibleFacts.joined(separator: "\n") ?? ""
-        )
         let existingArc = workspace.selectedBranchID.flatMap {
             workspace.projectSnapshot?.upcomingArc(for: $0)
         }
-        self._upcomingArcBeats = State(
-            initialValue: existingArc?.beats.joined(separator: "\n") ?? ""
+        self._writingContextFields = State(
+            initialValue: NovelWritingContextFieldState(plan: existingPlan, arc: existingArc)
         )
         self._modeSwitchMessage = State(initialValue: nil)
     }
@@ -1093,7 +1256,7 @@ struct NovelWritingContextSheet: View {
                         if session.canCancelGhostwriteBatch {
                             confirmCancelGhostwriteBatch = true
                         } else {
-                            NovelTextInputCommitter.perform(fieldBank: planFieldBank) {
+                            NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank) {
                                 dismiss()
                             }
                         }
@@ -1109,7 +1272,7 @@ struct NovelWritingContextSheet: View {
                         .disabled(toolbarGhostwriteActionDisabled)
                     } else {
                         Button("预览") {
-                            NovelTextInputCommitter.perform(fieldBank: planFieldBank) {
+                            NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank) {
                                 preview()
                             }
                         }
@@ -1118,7 +1281,13 @@ struct NovelWritingContextSheet: View {
                 }
             }
             .overlay {
-                if workspace.isPerforming, !session.isGhostwriting { ProgressView() }
+                if workspace.isPerforming,
+                   !session.isGhostwriting,
+                   !isSavingCollaborationMode,
+                   savingChapterPlanStatus == nil,
+                   !isSavingUpcomingArc {
+                    ProgressView()
+                }
             }
         }
         // 收起面板不等于停代笔。代笔进行中也必须能从滑杆下拉关闭。
@@ -1127,9 +1296,39 @@ struct NovelWritingContextSheet: View {
             // 预算兜底回写（滑块拖动中不触发，关闭时落定）。
             // 资料覆盖已在勾选时即时回写，无需重复。
             // 正在根据前文生成时不写本地 dirty，避免盖掉模型刚落盘的草稿。
-            NovelTextInputCommitter.perform(fieldBank: planFieldBank) {
-                if planFieldsDirty, !isProposingPlanDraft {
-                    Task { await saveChapterPlan(status: .draft) }
+            NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank) {
+                if writingContextFields.planFieldsDirty, !isProposingPlanDraft {
+                    let draftRevision = writingContextFields.planEditRevision
+                    let draftOutlinePlacement = writingContextFields.planPlacement
+                    let draftGoalAndConflict = writingContextFields.planGoal
+                    let draftMustHappen = planLines(from: writingContextFields.planMustHappen)
+                    let draftMustNotHappen = planLines(from: writingContextFields.planMustNotHappen)
+                    let draftEndingHook = writingContextFields.planEndingHook
+                    let draftVisibleFacts = planLines(from: writingContextFields.planVisibleFacts)
+                    let inFlightPlanSave = chapterPlanSaveTask
+                    let inFlightPlanRevision = savingChapterPlanRevision
+                    Task { @MainActor [workspace, inFlightPlanSave] in
+                        var shouldSaveDraft = true
+                        if let inFlightPlanSave {
+                            let priorSaveSucceeded = await inFlightPlanSave.value
+                            shouldSaveDraft = !priorSaveSucceeded || inFlightPlanRevision != draftRevision
+                        }
+                        guard shouldSaveDraft else { return }
+                        let saved = await workspace.upsertChapterPlan(
+                            status: .draft,
+                            outlinePlacement: draftOutlinePlacement,
+                            goalAndConflict: draftGoalAndConflict,
+                            mustHappen: draftMustHappen,
+                            mustNotHappen: draftMustNotHappen,
+                            endingHook: draftEndingHook,
+                            visibleFacts: draftVisibleFacts
+                        )
+                        if !saved {
+                            if workspace.errorMessage == nil || workspace.errorMessage?.isEmpty == true {
+                                workspace.errorMessage = "本章计划保存失败，草稿也未能保存。"
+                            }
+                        }
+                    }
                 }
                 onApply(overrides, budgetTokens)
             }
@@ -1140,7 +1339,7 @@ struct NovelWritingContextSheet: View {
             titleVisibility: .visible
         ) {
             Button("清除计划", role: .destructive) {
-                NovelTextInputCommitter.perform(fieldBank: planFieldBank) {
+                NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank) {
                     Task { await clearChapterPlan() }
                 }
             }
@@ -1154,7 +1353,7 @@ struct NovelWritingContextSheet: View {
             titleVisibility: .visible
         ) {
             Button("清除备注", role: .destructive) {
-                NovelTextInputCommitter.perform(fieldBank: planFieldBank) {
+                NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank) {
                     Task { await clearUpcomingArc() }
                 }
             }
@@ -1213,23 +1412,36 @@ struct NovelWritingContextSheet: View {
         let blockers = ghostwriteSwitchBlockers
         return List {
             Section {
-                Picker("创作模式", selection: $selectedMode) {
-                    ForEach(NovelCollaborationMode.allCases, id: \.self) { mode in
-                        Text(IOSAppLocalization.string(
-                            mode.displayName,
-                            defaultValue: mode.displayName
-                        )).tag(mode)
+                HStack(spacing: 8) {
+                    Picker("创作模式", selection: $selectedMode) {
+                        ForEach(NovelCollaborationMode.allCases, id: \.self) { mode in
+                            Text(IOSAppLocalization.string(
+                                mode.displayName,
+                                defaultValue: mode.displayName
+                            )).tag(mode)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-                .disabled(!workspace.canMutate || workspace.isPerforming || session.isGhostwriting)
-                .onChange(of: selectedMode) { _, newMode in
-                    Task { await selectCollaborationMode(newMode) }
-                }
-                .onChange(of: collaborationMode) { _, newMode in
-                    if selectedMode != newMode {
-                        selectedMode = newMode
+                    .pickerStyle(.segmented)
+                    .disabled(
+                        ((!workspace.canMutate || workspace.isPerforming) && !isSavingCollaborationMode)
+                            || session.isGhostwriting
+                    )
+                    .onChange(of: selectedMode) { _, newMode in
+                        selectCollaborationMode(newMode)
                     }
+                    .onChange(of: persistedCollaborationMode) { _, newMode in
+                        if !isSavingCollaborationMode, selectedMode != newMode {
+                            selectedMode = newMode
+                        }
+                    }
+
+                    ZStack {
+                        if isSavingCollaborationMode {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
                 }
 
                 if session.isGhostwriting {
@@ -1517,80 +1729,50 @@ struct NovelWritingContextSheet: View {
             Section {
                 LabeledContent("计划状态", value: planStatusLabel)
 
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("与总纲的位置").font(.footnote).foregroundStyle(AmberTheme.muted)
-                        NovelIMETextField(
-                            text: planPlacementBinding,
-                            placeholder: IOSAppLocalization.string(
-                                "例如：第 3 章",
-                                defaultValue: "例如：第 3 章"
-                            ),
-                        isEnabled: canEditChapterPlan,
-                        bank: planFieldBank
+                    NovelWritingContextPlacementFieldRow(
+                        fields: writingContextFields,
+                        isEnabled: canEditChapterPlan
                     )
-                    .frame(minHeight: 36)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("目标与冲突").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextEditor(
-                        text: planGoalBinding,
-                        placeholder: IOSAppLocalization.string(
-                            "本章要解决什么",
-                            defaultValue: "本章要解决什么"
-                        ),
+                    NovelWritingContextFieldRow(
+                        title: "目标与冲突",
+                        fields: writingContextFields,
+                        field: .goal,
+                        placeholder: "本章要解决什么",
                         isEnabled: canEditChapterPlan,
-                        minHeight: 88,
-                        bank: planFieldBank
+                        minHeight: 88
                     )
-                    .frame(minHeight: 88)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("必发生（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextEditor(
-                        text: planMustHappenBinding,
-                        placeholder: IOSAppLocalization.string(
-                            "至少一条",
-                            defaultValue: "至少一条"
-                        ),
+                    NovelWritingContextFieldRow(
+                        title: "必发生（每行一条）",
+                        fields: writingContextFields,
+                        field: .mustHappen,
+                        placeholder: "至少一条",
                         isEnabled: canEditChapterPlan,
-                        minHeight: 72,
-                        bank: planFieldBank
+                        minHeight: 72
                     )
-                    .frame(minHeight: 72)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("禁止发生（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextEditor(
-                        text: planMustNotHappenBinding,
-                        placeholder: IOSAppLocalization.string("可空", defaultValue: "可空"),
+                    NovelWritingContextFieldRow(
+                        title: "禁止发生（每行一条）",
+                        fields: writingContextFields,
+                        field: .mustNotHappen,
+                        placeholder: "可空",
                         isEnabled: canEditChapterPlan,
-                        minHeight: 64,
-                        bank: planFieldBank
+                        minHeight: 64
                     )
-                    .frame(minHeight: 64)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("章末钩子").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextEditor(
-                        text: planEndingHookBinding,
-                        placeholder: IOSAppLocalization.string("可空", defaultValue: "可空"),
+                    NovelWritingContextFieldRow(
+                        title: "章末钩子",
+                        fields: writingContextFields,
+                        field: .endingHook,
+                        placeholder: "可空",
                         isEnabled: canEditChapterPlan,
-                        minHeight: 56,
-                        bank: planFieldBank
+                        minHeight: 56
                     )
-                    .frame(minHeight: 56)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("POV 可见要点（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextEditor(
-                        text: planVisibleFactsBinding,
-                        placeholder: IOSAppLocalization.string("可空", defaultValue: "可空"),
+                    NovelWritingContextFieldRow(
+                        title: "POV 可见要点（每行一条）",
+                        fields: writingContextFields,
+                        field: .visibleFacts,
+                        placeholder: "可空",
                         isEnabled: canEditChapterPlan,
-                        minHeight: 64,
-                        bank: planFieldBank
+                        minHeight: 64
                     )
-                    .frame(minHeight: 64)
-                }
 
                 if let planMessage, !planMessage.isEmpty {
                     Label(
@@ -1626,27 +1808,51 @@ struct NovelWritingContextSheet: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button("保存草稿") {
+                    Button {
                         commitPlanFieldsThen {
-                            Task { await saveChapterPlan(status: .draft) }
+                            saveChapterPlan(status: .draft)
+                        }
+                    } label: {
+                        ZStack {
+                            Text("保存草稿")
+                                .opacity(savingChapterPlanStatus == .draft ? 0 : 1)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            if savingChapterPlanStatus == .draft {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityHidden(true)
+                            }
                         }
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
-                    .disabled(!canEditChapterPlan || isProposingPlanDraft)
+                    .disabled(!canEditChapterPlan || isProposingPlanDraft || savingChapterPlanStatus != nil)
 
-                    Button("确认计划") {
+                    Button {
                         commitPlanFieldsThen {
-                            Task { await saveChapterPlan(status: .confirmed) }
+                            saveChapterPlan(status: .confirmed)
+                        }
+                    } label: {
+                        ZStack {
+                            Text("确认计划")
+                                .opacity(savingChapterPlanStatus == .confirmed ? 0 : 1)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            if savingChapterPlanStatus == .confirmed {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityHidden(true)
+                            }
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
-                    .disabled(!canEditChapterPlan || isProposingPlanDraft)
+                    .disabled(!canEditChapterPlan || isProposingPlanDraft || savingChapterPlanStatus != nil)
 
                     Spacer(minLength: 0)
 
@@ -1658,7 +1864,7 @@ struct NovelWritingContextSheet: View {
                         .controlSize(.small)
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
-                        .disabled(!canEditChapterPlan || isProposingPlanDraft)
+                        .disabled(!canEditChapterPlan || isProposingPlanDraft || savingChapterPlanStatus != nil)
                     }
                 }
             } header: {
@@ -1669,20 +1875,14 @@ struct NovelWritingContextSheet: View {
             }
 
             Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("后面几章想往哪走（每行一条）").font(.footnote).foregroundStyle(AmberTheme.muted)
-                    NovelIMETextEditor(
-                        text: upcomingArcBeatsBinding,
-                        placeholder: IOSAppLocalization.string(
-                            "例如：使者身份曝光",
-                            defaultValue: "例如：使者身份曝光"
-                        ),
-                        isEnabled: canEditUpcomingArc,
-                        minHeight: 96,
-                        bank: planFieldBank
-                    )
-                    .frame(minHeight: 96)
-                }
+                NovelWritingContextFieldRow(
+                    title: "后面几章想往哪走（每行一条）",
+                    fields: writingContextFields,
+                    field: .upcomingArc,
+                    placeholder: "例如：使者身份曝光",
+                    isEnabled: canEditUpcomingArc,
+                    minHeight: 96
+                )
 
                 if let arcMessage, !arcMessage.isEmpty {
                     Label(
@@ -1696,16 +1896,28 @@ struct NovelWritingContextSheet: View {
                 }
 
                 HStack(spacing: 12) {
-                    Button("保存") {
+                    Button {
                         commitPlanFieldsThen {
-                            Task { await saveUpcomingArc() }
+                            saveUpcomingArc()
+                        }
+                    } label: {
+                        ZStack {
+                            Text("保存")
+                                .opacity(isSavingUpcomingArc ? 0 : 1)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            if isSavingUpcomingArc {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .accessibilityHidden(true)
+                            }
                         }
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .frame(minHeight: 44)
                     .contentShape(Rectangle())
-                    .disabled(!canEditUpcomingArc)
+                    .disabled(!canEditUpcomingArc || isSavingUpcomingArc)
 
                     Spacer(minLength: 0)
 
@@ -1717,7 +1929,7 @@ struct NovelWritingContextSheet: View {
                         .controlSize(.small)
                         .frame(minHeight: 44)
                         .contentShape(Rectangle())
-                        .disabled(!canEditUpcomingArc)
+                        .disabled(!canEditUpcomingArc || isSavingUpcomingArc)
                     }
                 }
             } header: {
@@ -1764,9 +1976,9 @@ struct NovelWritingContextSheet: View {
         .background(AmberTheme.background)
         .onChange(of: chapterPlanFieldSyncToken) { _, newToken in
             // Local dirty edits win over snapshot echo. Also never clobber IME.
-            if planFieldsDirty || planFieldBank.hasAnyMarkedText
+            if writingContextFields.planFieldsDirty || writingContextFields.fieldBank.hasAnyMarkedText
                 || NovelTextInputCommitter.hasMarkedText() {
-                if newToken == "none", !planFieldBank.hasAnyMarkedText {
+                if newToken == "none", !writingContextFields.fieldBank.hasAnyMarkedText {
                     // Plan cleared externally while we were not composing.
                     reloadPlanFieldsFromWorkspace()
                 }
@@ -1775,9 +1987,9 @@ struct NovelWritingContextSheet: View {
             reloadPlanFieldsFromWorkspace()
         }
         .onChange(of: upcomingArcFieldSyncToken) { _, newToken in
-            if arcFieldsDirty || planFieldBank.hasAnyMarkedText
+            if writingContextFields.arcFieldsDirty || writingContextFields.fieldBank.hasAnyMarkedText
                 || NovelTextInputCommitter.hasMarkedText() {
-                if newToken == "none", !planFieldBank.hasAnyMarkedText {
+                if newToken == "none", !writingContextFields.fieldBank.hasAnyMarkedText {
                     reloadUpcomingArcFromWorkspace()
                 }
                 return
@@ -1786,84 +1998,16 @@ struct NovelWritingContextSheet: View {
         }
     }
 
-    private var planPlacementBinding: Binding<String> {
-        Binding(
-            get: { planPlacement },
-            set: { newValue in
-                planPlacement = newValue
-                if !isReloadingPlanFields { planFieldsDirty = true }
-            }
-        )
-    }
-
-    private var planGoalBinding: Binding<String> {
-        Binding(
-            get: { planGoal },
-            set: { newValue in
-                planGoal = newValue
-                if !isReloadingPlanFields { planFieldsDirty = true }
-            }
-        )
-    }
-
-    private var planMustHappenBinding: Binding<String> {
-        Binding(
-            get: { planMustHappen },
-            set: { newValue in
-                planMustHappen = newValue
-                if !isReloadingPlanFields { planFieldsDirty = true }
-            }
-        )
-    }
-
-    private var planMustNotHappenBinding: Binding<String> {
-        Binding(
-            get: { planMustNotHappen },
-            set: { newValue in
-                planMustNotHappen = newValue
-                if !isReloadingPlanFields { planFieldsDirty = true }
-            }
-        )
-    }
-
-    private var planEndingHookBinding: Binding<String> {
-        Binding(
-            get: { planEndingHook },
-            set: { newValue in
-                planEndingHook = newValue
-                if !isReloadingPlanFields { planFieldsDirty = true }
-            }
-        )
-    }
-
-    private var planVisibleFactsBinding: Binding<String> {
-        Binding(
-            get: { planVisibleFacts },
-            set: { newValue in
-                planVisibleFacts = newValue
-                if !isReloadingPlanFields { planFieldsDirty = true }
-            }
-        )
-    }
-
-    private var upcomingArcBeatsBinding: Binding<String> {
-        Binding(
-            get: { upcomingArcBeats },
-            set: { newValue in
-                upcomingArcBeats = newValue
-                if !isReloadingArcFields { arcFieldsDirty = true }
-            }
-        )
-    }
-
     private func commitPlanFieldsThen(_ action: @escaping @MainActor () -> Void) {
         // Synchronous UIKit flush so save reads the last marked glyphs.
-        NovelTextInputCommitter.perform(fieldBank: planFieldBank, action)
+        NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank, action)
     }
 
-    private var collaborationMode: NovelCollaborationMode {
+    private var persistedCollaborationMode: NovelCollaborationMode {
         workspace.projectSnapshot?.project.collaborationMode ?? .cocreation
     }
+
+    private var collaborationMode: NovelCollaborationMode { selectedMode }
 
     /// Workspace 合同身份变化时（清除 / 换稿）驱动本地字段回填。
     private var chapterPlanFieldSyncToken: String {
@@ -2112,15 +2256,17 @@ struct NovelWritingContextSheet: View {
     }
 
     private var ghostwriteSwitchBlockers: [NovelGhostwriteReadinessIssue] {
-        workspace.ghostwriteReadinessIssues(requireChapterPlan: false)
+        ghostwriteReadinessCache.issues(for: workspace)
     }
 
     private var canEditChapterPlan: Bool {
-        workspace.canMutate && !workspace.isPerforming && !session.isGhostwriting && !isProposingPlanDraft
+        (workspace.canMutate || savingChapterPlanStatus != nil) &&
+            !session.isGhostwriting && !isProposingPlanDraft
     }
 
     private var canEditUpcomingArc: Bool {
-        workspace.canMutate && !workspace.isPerforming && !session.isGhostwriting && !isProposingPlanDraft
+        (workspace.canMutate || isSavingUpcomingArc) &&
+            !session.isGhostwriting && !isProposingPlanDraft
     }
 
     /// 尚无确认计划时露出「根据前文生成」；已确认则隐藏（避免盖掉手改合同）。
@@ -2129,7 +2275,7 @@ struct NovelWritingContextSheet: View {
     }
 
     private var canProposePlanDraft: Bool {
-        canEditChapterPlan && !isProposingPlanDraft
+        canEditChapterPlan && !isProposingPlanDraft && savingChapterPlanStatus == nil
     }
 
     private var proposePlanDraftButtonTitle: String {
@@ -2168,69 +2314,81 @@ struct NovelWritingContextSheet: View {
     }
 
     private func reloadPlanFieldsFromWorkspace() {
-        isReloadingPlanFields = true
-        let plan = currentChapterPlan
-        planPlacement = plan?.outlinePlacement ?? ""
-        planGoal = plan?.goalAndConflict ?? ""
-        planMustHappen = plan?.mustHappen.joined(separator: "\n") ?? ""
-        planMustNotHappen = plan?.mustNotHappen.joined(separator: "\n") ?? ""
-        planEndingHook = plan?.endingHook ?? ""
-        planVisibleFacts = plan?.visibleFacts.joined(separator: "\n") ?? ""
-        planFieldsDirty = false
-        isReloadingPlanFields = false
+        writingContextFields.reloadPlan(currentChapterPlan)
     }
 
     private func reloadUpcomingArcFromWorkspace() {
-        isReloadingArcFields = true
-        upcomingArcBeats = currentUpcomingArc?.beats.joined(separator: "\n") ?? ""
-        arcFieldsDirty = false
-        isReloadingArcFields = false
+        writingContextFields.reloadArc(currentUpcomingArc)
     }
 
-    private func selectCollaborationMode(_ mode: NovelCollaborationMode) async {
-        guard mode != collaborationMode else { return }
+    private func selectCollaborationMode(_ mode: NovelCollaborationMode) {
+        guard !isSavingCollaborationMode else {
+            selectedMode = persistedCollaborationMode
+            return
+        }
+        guard mode != persistedCollaborationMode else { return }
         modeSwitchMessage = nil
         if mode == .cocreation, session.isGhostwriting || session.isRunning {
-            selectedMode = collaborationMode
+            selectedMode = persistedCollaborationMode
             modeSwitchMessage = "当前生成仍在进行，请先停止再切回共创。"
             return
         }
         if mode == .ghostwrite, !ghostwriteSwitchBlockers.isEmpty {
-            selectedMode = collaborationMode
+            selectedMode = persistedCollaborationMode
             modeSwitchMessage = "无法切入代笔，请先补齐下方缺项。"
             return
         }
-        let saved = await workspace.setCollaborationMode(mode)
-        if saved {
-            selectedMode = mode
-            session.reconcileComposerIntent()
-        } else {
-            selectedMode = collaborationMode
-            modeSwitchMessage = workspace.errorMessage ?? "模式切换失败，请重试。"
+        isSavingCollaborationMode = true
+        Task { @MainActor in
+            let saved = await workspace.setCollaborationMode(mode)
+            isSavingCollaborationMode = false
+            if saved {
+                selectedMode = mode
+                session.reconcileComposerIntent()
+            } else {
+                selectedMode = persistedCollaborationMode
+                modeSwitchMessage = workspace.errorMessage ?? "模式切换失败，请重试。"
+            }
         }
     }
 
-    private func saveChapterPlan(status: NovelChapterPlanStatus) async {
+    private func saveChapterPlan(status: NovelChapterPlanStatus) {
+        guard savingChapterPlanStatus == nil else { return }
         planMessage = nil
         planMessageIsError = false
         // Belt-and-suspenders: bank already flushed on the button path.
-        planFieldBank.commitAll()
-        let saved = await workspace.upsertChapterPlan(
-            status: status,
-            outlinePlacement: planPlacement,
-            goalAndConflict: planGoal,
-            mustHappen: planLines(from: planMustHappen),
-            mustNotHappen: planLines(from: planMustNotHappen),
-            endingHook: planEndingHook,
-            visibleFacts: planLines(from: planVisibleFacts)
-        )
-        if saved {
-            planFieldsDirty = false
-            planMessage = status == .confirmed ? "已确认，可以按这个写。" : "草稿已保存。"
-            planMessageIsError = false
-        } else {
-            planMessage = workspace.errorMessage ?? "本章计划保存失败。"
-            planMessageIsError = true
+        writingContextFields.fieldBank.commitAll()
+        let submittedRevision = writingContextFields.planEditRevision
+        let outlinePlacement = writingContextFields.planPlacement
+        let goalAndConflict = writingContextFields.planGoal
+        let mustHappen = planLines(from: writingContextFields.planMustHappen)
+        let mustNotHappen = planLines(from: writingContextFields.planMustNotHappen)
+        let endingHook = writingContextFields.planEndingHook
+        let visibleFacts = planLines(from: writingContextFields.planVisibleFacts)
+        savingChapterPlanStatus = status
+        savingChapterPlanRevision = submittedRevision
+        chapterPlanSaveTask = Task { @MainActor in
+            let saved = await workspace.upsertChapterPlan(
+                status: status,
+                outlinePlacement: outlinePlacement,
+                goalAndConflict: goalAndConflict,
+                mustHappen: mustHappen,
+                mustNotHappen: mustNotHappen,
+                endingHook: endingHook,
+                visibleFacts: visibleFacts
+            )
+            if saved {
+                writingContextFields.markPlanClean(ifUnchangedSince: submittedRevision)
+                planMessage = status == .confirmed ? "已确认，可以按这个写。" : "草稿已保存。"
+                planMessageIsError = false
+            } else {
+                planMessage = workspace.errorMessage ?? "本章计划保存失败。"
+                planMessageIsError = true
+            }
+            savingChapterPlanStatus = nil
+            savingChapterPlanRevision = nil
+            chapterPlanSaveTask = nil
+            return saved
         }
     }
 
@@ -2245,7 +2403,7 @@ struct NovelWritingContextSheet: View {
         }
         planMessage = nil
         planMessageIsError = false
-        planFieldBank.commitAll()
+        writingContextFields.fieldBank.commitAll()
         isProposingPlanDraft = true
         defer { isProposingPlanDraft = false }
 
@@ -2270,32 +2428,16 @@ struct NovelWritingContextSheet: View {
     }
 
     private func applyChapterPlanToFields(_ plan: NovelChapterPlanRecord) {
-        isReloadingPlanFields = true
-        planPlacement = plan.outlinePlacement
-        planGoal = plan.goalAndConflict
-        planMustHappen = plan.mustHappen.joined(separator: "\n")
-        planMustNotHappen = plan.mustNotHappen.joined(separator: "\n")
-        planEndingHook = plan.endingHook
-        planVisibleFacts = plan.visibleFacts.joined(separator: "\n")
-        planFieldsDirty = false
-        isReloadingPlanFields = false
+        writingContextFields.reloadPlan(plan)
     }
 
     private func clearChapterPlan() async {
         planMessage = nil
         planMessageIsError = false
-        planFieldBank.commitAll()
+        writingContextFields.fieldBank.commitAll()
         let cleared = await workspace.clearChapterPlan()
         if cleared {
-            isReloadingPlanFields = true
-            planPlacement = ""
-            planGoal = ""
-            planMustHappen = ""
-            planMustNotHappen = ""
-            planEndingHook = ""
-            planVisibleFacts = ""
-            planFieldsDirty = false
-            isReloadingPlanFields = false
+            writingContextFields.reloadPlan(nil)
             planMessage = "计划已清除。"
             planMessageIsError = false
         } else {
@@ -2304,37 +2446,40 @@ struct NovelWritingContextSheet: View {
         }
     }
 
-    private func saveUpcomingArc() async {
+    private func saveUpcomingArc() {
+        guard !isSavingUpcomingArc else { return }
         arcMessage = nil
         arcMessageIsError = false
-        planFieldBank.commitAll()
-        let beats = planLines(from: upcomingArcBeats)
+        writingContextFields.fieldBank.commitAll()
+        let beats = planLines(from: writingContextFields.upcomingArcBeats)
         guard !beats.isEmpty else {
             arcMessage = "请至少写一条。"
             arcMessageIsError = true
             return
         }
-        let saved = await workspace.upsertUpcomingArc(beats: beats)
-        if saved {
-            arcFieldsDirty = false
-            arcMessage = "已保存。"
-            arcMessageIsError = false
-        } else {
-            arcMessage = workspace.errorMessage ?? "保存失败。"
-            arcMessageIsError = true
+        let submittedRevision = writingContextFields.arcEditRevision
+        isSavingUpcomingArc = true
+        Task { @MainActor in
+            let saved = await workspace.upsertUpcomingArc(beats: beats)
+            if saved {
+                writingContextFields.markArcClean(ifUnchangedSince: submittedRevision)
+                arcMessage = "已保存。"
+                arcMessageIsError = false
+            } else {
+                arcMessage = workspace.errorMessage ?? "保存失败。"
+                arcMessageIsError = true
+            }
+            isSavingUpcomingArc = false
         }
     }
 
     private func clearUpcomingArc() async {
         arcMessage = nil
         arcMessageIsError = false
-        planFieldBank.commitAll()
+        writingContextFields.fieldBank.commitAll()
         let cleared = await workspace.clearUpcomingArc()
         if cleared {
-            isReloadingArcFields = true
-            upcomingArcBeats = ""
-            arcFieldsDirty = false
-            isReloadingArcFields = false
+            writingContextFields.reloadArc(nil)
             arcMessage = "备注已清除。"
             arcMessageIsError = false
         } else {
@@ -2351,7 +2496,7 @@ struct NovelWritingContextSheet: View {
     }
 
     private func applyDraftBeforeTransition(_ transition: @escaping () -> Void) {
-        NovelTextInputCommitter.perform(fieldBank: planFieldBank) {
+        NovelTextInputCommitter.perform(fieldBank: writingContextFields.fieldBank) {
             onApply(overrides, budgetTokens)
             transition()
         }

@@ -239,7 +239,7 @@ enum NovelGenerationReducer {
             appliedAt: now
         ))
 
-        try NovelDocumentValidator.validateTransition(from: document, to: next)
+        _ = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(from: document, to: next)
         return (next, outcome)
     }
 
@@ -384,7 +384,7 @@ enum NovelGenerationReducer {
             document: &next
         )
 
-        try NovelDocumentValidator.validateTransition(from: document, to: next)
+        _ = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(from: document, to: next)
         return (
             next,
             NovelSessionMessageSnapshot(
@@ -461,7 +461,7 @@ enum NovelGenerationReducer {
             now: now,
             document: &next
         )
-        try NovelDocumentValidator.validateTransition(from: document, to: next)
+        _ = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(from: document, to: next)
         return (
             next,
             NovelSessionMessageSnapshot(
@@ -649,7 +649,10 @@ enum NovelGenerationReducer {
             now: now
         )
         guard result.didTransition else { return (document, nil) }
-        try NovelDocumentValidator.validateTransition(from: document, to: result.document)
+        _ = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(
+            from: document,
+            to: result.document
+        )
         return (result.document, result.message)
     }
 
@@ -719,7 +722,7 @@ enum NovelGenerationReducer {
             appliedAt: now
         ))
 
-        try NovelDocumentValidator.validateTransition(from: document, to: next)
+        _ = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(from: document, to: next)
         return (next, outcome, result.message)
     }
 
@@ -781,7 +784,7 @@ enum NovelGenerationReducer {
             document: &next
         )
 
-        try NovelDocumentValidator.validateTransition(from: document, to: next)
+        _ = try NovelDocumentValidator.validateTransitionFromValidatedCurrent(from: document, to: next)
         return (
             next,
             NovelSessionMessageSnapshot(

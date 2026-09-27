@@ -257,6 +257,7 @@ final class NovelCreationViewModel {
     var selectedBranchID: NovelBranchID?
     var projectSnapshot: NovelProjectSnapshot?
     var branchSnapshot: NovelBranchSnapshot?
+    private(set) var checkoutSidecarFailure: String?
     var injectionPreview: NovelInjectionPreviewSnapshot?
     /// 剧情矛盾检查的结果。**只活在内存里**:它是一份诊断报告,不是故事状态的一部分,
     /// 退出项目或换分支就丢弃,需要重扫(见 `NovelContinuityAuditReport` 的说明)。
@@ -284,7 +285,12 @@ final class NovelCreationViewModel {
     /// loadProjects 并发防护：首页 onAppear 与项目列表 .task 可并发触发同一加载，
     /// 较早响应不得回写覆盖较晚结果（latest-wins）。
     @ObservationIgnored private var projectsLoadRevision = 0
+    @ObservationIgnored private var projectListReadRevision = 0
     private(set) var isPerforming = false
+    private(set) var pendingSettingProposalIDs: Set<NovelProposalID> = []
+    private(set) var pendingMaterialDeletionIDs: Set<NovelMaterialID> = []
+    private(set) var isRejectingAllSettingProposals = false
+    private(set) var isAcceptingStalePlot = false
     private(set) var stateSyncActivity: NovelStateSyncActivity?
     private(set) var projectListLoadError: String?
     var errorMessage: String?
@@ -335,7 +341,7 @@ final class NovelCreationViewModel {
     @ObservationIgnored private var ownMutationOperationIDs: Set<NovelOperationID> = []
     /// Coalesce external mutation refreshes (discussion tools often fire many
     /// commits in one agent turn). Serial full-project reloads freeze large novels.
-    @ObservationIgnored private var pendingExternalMutationProjectIDs: Set<NovelProjectID> = []
+    @ObservationIgnored private var pendingExternalMutationProjectIDs: [NovelProjectID: Bool] = [:]
     @ObservationIgnored private var externalMutationRefreshTask: Task<Void, Never>?
     @ObservationIgnored private var ghostwriteProgressWriteTask: Task<Bool, Never>?
 
@@ -352,24 +358,53 @@ final class NovelCreationViewModel {
                 // 自身发起的写入已在自己的流程里刷新；回声刷新会与这些流程的
                 // 中间状态竞争（分支选择/快照序列），必须按 operationID 抑制。
                 if self.ownMutationOperationIDs.remove(event.operationID) != nil { continue }
-                self.scheduleExternalMutationRefresh(projectID: event.projectID)
+                self.scheduleExternalMutationRefresh(
+                    projectID: event.projectID,
+                    refreshesSelection: event.refreshesSelection
+                )
             }
         }
     }
 
     /// Batch tool writes into one UI refresh after a short quiet window.
-    private func scheduleExternalMutationRefresh(projectID: NovelProjectID) {
-        pendingExternalMutationProjectIDs.insert(projectID)
+    private func scheduleExternalMutationRefresh(
+        projectID: NovelProjectID,
+        refreshesSelection: Bool
+    ) {
+        pendingExternalMutationProjectIDs[projectID] =
+            (pendingExternalMutationProjectIDs[projectID] ?? false) || refreshesSelection
         guard externalMutationRefreshTask == nil else { return }
         externalMutationRefreshTask = Task { @MainActor [weak self] in
             // 150ms covers typical multi-tool bursts without making title/panel lag feel stuck.
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard let self else { return }
             let projectIDs = self.pendingExternalMutationProjectIDs
-            self.pendingExternalMutationProjectIDs = []
+            self.pendingExternalMutationProjectIDs = [:]
             self.externalMutationRefreshTask = nil
-            for id in projectIDs {
-                _ = try? await self.refreshCurrentSelection(projectID: id)
+            var needsProjectListRefresh = false
+            for (id, refreshesSelection) in projectIDs {
+                guard refreshesSelection else {
+                    needsProjectListRefresh = true
+                    continue
+                }
+                guard self.selectedProjectID == id else {
+                    needsProjectListRefresh = true
+                    continue
+                }
+                do {
+                    if try await self.refreshCurrentSelection(
+                        projectID: id,
+                        refreshProjectList: false,
+                        fallbackProjectListOnMiss: false
+                    ) == false {
+                        needsProjectListRefresh = true
+                    }
+                } catch {
+                    needsProjectListRefresh = true
+                }
+            }
+            if needsProjectListRefresh {
+                _ = try? await self.refreshProjectListIfLatest()
             }
         }
     }
@@ -469,6 +504,17 @@ final class NovelCreationViewModel {
         } else {
             composerDrafts[owner] = draft
         }
+    }
+
+    func restoreComposerDraftAfterFailedSend(
+        _ draft: NovelComposerDraft,
+        owner: NovelComposerDraftOwner
+    ) {
+        guard composerDraft(
+            projectID: owner.projectID,
+            branchID: owner.branchID
+        ).text.isEmpty else { return }
+        saveComposerDraft(draft, projectID: owner.projectID, branchID: owner.branchID)
     }
 
     func acquireSessionOperation(ownerID: UUID) -> Bool {
@@ -969,6 +1015,8 @@ final class NovelCreationViewModel {
     ) async {
         projectsLoadRevision &+= 1
         let revision = projectsLoadRevision
+        projectListReadRevision &+= 1
+        let projectListRevision = projectListReadRevision
         isLoading = true
         defer {
             if revision == projectsLoadRevision {
@@ -979,8 +1027,9 @@ final class NovelCreationViewModel {
             let loadedProjects = try await projectSummaries()
             try Task.checkCancellation()
             // 仅接受最新一次加载的结果；较早响应静默丢弃，防止旧快照回写。
-            guard revision == projectsLoadRevision else { return }
-            projects = loadedProjects
+            guard revision == projectsLoadRevision,
+                  projectListRevision == projectListReadRevision else { return }
+            updateProjectsIfChanged(loadedProjects)
             projectListLoadError = nil
             guard restoresSelection else {
                 errorMessage = nil
@@ -1004,7 +1053,8 @@ final class NovelCreationViewModel {
         } catch {
             guard !Task.isCancelled else { return }
             // 过期加载的失败同样不得覆盖最新状态。
-            guard revision == projectsLoadRevision else { return }
+            guard revision == projectsLoadRevision,
+                  projectListRevision == projectListReadRevision else { return }
             projectListLoadError = errorDescription(error)
             report(error)
         }
@@ -1047,6 +1097,7 @@ final class NovelCreationViewModel {
                   selectionToken == token else { return false }
             selectedProjectID = projectID
             projectSnapshot = project
+            refreshCheckoutSidecarFailure(for: projectID)
             selectedBranchID = branchID
             branchSnapshot = loadedBranch
             if let branchID { lastSelectedBranchIDs[projectID] = branchID }
@@ -1158,6 +1209,7 @@ final class NovelCreationViewModel {
                   selectedBranchID == sourceBranchID else { return .failed }
             selectionToken = UUID()
             projectSnapshot = refreshedProject
+            refreshCheckoutSidecarFailure(for: projectID)
             selectedBranchID = branchID
             branchSnapshot = snapshot
             lastSelectedBranchIDs[projectID] = branchID
@@ -1176,6 +1228,7 @@ final class NovelCreationViewModel {
                selectedProjectID == projectID {
                 selectionToken = UUID()
                 projectSnapshot = refreshedProject
+                refreshCheckoutSidecarFailure(for: projectID)
                 selectedBranchID = interruptedSourceBranchID
                 branchSnapshot = refreshedBranch
                 lastSelectedBranchIDs[projectID] = interruptedSourceBranchID
@@ -1374,7 +1427,10 @@ final class NovelCreationViewModel {
         }
         quickStartStatuses[owner] = .generating(runID: run.id)
         do {
-            try await refreshCurrentSelection(projectID: owner.projectID)
+            try await refreshCurrentSelection(
+                projectID: owner.projectID,
+                refreshProjectList: false
+            )
             errorMessage = nil
             reconcileQuickStartStartingOwner(owner: owner, runID: request.id)
         } catch {
@@ -1420,7 +1476,10 @@ final class NovelCreationViewModel {
         defer { releaseOperation(ownerID: ownerID) }
         do {
             try await creation.retryPendingTerminal(runID: runID)
-            try await refreshCurrentSelection(projectID: projectID)
+            try await refreshCurrentSelection(
+                projectID: projectID,
+                refreshProjectList: false
+            )
             quickStartStatuses[owner] = nil
             errorMessage = nil
         } catch {
@@ -1438,7 +1497,10 @@ final class NovelCreationViewModel {
         let owner = NovelQuickStartOwner(projectID: projectID, branchID: branchID)
         defer { releaseOperation(ownerID: ownerID) }
         do {
-            try await refreshCurrentSelection(projectID: projectID)
+            try await refreshCurrentSelection(
+                projectID: projectID,
+                refreshProjectList: false
+            )
             if let runID = quickStartStartingRun?.id {
                 reconcileQuickStartStartingOwner(owner: owner, runID: runID)
             }
@@ -1457,7 +1519,10 @@ final class NovelCreationViewModel {
             switch event {
             case .started:
                 do {
-                    try await refreshCurrentSelection(projectID: owner.projectID)
+                    try await refreshCurrentSelection(
+                        projectID: owner.projectID,
+                        refreshProjectList: false
+                    )
                     reconcileQuickStartStartingOwner(owner: owner, runID: run.id)
                 } catch {
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
@@ -1467,7 +1532,10 @@ final class NovelCreationViewModel {
                 continue
             case .completed(let snapshot):
                 do {
-                    try await refreshCurrentSelection(projectID: owner.projectID)
+                    try await refreshCurrentSelection(
+                        projectID: owner.projectID,
+                        refreshProjectList: false
+                    )
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
                     if case .some(.askUser) = snapshot.message.interaction {
                         quickStartStatuses[owner] = .awaitingUser(
@@ -1489,7 +1557,10 @@ final class NovelCreationViewModel {
                     defaultValue: "建议生成已中断，可以重新生成。"
                 ))
                 do {
-                    try await refreshCurrentSelection(projectID: owner.projectID)
+                    try await refreshCurrentSelection(
+                        projectID: owner.projectID,
+                        refreshProjectList: false
+                    )
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
                 } catch {
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
@@ -1502,7 +1573,10 @@ final class NovelCreationViewModel {
                     message: NovelPresentation.failureMessage(failure)
                 )
                 do {
-                    try await refreshCurrentSelection(projectID: owner.projectID)
+                    try await refreshCurrentSelection(
+                        projectID: owner.projectID,
+                        refreshProjectList: false
+                    )
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
                 } catch {
                     guard quickStartTaskRunIDs[owner] == run.id else { return }
@@ -1534,18 +1608,51 @@ final class NovelCreationViewModel {
         quickStartStartingRun = nil
     }
 
-    func refreshCurrentSelection(projectID: NovelProjectID? = nil) async throws {
+    @discardableResult
+    func refreshCurrentSelection(
+        projectID: NovelProjectID? = nil,
+        refreshProjectList: Bool = true,
+        fallbackProjectListOnMiss: Bool = true
+    ) async throws -> Bool {
         let targetProjectID = projectID ?? selectedProjectID
-        guard let targetProjectID else { return }
-        projects = try await projectSummaries()
-        guard selectedProjectID == targetProjectID else { return }
-        try await reloadSelection(
+        guard let targetProjectID else { return false }
+        if refreshProjectList {
+            _ = try await refreshProjectListIfLatest()
+        }
+        guard selectedProjectID == targetProjectID else {
+            if !refreshProjectList, fallbackProjectListOnMiss {
+                _ = try await refreshProjectListIfLatest()
+            }
+            return false
+        }
+        let didReloadSelection = try await reloadSelection(
             projectID: targetProjectID,
             branchID: selectedBranchID
         )
+        guard didReloadSelection else {
+            if !refreshProjectList, fallbackProjectListOnMiss {
+                _ = try await refreshProjectListIfLatest()
+            }
+            return false
+        }
+        guard let snapshot = projectSnapshot,
+              snapshot.project.id == targetProjectID else {
+            if !refreshProjectList, fallbackProjectListOnMiss {
+                _ = try await refreshProjectListIfLatest()
+            }
+            return false
+        }
+        guard patchProjectSummary(from: snapshot) else {
+            if !refreshProjectList, fallbackProjectListOnMiss {
+                _ = try await refreshProjectListIfLatest()
+                return true
+            }
+            return false
+        }
         if reloadNoticeProjectID == targetProjectID {
             clearReloadRequirement()
         }
+        return true
     }
 
     @discardableResult
@@ -1656,7 +1763,8 @@ final class NovelCreationViewModel {
         content: String,
         tags: [String],
         injectionMode: NovelInjectionMode,
-        aliases: [String] = []
+        aliases: [String] = [],
+        refreshProjectList: Bool = true
     ) async {
         guard let snapshot = projectSnapshot else { return }
         _ = await perform(.reviseMaterial(NovelReviseMaterialCommand(
@@ -1670,13 +1778,14 @@ final class NovelCreationViewModel {
             tags: tags,
             injectionMode: injectionMode,
             aliases: aliases
-        )))
+        )), refreshProjectList: refreshProjectList)
     }
 
     @discardableResult
     func clarifyCharacterIdentity(
         mention: String,
-        clarification: String
+        clarification: String,
+        refreshProjectList: Bool = true
     ) async -> Bool {
         guard let project = projectSnapshot,
               let branch = branchSnapshot else { return false }
@@ -1693,11 +1802,14 @@ final class NovelCreationViewModel {
                 mention: mention,
                 clarification: clarification
             )
-        ))
+        ), refreshProjectList: refreshProjectList)
     }
 
     func deleteMaterial(_ materialID: NovelMaterialID) async {
-        guard let snapshot = projectSnapshot else { return }
+        guard let snapshot = projectSnapshot,
+              !pendingMaterialDeletionIDs.contains(materialID) else { return }
+        pendingMaterialDeletionIDs.insert(materialID)
+        defer { pendingMaterialDeletionIDs.remove(materialID) }
         _ = await perform(.deleteMaterial(NovelDeleteMaterialCommand(
             context: mutationContext(configRevision: snapshot.project.configRevision),
             projectID: snapshot.project.id,
@@ -1843,6 +1955,17 @@ final class NovelCreationViewModel {
         resolution: NovelSettingProposalResolution
     ) async -> Bool {
         guard let project = projectSnapshot, let branch = branchSnapshot else { return false }
+        let isRejecting: Bool
+        if case .reject = resolution {
+            guard !pendingSettingProposalIDs.contains(proposalID) else { return false }
+            pendingSettingProposalIDs.insert(proposalID)
+            isRejecting = true
+        } else {
+            isRejecting = false
+        }
+        defer {
+            if isRejecting { pendingSettingProposalIDs.remove(proposalID) }
+        }
         return await perform(.resolveSettingProposal(NovelResolveSettingProposalCommand(
             context: mutationContext(
                 projectRevision: project.project.revision,
@@ -1857,12 +1980,98 @@ final class NovelCreationViewModel {
 
     @discardableResult
     func rejectActiveSettingProposals() async -> Bool {
-        let ids = branchSnapshot?.activeSettingProposals.map(\.id) ?? []
+        guard canMutate,
+              let project = projectSnapshot,
+              let branch = branchSnapshot else { return false }
+        let ids = branch.activeSettingProposals.map(\.id)
         guard !ids.isEmpty else { return true }
-        for id in ids {
-            let ok = await resolveProposal(id, resolution: .reject)
-            if !ok { return false }
+
+        let ownerID = UUID()
+        guard acquireOperation(ownerID: ownerID) else { return false }
+        pendingSettingProposalIDs.formUnion(ids)
+        isRejectingAllSettingProposals = true
+        let startingSelectionToken = selectionToken
+        defer {
+            pendingSettingProposalIDs.subtract(ids)
+            isRejectingAllSettingProposals = false
+            releaseOperation(ownerID: ownerID)
         }
+
+        var nextProjectRevision = project.project.revision
+        var nextConfigRevision = project.project.configRevision
+        var mutationError: Error?
+        for id in ids {
+            let context = mutationContext(
+                projectRevision: nextProjectRevision,
+                configRevision: nextConfigRevision,
+                branchHeadRevision: branch.branch.headRevision
+            )
+            let command = NovelResolveSettingProposalCommand(
+                context: context,
+                projectID: project.project.id,
+                proposalID: id,
+                resolution: .reject
+            )
+            ownMutationOperationIDs.insert(context.operationID)
+            do {
+                let outcome = try await creation.perform(.resolveSettingProposal(command))
+                guard case let .settingProposalRejected(
+                    projectID,
+                    proposalID,
+                    projectRevision,
+                    configRevision
+                ) = outcome,
+                      projectID == project.project.id,
+                      proposalID == id else {
+                    throw NovelError.repositoryFailure(
+                        "The proposal rejection returned an unexpected result."
+                    )
+                }
+                nextProjectRevision = projectRevision
+                nextConfigRevision = configRevision
+            } catch {
+                ownMutationOperationIDs.remove(context.operationID)
+                mutationError = error
+                break
+            }
+        }
+
+        var reloadError: Error?
+        if selectionToken == startingSelectionToken,
+           selectedProjectID == project.project.id {
+            do {
+                let reloaded = try await reloadSelection(
+                    projectID: project.project.id,
+                    branchID: branch.branch.id
+                )
+                if !reloaded {
+                    reloadError = NovelError.projectBusy(project.project.id)
+                } else if let refreshed = projectSnapshot,
+                          !patchProjectSummary(from: refreshed) {
+                    _ = try await refreshProjectListIfLatest()
+                }
+            } catch {
+                reloadError = error
+            }
+        }
+
+        if let mutationError {
+            report(mutationError)
+            if let reloadError {
+                reloadNoticeMessage = "拒绝建议时部分写入失败，且项目刷新失败：\(errorDescription(reloadError))"
+                reloadNoticeProjectID = project.project.id
+                reloadNoticeBranchID = branch.branch.id
+            }
+            return false
+        }
+        if let reloadError {
+            errorMessage = nil
+            reloadNoticeMessage = "拒绝建议已提交，但项目重新载入失败：\(errorDescription(reloadError))"
+            reloadNoticeProjectID = project.project.id
+            reloadNoticeBranchID = branch.branch.id
+            return false
+        }
+        errorMessage = nil
         return true
     }
 
@@ -2373,7 +2582,10 @@ final class NovelCreationViewModel {
         // A refresh failure after the atomic commit must not turn into another
         // adjudication/model request. The session performs its own durable refresh too.
         if result.didCollect {
-            try? await refreshCurrentSelection(projectID: projectID)
+            _ = try? await refreshCurrentSelection(
+                projectID: projectID,
+                refreshProjectList: false
+            )
         }
         return result
     }
@@ -2391,7 +2603,10 @@ final class NovelCreationViewModel {
             previousPlanSummary: previousPlanSummary
         )
         // 自动确认合同后刷新快照，供代笔 pipeline 立刻读到新 digest。
-        try await refreshCurrentSelection(projectID: projectID)
+        try await refreshCurrentSelection(
+            projectID: projectID,
+            refreshProjectList: false
+        )
         return plan
     }
 
@@ -2410,7 +2625,10 @@ final class NovelCreationViewModel {
             previousPlanSummary: previousPlanSummary
         )
         // 刷新失败不抛：盘上已有 draft，调用方用返回的 plan 回填字段。
-        try? await refreshCurrentSelection(projectID: projectID)
+        _ = try? await refreshCurrentSelection(
+            projectID: projectID,
+            refreshProjectList: false
+        )
         return plan
     }
 
@@ -2513,7 +2731,10 @@ final class NovelCreationViewModel {
         runID: NovelRunID
     ) async {
         do {
-            try await refreshCurrentSelection(projectID: owner.projectID)
+            try await refreshCurrentSelection(
+                projectID: owner.projectID,
+                refreshProjectList: false
+            )
         } catch {
             let message = NovelPresentation.operationErrorMessage(error)
             clearQuickStartTask(
@@ -2983,9 +3204,9 @@ final class NovelCreationViewModel {
                 continuityAuditFailureStorage = nil
             }
             errorMessage = nil
-            try? await reloadSelection(projectID: projectID, branchID: branchID)
+            _ = try? await reloadSelection(projectID: projectID, branchID: branchID)
         } catch is CancellationError {
-            try? await reloadSelection(projectID: projectID, branchID: branchID)
+            _ = try? await reloadSelection(projectID: projectID, branchID: branchID)
             if continuityAuditExpirationOwnerID == ownerID {
                 continuityAuditFailureStorage = NovelContinuityAuditFailure(
                     target: target,
@@ -2995,7 +3216,7 @@ final class NovelCreationViewModel {
                 continuityAuditFailureStorage = nil
             }
         } catch {
-            try? await reloadSelection(projectID: projectID, branchID: branchID)
+            _ = try? await reloadSelection(projectID: projectID, branchID: branchID)
             if continuityAuditExpirationOwnerID == ownerID {
                 continuityAuditFailureStorage = NovelContinuityAuditFailure(
                     target: target,
@@ -3166,20 +3387,17 @@ final class NovelCreationViewModel {
         return await creation.worktreeManifestExists(projectID: projectID)
     }
 
-    var checkoutSidecarFailure: String? {
-        guard let projectID = selectedProjectID,
-              let root = try? NovelFileProjectRepository.defaultRootDirectory() else {
-            return nil
-        }
-        let package = NovelProjectShardedStorage.packageDirectory(
-            projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
-            projectID: projectID
-        )
-        return NovelProjectShardedStorage.checkoutWriteFailureMessage(in: package)
-    }
-
     func acceptStalePlot() async {
-        guard let projectID = selectedProjectID, let branchID = selectedBranchID else { return }
+        guard canMutate,
+              let projectID = selectedProjectID,
+              let branchID = selectedBranchID else { return }
+        let ownerID = UUID()
+        guard acquireOperation(ownerID: ownerID) else { return }
+        isAcceptingStalePlot = true
+        defer {
+            isAcceptingStalePlot = false
+            releaseOperation(ownerID: ownerID)
+        }
         do {
             try await creation.applyWorkspacePlotAcceptStale(
                 projectID: projectID,
@@ -3187,6 +3405,7 @@ final class NovelCreationViewModel {
             )
             errorMessage = nil
             projectSnapshot = try await project(id: projectID)
+            refreshCheckoutSidecarFailure(for: projectID)
             branchSnapshot = try await branch(projectID: projectID, branchID: branchID)
         } catch {
             report(error)
@@ -3244,7 +3463,7 @@ final class NovelCreationViewModel {
               acquireOperation(ownerID: ownerID) else { return }
         defer { releaseOperation(ownerID: ownerID) }
         do {
-            projects = try await projectSummaries()
+            _ = try await refreshProjectListIfLatest()
             if selectedProjectID == projectID {
                 try await reloadSelection(
                     projectID: projectID,
@@ -3283,6 +3502,7 @@ final class NovelCreationViewModel {
         selecting projectID: NovelProjectID? = nil,
         selectingBranch branchID: NovelBranchID? = nil,
         reload: Bool = true,
+        refreshProjectList: Bool = true,
         reportsError: Bool = true,
         reservedOwnerID: UUID? = nil
     ) async -> Bool {
@@ -3330,15 +3550,26 @@ final class NovelCreationViewModel {
         } catch {
             let operationError = error
             if reload {
-                if let refreshedProjects = try? await projectSummaries() {
-                    projects = refreshedProjects
+                if refreshProjectList {
+                    _ = try? await refreshProjectListIfLatest()
                 }
                 let targetProjectID = projectID ?? selectedProjectID ?? action.projectID
-                if (projectID != nil || selectionToken == startingSelectionToken),
-                   projects.contains(where: { $0.id == targetProjectID }) {
-                    try? await reloadSelection(
+                let shouldReloadSelection = projectID != nil ||
+                    selectionToken == startingSelectionToken
+                let targetExists = refreshProjectList
+                    ? projects.contains(where: { $0.id == targetProjectID })
+                    : selectedProjectID == targetProjectID
+                var didReloadSelection = false
+                if shouldReloadSelection, targetExists {
+                    didReloadSelection = (try? await reloadSelection(
                         projectID: targetProjectID,
                         branchID: branchID ?? selectedBranchID
+                    )) == true
+                }
+                if !refreshProjectList {
+                    await refreshProjectSummaryAfterMutation(
+                        projectID: targetProjectID,
+                        selectionReloaded: didReloadSelection
                     )
                 }
             } else if !reload {
@@ -3366,11 +3597,20 @@ final class NovelCreationViewModel {
         let targetProjectID = projectID ?? selectedProjectID ?? action.projectID
         let targetBranchID = branchID ?? selectedBranchID
         do {
-            projects = try await projectSummaries()
+            if refreshProjectList {
+                _ = try await refreshProjectListIfLatest()
+            }
+            var didReloadSelection = false
             if projectID != nil || selectionToken == startingSelectionToken {
-                try await reloadSelection(
+                didReloadSelection = try await reloadSelection(
                     projectID: targetProjectID,
                     branchID: targetBranchID
+                )
+            }
+            if !refreshProjectList {
+                await refreshProjectSummaryAfterMutation(
+                    projectID: targetProjectID,
+                    selectionReloaded: didReloadSelection
                 )
             }
             return true
@@ -3379,6 +3619,12 @@ final class NovelCreationViewModel {
             reloadNoticeMessage = "操作已经完成，但项目重新载入失败：\(errorDescription(error))"
             reloadNoticeProjectID = targetProjectID
             reloadNoticeBranchID = targetBranchID
+            if !refreshProjectList {
+                await refreshProjectSummaryAfterMutation(
+                    projectID: targetProjectID,
+                    selectionReloaded: false
+                )
+            }
             return true
         }
     }
@@ -3450,7 +3696,9 @@ final class NovelCreationViewModel {
                     let streamedCharacters = NovelStateSyncStreamProgress.shared.count(
                         pendingID: pendingID
                     )
-                    self.stateSyncActivity = activity
+                    if self.stateSyncActivity != activity {
+                        self.stateSyncActivity = activity
+                    }
                     self.updateStateSyncBackgroundProgress(
                         ownerID: ownerID,
                         activity: activity,
@@ -3706,6 +3954,7 @@ final class NovelCreationViewModel {
             if selectedProjectID == target.projectID,
                selectedBranchID == target.branchID {
                 self.projectSnapshot = projectSnapshot
+                self.refreshCheckoutSidecarFailure(for: target.projectID)
                 self.branchSnapshot = branchSnapshot
             }
             guard branchSnapshot.branch.syncStatus == .needsSync else {
@@ -3877,10 +4126,11 @@ final class NovelCreationViewModel {
         }
     }
 
+    @discardableResult
     private func reloadSelection(
         projectID: NovelProjectID,
         branchID preferredBranchID: NovelBranchID?
-    ) async throws {
+    ) async throws -> Bool {
         let token = UUID()
         selectionToken = token
         let project = try await self.project(id: projectID)
@@ -3897,13 +4147,15 @@ final class NovelCreationViewModel {
         } else {
             loadedBranch = nil
         }
-        guard selectionToken == token else { return }
+        guard selectionToken == token else { return false }
         selectedProjectID = projectID
         projectSnapshot = project
+        refreshCheckoutSidecarFailure(for: projectID)
         selectedBranchID = branchID
         branchSnapshot = loadedBranch
         if let branchID { lastSelectedBranchIDs[projectID] = branchID }
         injectionPreview = nil
+        return true
     }
 
     private func projectSummaries() async throws -> [NovelProjectSummary] {
@@ -3911,6 +4163,64 @@ final class NovelCreationViewModel {
             throw NovelError.invalidInput("The project list returned an unexpected snapshot.")
         }
         return summaries
+    }
+
+    private func refreshProjectListIfLatest() async throws -> Bool {
+        projectListReadRevision &+= 1
+        let revision = projectListReadRevision
+        let refreshedProjects = try await projectSummaries()
+        try Task.checkCancellation()
+        guard revision == projectListReadRevision else { return false }
+        updateProjectsIfChanged(refreshedProjects)
+        return true
+    }
+
+    private func updateProjectsIfChanged(_ refreshedProjects: [NovelProjectSummary]) {
+        guard projects != refreshedProjects else { return }
+        projects = refreshedProjects
+    }
+
+    private func patchProjectSummary(from snapshot: NovelProjectSnapshot) -> Bool {
+        let summary = NovelProjectSummary(snapshot: snapshot)
+        guard let index = projects.firstIndex(where: { $0.id == summary.id }) else {
+            return false
+        }
+        guard projects[index] != summary else { return true }
+        var refreshedProjects = projects
+        refreshedProjects[index] = summary
+        refreshedProjects.sort(by: NovelProjectSummary.listOrder)
+        projectListReadRevision &+= 1
+        updateProjectsIfChanged(refreshedProjects)
+        return true
+    }
+
+    private func refreshProjectSummaryAfterMutation(
+        projectID: NovelProjectID,
+        selectionReloaded: Bool
+    ) async {
+        if selectionReloaded,
+           let snapshot = projectSnapshot,
+           snapshot.project.id == projectID,
+           patchProjectSummary(from: snapshot) {
+            return
+        }
+        _ = try? await refreshProjectListIfLatest()
+    }
+
+    private func refreshCheckoutSidecarFailure(for projectID: NovelProjectID?) {
+        guard let projectID,
+              let root = try? NovelFileProjectRepository.defaultRootDirectory() else {
+            checkoutSidecarFailure = nil
+            return
+        }
+        let package = NovelProjectShardedStorage.packageDirectory(
+            projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
+            projectID: projectID
+        )
+        let failure = NovelProjectShardedStorage.checkoutWriteFailureMessage(in: package)
+        if checkoutSidecarFailure != failure {
+            checkoutSidecarFailure = failure
+        }
     }
 
     private func project(id: NovelProjectID) async throws -> NovelProjectSnapshot {
@@ -3957,6 +4267,7 @@ final class NovelCreationViewModel {
         selectedBranchID = nil
         projectSnapshot = nil
         branchSnapshot = nil
+        refreshCheckoutSidecarFailure(for: nil)
         injectionPreview = nil
     }
 
@@ -3980,5 +4291,18 @@ final class NovelCreationViewModel {
 
     private func errorDescription(_ error: Error) -> String {
         (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+}
+
+fileprivate extension NovelProjectSummary {
+    init(snapshot: NovelProjectSnapshot) {
+        id = snapshot.project.id
+        name = snapshot.project.name
+        mainBranchID = snapshot.project.mainBranchID
+        updatedAt = snapshot.project.updatedAt
+        revision = snapshot.project.revision
+        isDegraded = snapshot.access != .readWrite
+        hasRunningRun = snapshot.activeRuns.contains(where: { $0.status == .running })
+        loadError = nil
     }
 }

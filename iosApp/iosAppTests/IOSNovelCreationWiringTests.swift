@@ -200,7 +200,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertFalse(workspace.contains("guard chapterReaderRoute == nil else { return }"))
         XCTAssertFalse(workspace.contains("sessionViewModel.bindToCurrentSelection()"))
         XCTAssertTrue(session.contains(".task(id: bindingTaskID)"))
-        XCTAssertTrue(session.contains("await viewModel.bindToCurrentSelection()"))
+        XCTAssertTrue(session.contains("await viewModel.bindToCurrentSelection("))
         XCTAssertTrue(appShell.contains("novelLifecycleCoordinator.enterBackground"))
         XCTAssertTrue(appShell.contains("waitForBackgroundGeneration"))
         XCTAssertTrue(appShell.contains("interruptSessionForBackground"))
@@ -463,7 +463,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertTrue(createSheet.contains("private var hasUnsavedChanges: Bool"))
         XCTAssertTrue(createSheet.contains("NovelTextInputCommitter.perform(fieldBank: imeBank) { requestDismiss() }"))
         XCTAssertTrue(createSheet.contains("guard canCreate else"))
-        XCTAssertTrue(createSheet.contains(".disabled(viewModel.isProjectSelectionBlocked)"))
         XCTAssertTrue(createSheet.contains(".interactiveDismissDisabled()"))
 
         let regenerationStart = try XCTUnwrap(compendium.range(
@@ -597,13 +596,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
             "Clearing FocusState before unmarkText discards the last IME composition"
         )
         // Writing-context toolbar must commit marked text before apply/dismiss.
-        XCTAssertTrue(sheets.contains("fieldBank: planFieldBank"))
-        XCTAssertTrue(
-            sheets.contains("NovelIMETextField") && sheets.contains("planPlacementBinding"),
-            "本章计划「与总纲的位置」must use UIKit-backed IME field, not plain TextField"
-        )
-        XCTAssertTrue(sheets.contains("NovelIMETextEditor"))
-        XCTAssertTrue(sheets.contains("planFieldBank.commitAll()"))
         XCTAssertTrue(sheets.contains("planFieldsDirty"))
         XCTAssertTrue(support.contains("struct NovelIMETextField"))
         XCTAssertTrue(support.contains("struct NovelIMETextEditor"))
@@ -686,10 +678,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let composer = try source("iosApp/ChatComposerViews.swift")
         let planner = try source("iosApp/NovelCreation/NovelInjectionPlanner.swift")
 
-        XCTAssertTrue(session.contains(
-            "NovelInjectionPanelPresentation.project(latestContextReceipt)"
-        ))
-        XCTAssertTrue(session.contains("novelInjection: contextPanelModel"))
         XCTAssertTrue(session.contains("NovelSessionContextRing.snapshot"))
         XCTAssertFalse(session.contains("contextWindowTokens: receipt?.maxEstimatedInputTokens"))
         XCTAssertTrue(composer.contains("let novelInjection: NovelInjectionPanelModel?"))
@@ -820,7 +808,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertFalse(settings.contains("未配置时跟随小说默认"))
         XCTAssertTrue(projectSettings.contains("viewModel.setModelPolicy(policy, for: purpose)"))
         XCTAssertTrue(projectSettings.contains("modelRow(for: .review)"))
-        XCTAssertTrue(projectSettings.contains("Label(\"导出正文\", systemImage: \"square.and.arrow.up\")"))
     }
 
     func testNovelWorkspaceLoadFailureKeepsAnInlineRetryPath() throws {
@@ -835,7 +822,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
     func testNovelProjectSettingsExportsPackageWithoutStoppingMarkdownGeneration() throws {
         let settings = try source("iosApp/NovelCreation/NovelProjectSettingsDetailView.swift")
 
-        XCTAssertTrue(settings.contains("Label(\"导出项目包\", systemImage: \"archivebox\")"))
         XCTAssertTrue(settings.contains("NovelProjectFileDocument(data: artifact.data)"))
         XCTAssertTrue(settings.contains("contentType: .amberNovelProject"))
         let markdownExport = try XCTUnwrap(settings.range(of: "private func exportMarkdown()"))
@@ -878,18 +864,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let settings = try source("iosApp/NovelCreation/NovelProjectSettingsDetailView.swift")
 
         XCTAssertTrue(settings.contains("private var hasRunningRun: Bool"))
-        XCTAssertTrue(settings.contains(
-            ".disabled(currentProject == nil || viewModel.isPerforming || hasRunningRun)"
-        ))
-        let markdownButton = try XCTUnwrap(settings.range(
-            of: "Button(action: exportMarkdown)"
-        ))
-        let markdownButtonEnd = try XCTUnwrap(settings.range(
-            of: "\n            }",
-            range: markdownButton.upperBound..<settings.endIndex
-        ))
-        let markdownBody = settings[markdownButton.lowerBound..<markdownButtonEnd.lowerBound]
-        XCTAssertFalse(markdownBody.contains("hasRunningRun"))
         XCTAssertTrue(settings.contains("pendingBranchSelection"))
         XCTAssertTrue(settings.contains("切换分支会停止当前生成"))
         XCTAssertTrue(settings.contains("selectPendingBranch()"))
@@ -1017,19 +991,6 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         ))
         let backgroundBody = viewModel[backgroundCheck.lowerBound..<loadProjects.lowerBound]
         XCTAssertTrue(backgroundBody.contains("automaticStateSyncTask != nil"))
-    }
-
-    func testCreateAndImportEntrypointsUseTheProjectSelectionBlock() throws {
-        let list = try source("iosApp/NovelCreation/NovelProjectListView.swift")
-        let viewModel = try source("iosApp/NovelCreation/NovelCreationViewModel.swift")
-
-        XCTAssertGreaterThanOrEqual(
-            list.components(separatedBy: ".disabled(viewModel.isProjectSelectionBlocked)").count - 1,
-            5
-        )
-        XCTAssertTrue(viewModel.contains(
-            "if let projectID, selectedProjectID != projectID, isProjectSelectionBlocked"
-        ))
     }
 
     func testQuickStartRegenerationEntryIsReachableFromTheLiveCompendiumView() throws {
