@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import iosApp
 
 final class AgentActivityDeepLinkTests: XCTestCase {
@@ -91,5 +92,38 @@ final class AgentActivityDeepLinkTests: XCTestCase {
                 focus: .task
             )
         )
+    }
+
+    // 延后起步窗口内，Watch/深链的归属判定仍要认这轮 run；终态后撤销。
+    @MainActor
+    func testPendingLiveActivityStartOwnsRunUntilEnded() async throws {
+        try XCTSkipUnless(UIApplication.shared.applicationState == .active)
+        let controller = AgentLiveActivityController.shared
+        let runId = "pending-\(UUID().uuidString)"
+        let conversationId = UUID().uuidString
+
+        controller.start(
+            runId: runId,
+            conversationId: conversationId.lowercased(),
+            presentation: .response(stage: .generating)
+        )
+        XCTAssertTrue(controller.ownsActivity(runId: runId, conversationId: conversationId.uppercased()))
+        XCTAssertFalse(controller.ownsActivity(runId: runId, conversationId: UUID().uuidString))
+
+        await controller.end(runId: runId, presentation: .failed())
+        XCTAssertFalse(controller.ownsActivity(runId: runId, conversationId: conversationId))
+    }
+
+    @MainActor
+    func testStopCurrentDiscardsPendingLiveActivityStart() async throws {
+        try XCTSkipUnless(UIApplication.shared.applicationState == .active)
+        let controller = AgentLiveActivityController.shared
+        let runId = "pending-\(UUID().uuidString)"
+        let conversationId = UUID().uuidString
+
+        controller.start(runId: runId, conversationId: conversationId, presentation: .response(stage: .generating))
+        await controller.stopCurrent()
+
+        XCTAssertFalse(controller.ownsActivity(runId: runId, conversationId: conversationId))
     }
 }

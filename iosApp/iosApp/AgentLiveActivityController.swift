@@ -1,5 +1,6 @@
 @preconcurrency import ActivityKit
 import Foundation
+import UIKit
 
 enum IOSExecutionPreferenceKeys {
     static let liveActivity = "app.amber.ios.execution.liveActivity"
@@ -51,8 +52,22 @@ final class AgentLiveActivityController {
         var lastUpdateAt: Date
     }
 
+    /// 发送瞬间的系统 Activity 请求（授权查询 + 枚举 + request 都是同步 IPC）
+    /// 会与用户消息上屏动画抢主线程：首轮可达数百毫秒。起步因此推迟到上屏
+    /// 动画结束后；App 失去前台时立即补做，保证离开 App 前系统卡片已就位。
+    private struct PendingStart {
+        let conversationId: String?
+        let conversationTitle: String?
+        var presentation: AgentActivityPresentation
+        var task: Task<Void, Never>?
+    }
+
+    static let deferredStartDelay: Duration = .milliseconds(500)
+
     private var activitiesByRunId: [String: OwnedActivity] = [:]
     private var endingActivityIDs: Set<String> = []
+    private var pendingStarts: [String: PendingStart] = [:]
+    private var resignActiveObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -60,10 +75,82 @@ final class AgentLiveActivityController {
         ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
+    /// 前台新卡片的真实请求延后执行（见 `PendingStart`）。
+    /// 延后窗口内的 update 只刷新待起步的展示，end 撤销待起步。
     func start(
         runId: String,
         conversationId: String?,
         conversationTitle: String? = nil,
+        presentation: AgentActivityPresentation
+    ) {
+        if pendingStarts[runId] != nil {
+            pendingStarts[runId]?.presentation = presentation
+            return
+        }
+        // 已有卡片（如审批恢复）只是更新，没有昂贵的 request；非前台时没有上屏
+        // 动画要让路，且延后可能落到后台导致 request 失败。两者都立即执行。
+        if activitiesByRunId[runId] != nil || UIApplication.shared.applicationState != .active {
+            startNow(
+                runId: runId,
+                conversationId: conversationId,
+                conversationTitle: conversationTitle,
+                presentation: presentation
+            )
+            return
+        }
+        installResignActiveObserverIfNeeded()
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.deferredStartDelay)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingStart(runId: runId)
+        }
+        pendingStarts[runId] = PendingStart(
+            conversationId: conversationId,
+            conversationTitle: conversationTitle,
+            presentation: presentation,
+            task: task
+        )
+    }
+
+    /// 失去前台时立即执行所有待起步请求。
+    private func flushPendingStarts() {
+        for runId in Array(pendingStarts.keys) {
+            flushPendingStart(runId: runId)
+        }
+    }
+
+    private func flushPendingStart(runId: String) {
+        guard let pending = pendingStarts.removeValue(forKey: runId) else { return }
+        pending.task?.cancel()
+        startNow(
+            runId: runId,
+            conversationId: pending.conversationId,
+            conversationTitle: pending.conversationTitle,
+            presentation: pending.presentation
+        )
+    }
+
+    private func cancelPendingStart(runId: String) {
+        pendingStarts.removeValue(forKey: runId)?.task?.cancel()
+    }
+
+    private func installResignActiveObserverIfNeeded() {
+        guard resignActiveObserver == nil else { return }
+        resignActiveObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.flushPendingStarts()
+            }
+        }
+    }
+
+    private func startNow(
+        runId: String,
+        conversationId: String?,
+        conversationTitle: String?,
         presentation: AgentActivityPresentation
     ) {
         guard activitiesEnabled else { return }
@@ -93,6 +180,10 @@ final class AgentLiveActivityController {
         force: Bool = false,
         minimumInterval: TimeInterval = 1.5
     ) async {
+        if pendingStarts[runId] != nil {
+            pendingStarts[runId]?.presentation = presentation
+            return
+        }
         guard var owned = activitiesByRunId[runId],
               owned.activity.attributes.runId == runId else { return }
 
@@ -126,6 +217,8 @@ final class AgentLiveActivityController {
         presentation: AgentActivityPresentation,
         dismissalDelay: TimeInterval? = nil
     ) async {
+        // 延后窗口内即终态：撤销待起步，不再为已结束的 run 请求系统卡片。
+        cancelPendingStart(runId: runId)
         guard let owned = activitiesByRunId[runId],
               owned.activity.attributes.runId == runId else { return }
         guard endingActivityIDs.insert(owned.activity.id).inserted else { return }
@@ -143,6 +236,8 @@ final class AgentLiveActivityController {
     }
 
     func stopCurrent(dismissalDelay: TimeInterval = 1) async {
+        pendingStarts.values.forEach { $0.task?.cancel() }
+        pendingStarts.removeAll()
         var activitiesToEnd = Activity<AgentActivityAttributes>.activities
         for owned in activitiesByRunId.values where
             !activitiesToEnd.contains(where: { $0.id == owned.activity.id }) {
@@ -239,6 +334,9 @@ final class AgentLiveActivityController {
     }
 
     func ownsActivity(runId: String, conversationId: String) -> Bool {
+        if pendingStarts[runId]?.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame {
+            return true
+        }
         if let owned = activitiesByRunId[runId],
            !endingActivityIDs.contains(owned.activity.id),
            isAdoptable(owned.activity),
