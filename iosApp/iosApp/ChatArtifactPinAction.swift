@@ -12,8 +12,22 @@ typealias ChatArtifactPinAction = @MainActor (
 /// 代码块头部“收进产物架”按钮使用的动作；由所在消息注入，其他 Markdown 场景为 nil。
 typealias ChatArtifactCodeBlockPinAction = @MainActor (_ code: String, _ language: String?) -> Void
 
+/// 环境里传递的是身份稳定的容器，而不是闭包本身：闭包无法判等，ChatView
+/// 每次重算都会让读取该环境值的全部消息气泡失效重建（滑动/流式时逐帧整页重算）。
+/// 容器随 ChatView 的 @State 存活，渲染时只刷新其中的回调，不触发视图更新。
+@MainActor
+final class ChatArtifactPinHandler {
+    var action: ChatArtifactPinAction?
+
+    func callAsFunction(
+        _ messageID: String, _ text: String, _ kind: ChatArtifactPinKind, _ codeLanguage: String?
+    ) {
+        action?(messageID, text, kind, codeLanguage)
+    }
+}
+
 private struct ChatArtifactPinActionKey: EnvironmentKey {
-    static let defaultValue: ChatArtifactPinAction? = nil
+    static let defaultValue: ChatArtifactPinHandler? = nil
 }
 
 private struct ChatArtifactCodeBlockPinActionKey: EnvironmentKey {
@@ -21,7 +35,7 @@ private struct ChatArtifactCodeBlockPinActionKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    var chatArtifactPinAction: ChatArtifactPinAction? {
+    var chatArtifactPinAction: ChatArtifactPinHandler? {
         get { self[ChatArtifactPinActionKey.self] }
         set { self[ChatArtifactPinActionKey.self] = newValue }
     }

@@ -40,6 +40,9 @@ private struct ChatListSummarySnapshot: Equatable {
     var failedToolStep: ChatToolStepModel?
     var webMountRecentUserTurnStartMillis: Int64?
     var browserTaskTitleCandidate: String?
+    /// 当前分支的消息 ID：产物架据此过滤可见收藏。流式追加不改变集合，
+    /// 因而不会让根视图随每个 chunk 重算。
+    var messageIDs: Set<String> = []
 
     // 手写 == 只比较 UI 使用的字段。activeToolStep 的流式 tool output 不参与比较，
     // 避免每个 chunk 刷新根视图；稳定 id 保留给活动岛终态匹配。WebMount 摘要仅在
@@ -51,6 +54,7 @@ private struct ChatListSummarySnapshot: Equatable {
             lhs.firstUserTitleSeed == rhs.firstUserTitleSeed &&
             lhs.webMountRecentUserTurnStartMillis == rhs.webMountRecentUserTurnStartMillis &&
             lhs.browserTaskTitleCandidate == rhs.browserTaskTitleCandidate &&
+            lhs.messageIDs == rhs.messageIDs &&
             lhs.activeToolStep?.id == rhs.activeToolStep?.id &&
             lhs.activeToolStep?.title == rhs.activeToolStep?.title &&
             lhs.activeToolStep?.detail == rhs.activeToolStep?.detail &&
@@ -197,6 +201,7 @@ struct ChatView: View {
     @State private var isProcessingSelectedFile = false
     @State private var photoPickerConversationId: String?
     @State private var isInputFocused = false
+    @State private var artifactPinHandler = ChatArtifactPinHandler()
     @Environment(RouterPath.self) private var router
     @AppStorage(IOSDisplayPreferenceKeys.followGeneration) private var followGeneration = true
     @State private var viewportState = ChatViewportState()
@@ -1108,7 +1113,7 @@ struct ChatView: View {
             },
             artifacts: artifactShelf.index,
             snippets: currentConversationIdString.map {
-                ChatArtifactPinning.visibleSnippets(conversationStore.artifactStore.snippets(for: $0), messages: viewModel.messages)
+                ChatArtifactPinning.visibleSnippets(conversationStore.artifactStore.snippets(for: $0), messageIDs: chatListSummary.messageIDs)
             } ?? [],
             adoptedVersions: currentConversationIdString.map { conversationStore.artifactStore.adoptedVersions(for: $0) } ?? [:],
             conversationTitle: conversationStore.currentConversation?.title ?? "对话成果",
@@ -1407,6 +1412,7 @@ struct ChatView: View {
         next.lastAssistantHasOpenReasoning = lastAssistantHasOpenReasoning(messages: messages)
         next.webMountRecentUserTurnStartMillis = Self.webMountRecentUserTurnStartMillis(from: messages)
         next.browserTaskTitleCandidate = Self.browserTaskTitleCandidate(messages: messages)
+        next.messageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
         if resetTitleSeed || next.firstUserTitleSeed == nil {
             next.firstUserTitleSeed = messages.first(where: { $0.role == MessageRole.user })?
                 .toText()
@@ -1509,7 +1515,8 @@ struct ChatView: View {
     // MARK: - Message List
 
     private var messageList: some View {
-        ChatTimelineSignalHost(viewModel: viewModel, onSignalChange: handleMessageUpdateSignal) { signal in
+        let _ = artifactPinHandler.action = pinArtifactSnippet
+        return ChatTimelineSignalHost(viewModel: viewModel, onSignalChange: handleMessageUpdateSignal) { signal in
             NativeChatTimelineView(
                 signal: signal,
                 configurationIssue: configurationIssue,
@@ -1533,7 +1540,7 @@ struct ChatView: View {
                 onViewportStateChange: applyCollectionViewportState,
                 onDismissKeyboard: dismissKeyboard
             )
-            .environment(\.chatArtifactPinAction, pinArtifactSnippet)
+            .environment(\.chatArtifactPinAction, artifactPinHandler)
             .id(NativeChatTimelineSessionIdentity.viewID(conversationId: conversationStore.currentConversation?.id))
         }
     }

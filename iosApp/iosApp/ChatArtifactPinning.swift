@@ -28,7 +28,11 @@ enum ChatArtifactPinning {
     /// 只展示原消息仍在当前分支中的收藏；其余保留在 store，切回原分支后重新出现。
     static func visibleSnippets(_ snippets: [IOSPinnedSnippet], messages: [UIMessage]) -> [IOSPinnedSnippet] {
         guard !snippets.isEmpty else { return [] }
-        let messageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+        return visibleSnippets(snippets, messageIDs: Set(messages.map(ChatMessageProjector.messageId(for:))))
+    }
+
+    static func visibleSnippets(_ snippets: [IOSPinnedSnippet], messageIDs: Set<String>) -> [IOSPinnedSnippet] {
+        guard !snippets.isEmpty else { return [] }
         return snippets.filter { messageIDs.contains($0.messageID) }
     }
 

@@ -460,6 +460,12 @@ struct ContextRingButton: View {
     @State private var rotates = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// 0.5% 步进（18pt 环上约 0.28pt，肉眼不可辨）：流式每拍的占用增长不再
+    /// 各自触发一段 0.3s 动画，避免环与玻璃按钮在整段流式中逐帧重算。
+    private var displayedFillFraction: CGFloat {
+        (snapshot.contextFillFraction * 200).rounded() / 200
+    }
+
     var body: some View {
         Button(action: action) {
             ZStack {
@@ -482,14 +488,14 @@ struct ContextRingButton: View {
                     // 进度:随上下文增长用强调色覆盖填充,呈现增长效果。填充上限按模型真实
                     // contextWindow 计算(见 snapshot.contextFillFraction)。
                     Circle()
-                        .trim(from: 0, to: snapshot.contextFillFraction)
+                        .trim(from: 0, to: displayedFillFraction)
                         .stroke(AmberTheme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
             }
             .frame(width: 18, height: 18)
             .frame(width: 34, height: 34)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: snapshot.contextFillFraction)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.3), value: displayedFillFraction)
             .animation(
                 reduceMotion ? nil : .linear(duration: 1.0).repeatForever(autoreverses: false),
                 value: rotates
