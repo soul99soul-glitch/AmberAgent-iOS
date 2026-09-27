@@ -1815,115 +1815,120 @@ struct ChatView: View {
                         )
                     }
 
-                    // Apple Music dock：左侧输入胶囊 + 右侧发送键；底对齐。
-                    HStack(alignment: .bottom, spacing: 8) {
-                        HStack(alignment: .center, spacing: 6) {
-                            ComposerAttachToggleButton(
-                                isExpanded: isAttachExpanded,
-                                isBusy: viewModel.isAttachingSelectedFile,
-                                // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
-                                isDisabled: viewModel.isRecognizingImages
-                                    || viewModel.isAttachingSelectedFile
-                                    || hasPendingComposerGate
-                                    || viewModel.currentConversationIsOrchestratedChild
-                            ) {
-                                withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
-                                    isAttachExpanded.toggle()
-                                }
-                            }
-
-                            ZStack(alignment: .leading) {
-                                ComposerInputTextView(
-                                    text: $viewModel.inputText,
-                                    height: $composerInputHeight,
-                                    isFocused: inputFocusBinding,
-                                    isEnabled: !hasPendingComposerGate
-                                        && !viewModel.currentConversationIsOrchestratedChild,
-                                    sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
-                                    controller: composerInputController,
-                                    onSubmit: sendComposerMessage
-                                )
-                                .frame(height: composerInputHeight)
-
-                                if viewModel.inputText.isEmpty {
-                                    Text(inputPlaceholder)
-                                        .font(.body)
-                                        .foregroundStyle(AmberTheme.muted2)
-                                        .allowsHitTesting(false)
-                                }
-                            }
-                            .frame(minHeight: 40)
-                        }
-                        .padding(.leading, 8)
-                        .padding(.trailing, 18)
-                        .padding(.vertical, 5)
-                        .composerDockGlass(cornerRadius: 27)
-
-                        ComposerDockSendButton(
-                            isLoading: isComposerStopMode,
-                            sendEnabled: sendEnabled,
-                            diameter: 54,
-                            onSend: sendComposerMessage,
-                            onStop: {
-                                if viewModel.isRecognizingImages {
-                                    viewModel.cancelVisionRecognition()
-                                } else {
-                                    viewModel.cancelGeneration()
-                                }
-                            }
-                        )
-                    }
-
-                    if showsComposerMeta {
-                        HStack {
-                            Button {
-                                openComposerModelSheet()
-                            } label: {
-                                Text(composerModelLabel)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(AmberTheme.foreground2)
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 12)
-                                    .frame(height: 30)
-                                    .composerDockGlass(cornerRadius: 15)
-                            }
-                            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
-                            .frame(minHeight: 44)
-                            .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                            .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
-
-                            Spacer()
-
-                            HStack(spacing: 8) {
-                                ComposerIconButton(
-                                    koboyo: .solidThoughtCloud,
-                                    accessibilityLabel: "设置思考等级",
-                                    size: 34,
-                                    symbolSize: 15
+                    VStack(spacing: 0) {
+                        // Apple Music dock：左侧输入胶囊 + 右侧发送键；底对齐。
+                        HStack(alignment: .bottom, spacing: 8) {
+                            HStack(alignment: .center, spacing: 6) {
+                                ComposerAttachToggleButton(
+                                    isExpanded: isAttachExpanded,
+                                    isBusy: viewModel.isAttachingSelectedFile,
+                                    // 生成中允许加附件以便入队；识图中/审批中/读文件中仍禁用。
+                                    isDisabled: viewModel.isRecognizingImages
+                                        || viewModel.isAttachingSelectedFile
+                                        || hasPendingComposerGate
+                                        || viewModel.currentConversationIsOrchestratedChild
                                 ) {
-                                    toggleComposerPanel(.thinking)
-                                }
-                                .accessibilityValue(reasoningAccessibilityValue)
-                                .popover(isPresented: popoverBinding(for: .thinking), arrowEdge: .bottom) {
-                                    ComposerThinkingPanel(
-                                        selectedOption: selectedReasoningBinding,
-                                        options: availableReasoningOptions,
-                                        isAvailable: reasoningIsAvailable
-                                    ) { _ in activeComposerPanel = nil }
-                                    .presentationCompactAdaptation(.popover)
+                                    withAnimation(.bouncy(duration: 0.42, extraBounce: 0.14)) {
+                                        isAttachExpanded.toggle()
+                                    }
                                 }
 
-                                ChatContextControl(
-                                    viewModel: viewModel,
-                                    isPresented: popoverBinding(for: .context),
-                                    jevSummaryRunId: jevSummaryRunId,
-                                    onOpen: { toggleComposerPanel(.context) }
-                                )
+                                ZStack(alignment: .leading) {
+                                    ComposerInputTextView(
+                                        text: $viewModel.inputText,
+                                        height: $composerInputHeight,
+                                        isFocused: inputFocusBinding,
+                                        isEnabled: !hasPendingComposerGate
+                                            && !viewModel.currentConversationIsOrchestratedChild,
+                                        sendOnEnter: sharedSettings.displaySetting.sendOnEnter,
+                                        controller: composerInputController,
+                                        onSubmit: sendComposerMessage
+                                    )
+                                    .frame(height: composerInputHeight)
+
+                                    if viewModel.inputText.isEmpty {
+                                        Text(inputPlaceholder)
+                                            .font(.body)
+                                            .foregroundStyle(AmberTheme.muted2)
+                                            .allowsHitTesting(false)
+                                    }
+                                }
+                                .frame(minHeight: 40)
                             }
+                            .padding(.leading, 8)
+                            .padding(.trailing, 18)
+                            .padding(.vertical, 5)
+                            .composerDockGlass(cornerRadius: 27)
+
+                            ComposerDockSendButton(
+                                isLoading: isComposerStopMode,
+                                sendEnabled: sendEnabled,
+                                diameter: 54,
+                                onSend: sendComposerMessage,
+                                onStop: {
+                                    if viewModel.isRecognizingImages {
+                                        viewModel.cancelVisionRecognition()
+                                    } else {
+                                        viewModel.cancelGeneration()
+                                    }
+                                }
+                            )
                         }
-                        .padding(.horizontal, 2)
-                        .padding(.top, 2)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+
+                            HStack {
+                                Button {
+                                    openComposerModelSheet()
+                                } label: {
+                                    Text(composerModelLabel)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(AmberTheme.foreground2)
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 12)
+                                        .frame(height: 30)
+                                        .composerDockGlass(cornerRadius: 15)
+                                }
+                                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.96, haptic: .selection))
+                                .frame(minHeight: 44)
+                                .contentShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                                .accessibilityLabel("切换模型，当前 \(composerModelLabel)")
+
+                                Spacer()
+
+                                HStack(spacing: 8) {
+                                    ComposerIconButton(
+                                        koboyo: .solidThoughtCloud,
+                                        accessibilityLabel: "设置思考等级",
+                                        size: 34,
+                                        symbolSize: 15
+                                    ) {
+                                        toggleComposerPanel(.thinking)
+                                    }
+                                    .accessibilityValue(reasoningAccessibilityValue)
+                                    .popover(isPresented: popoverBinding(for: .thinking), arrowEdge: .bottom) {
+                                        ComposerThinkingPanel(
+                                            selectedOption: selectedReasoningBinding,
+                                            options: availableReasoningOptions,
+                                            isAvailable: reasoningIsAvailable
+                                        ) { _ in activeComposerPanel = nil }
+                                        .presentationCompactAdaptation(.popover)
+                                    }
+
+                                    ChatContextControl(
+                                        viewModel: viewModel,
+                                        isPresented: popoverBinding(for: .context),
+                                        jevSummaryRunId: jevSummaryRunId,
+                                        onOpen: { toggleComposerPanel(.context) }
+                                    )
+                                }
+                            }
+                            .padding(.horizontal, 2)
+                            .padding(.top, 10)
+                            // 常驻布局、只折叠高度：收键盘时整个 dock 随键盘下移，被移除的视图
+                            // 不跟随这段位移，会停在原地/往上飞。顶对齐折叠让它贴着输入行一起下沉并渐隐。
+                            .frame(height: showsComposerMeta ? nil : 0, alignment: .top)
+                            .opacity(showsComposerMeta ? 1 : 0)
+                            .allowsHitTesting(showsComposerMeta)
+                            .accessibilityHidden(!showsComposerMeta)
                     }
             }
         }
