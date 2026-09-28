@@ -106255,38 +106255,98 @@
     },
     "正在创建": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Creating" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在创建" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Creating"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在创建"
+          }
+        }
       }
     },
     "正在接受…": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Accepting…" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在接受…" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Accepting…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在接受…"
+          }
+        }
       }
     },
     "接受剧情状态失败": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Could not accept plot state" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "接受剧情状态失败" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not accept plot state"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接受剧情状态失败"
+          }
+        }
       }
     },
     "撤销处理结果": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Undo result" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "撤销处理结果" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Undo result"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "撤销处理结果"
+          }
+        }
       }
     },
     "正在切换": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Switching" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在切换" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switching"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在切换"
+          }
+        }
       }
     },
     "正在撤销": {
       "localizations": {
-        "en": { "stringUnit": { "state": "translated", "value": "Undoing" } },
-        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在撤销" } }
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Undoing"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在撤销"
+          }
+        }
       }
     },
     "Mac Gateway 返回了无法识别的数据": {
@@ -106904,43 +106964,43 @@
         }
       }
     },
-    "心跳": {
+    "更新于": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "heartbeat"
+            "value": "updated"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ハートビート"
+            "value": "更新"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "하트비트"
+            "value": "업데이트"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "пульс"
+            "value": "обновлено"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "心跳"
+            "value": "更新于"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "心跳"
+            "value": "更新於"
           }
         }
       }
@@ -107232,43 +107292,43 @@
         }
       }
     },
-    "无法连接 Mac：确认手机与 Mac 在同一局域网或 Tailscale 网络，且 Mac 未睡眠": {
+    "无法连接 Mac：确认 Mac 未睡眠，且网络可达（同一局域网、Tailscale 或公网地址）": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Can't reach the Mac. Make sure the phone and Mac are on the same local or Tailscale network and the Mac isn't asleep."
+            "value": "Can't reach the Mac. Make sure it's awake and reachable (same network, Tailscale, or its public address)."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac に接続できません。iPhone と Mac が同じローカルネットワークまたは Tailscale ネットワークにあり、Mac がスリープしていないことを確認してください"
+            "value": "Mac に接続できません。Mac がスリープしておらず、同じネットワーク・Tailscale・公開アドレスのいずれかで到達できるか確認してください"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mac에 연결할 수 없습니다. 휴대폰과 Mac이 같은 로컬 또는 Tailscale 네트워크에 있고 Mac이 잠자기 상태가 아닌지 확인하세요"
+            "value": "Mac에 연결할 수 없습니다. Mac이 잠자기 상태가 아니고 같은 네트워크, Tailscale 또는 공개 주소로 연결 가능한지 확인하세요"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Не удаётся подключиться к Mac. Убедитесь, что телефон и Mac в одной локальной сети или сети Tailscale и Mac не спит."
+            "value": "Не удаётся подключиться к Mac. Убедитесь, что он не спит и доступен (та же сеть, Tailscale или публичный адрес)."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "无法连接 Mac：确认手机与 Mac 在同一局域网或 Tailscale 网络，且 Mac 未睡眠"
+            "value": "无法连接 Mac：确认 Mac 未睡眠，且网络可达（同一局域网、Tailscale 或公网地址）"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "無法連線 Mac：確認手機與 Mac 在同一區域網路或 Tailscale 網路，且 Mac 未睡眠"
+            "value": "無法連線 Mac：確認 Mac 未睡眠，且網路可達（同一區域網路、Tailscale 或公網位址）"
           }
         }
       }
@@ -107683,43 +107743,43 @@
         }
       }
     },
-    "疑似停滞": {
+    "可能卡住了": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Possibly stalled"
+            "value": "May be stuck"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "停止している可能性"
+            "value": "止まっているかも"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "멈춘 것으로 보임"
+            "value": "멈춘 것 같음"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Возможно, завис"
+            "value": "Похоже, зависла"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "疑似停滞"
+            "value": "可能卡住了"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "疑似停滯"
+            "value": "可能卡住了"
           }
         }
       }
@@ -107806,84 +107866,84 @@
         }
       }
     },
-    "等待你处理": {
+    "等你回复": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Needs you"
+            "value": "Waiting for your reply"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "対応待ち"
+            "value": "返信待ち"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "사용자 대기 중"
+            "value": "답장 대기 중"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ждёт вас"
+            "value": "Ждёт вашего ответа"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "等待你处理"
+            "value": "等你回复"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "等待你處理"
+            "value": "等你回覆"
           }
         }
       }
     },
-    "等待你处理（权限）": {
+    "等你确认": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Needs you (permission)"
+            "value": "Waiting for your approval"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "対応待ち（権限）"
+            "value": "承認待ち"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "사용자 대기 중(권한)"
+            "value": "승인 대기 중"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ждёт вас (разрешение)"
+            "value": "Ждёт вашего подтверждения"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "等待你处理（权限）"
+            "value": "等你确认"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "等待你處理（權限）"
+            "value": "等你確認"
           }
         }
       }
@@ -108175,43 +108235,43 @@
         }
       }
     },
-    "（异常）": {
+    "意外中断": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": " (abnormal)"
+            "value": "Ended unexpectedly"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "（異常）"
+            "value": "予期せず終了"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": " (비정상)"
+            "value": "예기치 않게 종료됨"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": " (сбой)"
+            "value": "Неожиданно прервана"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "（异常）"
+            "value": "意外中断"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "（異常）"
+            "value": "意外中斷"
           }
         }
       }
@@ -108253,6 +108313,88 @@
           "stringUnit": {
             "state": "translated",
             "value": "Mac 的憑證與配對時不一致（可能重裝過 amber-gateway），請取消配對後重新掃碼"
+          }
+        }
+      }
+    },
+    "在 Synara 中回复或确认": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reply or approve in Synara"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synara で返信・承認"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synara에서 답장 또는 승인"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ответить или подтвердить в Synara"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Synara 中回复或确认"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 Synara 中回覆或確認"
+          }
+        }
+      }
+    },
+    "在浏览器中打开 Synara，处理其中的任务": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open Synara in the browser to handle its tasks"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ブラウザで Synara を開いてタスクを処理"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "브라우저에서 Synara를 열어 작업 처리"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть Synara в браузере и заняться задачами"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在浏览器中打开 Synara，处理其中的任务"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在瀏覽器中開啟 Synara，處理其中的任務"
           }
         }
       }

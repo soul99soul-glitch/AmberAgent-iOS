@@ -3,6 +3,7 @@ import SwiftUI
 struct MacGatewaySettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.openURL) private var openURL
     @State private var confirmsUnpair = false
 
     private let store = MacGatewayStore.shared
@@ -178,6 +179,13 @@ struct MacGatewaySettingsView: View {
         return VStack(spacing: 0) {
             AmberSectionLabel(text: "任务")
             AmberFormGroup {
+                if let url = store.status?.synaraURL.flatMap(URL.init(string:)) {
+                    settingsRow(icon: "bubble.left.and.text.bubble.right", title: L("在 Synara 中回复或确认"),
+                                detail: L("在浏览器中打开 Synara，处理其中的任务"), action: { openURL(url) }) {
+                        chevron
+                    }
+                    rowDivider
+                }
                 if sessions.isEmpty {
                     settingsRow(icon: "tray", title: L("暂无任务"),
                                 detail: L("在 Mac 上使用 Claude Code 或 Codex 后会出现在这里")) {
@@ -220,7 +228,7 @@ struct MacGatewaySettingsView: View {
         case false: return L("无法连接")
         case true:
             guard let sampled = store.status?.health?.sampledAt else { return L("在线") }
-            return L("在线") + " · " + L("心跳") + " " + sampled.formatted(.relative(presentation: .named))
+            return L("在线") + " · " + L("更新于") + " " + sampled.formatted(.relative(presentation: .named))
         }
     }
 
@@ -235,15 +243,15 @@ struct MacGatewaySettingsView: View {
         case "codex": "Codex"
         default: L("任务")
         }
-        var state = switch session.state {
+        let state = switch session.state {
         case "running": L("运行中")
-        case "waiting": session.waitReason == "permission" ? L("等待你处理（权限）") : L("等待你处理")
-        case "stalled": L("疑似停滞")
+        case "waiting": session.waitReason == "permission" ? L("等你确认") : L("等你回复")
+        case "stalled": L("可能卡住了")
         case "completed": L("已完成")
-        default: L("已停止")
+        default: session.abnormal ? L("意外中断") : L("已停止")
         }
-        if session.abnormal { state += L("（异常）") }
-        return [agent, state, session.updatedAt.formatted(.relative(presentation: .named))].joined(separator: " · ")
+        return [agent, session.host, state, session.updatedAt.formatted(.relative(presentation: .named))]
+            .compactMap { $0 }.joined(separator: " · ")
     }
 
     private static func agentIcon(_ agent: String) -> String {

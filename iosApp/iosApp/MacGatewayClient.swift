@@ -55,6 +55,8 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
         var agent: String
         var subject: String
         var origin: String
+        /// App hosting the session on the Mac, e.g. "Synara".
+        var host: String?
         var state: String
         var waitReason: String?
         var abnormal: Bool
@@ -67,6 +69,8 @@ struct MacGatewayStatus: Decodable, Equatable, Sendable {
     var device: Device
     var serverTime: Date
     var health: Health?
+    /// Where Synara-hosted tasks are answered from outside the LAN; opened in the browser.
+    var synaraURL: String?
     var sessions: [Session]
 }
 
@@ -81,7 +85,7 @@ enum MacGatewayError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .unreachable:
-            IOSAppLocalization.string("无法连接 Mac：确认手机与 Mac 在同一局域网或 Tailscale 网络，且 Mac 未睡眠", defaultValue: "无法连接 Mac：确认手机与 Mac 在同一局域网或 Tailscale 网络，且 Mac 未睡眠")
+            IOSAppLocalization.string("无法连接 Mac：确认 Mac 未睡眠，且网络可达（同一局域网、Tailscale 或公网地址）", defaultValue: "无法连接 Mac：确认 Mac 未睡眠，且网络可达（同一局域网、Tailscale 或公网地址）")
         case .certificateMismatch:
             IOSAppLocalization.string("Mac 的证书与配对时不一致（可能重装过 amber-gateway），请取消配对后重新扫码", defaultValue: "Mac 的证书与配对时不一致（可能重装过 amber-gateway），请取消配对后重新扫码")
         case .unauthorized:

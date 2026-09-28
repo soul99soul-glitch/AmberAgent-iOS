@@ -19,7 +19,7 @@
 | 心跳 | 60s 本地采集，只做本地阈值判定，越限才通知；不做远程仪表盘 |
 | 任务定义 | 一个任务 = 一次 agent 会话（session_id + 项目 cwd），或 `amber-gateway run -- <cmd>` 包装的任意进程。v1 内置 Codex 与 Claude Code 会话；自定义任务经 run 包装器 |
 | 监控对象范围 | 用户级 hooks 作用于所有宿主拉起的会话（含 Cursor、Synara 等）；v1 默认全部登记、按项目 cwd 分组展示，但**只对交互会话推送「等你回复」**，非交互宿主（自动化线程、headless）只推完成/异常且单独限流；提供 exclude 列表（决策 D9） |
-| 上行控制面 | v1 就有：手机可指定监控哪些任务、查看状态、请求测试推送。作用范围 = 局域网或 Tailscale 组网（5.1）；跨网不依赖公网可达 |
+| 上行控制面 | v1 就有：手机可指定监控哪些任务、查看状态、请求测试推送。作用范围 = 局域网、Tailscale 组网，或经 VPS 反向隧道的公网地址（5.1、G6） |
 | 接收端 | 各端 Amber App 本身（iOS / Android / 鸿蒙），不做独立 Gateway App |
 | 推送通道 | Mac 直连 APNs / FCM HTTP v1 / 华为 Push Kit，不自建服务器；一次性准备三套凭据 |
 | 推送正文 | 只含元信息（agent 名、任务/项目名、状态），不含代码与对话内容。v1 无端到端加密，推送云视为不可信，此为硬约束 |
@@ -34,7 +34,7 @@ Gateway 提供统一入口 `amber-gateway hook <source>`，经 Unix domain socke
 - **Claude Code**：`~/.claude/settings.json` 配置 hooks：`SessionStart`、`UserPromptSubmit`（新回合开始，取消待推送）、`PermissionRequest`（即时）、`Notification`（`permission_prompt` 约 6s / `idle_prompt` 约 60s / `elicitation_*`）、`Stop`（回合结束）、`StopFailure`（回合因 API 错误结束）、`SessionEnd`。
 - **Codex**：采用与 Claude Code 同构的 hooks 体系（`~/.codex/hooks.json`），v1 接 `SessionStart`、`UserPromptSubmit`、`PermissionRequest`、`Stop`、`Interrupt`、`SessionEnd`（`SessionEnd` hook 超时上限 3s，入口 200ms 内返回不受影响）。**不使用顶层 `notify`**：它只发 `agent-turn-complete` 一种事件；openai/codex#19921 中维护者表示顶层 `notify` 将被 hooks 取代、不再扩展（尚无时间表）。
 - **覆盖缺口（G1 实测）**：Codex plan 模式的 `request_user_input` 提问目前未见对应 hook，这类「等待」可能只能由随后的 `Stop` 间接反映，或完全漏掉；G1 实测后在 3.3 词表中标注。
-- **v1 不挂 `PreToolUse` / `PostToolUse`**：它们每次工具调用同步触发，daemon 一旦卡住会拖慢每次调用。「运行中」由 `SessionStart` / `UserPromptSubmit` 给出，停滞判定见 3.3（v0.4 取消 JSONL 尾读，D11）。若后续确需挂载，Codex 侧必须用后台 hook 模式。
+- **`PostToolUse` 以后台模式挂载（`"async": true`），不挂 `PreToolUse`**：权限框被批准没有专门事件，只能靠该工具的 `PostToolUse` 得知（2026-09-27 实测：`PermissionRequest` → 批准 → `PostToolUse` → `Stop`，其间无其他事件）。它每次工具调用都触发，因此两端都用后台模式，不阻塞 agent（实测 Claude 的 `Stop` 先于一个 `sleep 3` 的异步 hook 到达；Codex ≥ 0.148 支持）。只有「等待你处理（权限）」且工具名与 `PermissionRequest` 相同时才转回「运行中」、撤销挂起的推送；并行的其他工具完成不算。局限：`PostToolUse` 在工具**结束**时才触发，批准后工具本身运行超过权限在场阈值（20s）且用户未操作键鼠时，仍会多推一条权限提醒。按终端 tty 访问时间判断「在该终端输入过」只对 Claude 有效（Codex 经 `/dev/tty` 读输入，实测不更新该 tty 的访问时间），不采用。
 - **信任审核（Codex 特有）**：非托管 hook 须由用户在 `/hooks` 里信任后才会执行；Codex 按 **hook 定义**（命令字符串等配置内容）的哈希记录信任，而非二进制内容。安装流程把这一步作为显式手动步骤交付（给出精确指引）；hook 命令指向固定路径 `~/.local/bin/amber-gateway`（软链到真实二进制），重建二进制不改变定义、无需重新信任。**不加 shim 层**：它不改变信任行为，反而多一层中间进程（影响 3.2 进程树定位）。G1 实测确认。
 - **Gateway hook 行为硬约束**：v1 所挂事件中，Codex 的 `PermissionRequest`（allow/deny）和两端的 `Stop`（block / continue）都可返回决策。Gateway 的 hook 入口**只读不写**：不产生任何 stdout/stderr、不返回任何决策，解析后立即退出，绝不影响 agent 行为。此约束有专项测试。
 - **安装器（`amber-gateway install` / `uninstall`）**：修改 `~/.claude/settings.json` 与 `~/.codex/hooks.json` 时幂等合并——用户已有的 hooks/notify 串联保留、不覆盖；写前备份；`uninstall` 还原。
@@ -62,13 +62,13 @@ Gateway 提供统一入口 `amber-gateway hook <source>`，经 Unix domain socke
 
 ### 3.3 状态词汇表 v2
 
-| 状态 | 来源事件 |
-| --- | --- |
-| 运行中 | `SessionStart` / `UserPromptSubmit` / `run` 启动 |
-| 等待你处理 | `PermissionRequest`；Claude Code 权限/空闲 `Notification`；交互会话回合结束（`Stop` / `StopFailure` / `Interrupt`）立即转入此状态，推送受在场判定约束（3.5） |
-| 已完成 | 仅 headless 场景：`run` 包装任务以 exit 0 为准；外部 `claude -p` / `codex exec` 以「先 `Stop`/`SessionEnd` 后退出」为准（3.2） |
-| 已停止 | `SessionEnd`（交互会话）；会话进程退出（NOTE_EXIT 秒级感知）；异常退出标注「（异常）」 |
-| 疑似停滞 | headless 会话处于「运行中」且超过 `headlessStallMinutes`（默认 60）无任何事件，由 60s 心跳检查；只推一次，下一个事件恢复「运行中」。交互会话空闲是正常行为，不判停滞 |
+| 状态 | 用户看到的文案（推送 / App） | 来源事件 |
+| --- | --- | --- |
+| 运行中 | 运行中 | `SessionStart` / `UserPromptSubmit` / `run` 启动 |
+| 等待你处理 | 等你确认（权限）/ 等你回复 | `PermissionRequest`；Claude Code 权限/空闲 `Notification`；交互会话回合结束（`Stop` / `StopFailure` / `Interrupt`）立即转入此状态，推送受在场判定约束（3.5） |
+| 已完成 | 已完成 | 仅 headless 场景：`run` 包装任务以 exit 0 为准；外部 `claude -p` / `codex exec` 以「先 `Stop`/`SessionEnd` 后退出」为准（3.2） |
+| 已停止 | 已停止 / 意外中断（异常） | `SessionEnd`（交互会话）；会话进程退出（NOTE_EXIT 秒级感知）；异常退出标注「（异常）」 |
+| 疑似停滞 | 可能卡住了 | headless 会话处于「运行中」且超过 `headlessStallMinutes`（默认 60）无任何事件，由 60s 心跳检查；只推一次，下一个事件恢复「运行中」。交互会话空闲是正常行为，不判停滞 |
 
 v0.1 的「判稳 90s 窗口」移除：交互模式下新回合只由用户输入触发，固定窗口只会无差别延迟推送。「已完成」不再用于交互会话——回合结束本身就是用户最需要的信号；「人是否在 Mac 前」由 3.5 的在场判定处理。
 
@@ -114,6 +114,7 @@ v0.1 的「判稳 90s 窗口」移除：交互模式下新回合只由用户输�
 | --- | --- | --- |
 | 本地 HTTPS（自签证书 + 公钥 pinning），端口 47821 | 配对、任务列表、监控开关、token 上报、测试推送 | 局域网 |
 | Tailscale / WireGuard 组网（**推荐路径**） | 装入后同一 API 全网可用 | 全网 |
+| VPS 反向隧道（G6） | `publicAddresses` 进二维码候选地址，同一 API 经公网可用；TLS 仍端到端终止在 Mac，pinning 不变；服务端同时最多 32 个连接 | 全网 |
 | SSH 只读兜底 | `amber-gateway status --json` | 全网 |
 | 云推送（APNs / FCM / 华为） | 事件通知 | 全网 |
 | 中继 | 跨网控制与协作 | v2 |
@@ -127,7 +128,7 @@ v0.1 的「判稳 90s 窗口」移除：交互模式下新回合只由用户输�
 | 方法与路径 | 鉴权 | 作用 |
 | --- | --- | --- |
 | `POST /v1/pair` `{secret, deviceName, platform}` | 一次性 secret | 换取 `{deviceId, token, gatewayId, gatewayName}` |
-| `GET /v1/status` | Bearer | 任务列表 + 心跳快照 + 本设备推送状态 |
+| `GET /v1/status` | Bearer | 任务列表（宿主会话带 `host`，如 Synara）+ 心跳快照 + 本设备推送状态 + 配置了的 `synaraURL` |
 | `POST /v1/tasks/{key}/monitor` `{monitored}` | Bearer | 开/关某任务监控 |
 | `POST /v1/push-token` `{token, platform, environment}` | Bearer | 上报/更新推送 token（`platform` ∈ ios/android/harmony） |
 | `POST /v1/test-push` | Bearer | 向本设备发一条测试推送，同步返回投递结果 |
@@ -229,6 +230,22 @@ FCM 适配器（RS256 → OAuth → v1 send，`UNREGISTERED` 删除 token）+ An
 华为 Push Kit v3 适配器（PS256 JWT）+ 鸿蒙清单。
 验收：请求构造与 PSS 签名可验签单测；ArkTS lint 与构建通过；真机送达需 AGC `client_id` 与服务账号，列为用户执行项。
 
+**G6：在外网也能回复和确认（2026-09-28）**
+目标：人在公网时，手机能收到提醒、查看 Mac 任务、并对 Synara 里的任务回复和批准权限。原则是复用现有设施，不新造通道：
+- Mac mini 已有 jp-vps（103.201.130.63）反向隧道，Synara 网页已经以 `https://103.201.130.63.sslip.io:8944`（Let's Encrypt 证书 + gate cookie + Synara 自带配对链接）对外，回复和批准在 Synara 网页里完成，Gateway 不重做这部分。
+- Gateway 控制面本身就是 TLS + SPKI pinning + Bearer，可以直接经反向隧道对外，不需要再套一层。
+- 不读 Synara 内部数据库做「会话 → 线程」映射（耦合内部表结构）；手机从 Gateway 跳到 Synara 首页，在线程列表里找对应任务。
+
+分阶段：
+- **R1 Mac mini 部署**：源码同步到 mini，`swift test` + release 构建，`install`（LaunchAgent + Claude/Codex hooks，保留 mini 已有 hooks）。验收：daemon 常驻、`status` 正常；真实 `claude -p` 会话被登记并结束为「已完成」；Synara 的 Codex 覆盖目录能读到 `hooks.json`。
+- **R2 公网控制面**：配置项 `publicAddresses`（插在 `.local`/Tailscale 名之后、局域网 IP 之前，进二维码候选地址）；mini 增加反向隧道 `0.0.0.0:47821 → 127.0.0.1:47821`，jp-vps ufw 放行 47821。验收：从公网地址完成 TLS 握手且 SPKI 与指纹一致；用公网地址完成配对 → status → 取消配对全链路。
+- **R3 Synara 入口**：宿主会话沿进程树找到所在 `.app`，记录宿主名（如 Synara）；配置项 `synaraURL`，`/v1/status` 返回它和每个任务的宿主名；三端任务行显示宿主名，任务区在有 `synaraURL` 时提供「在 Synara 中回复或确认」入口，用系统浏览器打开。验收：单测覆盖宿主识别与 status 字段；三端编译/lint 通过；mini 上配好 `synaraURL`。
+- **R4 收尾**：终端里直接跑的 Claude 会话，远程操作走 Claude Code 自带的 `--remote-control`，写进 README；文档与全量回归。
+
+每个阶段完成后用 subagent 做逻辑闭环、调用链路与 UI 细节 review，按结论修复。
+
+实施结果与偏差（2026-09-28）：R1–R4 完成，mini 已部署（`publicAddresses: ["103.201.130.63"]`、`synaraURL` 已配），iOS 模拟器经公网完成配对并打开 Synara 网页。review 后追加：① HTTPS 同时最多 32 个连接（公网暴露后防描述符耗尽）；② 证书 CN 固定为 "Amber Gateway"，不再暴露机主名；③ Codex ≥ 0.157 终端会话跑在 CLI 托管的 app-server 守护进程（`--managed-daemon`）里，归为交互会话且不挂进程监听（共享进程、升级会被替换，其退出不代表任何单个会话结束）；④ Android 直接以 `ACTION_VIEW` 打开 `synaraURL`，避免带 gate 口令的 URL 进 logcat。未做：鸿蒙在家也经 VPS（不解析 `.local`），`publicAddresses` / `synaraURL` 不做格式校验。
+
 **G5（可选，不在本轮范围）：并入对等协同**
 事件模型迁入 `core/collab`、信封协议、Ed25519 挑战-应答配对、中继。依赖 collab 草案与中继部署决策（D7），v1 单开发者定位下没有收益，不做。
 
@@ -256,4 +273,4 @@ FCM 适配器（RS256 → OAuth → v1 send，`UNREGISTERED` 删除 token）+ An
 - **v0.2 → v0.3（2026-09-27，按第二轮评审）**：① 退出码仅子进程可得（`NOTE_EXITSTATUS` 限制）：`run` 包装任务用 `waitpid`，外部 headless 改为「先 `Stop`/`SessionEnd` 后退出」组合判定；② 会话进程改为沿进程树定位（跳过 `sh -c` 等中间层），登记键为 PID + 启动时间防复用；③ 新增多会话宿主规则：状态以 hook 为准，进程监听兜底；④ v1 不挂 `PreToolUse`/`PostToolUse`，活性改由 JSONL 提供；UDS 超时 2s → 200ms，hook 总耗时 P95 < 50ms；⑤ 新增 3.5 推送在场判定（D10），D9 收窄为只对交互会话推「等你回复」；⑥ 撤销「自动删除凭据原文件」（`.p8` 只能下载一次），改为用户确认后删除；开发期即固定签名身份，避免 Keychain 反复授权；⑦ 新增 `devices list/revoke`；⑧ 删除 shim：Codex 按 hook 定义哈希记录信任，与二进制内容无关；⑨ 标注 Codex plan 模式 `request_user_input` 可能无 hook 覆盖；⑩ 睡眠监听改 IOKit `IORegisterForSystemPower`，注明 `IOPMAssertion` 挡不住电池合盖睡眠；⑪ 二维码携带候选地址列表（含 Tailscale MagicDNS）；⑫ TLS 服务端实现路径（`NWListener` + `swift-certificates`）；⑬ iOS：补 time-sensitive entitlement 及其镜像/测试同步、推送仅 stable 构建、Live Activity 需 `pushType: .token`；⑭ 事实修正：openai/codex#19921 中维护者已表示顶层 `notify` 将被 hooks 取代，v0.2 的「废弃说法未获证实」撤回。
 - **v0.3 → v0.4（2026-09-27，G1 实施后）**：① hook 事件补 `UserPromptSubmit`、`StopFailure`、`Interrupt` 与 Claude `PermissionRequest`；② Claude 原生安装按 `/claude/versions/` 路径识别（运行时证据）；③ 宿主只按启动参数判定，撤销「同 PID 多会话 = 宿主」（`codex exec` 内部记忆会话反例），`~/.codex/memories` 默认排除；④ 取消 JSONL 尾读，停滞改为 headless 无事件超时（D11）；⑤ 凭据改存 600 文件（D12）；⑥ TLS 证书改用系统 openssl 生成，取消 `swift-certificates`；pinning 对象改 SPKI SHA-256；⑦ 取消 Bonjour（D13）；⑧ iOS 配对主路径改为系统相机扫码直接唤起深链，Android / 鸿蒙 App 内扫码；⑨ install 复制二进制到固定位置；⑩ 鸿蒙确认为 ArkTS 工程，华为通道按 Push Kit v3（PS256 JWT）；⑪ D4 定为 v1 只做 FCM；⑫ Live Activity 移出 v1；⑬ G5 明确不在本轮范围。
 
-- **v0.4 实施偏差（2026-09-27，G2–G4 落地与 review 后）**：① Android token 存 DataStore、鸿蒙存 KV 存储（原写 EncryptedSharedPreferences / Preferences）；② 鸿蒙网络栈用 RCP 而非 `http`，入口挂在设置 → 高级功能；③ Android / 鸿蒙均不接系统深链；④ 同一 push token 只保留在最新上报的设备记录上，避免重复配对后重复推送；⑤ `devices.json` 损坏时 API 返回 500、不覆盖文件（原会让所有手机收到 401 后自行解绑）；⑥ 推送请求 8s 超时、HTTPS 连接上限 20s、客户端读超时 25s，保证 test-push 慢时不被换地址重发；⑦ APNs `DeviceTokenNotForTopic` 视为 topic 配置错误，不删 token；⑧ `devices revoke` 前缀必须唯一；⑨ 失联判定简化为「连不上即失联」。
+- **v0.4 实施偏差（2026-09-27，G2–G4 落地与 review 后）**：① Android token 存 DataStore、鸿蒙存 KV 存储（原写 EncryptedSharedPreferences / Preferences）；② 鸿蒙网络栈用 RCP 而非 `http`，入口挂在设置 → 高级功能；③ Android / 鸿蒙均不接系统深链；④ 同一 push token 只保留在最新上报的设备记录上，避免重复配对后重复推送；⑤ `devices.json` 损坏时 API 返回 500、不覆盖文件（原会让所有手机收到 401 后自行解绑）；⑥ 推送请求 8s 超时、HTTPS 连接上限 20s、客户端读超时 25s，保证 test-push 慢时不被换地址重发；⑦ APNs `DeviceTokenNotForTopic` 视为 topic 配置错误，不删 token；⑧ `devices revoke` 前缀必须唯一；⑨ 失联判定简化为「连不上即失联」；⑩ 以后台模式挂 `PostToolUse`：在 Mac 前批准权限后不再误推「等待你处理（权限）」，headless 任务的工具调用也计入活性（原先持续调用工具超过 60 分钟的 headless 任务会被误判停滞）；实测关闭终端窗口时 Claude 会先发 `SessionEnd`，不会误报「已停止（异常）」。
