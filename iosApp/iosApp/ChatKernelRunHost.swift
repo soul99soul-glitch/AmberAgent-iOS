@@ -1688,6 +1688,7 @@ final class ChatKernelRunHost {
             self.streamClock.noteVisibleDelta()
             if !self.didReportFirstDeltaThisRound {
                 self.didReportFirstDeltaThisRound = true
+                ChatPerfTrace.event("FirstDelta")
                 self.backgroundExecution.updateProgress(
                     runId,
                     completed: 2,
@@ -1821,6 +1822,8 @@ final class ChatKernelRunHost {
         provider: ProviderSetting,
         params: TextGenerationParams
     ) async throws -> [UIMessage] {
+        var prepareInterval = ChatPerfTrace.begin("PrepareUpload")
+        defer { ChatPerfTrace.end(&prepareInterval) }
         guard currentRunId == runId else { return messages }
         let settings = runSettings ?? dependencies.sharedSettings.snapshot
         let conversationId = currentConversationIdForRun
@@ -2454,6 +2457,9 @@ final class ChatKernelRunHost {
     /// 尾的差异:恢复 steer leftover 进 composer,不走 handleSteerQueueAtTerminal,
     /// 也不 generationSucceeded。
     private func cancelledTerminal(runId: String) async {
+        // cancelledTerminal 不经过 teardownRun,单独补同名事件,保持三种终态
+        // (完成/失败/取消)都能发出 RunTerminal。
+        ChatPerfTrace.event("RunTerminal")
         projection.discardProvisionalAssistant()
         let cause = cancelCause ?? .user
         let startedAt = currentStartedAt
@@ -2559,6 +2565,8 @@ final class ChatKernelRunHost {
         terminalEvent: ChatMessageUpdateReason,
         terminalStatus: AgentRunStatus
     ) {
+        // 完成/失败共用的收尾路径；取消走 cancelledTerminal 下方单独打点。
+        ChatPerfTrace.event("RunTerminal")
         let runConversationId = currentConversationIdForRun
         IOSChatBackgroundGenerationCoordinator.shared.discardDurableResponse(runId: runId)
         if terminalEvent == .generationCompleted {
@@ -2660,6 +2668,7 @@ final class ChatKernelRunHost {
     /// process-local owner so the composer cannot remain stuck forever.
     private func releaseLocalRunAfterTerminalRecordFailure(runId: String) {
         guard currentRunId == runId else { return }
+        ChatPerfTrace.event("RunTerminal")
         IOSJevToolDiscoveryMetricsTracker.discardPending(runId: runId)
         let runConversationId = currentConversationIdForRun
         backgroundExecution.end(runId)

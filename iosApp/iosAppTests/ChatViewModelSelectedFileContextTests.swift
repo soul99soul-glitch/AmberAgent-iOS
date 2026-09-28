@@ -1795,7 +1795,10 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
     }
 
     func testAdvancedToolDeclarationsFollowParityRules() throws {
-        let alwaysOnToolNames = ["subagent_dispatch", "model_council_run"]
+        // bf53f8e 起子代理派发改由 spawn_agent 一组编排函数承担（非常驻，经 tool_search
+        // 暴露），旧 subagent_dispatch 不再声明；历史里的旧调用仍需可恢复（见下方恢复断言）。
+        let declaredToolNames = ["model_council_run"]
+        let resumableToolNames = ["subagent_dispatch", "model_council_run"]
 
         let defaultViewModel = ChatViewModel(
             settingsStore: SettingsStore(),
@@ -1808,9 +1811,13 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         )
         let defaultNames = Set(defaultViewModel.currentToolDeclarationNames())
         XCTAssertTrue(defaultNames.contains("mcp_call"), "mcp_call should be declared by default")
-        for toolName in alwaysOnToolNames {
+        for toolName in declaredToolNames {
             XCTAssertTrue(defaultNames.contains(toolName), "\(toolName) should be declared by default")
         }
+        XCTAssertFalse(defaultNames.contains("subagent_dispatch"), "legacy subagent_dispatch must not be declared")
+        let spawnPayload = defaultViewModel.toolExposureBridgeForTesting()?
+            .executeToolSearch(argumentsJson: #"{"query":"spawn_agent","limit":1}"#) ?? ""
+        XCTAssertTrue(spawnPayload.contains("spawn_agent"), "spawn_agent must stay reachable through tool_search")
         // P0-a: WebMount tools are deferred behind tool_search in the default
         // (>40 tools) config — tool_search itself is the resident discovery tool.
         XCTAssertTrue(defaultNames.contains("tool_search"), "tool_search should be declared by default")
@@ -1848,11 +1855,11 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         )
         let enabledNames = Set(enabledViewModel.currentToolDeclarationNames())
         XCTAssertTrue(enabledNames.contains("mcp_call"), "mcp_call should stay declared without a capability gate")
-        for toolName in alwaysOnToolNames {
+        for toolName in declaredToolNames {
             XCTAssertTrue(enabledNames.contains(toolName), "\(toolName) should stay declared without a capability gate")
         }
 
-        for toolName in ["mcp_call"] + alwaysOnToolNames {
+        for toolName in ["mcp_call"] + resumableToolNames {
             let toolCall = UIMessagePart.Tool(
                 toolCallId: "call-\(toolName)",
                 toolName: toolName,

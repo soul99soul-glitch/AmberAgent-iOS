@@ -31,7 +31,13 @@ final class ConversationRecapGenerator {
     }
 
     func recap(for conversationID: String, messages: [UIMessage]) -> ConversationRecap? {
-        recapStore.recap(for: conversationID)?.projectingMessageReferences(to: messages)
+        recap(for: conversationID, messageIDs: Set(messages.map(ChatMessageProjector.messageId(for:))))
+    }
+
+    /// ID-based overload: lets callers pass an already-cached message ID set
+    /// (e.g. a view's list-summary projection) instead of re-walking `messages`.
+    func recap(for conversationID: String, messageIDs: Set<String>) -> ConversationRecap? {
+        recapStore.recap(for: conversationID)?.projectingMessageReferences(toMessageIDs: messageIDs)
     }
 
     func isLoading(for conversationID: String) -> Bool { loadingConversationIDs.contains(conversationID) }

@@ -4052,7 +4052,24 @@ enum IOSWebMountBridgeScripts {
             if(preflightOnly) return finish({preflight_only:true,target_ref:bridge.refFor(el),target_label:amberName(el),verified:true});
             var actionLocator=target.indexOf("wm:")===0?amberLocator(el):null;
             markActionTarget(el);
-            if(typeof el.focus==="function" && (amberTypeable(el) || el.tabIndex>=0)) el.focus();
+            if(typeof el.focus==="function" && (amberTypeable(el) || el.tabIndex>=0)){
+              // WebMount WKWebViews often run detached from any window; there WebKit
+              // moves activeElement but may skip the focus/focusin events, so
+              // focus-revealed content never appears. Replay them only when this
+              // call newly focused the element and no native focus event fired.
+              var focusDoc=el.ownerDocument,wasFocused=focusDoc.activeElement===el,sawFocus=false;
+              var noteFocus=function(){sawFocus=true;};
+              el.addEventListener("focus",noteFocus,true);
+              el.focus();
+              el.removeEventListener("focus",noteFocus,true);
+              if(!wasFocused && !sawFocus && focusDoc.activeElement===el){
+                try{
+                  var focusWindow=focusDoc.defaultView||window,FocusCtor=focusWindow.FocusEvent||FocusEvent;
+                  el.dispatchEvent(new FocusCtor("focus",{bubbles:false,cancelable:false,view:focusWindow}));
+                  el.dispatchEvent(new FocusCtor("focusin",{bubbles:true,cancelable:false,view:focusWindow}));
+                }catch(e){}
+              }
+            }
             var doubleClickEvent=null;
             if(clickCount===2){
               try{

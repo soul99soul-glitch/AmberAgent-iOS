@@ -13,8 +13,9 @@ final class HomeDesignContractTests: XCTestCase {
             let path = HomeSVGPathParser.parse(icon.pathData)
             let box = path.boundingRect
             XCTAssertFalse(box.isNull || box.isEmpty, "\(icon) 解析结果为空")
-            XCTAssertGreaterThan(box.width, 100, "\(icon) 解析后宽度异常：\(box)")
-            XCTAssertGreaterThan(box.height, 100, "\(icon) 解析后高度异常：\(box)")
+            // 窄长字形（如 arrowsVertical/arrowsHorizontal）短边本就不足 100；只要求长边未塌缩。
+            XCTAssertGreaterThan(max(box.width, box.height), 100, "\(icon) 解析后尺寸异常：\(box)")
+            XCTAssertGreaterThan(min(box.width, box.height), 0, "\(icon) 解析后塌缩为线：\(box)")
             XCTAssertLessThan(box.minX, 256, "\(icon) 越出 viewBox 右缘：\(box)")
             XCTAssertLessThan(box.minY, 256, "\(icon) 越出 viewBox 下缘：\(box)")
             XCTAssertGreaterThan(box.maxX, 0, "\(icon) 越出 viewBox 左缘：\(box)")
@@ -70,6 +71,134 @@ final class HomeDesignContractTests: XCTestCase {
             "非 catalog 的 enum 名不应当作 LLM key"
         )
         XCTAssertEqual(HomeConversationIcon.fallback, .chatCircle, "fallback 常量仍为实心气泡")
+    }
+
+    /// Q2 性能修复：`icon(forTitle:isPinned:preferredKey:)` 加了主线程内的小缓存，
+    /// 命中缓存的结果必须与未命中（首次求值）完全一致，且不同入参不能互相污染。
+    func testIconLookupCacheMatchesUncachedResultAndKeysAreIndependent() {
+        let titles = [
+            "赵匡胤的打仗风格是什么样的？",
+            "今晚的红酒品鉴笔记",
+            "梁圣和牢梁的区别是什么",
+        ]
+        for title in titles {
+            let first = HomeConversationIcon.icon(forTitle: title, isPinned: false)
+            for _ in 0..<5 {
+                XCTAssertEqual(
+                    HomeConversationIcon.icon(forTitle: title, isPinned: false),
+                    first,
+                    "重复调用（命中缓存）必须与首次求值结果一致：\(title)"
+                )
+            }
+        }
+        // isPinned / preferredKey 变化必须落到不同缓存桶，不能互相污染彼此的结果。
+        XCTAssertEqual(HomeConversationIcon.icon(forTitle: "同一个标题", isPinned: true), .pushPin)
+        XCTAssertNotEqual(
+            HomeConversationIcon.icon(forTitle: "同一个标题", isPinned: true),
+            HomeConversationIcon.icon(forTitle: "同一个标题", isPinned: false),
+            "isPinned 不同必须命中不同缓存条目"
+        )
+        XCTAssertEqual(
+            HomeConversationIcon.icon(forTitle: "同一个标题", isPinned: false, preferredKey: "crown"),
+            .crown
+        )
+        XCTAssertNotEqual(
+            HomeConversationIcon.icon(forTitle: "同一个标题", isPinned: false, preferredKey: "crown"),
+            HomeConversationIcon.icon(forTitle: "同一个标题", isPinned: false, preferredKey: nil),
+            "preferredKey 不同必须命中不同缓存条目"
+        )
+    }
+
+    /// Q2 性能修复：`ConversationSummaryRow` 现在是 `Equatable`（供首页列表 `.equatable()`
+    /// 跳过未变化行的重算）。这里验证：body 实际读取/展示的字段（title/isPinned/
+    /// messageCount/updateAt 以及行自身的 isCurrent/isGenerating/listPreview/
+    /// listIconKey/slice/hidesSeparator）任一变化都必须判定不相等；其余字段
+    /// （assistantId/createAt/memoryMode 等本行不读的 summary 字段）不参与比较。
+    @MainActor
+    func testConversationSummaryRowEquatableTracksOnlyDisplayedFields() {
+        func makeSummary(
+            title: String,
+            id: KotlinUuid,
+            isPinned: Bool = false,
+            messageCount: Int32 = 1,
+            updateAtMs: Int64 = 0
+        ) -> ConversationSummary {
+            ConversationSummary(
+                id: id,
+                title: title,
+                assistantId: KotlinUuid.companion.random(),
+                createAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0),
+                updateAt: KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: updateAtMs),
+                isPinned: isPinned,
+                messageCount: messageCount,
+                memoryMode: .enabled
+            )
+        }
+
+        func makeRow(
+            _ summary: ConversationSummary,
+            isCurrent: Bool = false,
+            isGenerating: Bool = false,
+            listPreview: String = "",
+            listIconKey: String? = nil,
+            slice: HomeCardSlice = .single,
+            hidesSeparator: Bool = false
+        ) -> ConversationSummaryRow {
+            ConversationSummaryRow(
+                summary: summary,
+                isCurrent: isCurrent,
+                isGenerating: isGenerating,
+                listPreview: listPreview,
+                listIconKey: listIconKey,
+                slice: slice,
+                hidesSeparator: hidesSeparator,
+                onTap: {},
+                onRename: {},
+                onTogglePin: {},
+                onDelete: {}
+            )
+        }
+
+        let sharedId = KotlinUuid.companion.random()
+        let base = makeSummary(title: "标题", id: sharedId)
+
+        XCTAssertEqual(
+            makeRow(base),
+            makeRow(makeSummary(title: "标题", id: sharedId)),
+            "summary 结构相同（同一 id/title/isPinned/messageCount/updateAt）且其余行属性不变时应判定相等，" +
+            "让 SwiftUI 跳过这一行的重算"
+        )
+
+        XCTAssertNotEqual(
+            makeRow(base),
+            makeRow(makeSummary(title: "新标题", id: sharedId)),
+            "标题变化必须判定不相等——否则 body 不会用新标题重算，onRename 捕获的 summary.title 也会过期"
+        )
+        XCTAssertNotEqual(
+            makeRow(base),
+            makeRow(makeSummary(title: "标题", id: sharedId, isPinned: true)),
+            "置顶状态变化必须判定不相等"
+        )
+        XCTAssertNotEqual(
+            makeRow(base),
+            makeRow(makeSummary(title: "标题", id: sharedId, messageCount: 2)),
+            "消息条数变化必须判定不相等"
+        )
+        XCTAssertNotEqual(
+            makeRow(base),
+            makeRow(makeSummary(title: "标题", id: sharedId, updateAtMs: 1_000)),
+            "updateAt 变化（影响相对时间展示）必须判定不相等"
+        )
+        XCTAssertNotEqual(makeRow(base, isCurrent: true), makeRow(base, isCurrent: false), "isCurrent 变化必须判定不相等")
+        XCTAssertNotEqual(makeRow(base, isGenerating: true), makeRow(base, isGenerating: false), "isGenerating 变化必须判定不相等")
+        XCTAssertNotEqual(makeRow(base, listPreview: "浓缩预览"), makeRow(base, listPreview: ""), "listPreview 变化必须判定不相等")
+        XCTAssertNotEqual(makeRow(base, listIconKey: "crown"), makeRow(base, listIconKey: nil), "listIconKey 变化必须判定不相等")
+        XCTAssertNotEqual(makeRow(base, slice: .top), makeRow(base, slice: .bottom), "slice 变化必须判定不相等")
+        XCTAssertNotEqual(
+            makeRow(base, hidesSeparator: true),
+            makeRow(base, hidesSeparator: false),
+            "hidesSeparator 变化必须判定不相等"
+        )
     }
 
     @MainActor
@@ -235,7 +364,9 @@ final class HomeDesignContractTests: XCTestCase {
         ))
 
         XCTAssertEqual(selected.destination, .deepReadTask("read-sync"))
-        XCTAssertEqual(selected.title, "深度阅读")
+        // db25ed1 起任务主题作首行，功能名进副信息。
+        XCTAssertEqual(selected.title, "年度报告")
+        XCTAssertTrue(selected.meta.contains("深度阅读"))
         XCTAssertEqual(selected.ctaTitle, "处理", "等待用户处理的任务必须高于运行、重试和草稿")
         XCTAssertTrue(selected.meta.contains("同步失败"))
     }
@@ -537,7 +668,7 @@ final class HomeDesignContractTests: XCTestCase {
         // 新对话胶囊相对会话卡 16 内缩：trailing 28 → 与卡边 gap 12，避免相切。
         XCTAssertTrue(source.contains("private var homeNewChatCapsuleTrailingInset: CGFloat { 28 }"))
         XCTAssertTrue(
-            source.contains(".padding(.trailing, homeNewChatCapsuleTrailingInset)"),
+            source.contains(".padding(.trailing, homeNewChatCapsuleTrailingInset - homeNewChatCapsuleHitSlop)"),
             "浮层必须挂 trailing inset 常量，不能回退硬编码 16"
         )
         // Continue CTA 保持浅强调色底，与原生 prominent 新对话按钮区分。
@@ -617,7 +748,7 @@ final class HomeDesignContractTests: XCTestCase {
                 .appendingPathComponent("iosApp/ChatViewModel.swift"),
             encoding: .utf8
         )
-        XCTAssertTrue(chatVM.contains("generateConversationListPreview()"))
+        XCTAssertTrue(chatVM.contains("generateConversationListPreview(state: state)"))
         XCTAssertTrue(chatVM.contains("ConversationListPreviewGenerator.schedule"))
 
         let generator = try String(

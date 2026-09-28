@@ -48,12 +48,22 @@ final class IOSPermissionsStatusSnapshotTests: XCTestCase {
 
     func testEntitlementAndExtensionCapabilitiesExposePrerequisites() throws {
         let snapshot = makeSnapshot()
-        let health = try XCTUnwrap(snapshot.capabilities.first { $0.id == "ios.health.read" })
+        // ios.health.read was picked originally, but 3b0f50c ("unlock paid Apple
+        // capabilities with release-safe product flows") intentionally added the
+        // com.apple.developer.healthkit entitlement to AmberAgent.entitlements, so
+        // the coordinator now reports it as configured (systemStatus == .unknown,
+        // since HealthKit read grants have no public introspection API) instead of
+        // .requiresEntitlement. ios.screen_time.family_controls still lacks its
+        // entitlement (com.apple.developer.family-controls is not in
+        // AmberAgent.entitlements) and is not in implementedRequestCapabilityIds,
+        // so it keeps exercising the same "entitlement missing" contract this test
+        // is meant to cover.
+        let familyControls = try XCTUnwrap(snapshot.capabilities.first { $0.id == "ios.screen_time.family_controls" })
         let callDirectory = try XCTUnwrap(snapshot.capabilities.first { $0.id == "ios.call_directory" })
 
-        XCTAssertEqual(health.systemStatus, IOSSystemPermissionStatus.requiresEntitlement.title)
-        XCTAssertTrue(health.requiredEntitlements.contains("com.apple.developer.healthkit"))
-        XCTAssertFalse(health.canRequestInApp)
+        XCTAssertEqual(familyControls.systemStatus, IOSSystemPermissionStatus.requiresEntitlement.title)
+        XCTAssertTrue(familyControls.requiredEntitlements.contains("com.apple.developer.family-controls"))
+        XCTAssertFalse(familyControls.canRequestInApp)
         XCTAssertEqual(callDirectory.systemStatus, IOSSystemPermissionStatus.requiresExtensionTarget.title)
         XCTAssertTrue(callDirectory.requiredExtensionTargets.contains("Call Directory Extension"))
         XCTAssertFalse(callDirectory.canRequestInApp)

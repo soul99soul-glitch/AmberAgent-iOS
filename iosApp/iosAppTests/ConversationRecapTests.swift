@@ -15,6 +15,11 @@ final class ConversationRecapTests: XCTestCase {
         XCTAssertFalse(ConversationRecapLogic.eligible(messages: Array(twoMessages.prefix(2))))
         XCTAssertFalse(ConversationRecapLogic.eligible(messages: twoMessages))
         XCTAssertTrue(ConversationRecapLogic.eligible(messages: threeMessages))
+
+        // ID-count overload must agree with the array-based one it backs.
+        XCTAssertFalse(ConversationRecapLogic.eligible(userMessageCount: 1))
+        XCTAssertFalse(ConversationRecapLogic.eligible(userMessageCount: 2))
+        XCTAssertTrue(ConversationRecapLogic.eligible(userMessageCount: 3))
     }
 
     func testNumberedRecentMessagesMapCitationsAndLeaveOutOfRangeReferencesUnlinked() throws {
@@ -197,6 +202,49 @@ final class ConversationRecapTests: XCTestCase {
             messages: messages,
             branchID: "branch-a"
         ))
+
+        // ID-based overload must agree with the array-based one it backs.
+        let messageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+        let lastMessageID = ChatMessageProjector.messageId(for: messages[1])
+        XCTAssertFalse(ConversationRecapLogic.isStale(
+            recap: recap, messageIDs: messageIDs, lastMessageID: lastMessageID, branchID: "branch-a"
+        ))
+        XCTAssertTrue(ConversationRecapLogic.isStale(
+            recap: recap, messageIDs: messageIDs, lastMessageID: "new-message", branchID: "branch-a"
+        ))
+        XCTAssertTrue(ConversationRecapLogic.isStale(
+            recap: recap, messageIDs: messageIDs, lastMessageID: lastMessageID, branchID: "branch-b"
+        ))
+        XCTAssertTrue(ConversationRecapLogic.isStale(
+            recap: missingCoverage, messageIDs: messageIDs, lastMessageID: lastMessageID, branchID: "branch-a"
+        ))
+    }
+
+    func testProjectingMessageReferencesByIDsMatchesArrayOverload() {
+        let messages = [
+            IOSChatForegroundFixtures.userMessage("question"),
+            IOSChatForegroundFixtures.assistantText("answer"),
+        ]
+        let keptID = ChatMessageProjector.messageId(for: messages[1])
+        let recap = ConversationRecap(
+            overview: "Done",
+            nodes: [
+                ConversationRecap.Node(kind: .milestone, title: "Kept", messageRef: "m2", messageID: keptID),
+                ConversationRecap.Node(kind: .decision, title: "Dropped", messageRef: "m0", messageID: "removed"),
+            ],
+            nextSteps: [],
+            conversationID: "conversation-a",
+            coveredThroughMessageID: keptID,
+            branchID: "branch-a",
+            generatedAt: Date(timeIntervalSince1970: 1)
+        )
+
+        let byArray = recap.projectingMessageReferences(to: messages)
+        let byIDs = recap.projectingMessageReferences(toMessageIDs: Set(messages.map(ChatMessageProjector.messageId(for:))))
+
+        XCTAssertEqual(byArray, byIDs)
+        XCTAssertEqual(byIDs.nodes[0].messageID, keptID)
+        XCTAssertNil(byIDs.nodes[1].messageID)
     }
 
     func testParserReportsInvalidJSONAndIncompleteContent() {

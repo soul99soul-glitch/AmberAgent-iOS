@@ -116,16 +116,21 @@ private struct AmberTableLayout: Layout {
     struct CacheData {
         let columnWidths: [CGFloat]
         let rowHeights: [CGFloat]
+        let fingerprint: Int
+        let subviewCount: Int
     }
 
     let columnCount: Int
+    /// Cheap content signature built from each cell's markdown source offsets
+    /// (not its measured size) — see `updateCache` for why this exists.
+    let contentFingerprint: Int
 
     private let maxColumnWidth: CGFloat = 300
     private let defaultRowHeight: CGFloat = 44
 
     func makeCache(subviews: Subviews) -> CacheData {
         guard columnCount > 0, !subviews.isEmpty else {
-            return CacheData(columnWidths: [], rowHeights: [])
+            return CacheData(columnWidths: [], rowHeights: [], fingerprint: contentFingerprint, subviewCount: subviews.count)
         }
         let rowCount = (subviews.count + columnCount - 1) / columnCount
 
@@ -155,7 +160,30 @@ private struct AmberTableLayout: Layout {
             rowHeights[row] = rowHeight
         }
 
-        return CacheData(columnWidths: columnWidths, rowHeights: rowHeights)
+        return CacheData(columnWidths: columnWidths, rowHeights: rowHeights, fingerprint: contentFingerprint, subviewCount: subviews.count)
+    }
+
+    /// SwiftUI's default `updateCache` just calls `makeCache` again on *every*
+    /// layout pass that touches this container. Inside the eager (non-lazy)
+    /// `VStack` that hosts the whole loaded message history
+    /// (`NativeChatTimelineView.body`, ChatCollectionMessageList.swift), a single
+    /// unrelated row animating in (e.g. a new message bubble's entrance) forces the
+    /// `VStack` to re-propose sizes to *every* child — including this table in a
+    /// long-settled, unrelated older message — on every animation frame, even
+    /// though nothing about this table changed.
+    ///
+    /// `makeCache` only ever reads subview content, never `proposal`, so it's safe
+    /// to reuse the cache whenever both the content fingerprint and the subview
+    /// count (columns × rows, including padded ragged-row cells) are unchanged.
+    /// A streaming table growing by a row changes `subviewCount`; a cell's text
+    /// changing while counts stay the same (e.g. a padded, still-empty cell in a
+    /// partially-streamed row gaining text) changes `contentFingerprint` — either
+    /// forces a real remeasure, so growing/streaming tables stay correct.
+    func updateCache(_ cache: inout CacheData, subviews: Subviews) {
+        if cache.fingerprint == contentFingerprint, cache.subviewCount == subviews.count {
+            return
+        }
+        cache = makeCache(subviews: subviews)
     }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout CacheData) -> CGSize {
@@ -191,6 +219,8 @@ struct AmberMarkdownView: View {
     var displaySetting: DisplaySetting? = nil
     var style: MarkdownStyle = .standard
     @Environment(\.chatArtifactPinAction) private var artifactPinAction
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.legibilityWeight) private var legibilityWeight
 
     var body: some View {
         let resolved = AmberMarkdownAstCache.shared.result(for: markdown)
@@ -372,12 +402,13 @@ struct AmberMarkdownView: View {
         }
 
         let columnCount = headerCells.count
+        let contentFingerprint = tableContentFingerprint(node, source: source, columnCount: columnCount)
 
         return AnyView(
             ScrollView(.horizontal, showsIndicators: false) {
                 // Subviews are emitted in row-major order (header row first); the
                 // layout maps index i to (row: i / columnCount, col: i % columnCount).
-                AmberTableLayout(columnCount: columnCount) {
+                AmberTableLayout(columnCount: columnCount, contentFingerprint: contentFingerprint) {
                     ForEach(Array(headerCells.enumerated()), id: \.offset) { _, cell in
                         renderTableCell(
                             cell, source: source,
@@ -402,6 +433,27 @@ struct AmberMarkdownView: View {
             // 限制在列宽内横滑；否则宽表 ideal width 会撑破外层聊天 ScrollView。
             .frame(maxWidth: .infinity, alignment: .leading)
         )
+    }
+
+    /// 单元格测量只取决于：表格源文本（含每格内容与行内格式、行列数）、样式、
+    /// 动态字号与粗体文本设置。指纹覆盖全部这些输入，任一变化都会重新测量；不变时
+    /// `AmberTableLayout.updateCache` 跳过测量（历史区是非懒加载 VStack，兄弟行
+    /// 做动画时这张表也会被要求重新布局）。
+    private func tableContentFingerprint(_ node: PackedAstNode, source: String, columnCount: Int) -> Int {
+        var hasher = Hasher()
+        hasher.combine(columnCount)
+        hasher.combine(style)
+        hasher.combine(dynamicTypeSize)
+        hasher.combine(legibilityWeight)
+        let utf8 = source.utf8
+        if let lower = utf8.index(utf8.startIndex, offsetBy: node.startOffset, limitedBy: utf8.endIndex),
+           let upper = utf8.index(utf8.startIndex, offsetBy: node.endOffset, limitedBy: utf8.endIndex),
+           lower <= upper {
+            hasher.combine(String(decoding: utf8[lower..<upper], as: UTF8.self))
+        } else {
+            hasher.combine(source)
+        }
+        return hasher.finalize()
     }
 
     private func renderTableCell(

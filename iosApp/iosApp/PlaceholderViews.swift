@@ -1496,12 +1496,39 @@ enum HomeConversationIcon {
         ("chat", .chatCircle, "闲聊/一般"),
     ]
 
+    /// `icon(forTitle:isPinned:preferredKey:)` 的结果缓存。三个入参完全决定输出，
+    /// 且调用方（ConversationSummaryRow.body / 单测）只在主线程调用，因此用普通
+    /// Dictionary 即可，不需要额外加锁。超过上限直接清空，避免无界增长。
+    /// `nonisolated(unsafe)`：`HomeConversationIcon` 本身不是 actor-isolated 类型
+    /// （沿用既有调用方，非 @MainActor 的旧测试也直接同步调用），跟本文件其它
+    /// 静态缓存（如 IOSGeminiProvider.effortsByBase）同一纪律——手动保证只在主线程写。
+    private struct IconCacheKey: Hashable {
+        let title: String
+        let isPinned: Bool
+        let preferredKey: String?
+    }
+    nonisolated(unsafe) private static var iconCache: [IconCacheKey: HomePhosphor] = [:]
+    private static let iconCacheLimit = 500
+
     /// 按会话标题 / 可选 LLM 图标 key 取 Phosphor fill。
     /// 1) 置顶 → 图钉
     /// 2) 标题 LLM 写入的 preferredKey
     /// 3) 标题关键词表
     /// 4) 中性气泡 fallback
     static func icon(forTitle title: String, isPinned: Bool, preferredKey: String? = nil) -> HomePhosphor {
+        let key = IconCacheKey(title: title, isPinned: isPinned, preferredKey: preferredKey)
+        if let cached = iconCache[key] {
+            return cached
+        }
+        let resolved = resolveIcon(forTitle: title, isPinned: isPinned, preferredKey: preferredKey)
+        if iconCache.count >= iconCacheLimit {
+            iconCache.removeAll(keepingCapacity: true)
+        }
+        iconCache[key] = resolved
+        return resolved
+    }
+
+    private static func resolveIcon(forTitle title: String, isPinned: Bool, preferredKey: String?) -> HomePhosphor {
         if isPinned { return .pushPin }
         if let preferredKey,
            let icon = resolveLLMKey(preferredKey) {
@@ -2028,7 +2055,7 @@ struct HomeContinueCardModel: Equatable {
     }
 }
 
-private enum HomeCardSlice { case top, middle, bottom, single }
+enum HomeCardSlice: Equatable { case top, middle, bottom, single }
 
 private struct HomeSliceShape: Shape {
     let slice: HomeCardSlice
@@ -2856,6 +2883,7 @@ struct ConversationsView: View {
                     deletingConversationId = summary.id
                 }
             )
+            .equatable()
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -3074,7 +3102,9 @@ struct ConversationsView: View {
 }
 
 /// 真实会话摘要行：切片一体卡（外框 + 顶/底投影），激活行 accent 色带，行间 hairline。
-private struct ConversationSummaryRow: View {
+/// 非 private（原为 private struct）：只放宽到 internal，方便 HomeDesignContractTests
+/// 用 @testable import 直接构造实例验证 `==`；仍是模块内部类型，不对外暴露。
+struct ConversationSummaryRow: View, Equatable {
     let summary: ConversationSummary
     let isCurrent: Bool
     let isGenerating: Bool
@@ -3099,6 +3129,33 @@ private struct ConversationSummaryRow: View {
     @State private var metaCycleTask: Task<Void, Never>?
     @ScaledMetric(relativeTo: .body) private var conversationTitleSize: CGFloat = 16
     @ScaledMetric(relativeTo: .caption2) private var conversationMetadataSize: CGFloat = 11
+
+    /// 供 `.equatable()` 用：只比较 body 实际读取、决定渲染结果的字段。
+    /// `summary` 是 KMP `data class`（结构相等），但这里不比较整个对象——只挑 body 里
+    /// 真正用到的四个字段（title/isPinned/messageCount/updateAt），忽略
+    /// assistantId/createAt/memoryMode 等本行不读的字段，命中率更高。
+    ///
+    /// 闭包（onTap/onRename/onTogglePin/onDelete）故意不参与比较：
+    /// - onTap/onDelete/onTogglePin 只捕获 `summary.id`（同一行 id 恒定不变）和
+    ///   引用类型 owner（conversationStore/chatViewModel/router，@State 写入路径也是
+    ///   共享存储，与具体是哪一份 self 快照无关），跟“这份闭包是不是本帧新建的”无关。
+    /// - onRename 额外捕获 `summary.title` 写进 renameDraft；但 title 已经是本 == 的
+    ///   比较字段之一——只要 title 变了这一行就判定不相等、body 会重新求值并换上带新
+    ///   title 的闭包，所以点击时拿到的必然是当前 title，不存在“旧闭包捕获旧标题”的
+    ///   过期风险，不需要额外改成点击时按 id 现查。
+    nonisolated static func == (lhs: ConversationSummaryRow, rhs: ConversationSummaryRow) -> Bool {
+        lhs.summary.id == rhs.summary.id
+            && lhs.summary.title == rhs.summary.title
+            && lhs.summary.isPinned == rhs.summary.isPinned
+            && lhs.summary.messageCount == rhs.summary.messageCount
+            && lhs.summary.updateAt == rhs.summary.updateAt
+            && lhs.isCurrent == rhs.isCurrent
+            && lhs.isGenerating == rhs.isGenerating
+            && lhs.listPreview == rhs.listPreview
+            && lhs.listIconKey == rhs.listIconKey
+            && lhs.slice == rhs.slice
+            && lhs.hidesSeparator == rhs.hidesSeparator
+    }
 
     var body: some View {
         let ambient = AmberTheme.cardShadowAmbientGeometry(for: colorScheme)

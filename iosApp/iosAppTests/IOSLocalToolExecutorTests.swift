@@ -1141,7 +1141,23 @@ final class IOSLocalToolExecutorTests: XCTestCase {
             options: ["snapshot_id": try XCTUnwrap(foundWidget["snapshot_id"] as? String)])
         XCTAssertEqual(focused["focused"] as? Bool, true)
 
-        let refreshed = try await runtime.observe(maxChars: 8_000, maxLinks: 20)
+        // 测试用 WKWebView 不挂窗口：WebKit 只移动 activeElement、不派发 focus/focusin，
+        // 由 wm_click 在确认无原生事件时补发（去掉补发时轮询 3 秒仍不可输入）。
+        // 补发后页面处理器同步执行，这里轮询只是给 observe 的 DOM 快照留余量。
+        var typeableObservation: [String: Any]?
+        for _ in 0..<60 {
+            if let observed = try? await runtime.observe(maxChars: 8_000, maxLinks: 20),
+               let elements = observed["interactive_elements"] as? [[String: Any]],
+               elements.contains(where: { $0["typeable"] as? Bool == true }) {
+                typeableObservation = observed
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let refreshed = try XCTUnwrap(
+            typeableObservation,
+            "search input did not become typeable after focus within the existing timeout"
+        )
         let nodes = try XCTUnwrap(refreshed["interactive_elements"] as? [[String: Any]])
         let inputRef = try XCTUnwrap(nodes.first { $0["typeable"] as? Bool == true }?["ref"] as? String)
         XCTAssertEqual(nodes.first?["ref"] as? String, inputRef)

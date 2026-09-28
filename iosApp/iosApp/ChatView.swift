@@ -43,6 +43,14 @@ private struct ChatListSummarySnapshot: Equatable {
     /// 当前分支的消息 ID：产物架据此过滤可见收藏。流式追加不改变集合，
     /// 因而不会让根视图随每个 chunk 重算。
     var messageIDs: Set<String> = []
+    /// 符合回顾口径（`ChatMessageProjector.isConversationMessage`）的 user 消息数，
+    /// 与 `ConversationRecapLogic.eligible` 判据一致，供 topBar 免读 `viewModel.messages`。
+    var userMessageCount = 0
+    /// 最后一条消息的稳定 id，与 `ConversationRecapLogic.isStale` 判据一致。
+    var lastMessageID: String?
+    /// 当前会话的回顾分支标识（依赖 `conversation.messageNodes` 的 variant 选择，
+    /// 不依赖消息内容），随会话切换 / 分支变化刷新。
+    var recapBranchID = ""
 
     // 手写 == 只比较 UI 使用的字段。activeToolStep 的流式 tool output 不参与比较，
     // 避免每个 chunk 刷新根视图；稳定 id 保留给活动岛终态匹配。WebMount 摘要仅在
@@ -55,6 +63,9 @@ private struct ChatListSummarySnapshot: Equatable {
             lhs.webMountRecentUserTurnStartMillis == rhs.webMountRecentUserTurnStartMillis &&
             lhs.browserTaskTitleCandidate == rhs.browserTaskTitleCandidate &&
             lhs.messageIDs == rhs.messageIDs &&
+            lhs.userMessageCount == rhs.userMessageCount &&
+            lhs.lastMessageID == rhs.lastMessageID &&
+            lhs.recapBranchID == rhs.recapBranchID &&
             lhs.activeToolStep?.id == rhs.activeToolStep?.id &&
             lhs.activeToolStep?.title == rhs.activeToolStep?.title &&
             lhs.activeToolStep?.detail == rhs.activeToolStep?.detail &&
@@ -1148,13 +1159,16 @@ struct ChatView: View {
             dismissShelfRevision: artifactShelfDismissRevision,
             onShelfStripHeightChange: { artifactShelfStripHeight = $0 },
             tapRegions: dockTapRegions,
-            recapEligible: !generating && ConversationRecapLogic.eligible(messages: viewModel.messages),
+            recapEligible: !generating && ConversationRecapLogic.eligible(userMessageCount: chatListSummary.userMessageCount),
             recap: recap,
             recapLoading: recapLoading,
             recapFailure: generating ? nil : currentConversationIdString.flatMap { conversationStore.recapGenerator.error(for: $0) },
             recapStale: recap.map {
                 ConversationRecapLogic.isStale(
-                    recap: $0, messages: viewModel.messages, branchID: conversationStore.currentRecapBranchID ?? ""
+                    recap: $0,
+                    messageIDs: chatListSummary.messageIDs,
+                    lastMessageID: chatListSummary.lastMessageID,
+                    branchID: chatListSummary.recapBranchID
                 )
             } ?? false,
             onOpenRecap: {
@@ -1172,7 +1186,7 @@ struct ChatView: View {
 
     private var currentRecap: ConversationRecap? {
         currentConversationIdString.flatMap {
-            conversationStore.recapGenerator.recap(for: $0, messages: viewModel.messages)
+            conversationStore.recapGenerator.recap(for: $0, messageIDs: chatListSummary.messageIDs)
         }
     }
 
@@ -1413,6 +1427,11 @@ struct ChatView: View {
         next.webMountRecentUserTurnStartMillis = Self.webMountRecentUserTurnStartMillis(from: messages)
         next.browserTaskTitleCandidate = Self.browserTaskTitleCandidate(messages: messages)
         next.messageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
+        next.userMessageCount = messages.filter {
+            $0.role == MessageRole.user && ChatMessageProjector.isConversationMessage($0)
+        }.count
+        next.lastMessageID = messages.last.map(ChatMessageProjector.messageId(for:))
+        next.recapBranchID = conversationStore.currentRecapBranchID ?? ""
         if resetTitleSeed || next.firstUserTitleSeed == nil {
             next.firstUserTitleSeed = messages.first(where: { $0.role == MessageRole.user })?
                 .toText()

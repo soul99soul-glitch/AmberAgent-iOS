@@ -2140,6 +2140,10 @@ final class ChatViewModel {
     ///   入场动画落位后才启动（见 `DeferredGenerationStart`）。其他调用方需要同步拿到 run。
     @discardableResult
     func sendMessage(startsGenerationAfterInsertion: Bool = false) -> Bool {
+        // 两处 composer 发送入口（ChatView.swift）都经过这里，且是同一事件帧内的
+        // 第一行代码，用它做 tap-to-send 起点比按 startsGenerationAfterInsertion
+        // 二次分支更简单，覆盖的非 composer 调用方（AppShell 全局发送）本就极少。
+        ChatPerfTrace.event("SendTap")
         startDeferredGenerationNow()
         guard conversationStore?.isImportingConversationDocuments != true else {
             configurationError = "正在恢复会话，请等待完成后再发送。"
@@ -4087,6 +4091,10 @@ final class ChatViewModel {
     // MARK: - Private
 
     private func generateResponse(inputDigest: String, conversationId: KotlinUuid?) {
+        // generateResponse 本身完全同步（kernelRunHost.start 内部再起 Task），
+        // 用 begin/defer-end 包住整个函数体即测到主线程被占用的时长。
+        var kickoffInterval = ChatPerfTrace.begin("GenerationKickoff")
+        defer { ChatPerfTrace.end(&kickoffInterval) }
         guard conversationStore?.isImportingConversationDocuments != true else {
             configurationError = "正在恢复会话，请等待完成后再生成。"
             return

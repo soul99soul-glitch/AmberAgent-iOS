@@ -27,8 +27,13 @@ struct ConversationRecap: Codable, Equatable, Sendable {
     let generatedAt: Date
 
     func projectingMessageReferences(to messages: [UIMessage]) -> ConversationRecap {
-        let currentMessageIDs = Set(messages.map(ChatMessageProjector.messageId(for:)))
-        return ConversationRecap(
+        projectingMessageReferences(toMessageIDs: Set(messages.map(ChatMessageProjector.messageId(for:))))
+    }
+
+    /// ID-based projection: avoids re-walking the full message array (and its
+    /// O(n) KMP bridge accessors) when callers already hold a cached ID set.
+    func projectingMessageReferences(toMessageIDs currentMessageIDs: Set<String>) -> ConversationRecap {
+        ConversationRecap(
             overview: overview,
             nodes: nodes.map { node in
                 Node(
@@ -109,9 +114,13 @@ enum ConversationRecapLogic {
     }
 
     static func eligible(messages: [UIMessage]) -> Bool {
-        messages.filter {
+        eligible(userMessageCount: messages.filter {
             $0.role == MessageRole.user && ChatMessageProjector.isConversationMessage($0)
-        }.count >= minimumUserMessageCount
+        }.count)
+    }
+
+    static func eligible(userMessageCount: Int) -> Bool {
+        userMessageCount >= minimumUserMessageCount
     }
 
     static func isStale(
@@ -119,14 +128,29 @@ enum ConversationRecapLogic {
         messages: [UIMessage],
         branchID: String
     ) -> Bool {
+        isStale(
+            recap: recap,
+            messageIDs: Set(messages.map(ChatMessageProjector.messageId(for:))),
+            lastMessageID: messages.last.map(ChatMessageProjector.messageId(for:)),
+            branchID: branchID
+        )
+    }
+
+    /// ID-based staleness check: same semantics as the array-based overload,
+    /// but reusable from a cached `Set<String>` + last id without rewalking
+    /// the message array (or its underlying KMP bridge) on every evaluation.
+    static func isStale(
+        recap: ConversationRecap,
+        messageIDs: Set<String>,
+        lastMessageID: String?,
+        branchID: String
+    ) -> Bool {
         guard recap.branchID == branchID,
-              messages.contains(where: {
-                  ChatMessageProjector.messageId(for: $0) == recap.coveredThroughMessageID
-              }),
-              let lastMessage = messages.last else {
+              messageIDs.contains(recap.coveredThroughMessageID),
+              let lastMessageID else {
             return true
         }
-        return ChatMessageProjector.messageId(for: lastMessage) != recap.coveredThroughMessageID
+        return lastMessageID != recap.coveredThroughMessageID
     }
 
     static func makeInput(

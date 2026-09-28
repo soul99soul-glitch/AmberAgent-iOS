@@ -162,10 +162,21 @@ final class IOSSettingsWiringTests: XCTestCase {
     func testChatTopBarKeepsIslandOpaqueAndWidthAdaptive() throws {
         let chatView = try source("iosApp/ChatView.swift")
         let island = try source("iosApp/ChatActivityIslandView.swift")
+        // db25ed1 ("Add conversation artifact shelf and refine chat, WebMount,
+        // and model flows") extracted the whole top bar (back button, trailing
+        // dock, and the island) out of ChatView.swift into ChatTopBarView.swift.
+        // The island wrapper's sizing also moved from a fixedSize+gutter-padding
+        // wrapper to an upfront `maxWidth:` constraint computed by
+        // ChatTopBarLayout.availableIslandWidth(in:), which still bakes in
+        // islandSideGutter. The properties this test cares about (glass groups
+        // stay independent; the island stays width-adaptive via the gutter
+        // constant; the island shell never stretches to the full bar width)
+        // still hold, just in the new file/shape.
+        let topBar = try source("iosApp/ChatTopBarView.swift")
 
         // Side chips + center island must not share GlassEffectContainer (punch-through).
         XCTAssertFalse(
-            chatView.contains("AmberGlassGroup(spacing: 12)"),
+            topBar.contains("AmberGlassGroup(spacing: 12)"),
             "Chat top bar must not group toolbar glass with the activity island."
         )
         // fixedSize must precede glass so the capsule paints hug width, not bar width.
@@ -181,20 +192,22 @@ final class IOSSettingsWiringTests: XCTestCase {
             "Island must lock hug size before glassEffect."
         )
         XCTAssertTrue(island.contains("ChatTopBarLayout.islandTitleMaxWidth"))
-        XCTAssertTrue(chatView.contains("ChatTopBarLayout.islandSideGutter"))
+        // islandSideGutter's only consumer is now availableIslandWidth(in:) inside
+        // the same ChatTopBarLayout enum, so it is referenced bare (no qualifier)
+        // there; just confirm the width-adaptive constant itself still exists.
+        XCTAssertTrue(chatView.contains("static let islandSideGutter"))
+        // Width-adaptive: the island's max width is computed upfront from the
+        // gutter constant and handed down, instead of a fixedSize+padding wrapper.
         XCTAssertTrue(
-            chatView.contains(
-                """
-                ChatActivityIslandView(presentation: islandPresentation ?? .idle(topIslandState))
-                                .fixedSize(horizontal: true, vertical: false)
-                                .padding(.horizontal, ChatTopBarLayout.islandSideGutter)
-                """
+            topBar.contains("island(maxWidth: ChatTopBarLayout.availableIslandWidth(in: geometry.size.width))")
+        )
+        XCTAssertTrue(
+            topBar.contains(
+                "ChatActivityIslandView(presentation: arrivalState.islandPresentation(presentation), maxWidth: maxWidth,"
             )
         )
         // Must not stretch the island shell to the full bar width.
-        XCTAssertFalse(
-            chatView.contains("ChatActivityIslandView(presentation: islandPresentation ?? .idle(topIslandState))\n                .padding(.horizontal, ChatTopBarLayout.islandSideGutter)\n                .frame(maxWidth: .infinity)")
-        )
+        XCTAssertFalse(topBar.contains(".frame(maxWidth: .infinity)"))
         XCTAssertTrue(island.contains(".background(AmberTheme.glass.opacity(0.16), in: Capsule())"))
         XCTAssertTrue(island.contains(".glassEffect(.regular, in: Capsule())"))
     }
