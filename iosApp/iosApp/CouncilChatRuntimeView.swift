@@ -2073,7 +2073,8 @@ final class CouncilChatViewModel {
     var homeResumeContext: CouncilHomeResumeContext? {
         guard !isReplay,
               let currentTaskId,
-              archiveStore.load(taskId: currentTaskId) != nil,
+              // 首页 body 读取：只判存在，不读盘解码整份存档（首页在聊天页下方仍随数据重算）。
+              archiveStore.exists(taskId: currentTaskId),
               let task = runner.taskRecord(taskId: currentTaskId) else {
             return nil
         }

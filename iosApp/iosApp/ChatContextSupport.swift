@@ -1,6 +1,24 @@
 import Foundation
 import Shared
 
+private final class RecallTokenMemo: @unchecked Sendable {
+    static let shared = RecallTokenMemo()
+    private static let capacity = 4_096
+
+    private let lock = NSLock()
+    private var tokensByText: [String: [String]] = [:]
+
+    func tokens(for text: String, compute: (String) -> [String]) -> [String] {
+        if let cached = lock.withLock({ tokensByText[text] }) { return cached }
+        let tokens = compute(text)
+        lock.withLock {
+            if tokensByText.count >= Self.capacity { tokensByText.removeAll(keepingCapacity: true) }
+            tokensByText[text] = tokens
+        }
+        return tokens
+    }
+}
+
 enum ChatMemoryContextBuilder {
     struct RecallResult {
         let prompt: String?
@@ -170,7 +188,13 @@ enum ChatMemoryContextBuilder {
         }
     }
 
+    /// 记忆正文不变时分词结果不变；每轮请求会对全部记忆重复分词多遍（打分、
+    /// 重叠判定、注入前后各一次），按文本缓存。
     static func recallTokens(from text: String) -> [String] {
+        RecallTokenMemo.shared.tokens(for: text, compute: computeRecallTokens)
+    }
+
+    private static func computeRecallTokens(from text: String) -> [String] {
         let stopwords: Set<String> = [
             "the", "a", "an", "is", "are", "was", "were", "be", "to", "of", "and", "or", "in", "on",
             "for", "i", "you", "me", "my", "的", "了", "是", "在", "和"

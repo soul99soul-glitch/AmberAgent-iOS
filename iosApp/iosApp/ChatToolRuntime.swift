@@ -7198,8 +7198,7 @@ final class ChatToolRuntime {
             return snapshot.policy(for: capability) != .disabled
         }
         guard let localToolExecutor else { return true }
-        let snapshot = localToolExecutor.permissionsStatus()
-        return snapshot.capabilities.first { $0.id == capabilityId }?.policy != IOSAgentPermissionPolicy.disabled.title
+        return localToolExecutor.permissionPolicy(capabilityId: capabilityId) != .disabled
     }
 
     private var requiresCouncilApproval: Bool {

@@ -190,7 +190,7 @@ struct AmberMarkdownView: View {
     let markdown: String
     var displaySetting: DisplaySetting? = nil
     var style: MarkdownStyle = .standard
-    @Environment(\.chatArtifactCodeBlockPinAction) private var codeBlockPinAction
+    @Environment(\.chatArtifactPinAction) private var artifactPinAction
 
     var body: some View {
         let resolved = AmberMarkdownAstCache.shared.result(for: markdown)
@@ -337,7 +337,7 @@ struct AmberMarkdownView: View {
             code: code,
             autoWrap: displaySetting?.codeBlockAutoWrap ?? true,
             autoCollapse: displaySetting?.codeBlockAutoCollapse ?? false,
-            headerAccessory: showsWidgetPreview || codeBlockPinAction != nil
+            headerAccessory: showsWidgetPreview || artifactPinAction != nil
                 ? AnyView(ChatCodeBlockHeaderAccessory(code: code, language: lang, showsWidgetPreview: showsWidgetPreview))
                 : nil
         )

@@ -105,7 +105,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         let sendEnd = try XCTUnwrap(chat.range(of: "private func openComposerModelSheet()", range: sendStart.upperBound..<chat.endIndex))
         let send = chat[sendStart.lowerBound..<sendEnd.lowerBound]
         let gate = try XCTUnwrap(send.range(of: "guard sendEnabled(for: committedText) else { return }"))
-        let dispatch = try XCTUnwrap(send.range(of: "viewModel.sendMessage()"))
+        let dispatch = try XCTUnwrap(send.range(of: "viewModel.sendMessage(startsGenerationAfterInsertion: true)"))
         let cancelStart = try XCTUnwrap(viewModel.range(of: "func cancelGeneration()"))
         let cancelEnd = try XCTUnwrap(viewModel.range(of: "func cancelGeneration(runId:", range: cancelStart.upperBound..<viewModel.endIndex))
         let cancel = viewModel[cancelStart.lowerBound..<cancelEnd.lowerBound]
@@ -118,6 +118,8 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertFalse(send.contains("dismissKeyboard()"))
         XCTAssertTrue(chat.contains("return viewModel.composerSendBlockReason(for: text) == nil"))
         XCTAssertLessThan(gate.lowerBound, dispatch.lowerBound)
+        // 停止键在生成延后启动的窗口内也要作用于本轮 run。
+        XCTAssertTrue(cancel.contains("startDeferredGenerationNow()"))
         XCTAssertTrue(cancel.contains("guard let currentConversationId else { return }"))
         XCTAssertTrue(cancel.contains("conversationId: currentConversationId"))
     }

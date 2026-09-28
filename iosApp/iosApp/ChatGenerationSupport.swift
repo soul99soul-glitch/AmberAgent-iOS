@@ -644,8 +644,7 @@ enum IOSGenerativeUiRequestPolicy {
 enum ChatGenerationSupport {
     static func isMcpNetworkAllowed(executor: IOSLocalToolExecutor?) -> Bool {
         guard let executor else { return true }
-        return executor.permissionsStatus().capabilities
-            .first { $0.id == "ios.mcp.tool_call" }?.policy != IOSAgentPermissionPolicy.disabled.title
+        return executor.permissionPolicy(capabilityId: "ios.mcp.tool_call") != .disabled
     }
 
     static func outputLimitNotice() -> UIMessage {

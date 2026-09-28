@@ -1995,7 +1995,7 @@ struct ChatView: View {
         }
         guard sendEnabled(for: committedText) else { return }
         viewportState.followPaused = false
-        viewModel.sendMessage()
+        viewModel.sendMessage(startsGenerationAfterInsertion: true)
     }
 
     private func openComposerModelSheet() {
@@ -2193,7 +2193,7 @@ struct ChatView: View {
             guard !viewModel.isGenerationActive else { return }
             viewModel.inputText = prompt
             viewportState.followPaused = false
-            viewModel.sendMessage()
+            viewModel.sendMessage(startsGenerationAfterInsertion: true)
         case let .modifyGeneratedImage(urlString, prompt, aspectRatio):
             guard !viewModel.isGenerationActive else { return }
             viewportState.followPaused = false

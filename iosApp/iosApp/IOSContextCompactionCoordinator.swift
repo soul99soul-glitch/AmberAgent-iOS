@@ -1345,22 +1345,7 @@ private extension IOSContextCompactionCoordinator {
     }
 
     static func estimatedChars(_ part: UIMessagePart) -> Int {
-        switch part {
-        case let text as UIMessagePart.Text:
-            return text.text.weightedTokenChars
-        case let reasoning as UIMessagePart.Reasoning:
-            return reasoning.reasoning.weightedTokenChars
-        case let tool as UIMessagePart.Tool:
-            return tool.input.weightedTokenChars + tool.output.reduce(0) { $0 + estimatedChars($1) }
-        case let document as UIMessagePart.Document:
-            return document.fileName.count + 80
-        case let miniApp as UIMessagePart.MiniApp:
-            return miniApp.title.weightedTokenChars + miniApp.description_.weightedTokenChars + 120
-        case is UIMessagePart.Image, is UIMessagePart.Video, is UIMessagePart.Audio:
-            return 4_500
-        default:
-            return String(describing: part).count
-        }
+        ContextTokenEstimateMemo.shared.estimatedChars(part)
     }
 
     static func summaryLine(_ part: UIMessagePart) -> String {
@@ -1847,6 +1832,54 @@ enum ContextCompactionEditTestSupport {
     }
 }
 #endif
+
+/// 每轮请求准备都要对整段对话估算多遍 token（注入前后、压缩规划、最终校验），
+/// 逐个 Unicode 标量扫描桥接自 Kotlin 的字符串，在主线程上与发送动画抢帧。
+/// KMP 消息 part 不可变，按对象身份缓存其加权字符数：同一 part 只扫描一次，
+/// 弱引用键随 part 释放自动清理。会话载入时在后台预热，首轮发送也只剩查表。
+final class ContextTokenEstimateMemo: @unchecked Sendable {
+    static let shared = ContextTokenEstimateMemo()
+
+    private let lock = NSLock()
+    private let charsByPart = NSMapTable<UIMessagePart, NSNumber>(
+        keyOptions: [.weakMemory, .objectPointerPersonality],
+        valueOptions: .strongMemory
+    )
+
+    func estimatedChars(_ part: UIMessagePart) -> Int {
+        if let cached = lock.withLock({ charsByPart.object(forKey: part) }) {
+            return cached.intValue
+        }
+        let chars = computeEstimatedChars(part)
+        lock.withLock { charsByPart.setObject(NSNumber(value: chars), forKey: part) }
+        return chars
+    }
+
+    func warm(_ messages: [UIMessage]) {
+        for message in messages {
+            for part in message.parts { _ = estimatedChars(part) }
+        }
+    }
+
+    private func computeEstimatedChars(_ part: UIMessagePart) -> Int {
+        switch part {
+        case let text as UIMessagePart.Text:
+            return text.text.weightedTokenChars
+        case let reasoning as UIMessagePart.Reasoning:
+            return reasoning.reasoning.weightedTokenChars
+        case let tool as UIMessagePart.Tool:
+            return tool.input.weightedTokenChars + tool.output.reduce(0) { $0 + estimatedChars($1) }
+        case let document as UIMessagePart.Document:
+            return document.fileName.count + 80
+        case let miniApp as UIMessagePart.MiniApp:
+            return miniApp.title.weightedTokenChars + miniApp.description_.weightedTokenChars + 120
+        case is UIMessagePart.Image, is UIMessagePart.Video, is UIMessagePart.Audio:
+            return 4_500
+        default:
+            return String(describing: part).count
+        }
+    }
+}
 
 private extension String {
     var weightedTokenChars: Int {
