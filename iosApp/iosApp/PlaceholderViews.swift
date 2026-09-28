@@ -117,16 +117,29 @@ enum AmberTheme {
     )
 
     private static func base(_ key: KeyPath<AmberPalette, UInt32>, alpha: Double = 1) -> Color {
+        base(light: key, dark: key, alpha: alpha)
+    }
+
+    private static func base(
+        light lightKey: KeyPath<AmberPalette, UInt32>, dark darkKey: KeyPath<AmberPalette, UInt32>,
+        alpha: Double = 1
+    ) -> Color {
         let paper = AmberThemeRuntime.shared.paper
         let design = AmberThemeRuntime.shared.design
-        let lightHex = (design?.light?.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: key]
-        let darkHex = (design?.dark?.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: key]
+        let lightHex = (design?.light?.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: lightKey]
+        let darkHex = (design?.dark?.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: darkKey]
         return Color(uiColor: UIColor { trait in
             UIColor(hex: trait.userInterfaceStyle == .dark ? darkHex : lightHex, alpha: alpha)
         })
     }
 
     static var background: Color { base(\.background) }
+    /// 顶栏弹出面板底色：借 EDR 线性提亮到 1.25 倍，与页面背景拉开亮度层级。
+    /// 暗色背景近黑，倍乘几乎无效，改以 `surface` 为底抬高层级。
+    /// 不支持 EDR 的屏幕会色调映射回 SDR。
+    static var elevatedPanel: Color {
+        base(light: \.background, dark: \.surface).exposureAdjust(log2(1.25))
+    }
     static var surface: Color { base(\.surface) }
     static var surface2: Color { base(\.surface2) }
     static var card: Color { base(\.surface) }

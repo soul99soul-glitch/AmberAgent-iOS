@@ -436,7 +436,8 @@ struct ChatTopBarView: View {
             .clipShape(shape)
             .background {
                 shape
-                    .fill(AmberTheme.background)
+                    .fill(AmberTheme.elevatedPanel)
+                    .allowedDynamicRange(.high)
                     .overlay { shape.strokeBorder(AmberTheme.border, lineWidth: 0.5) }
                     .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 5)
             }

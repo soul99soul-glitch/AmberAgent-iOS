@@ -56,9 +56,10 @@ struct ChatArtifactShelfPanel: View {
                 .overlay(alignment: .bottom) {
                     if canScrollDown {
                         LinearGradient(
-                            colors: [AmberTheme.background.opacity(0), AmberTheme.background],
+                            colors: [AmberTheme.elevatedPanel.opacity(0), AmberTheme.elevatedPanel],
                             startPoint: .top, endPoint: .bottom
                         )
+                        .allowedDynamicRange(.high)
                         .frame(height: 36)
                         .allowsHitTesting(false)
                     }
@@ -801,6 +802,8 @@ private struct ChatArtifactFileVersionCard: View {
                 if file.versions.count > 1 {
                     RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous)
                         .fill(AmberTheme.surface.opacity(0.55))
+                        // 暗色面板底也是 surface，靠描边保住叠层轮廓。
+                        .strokeBorder(AmberTheme.borderSoft, lineWidth: 0.5)
                         .padding(.horizontal, 8)
                         .offset(y: 6)
                 }

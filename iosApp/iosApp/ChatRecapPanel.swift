@@ -43,9 +43,10 @@ struct ChatRecapPanel: View {
             .overlay(alignment: .bottom) {
                 if canScrollDown {
                     LinearGradient(
-                        colors: [AmberTheme.background.opacity(0), AmberTheme.background],
+                        colors: [AmberTheme.elevatedPanel.opacity(0), AmberTheme.elevatedPanel],
                         startPoint: .top, endPoint: .bottom
                     )
+                    .allowedDynamicRange(.high)
                     .frame(height: 36)
                     .allowsHitTesting(false)
                 }
