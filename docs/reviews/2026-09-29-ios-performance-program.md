@@ -197,3 +197,10 @@
 - 小说气泡滑动时高度一次性减少约 1000 字：流式期间时间线贴底，底部文字不动 → 不处理。
 - Time Profiler 长跑样本（小说 / 议会）需 `AMBER_PERF_SAMPLE=1`（xcodebuild 下 `TEST_RUNNER_AMBER_PERF_SAMPLE=1`）才运行。
 - P3b 仍阻塞：主工作区 `IOSContextCompactionCoordinator` 的重构未提交，本分支不动。
+
+## 收尾（2026-09-29）
+- 提交：3425d77（发送卡顿根因）、d8044e9（P0/P1）、3c3654d（P2）、f2846cc（P3a）、70a5796（P4）、c7bedc8（P5）、1cac7e1（P6/P7）。
+- 集成回归（12 个测试类，402 用例）：仅 3 条失败，均为已知项——底部归属 2 条基线失败、`testPerfGrowingTableStreamingKeepsDisplayLinkResponsive`
+  阈值噪声（表格路径不经 `ChatTextWindow`）。
+- 未完成 / 待决策：P3b（等主工作区压缩重构提交）；流式表格 O(行数) 重建的结构性改造（需真机 Profile 构建评估）；
+  子代理状态不写 durable run（产品决策）。
