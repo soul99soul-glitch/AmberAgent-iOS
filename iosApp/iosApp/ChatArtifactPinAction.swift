@@ -9,9 +9,6 @@ typealias ChatArtifactPinAction = @MainActor (
     _ messageID: String, _ text: String, _ kind: ChatArtifactPinKind, _ codeLanguage: String?
 ) -> Void
 
-/// 代码块头部“收进产物架”按钮使用的动作；由所在消息注入，其他 Markdown 场景为 nil。
-typealias ChatArtifactCodeBlockPinAction = @MainActor (_ code: String, _ language: String?) -> Void
-
 /// 环境里传递的是身份稳定的容器，而不是闭包本身：闭包无法判等，ChatView
 /// 每次重算都会让读取该环境值的全部消息气泡失效重建（滑动/流式时逐帧整页重算）。
 /// 容器随 ChatView 的 @State 存活，渲染时只刷新其中的回调，不触发视图更新。
@@ -30,8 +27,9 @@ private struct ChatArtifactPinActionKey: EnvironmentKey {
     static let defaultValue: ChatArtifactPinHandler? = nil
 }
 
-private struct ChatArtifactCodeBlockPinActionKey: EnvironmentKey {
-    static let defaultValue: ChatArtifactCodeBlockPinAction? = nil
+/// 代码块所在消息的 ID，由消息气泡注入；其他 Markdown 场景为 nil。
+private struct ChatArtifactMessageIDKey: EnvironmentKey {
+    static let defaultValue: String? = nil
 }
 
 extension EnvironmentValues {
@@ -40,19 +38,27 @@ extension EnvironmentValues {
         set { self[ChatArtifactPinActionKey.self] = newValue }
     }
 
-    var chatArtifactCodeBlockPinAction: ChatArtifactCodeBlockPinAction? {
-        get { self[ChatArtifactCodeBlockPinActionKey.self] }
-        set { self[ChatArtifactCodeBlockPinActionKey.self] = newValue }
+    var chatArtifactMessageID: String? {
+        get { self[ChatArtifactMessageIDKey.self] }
+        set { self[ChatArtifactMessageIDKey.self] = newValue }
     }
 }
 
 /// 代码块头部附件：沿用 vendor 的 headerAccessory 插槽，不给代码块另加 contextMenu，
 /// 长按代码块仍弹出整条消息的菜单。
+/// 收藏动作在点击时由稳定的 handler 与消息 ID 组合，不经环境传闭包：
+/// 每次气泡重算新建的闭包无法判等，会让整段 Markdown 失效重建。
 struct ChatCodeBlockHeaderAccessory: View {
     let code: String
     let language: String?
     let showsWidgetPreview: Bool
-    @Environment(\.chatArtifactCodeBlockPinAction) private var pinAction
+    @Environment(\.chatArtifactPinAction) private var pinAction
+    @Environment(\.chatArtifactMessageID) private var messageID
+
+    /// 流式 block 渲染路径的头部附件提供者。常量闭包保证每次注入的环境值相同。
+    static let streamingHeaderProvider: (_ code: String, _ language: String?) -> AnyView? = { code, language in
+        AnyView(ChatCodeBlockHeaderAccessory(code: code, language: language, showsWidgetPreview: false))
+    }
 
     /// vendor 在非隔离闭包里构造头部附件，初始化只保存值。
     nonisolated init(code: String, language: String?, showsWidgetPreview: Bool) {
@@ -65,9 +71,9 @@ struct ChatCodeBlockHeaderAccessory: View {
         if showsWidgetPreview {
             WidgetCodePreviewButton(code: code)
         }
-        if let pinAction {
+        if let pinAction, let messageID {
             Button {
-                pinAction(code, language)
+                pinAction(messageID, code, .code, language)
             } label: {
                 Image(systemName: "pin")
                     .font(.system(size: 13, weight: .medium))

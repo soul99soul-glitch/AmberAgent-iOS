@@ -1288,8 +1288,7 @@ final class ChatViewModel {
             configStore: .shared,
             isNetworkAllowed: { [localToolExecutor] in
                 guard let localToolExecutor else { return true }
-                return localToolExecutor.permissionsStatus().capabilities
-                    .first { $0.id == "ios.mcp.tool_call" }?.policy != IOSAgentPermissionPolicy.disabled.title
+                return localToolExecutor.permissionPolicy(capabilityId: "ios.mcp.tool_call") != .disabled
             }
         )
         self.steerQueueStore = steerQueueStore ?? IOSSteerQueueStore()
@@ -1657,6 +1656,11 @@ final class ChatViewModel {
         if selectedRun.host?.isRunning != true {
             let storedMessages = store.currentMessages
             messages = messagesByTerminatingStaleSearches(in: storedMessages, store: store) ?? storedMessages
+            // 历史消息的 token 估算在后台预热，发送时的请求准备只剩查表。
+            nonisolated(unsafe) let loadedMessages = messages
+            Task.detached(priority: .utility) {
+                ContextTokenEstimateMemo.shared.warm(loadedMessages)
+            }
             contextCompactState = .idle
             let state = selectedRun.state
             state.steerQueueLoaded = false
@@ -2132,8 +2136,11 @@ final class ChatViewModel {
         return true
     }
 
+    /// - Parameter startsGenerationAfterInsertion: composer 发送传 true：生成在用户消息
+    ///   入场动画落位后才启动（见 `DeferredGenerationStart`）。其他调用方需要同步拿到 run。
     @discardableResult
-    func sendMessage() -> Bool {
+    func sendMessage(startsGenerationAfterInsertion: Bool = false) -> Bool {
+        startDeferredGenerationNow()
         guard conversationStore?.isImportingConversationDocuments != true else {
             configurationError = "正在恢复会话，请等待完成后再发送。"
             return false
@@ -2175,7 +2182,11 @@ final class ChatViewModel {
             }
         }
         configurationError = nil
-        sendUserMessage(text: text, images: pendingImages)
+        sendUserMessage(
+            text: text,
+            images: pendingImages,
+            startsGenerationAfterInsertion: startsGenerationAfterInsertion
+        )
         return true
     }
 
@@ -2187,6 +2198,7 @@ final class ChatViewModel {
         text: String,
         conversationId requestedConversationId: String? = nil
     ) async -> IOSWatchQuestionStartResult {
+        startDeferredGenerationNow()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed.count <= 2_000 else {
             return .failure("请输入 1–2000 个字符")
@@ -2298,7 +2310,10 @@ final class ChatViewModel {
     /// Appends the user message (keeping image parts for in-bubble display) and persists it.
     /// Returns the input digest + conversation id so the caller can start generation.
     @discardableResult
-    private func appendUserMessage(text: String, images: [PendingChatImage]) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
+    private func appendUserMessage(
+        text: String,
+        images: [PendingChatImage]
+    ) -> (digest: String, conversationId: KotlinUuid?, messageId: String) {
         currentRun.state.clearChildResultWait()
         let prompt = Self.promptText(userText: text, selectedFilePreview: pendingSelectedFilePreview)
         let digest = chatInputDigest(for: prompt.isEmpty ? "[image]" : prompt)
@@ -2306,7 +2321,7 @@ final class ChatViewModel {
         pendingAssistantRegeneration = nil
         // iMessage 式上屏:仅把这条用户消息的插入放进动画事务,驱动消息行的入场 transition。
         // 批量加载/切换会话走 `messages = store.currentMessages`(不在事务内),不会逐条动画。
-        withAnimation(.spring(response: 0.34, dampingFraction: 0.8)) {
+        withAnimation(.spring(Self.userMessageSendSpring)) {
             messages.append(userMsg)
             bumpMessageRevision(reason: .userAppend)
         }
@@ -2327,10 +2342,66 @@ final class ChatViewModel {
     /// Sends the user message and kicks off generation. For non-vision models the image
     /// parts are recognized and replaced in upload preparation before the request
     /// leaves for the provider.
-    private func sendUserMessage(text: String, images: [PendingChatImage]) {
+    private func sendUserMessage(
+        text: String,
+        images: [PendingChatImage],
+        startsGenerationAfterInsertion: Bool = false
+    ) {
+        guard startsGenerationAfterInsertion, autoGenerateResponses else {
+            let (digest, conversationId, _) = appendUserMessage(text: text, images: images)
+            guard autoGenerateResponses else { return }
+            generateResponse(inputDigest: digest, conversationId: conversationId)
+            return
+        }
+        let token = UUID()
         let (digest, conversationId, _) = appendUserMessage(text: text, images: images)
-        guard autoGenerateResponses else { return }
-        generateResponse(inputDigest: digest, conversationId: conversationId)
+        deferredGenerationStart = DeferredGenerationStart(
+            token: token,
+            run: currentRun,
+            inputDigest: digest,
+            conversationId: conversationId
+        )
+        // 停止键与思考占位仍在发送当帧出现，只有启动工作后移。
+        isLoading = true
+        // 以入场弹簧的视觉时长为准，而非动画完成回调：懒加载列表里的新行在事务
+        // 结算后才布局，回调会在动画开始前就触发。token 保证只启动一次。
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Self.userMessageSendSpring.duration))
+            self?.startDeferredGeneration(token: token)
+        }
+    }
+
+    /// 用户消息入场弹簧；生成启动也以它的视觉时长为界，二者不会脱节。
+    static let userMessageSendSpring = Spring(response: 0.34, dampingRatio: 0.8)
+
+    /// 生成启动（参数与工具目录组装、Kernel、后台保活、记忆召回）在主线程上要
+    /// 同步跑上百毫秒；与发送放在同一事件里会挡住用户气泡上屏并打断入场动画。
+    /// composer 发送因此等入场动画落位再启动；需要 run 已存在的入口先补启动。
+    private struct DeferredGenerationStart {
+        let token: UUID
+        let run: ChatConversationRun
+        let inputDigest: String
+        let conversationId: KotlinUuid?
+    }
+
+    @ObservationIgnored private var deferredGenerationStart: DeferredGenerationStart?
+
+    private func startDeferredGeneration(token: UUID) {
+        guard let pending = deferredGenerationStart, pending.token == token else { return }
+        deferredGenerationStart = nil
+        guard currentRun === pending.run else {
+            // 动画期间已离开该会话：当前消息与配置不再属于它，不能代为启动。
+            pending.run.state.isLoading = false
+            NSLog("[ChatViewModel] deferred generation dropped after conversation switch")
+            return
+        }
+        generateResponse(inputDigest: pending.inputDigest, conversationId: pending.conversationId)
+    }
+
+    /// 需要 run 已存在的入口（再次发送、停止、新建会话、Watch 提问）先立即启动。
+    private func startDeferredGenerationNow() {
+        guard let token = deferredGenerationStart?.token else { return }
+        startDeferredGeneration(token: token)
     }
 
     // MARK: - Steer 队列（P1-a）
@@ -3655,6 +3726,7 @@ final class ChatViewModel {
     }
 
     func cancelGeneration() {
+        startDeferredGenerationNow()
         currentRun.state.clearChildResultWait()
         // cancel() itself publishes the cancelled watch snapshot; do not clear first.
         if kernelRunHost.isRunning {
@@ -3702,6 +3774,7 @@ final class ChatViewModel {
     @discardableResult
     func startNewConversation(commitIf: () -> Bool = { true }) async -> Bool {
         guard let store = conversationStore, commitIf() else { return false }
+        startDeferredGenerationNow()
         guard !store.isImportingConversationDocuments else {
             store.publishUserVisibleError(IOSUserVisibleError(
                 title: "暂时无法新建对话",
@@ -4680,7 +4753,8 @@ final class ChatViewModel {
         let imageGenerationConfigured: Bool = {
             let snap = sharedSettings.snapshot
             guard let model = snap.findModelById(uuid: snap.imageGenerationModelId),
-                  let provider = ChatProviderConfiguration.provider(for: model, providers: snap.providers) else {
+                  let provider = ChatProviderConfiguration.provider(for: model, providers: snap.providers),
+                  provider.enabled else {
                 return false
             }
             // Codex image generation uses the OAuth bearer (no apiKey); gate on
@@ -5075,20 +5149,20 @@ final class ChatViewModel {
         }
     }
 
+    // 工具暴露只取决于用户设置的能力策略。不走 permissionsStatus()：它会逐个探测
+    // 系统授权（定位、相册、钱包、录屏等），每次发送在主线程上同步阻塞近百毫秒。
     private func isCapabilityPolicyEnabled(_ capabilityId: String) -> Bool {
         guard let localToolExecutor else { return true }
-        let snapshot = localToolExecutor.permissionsStatus()
-        return snapshot.capabilities.first { $0.id == capabilityId }?.policy != IOSAgentPermissionPolicy.disabled.title
+        return localToolExecutor.permissionPolicy(capabilityId: capabilityId) != .disabled
     }
 
     private func enabledModelToolNames(_ names: Set<String>) -> [String] {
         guard let localToolExecutor else { return Array(names).sorted() }
-        let snapshot = localToolExecutor.permissionsStatus()
         return names.filter { toolName in
-            guard let capability = snapshot.capabilities.first(where: { $0.modelToolNames.contains(toolName) }) else {
+            guard let capability = IOSCapabilityRegistry.capabilities.first(where: { $0.modelToolNames.contains(toolName) }) else {
                 return false
             }
-            return capability.policy != IOSAgentPermissionPolicy.disabled.title
+            return localToolExecutor.permissionPolicy(capabilityId: capability.id) != .disabled
         }
         .sorted()
     }

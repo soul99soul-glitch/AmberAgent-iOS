@@ -205,22 +205,13 @@ struct MessageBubbleView: View {
                 dismissButton: .default(Text("好"))
             )
         }
-        .environment(\.chatArtifactCodeBlockPinAction, codeBlockPinAction)
-        .environment(\.swiftStreamingMarkdownCodeBlockHeaderAccessory, codeBlockHeaderAccessory)
-    }
-
-    /// 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
-    private var codeBlockHeaderAccessory: ((String, String?) -> AnyView?)? {
-        guard artifactPinAction != nil else { return nil }
-        return { code, language in
-            AnyView(ChatCodeBlockHeaderAccessory(code: code, language: language, showsWidgetPreview: false))
-        }
-    }
-
-    private var codeBlockPinAction: ChatArtifactCodeBlockPinAction? {
-        guard let artifactPinAction else { return nil }
-        let messageID = ChatMessageProjector.messageId(for: message)
-        return { code, language in artifactPinAction(messageID, code, .code, language) }
+        // 只注入可判等的值：新建闭包每次都不相等，会让所有代码块与 Markdown 随气泡重算失效。
+        .environment(\.chatArtifactMessageID, artifactPinAction == nil ? nil : ChatMessageProjector.messageId(for: message))
+        // 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
+        .environment(
+            \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
+            artifactPinAction == nil ? nil : ChatCodeBlockHeaderAccessory.streamingHeaderProvider
+        )
     }
 
     // MARK: - Annotations (URL citations)

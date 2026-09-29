@@ -753,6 +753,13 @@ final class IOSSharedSettingsStore {
         let merged = IosSettingsMutations.shared.updateProviderChatModels(
             settings: before, providerId: providerId, modelIds: pairs
         )
+        let remainingIds = Set(merged.providers.first { $0.id.description() == providerId }?.models.map { $0.id.description() } ?? [])
+        for model in before.providers.first(where: { $0.id.description() == providerId })?.models ?? []
+            where !remainingIds.contains(model.id.description()) {
+            genericCredentialRefs(stableId: model.id.description()).forEach {
+                IOSCredentialSideTable.delete(key: $0)
+            }
+        }
         restoreSnapshot(merged)
         return merged.providers.first { ($0.id.description() as String) == providerId }
     }
@@ -885,6 +892,14 @@ final class IOSSharedSettingsStore {
     /// Set the global current chat model by model UUID string. Persists to snapshot.
     func setCurrentChatModelId(_ modelId: String) {
         let merged = IosSettingsMutations.shared.setChatModelId(settings: snapshot, modelId: modelId)
+        restoreSnapshot(merged)
+    }
+
+    /// Select the default chat model in both the global slot and active assistant.
+    /// The dedicated composer selection remains assistant-scoped.
+    func selectChatModelAsDefault(_ modelId: String) {
+        let selected = IosSettingsMutations.shared.setCurrentAssistantChatModelId(settings: snapshot, modelId: modelId)
+        let merged = IosSettingsMutations.shared.setChatModelId(settings: selected, modelId: modelId)
         restoreSnapshot(merged)
     }
 

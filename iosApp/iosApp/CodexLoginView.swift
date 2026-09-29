@@ -21,6 +21,8 @@ final class CodexLoginModel: ObservableObject {
     private let client: IOSCodexOAuthClient
     private let onModelsFetched: ([(modelId: String, displayName: String)]) -> Void
     private var loginTask: Task<Void, Never>?
+    private var modelRefreshTask: Task<Void, Never>?
+    private var modelRequestGeneration = 0
 
     init(
         providerId: String,
@@ -42,6 +44,7 @@ final class CodexLoginModel: ObservableObject {
     /// Requests a device code and polls until the user finishes the browser
     /// sign-in. `onSignedIn` fires once tokens are persisted.
     func startLogin(onSignedIn: @escaping () -> Void) {
+        invalidateModelRequests()
         loginTask?.cancel()
         phase = .requesting
         loginTask = Task { [client] in
@@ -52,9 +55,10 @@ final class CodexLoginModel: ObservableObject {
                     url: authorization.verificationUrl
                 )
                 let tokens = try await client.pollDeviceCode(authorization)
+                try Task.checkCancellation()
                 self.phase = .signedIn(email: tokens.email, plan: tokens.planType)
                 onSignedIn()
-                await self.applyModels()
+                await self.applyModels(generation: self.modelRequestGeneration)
             } catch is CancellationError {
                 self.restorePersistedPhase()
             } catch {
@@ -70,24 +74,36 @@ final class CodexLoginModel: ObservableObject {
     func cancelLogin() {
         loginTask?.cancel()
         loginTask = nil
+        invalidateModelRequests()
         restorePersistedPhase()
     }
 
     /// Refetches codex models and reports them as candidates for the provider page.
     func refreshModels() {
-        Task { await applyModels() }
+        invalidateModelRequests()
+        let generation = modelRequestGeneration
+        modelRefreshTask = Task { await applyModels(generation: generation) }
     }
 
-    private func applyModels() async {
-        guard !isRefreshingModels else { return }
+    private func applyModels(generation: Int) async {
+        guard generation == modelRequestGeneration, !isRefreshingModels else { return }
         isRefreshingModels = true
         modelRefreshMessage = nil
-        defer { isRefreshingModels = false }
+        defer {
+            if generation == modelRequestGeneration {
+                isRefreshingModels = false
+                modelRefreshTask = nil
+            }
+        }
         do {
             let models = try await client.fetchCodexModelsOrThrow()
+            guard generation == modelRequestGeneration,
+                  !Task.isCancelled,
+                  isSignedIn else { return }
             onModelsFetched(models)
             modelRefreshMessage = "已刷新 Codex 聊天模型；GPT Image 生图预设可在模型页单独添加。"
         } catch {
+            guard generation == modelRequestGeneration, !Task.isCancelled else { return }
             modelRefreshMessage = "模型刷新失败：\(error.localizedDescription)"
         }
     }
@@ -95,9 +111,17 @@ final class CodexLoginModel: ObservableObject {
     func logout(onLoggedOut: () -> Void) {
         loginTask?.cancel()
         loginTask = nil
+        invalidateModelRequests()
         client.logout()
         phase = .idle
         onLoggedOut()
+    }
+
+    private func invalidateModelRequests() {
+        modelRequestGeneration += 1
+        modelRefreshTask?.cancel()
+        modelRefreshTask = nil
+        isRefreshingModels = false
     }
 
     private func restorePersistedPhase() {
@@ -148,6 +172,9 @@ struct CodexLoginView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("完成") { dismiss() }
                 }
+            }
+            .onDisappear {
+                model.cancelLogin()
             }
         }
     }

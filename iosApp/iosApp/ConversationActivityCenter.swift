@@ -47,6 +47,14 @@ final class ConversationActivityCenter {
     }
 
     private(set) var notices: [ConversationActivityNotice] = []
+    /// 所有增删都作用在工作副本上，内容真正变化时才发布到被观察的 `notices`。
+    /// 每次保存或运行状态迁移都会重算；原地 removeAll 即使没删元素也会通知观察者，
+    /// 让读取提醒的聊天页整页重算。
+    @ObservationIgnored private var workingNotices: [ConversationActivityNotice] = [] {
+        didSet {
+            if workingNotices != notices { notices = workingNotices }
+        }
+    }
     @ObservationIgnored private let conversationStore: IOSConversationStore
     @ObservationIgnored private let dao: AgentRuntimeDao
     @ObservationIgnored private let startedAt: Date
@@ -109,7 +117,7 @@ final class ConversationActivityCenter {
         guard succeeded else { return }
         let id = id.lowercased()
         if isTranscript { visibleTranscriptConversationID = id }
-        notices.removeAll { $0.conversationId == id }
+        workingNotices.removeAll { $0.conversationId == id }
 
         if let event = latestEventsByConversationId[id] {
             if event.kind == .awaitingUser {
@@ -131,7 +139,7 @@ final class ConversationActivityCenter {
 
     func dismiss(conversationId: String) {
         clearedRevision[conversationId, default: 0] &+= 1
-        notices.removeAll { $0.conversationId == conversationId }
+        workingNotices.removeAll { $0.conversationId == conversationId }
     }
 
     private func requestRunRefresh() {
@@ -203,12 +211,12 @@ final class ConversationActivityCenter {
 
     private func recomputeNotices() async {
         let latest = latestEventsByConversationId
-        notices.removeAll { latest[$0.conversationId] == nil }
+        workingNotices.removeAll { latest[$0.conversationId] == nil }
         for (id, event) in latest {
-            let existing = notices.first { $0.conversationId == id }
+            let existing = workingNotices.first { $0.conversationId == id }
             let kind = event.kind
             if isVisibleConversation(id) {
-                notices.removeAll { $0.conversationId == id }
+                workingNotices.removeAll { $0.conversationId == id }
                 if kind == .awaitingUser {
                     // 等待确认需在用户离开会话后重新出现。
                     seen.removeValue(forKey: id)
@@ -218,7 +226,7 @@ final class ConversationActivityCenter {
                 continue
             }
             guard let kind else {
-                notices.removeAll { $0.conversationId == id }
+                workingNotices.removeAll { $0.conversationId == id }
                 cachedPreviews.removeValue(forKey: id)
                 seen[id] = event
                 continue
@@ -227,7 +235,7 @@ final class ConversationActivityCenter {
             // 冷启动不把历史已读终态变成新提醒；仍在等待用户的运行可以恢复显示。
             if kind != .awaitingUser,
                Double(event.finishedAt ?? event.startedAt) / 1_000 < startedAt.timeIntervalSince1970 {
-                notices.removeAll { $0.conversationId == id }
+                workingNotices.removeAll { $0.conversationId == id }
                 seen[id] = event
                 continue
             }
@@ -251,7 +259,7 @@ final class ConversationActivityCenter {
                 guard !isVisibleConversation(id) else {
                     if kind != .awaitingUser { seen[id] = event }
                     else { seen.removeValue(forKey: id) }
-                    notices.removeAll { $0.conversationId == id }
+                    workingNotices.removeAll { $0.conversationId == id }
                     continue
                 }
                 preview = Self.preview(messages: messages, event: event)
@@ -265,22 +273,22 @@ final class ConversationActivityCenter {
                 ? event.finishedAt.map { Date(timeIntervalSince1970: Double($0) / 1_000) } ?? Date()
                 : existing?.occurredAt ?? Date()
             guard !isVisibleConversation(id) else {
-                notices.removeAll { $0.conversationId == id }
+                workingNotices.removeAll { $0.conversationId == id }
                 if kind == .awaitingUser { seen.removeValue(forKey: id) }
                 else { seen[id] = event }
                 continue
             }
             // 读取预览期间可能已成功进入又离开；已消费的终态不能被旧读取重新加入。
-            guard seen[id] != event || notices.contains(where: { $0.conversationId == id }) else { continue }
+            guard seen[id] != event || workingNotices.contains(where: { $0.conversationId == id }) else { continue }
             let notice = ConversationActivityNotice(
                 conversationId: id, title: currentSummary.title, kind: kind,
                 preview: preview, occurredAt: occurredAt
             )
-            notices.removeAll { $0.conversationId == id }
-            notices.append(notice)
+            workingNotices.removeAll { $0.conversationId == id }
+            workingNotices.append(notice)
             seen[id] = event
         }
-        notices.sort {
+        workingNotices.sort {
             if $0.kind != $1.kind { return $0.kind.rawValue > $1.kind.rawValue }
             if $0.occurredAt != $1.occurredAt { return $0.occurredAt > $1.occurredAt }
             return $0.conversationId < $1.conversationId

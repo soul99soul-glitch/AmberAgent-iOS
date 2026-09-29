@@ -62,6 +62,106 @@ final class ProviderCredentialAndHeaderTests: XCTestCase {
         XCTAssertNil(ProviderUserAgentPreset.matching(userAgent: "  "))
     }
 
+    func testHeaderStorePersistsSensitiveValuesOnlyInKeychainAndClearsRemovedRows() throws {
+        let suiteName = "ProviderSensitiveHeaderTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let providerId = UUID().uuidString
+        defer {
+            IOSProviderRequestHeaderStore.save(providerId: providerId, userAgent: nil, extra: [], defaults: defaults)
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        IOSProviderRequestHeaderStore.save(
+            providerId: providerId,
+            userAgent: nil,
+            extra: [
+                .init(name: "Authorization", value: "Bearer provider-secret"),
+                .init(name: "X-API-Key", value: "provider-api-secret"),
+                .init(name: "X-Title", value: "AmberAgent"),
+            ],
+            defaults: defaults
+        )
+
+        let persisted = try XCTUnwrap(defaults.data(forKey: "app.amber.ios.providerRequestHeaders.v1"))
+        let persistedText = try XCTUnwrap(String(data: persisted, encoding: .utf8))
+        XCTAssertFalse(persistedText.contains("Bearer provider-secret"))
+        XCTAssertFalse(persistedText.contains("provider-api-secret"))
+        XCTAssertTrue(persistedText.contains(IOSCredentialRedactor.mask))
+
+        XCTAssertEqual(
+            IOSProviderRequestHeaderStore.record(for: providerId, defaults: defaults).extra.map(\.value),
+            ["Bearer provider-secret", "provider-api-secret", "AmberAgent"]
+        )
+        XCTAssertEqual(
+            IOSProviderRequestHeaderStore.headers(for: providerId, defaults: defaults).map(\.value),
+            ["Bearer provider-secret", "provider-api-secret", "AmberAgent"]
+        )
+
+        IOSProviderRequestHeaderStore.save(
+            providerId: providerId,
+            userAgent: nil,
+            extra: [.init(name: "X-Title", value: "AmberAgent")],
+            defaults: defaults
+        )
+        IOSProviderRequestHeaderStore.save(
+            providerId: providerId,
+            userAgent: nil,
+            extra: [.init(name: "Authorization", value: IOSCredentialRedactor.mask)],
+            defaults: defaults
+        )
+        XCTAssertEqual(
+            IOSProviderRequestHeaderStore.record(for: providerId, defaults: defaults).extra.first?.value,
+            ""
+        )
+
+        IOSProviderRequestHeaderStore.save(
+            providerId: providerId, userAgent: nil,
+            extra: [.init(name: "Authorization", value: "replacement-secret")], defaults: defaults
+        )
+        IOSProviderRequestHeaderStore.save(providerId: providerId, userAgent: nil, extra: [], defaults: defaults)
+        IOSProviderRequestHeaderStore.save(
+            providerId: providerId,
+            userAgent: nil,
+            extra: [.init(name: "Authorization", value: IOSCredentialRedactor.mask)],
+            defaults: defaults
+        )
+        XCTAssertEqual(
+            IOSProviderRequestHeaderStore.headers(for: providerId, defaults: defaults).first?.value,
+            ""
+        )
+    }
+
+    func testHeaderStoreMigratesLegacySensitiveValuesBeforeMaskingThem() throws {
+        let suiteName = "ProviderLegacyHeaderTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let providerId = UUID().uuidString
+        let secret = "legacy-provider-secret"
+        defer {
+            IOSProviderRequestHeaderStore.save(providerId: providerId, userAgent: nil, extra: [], defaults: defaults)
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let legacy = try JSONSerialization.data(withJSONObject: [
+            providerId: [
+                "userAgent": NSNull(),
+                "extra": [["name": "Authorization", "value": secret]],
+            ],
+        ])
+        defaults.set(legacy, forKey: "app.amber.ios.providerRequestHeaders.v1")
+
+        let migrated = IOSProviderRequestHeaderStore.record(for: providerId, defaults: defaults)
+
+        XCTAssertEqual(migrated.extra.first?.value, secret)
+        XCTAssertEqual(
+            IOSProviderRequestHeaderStore.record(for: providerId, defaults: defaults).extra.first?.value,
+            secret
+        )
+        let persisted = try XCTUnwrap(defaults.data(forKey: "app.amber.ios.providerRequestHeaders.v1"))
+        let persistedText = try XCTUnwrap(String(data: persisted, encoding: .utf8))
+        XCTAssertFalse(persistedText.contains(secret))
+        XCTAssertTrue(persistedText.contains(IOSCredentialRedactor.mask))
+    }
+
     func testApiKeyProviderHasUsableCredentialAndCodexDoesNotWithoutLogin() {
         let keyed = ProviderSetting.OpenAI(
             id: KotlinUuid.companion.random(),

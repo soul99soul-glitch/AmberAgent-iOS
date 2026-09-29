@@ -4,6 +4,47 @@ import XCTest
 
 @MainActor
 final class ChatImageGenerationReferenceTests: XCTestCase {
+    func testDisabledImageProviderIsNotExposedAndRejectsAlreadyIssuedCall() async throws {
+        let defaults = UserDefaults(suiteName: "DisabledImageProvider-\(UUID().uuidString)")!
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        let chat = store.addProvider(IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Chat", apiKey: "test-key", baseUrl: "https://example.test/v1",
+            modelName: "Chat", modelId: "gpt-4o"
+        ))
+        store.setCurrentChatModelId(try XCTUnwrap(chat.models.first).id.description())
+        let imageProvider = store.addProvider(IosSettingsMutations.shared.buildBlankOpenAIProvider(
+            name: "Image", apiKey: "test-key", baseUrl: "https://example.test/v1"
+        ))
+        let updated = store.upsertProviderImageModel(
+            providerId: imageProvider.id.description(), modelId: "gpt-image-2", displayName: "Image"
+        )
+        store.setImageGenerationModelId(try XCTUnwrap(updated?.models.first).id.description())
+        defer {
+            _ = store.removeProvider(providerId: imageProvider.id.description())
+            _ = store.updateProviderApiKey(providerId: chat.id.description(), apiKey: "")
+        }
+        let viewModel = ChatViewModel(
+            settingsStore: SettingsStore(userDefaults: defaults), sharedSettings: store,
+            autoGenerateResponses: false
+        )
+        _ = viewModel.textGenerationParamsForTesting()
+        XCTAssertTrue(viewModel.toolExposureBridgeForTesting()?.fullToolDeclarations().contains { $0.name == "generate_image" } == true)
+        _ = store.updateProviderBasics(providerId: imageProvider.id.description(), name: "Image", enabled: false)
+        _ = viewModel.textGenerationParamsForTesting()
+        XCTAssertFalse(viewModel.toolExposureBridgeForTesting()?.fullToolDeclarations().contains { $0.name == "generate_image" } == true)
+
+        let runtime = ChatToolRuntime(
+            settingsStore: SettingsStore(userDefaults: defaults), sharedSettings: store,
+            localToolExecutor: nil, searchTransport: IOSURLSessionSearchHTTPTransport(),
+            mcpManager: IOSMcpManager(serverProvider: { [] })
+        )
+        let message = assistantToolCall(input: #"{"prompt":"cat"}"#)
+        let call = try XCTUnwrap(message.parts.compactMap { $0 as? UIMessagePart.Tool }.first)
+        let result = await runtime.messagesByExecutingImageToolCall(call, in: [message])
+        let output = try XCTUnwrap(result.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first)
+        XCTAssertTrue(output.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined().contains("已停用"))
+    }
+
     func testWantsAttachedImageParsesBooleanAliases() {
         XCTAssertTrue(ChatImageGenerationReference.wantsAttachedImage(
             #"{"prompt":"x","use_attached_image":true}"#

@@ -4,6 +4,7 @@ import app.amber.ai.provider.CustomHeader
 import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.BuiltInTools
 import app.amber.ai.provider.GoogleAuthMode
+import app.amber.ai.provider.GOOGLE_API_KEY_DEFAULT_BASE_URL
 import app.amber.ai.provider.MIMO_API_DEFAULT_BASE_URL
 import app.amber.ai.provider.MIMO_TOKEN_PLAN_DEFAULT_BASE_URL
 import app.amber.ai.provider.Model
@@ -14,6 +15,7 @@ import app.amber.ai.provider.OpenAIAuthMode
 import app.amber.ai.provider.OpenAIBrand
 import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.hasUsableAuth
+import app.amber.ai.provider.fixedBaseUrl
 import app.amber.ai.core.ReasoningLevel
 import app.amber.core.model.Assistant
 import app.amber.core.settings.DEFAULT_AUTO_MODEL_ID
@@ -106,9 +108,11 @@ class IosSettingsMutationsProviderTest {
     }
 
     @Test
-    fun antigravityAuthModePinsCloudcodePaAndRestoresGenerativeLanguageDefault() {
+    fun antigravityAuthModePreservesCustomApiKeyEndpointAcrossRoundTrip() {
+        val customBaseUrl = "https://proxy.example/gemini"
         val provider = ProviderSetting.Google(
-            baseUrl = "https://generativelanguage.googleapis.com/v1beta",
+            apiKey = "test-key",
+            baseUrl = customBaseUrl,
         )
         val settings = Settings(providers = listOf(provider))
 
@@ -118,7 +122,8 @@ class IosSettingsMutationsProviderTest {
             authMode = GoogleAuthMode.ANTIGRAVITY_OAUTH,
         ).providers.single() as ProviderSetting.Google
         assertEquals(GoogleAuthMode.ANTIGRAVITY_OAUTH, oauth.authMode)
-        assertEquals("https://cloudcode-pa.googleapis.com", oauth.baseUrl)
+        assertEquals(customBaseUrl, oauth.baseUrl)
+        assertEquals("test-key", oauth.apiKey)
         assertTrue(oauth.hasUsableAuth())
 
         val restored = IosSettingsMutations.setGoogleAuthMode(
@@ -127,8 +132,28 @@ class IosSettingsMutationsProviderTest {
             authMode = GoogleAuthMode.API_KEY,
         ).providers.single() as ProviderSetting.Google
         assertEquals(GoogleAuthMode.API_KEY, restored.authMode)
-        assertEquals("https://generativelanguage.googleapis.com/v1beta", restored.baseUrl)
-        assertFalse(restored.hasUsableAuth())
+        assertEquals(customBaseUrl, restored.baseUrl)
+        assertEquals("test-key", restored.apiKey)
+        assertTrue(restored.hasUsableAuth())
+    }
+
+    @Test
+    fun leavingLegacyAntigravityFixedEndpointRestoresApiKeyDefault() {
+        val provider = ProviderSetting.Google(
+            apiKey = "test-key",
+            baseUrl = GoogleAuthMode.ANTIGRAVITY_OAUTH.fixedBaseUrl()!!,
+            authMode = GoogleAuthMode.ANTIGRAVITY_OAUTH,
+        )
+
+        val updated = IosSettingsMutations.setGoogleAuthMode(
+            settings = Settings(providers = listOf(provider)),
+            providerId = provider.id.toString(),
+            authMode = GoogleAuthMode.API_KEY,
+        ).providers.single() as ProviderSetting.Google
+
+        assertEquals(GoogleAuthMode.API_KEY, updated.authMode)
+        assertEquals(GOOGLE_API_KEY_DEFAULT_BASE_URL, updated.baseUrl)
+        assertEquals("test-key", updated.apiKey)
     }
 
     @Test
@@ -338,6 +363,64 @@ class IosSettingsMutationsProviderTest {
         assertEquals(listOf(Modality.TEXT, Modality.IMAGE), model.inputModalities)
         assertEquals(listOf(ModelAbility.TOOL, ModelAbility.REASONING), model.abilities)
         assertNull(model.contextWindowTokens)
+    }
+
+    @Test
+    fun modelCatalogReplacementPreservesMatchingModelsAndCleansRemovedReferences() {
+        val existingModel = Model(
+            modelId = "kept-model",
+            displayName = "My model label",
+            id = Uuid.random(),
+            type = ModelType.CHAT,
+            customHeaders = listOf(CustomHeader("X-Model-Key", "keep")),
+            customBodies = listOf(CustomBody("quality", JsonPrimitive("high"))),
+            inputModalities = listOf(Modality.TEXT, Modality.IMAGE),
+            outputModalities = listOf(Modality.TEXT, Modality.AUDIO),
+            abilities = listOf(ModelAbility.TOOL),
+            tools = setOf(BuiltInTools.Search),
+            contextWindowTokens = 123_456,
+        )
+        val removedModel = Model(modelId = "removed-model", type = ModelType.CHAT)
+        val imageModel = Model(modelId = "kept-image", type = ModelType.IMAGE)
+        val provider = ProviderSetting.OpenAI(models = listOf(existingModel, removedModel, imageModel))
+        val settings = Settings(
+            providers = listOf(provider),
+            chatModelId = removedModel.id,
+            titleModelId = removedModel.id,
+            suggestionModelId = removedModel.id,
+            ocrModelId = removedModel.id,
+            compressModelId = removedModel.id,
+            imageGenerationModelId = removedModel.id,
+            assistants = listOf(Assistant(
+                chatModelId = removedModel.id,
+                imageGenerationModelId = removedModel.id,
+            )),
+        )
+
+        val updated = IosSettingsMutations.updateProviderChatModels(
+            settings = settings,
+            providerId = provider.id.toString(),
+            modelIds = listOf(
+                "kept-model" to "Catalog display name",
+                "new-model" to "New model",
+            ),
+        )
+        val updatedProvider = updated.providers.single()
+
+        assertEquals(
+            existingModel.copy(displayName = "Catalog display name"),
+            updatedProvider.models.single { it.modelId == "kept-model" },
+        )
+        assertTrue(updatedProvider.models.contains(imageModel))
+        assertTrue(updatedProvider.models.none { it.id == removedModel.id })
+        assertEquals(existingModel.id, updated.chatModelId)
+        assertEquals(DEFAULT_AUTO_MODEL_ID, updated.titleModelId)
+        assertEquals(DEFAULT_AUTO_MODEL_ID, updated.suggestionModelId)
+        assertEquals(DEFAULT_AUTO_MODEL_ID, updated.ocrModelId)
+        assertEquals(DEFAULT_AUTO_MODEL_ID, updated.compressModelId)
+        assertEquals(DEFAULT_AUTO_MODEL_ID, updated.imageGenerationModelId)
+        assertNull(updated.assistants.single().chatModelId)
+        assertNull(updated.assistants.single().imageGenerationModelId)
     }
 
     @Test

@@ -714,18 +714,14 @@ enum IOSProviderConfigToolCatalog {
             var changed = false
             let parts = message.parts.map { part -> UIMessagePart in
                 guard let tool = part as? UIMessagePart.Tool,
-                      tool.toolName == "provider_config_apply" else {
+                      highRiskToolNames.contains(tool.toolName) else {
                     return part
                 }
                 changed = true
-                return UIMessagePart.Tool(
-                    toolCallId: tool.toolCallId,
-                    toolName: tool.toolName,
+                return PromptTranscript.shared.doCopyTool(
+                    tool: tool,
                     input: redactedArgumentsJSON(tool.input),
-                    output: tool.output,
-                    approvalState: tool.approvalState,
-                    streamIndex: tool.streamIndex,
-                    metadata: nil
+                    output: tool.output
                 )
             }
             guard changed else { return message }

@@ -63,9 +63,56 @@ struct IOSCodexOAuthError: LocalizedError, Equatable {
 /// Keychain-backed token store (one record per provider id), reusing the generic
 /// `IOSCredentialSideTable` so codex tokens live alongside other iOS credentials.
 enum IOSCodexAuthStore {
+    enum RefreshCommitResult: Equatable {
+        case saved
+        case storeFailed
+        case credentialsChanged
+    }
+
+    private static let mutationLock = NSLock()
+
     static func credentialKey(providerId: String) -> String { "codex.\(providerId).tokens" }
 
     static func load(providerId: String) -> IOSCodexAuthTokens? {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+        return loadLocked(providerId: providerId)
+    }
+
+    @discardableResult
+    static func save(providerId: String, tokens: IOSCodexAuthTokens) -> Bool {
+        guard let raw = encoded(tokens) else { return false }
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+    }
+
+    /// Atomically commits a refresh only while the credential used to request
+    /// it is still the provider's current session. `clear` and all saves share
+    /// this lock, so a logout cannot land between the comparison and write.
+    static func saveRefreshedTokens(
+        providerId: String,
+        expected: IOSCodexAuthTokens,
+        refreshed: IOSCodexAuthTokens
+    ) -> RefreshCommitResult {
+        guard let raw = encoded(refreshed) else { return .storeFailed }
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+        guard loadLocked(providerId: providerId) == expected else {
+            return .credentialsChanged
+        }
+        return IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
+            ? .saved
+            : .storeFailed
+    }
+
+    static func clear(providerId: String) {
+        mutationLock.lock()
+        defer { mutationLock.unlock() }
+        IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
+    }
+
+    private static func loadLocked(providerId: String) -> IOSCodexAuthTokens? {
         guard let raw = IOSCredentialSideTable.load(key: credentialKey(providerId: providerId)),
               let data = raw.data(using: .utf8),
               let tokens = try? JSONDecoder().decode(IOSCodexAuthTokens.self, from: data) else {
@@ -74,20 +121,16 @@ enum IOSCodexAuthStore {
         return tokens
     }
 
-    static func save(providerId: String, tokens: IOSCodexAuthTokens) {
+    private static func encoded(_ tokens: IOSCodexAuthTokens) -> String? {
         guard let data = try? JSONEncoder().encode(tokens),
-              let raw = String(data: data, encoding: .utf8) else { return }
-        IOSCredentialSideTable.store(key: credentialKey(providerId: providerId), value: raw)
-    }
-
-    static func clear(providerId: String) {
-        IOSCredentialSideTable.delete(key: credentialKey(providerId: providerId))
+              let raw = String(data: data, encoding: .utf8) else { return nil }
+        return raw
     }
 }
 
-/// Serializes refresh and exposes the device-auth flow. An `actor` so concurrent
-/// chat requests can't trigger overlapping refreshes (mirrors the Android
-/// `refreshMutex`). One instance per provider id.
+/// Exposes the device-auth flow and token lookup. Each instance serializes its
+/// own state, while `IOSCodexResolveCoordinator` coalesces refreshes across
+/// instances that use the same provider id.
 actor IOSCodexOAuthClient {
     private let providerId: String
     private let session: URLSession
@@ -160,6 +203,7 @@ actor IOSCodexOAuthClient {
                         authorizationCode: authorizationCode,
                         codeVerifier: codeVerifier
                     )
+                    try Task.checkCancellation()
                     IOSCodexAuthStore.save(providerId: providerId, tokens: tokens)
                     return tokens
                 case 403, 404:
@@ -197,11 +241,18 @@ actor IOSCodexOAuthClient {
         if !forceRefresh, current.expiresAtMillis - IOSCodexOAuthConstants.refreshSkewMillis > now {
             return current.accessToken
         }
-        return try await refresh().accessToken
+        return try await IOSCodexResolveCoordinator.shared.resolve(key: providerId) { [self] in
+            // Another refresh may finish between the initial read and joining this flight.
+            if !forceRefresh,
+               let latest = IOSCodexAuthStore.load(providerId: providerId),
+               latest.expiresAtMillis - IOSCodexOAuthConstants.refreshSkewMillis > Self.nowMillis() {
+                return latest.accessToken
+            }
+            return try await refresh().accessToken
+        }
     }
 
-    @discardableResult
-    func refresh() async throws -> IOSCodexAuthTokens {
+    private func refresh() async throws -> IOSCodexAuthTokens {
         guard let current = IOSCodexAuthStore.load(providerId: providerId) else {
             throw IOSCodexOAuthError(message: "尚未登录 Codex,请先在服务商设置里用 ChatGPT 账号登录。")
         }
@@ -214,6 +265,7 @@ actor IOSCodexOAuthClient {
             url: IOSCodexOAuthConstants.issuer + "/oauth/token",
             body: body
         )
+        try Task.checkCancellation()
         guard response.statusCode.isHTTPSuccess else {
             throw oauthError("Codex 令牌刷新失败", response.statusCode, data)
         }
@@ -226,7 +278,18 @@ actor IOSCodexOAuthClient {
             idToken: idToken,
             fallback: current
         )
-        IOSCodexAuthStore.save(providerId: providerId, tokens: merged)
+        switch IOSCodexAuthStore.saveRefreshedTokens(
+            providerId: providerId,
+            expected: current,
+            refreshed: merged
+        ) {
+        case .saved:
+            break
+        case .storeFailed:
+            throw IOSCodexOAuthError(message: "无法保存 Codex 刷新后的登录状态，请重试。")
+        case .credentialsChanged:
+            throw IOSCodexOAuthError(message: "Codex 登录状态已变更，已取消过期的令牌刷新。")
+        }
         return merged
     }
 

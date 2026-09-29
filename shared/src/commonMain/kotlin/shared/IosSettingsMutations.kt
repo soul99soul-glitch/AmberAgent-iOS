@@ -152,23 +152,34 @@ object IosSettingsMutations {
         val removed = settings.providers.firstOrNull { it.id == parsed } ?: return settings
         val remaining = settings.providers.filterNot { it.id == parsed }
         val removedModelIds = removed.models.mapTo(mutableSetOf()) { it.id }
-        val replacementModelId = remaining
+        return clearReferencesToRemovedModels(settings, remaining, removedModelIds)
+    }
+
+    /**
+     * Applies the existing provider-deletion policy to model IDs removed by a
+     * provider catalog replacement: retarget the global chat slot when possible,
+     * clear auxiliary and assistant overrides, and keep the original snapshot if
+     * its required global chat selection would otherwise become invalid.
+     */
+    private fun clearReferencesToRemovedModels(
+        settings: Settings,
+        providers: List<ProviderSetting>,
+        removedModelIds: Set<kotlin.uuid.Uuid>,
+    ): Settings {
+        val replacementModelId = providers
             .asSequence()
             .flatMap { it.models.asSequence() }
             .firstOrNull { it.type == ModelType.CHAT }
             ?.id
 
-        // The replacementModelId!! force-unwrap below only guards the top-level
-        // chatModelId. Assistant references are nulled out (Assistant.chatModelId
-        // is nullable) and need no replacement, so they must NOT abort the removal
-        // — otherwise removing a provider whose model is referenced only by an
-        // assistant silently no-ops when no other CHAT model remains.
+        // Assistant references are nullable and can fall back to the global
+        // selection. Only the top-level selection requires a replacement.
         val needsReplacement = settings.chatModelId in removedModelIds
         if (needsReplacement && replacementModelId == null) return settings
 
         return settings.copy(
-            providers = remaining,
-            chatModelId = if (settings.chatModelId in removedModelIds) replacementModelId!! else settings.chatModelId,
+            providers = providers,
+            chatModelId = if (needsReplacement) replacementModelId!! else settings.chatModelId,
             titleModelId = settings.titleModelId.clearedIfRemoved(removedModelIds),
             suggestionModelId = settings.suggestionModelId.clearedIfRemoved(removedModelIds),
             ocrModelId = settings.ocrModelId.clearedIfRemoved(removedModelIds),
@@ -334,18 +345,12 @@ object IosSettingsMutations {
     }
 
     /**
-     * Sets the persisted auth mode for a Google [providerId].
-     *
-     * OAuth modes (Antigravity / Code Assist) pin the cloudcode-pa base URL
-     * (token-managed, apiKey unused at request time). Switching back to
-     * API_KEY restores the brand default generative-language base URL only
-     * when the current URL is still the pinned OAuth URL. Note: the URL the
-     * user had *before* entering OAuth mode is not retained — a custom
-     * pre-OAuth proxy is lost on the way back (a proxy edited while in OAuth
-     * mode is kept, but the settings UI renders that row read-only). Mirrors
-     * [setOpenAIAuthMode]'s non-destructive endpoint policy.
+     * Sets the persisted auth mode for a Google [providerId]. OAuth request
+     * endpoints are selected by the iOS runtime from [GoogleAuthMode], so the
+     * user's API-key endpoint remains untouched for when API_KEY is restored.
+     * Older iOS versions persisted the fixed Antigravity endpoint into baseUrl;
+     * restore the API default only for that exact legacy state.
      */
-    @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
     fun setGoogleAuthMode(
         settings: Settings,
         providerId: String,
@@ -357,28 +362,22 @@ object IosSettingsMutations {
                 if (provider.id != parsed || provider !is ProviderSetting.Google) {
                     provider
                 } else {
+                    val legacyAntigravityEndpoint =
+                        provider.authMode == GoogleAuthMode.ANTIGRAVITY_OAUTH &&
+                            provider.baseUrl == provider.authMode.fixedBaseUrl()
                     provider.copy(
                         authMode = authMode,
-                        baseUrl = resolvedBaseUrlForGoogleAuthMode(provider, authMode),
+                        baseUrl = if (
+                            authMode == GoogleAuthMode.API_KEY && legacyAntigravityEndpoint
+                        ) {
+                            GOOGLE_API_KEY_DEFAULT_BASE_URL
+                        } else {
+                            provider.baseUrl
+                        },
                     )
                 }
             }
         )
-    }
-
-    private fun resolvedBaseUrlForGoogleAuthMode(
-        provider: ProviderSetting.Google,
-        mode: GoogleAuthMode,
-    ): String {
-        val pinned = mode.fixedBaseUrl()
-        if (pinned != null) {
-            return pinned
-        }
-        val previousPinned = provider.authMode.fixedBaseUrl()
-        if (previousPinned != null && provider.baseUrl == previousPinned) {
-            return GOOGLE_API_KEY_DEFAULT_BASE_URL
-        }
-        return provider.baseUrl
     }
 
     /**
@@ -495,10 +494,10 @@ object IosSettingsMutations {
     }
 
     /**
-     * Replace the chat-typed models on the provider identified by [providerId].
-     * Used by the iOS provider editor's model field to set/update the models a
-     * provider exposes. Non-chat models on the provider are preserved.
-     * Returns the original snapshot unchanged if the id is not found.
+     * Replace the chat-typed catalog on [providerId], preserving the UUID and
+     * user-owned metadata of models whose wire [Model.modelId] remains present.
+     * References to removed models follow the same cleanup policy as provider
+     * deletion. Non-chat models are preserved.
      */
     @OptIn(kotlin.uuid.ExperimentalUuidApi::class)
     fun updateProviderChatModels(
@@ -507,30 +506,37 @@ object IosSettingsMutations {
         modelIds: List<Pair<String, String>>,  // (modelId, displayName)
     ): Settings {
         val parsed = runCatching { kotlin.uuid.Uuid.parse(providerId) }.getOrNull() ?: return settings
-        val newChatModels = modelIds.map { (modelId, displayName) ->
-            Model(
-                modelId = modelId,
-                displayName = displayName,
-                id = kotlin.uuid.Uuid.random(),
-                type = ModelType.CHAT,
-                inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(modelId),
-                abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
-            )
+        val currentProvider = settings.providers.firstOrNull { it.id == parsed } ?: return settings
+        val discovered = modelIds
+            .filter { it.first.isNotBlank() }
+            .distinctBy { it.first }
+        val existingChatModels = currentProvider.models.filter { it.type == ModelType.CHAT }
+        val newChatModels = discovered.map { (modelId, displayName) ->
+            existingChatModels.firstOrNull { it.modelId == modelId }
+                ?.copy(displayName = displayName.ifBlank { modelId })
+                ?: Model(
+                    modelId = modelId,
+                    displayName = displayName.ifBlank { modelId },
+                    id = kotlin.uuid.Uuid.random(),
+                    type = ModelType.CHAT,
+                    inputModalities = ModelRegistry.MODEL_INPUT_MODALITIES.getData(modelId),
+                    abilities = ModelRegistry.MODEL_ABILITIES.getData(modelId),
+                )
         }
+        val retainedModelIds = newChatModels.mapTo(mutableSetOf()) { it.id }
+        val removedModelIds = existingChatModels
+            .filterNot { it.id in retainedModelIds }
+            .mapTo(mutableSetOf()) { it.id }
         val providers = settings.providers.map { provider ->
             if (provider.id != parsed) {
                 provider
             } else {
                 val nonChat = provider.models.filter { it.type != ModelType.CHAT }
                 val merged = nonChat + newChatModels
-                when (provider) {
-                    is ProviderSetting.OpenAI -> provider.copy(models = merged)
-                    is ProviderSetting.Google -> provider.copy(models = merged)
-                    is ProviderSetting.Claude -> provider.copy(models = merged)
-                }
+                provider.copyProvider(models = merged)
             }
         }
-        return settings.copy(providers = providers)
+        return clearReferencesToRemovedModels(settings, providers, removedModelIds)
     }
 
     /**

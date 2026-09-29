@@ -844,6 +844,50 @@ final class IOSAgentToolEngineTests: XCTestCase {
         XCTAssertEqual(outputText, "{\"answer\":42}")
     }
 
+    @MainActor
+    func testForegroundProviderCreateRedactsCanonicalInputAndNextRequest() async throws {
+        let defaults = UserDefaults(suiteName: "ProviderEngine-\(UUID().uuidString)")!
+        let store = IOSSharedSettingsStore(userDefaults: defaults)
+        let runtime = ChatToolRuntime(
+            settingsStore: SettingsStore(userDefaults: defaults), sharedSettings: store,
+            localToolExecutor: nil, searchTransport: IOSURLSessionSearchHTTPTransport(),
+            mcpManager: IOSMcpManager(serverProvider: { [] })
+        )
+        let secret = "sk-test-engine-private-key"
+        let call = toolCallMessage(
+            toolCallId: "create-provider", toolName: "provider_config_create",
+            input: #"{"name":"Engine Provider","base_url":"https://example.test/v1","api_key":"\#(secret)"}"#
+        )
+        let messages = [userMessage("configure"), call]
+        let provider = ParamsRecordingProvider([call, assistantText("done")])
+        let params = makeParams(tools: []).replacingTools(
+            ToolKt.iosToolDeclarations(names: ["provider_config_create"])
+        )
+        let executors = runtime.foregroundToolExecutors(
+            providerSetting: makeProviderSetting(), params: params,
+            runId: "provider-engine", startedAt: 1, inputDigest: "test", conversationId: nil,
+            toolExposureBridge: nil, baseMessagesProvider: { messages },
+            approvalPromptBox: ChatToolRuntime.IOSForegroundApprovalPromptBox(),
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:], globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: true, execJavaScriptEnabled: false, webSearchEnabled: false
+            )
+        )
+        let engine = IOSAgentToolEngine(provider: provider, executors: executors)
+        let result = await engine.run(
+            providerSetting: makeProviderSetting(), messages: [messages[0]], params: params
+        )
+        let saved = try XCTUnwrap(store.snapshot.providers.first { $0.name == "Engine Provider" } as? ProviderSetting.OpenAI)
+        defer { _ = store.removeProvider(providerId: saved.id.description()) }
+        XCTAssertEqual(saved.apiKey, secret, "execution must still receive the original key")
+        XCTAssertEqual(provider.recordedMessages.count, 2)
+        for transcript in [result.messages, try XCTUnwrap(provider.recordedMessages.last)] {
+            let tool = try XCTUnwrap(transcript.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first)
+            XCTAssertFalse(tool.input.contains(secret))
+            XCTAssertTrue(tool.input.contains("****"))
+        }
+    }
+
     func testMultipleToolCallsInOneTurnAreAllExecutedBeforeNextRound() async {
         // One assistant turn carrying TWO tool calls, then a final text turn.
         let twoToolMessage = makeMessage(

@@ -2342,7 +2342,9 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 didChange = true
                 return PromptTranscript.shared.doCopyTool(
                     tool: toolPart,
-                    input: toolPart.input,
+                    input: IOSProviderConfigToolCatalog.toolNames.contains(toolPart.toolName)
+                        ? IOSProviderConfigToolCatalog.redactedArgumentsJSON(toolPart.input)
+                        : toolPart.input,
                     output: newOutput
                 )
             }

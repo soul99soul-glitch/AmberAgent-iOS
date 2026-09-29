@@ -93,6 +93,23 @@ final class IOSSharedSettingsStoreProvidersWriteBackTests: XCTestCase {
         )
     }
 
+    func testDefaultModelSelectionReplacesEarlierComposerOverrideAndSurvivesRestart() throws {
+        let suiteName = "ProviderDefault-\(UUID().uuidString)"
+        let store = makeIsolatedStore(suiteName: suiteName)
+        store.addCustomModel(name: "A", modelId: "model-a", providerName: "A")
+        let first = try XCTUnwrap(store.snapshot.providers.last?.models.first)
+        store.addCustomModel(name: "B", modelId: "model-b", providerName: "B")
+        let second = try XCTUnwrap(store.snapshot.providers.last?.models.first)
+        store.setCurrentAssistantChatModelId(first.id.description())
+
+        store.selectChatModelAsDefault(second.id.description())
+
+        XCTAssertEqual(store.snapshot.chatModelId, second.id)
+        XCTAssertEqual(store.snapshot.getCurrentChatModel()?.id, second.id)
+        let reloaded = makeIsolatedStore(suiteName: suiteName)
+        XCTAssertEqual(reloaded.snapshot.getCurrentChatModel()?.id, second.id)
+    }
+
     func testRemoveCustomModelDoesNotResurrectAfterRestart() {
         let suiteName = "Slice4-ProvDel-\(UUID().uuidString)"
         let store1 = makeIsolatedStore(suiteName: suiteName)

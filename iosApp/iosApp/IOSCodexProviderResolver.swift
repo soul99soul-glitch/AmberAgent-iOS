@@ -33,27 +33,16 @@ enum IOSCodexProviderResolver {
     /// Returns a request-ready provider. Throws if a codex provider isn't signed
     /// in or the token can't be refreshed.
     ///
-    /// I-4 single-flight（`docs/IOS_AGENT_HARDENING_PLAN_2026-07-29.md` §W4 裂缝①）：
-    /// 每个模型轮都会调用这个函数——这本身不是要修的问题，它就是
-    /// `getValidAccessToken()` 的按需刷新机制（token 未过期时直接返回缓存值，无
-    /// 网络请求；只有临近/已过期才真正触发一次 HTTP 刷新）。缓存整份解析结果反而
-    /// 会让长 run 错过刷新，是错的方向。真正的裂缝是"无 single-flight"：前台流与
-    /// 后台交接可能同时对同一个 provider 调用 `resolved()`，各自 new 一个
-    /// `IOSCodexOAuthClient` 实例、各自触发一次刷新，互相不知道对方存在。这里把
-    /// 并发/重入的调用按 provider id 合并成一次 token 获取，共享同一个凭据结果
-    /// （含失败，不放大失败次数）；整份 provider 仍由各调用者自己的快照重建。
+    /// Token 缓存命中与过期刷新在 `getValidAccessToken()` 内处理。多个独立
+    /// `IOSCodexOAuthClient` 实例共享同一 provider 的刷新请求；这里仍由每个调用者
+    /// 根据自己的冻结快照重建 provider，避免串入其他调用者的设置字段。
     static func resolved(_ provider: ProviderSetting) async throws -> ProviderSetting {
         guard let openAI = provider as? ProviderSetting.OpenAI,
               isCodexConfiguration(openAI) else {
             return provider
         }
         let key = providerKey(openAI)
-        let token = try await IOSCodexResolveCoordinator.shared.resolve(key: key) {
-            try await IOSCodexOAuthClient(providerId: key).getValidAccessToken()
-        }
-        // Single-flight only owns the live credential. Every caller rebuilds
-        // from its own frozen provider value, so concurrent runs sharing an id
-        // cannot leak the first caller's unrelated provider fields.
+        let token = try await IOSCodexOAuthClient(providerId: key).getValidAccessToken()
         return ProviderSetting.OpenAI(
             id: openAI.id,
             enabled: openAI.enabled,
@@ -214,11 +203,10 @@ private extension Array where Element == CustomHeader {
     }
 }
 
-/// I-4 single-flight 合并器：把针对同一个 key 的并发/重入异步解析合并成一次底层
-/// 执行，等待中的调用者共享同一个 `Task`（因而共享同一个结果——成功或失败都不
-/// 放大）。当前唯一使用者是 `IOSCodexProviderResolver.resolved(_:)`。
+/// 合并同一 provider 的在途 token 刷新。调用者先在
+/// `getValidAccessToken()` 判断缓存是否需要刷新，普通缓存命中不会进入这里。
 ///
-/// 非 private 且不与 `resolved()` 耦合具体网络逻辑，是为了让
+/// 非 private 且不与 OAuth 网络逻辑耦合，是为了让
 /// `IOSRunSnapshotTests` 能直接实例化一份、注入可计数的闭包验证合并语义，不需要
 /// 真的触发 Codex OAuth 网络请求。
 actor IOSCodexResolveCoordinator {

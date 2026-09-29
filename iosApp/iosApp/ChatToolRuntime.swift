@@ -99,7 +99,7 @@ enum ConversationMemoryPollutionPolicy {
     /// model never sees the key material again.
     static func shouldMarkPolluted(toolName: String, outputText: String) -> Bool {
         if isPollutingToolName(toolName) { return true }
-        guard toolName == "provider_config_apply" else { return false }
+        guard IOSProviderConfigToolCatalog.highRiskToolNames.contains(toolName) else { return false }
         guard let data = outputText.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               obj["ok"] as? Bool == true else {
@@ -107,6 +107,7 @@ enum ConversationMemoryPollutionPolicy {
         }
         let status = (obj["api_key_status"] as? String) ?? ""
         return status == "updated" || status == "cleared"
+            || (toolName == "provider_config_create" && obj["has_api_key"] as? Bool == true)
     }
 }
 
@@ -1819,7 +1820,7 @@ final class ChatToolRuntime {
             audit = ("ios.mcp.tool_call", "MCP tool call")
         } else if IOSMcpManagementToolCatalog.toolNames.contains(pending.toolCall.toolName) {
             audit = ("ios.mcp.management", "MCP management operation")
-        } else if pending.toolCall.toolName == "provider_config_apply" {
+        } else if IOSProviderConfigToolCatalog.highRiskToolNames.contains(pending.toolCall.toolName) {
             audit = ("ios.settings.provider_config", "Provider configuration")
         } else if pending.toolCall.toolName == "theme_pack_import" {
             audit = ("ios.settings.theme_pack", "Theme pack try-on")
@@ -3278,7 +3279,7 @@ final class ChatToolRuntime {
         }
 
         // Provider 配置写入：高风险自动批准开启时沿用同一安全写入服务并跳过逐次审批。
-        if toolName == "provider_config_apply" {
+        if IOSProviderConfigToolCatalog.highRiskToolNames.contains(toolName) {
             if effectiveHighRiskAutoApproveEnabled {
                 let resultText = await providerConfigToolService.execute(
                     toolName: toolName,
@@ -6089,6 +6090,18 @@ final class ChatToolRuntime {
         _ toolCall: UIMessagePart.Tool,
         messages: [UIMessage] = []
     ) async -> [UIMessagePart] {
+        let settings = sharedSettings.snapshot
+        if let model = settings.findModelById(uuid: settings.imageGenerationModelId),
+           let provider = ChatProviderConfiguration.provider(for: model, providers: settings.providers),
+           !provider.enabled {
+            return [UIMessagePart.Text(
+                text: ChatToolOutputFormatter.toolFailureJSON(
+                    toolName: "generate_image",
+                    reason: "生图服务商已停用，请先启用或选择其他生图模型。"
+                ),
+                metadata: nil
+            )]
+        }
         let enrichedInput: String
         switch ChatImageGenerationReference.enrichToolInput(toolCall.input, messages: messages) {
         case .success(let input):
@@ -7198,8 +7211,7 @@ final class ChatToolRuntime {
             return snapshot.policy(for: capability) != .disabled
         }
         guard let localToolExecutor else { return true }
-        let snapshot = localToolExecutor.permissionsStatus()
-        return snapshot.capabilities.first { $0.id == capabilityId }?.policy != IOSAgentPermissionPolicy.disabled.title
+        return localToolExecutor.permissionPolicy(capabilityId: capabilityId) != .disabled
     }
 
     private var requiresCouncilApproval: Bool {

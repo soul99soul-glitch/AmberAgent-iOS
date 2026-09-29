@@ -20,27 +20,53 @@ enum IOSProviderRequestHeaderStore {
     }
 
     static func record(for providerId: String, defaults: UserDefaults = .standard) -> Record {
-        guard let data = defaults.data(forKey: defaultsKey),
-              let all = try? JSONDecoder().decode([String: Record].self, from: data),
-              let record = all[providerId] else {
+        guard var all = loadAll(defaults: defaults),
+              var stored = all[providerId] else {
             return Record(userAgent: nil, extra: [])
         }
-        return record
+
+        var changed = false
+        for index in stored.extra.indices {
+            let item = stored.extra[index]
+            guard IOSCredentialRedactor.isHeaderSensitive(item.name),
+                  !item.value.isEmpty,
+                  item.value != IOSCredentialRedactor.mask else {
+                continue
+            }
+            let key = credentialKey(providerId: providerId, headerName: item.name, rowIndex: index)
+            // Mask only values that were successfully moved to Keychain.
+            guard IOSCredentialSideTable.store(key: key, value: item.value) else { continue }
+            stored.extra[index].value = IOSCredentialRedactor.mask
+            changed = true
+        }
+        if changed {
+            all[providerId] = stored
+            persist(all, defaults: defaults)
+        }
+
+        var hydrated = stored
+        for index in hydrated.extra.indices where hydrated.extra[index].value == IOSCredentialRedactor.mask {
+            let item = hydrated.extra[index]
+            let key = credentialKey(providerId: providerId, headerName: item.name, rowIndex: index)
+            hydrated.extra[index].value = IOSCredentialSideTable.load(key: key) ?? ""
+        }
+        return hydrated
     }
 
+    @discardableResult
     static func save(
         providerId: String,
         userAgent: String?,
         extra: [Item],
         defaults: UserDefaults = .standard
-    ) {
-        var all: [String: Record] = [:]
-        if let data = defaults.data(forKey: defaultsKey),
-           let decoded = try? JSONDecoder().decode([String: Record].self, from: data) {
-            all = decoded
-        }
+    ) -> Bool {
+        var all = loadAll(defaults: defaults) ?? [:]
+        let oldRefs = Set((all[providerId]?.extra ?? []).enumerated().compactMap { index, item -> String? in
+            guard IOSCredentialRedactor.isHeaderSensitive(item.name), !item.value.isEmpty else { return nil }
+            return credentialKey(providerId: providerId, headerName: item.name, rowIndex: index)
+        })
         let trimmedAgent = userAgent?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cleanedExtra = extra.compactMap { item -> Item? in
+        var cleanedExtra = extra.compactMap { item -> Item? in
             let name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !name.isEmpty else { return nil }
             return Item(name: name, value: item.value)
@@ -48,9 +74,34 @@ enum IOSProviderRequestHeaderStore {
         if trimmedAgent?.isEmpty != false && cleanedExtra.isEmpty {
             all.removeValue(forKey: providerId)
         } else {
-            all[providerId] = Record(userAgent: trimmedAgent?.isEmpty == true ? nil : trimmedAgent, extra: cleanedExtra)
+            var activeRefs = Set<String>()
+            for index in cleanedExtra.indices {
+                let item = cleanedExtra[index]
+                guard IOSCredentialRedactor.isHeaderSensitive(item.name), !item.value.isEmpty else { continue }
+                let key = credentialKey(providerId: providerId, headerName: item.name, rowIndex: index)
+                if item.value != IOSCredentialRedactor.mask,
+                   !IOSCredentialSideTable.store(key: key, value: item.value) {
+                    return false
+                } else if item.value != IOSCredentialRedactor.mask {
+                    cleanedExtra[index].value = IOSCredentialRedactor.mask
+                }
+                activeRefs.insert(key)
+            }
+            all[providerId] = Record(
+                userAgent: trimmedAgent?.isEmpty == true ? nil : trimmedAgent,
+                extra: cleanedExtra
+            )
+            for key in oldRefs.subtracting(activeRefs) {
+                IOSCredentialSideTable.delete(key: key)
+            }
         }
-        defaults.set(try? JSONEncoder().encode(all), forKey: defaultsKey)
+        if all[providerId] == nil {
+            for key in oldRefs {
+                IOSCredentialSideTable.delete(key: key)
+            }
+        }
+        persist(all, defaults: defaults)
+        return true
     }
 
     static func headers(for providerId: String, defaults: UserDefaults = .standard) -> [CustomHeader] {
@@ -61,6 +112,24 @@ enum IOSProviderRequestHeaderStore {
         }
         headers.append(contentsOf: record.extra.map { CustomHeader(name: $0.name, value: $0.value) })
         return headers
+    }
+
+    /// Stable reference for each provider header row. The row index keeps
+    /// repeated sensitive header names from sharing a single secret value.
+    private static func credentialKey(providerId: String, headerName: String, rowIndex: Int) -> String {
+        IOSCredentialSideTable.settingsPath(
+            "providerRequestHeaders.\(providerId).extra[\(headerName)#\(rowIndex)].value"
+        )
+    }
+
+    private static func loadAll(defaults: UserDefaults) -> [String: Record]? {
+        guard let data = defaults.data(forKey: defaultsKey) else { return nil }
+        return try? JSONDecoder().decode([String: Record].self, from: data)
+    }
+
+    private static func persist(_ all: [String: Record], defaults: UserDefaults) {
+        guard let data = try? JSONEncoder().encode(all) else { return }
+        defaults.set(data, forKey: defaultsKey)
     }
 }
 
