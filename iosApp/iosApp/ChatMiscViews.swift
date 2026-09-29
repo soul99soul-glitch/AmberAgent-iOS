@@ -884,8 +884,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     private func startDisplayLink() {
         guard displayLink == nil else { return }
         let displayLink = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
-        // 只驱动淡入透明度（每次都要重绘字形）；滚动由 glide 交给渲染进程，60Hz 足够。
-        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+        // 只驱动淡入透明度。保持 120Hz：它常是屏幕上唯一的动画源，降频会把整屏刷新拉到 40Hz。
+        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         displayLink.add(to: .main, forMode: .common)
         self.displayLink = displayLink
     }

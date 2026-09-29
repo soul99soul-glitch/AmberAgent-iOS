@@ -967,7 +967,7 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             dt: 1.0 / 120.0
         )
 
-        guard case let .followingBottom(virtualOffset, target, _, _) = result.state else {
+        guard case let .followingBottom(virtualOffset, target, _, _, _) = result.state else {
             return XCTFail("expected followingBottom")
         }
         XCTAssertEqual(target, 800)
@@ -1064,8 +1064,14 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             return XCTFail("expected writeOffsetY")
         }
         let tauEff = NativeTimelineScrollCore.tau * 0.25
-        let expected = 500 + 300 * (1 - exp(-dt / tauEff))
+        let expected = NativeTimelineScrollCore.springStep(
+            from: 500, velocity: 0, target: 800, tau: tauEff, dt: dt
+        ).position
         XCTAssertEqual(offsetY, expected, accuracy: 0.5)
+        let untightened = NativeTimelineScrollCore.springStep(
+            from: 500, velocity: 0, target: 800, tau: NativeTimelineScrollCore.tau, dt: dt
+        ).position
+        XCTAssertGreaterThan(offsetY, untightened + 1, "allowance 收紧后同一帧必须闭合得更多")
     }
 
     /// allowance 越界读数钳制：≤0 用下限（保持严格小于 1 的每帧闭合率），
@@ -1111,13 +1117,23 @@ final class NativeTimelineScrollCoreTests: XCTestCase {
             lagAllowance: NativeTimelineScrollCore.minimumLagAllowance
         )
 
-        let ticked = NativeTimelineScrollCore.tick(
+        // 二阶跟随从静止起步需要两帧闭合（一阶是一帧）；排空期仍在终态前清零。
+        let firstTick = NativeTimelineScrollCore.tick(
             state: almostThere,
             geometry: geometry(offsetY: 500, contentHeight: 1_200),
             now: 2,
             dt: 1.0 / 60.0
         )
-        guard case let .followingBottom(virtualOffset, _, _, _) = ticked.state else {
+        guard case let .followingBottom(firstVirtual, _, _, _, _) = firstTick.state else {
+            return XCTFail("expected followingBottom")
+        }
+        let ticked = NativeTimelineScrollCore.tick(
+            state: firstTick.state,
+            geometry: geometry(offsetY: firstVirtual, contentHeight: 1_200),
+            now: 2 + 1.0 / 60.0,
+            dt: 1.0 / 60.0
+        )
+        guard case let .followingBottom(virtualOffset, _, _, _, _) = ticked.state else {
             return XCTFail("expected followingBottom")
         }
         XCTAssertLessThan(520 - virtualOffset, NativeTimelineScrollCore.arrivalEpsilon)

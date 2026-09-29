@@ -57,7 +57,10 @@ enum NativeTimelineScrollState: Equatable {
         /// 滞后允许度：1=流式期（跟随器保留指数平滑的稳态滞后，行为不变）；
         /// 终态排空期间由节奏层随剩余积压连续衰减到 0，让视口在最后一拍前
         /// 贴回底部——完成瞬间的钉底因此不再需要一次性清掉跟随期积累的滞后。
-        lagAllowance: CGFloat = 1
+        lagAllowance: CGFloat = 1,
+        /// 跟随速度（pt/s）。二阶临界阻尼跟随的状态：新行让目标跳一格时只改变
+        /// 加速度，速度连续，不再每行「冲一下再停」。
+        velocity: CGFloat = 0
     )
     case settlingAfterTerminal(virtualOffset: CGFloat, target: CGFloat, lastLayoutAt: TimeInterval)
     case pausedForUser
@@ -172,13 +175,14 @@ enum NativeTimelineScrollCore {
             switch state {
             case .pausedForUser:
                 return (state, [])
-            case let .followingBottom(virtualOffset, target, _, _):
+            case let .followingBottom(virtualOffset, target, _, _, velocity):
                 return (
                     .followingBottom(
                         virtualOffset: virtualOffset,
                         target: clampedTarget(current: target, incoming: geometry.bottomTarget),
                         lastFollowRequestAt: now,
-                        lagAllowance: lagAllowance
+                        lagAllowance: lagAllowance,
+                        velocity: velocity
                     ),
                     [.startFrameDriver]
                 )
@@ -213,7 +217,7 @@ enum NativeTimelineScrollCore {
 
         case .viewportChanged:
             switch state {
-            case let .followingBottom(_, _, _, lagAllowance):
+            case let .followingBottom(_, _, _, lagAllowance, _):
                 return (
                     .followingBottom(
                         virtualOffset: min(geometry.offsetY, geometry.bottomTarget),
@@ -280,7 +284,7 @@ enum NativeTimelineScrollCore {
             }
             guard case let .keyboardFocus(transaction) = state else {
                 guard layoutToken == nil,
-                      case let .followingBottom(virtualOffset, target, _, lagAllowance) = state
+                      case let .followingBottom(virtualOffset, target, _, lagAllowance, velocity) = state
                 else {
                     return (state, [])
                 }
@@ -293,7 +297,8 @@ enum NativeTimelineScrollCore {
                         virtualOffset: max(virtualOffset, geometry.offsetY),
                         target: nextTarget,
                         lastFollowRequestAt: now,
-                        lagAllowance: lagAllowance
+                        lagAllowance: lagAllowance,
+                        velocity: velocity
                     ),
                     [.startFrameDriver]
                 )
@@ -372,6 +377,25 @@ enum NativeTimelineScrollCore {
         }
     }
 
+    /// 临界阻尼弹簧一步的闭式解；对阶跃不过冲，另外钳在目标内。ω = 2/τ：
+    /// 匀速增长下稳态滞后 2r/ω = r·τ，与原一阶指数跟随相同，终态剩余量不变。
+    static func springStep(
+        from position: CGFloat,
+        velocity: CGFloat,
+        target: CGFloat,
+        tau: TimeInterval,
+        dt: TimeInterval
+    ) -> (position: CGFloat, velocity: CGFloat) {
+        let omega = 2 / CGFloat(tau)
+        let step = CGFloat(max(dt, 0))
+        let decay = exp(-omega * step)
+        let error = position - target
+        let coupling = (velocity + omega * error) * step
+        let next = target + (error + coupling) * decay
+        guard next <= target else { return (target, 0) }
+        return (next, (velocity - omega * coupling) * decay)
+    }
+
     static func tick(
         state: NativeTimelineScrollState,
         geometry: NativeTimelineScrollGeometry,
@@ -379,7 +403,7 @@ enum NativeTimelineScrollCore {
         dt: TimeInterval
     ) -> (state: NativeTimelineScrollState, actions: [NativeTimelineScrollAction]) {
         switch state {
-        case let .followingBottom(virtualOffset, target, lastFollowRequestAt, lagAllowance):
+        case let .followingBottom(virtualOffset, target, lastFollowRequestAt, lagAllowance, velocity):
             guard !geometry.userInteracting else {
                 return (.pausedForUser, [.stopFrameDriver])
             }
@@ -415,20 +439,20 @@ enum NativeTimelineScrollCore {
                 )
             }
 
-            // 终态临近度连续收紧时间常数：流式期 allowance=1，τ_eff=tau，
-            // 保留把每拍高度台阶抹成连续运动的稳态滞后；排空期间 allowance
-            // 随剩余积压连续衰减，闭合速度连续上升、滞后同步收敛到 0——
-            // 最后一拍落定时视口已在底部，完成钉底从「一次清掉 10–35pt 滞后」
-            // 变成空操作。指数闭合本身速度连续，无单帧瞬移。
+            // 二阶临界阻尼闭式解：目标每来一行跳一格时速度连续，
+            // 行与行之间不再「冲一下再停」；临界阻尼对阶跃不过冲，另外钳在目标内。
+            // 终态临近度仍通过 lagAllowance 收紧 τ_eff，排空期滞后连续收敛到 0。
             let tauEff = tau * min(max(lagAllowance, minimumLagAllowance), 1)
-            let alpha = 1 - exp(-max(dt, 0) / tauEff)
-            let newVirtual = baseVirtual + remaining * alpha
+            let (newVirtual, newVelocity) = springStep(
+                from: baseVirtual, velocity: velocity, target: newTarget, tau: tauEff, dt: dt
+            )
             return (
                 .followingBottom(
                     virtualOffset: newVirtual,
                     target: newTarget,
                     lastFollowRequestAt: lastFollowRequestAt,
-                    lagAllowance: lagAllowance
+                    lagAllowance: lagAllowance,
+                    velocity: newVelocity
                 ),
                 abs(newVirtual - geometry.offsetY) < arrivalEpsilon ? [] : [.writeOffsetY(newVirtual)]
             )
