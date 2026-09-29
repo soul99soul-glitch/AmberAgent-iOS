@@ -61,12 +61,7 @@ struct ChatSubAgentResultCard: View {
             .clipShape(resultShape)
             .resultCardSurface(shape: resultShape, reduceTransparency: reduceTransparency)
         }
-        .environment(
-            \.openURL,
-            OpenURLAction { url in
-                ChatMarkdownOpenURLPolicy.result(for: url)
-            }
-        )
+        .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
     }
 
     private var resultShape: ChatSubAgentResultShape {

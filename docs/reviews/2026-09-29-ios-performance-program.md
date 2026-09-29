@@ -136,3 +136,18 @@
   累计 24ms（命中 18 次），p95/max 与改前无可测差异 → 回退 vendor 改动；另一“增量 vs 全量”测试经对照实验证明对原版同样失败
   （读取到中间帧），删除。流式表格帧尖峰（约 70–116ms，单帧）的真实来源待 P5 用 Time Profiler 定位。
 - 已知：`testPerfGrowingTableStreamingKeepsDisplayLinkResponsive` 在基线与本阶段均在阈值附近波动（max 67–116ms）。
+
+### 2026-09-29 P3a
+- 技能目录列表与 SKILL.md 按路径缓存、mtime 失效、store 写入主动失效（每轮请求准备不再在主线程列目录读文件）。
+- 记忆召回：基线注入与最终注入各算一次（原三处各算），最终注入仍在压缩与投影之后现算（审查指出复用开头快照会在 await 期间
+  错过记忆写入，已改回原时机），usage marking 复用最终注入结果。
+- ai-core `Message.kt`：`TimeZone.currentSystemDefault()` 60 秒快照缓存；前台期间改时区至多 60 秒内的时间戳沿用旧时区（接受）。
+- 验证：iOS 161 项定点测试；`:ai-core:jvmTest`、`:ai-core:iosSimulatorArm64Test`。
+
+### 2026-09-29 P4
+- `iosApp/AGENTS.md` 新增“SwiftUI 失效与主线程纪律”（环境值可判等、被观察集合有变化才写、body 禁 IO/解码/权限查询、
+  交互事件禁同步系统 IPC、父视图读投影、自定义 Layout 需 updateCache、重复纯计算须缓存并附测量）。
+- `PerformanceHygieneTests` 锁住本轮修复点。审查发现同类遗留：`MessageBubbleView` 流式 Markdown 与 `ChatSubAgentResultCard`
+  每次 body 新建 `OpenURLAction` 注入 `\.openURL` → 改为常量 `ChatMarkdownOpenURLPolicy.openURLAction` 并纳入测试。
+- 聊天页 body 复核：剩余 `viewModel.messages` 读取均在点击/事件闭包；首页被导航压住时冻结观察——P1 后首页单次重算成本已低，
+  冻结需维护快照与返回时同步，风险大于收益，不做。

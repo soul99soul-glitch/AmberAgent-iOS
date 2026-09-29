@@ -3,6 +3,10 @@ import Shared
 import SwiftStreamingMarkdown
 
 enum ChatMarkdownOpenURLPolicy {
+    /// 注入 `\.openURL` 的常量动作：每次 body 新建的 OpenURLAction 不可判等，
+    /// 会让子树里所有链接文本随父视图重算而失效。
+    @MainActor static let openURLAction = OpenURLAction { url in result(for: url) }
+
     static func url(from raw: String) -> URL? {
         guard let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
               isAllowed(url) else {
@@ -849,12 +853,7 @@ struct ChatAssistantMarkdownView: View {
                 }
             }
         }
-        .environment(
-            \.openURL,
-            OpenURLAction { url in
-                ChatMarkdownOpenURLPolicy.result(for: url)
-            }
-        )
+        .environment(\.openURL, ChatMarkdownOpenURLPolicy.openURLAction)
     }
 
     private var renderedMarkdownText: String {
