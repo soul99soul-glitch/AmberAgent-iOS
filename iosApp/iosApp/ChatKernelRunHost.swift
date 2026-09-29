@@ -1858,9 +1858,16 @@ final class ChatKernelRunHost {
         }
         defer { memoryRecallTask.cancel() }
 
+        // 基线注入只用于压缩预算估算，先算一次召回结果给它；最终注入在下方
+        // 按原时机（压缩与投影的 await 之后）现算，保证读到注入前最新的记忆。
+        let fallbackMemoryRecallResult = bindings.memoryRecallResultForRun(requestMessages)
+
         // 注入开销估算基于 canonical 输入（无投影），保证压缩预算口径与
         // 原行为一致（等价于 Phase 1 之前 Host 的估算方式）。
-        let runtimeBaseline = messagesByInjectingRuntimeContext(requestMessages)
+        let runtimeBaseline = messagesByInjectingRuntimeContext(
+            requestMessages,
+            memoryRecallOverride: fallbackMemoryRecallResult
+        )
         let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
             setting: provider,
             model: effectiveParams.model
@@ -1938,7 +1945,9 @@ final class ChatKernelRunHost {
         // 传给后续两次注入与 usage marking——中途的 await（图片识别等）不会
         // 导致注入与标记各拿一份结果。off/shadow 返回 nil，走同步原行为。
         await memoryRecallTask.value
-        let memoryRecallOverride = recallBox.value
+        // Jev 未给出结果时在注入时刻现算（与原行为同一时机与输入），并复用给
+        // usage marking，使标记的记忆与实际注入的一致。
+        let memoryRecallOverride = recallBox.value ?? bindings.memoryRecallResultForRun(projectedMessages)
         let runtimePreparedMessages = try await bindings.prepareImageAttachments(
             messagesByInjectingRuntimeContext(projectedMessages, memoryRecallOverride: memoryRecallOverride),
             effectiveParams.model,

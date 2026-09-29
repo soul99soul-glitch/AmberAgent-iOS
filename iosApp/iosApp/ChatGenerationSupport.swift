@@ -358,6 +358,12 @@ struct ChatGenerationBindings {
     /// 后台观测 / off 零操作）。返回值由调用方显式传给注入与 usage marking，
     /// 禁止各自再算一次。第二参数为 runId（轮次预算/并发归属）。
     var prepareJevMemoryRecall: @MainActor ([UIMessage], String?) async -> ChatMemoryContextBuilder.RecallResult? = { _, _ in nil }
+    /// P3a：Jev 关闭/未命中时的兜底记忆召回结果——`prepareUploadMessages` 在
+    /// 一次请求准备内只调用一次，把结果经既有 override 通道复用给基线注入、
+    /// 最终注入与 usage marking，避免同一轮内对全部记忆重复打分三次。
+    var memoryRecallResultForRun: ([UIMessage]) -> ChatMemoryContextBuilder.RecallResult = { _ in
+        ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+    }
     /// 第二个 Bool 为 P2-c 修复 2 的 force 标记：模型显式引用（citation flush）
     /// 传 true 绕过 P2-b 同集去抖；召回标记传 false。
     var recordMemoryUsage: @MainActor ([Int32], Bool) -> Void = { _, _ in }

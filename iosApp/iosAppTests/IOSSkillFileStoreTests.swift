@@ -337,6 +337,73 @@ final class IOSSkillFileStoreTests: XCTestCase {
         """
     }
 
+    // MARK: - P3a: request-preparation caching
+
+    /// `readSkillMarkdown` caches by the SKILL.md file's modification time.
+    /// A write made *outside* the store's own mutation paths (so the store's
+    /// active invalidation never runs) must still be observed once the mtime
+    /// changes — proving the stat-based invalidation itself, not just the
+    /// store's own write-path invalidation.
+    func testReadSkillMarkdownCacheInvalidatesWhenFileModifiedExternally() throws {
+        let root = tempRoot()
+        let store = IOSSkillFileStore(baseDirectory: root)
+        let name = try store.createSkill(
+            name: "Cache Probe",
+            description: "Initial trigger text.",
+            allowedTools: []
+        )
+        let first = try store.readSkillMarkdown(dirName: name)
+        XCTAssertTrue(first.contains("Initial trigger text."))
+
+        let skillMdURL = try store.skillDirectoryURL(name: name).appendingPathComponent("SKILL.md")
+        let updated = """
+        ---
+        name: "\(name)"
+        description: "Updated trigger text."
+        ---
+
+        # \(name)
+
+        Updated trigger text.
+        """
+        try updated.write(to: skillMdURL, atomically: true, encoding: .utf8)
+        // Force a distinct mtime regardless of filesystem timestamp resolution,
+        // so the assertion doesn't depend on wall-clock timing.
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(5)],
+            ofItemAtPath: skillMdURL.path
+        )
+
+        let second = try store.readSkillMarkdown(dirName: name)
+        XCTAssertTrue(second.contains("Updated trigger text."), "外部修改后应读到新内容，而不是命中过期缓存")
+        XCTAssertFalse(second.contains("Initial trigger text."))
+    }
+
+    /// Same property for the directory listing cache: a skill directory added
+    /// directly on disk (not through `createSkill`/`saveSkillFiles`, so the
+    /// store's own invalidation calls never fire) must still show up once the
+    /// parent directory's mtime moves.
+    func testListSkillDirNamesCacheInvalidatesWhenDirectoryModifiedExternally() throws {
+        let root = tempRoot()
+        let store = IOSSkillFileStore(baseDirectory: root)
+        _ = try store.createSkill(name: "existing-skill", description: "d", allowedTools: [])
+        XCTAssertEqual(store.listSkillDirNames(), ["existing-skill"])
+
+        let newSkillDir = store.skillsDirectory.appendingPathComponent("added-later", isDirectory: true)
+        try FileManager.default.createDirectory(at: newSkillDir, withIntermediateDirectories: true)
+        try "---\nname: added-later\ndescription: d\n---\n".write(
+            to: newSkillDir.appendingPathComponent("SKILL.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(5)],
+            ofItemAtPath: store.skillsDirectory.path
+        )
+
+        XCTAssertEqual(store.listSkillDirNames().sorted(), ["added-later", "existing-skill"])
+    }
+
     private func tempRoot() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("ios-skill-file-store-\(UUID().uuidString)", isDirectory: true)

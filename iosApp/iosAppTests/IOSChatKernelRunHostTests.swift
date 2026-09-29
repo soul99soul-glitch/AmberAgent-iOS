@@ -440,6 +440,43 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertEqual(provider.callCount, 1)
     }
 
+    /// P3a:Jev 关闭时,基线注入(只用于压缩预算估算)与最终注入各算一次记忆召回,
+    /// 最终注入在压缩/投影之后现算(读到最新记忆);usage marking 复用最终注入的结果,
+    /// 标记的记忆必须与实际注入的一致。原实现三处各算一次。
+    func testMemoryRecallComputedForBaselineAndFinalInjectionAndMarkingReusesFinal() async {
+        let harness = makeHarness()
+        harness.bindings.prepareJevMemoryRecall = { _, _ in nil } // Jev off/shadow：no override.
+        var computations: [ChatMemoryContextBuilder.RecallResult] = []
+        harness.bindings.memoryRecallResultForRun = { _ in
+            let result = ChatMemoryContextBuilder.RecallResult(prompt: "recall-\(computations.count + 1)", records: [])
+            computations.append(result)
+            return result
+        }
+        var injectionOverrides: [ChatMemoryContextBuilder.RecallResult?] = []
+        harness.bindings.messagesByInjectingRuntimeContextForRun = { messages, _, override in
+            injectionOverrides.append(override)
+            return messages
+        }
+        var recordIdsOverrides: [ChatMemoryContextBuilder.RecallResult?] = []
+        harness.bindings.memoryRecordIdsForRuntimeContext = { _, override in
+            recordIdsOverrides.append(override)
+            return override?.ids ?? []
+        }
+
+        let provider = HostScriptedProvider(rounds: [textRound("你好，世界")])
+        let host = makeHost(harness: harness, provider: provider)
+        start(host, harness: harness)
+
+        let terminal = await harness.waitForTerminal()
+        XCTAssertEqual(terminal, "completed")
+        let idle = await waitForHostIdle(host)
+        XCTAssertTrue(idle)
+
+        XCTAssertEqual(computations.count, 2, "基线注入与最终注入各算一次，usage marking 不再单独计算")
+        XCTAssertEqual(injectionOverrides.map { $0?.prompt }, ["recall-1", "recall-2"], "最终注入必须用注入时刻现算的结果")
+        XCTAssertEqual(recordIdsOverrides.map { $0?.prompt }, ["recall-2"], "标记的记忆必须与最终注入一致")
+    }
+
     func testTerminalCASFailureReleasesLocalOwnerAndSuppressesExternalCompletion() async {
         IOSJevMetricsStore.clear()
         defer { IOSJevMetricsStore.clear() }

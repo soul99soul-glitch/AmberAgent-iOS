@@ -66,6 +66,62 @@ struct IOSSkillRollbackReceipt: Equatable {
     let manifest: IOSSkillPreviousManifest
 }
 
+/// P3a: `IOSSkillFileStore` is a value type re-constructed at every call site
+/// (`IOSSkillFileStore()`), so a per-instance cache would never hit. This
+/// caches directory listings and SKILL.md bodies keyed by absolute path,
+/// shared across all instances that point at the same directory, and
+/// invalidated by comparing the directory's / file's modification time (one
+/// `stat` is far cheaper than `contentsOfDirectory` + `String(contentsOf:)`
+/// on every request-preparation turn). Mutation paths in this file also
+/// invalidate proactively so an immediate re-read after a write can't
+/// observe a stale entry sharing the same filesystem mtime tick.
+private final class IOSSkillFileStoreCache: @unchecked Sendable {
+    static let shared = IOSSkillFileStoreCache()
+
+    private struct ListingEntry {
+        let modified: Date
+        let names: [String]
+    }
+    private struct MarkdownEntry {
+        let modified: Date
+        let content: String
+    }
+
+    private let lock = NSLock()
+    private var listings: [String: ListingEntry] = [:]
+    private var markdown: [String: MarkdownEntry] = [:]
+
+    func listing(directoryPath: String, modified: Date) -> [String]? {
+        lock.withLock {
+            let entry = listings[directoryPath]
+            return entry?.modified == modified ? entry?.names : nil
+        }
+    }
+
+    func storeListing(directoryPath: String, modified: Date, names: [String]) {
+        lock.withLock { listings[directoryPath] = ListingEntry(modified: modified, names: names) }
+    }
+
+    func invalidateListing(directoryPath: String) {
+        lock.withLock { listings.removeValue(forKey: directoryPath) }
+    }
+
+    func markdownContent(filePath: String, modified: Date) -> String? {
+        lock.withLock {
+            let entry = markdown[filePath]
+            return entry?.modified == modified ? entry?.content : nil
+        }
+    }
+
+    func storeMarkdown(filePath: String, modified: Date, content: String) {
+        lock.withLock { markdown[filePath] = MarkdownEntry(modified: modified, content: content) }
+    }
+
+    func invalidateMarkdown(filePath: String) {
+        lock.withLock { markdown.removeValue(forKey: filePath) }
+    }
+}
+
 struct IOSSkillFileStore {
     // All in-process writers share the CAS critical section, even when callers
     // construct separate value-type store instances for the same directory.
@@ -114,12 +170,23 @@ struct IOSSkillFileStore {
             allowedTools: allowedTools
         )
         try markdown.write(to: skillDirectory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        invalidateCaches(name: name)
         return name
     }
 
     func readSkillMarkdown(dirName: String) throws -> String {
         let directory = try resolveSkillDirectory(name: dirName)
-        return try String(contentsOf: directory.appendingPathComponent("SKILL.md"), encoding: .utf8)
+        let fileURL = directory.appendingPathComponent("SKILL.md")
+        let filePath = fileURL.standardizedFileURL.path
+        if let modified = modificationDate(atPath: filePath),
+           let cached = IOSSkillFileStoreCache.shared.markdownContent(filePath: filePath, modified: modified) {
+            return cached
+        }
+        let content = try String(contentsOf: fileURL, encoding: .utf8)
+        if let modified = modificationDate(atPath: filePath) {
+            IOSSkillFileStoreCache.shared.storeMarkdown(filePath: filePath, modified: modified, content: content)
+        }
+        return content
     }
 
     func saveSkillMarkdown(dirName: String, expectedName: String, content: String) throws {
@@ -136,6 +203,7 @@ struct IOSSkillFileStore {
             throw IOSSkillFileStoreError.skillNameChanged(expected: expectedName)
         }
         try content.write(to: directory.appendingPathComponent("SKILL.md"), atomically: true, encoding: .utf8)
+        invalidateCaches(name: dirName)
     }
 
     func deleteSkill(dirName: String) throws {
@@ -149,6 +217,7 @@ struct IOSSkillFileStore {
         guard fileManager.fileExists(atPath: directory.path) else {
             throw IOSSkillFileStoreError.skillMissing(dirName)
         }
+        defer { invalidateCaches(name: dirName) }
         try fileManager.removeItem(at: directory)
     }
 
@@ -238,6 +307,7 @@ struct IOSSkillFileStore {
             try fileManager.moveItem(at: stagingDirectory, to: skillDirectory)
             shouldRemoveStaging = false
         }
+        invalidateCaches(name: packageName)
         _ = description
         return packageName
     }
@@ -334,6 +404,7 @@ struct IOSSkillFileStore {
         if let previousBackup {
             try? fileManager.removeItem(at: previousBackup)
         }
+        invalidateCaches(name: name)
         return IOSSkillPackageApplyReceipt(
             name: name,
             promotedHash: candidate.hash,
@@ -387,6 +458,7 @@ struct IOSSkillFileStore {
         // avoids reporting a failed rollback after the package has changed; if
         // cleanup itself fails, the retained slot is safely classified stale.
         try? fileManager.removeItem(at: previousSlotDirectory(name: name))
+        invalidateCaches(name: name)
         return IOSSkillRollbackReceipt(manifest: manifest)
     }
 
@@ -922,7 +994,20 @@ struct IOSSkillFileStore {
     /// Lists the directory names of every skill that has a SKILL.md on disk.
     /// Used by chat skill-context injection to map enabled skill names → their
     /// markdown bodies. Best-effort: skips unreadable / malformed entries.
+    ///
+    /// Cached by `skillsDirectory`'s modification time: every mutation in this
+    /// file that adds/removes/replaces a skill's top-level directory entry
+    /// (create/delete/saveSkillFiles/applySkillPackage/rollbackSkillPackage)
+    /// changes that entry, which updates the parent directory's mtime — the
+    /// same signal a cold re-list would observe. `saveSkillMarkdown` writes
+    /// SKILL.md in place without touching the parent directory entry, so it
+    /// correctly leaves this listing cache alone.
     func listSkillDirNames() -> [String] {
+        let directoryPath = skillsDirectory.standardizedFileURL.path
+        if let modified = modificationDate(atPath: directoryPath),
+           let cached = IOSSkillFileStoreCache.shared.listing(directoryPath: directoryPath, modified: modified) {
+            return cached
+        }
         guard let entries = try? fileManager.contentsOfDirectory(at: skillsDirectory, includingPropertiesForKeys: nil) else {
             return []
         }
@@ -936,7 +1021,28 @@ struct IOSSkillFileStore {
                 result.append(entry.lastPathComponent)
             }
         }
+        if let modified = modificationDate(atPath: directoryPath) {
+            IOSSkillFileStoreCache.shared.storeListing(directoryPath: directoryPath, modified: modified, names: result)
+        }
         return result
+    }
+
+    /// Single `stat` used as the cache-validity signal for both the listing
+    /// and markdown caches above.
+    private func modificationDate(atPath path: String) -> Date? {
+        (try? fileManager.attributesOfItem(atPath: path))?[.modificationDate] as? Date
+    }
+
+    /// Best-effort invalidation after a mutation. `name` need not be
+    /// normalized by the caller; `resolveSkillDirectory` does that and also
+    /// rejects it harmlessly if the directory no longer exists (invalidation
+    /// keys only need to match the paths used by the read paths above).
+    private func invalidateCaches(name: String) {
+        IOSSkillFileStoreCache.shared.invalidateListing(directoryPath: skillsDirectory.standardizedFileURL.path)
+        if let directory = try? resolveSkillDirectory(name: name) {
+            let filePath = directory.appendingPathComponent("SKILL.md").standardizedFileURL.path
+            IOSSkillFileStoreCache.shared.invalidateMarkdown(filePath: filePath)
+        }
     }
 
     private static func frontmatterName(in content: String) -> String? {

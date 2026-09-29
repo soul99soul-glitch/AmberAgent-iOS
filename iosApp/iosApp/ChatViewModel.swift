@@ -1571,6 +1571,9 @@ final class ChatViewModel {
                     guard let self else { return nil }
                     return await self.prepareJevMemoryRecallSelection(messages, runId: runId)
                 },
+                memoryRecallResultForRun: { [weak self] messages in
+                    self?.memoryRecallResultForRun(messages) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
+                },
                 recordMemoryUsage: { [weak self] ids, force in
                     self?.recordMemoryUsage(ids, force: force)
                 },
@@ -4192,6 +4195,18 @@ final class ChatViewModel {
             miniAppRepository: miniAppRepository,
             miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
         ).memoryRecallResult(for: uploadableMessages, override: override).ids
+    }
+
+    /// P3a：Jev 关闭/未提供覆盖时的兜底记忆召回结果，供 `ChatKernelRunHost`
+    /// 在一次请求准备内计算一次并复用（见 `memoryRecallResultForRun` 绑定）。
+    private func memoryRecallResultForRun(_ messages: [UIMessage]) -> ChatMemoryContextBuilder.RecallResult {
+        let uploadableMessages = messages.filter { !Self.isLocalGenerationError($0) }
+        return ChatRuntimeContextBuilder(
+            sharedSettings: sharedSettings,
+            mcpTools: mcpManager.tools,
+            miniAppRepository: miniAppRepository,
+            miniAppRuntimeEnabled: isMiniAppRuntimeEnabled
+        ).memoryRecallResult(for: uploadableMessages)
     }
 
     /// Jev Phase 1（记忆召回）：每轮上传准备时计算统一选中集合。轮次预算与

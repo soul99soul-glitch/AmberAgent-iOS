@@ -17,8 +17,13 @@ import app.amber.ai.core.MessageRole
 import app.amber.ai.core.TokenUsage
 import app.amber.ai.provider.Model
 import app.amber.ai.util.json
+import kotlin.concurrent.Volatile
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 import kotlin.uuid.Uuid
 
 const val STREAM_TOOL_INDEX_METADATA_KEY = "stream_tool_index"
@@ -27,6 +32,43 @@ const val THOUGHT_SIGNATURE_METADATA_KEY = "thoughtSignature"
 const val LOCAL_GENERATION_ERROR_METADATA_KEY = "amber_local_kind"
 const val LOCAL_GENERATION_ERROR_METADATA_VALUE = "generation_error"
 const val LOCAL_OUTPUT_LIMIT_NOTICE_METADATA_VALUE = "output_limit_notice"
+
+/**
+ * `TimeZone.currentSystemDefault()` reads and parses the platform timezone
+ * database on every call (iOS/Native: `TzFile#toTimeZoneRules`). `UIMessage`
+ * construction hits it on every default `createdAt`, and finish() hits it on
+ * every `finishedAt` — once per message and once per prompt-transcript
+ * section message per request. The system zone essentially never changes
+ * mid-session, so cache it for a short window and refresh lazily.
+ *
+ * `kotlin.concurrent.atomics.AtomicReference` is still `@ExperimentalAtomicApi`
+ * in this Kotlin version, and commonMain has no atomicfu dependency, so this
+ * uses a `@Volatile`-published immutable snapshot instead of a CAS loop: a
+ * lost race just means two threads redundantly call
+ * `TimeZone.currentSystemDefault()` once and both publish a fresh snapshot —
+ * never a torn/partial read, since the snapshot itself is replaced wholesale.
+ */
+private class CachedSystemTimeZone(private val validityWindow: Duration) {
+    private class Snapshot(val zone: TimeZone, val capturedAt: TimeMark)
+
+    @Volatile
+    private var snapshot: Snapshot? = null
+
+    fun current(): TimeZone {
+        val cached = snapshot
+        if (cached != null && cached.capturedAt.elapsedNow() < validityWindow) {
+            return cached.zone
+        }
+        val zone = TimeZone.currentSystemDefault()
+        snapshot = Snapshot(zone, TimeSource.Monotonic.markNow())
+        return zone
+    }
+}
+
+private val cachedSystemTimeZone = CachedSystemTimeZone(validityWindow = 60.seconds)
+
+/** Short-lived cache over [TimeZone.currentSystemDefault]; see [CachedSystemTimeZone]. */
+internal fun currentSystemTimeZoneCached(): TimeZone = cachedSystemTimeZone.current()
 
 fun localGenerationErrorTextPart(text: String): UIMessagePart.Text =
     UIMessagePart.Text(
@@ -60,7 +102,7 @@ data class UIMessage(
     val parts: List<UIMessagePart>,
     val annotations: List<UIMessageAnnotation> = emptyList(),
     val createdAt: LocalDateTime = Clock.System.now()
-        .toLocalDateTime(TimeZone.currentSystemDefault()),
+        .toLocalDateTime(currentSystemTimeZoneCached()),
     val finishedAt: LocalDateTime? = null,
     val modelId: Uuid? = null,
     val usage: TokenUsage? = null,
@@ -761,7 +803,7 @@ fun UIMessage.finishPendingTools(
 
     return copy(
         parts = updatedParts,
-        finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault())
+        finishedAt = Clock.System.now().toLocalDateTime(currentSystemTimeZoneCached())
     ).finishReasoning()
 }
 
