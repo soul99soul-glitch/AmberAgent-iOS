@@ -84,6 +84,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private var outcomeUnknownRunIds = Set<String>()
     private let durableRunStore: IOSDurableRunStore
     private let toolLedger: IOSAgentRunLedger
+    private let agentRuntimeDao: AgentRuntimeDao
     private var isAttached = false
     private var attachmentWaiters: [UUID: CheckedContinuation<Void, Never>] = [:]
     private var runGeneration: [String: UInt64] = [:]
@@ -126,6 +127,7 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
         }
         self.durableRunStore = IOSDurableRunStore(dao: agentRuntimeDao)
         self.toolLedger = IOSAgentRunLedger(dao: agentRuntimeDao)
+        self.agentRuntimeDao = agentRuntimeDao
     }
 
     private static func productionColdStartPreparer() async -> WatchTaskColdStartContext? {
@@ -245,8 +247,10 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
     private func recoverTerminalActivitiesIfNeeded() async {
         guard !didRecoverTerminalActivities else { return }
         didRecoverTerminalActivities = true
+        // Reuse the DAO built once at init (backs durableRunStore/toolLedger)
+        // instead of opening a second Room database + migration chain here.
         let rows: [WatchDurableRunProjection] = await withCheckedContinuation { continuation in
-            IosDatabaseFactory.shared.createDatabase().agentRuntimeDao().listAllRuns { result, _ in
+            agentRuntimeDao.listAllRuns { result, _ in
                 let projections = (result ?? []).compactMap { row -> WatchDurableRunProjection? in
                     guard !row.runId.isEmpty else { return nil }
                     let isOutcomeUnknown = row.status == AgentRunStatus.outcomeUnknown.wireName

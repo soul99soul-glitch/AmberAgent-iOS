@@ -84,6 +84,16 @@
   流式 bump、活动广播、子线程持久化、头像动画），以及跨 run 的重复工作。
 - 再分类：每个问题判定为小改、小重构或架构调整，出完整计划后执行，同样走 review 闭环。
 
+### P7 执行计划（测量后，2026-09-29）
+- 核对：用户 `novel-performance-plan.md`（09-27）Phase 1–5 基本已在 da10101 及更早落地；议会转录行 `.equatable()`、存档异步节流已具备；
+  议会“多席位并行发言”实为顺序发言（改为真并发属架构调整，需产品决策，不做）。
+- P7-1（小改）：`ChatTextWindow` 每次 `suffix(limit)` 使超过 2000 字的流式窗口逐 delta 滑动，把下游两条增量路径打穿：
+  vendor `ParagraphUIView` 退化为整段替换 `attributedText`（流式稳态主线程忙碌时间过半在其 set/测量/动画上）、
+  `IOSGenerativeWidgetPayloadDetector` 每次重置全窗重扫。改为分段滑动（窗口起点仅在超出一个步长时前移），两次前移之间纯追加。
+- P7-2（小改，先查因）：冷启动约 350ms 的 3 次主线程卡顿（`IOSBackgroundLifecycleLog` 读盘解码、`WatchTaskCoordinator.refreshWatchSnapshot`、
+  `AppShell.handleScenePhaseChange`）。
+- 不做：`currentChapterVersions` 缓存、sessions 段 per-session 指纹（无性能证据）。
+
 ### P7 小说创作与模型议会（P6 完成后开始）
 - 覆盖：小说创作（项目列表、工作区、会话流式生成、候选稿、设定集）与模型议会（多席位并行发言、
   讨论轮次、存档检查点、续接）两条链路的关键交互。
@@ -162,3 +172,28 @@
   85.6ms，修复后 33.3ms / 74.0ms，落在噪声内（单次 max 波动 38–179ms）→ 回退。原因：每次追加行都会改变所有单元格的
   无障碍“共 Y 行”与边框 rowCount，外层依赖必然全表失效。
   后续项：结构性改造（边框仅依赖是否末行/末列；行级身份与增量发布），需在真机 Profile 构建上评估，模拟器噪声不足以验证。
+
+### 2026-09-29 P6
+- 夹具 `SubAgentConcurrencyPerfTests`：父会话时间线 + 活动条挂进真实窗口，经生产入口 `SubAgentRunner.runViaEngine` 并发驱动
+  N 个脚本化流式子代理；覆盖 N=1/2/4/8、N=8 + 约 8KB 中英混排/代码块同时收尾、N=8 + 8KB + 隔离 Room 库 300 条历史 run +
+  真实 `ConversationActivityCenter` 与两次并发 `.amberSubAgentRunsDidChange`。
+- 结果（`-test-iterations 3`，18/18 通过）：所有组合 p95 恒为 16.67ms（一帧），over50ms 0–2 帧且为孤立尖峰，不随 N、输出长度、
+  历史行数增长。Time Profiler：脱敏扫描、JSON 编码、`listAllRuns` 映射、`recomputeNotices`、活动条持久化合计只占收尾窗口
+  个位数样本（输入已被 `prefix(1_000)` / `maxSummaryLength` 限界）→ 无需改动。
+- 常规回归只保留最重组合 `testMeasureConcurrency8LargeOutputDurable300`；N 扫描用例需 `AMBER_PERF_SAMPLE=1` 才运行。
+- 非性能观察（留给产品决策）：`SubAgentRunner` 不写 `IOSDurableRunStore`，子代理状态不参与冷启动恢复。
+
+### 2026-09-29 P7
+- P7-1 `ChatTextWindow` 分段滑动：窗口长度超过 `limit + step`（2000 + 1000）才一次性前移回 `limit`，两次前移之间 `text` 纯追加。
+  长篇散文流式（真实节奏）下 vendor `ParagraphUIView` 追加快路径命中率 7.9% → 95%（miss 849 → 26）；回归用例
+  `testChatTextWindowAppendFastPathHitRateForLongProseStream` 断言 ≥80%（约 9s）。消费方（推理卡片、小说气泡）只依赖“text 是
+  source 的后缀”，无需改动。
+- 推理卡片滑动补偿：用户上滑阅读（`!followsBottom`）时，窗口前移会把保留文字整体上顶；`slideWindow` 编辑前后测量保留区起点并
+  补偿 `contentOffset`。首版补偿量偏大（确定性误差约 220–690pt），根因是 UITextView 非连续布局下 `lineFragmentRect` 返回估算值；
+  测量前 `ensureLayout` 前缀后，保留行可见位置漂移 0.08pt（`testReasoningWindowSlideKeepsRetainedLinePositionStable`）。
+- P7-2 冷启动：`IOSBackgroundLifecycleLog` 落盘/读盘移到串行队列，启动时 `bootstrap()` 异步补齐上一进程历史（读在调用栈内入队保证
+  FIFO；合并后重落盘一次，避免补齐前的写入覆盖历史）；`WatchTaskCoordinator` 复用 init 时的 `agentRuntimeDao`，不再二次打开
+  Room 库并重跑迁移链。
+- 小说气泡滑动时高度一次性减少约 1000 字：流式期间时间线贴底，底部文字不动 → 不处理。
+- Time Profiler 长跑样本（小说 / 议会）需 `AMBER_PERF_SAMPLE=1`（xcodebuild 下 `TEST_RUNNER_AMBER_PERF_SAMPLE=1`）才运行。
+- P3b 仍阻塞：主工作区 `IOSContextCompactionCoordinator` 的重构未提交，本分支不动。

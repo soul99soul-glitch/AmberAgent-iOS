@@ -717,6 +717,12 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
                                length: overlap.length)
             )
         }
+        // Reading history (!followsBottom): the top-replace below shifts
+        // every retained line up in the document, which would otherwise
+        // yank the visible text out from under the reader. Pin it by
+        // measuring the retained region's start before/after the edit and
+        // compensating contentOffset by the same delta.
+        let beforeY = followsBottom ? nil : lineFragmentY(atCharacterIndex: removedLength)
         textStorage.beginEditing()
         textStorage.replaceCharacters(
             in: NSRange(location: 0, length: removedLength),
@@ -728,12 +734,30 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         textStorage.endEditing()
         lastUnconstrainedHeight = 0
         lastMeasureWidth = 0
+        if let beforeY {
+            let delta = beforeY - lineFragmentY(atCharacterIndex: noticeLength)
+            let minY = -adjustedContentInset.top
+            let newY = min(bottomOffsetY, max(minY, contentOffset.y - delta))
+            setContentOffset(CGPoint(x: contentOffset.x, y: newY), animated: false)
+        }
         if animatesNewWords {
             appendTailFade(in: NSRange(location: noticeLength + retainedLength, length: addedLength))
         } else {
             finishWordFades()
         }
         return true
+    }
+
+    /// Document-space y of the line fragment containing `index`, used to
+    /// measure how far a retained line moves when `slideWindow` edits
+    /// `textStorage` (see call site).
+    private func lineFragmentY(atCharacterIndex index: Int) -> CGFloat {
+        // UITextView lays out non-contiguously; force the prefix so the y is exact, not estimated.
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: index + 1))
+        let glyphIndex = layoutManager.glyphRange(
+            forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil
+        ).location
+        return layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil).origin.y
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {

@@ -2269,7 +2269,21 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
         pump(seconds: 0.55)
         probe.stop()
         XCTAssertTrue(reasoningView(in: fixture.host.view) === textView)
-        XCTAssertEqual(textView.text, ChatTextWindow(reasoning).displayText)
+        // `ChatTextWindow`'s stepped slide (ChatTextWindow.step) keeps the live
+        // window up to `step` characters ahead of where a freshly-reconstructed
+        // window over the same source would have slid to — exact equality no
+        // longer holds once omission has started, only "still ends with the
+        // latest tail, still bounded".
+        let freshWindow = ChatTextWindow(reasoning)
+        XCTAssertTrue(
+            textView.text.hasSuffix(freshWindow.text),
+            "尾窗必须仍以最新内容收尾"
+        )
+        XCTAssertLessThanOrEqual(
+            (textView.text as NSString).length,
+            freshWindow.text.utf16.count + ChatTextWindow.step + 64,
+            "尾窗不能无限增长，必须在一个步长内收敛"
+        )
         XCTAssertEqual(textView.bounds.height, 180, accuracy: 0.5)
         let metrics = "[PERF-REASONING-NATIVE] updates=30 CPU=\(cpuMs)ms per-update=\(cpuMs / 30)ms max-frame-gap=\((probe.gaps.max() ?? 0) * 1000)ms"
         print(metrics)

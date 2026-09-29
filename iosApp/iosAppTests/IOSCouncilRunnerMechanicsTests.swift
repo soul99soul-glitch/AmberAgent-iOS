@@ -2374,6 +2374,103 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         )
     }
 
+    /// P7 性能核查用的长时窗测量夹具(2026-09-29,ios-perf worktree)。把真实
+    /// `CouncilChatRuntimeView` 挂到窗口上,用 `LongIncrementalCouncilStreamer` 以
+    /// 真机节奏顺序驱动host+2席+总结四段发言,给外部 Time Profiler attach 提供
+    /// 稳态窗口。不断言严格阈值,只做流程健全性检查。
+    func testTimeProfilerLongCouncilStreamSample() async throws {
+        try XCTSkipIf(
+            ProcessInfo.processInfo.environment["AMBER_PERF_SAMPLE"] == nil,
+            "仅在手动 Time Profiler 采样时运行"
+        )
+        let defaults = isolatedDefaults()
+        let taskStore = IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks")
+        let permissionStore = IOSPermissionStore(
+            userDefaults: defaults,
+            storageKey: "policies",
+            approvalStorageKey: "approvals",
+            taskStore: taskStore
+        )
+        let streamer = LongIncrementalCouncilStreamer()
+        let runner = IOSCouncilRoomRunner(
+            streamer: streamer,
+            researcher: StaticCouncilResearcher(),
+            taskStore: taskStore,
+            permissionStore: permissionStore
+        )
+        let settingsStore = SettingsStore(
+            userDefaults: defaults,
+            storageKey: "legacy-settings",
+            apiKeyStore: CouncilTestAPIKeyStore(key: "test-key")
+        )
+        let sharedSettings = IOSSharedSettingsStore(userDefaults: defaults)
+        let provider = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Council Perf Provider",
+            apiKey: "test-key",
+            baseUrl: "https://example.com/v1",
+            modelName: "Council Perf Model",
+            modelId: "gpt-main"
+        )
+        _ = sharedSettings.addProvider(provider)
+        let model = try XCTUnwrap(
+            sharedSettings.availableChatModels().first { $0.providerName == "Council Perf Provider" }
+        )
+        sharedSettings.setCurrentChatModelId(model.id)
+        let roomSettings = IOSCouncilRoomSettingsStore(
+            userDefaults: defaults,
+            storageKey: "room-settings",
+            currentModelId: "gpt-main"
+        )
+        roomSettings.settings = compactRoomSettings(defaultRounds: 1)
+        roomSettings.dynamicSeatGeneration = false
+        let archiveStore = CouncilRoomArchiveStore(
+            baseDirectory: FileManager.default.temporaryDirectory
+                .appendingPathComponent("council-perf-\(UUID().uuidString)", isDirectory: true)
+        )
+        let viewModel = CouncilChatViewModel(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            providerRegistry: nil,
+            permissionStore: permissionStore,
+            roomSettingsStore: roomSettings,
+            runner: runner,
+            transcriptDefaults: defaults,
+            archiveStore: archiveStore
+        )
+
+        let host = UIHostingController(rootView: CouncilChatRuntimeView(
+            settingsStore: settingsStore,
+            sharedSettings: sharedSettings,
+            providerRegistry: nil,
+            permissionStore: permissionStore,
+            viewModel: viewModel
+        ))
+        let window: UIWindow
+        if let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first {
+            window = UIWindow(windowScene: scene)
+            window.frame = CGRect(x: 0, y: 0, width: 393, height: 852)
+        } else {
+            window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        }
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+        window.layoutIfNeeded()
+        try? await Task.sleep(for: .seconds(1))
+
+        viewModel.inputText = "长窗口测量议题"
+        viewModel.send()
+
+        // host + 2 席 + 总结 = 4 段发言 × (130 块 × 60ms ≈ 7.8s) ≈ 31s。
+        // 固定墙钟等待,给外部录制脚本稳定的窗口预期。
+        try? await Task.sleep(for: .seconds(33))
+        XCTAssertGreaterThanOrEqual(streamer.callCount, 1, "streamer 至少应被调用过一次。")
+    }
+
     func testViewModelDoesNotResearchWhenWebSearchIsDisabled() async throws {
         let researcher = RecordingCouncilResearcher()
         let harness = try makeViewModelHarness(
@@ -2913,6 +3010,41 @@ private final class ScriptedCouncilStreamer: IOSCouncilTextStreaming {
     func cancel() {
         cancelCount += 1
     }
+}
+
+/// P7 性能核查用的长时窗测量夹具(2026-09-29,ios-perf worktree)。真实节奏(chunk 间
+/// 隔用 `Task.sleep`,不压缩时间)逐块把文本喂给 `onUpdate`,每次 `streamText` 调用
+/// 拉出一段可供外部 Time Profiler attach 的稳态窗口。议会的 runner 按 for-in 顺序
+/// 逐席调用(非真正并发发言),这里如实复现该顺序,不假造并发。
+@MainActor
+private final class LongIncrementalCouncilStreamer: IOSCouncilTextStreaming {
+    private let chunkCount: Int
+    private let chunkDelay: TimeInterval
+    private(set) var callCount = 0
+
+    init(chunkCount: Int = 130, chunkDelay: TimeInterval = 0.06) {
+        self.chunkCount = chunkCount
+        self.chunkDelay = chunkDelay
+    }
+
+    func streamText(
+        providerSetting: ProviderSetting,
+        messages: [UIMessage],
+        params: TextGenerationParams,
+        onUpdate: @escaping @MainActor (String, CGFloat) -> Void
+    ) async throws -> String {
+        callCount += 1
+        let fragment = "综合各方证据后，本席认为当前方案在落地成本上仍有压缩空间。"
+        var accumulated = ""
+        for index in 0..<chunkCount {
+            accumulated += "\(fragment)第\(index)条"
+            onUpdate(accumulated, CGFloat(index + 1) / CGFloat(chunkCount))
+            try? await Task.sleep(for: .seconds(chunkDelay))
+        }
+        return accumulated
+    }
+
+    func cancel() {}
 }
 
 @MainActor

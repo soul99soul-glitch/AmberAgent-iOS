@@ -109,12 +109,24 @@ fi
 
 echo "[record.sh] 目标 pid=${PID}，开始录制 ${DURATION}s（Time Profiler 模板）..." >&2
 
+# 被 attach 的进程中途退出时，xctrace 会无视 --time-limit 一直挂住（实测挂过 30 分钟）。
+# 看门狗：超过时长 + 60 秒仍未结束就强杀；看门狗不持有调用方的输出，避免 `record.sh | tail` 等待。
 xcrun xctrace record \
   --template 'Time Profiler' \
   --device "$TARGET_UDID" \
   --attach "$PID" \
   --time-limit "${DURATION}s" \
-  --output "$OUTPUT"
+  --output "$OUTPUT" &
+XCTRACE_PID=$!
+( sleep $((DURATION + 60)); kill "$XCTRACE_PID" 2>/dev/null; sleep 5; kill -9 "$XCTRACE_PID" 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+WATCHDOG_PID=$!
+wait "$XCTRACE_PID"
+STATUS=$?
+pkill -P "$WATCHDOG_PID" 2>/dev/null; kill "$WATCHDOG_PID" 2>/dev/null
+if [ "$STATUS" -ne 0 ]; then
+  echo "[record.sh] xctrace 以状态 ${STATUS} 结束（可能被看门狗强杀：目标进程在录制中退出）" >&2
+  exit "$STATUS"
+fi
 
 echo "[record.sh] 完成：${OUTPUT}" >&2
 echo "[record.sh] 下一步: analyze.py anchors ${OUTPUT} sendComposerMessage" >&2

@@ -459,6 +459,7 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         IOSJevMetricsStore.setApplicationBackgroundState(application.applicationState == .background)
+        IOSBackgroundLifecycleLog.bootstrap()
         UNUserNotificationCenter.current().delegate = self
         WatchConnectivityBridge.shared.startReceiving(
             actionHandler: WatchTaskCoordinator.shared

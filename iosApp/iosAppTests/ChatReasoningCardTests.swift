@@ -13,14 +13,48 @@ import QuartzCore
 @MainActor
 final class ChatReasoningCardTests: XCTestCase {
 
+    /// `ChatTextWindow`'s stepped slide (see `ChatTextWindow.step`) makes the
+    /// live window path-dependent: it may still hold up to `step` extra
+    /// leading characters that a *freshly* single-shot-reconstructed window
+    /// over the same source would have already slid past. So the live tail
+    /// can no longer be asserted byte-equal to `ChatTextWindow(fullSource)`
+    /// once any omission has kicked in — only that it still ends with the
+    /// same up-to-date `limit`-character tail, and that it never grows
+    /// unbounded.
+    private func assertShowsLatestWindowedTail(
+        _ rendered: String,
+        fullSource: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let fresh = ChatTextWindow(fullSource)
+        guard fresh.omittedCount > 0 else {
+            XCTAssertEqual(rendered, fresh.displayText, file: file, line: line)
+            return
+        }
+        XCTAssertTrue(
+            rendered.hasSuffix(fresh.text),
+            "尾窗必须仍以最新内容收尾", file: file, line: line
+        )
+        XCTAssertLessThanOrEqual(
+            rendered.utf16.count,
+            fresh.text.utf16.count + ChatTextWindow.step + 64,
+            "尾窗不能无限增长，必须在一个步长内收敛", file: file, line: line
+        )
+    }
+
     func testWindowRetainsLatestGraphemesAndCountsOnlyOmittedContent() {
         let emoji = "👩🏽‍💻"
         var window = ChatTextWindow(String(repeating: "中", count: 2_000))
         XCTAssertEqual(window.omittedCount, 0)
         XCTAssertEqual(window.text.count, 2_000)
+        // Appending 1 character over `limit` stays within the slide's `step`
+        // slack: the window grows by a pure append instead of cropping yet
+        // (see ChatTextWindow.step) — nothing is omitted until growth since
+        // the last slide exceeds `step`.
         XCTAssertTrue(window.update(String(repeating: "中", count: 2_000) + emoji))
-        XCTAssertEqual(window.omittedCount, 1)
-        XCTAssertEqual(window.text.count, 2_000)
+        XCTAssertEqual(window.omittedCount, 0)
+        XCTAssertEqual(window.text.count, 2_001)
         XCTAssertTrue(window.text.hasSuffix(emoji))
         XCTAssertFalse(window.update("替换输出"))
         XCTAssertEqual(window.text, "替换输出")
@@ -34,6 +68,118 @@ final class ChatReasoningCardTests: XCTestCase {
         XCTAssertEqual(window.omittedCount, 1)
         XCTAssertEqual(window.text.count, 2_000)
         XCTAssertTrue(window.text.hasSuffix("é"))
+    }
+
+    /// Between slides, `text` must stay a pure prefix extension of its
+    /// previous value — that invariant is what lets `ParagraphUIView`'s
+    /// TextKit 1 append fast path (`appendedTailRange(toBecome:)`) fire
+    /// instead of a full attributed-string replacement on every streamed
+    /// delta.
+    func testWindowStaysPureAppendWithinStep() {
+        let base = String(repeating: "a", count: ChatTextWindow.limit)
+        var window = ChatTextWindow(base)
+        var accumulated = base
+        var previousText = window.text
+        XCTAssertEqual(previousText.count, ChatTextWindow.limit)
+
+        // Grow by less than `step` total, in small chunks: the window must
+        // never omit anything and every frame's text must extend the last.
+        for _ in 0..<9 {
+            accumulated += String(repeating: "b", count: 100)
+            XCTAssertTrue(window.update(accumulated))
+            XCTAssertTrue(
+                window.text.hasPrefix(previousText),
+                "步长内的追加必须保持 text 为上一帧的前缀扩展"
+            )
+            XCTAssertEqual(window.omittedCount, 0, "步长耗尽前不应省略任何字符")
+            previousText = window.text
+        }
+        XCTAssertEqual(window.text.count, ChatTextWindow.limit + 900)
+    }
+
+    /// Once accumulated growth since the last slide exceeds `step`, the
+    /// window start must advance in one jump back to exactly `limit` visible
+    /// characters — never below `limit` (nothing extra is ever hidden) and
+    /// never left above `limit + step` (the window doesn't grow unbounded).
+    func testWindowSlidesOnceStepExceeded() {
+        let base = String(repeating: "a", count: ChatTextWindow.limit)
+        var window = ChatTextWindow(base)
+        var accumulated = base
+        let bigDelta = String(repeating: "b", count: ChatTextWindow.step + 1)
+        accumulated += bigDelta
+        XCTAssertTrue(window.update(accumulated))
+        XCTAssertEqual(window.text.count, ChatTextWindow.limit, "越过步长后应精确回落到 limit")
+        XCTAssertEqual(window.omittedCount, accumulated.count - ChatTextWindow.limit)
+        XCTAssertEqual(window.text, String(accumulated.suffix(ChatTextWindow.limit)))
+        XCTAssertTrue(window.text.hasSuffix(bigDelta.suffix(200)))
+    }
+
+    /// A long stream made of many small, irregularly-sized chunks (not an
+    /// even multiple of `step`) must still land, at every single frame, on a
+    /// window whose length sits in `[limit, limit + step]` and whose
+    /// `omittedCount` exactly accounts for the characters not shown.
+    func testWindowStaysBoundedAcrossManySlidesDuringLongStream() {
+        let base = String(repeating: "a", count: ChatTextWindow.limit)
+        var window = ChatTextWindow(base)
+        var accumulated = base
+        let digits = Array("0123456789")
+        for chunkIndex in 0..<400 {
+            accumulated += String(repeating: digits[chunkIndex % digits.count], count: 37)
+            XCTAssertTrue(window.update(accumulated))
+            XCTAssertEqual(
+                window.omittedCount, accumulated.count - window.text.count,
+                "省略字数必须精确等于窗口前被跳过的字符数"
+            )
+            XCTAssertGreaterThanOrEqual(window.text.count, ChatTextWindow.limit)
+            XCTAssertLessThanOrEqual(window.text.count, ChatTextWindow.limit + ChatTextWindow.step)
+            XCTAssertEqual(window.text, String(accumulated.suffix(window.text.count)))
+        }
+    }
+
+    /// A non-append update (the new text doesn't extend the old source) must
+    /// always fall back to a full recompute that lands exactly at `limit`
+    /// characters — no leftover slack from whatever slide state preceded it.
+    func testNonAppendReplacementRecomputesExactBoundary() {
+        var window = ChatTextWindow(String(repeating: "a", count: ChatTextWindow.limit + ChatTextWindow.step - 1))
+        XCTAssertGreaterThan(window.omittedCount, 0)
+
+        let replacement = String(repeating: "z", count: ChatTextWindow.limit + 250)
+        XCTAssertFalse(window.update(replacement))
+        XCTAssertEqual(window.text.count, ChatTextWindow.limit)
+        XCTAssertEqual(window.omittedCount, 250)
+        XCTAssertEqual(window.text, String(replacement.suffix(ChatTextWindow.limit)))
+    }
+
+    /// A combining-character delta that only extends the window's boundary
+    /// grapheme must not itself count as growth toward the slide threshold;
+    /// only once real new characters push growth past `step` should the
+    /// window start advance.
+    func testWindowSlideHandlesGraphemeBoundaryAcrossStepThreshold() {
+        let base = String(repeating: "中", count: ChatTextWindow.limit) + "e"
+        var window = ChatTextWindow(base)
+        var accumulated = base
+        XCTAssertEqual(window.omittedCount, 1)
+
+        // Extend the boundary grapheme (e -> é): net character count doesn't
+        // move, so this alone must not trip the slide.
+        accumulated = String(accumulated.dropLast()) + "e\u{301}"
+        XCTAssertTrue(window.update(accumulated))
+        XCTAssertEqual(window.omittedCount, 1, "组合字符扩展不计入新增字符，不应触发前移")
+        XCTAssertTrue(window.text.hasSuffix("é"))
+
+        // Grow with real new characters up to exactly the slide threshold
+        // (still not over it).
+        accumulated += String(repeating: "b", count: ChatTextWindow.step)
+        XCTAssertTrue(window.update(accumulated))
+        XCTAssertEqual(window.omittedCount, 1, "尚未越过步长，起点不应前移")
+
+        // One more real character finally exceeds the step and slides.
+        accumulated += "f"
+        XCTAssertTrue(window.update(accumulated))
+        XCTAssertGreaterThan(window.omittedCount, 1, "越过步长后起点必须前移")
+        XCTAssertEqual(window.text.count, ChatTextWindow.limit)
+        XCTAssertEqual(window.text, String(accumulated.suffix(ChatTextWindow.limit)))
+        XCTAssertTrue(window.text.hasSuffix("f"))
     }
 
     private final class StreamingReasoningModel: ObservableObject {
@@ -377,7 +523,7 @@ final class ChatReasoningCardTests: XCTestCase {
             10,
             "思考正文贴底应按帧连续推进，不能随每个 chunk 整行跳动。"
         )
-        XCTAssertEqual(textView.text, ChatTextWindow(model.text).displayText)
+        assertShowsLatestWindowedTail(textView.text, fullSource: model.text)
         XCTAssertGreaterThanOrEqual(
             foregroundAlphas(
                 in: textView,
@@ -461,16 +607,17 @@ final class ChatReasoningCardTests: XCTestCase {
         )
         XCTAssertLessThanOrEqual(
             (textView.text as NSString).length,
-            2_050,
-            "正文最多2000字，另加省略提示，避免全文重排。"
+            ChatTextWindow.limit + ChatTextWindow.step + 64,
+            "正文最多 limit+step 字，另加省略提示，避免无界增长。"
         )
         XCTAssertEqual(textView.bounds.height, 180, accuracy: 0.5)
         model.isThinking = false
         pump(seconds: 0.35)
-        XCTAssertEqual(
+        assertShowsLatestWindowedTail(
             textView.text,
-            ChatTextWindow(model.text).displayText,
-            "结束后保持尾窗，完整思考保留在消息源中。"
+            fullSource: model.text,
+            file: #filePath,
+            line: #line
         )
         XCTAssertLessThanOrEqual(
             p95Gap,
@@ -514,7 +661,7 @@ final class ChatReasoningCardTests: XCTestCase {
         model.isThinking = false
         pump(seconds: 0.05)
 
-        XCTAssertEqual(textView.text, ChatTextWindow(model.text).displayText)
+        assertShowsLatestWindowedTail(textView.text, fullSource: model.text)
         XCTAssertGreaterThanOrEqual(
             foregroundAlphas(
                 in: textView,
@@ -623,7 +770,83 @@ final class ChatReasoningCardTests: XCTestCase {
         pump(seconds: 0.35)
 
         XCTAssertEqual(textView.contentOffset.y, historyOffset, accuracy: 1)
-        XCTAssertEqual(textView.text, ChatTextWindow(model.text).displayText)
+        assertShowsLatestWindowedTail(textView.text, fullSource: model.text)
+    }
+
+    /// Regression for the top-replace compensation in `slideWindow`
+    /// (`ChatMiscViews.swift`): when the tail window slides while the user
+    /// has scrolled up to read history (`!followsBottom`), every retained
+    /// character's index in `textStorage` is rewritten (new omission notice
+    /// length + new window start). The visible position of the line the
+    /// user is reading must not jump as a result.
+    func testReasoningWindowSlideKeepsRetainedLinePositionStable() throws {
+        let marker = "MARK"
+        let limit = ChatTextWindow.limit
+        let step = ChatTextWindow.step
+
+        // Initial source already exceeds `limit`, so the very first apply
+        // starts with an omission notice and windowStart == step (see
+        // ChatTextWindow's fresh-window math: windowStart = count - limit).
+        let initialCount = limit + step
+        let markerOffset = 2_500
+        let head = String(repeating: "字", count: markerOffset)
+        let tailCount = initialCount - markerOffset - marker.utf16.count
+        let initialText = head + marker + String(repeating: "行", count: tailCount)
+        XCTAssertEqual(initialText.utf16.count, initialCount)
+
+        let model = StreamingReasoningModel(text: initialText)
+        let fixture = mountHarness(model: model)
+        defer {
+            fixture.window.isHidden = true
+            fixture.window.rootViewController = nil
+        }
+        pump(seconds: 0.75)
+        fixture.window.layoutIfNeeded()
+        let textView = try XCTUnwrap(firstSubview(of: UITextView.self, in: fixture.host.view))
+        XCTAssertGreaterThan(textView.contentSize.height, textView.bounds.height)
+
+        func markerLine(in view: UITextView) throws -> (index: Int, y: CGFloat) {
+            let range = (view.text as NSString).range(of: marker)
+            XCTAssertNotEqual(range.location, NSNotFound, "marker 必须仍在渲染窗口内")
+            let glyphIndex = view.layoutManager.glyphRange(
+                forCharacterRange: NSRange(location: range.location, length: 1),
+                actualCharacterRange: nil
+            ).location
+            let y = view.layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil).origin.y
+            return (range.location, y)
+        }
+
+        let before = try markerLine(in: textView)
+
+        // Simulate the user scrolling up to read this line inside the
+        // 180pt card: stop following the bottom and center the marker line.
+        textView.delegate?.scrollViewWillBeginDragging?(textView)
+        let bottomOffset = max(
+            -textView.adjustedContentInset.top,
+            textView.contentSize.height - textView.bounds.height + textView.adjustedContentInset.bottom
+        )
+        let historyOffset = max(
+            -textView.adjustedContentInset.top,
+            min(bottomOffset, before.y - textView.bounds.height / 2)
+        )
+        textView.setContentOffset(CGPoint(x: 0, y: historyOffset), animated: false)
+        let visibleBefore = before.y - textView.contentOffset.y
+
+        // Append comfortably more than `step` characters: guarantees
+        // ChatTextWindow slides its window start forward by exactly the
+        // appended length (see ChatTextWindow.update), which rewrites the
+        // notice and shifts every retained character's storage index.
+        let addedLength = step + 200
+        model.text += String(repeating: "追", count: addedLength)
+        pump(seconds: 0.35)
+
+        let after = try markerLine(in: textView)
+        XCTAssertLessThan(after.index, before.index,
+            "窗口应已前移一个滑动量，marker 在存储中的下标应随之前移")
+        let visibleAfter = after.y - textView.contentOffset.y
+
+        XCTAssertEqual(visibleAfter, visibleBefore, accuracy: 2,
+            "窗口滑动后，用户正在阅读的保留行不应在可见区内跳动")
     }
 
     private func mountHarness(model: StreamingReasoningModel) -> (
