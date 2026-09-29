@@ -47,3 +47,6 @@ docs/cloud-design/**/.thumbnail
 
 # ZCode agent local state (session plans etc.) — never commit
 .zcode/
+
+# App Store Connect API 私钥：放 ~/.appstoreconnect/private_keys/，不要提交
+*.p8
