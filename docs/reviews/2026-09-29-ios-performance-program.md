@@ -189,7 +189,7 @@
   `testChatTextWindowAppendFastPathHitRateForLongProseStream` 断言 ≥80%（约 9s）。消费方（推理卡片、小说气泡）只依赖“text 是
   source 的后缀”，无需改动。
 - 推理卡片滑动补偿：用户上滑阅读（`!followsBottom`）时，窗口前移会把保留文字整体上顶；`slideWindow` 编辑前后测量保留区起点并
-  补偿 `contentOffset`。首版补偿量偏大（确定性误差约 220–690pt），根因是 UITextView 非连续布局下 `lineFragmentRect` 返回估算值；
+  补偿 `contentOffset`。首版补偿量偏大（确定性误差约 220–690pt），根因是编辑后未强制布局，`lineFragmentRect` 取到的是过期位置；
   测量前 `ensureLayout` 前缀后，保留行可见位置漂移 0.08pt（`testReasoningWindowSlideKeepsRetainedLinePositionStable`）。
 - P7-2 冷启动：`IOSBackgroundLifecycleLog` 落盘/读盘移到串行队列，启动时 `bootstrap()` 异步补齐上一进程历史（读在调用栈内入队保证
   FIFO；合并后重落盘一次，避免补齐前的写入覆盖历史）；`WatchTaskCoordinator` 复用 init 时的 `agentRuntimeDao`，不再二次打开
@@ -204,3 +204,15 @@
   阈值噪声（表格路径不经 `ChatTextWindow`）。
 - 未完成 / 待决策：P3b（等主工作区压缩重构提交）；流式表格 O(行数) 重建的结构性改造（需真机 Profile 构建评估）；
   子代理状态不写 durable run（产品决策）。
+
+### 2026-09-29 思考框流畅度（真机 Time Profiler，Xcode 27.2 beta 附加 iOS 27.2）
+- 真机数据（Debug）：思考阶段主线程约 450–575ms/s，正文阶段约 310–390ms/s。随时间增长的一项是 KMP 桥接的外来字符串
+  逐字比较（`ChatTextWindow.update` / `apply` 的相等与前缀检查，NFC 慢路径），35 秒内 20 → 53ms/s；淡入重绘 46–77ms/s；
+  `currentAssistantReasoningLevel()` 每次 ChatView 重算都走 Kotlin 正则，13–19ms/s。
+- 修复：入口 `makeContiguousUTF8()` 原生化 + `memcmp` 前缀检查；推理档位按设置快照身份缓存；淡入 display link 降到 60Hz。
+- 跟随改为渲染进程驱动：模型直接落到底部，屏幕位移用一段叠加动画（线性，≥0.28s，≤540pt/s）从当前可见位置滑过去，
+  主线程卡顿不再打断滚动；拖动（`gestureRecognizerShouldBegin` / `scrollViewWillBeginDragging`）先把画面位置落回模型；
+  卡片未长到高度上限前不滚动；窗口前移时先钉住可见文字再继续滑。节奏测试改为读 presentation 并按实际读取间隔折算单帧步进
+  （实测 ≤9.1pt）。
+- 录制：iOS 27.2 设备需 `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer ./record.sh ...`；record.sh 修复了
+  heredoc 占用 stdin 导致真机取 pid 失败的问题。手动采样用例需环境变量 `TEST_RUNNER_AMBER_PERF_SAMPLE=1`（作为 xcodebuild 的环境变量，不是构建参数）。

@@ -37,8 +37,12 @@ struct ChatTextWindow {
     /// reuse this result instead of scanning the full prefix a second time.
     @discardableResult
     mutating func update(_ next: String) -> Bool {
+        // KMP 桥接来的是外来（NSString）字符串，逐字符比较会走慢路径且随长度线性变慢；
+        // 先整体转成原生 UTF-8，比较与前缀检查都变成 memcmp。
+        var next = next
+        next.makeContiguousUTF8()
         guard next != source else { return false }
-        let isAppend = next.utf8.starts(with: source.utf8)
+        let isAppend = Self.hasUTF8Prefix(next, source)
         if isAppend, let last = source.last {
             // Recount the boundary grapheme too: a delta can extend an emoji or
             // combining character. Ordinary appends only count the new delta.
@@ -68,6 +72,17 @@ struct ChatTextWindow {
         }
         omittedCount = windowStart
         return isAppend
+    }
+
+    private static func hasUTF8Prefix(_ string: String, _ prefix: String) -> Bool {
+        var string = string
+        var prefix = prefix
+        return string.withUTF8 { whole in
+            prefix.withUTF8 { head in
+                head.count <= whole.count &&
+                    (head.isEmpty || memcmp(whole.baseAddress!, head.baseAddress!, head.count) == 0)
+            }
+        }
     }
 
     var omissionNotice: String? {

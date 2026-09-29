@@ -899,8 +899,15 @@ final class IOSSharedSettingsStore {
         IosSettingsMutations.shared.currentAssistantReasoningLevels(settings: snapshot)
     }
 
+    /// ChatView 每次重算都会读（流式期间约 20 次/秒），而 Kotlin 侧要做模型能力正则匹配；
+    /// 快照每次变更都会整体替换，按对象身份缓存即可。
+    @ObservationIgnored private var reasoningLevelCache: (snapshot: Settings, level: ReasoningLevel)?
+
     func currentAssistantReasoningLevel() -> ReasoningLevel {
-        IosSettingsMutations.shared.currentAssistantReasoningLevel(settings: snapshot)
+        if let cache = reasoningLevelCache, cache.snapshot === snapshot { return cache.level }
+        let level = IosSettingsMutations.shared.currentAssistantReasoningLevel(settings: snapshot)
+        reasoningLevelCache = (snapshot, level)
+        return level
     }
 
     func updateCurrentAssistantReasoningLevel(_ level: ReasoningLevel) {

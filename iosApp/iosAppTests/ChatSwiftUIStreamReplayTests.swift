@@ -2301,6 +2301,53 @@ final class ChatSwiftUIStreamReplayTests: XCTestCase {
             "绘制尾窗不能截断持久化/上下文中的完整思考内容")
     }
 
+    /// 手动采样：按真实节奏（约 167 字/秒）从空串推 45 秒推理，按 3 秒分桶打印
+    /// 主线程每次更新 CPU 与帧间隔，观察成本是否随推理长度增长。
+    func testReasoningStreamCostOverTimeSample() throws {
+        try XCTSkipIf(ProcessInfo.processInfo.environment["AMBER_PERF_SAMPLE"] == nil, "仅在手动性能采样时运行")
+        let fixture = makeFixture()
+        defer { fixture.tearDown() }
+        let id = KotlinUuid.companion.random()
+        let instant = KotlinInstant.companion.fromEpochMilliseconds(epochMilliseconds: 0)
+        var reasoning = "先"
+        func message() -> UIMessage {
+            UIMessage(id: id, role: MessageRole.assistant,
+                parts: [UIMessagePart.Reasoning(reasoning: reasoning, createdAt: instant, finishedAt: nil, metadata: nil)],
+                annotations: [], createdAt: chatNowLocalDateTime(), finishedAt: nil,
+                modelId: nil, usage: nil, translation: nil)
+        }
+        fixture.model.messages = longConversation(turns: 8) + [makeUserMessage("请详细思考。"), message()]
+        fixture.model.isGenerationActive = true
+        fixture.model.send(.streamDelta)
+        pump(seconds: 1.0)
+        let probe = DisplayLinkGapProbe()
+        probe.start()
+        let chunk = "核对推理每一步，"
+        let bucketUpdates = 62 // ≈3s @48ms
+        for bucket in 0..<15 {
+            let bucketStart = CACurrentMediaTime()
+            var cpu: UInt64 = 0
+            var worst: UInt64 = 0
+            for _ in 0..<bucketUpdates {
+                reasoning += chunk
+                let t0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID)
+                fixture.model.messages[fixture.model.messages.count - 1] = message()
+                fixture.model.send(.streamDelta)
+                pump(seconds: 0.048)
+                let spent = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - t0
+                cpu += spent
+                worst = max(worst, spent)
+            }
+            let gaps = zip(probe.gaps, probe.gapEndTimestamps).filter { $0.1 >= bucketStart }.map { $0.0 * 1000 }.sorted()
+            let p95 = gaps.isEmpty ? 0 : gaps[Int(Double(gaps.count - 1) * 0.95)]
+            print(String(format: "[PERF-REASONING-TIME] t=%02ds chars=%d cpu/update=%.2fms worstUpdate=%.2fms p95Gap=%.2fms maxGap=%.2fms over25=%d",
+                (bucket + 1) * 3, reasoning.count,
+                Double(cpu) / Double(bucketUpdates) / 1e6, Double(worst) / 1e6,
+                p95, gaps.last ?? 0, gaps.filter { $0 > 25 }.count))
+        }
+        probe.stop()
+    }
+
     func testTerminalWithReasoningCollapseSettlesMonotonically() {
         let fixture = makeFixture()
         defer { fixture.tearDown() }

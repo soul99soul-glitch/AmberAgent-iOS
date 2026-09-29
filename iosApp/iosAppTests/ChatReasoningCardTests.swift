@@ -227,6 +227,7 @@ final class ChatReasoningCardTests: XCTestCase {
         private(set) var contentOffsets: [CGFloat] = []
         private(set) var contentHeights: [CGFloat] = []
         private(set) var bottomDistances: [CGFloat] = []
+        private(set) var sampleTimes: [CFTimeInterval] = []
 
         init(scrollView: UIScrollView? = nil) {
             self.scrollView = scrollView
@@ -246,13 +247,16 @@ final class ChatReasoningCardTests: XCTestCase {
         @objc private func tick(_ displayLink: CADisplayLink) {
             defer { previousTimestamp = displayLink.timestamp }
             if let scrollView {
-                contentOffsets.append(scrollView.contentOffset.y)
+                // 跟随由 Core Animation 插值：模型值直接落在目标，屏幕上的位置看 presentation。
+                let visibleOffsetY = scrollView.layer.presentation()?.bounds.origin.y ?? scrollView.contentOffset.y
+                contentOffsets.append(visibleOffsetY)
+                sampleTimes.append(CACurrentMediaTime())
                 contentHeights.append(scrollView.contentSize.height)
                 let bottomOffset = max(
                     -scrollView.adjustedContentInset.top,
                     scrollView.contentSize.height - scrollView.bounds.height + scrollView.adjustedContentInset.bottom
                 )
-                bottomDistances.append(max(0, bottomOffset - scrollView.contentOffset.y))
+                bottomDistances.append(max(0, bottomOffset - visibleOffsetY))
             }
             guard let previousTimestamp else { return }
             gaps.append(displayLink.timestamp - previousTimestamp)
@@ -913,7 +917,11 @@ final class ChatReasoningCardTests: XCTestCase {
             let offsetDelta = probe.contentOffsets[index + 1] - probe.contentOffsets[index]
             let heightDelta = probe.contentHeights[index + 1] - probe.contentHeights[index]
             let step = Self.followStep(offsetDelta: offsetDelta, heightDelta: heightDelta)
-            maximum = max(maximum, step)
+            // 跟随由渲染进程按时间插值，presentation 读到的是读取那一刻的位置；
+            // 主线程读取时刻有抖动，按实际读取间隔折算成每 1/60s 的步进。
+            let elapsed = probe.sampleTimes[index + 1] - probe.sampleTimes[index]
+            let frames = max(0.5, elapsed * 60)
+            maximum = max(maximum, step / CGFloat(frames))
         }
         return maximum
     }

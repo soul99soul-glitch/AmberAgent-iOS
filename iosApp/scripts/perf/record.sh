@@ -67,11 +67,14 @@ echo "[record.sh] 模式=${MODE} UDID=${TARGET_UDID} 进程=${PROCESS} 时长=${
 # 真机：进程运行在设备侧，用 devicectl 按可执行文件名查找 pid。
 find_pid_device() {
   local udid="$1" proc="$2"
-  xcrun devicectl device info processes --device "$udid" -j - --quiet 2>/dev/null \
-    | python3 - "$proc" <<'PY'
+  # heredoc 占用了 python 的 stdin，JSON 只能走临时文件。
+  local json
+  json=$(mktemp)
+  xcrun devicectl device info processes --device "$udid" -j "$json" --quiet >/dev/null 2>&1
+  python3 - "$proc" "$json" <<'PY'
 import json, sys
 proc = sys.argv[1]
-data = json.load(sys.stdin)
+data = json.load(open(sys.argv[2]))
 procs = (data.get("result") or {}).get("runningProcesses") or (data.get("result") or {}).get("processes") or []
 def exe_name(p):
     exe = p.get("executable") or ""

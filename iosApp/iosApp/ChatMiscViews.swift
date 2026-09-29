@@ -514,8 +514,11 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         return max(1.0 / 30.0, wordFadeDuration * 12.0 / CFTimeInterval(length))
     }
     private static let bottomTolerance: CGFloat = 8
+    /// 跟随滑动：由渲染进程插值（主线程卡一帧也不顿）。至少滑 0.28s，
+    /// 大段追赶时限速 540pt/s，保持单帧步进 ≤10pt 的节奏契约。
+    private static let followGlideMinimumDuration: CFTimeInterval = 0.28
     private static let followSpeed: CGFloat = 540
-    private static let followSettleDuration: CFTimeInterval = 0.12
+    private static let glideKey = "amber.reasoning.glide"
 
     private var renderedText = ""
     private var textWindow = ChatTextWindow()
@@ -525,14 +528,13 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     private var renderedColor: UIColor?
     private var activeWordFades: [WordFade] = []
     private var displayLink: CADisplayLink?
-    private var previousFrameTimestamp: CFTimeInterval?
     private var followsBottom = false
     private var hasAppliedContent = false
     private var smoothsFollowing = true
-    private var followSettleUntil: CFTimeInterval = 0
     private var lastClipped: Bool?
     private var lastUnconstrainedHeight: CGFloat = 0
     private var lastMeasureWidth: CGFloat = 0
+    private var lastFittingMaxHeight: CGFloat = 0
 
     /// 内容是否被高度上限裁切——供卡片决定 mask 底部渐变（短正文不洗淡）。
     var onClippedChanged: ((Bool) -> Void)?
@@ -540,6 +542,7 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     override func layoutSubviews() {
         if bounds.width > 0 { synchronizeTextContainer(forWidth: bounds.width) }
         super.layoutSubviews()
+        glideToBottomIfFollowing()
         let clipped = contentSize.height > bounds.height + 1
         if clipped != lastClipped {
             lastClipped = clipped
@@ -571,6 +574,7 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     }
 
     func fittingSize(forWidth width: CGFloat, maxHeight: CGFloat) -> CGSize {
+        lastFittingMaxHeight = maxHeight
         if abs(width - lastMeasureWidth) < 0.5, lastUnconstrainedHeight >= maxHeight {
             return CGSize(width: width, height: maxHeight)
         }
@@ -603,6 +607,9 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         followsBottomOnFirstPresentation: Bool,
         animatesNewWords: Bool
     ) {
+        // 同 ChatTextWindow.update：外来字符串先原生化，下面的相等/前缀比较才不随思考长度变慢。
+        var newText = newText
+        newText.makeContiguousUTF8()
         if hasAppliedContent {
             updateFollowOwnership()
         } else {
@@ -686,7 +693,6 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         storageText = targetStorage
 
         accessibilityLabel = targetStorage
-        followSettleUntil = CACurrentMediaTime() + Self.followSettleDuration
         requestBottomFollow()
     }
 
@@ -717,12 +723,12 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
                                length: overlap.length)
             )
         }
-        // Reading history (!followsBottom): the top-replace below shifts
-        // every retained line up in the document, which would otherwise
-        // yank the visible text out from under the reader. Pin it by
-        // measuring the retained region's start before/after the edit and
-        // compensating contentOffset by the same delta.
-        let beforeY = followsBottom ? nil : lineFragmentY(atCharacterIndex: removedLength)
+        // The top-replace below shifts every retained line up in the
+        // document. Pin the visible text by measuring the retained region's
+        // start before/after the edit and compensating contentOffset by the
+        // same delta; a following glide then continues from the pinned spot.
+        stopGlide()
+        let beforeY = lineFragmentY(atCharacterIndex: removedLength)
         textStorage.beginEditing()
         textStorage.replaceCharacters(
             in: NSRange(location: 0, length: removedLength),
@@ -734,12 +740,9 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         textStorage.endEditing()
         lastUnconstrainedHeight = 0
         lastMeasureWidth = 0
-        if let beforeY {
-            let delta = beforeY - lineFragmentY(atCharacterIndex: noticeLength)
-            let minY = -adjustedContentInset.top
-            let newY = min(bottomOffsetY, max(minY, contentOffset.y - delta))
-            setContentOffset(CGPoint(x: contentOffset.x, y: newY), animated: false)
-        }
+        let delta = beforeY - lineFragmentY(atCharacterIndex: noticeLength)
+        let newY = max(-adjustedContentInset.top, contentOffset.y - delta)
+        setContentOffset(CGPoint(x: contentOffset.x, y: newY), animated: false)
         if animatesNewWords {
             appendTailFade(in: NSRange(location: noticeLength + retainedLength, length: addedLength))
         } else {
@@ -761,8 +764,15 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        stopGlide()
         followsBottom = false
-        followSettleUntil = 0
+    }
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // The pan reads contentOffset as its origin; land the model on what
+        // is on screen first so grabbing mid-glide does not jump.
+        if gestureRecognizer === panGestureRecognizer { stopGlide() }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
     private func updateFollowOwnership() {
@@ -770,9 +780,52 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
             followsBottom = false
         } else if isAtBottom {
             followsBottom = true
-        } else if displayLink == nil {
-            followsBottom = false
         }
+    }
+
+    private func glideToBottomIfFollowing() {
+        guard followsBottom, !isTracking, !isDragging, !isDecelerating else { return }
+        // 卡片还在长高（未到高度上限）时内容本该完整可见；新行先于卡片高度到达
+        // 的那一瞬间不能当成要滚动，否则每长一行都会上下晃一次。
+        guard bounds.height >= lastFittingMaxHeight - 0.5 else { return }
+        let targetY = bottomOffsetY
+        guard abs(contentOffset.y - targetY) > 0.5 else { return }
+        guard smoothsFollowing, window != nil else {
+            stopGlide()
+            contentOffset.y = targetY
+            return
+        }
+        // 模型直接落到目标；屏幕上从当前可见位置用一段叠加动画滑过去（合并掉
+        // 未滑完的旧段），位置连续，且整体速度不超过 followSpeed。
+        // presentation 是上一帧的画面：只有滑动进行中它才代表屏幕位置；否则
+        // 模型值可能刚被改过（窗口前移补偿），以模型为准。
+        let visibleY = layer.animation(forKey: Self.glideKey) != nil
+            ? (layer.presentation()?.bounds.origin.y ?? contentOffset.y)
+            : contentOffset.y
+        removeGlides()
+        UIView.performWithoutAnimation {
+            contentOffset = CGPoint(x: contentOffset.x, y: targetY)
+        }
+        let remaining = visibleY - targetY
+        guard abs(remaining) > 0.5 else { return }
+        let glide = CABasicAnimation(keyPath: "bounds.origin.y")
+        glide.fromValue = remaining
+        glide.toValue = 0
+        glide.isAdditive = true
+        glide.duration = max(Self.followGlideMinimumDuration, Double(abs(remaining) / Self.followSpeed))
+        glide.timingFunction = CAMediaTimingFunction(name: .linear)
+        layer.add(glide, forKey: Self.glideKey)
+    }
+
+    private func removeGlides() {
+        layer.removeAnimation(forKey: Self.glideKey)
+    }
+
+    private func stopGlide() {
+        guard layer.animation(forKey: Self.glideKey) != nil else { return }
+        let visibleY = layer.presentation()?.bounds.origin.y ?? contentOffset.y
+        removeGlides()
+        contentOffset.y = visibleY
     }
 
     private var bottomOffsetY: CGFloat {
@@ -788,17 +841,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     }
 
     private func requestBottomFollow() {
-        guard followsBottom else {
-            stopDisplayLinkIfIdle()
-            return
-        }
-        if !smoothsFollowing {
-            followSettleUntil = max(
-                followSettleUntil,
-                CACurrentMediaTime() + Self.followSettleDuration
-            )
-        }
-        startDisplayLink()
+        guard followsBottom else { return }
+        setNeedsLayout()
     }
 
     /// 每拍只记录一个尾段淡入范围。Display link 更新绘制透明度，
@@ -821,10 +865,8 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
     }
 
     @objc private func displayLinkTick(_ displayLink: CADisplayLink) {
-        let now = CACurrentMediaTime()
-        updateWordFades(at: now)
-        updateBottomFollow(displayLink: displayLink, now: now)
-        stopDisplayLinkIfIdle(now: now)
+        updateWordFades(at: CACurrentMediaTime())
+        stopDisplayLinkIfIdle()
     }
 
     private func updateWordFades(at currentTime: CFTimeInterval) {
@@ -839,65 +881,22 @@ private final class ChatReasoningTextView: UITextView, UITextViewDelegate {
         (layoutManager as? ChatReasoningLayoutManager)?.setOpacityRanges(ranges)
     }
 
-    /// 限速连续跟随：内部滚动按 540pt/s 逐帧推进（cadence 门禁契约：
-    /// 单帧步进 ≤10pt，不能随 chunk 整行跳）。掉帧/乱跳的根因不在跟随
-    /// 策略，而在每帧开销——淡入只刷新 glyph 绘制，不编辑文本存储。
-    private func updateBottomFollow(displayLink: CADisplayLink, now: CFTimeInterval) {
-        guard followsBottom else { return }
-        if isTracking || isDragging || isDecelerating {
-            followsBottom = false
-            followSettleUntil = 0
-            return
-        }
-
-        let targetY = bottomOffsetY
-        let delta = targetY - contentOffset.y
-        guard abs(delta) > 0.5 else {
-            if contentOffset.y != targetY {
-                setContentOffset(CGPoint(x: contentOffset.x, y: targetY), animated: false)
-            }
-            return
-        }
-        guard smoothsFollowing else {
-            setContentOffset(CGPoint(x: contentOffset.x, y: targetY), animated: false)
-            return
-        }
-
-        let previousTimestamp = previousFrameTimestamp ?? (displayLink.timestamp - displayLink.duration)
-        let frameDuration = min(max(displayLink.timestamp - previousTimestamp, 1.0 / 240.0), 1.0 / 60.0)
-        previousFrameTimestamp = displayLink.timestamp
-        let maximumStep = Self.followSpeed * frameDuration
-        let step = min(abs(delta), maximumStep) * (delta < 0 ? -1 : 1)
-        setContentOffset(
-            CGPoint(x: contentOffset.x, y: contentOffset.y + step),
-            animated: false
-        )
-    }
-
     private func startDisplayLink() {
         guard displayLink == nil else { return }
         let displayLink = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
-        displayLink.preferredFrameRateRange = CAFrameRateRange(
-            minimum: 60,
-            maximum: 120,
-            preferred: 120
-        )
+        // 只驱动淡入透明度（每次都要重绘字形）；滚动由 glide 交给渲染进程，60Hz 足够。
+        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
         displayLink.add(to: .main, forMode: .common)
         self.displayLink = displayLink
     }
 
-    private func stopDisplayLinkIfIdle(now: CFTimeInterval = CACurrentMediaTime()) {
-        let followSettled = !followsBottom ||
-            (abs(bottomOffsetY - contentOffset.y) <= 0.5 && now >= followSettleUntil)
-        if activeWordFades.isEmpty, followSettled {
-            stopDisplayLink()
-        }
+    private func stopDisplayLinkIfIdle() {
+        if activeWordFades.isEmpty { stopDisplayLink() }
     }
 
     private func stopDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
-        previousFrameTimestamp = nil
     }
 
     private static func easeOut(_ progress: CGFloat) -> CGFloat {
