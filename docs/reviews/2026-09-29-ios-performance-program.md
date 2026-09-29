@@ -52,7 +52,14 @@
 - 验收：点击发送到动画落位期间主线程无系统 IPC；`BackgroundAudioKeepAliveTests`、
   `BackgroundGenerationKeepAliveTests`、`AgentActivityDeepLinkTests` 通过并补齐新状态的用例。
 
-### P3 请求准备移出主线程
+### P3 请求准备移出主线程（拆分：P3a 在 P2 后执行；P3b 放到 P7 之后）
+- P3a（不触碰压缩协调器）：技能文件按路径+修改时间缓存（每轮请求都在主线程列目录、读 Markdown）；
+  记忆召回每次请求只计算一次并复用（现有 `memoryRecallOverride` 通道）；KMP 系统时区缓存
+  （每个 `UIMessage` 构造都重新解析时区文件）。
+- P3b：`editPreparedContext` 等压缩路径的纯计算移出主线程。主工作区另一线程对
+  `IOSContextCompactionCoordinator.swift` 有约 586 行未提交重构，待其提交后基于其结果执行，
+  否则记为阻塞项。
+
 - 主线程只取不可变快照（消息、设置、记忆记录、工具目录、压缩记录），纯计算（token 估算、
   压缩规划、记忆召回打分、运行时注入、PromptTranscript 准备）在后台执行，结果按 runId 验收。
 - 与主工作区的上下文压缩重构（另一线程）存在文件重叠：开工前先同步其已提交内容。
@@ -113,3 +120,19 @@
   - Q5 不做：token 估算加缓存后仅剩 7 个样本；请求准备剩余成本为 `editPreparedContext`（约 50%）与运行时注入，归 P3。
 - Review（子代理）：采纳终态落盘失败路径补 RunTerminal、清理过时注释；首页行环境值（@Environment 独立失效，不受 `.equatable()`
   拦截）与相对时间（改动前后一致）判定无需修改；WebMount 重复触发的前提（事件延迟到达）经实验证伪。
+
+### 2026-09-29 P2
+- 音频保活：session 激活/反激活、AVAudioEngine 构造/启动/停止移到私有串行队列（可注入 runner），主线程以代次号验收；
+  新增“启动中”状态与 `isStartingOrActive`。`BackgroundGenerationKeepAlive` 中 begin 抑制系统任务、首 token 升级、
+  提交守卫、UIKit 短窗到期判定改用“启动中或播放中”（到期判定若仍用 isActive 会把启动中的 run 当场终止）；对外断言、
+  日志、放弃系统任务、空闲保留仍用“确认在播”。音频最终启动失败经变更通知在前台补交系统任务（排除已挂一次性重试的租约，
+  否则会重复提交）。
+- Live Activity：授权查询、`Activity.activities` 枚举、`Activity.request` 放到后台（ActivityKit 接口未标注 @MainActor）；
+  去掉 5ea1795 的 500ms 延迟与 willResignActive 补做；`pendingStarts` 改为“请求在途”，在途 update 刷新展示、end/stopCurrent
+  记录撤销，落地后撤销则立即结束卡片，否则补一次最新展示的 update；在途时再次 start 清除撤销。增加测试注入点与在途状态用例。
+- Review 修复：stop 后立即 start 时旧一代清理会在串行队列上反激活新一代刚激活的会话 → 队列内会话激活序号，仅序号未更新时反激活；
+  启动在途切后台导致落地使用过期的 exclusive → 落地时按当前状态重投类别；Live Activity 在途撤销后再 start 未清撤销标记。
+- 流式表格：尖峰测试走 vendor `TableLayout`（非 AmberTableLayout）。给 vendor 加内容指纹缓存后，计数实测整个用例仅 5 次整表测量、
+  累计 24ms（命中 18 次），p95/max 与改前无可测差异 → 回退 vendor 改动；另一“增量 vs 全量”测试经对照实验证明对原版同样失败
+  （读取到中间帧），删除。流式表格帧尖峰（约 70–116ms，单帧）的真实来源待 P5 用 Time Profiler 定位。
+- 已知：`testPerfGrowingTableStreamingKeepsDisplayLinkResponsive` 在基线与本阶段均在阈值附近波动（max 67–116ms）。

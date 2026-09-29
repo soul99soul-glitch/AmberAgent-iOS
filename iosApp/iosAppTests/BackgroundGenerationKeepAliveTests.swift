@@ -76,18 +76,38 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
     @MainActor
     private final class AudioSpy: BackgroundAudioKeepAliveControlling {
         var isActive = false
+        /// Models the real implementation's async window: true from `start()`
+        /// until the (simulated) attempt resolves via `completeStart`.
+        var isStarting = false
+        var isStartingOrActive: Bool { isStarting || isActive }
         var startSucceeds = true
+        /// When false, `start()` only enters the "starting" state instead of
+        /// resolving synchronously — the test drives the outcome later via
+        /// `completeStart`, mirroring `BackgroundAudioKeepAlive`'s real
+        /// dispatch-then-verify recovery.
+        var startsSynchronously = true
         var startCount = 0
         var stopCount = 0
 
         func start() {
             startCount += 1
-            isActive = startSucceeds
+            if startsSynchronously {
+                isActive = startSucceeds
+            } else {
+                isStarting = true
+            }
         }
 
         func stop() {
             stopCount += 1
             isActive = false
+            isStarting = false
+        }
+
+        /// Test-only: resolve a `startsSynchronously == false` attempt.
+        func completeStart(success: Bool) {
+            isStarting = false
+            isActive = success
         }
     }
 
@@ -666,6 +686,49 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertTrue(spy.submittedRequests.isEmpty)
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
         XCTAssertTrue(keepAlive.holdsLease("run-1"))
+    }
+
+    /// `BackgroundAudioKeepAlive.start()` no longer resolves synchronously — a
+    /// recovery attempt can still be in flight when `begin()` checks whether it
+    /// needs a system task fallback. That check must treat "starting" the same
+    /// as "active" so it doesn't submit a system card that a moment later
+    /// becomes redundant once the audio leg actually comes up.
+    func testBeginDoesNotSubmitSystemTaskWhileAudioIsStarting() {
+        let spy = SystemSpy()
+        spy.audio.startsSynchronously = false
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
+
+        keepAlive.begin("run-1", title: "t", subtitle: "s")
+
+        XCTAssertEqual(spy.audio.startCount, 1)
+        XCTAssertTrue(spy.audio.isStarting)
+        XCTAssertFalse(spy.audio.isActive)
+        XCTAssertTrue(spy.submittedRequests.isEmpty)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .uiOnly)
+    }
+
+    /// When the in-flight attempt from `testBeginDoesNotSubmitSystemTaskWhileAudioIsStarting`
+    /// definitively fails, `BackgroundAudioKeepAlive` posts
+    /// `.amberBackgroundAudioKeepAliveChanged`; the lease still owes a system
+    /// task, so the notification observer's `resubmitSystemTasksAfterForeground()`
+    /// call must submit it (foreground here) instead of leaving the run with
+    /// only its 30s UIKit window.
+    func testAudioDefinitiveFailureSubmitsSystemTaskInForeground() async {
+        let spy = SystemSpy()
+        spy.audio.startsSynchronously = false
+        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
+
+        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        XCTAssertTrue(spy.submittedRequests.isEmpty)
+
+        spy.audio.completeStart(success: false)
+        NotificationCenter.default.post(name: .amberBackgroundAudioKeepAliveChanged, object: nil)
+        // The observer is registered with `queue: .main`, which delivers on the
+        // next run loop turn rather than inline with `post`.
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(spy.submittedRequests.count, 1)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
     }
 
     func testAudioKeepAlivePreferenceHonorsBuildDefaultOverrideAndRequiresBackgroundMode() {

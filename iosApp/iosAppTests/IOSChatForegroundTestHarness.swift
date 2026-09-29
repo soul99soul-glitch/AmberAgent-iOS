@@ -540,6 +540,7 @@ final class IOSChatForegroundHarness {
 
 final class NoOpBackgroundAudioKeepAlive: BackgroundAudioKeepAliveControlling {
     var isActive = false
+    var isStartingOrActive: Bool { isActive }
 
     func start() {
         isActive = true

@@ -1,6 +1,5 @@
 @preconcurrency import ActivityKit
 import Foundation
-import UIKit
 
 enum IOSExecutionPreferenceKeys {
     static let liveActivity = "app.amber.ios.execution.liveActivity"
@@ -46,37 +45,86 @@ enum AgentActivityOwnershipPolicy {
 final class AgentLiveActivityController {
     static let shared = AgentLiveActivityController()
 
+    /// Bound handle to a single system Live Activity card. Production wraps a
+    /// real `Activity<AgentActivityAttributes>` (see `wrap(_:)`); tests
+    /// substitute a fake handle so start/update/end sequencing can be
+    /// exercised without real ActivityKit or a foregrounded app (ActivityKit's
+    /// `Activity.request` itself requires foreground, which is what gated the
+    /// pre-existing `AgentActivityDeepLinkTests` pending-start tests).
+    struct SystemCardHandle {
+        let id: String
+        let activityState: () -> ActivityState
+        let currentPresentation: () -> AgentActivityPresentation
+        let currentUpdatedAt: () -> Date
+        let performUpdate: (ActivityContent<AgentActivityAttributes.ContentState>) async -> Void
+        let performEnd: (AgentActivityPresentation, TimeInterval) async -> Void
+    }
+
     private struct OwnedActivity {
-        let activity: Activity<AgentActivityAttributes>
+        let runId: String
+        let conversationId: String?
+        let card: SystemCardHandle
         var lastPresentation: AgentActivityPresentation
         var lastUpdateAt: Date
     }
 
-    /// 发送瞬间的系统 Activity 请求（授权查询 + 枚举 + request 都是同步 IPC）
-    /// 会与用户消息上屏动画抢主线程：首轮可达数百毫秒。起步因此推迟到上屏
-    /// 动画结束后；App 失去前台时立即补做，保证离开 App 前系统卡片已就位。
+    /// 起步意图在系统请求在途期间被撤销（`end`/`stopCurrent`）时记录的终态：
+    /// 请求落地后不再展示新卡片，而是用这份终态立即结束它。
+    private struct PendingRevocation {
+        let presentation: AgentActivityPresentation
+        let dismissalDelay: TimeInterval?
+    }
+
+    /// 系统 Activity 请求（授权查询 + 枚举 + request 都是同步 IPC，首轮可达数百
+    /// 毫秒）在后台线程执行，不再用人为延迟给上屏动画让路。这段时间里，请求
+    /// 视为“在途”：`update` 只刷新待落地的展示；`end`/`stopCurrent` 记录撤销
+    /// 终态而不等待。请求落地后（见 `resolvePendingStart`）按撤销与否二选一
+    /// 收尾。
     private struct PendingStart {
         let conversationId: String?
         let conversationTitle: String?
         var presentation: AgentActivityPresentation
-        var task: Task<Void, Never>?
+        var revocation: PendingRevocation?
     }
 
-    static let deferredStartDelay: Duration = .milliseconds(500)
+    struct ActivitySystemSnapshot {
+        let enabled: Bool
+        let activities: [Activity<AgentActivityAttributes>]
+    }
+
+    /// 系统快照（授权查询 + 现有 activities 枚举）注入点。生产默认值
+    /// `defaultFetchSystemSnapshot` 与原实现一致（在后台线程执行）；测试注入可手动
+    /// 控制完成时机的替身，不依赖真实 ActivityKit 授权状态或前台门控。
+    typealias SystemSnapshotFetcher = () async -> ActivitySystemSnapshot
+    /// 发起系统 request 注入点。生产默认值 `defaultRequestSystemCard` 与原实现一致
+    /// （后台线程 `Activity.request`），返回的 `SystemCardHandle` 把后续“结束/更新
+    /// 系统卡片”也一并绑定好（见 `wrap(_:)`），测试替身直接构造不触达 ActivityKit
+    /// 的 handle。
+    typealias SystemCardRequester = (
+        _ runId: String,
+        _ conversationId: String?,
+        _ conversationTitle: String?,
+        _ presentation: AgentActivityPresentation
+    ) async -> SystemCardHandle?
 
     private var activitiesByRunId: [String: OwnedActivity] = [:]
     private var endingActivityIDs: Set<String> = []
     private var pendingStarts: [String: PendingStart] = [:]
-    private var resignActiveObserver: NSObjectProtocol?
+    private let fetchSystemSnapshot: SystemSnapshotFetcher
+    private let requestSystemCard: SystemCardRequester
 
-    private init() {}
-
-    var activitiesEnabled: Bool {
-        ActivityAuthorizationInfo().areActivitiesEnabled
+    /// 单例继续用默认值（真实 ActivityKit 调用）。测试创建独立实例注入替身，
+    /// 与 `BackgroundAudioKeepAlive` 同一做法。
+    init(
+        fetchSystemSnapshot: @escaping SystemSnapshotFetcher = AgentLiveActivityController.defaultFetchSystemSnapshot,
+        requestSystemCard: @escaping SystemCardRequester = AgentLiveActivityController.defaultRequestSystemCard
+    ) {
+        self.fetchSystemSnapshot = fetchSystemSnapshot
+        self.requestSystemCard = requestSystemCard
     }
 
-    /// 前台新卡片的真实请求延后执行（见 `PendingStart`）。
-    /// 延后窗口内的 update 只刷新待起步的展示，end 撤销待起步。
+    /// 起步请求视为“在途”，在后台线程完成授权查询 + 枚举 + request 后落地。
+    /// 在途期间重复调用只刷新待落地的展示（不会重复发起系统请求）。
     func start(
         runId: String,
         conversationId: String?,
@@ -85,93 +133,126 @@ final class AgentLiveActivityController {
     ) {
         if pendingStarts[runId] != nil {
             pendingStarts[runId]?.presentation = presentation
+            // 在途期间先撤销再重新 start：以最新意图为准，落地后保留卡片。
+            pendingStarts[runId]?.revocation = nil
             return
         }
-        // 已有卡片（如审批恢复）只是更新，没有昂贵的 request；非前台时没有上屏
-        // 动画要让路，且延后可能落到后台导致 request 失败。两者都立即执行。
-        if activitiesByRunId[runId] != nil || UIApplication.shared.applicationState != .active {
-            startNow(
-                runId: runId,
-                conversationId: conversationId,
-                conversationTitle: conversationTitle,
-                presentation: presentation
-            )
-            return
-        }
-        installResignActiveObserverIfNeeded()
-        let task = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.deferredStartDelay)
-            guard !Task.isCancelled else { return }
-            self?.flushPendingStart(runId: runId)
-        }
-        pendingStarts[runId] = PendingStart(
-            conversationId: conversationId,
-            conversationTitle: conversationTitle,
-            presentation: presentation,
-            task: task
-        )
-    }
-
-    /// 失去前台时立即执行所有待起步请求。
-    private func flushPendingStarts() {
-        for runId in Array(pendingStarts.keys) {
-            flushPendingStart(runId: runId)
-        }
-    }
-
-    private func flushPendingStart(runId: String) {
-        guard let pending = pendingStarts.removeValue(forKey: runId) else { return }
-        pending.task?.cancel()
-        startNow(
-            runId: runId,
-            conversationId: pending.conversationId,
-            conversationTitle: pending.conversationTitle,
-            presentation: pending.presentation
-        )
-    }
-
-    private func cancelPendingStart(runId: String) {
-        pendingStarts.removeValue(forKey: runId)?.task?.cancel()
-    }
-
-    private func installResignActiveObserverIfNeeded() {
-        guard resignActiveObserver == nil else { return }
-        resignActiveObserver = NotificationCenter.default.addObserver(
-            forName: UIApplication.willResignActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.flushPendingStarts()
-            }
-        }
-    }
-
-    private func startNow(
-        runId: String,
-        conversationId: String?,
-        conversationTitle: String?,
-        presentation: AgentActivityPresentation
-    ) {
-        guard activitiesEnabled else { return }
-        reconcileExistingActivities(
-            for: runId,
-            conversationId: conversationId
-        )
-
+        // 已有卡片（如审批恢复）只是更新，没有昂贵的 request。
         if activitiesByRunId[runId] != nil {
             Task {
                 await update(runId: runId, presentation: presentation, force: true)
             }
             return
         }
-
-        requestActivity(
-            runId: runId,
+        pendingStarts[runId] = PendingStart(
             conversationId: conversationId,
             conversationTitle: conversationTitle,
-            presentation: presentation
+            presentation: presentation,
+            revocation: nil
         )
+        Task { [weak self] in
+            await self?.resolvePendingStart(
+                runId: runId,
+                conversationId: conversationId,
+                conversationTitle: conversationTitle
+            )
+        }
+    }
+
+    static let defaultFetchSystemSnapshot: SystemSnapshotFetcher = {
+        await Task.detached(priority: .userInitiated) {
+            ActivitySystemSnapshot(
+                enabled: ActivityAuthorizationInfo().areActivitiesEnabled,
+                activities: Activity<AgentActivityAttributes>.activities
+            )
+        }.value
+    }
+
+    static let defaultRequestSystemCard: SystemCardRequester = { runId, conversationId, conversationTitle, presentation in
+        let now = Date()
+        let attributes = AgentActivityAttributes(
+            runId: runId,
+            conversationId: conversationId,
+            startedAt: now,
+            conversationTitle: WatchTaskText.singleLine(conversationTitle, maxLength: 120)
+        )
+        let content = AgentLiveActivityController.content(presentation: presentation, now: now)
+
+        do {
+            let activity = try await Task.detached(priority: .userInitiated) {
+                try Activity.request(
+                    attributes: attributes,
+                    content: content,
+                    pushType: nil
+                )
+            }.value
+            return AgentLiveActivityController.wrap(activity)
+        } catch {
+            print("[LiveActivity] Failed to start Agent activity: \(error)")
+            return nil
+        }
+    }
+
+    /// 请求落地：先查授权 + 枚举现有卡片（后台线程），必要时发起 request（同样
+    /// 后台线程）；随后回到主线程按在途期间是否被撤销收尾。
+    private func resolvePendingStart(
+        runId: String,
+        conversationId: String?,
+        conversationTitle: String?
+    ) async {
+        guard let presentationForRequest = pendingStarts[runId]?.presentation else { return }
+
+        let snapshot = await fetchSystemSnapshot()
+
+        guard snapshot.enabled else {
+            pendingStarts.removeValue(forKey: runId)
+            return
+        }
+
+        reconcileExistingActivities(
+            for: runId,
+            conversationId: conversationId,
+            activities: snapshot.activities
+        )
+
+        if activitiesByRunId[runId] == nil {
+            guard let card = await requestSystemCard(
+                runId,
+                conversationId,
+                conversationTitle,
+                presentationForRequest
+            ) else {
+                pendingStarts.removeValue(forKey: runId)
+                return
+            }
+            activitiesByRunId[runId] = OwnedActivity(
+                runId: runId,
+                conversationId: conversationId,
+                card: card,
+                lastPresentation: presentationForRequest,
+                lastUpdateAt: Date()
+            )
+        }
+
+        guard let pending = pendingStarts.removeValue(forKey: runId) else { return }
+
+        if let revocation = pending.revocation {
+            // `end(runId:presentation:)` 会用 `owned.lastPresentation`（刚落地的卡片）
+            // 做 preservingKind，这里不用再对 pending.presentation 做一次。
+            await end(
+                runId: runId,
+                presentation: revocation.presentation,
+                dismissalDelay: revocation.dismissalDelay
+            )
+            return
+        }
+
+        // 新建卡片已用 presentationForRequest 初始化；被 reconcile 复用的既有卡片
+        // (如审批恢复) 可能带着更早的展示，需要与 pending 期间收到的最新展示比较，
+        // 不能只比 presentationForRequest。
+        if pending.presentation != activitiesByRunId[runId]?.lastPresentation {
+            await update(runId: runId, presentation: pending.presentation, force: true)
+        }
     }
 
     func update(
@@ -184,8 +265,7 @@ final class AgentLiveActivityController {
             pendingStarts[runId]?.presentation = presentation
             return
         }
-        guard var owned = activitiesByRunId[runId],
-              owned.activity.attributes.runId == runId else { return }
+        guard var owned = activitiesByRunId[runId], owned.runId == runId else { return }
 
         let now = Date()
         if !force,
@@ -197,7 +277,7 @@ final class AgentLiveActivityController {
         owned.lastPresentation = presentation
         owned.lastUpdateAt = now
         activitiesByRunId[runId] = owned
-        await owned.activity.update(Self.content(presentation: presentation, now: now))
+        await owned.card.performUpdate(Self.content(presentation: presentation, now: now))
     }
 
     func refreshLanguage() async {
@@ -217,42 +297,58 @@ final class AgentLiveActivityController {
         presentation: AgentActivityPresentation,
         dismissalDelay: TimeInterval? = nil
     ) async {
-        // 延后窗口内即终态：撤销待起步，不再为已结束的 run 请求系统卡片。
-        cancelPendingStart(runId: runId)
-        guard let owned = activitiesByRunId[runId],
-              owned.activity.attributes.runId == runId else { return }
-        guard endingActivityIDs.insert(owned.activity.id).inserted else { return }
+        // 请求在途：系统请求可能仍未返回，这里不阻塞等待，只记录撤销终态；
+        // `resolvePendingStart` 落地后会立即用这份终态结束刚创建/复用的卡片。
+        if pendingStarts[runId] != nil {
+            pendingStarts[runId]?.revocation = PendingRevocation(
+                presentation: presentation,
+                dismissalDelay: dismissalDelay
+            )
+            return
+        }
+        guard let owned = activitiesByRunId[runId], owned.runId == runId else { return }
+        guard endingActivityIDs.insert(owned.card.id).inserted else { return }
 
         let terminalPresentation = presentation.preservingKind(from: owned.lastPresentation)
         activitiesByRunId.removeValue(forKey: runId)
 
-        await Self.end(
-            activity: owned.activity,
-            presentation: terminalPresentation,
-            dismissalDelay: dismissalDelay ?? AgentActivityLifecyclePolicy
-                .lockScreenDismissalDelay(for: terminalPresentation.phase)
+        await owned.card.performEnd(
+            terminalPresentation,
+            dismissalDelay ?? AgentActivityLifecyclePolicy.lockScreenDismissalDelay(for: terminalPresentation.phase)
         )
-        endingActivityIDs.remove(owned.activity.id)
+        endingActivityIDs.remove(owned.card.id)
     }
 
     func stopCurrent(dismissalDelay: TimeInterval = 1) async {
-        pendingStarts.values.forEach { $0.task?.cancel() }
-        pendingStarts.removeAll()
-        var activitiesToEnd = Activity<AgentActivityAttributes>.activities
-        for owned in activitiesByRunId.values where
-            !activitiesToEnd.contains(where: { $0.id == owned.activity.id }) {
-            activitiesToEnd.append(owned.activity)
+        // 在途请求同样标记撤销而非直接丢弃：系统请求已经发出，落地后
+        // `resolvePendingStart` 需要知道要立即结束这张卡片，而不是误当作
+        // 仍然存活继续展示。
+        for runId in pendingStarts.keys {
+            let kind = pendingStarts[runId]?.presentation.kind ?? .response
+            pendingStarts[runId]?.revocation = PendingRevocation(
+                presentation: AgentActivityPresentation(
+                    kind: kind,
+                    phase: .cancelled,
+                    stage: .cancelled,
+                    action: nil
+                ),
+                dismissalDelay: dismissalDelay
+            )
         }
 
-        endingActivityIDs.formUnion(activitiesToEnd.map(\.id))
-        let ownedActivities = activitiesByRunId
+        let owned = activitiesByRunId
         activitiesByRunId.removeAll()
+        let ownedCardIDs = Set(owned.values.map(\.card.id))
 
-        for activity in activitiesToEnd {
-            let lastPresentation = ownedActivities[activity.attributes.runId]?.lastPresentation
-                ?? activity.content.state.presentation
+        let discovered = Activity<AgentActivityAttributes>.activities
+        endingActivityIDs.formUnion(discovered.map(\.id))
+        endingActivityIDs.formUnion(ownedCardIDs)
+
+        for activity in discovered where !ownedCardIDs.contains(activity.id) {
+            let kind = owned[activity.attributes.runId]?.lastPresentation.kind
+                ?? activity.content.state.presentation.kind
             let cancelledPresentation = AgentActivityPresentation(
-                kind: lastPresentation.kind,
+                kind: kind,
                 phase: .cancelled,
                 stage: .cancelled,
                 action: nil
@@ -263,6 +359,17 @@ final class AgentLiveActivityController {
                 dismissalDelay: dismissalDelay
             )
             endingActivityIDs.remove(activity.id)
+        }
+
+        for entry in owned.values {
+            let cancelledPresentation = AgentActivityPresentation(
+                kind: entry.lastPresentation.kind,
+                phase: .cancelled,
+                stage: .cancelled,
+                action: nil
+            )
+            await entry.card.performEnd(cancelledPresentation, dismissalDelay)
+            endingActivityIDs.remove(entry.card.id)
         }
     }
 
@@ -285,7 +392,9 @@ final class AgentLiveActivityController {
             return (
                 candidate.attributes.runId,
                 OwnedActivity(
-                    activity: candidate,
+                    runId: candidate.attributes.runId,
+                    conversationId: candidate.attributes.conversationId,
+                    card: Self.wrap(candidate),
                     lastPresentation: candidate.content.state.presentation,
                     lastUpdateAt: candidate.content.state.updatedAt
                 )
@@ -303,8 +412,8 @@ final class AgentLiveActivityController {
         conversationId: String? = nil
     ) -> Bool {
         if let owned = activitiesByRunId[runId],
-           isAdoptable(owned.activity),
-           conversationId == nil || owned.activity.attributes.conversationId == conversationId {
+           isAdoptable(id: owned.card.id, activityState: owned.card.activityState()),
+           conversationId == nil || owned.conversationId == conversationId {
             return true
         }
 
@@ -323,7 +432,9 @@ final class AgentLiveActivityController {
         }
 
         activitiesByRunId[runId] = OwnedActivity(
-            activity: restored,
+            runId: runId,
+            conversationId: restored.attributes.conversationId,
+            card: Self.wrap(restored),
             lastPresentation: restored.content.state.presentation,
             lastUpdateAt: restored.content.state.updatedAt
         )
@@ -334,14 +445,16 @@ final class AgentLiveActivityController {
     }
 
     func ownsActivity(runId: String, conversationId: String) -> Bool {
-        if pendingStarts[runId]?.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame {
+        // 已撤销的在途请求不再代表所有权：请求落地后会立即结束这张卡片。
+        if let pending = pendingStarts[runId],
+           pending.revocation == nil,
+           pending.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame {
             return true
         }
         if let owned = activitiesByRunId[runId],
-           !endingActivityIDs.contains(owned.activity.id),
-           isAdoptable(owned.activity),
-           owned.activity.attributes.conversationId?.caseInsensitiveCompare(conversationId)
-            == .orderedSame {
+           !endingActivityIDs.contains(owned.card.id),
+           isAdoptable(id: owned.card.id, activityState: owned.card.activityState()),
+           owned.conversationId?.caseInsensitiveCompare(conversationId) == .orderedSame {
             return true
         }
         return Activity<AgentActivityAttributes>.activities.contains {
@@ -351,60 +464,55 @@ final class AgentLiveActivityController {
         }
     }
 
-    private func requestActivity(
-        runId: String,
-        conversationId: String?,
-        conversationTitle: String?,
-        presentation: AgentActivityPresentation
-    ) {
-        let now = Date()
-        let attributes = AgentActivityAttributes(
-            runId: runId,
-            conversationId: conversationId,
-            startedAt: now,
-            conversationTitle: WatchTaskText.singleLine(conversationTitle, maxLength: 120)
-        )
-
-        do {
-            let activity = try Activity.request(
-                attributes: attributes,
-                content: Self.content(presentation: presentation, now: now),
-                pushType: nil
-            )
-            activitiesByRunId[runId] = OwnedActivity(
-                activity: activity,
-                lastPresentation: presentation,
-                lastUpdateAt: now
-            )
-        } catch {
-            print("[LiveActivity] Failed to start Agent activity: \(error)")
-            activitiesByRunId.removeValue(forKey: runId)
-        }
-    }
-
     private func reconcileExistingActivities(
         for runId: String,
-        conversationId: String?
+        conversationId: String?,
+        activities: [Activity<AgentActivityAttributes>]
     ) {
-        var sameRun = Activity<AgentActivityAttributes>.activities.filter {
+        let sameRun = activities.filter {
             isAdoptable($0) && $0.attributes.runId == runId
         }
+
+        var ownedCandidate: AgentActivityOwnershipCandidate?
         if let owned = activitiesByRunId[runId],
-           isAdoptable(owned.activity),
-           !sameRun.contains(where: { $0.id == owned.activity.id }) {
-            sameRun.append(owned.activity)
+           isAdoptable(id: owned.card.id, activityState: owned.card.activityState()),
+           !sameRun.contains(where: { $0.id == owned.card.id }) {
+            ownedCandidate = AgentActivityOwnershipCandidate(
+                id: owned.card.id,
+                runId: runId,
+                updatedAt: owned.lastUpdateAt
+            )
         }
 
         let matchingConversation = sameRun.filter {
             $0.attributes.conversationId == conversationId
         }
+        var candidates = matchingConversation.map(Self.ownershipCandidate)
+        if let ownedCandidate, activitiesByRunId[runId]?.conversationId == conversationId {
+            candidates.append(ownedCandidate)
+        }
+
         let retainedIDs = AgentActivityOwnershipPolicy.retainedActivityIDs(
-            from: matchingConversation.map(Self.ownershipCandidate),
+            from: candidates,
             ownedRunIds: [runId]
         )
-        if let restored = matchingConversation.first(where: { retainedIDs.contains($0.id) }) {
+
+        if let currentOwned = activitiesByRunId[runId], retainedIDs.contains(currentOwned.card.id) {
+            // 既有卡片仍是赢家：与 reconcile 时刻的真实系统状态重新对齐
+            // lastPresentation/lastUpdateAt（原实现每次都会用刚枚举到的
+            // content state 覆盖一次，不只在被替换时）。
             activitiesByRunId[runId] = OwnedActivity(
-                activity: restored,
+                runId: runId,
+                conversationId: currentOwned.conversationId,
+                card: currentOwned.card,
+                lastPresentation: currentOwned.card.currentPresentation(),
+                lastUpdateAt: currentOwned.card.currentUpdatedAt()
+            )
+        } else if let restored = matchingConversation.first(where: { retainedIDs.contains($0.id) }) {
+            activitiesByRunId[runId] = OwnedActivity(
+                runId: runId,
+                conversationId: restored.attributes.conversationId,
+                card: Self.wrap(restored),
                 lastPresentation: restored.content.state.presentation,
                 lastUpdateAt: restored.content.state.updatedAt
             )
@@ -412,14 +520,23 @@ final class AgentLiveActivityController {
             activitiesByRunId.removeValue(forKey: runId)
         }
 
-        for duplicate in sameRun where !retainedIDs.contains(duplicate.id) {
+        for duplicate in matchingConversation where !retainedIDs.contains(duplicate.id) {
             scheduleEnd(activity: duplicate, dismissalDelay: 1)
+        }
+        if let currentOwned = activitiesByRunId[runId],
+           candidates.contains(where: { $0.id == currentOwned.card.id }),
+           !retainedIDs.contains(currentOwned.card.id) {
+            scheduleEndOwned(runId: runId, owned: currentOwned, dismissalDelay: 1)
         }
     }
 
+    private func isAdoptable(id: String, activityState: ActivityState) -> Bool {
+        guard !endingActivityIDs.contains(id) else { return false }
+        return activityState == .active || activityState == .stale
+    }
+
     private func isAdoptable(_ candidate: Activity<AgentActivityAttributes>) -> Bool {
-        guard !endingActivityIDs.contains(candidate.id) else { return false }
-        return candidate.activityState == .active || candidate.activityState == .stale
+        isAdoptable(id: candidate.id, activityState: candidate.activityState)
     }
 
     private func scheduleEnd(
@@ -428,7 +545,7 @@ final class AgentLiveActivityController {
     ) {
         guard endingActivityIDs.insert(activity.id).inserted else { return }
         let runId = activity.attributes.runId
-        if activitiesByRunId[runId]?.activity.id == activity.id {
+        if activitiesByRunId[runId]?.card.id == activity.id {
             activitiesByRunId.removeValue(forKey: runId)
         }
         let presentation = AgentActivityPresentation(
@@ -444,6 +561,30 @@ final class AgentLiveActivityController {
                 dismissalDelay: dismissalDelay
             )
             self?.endingActivityIDs.remove(activity.id)
+        }
+    }
+
+    /// `scheduleEnd(activity:dismissalDelay:)` 的对应版本，用于一张既有的
+    /// `OwnedActivity`（可能是测试替身，没有真实 `Activity` 对象）在 reconcile
+    /// 中输给了别的卡片、需要异步收尾的场景。
+    private func scheduleEndOwned(
+        runId: String,
+        owned: OwnedActivity,
+        dismissalDelay: TimeInterval
+    ) {
+        guard endingActivityIDs.insert(owned.card.id).inserted else { return }
+        if activitiesByRunId[runId]?.card.id == owned.card.id {
+            activitiesByRunId.removeValue(forKey: runId)
+        }
+        let presentation = AgentActivityPresentation(
+            kind: owned.lastPresentation.kind,
+            phase: .cancelled,
+            stage: .cancelled,
+            action: nil
+        )
+        Task { [weak self] in
+            await owned.card.performEnd(presentation, dismissalDelay)
+            self?.endingActivityIDs.remove(owned.card.id)
         }
     }
 
@@ -476,6 +617,28 @@ final class AgentLiveActivityController {
             relevanceScore: AgentActivityLifecyclePolicy.relevanceScore(
                 for: presentation.phase
             )
+        )
+    }
+
+    /// 把一个真实 `Activity<AgentActivityAttributes>` 包成 `SystemCardHandle`：
+    /// “结束/更新系统卡片”这两步的生产实现都封在这里，行为与重构前直接调用
+    /// `activity.update(...)` / `activity.end(...)` 完全一致。
+    private static func wrap(_ activity: Activity<AgentActivityAttributes>) -> SystemCardHandle {
+        SystemCardHandle(
+            id: activity.id,
+            activityState: { activity.activityState },
+            currentPresentation: { activity.content.state.presentation },
+            currentUpdatedAt: { activity.content.state.updatedAt },
+            performUpdate: { content in
+                await activity.update(content)
+            },
+            performEnd: { presentation, dismissalDelay in
+                let now = Date()
+                await activity.end(
+                    Self.content(presentation: presentation, now: now),
+                    dismissalPolicy: .after(now.addingTimeInterval(dismissalDelay))
+                )
+            }
         )
     }
 

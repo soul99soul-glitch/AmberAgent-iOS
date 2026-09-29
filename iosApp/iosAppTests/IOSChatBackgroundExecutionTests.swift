@@ -8,6 +8,7 @@ import XCTest
 final class IOSChatBackgroundExecutionTests: XCTestCase {
     @MainActor private final class Audio: BackgroundAudioKeepAliveControlling {
         var isActive = false
+        var isStartingOrActive: Bool { isActive }
         func start() { isActive = true }
         func stop() { isActive = false }
     }
