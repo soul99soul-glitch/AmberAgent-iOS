@@ -151,3 +151,14 @@
   每次 body 新建 `OpenURLAction` 注入 `\.openURL` → 改为常量 `ChatMarkdownOpenURLPolicy.openURLAction` 并纳入测试。
 - 聊天页 body 复核：剩余 `viewModel.messages` 读取均在点击/事件闭包；首页被导航压住时冻结观察——P1 后首页单次重算成本已低，
   冻结需维护快照与返回时同步，风险大于收益，不做。
+
+### 2026-09-29 P5
+- 发送路径行为测试 `ChatSendDeferredGenerationTests`：composer 发送立即上屏且生成延后、只启动一次；窗口期停止先补启动再取消且
+  不复活；窗口期再次发送进入 steer 队列不并发；默认 `sendMessage()` 同步启动。连跑 3 次通过；未发现产品缺陷。
+- 字体：同一 2000 字混排段落，内置 NotoSerifSC 可变字体与同字形静态实例绘制成本差 ≤5%（可变插值在字形首次解码后被 CoreText
+  进程级缓存摊销）；系统默认（苹方 + SF 可变）反而贵约 60%；改两个静态字重体积持平或更大 → 不换字体。
+- 流式表格帧尖峰根因（Time Profiler）：每次节流发布（250–320ms）vendor `TableView` 为全部行×列重建单元格视图并重走 AttributeGraph
+  依赖与布局回调，成本 O(总行数)，单次 20–120ms。尝试让单元格文本子树 `.equatable()` 短路：基线 3 次 p95 中位 28.5ms / max 中位
+  85.6ms，修复后 33.3ms / 74.0ms，落在噪声内（单次 max 波动 38–179ms）→ 回退。原因：每次追加行都会改变所有单元格的
+  无障碍“共 Y 行”与边框 rowCount，外层依赖必然全表失效。
+  后续项：结构性改造（边框仅依赖是否末行/末列；行级身份与增量发布），需在真机 Profile 构建上评估，模拟器噪声不足以验证。
