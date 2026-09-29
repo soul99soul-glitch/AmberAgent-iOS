@@ -40,7 +40,8 @@ enum IOSRecipePrimitiveCatalog {
         if tool == "runtime_status" { return .sessionRead }
         if tool == "tool_search" || tool == "tools_list" { return .discovery }
         if IOSSkillToolCatalog.toolNames.contains(tool), tool != "skill_import" { return .skill }
-        if IOSProviderConfigToolCatalog.toolNames.contains(tool), tool != "provider_config_apply" {
+        if IOSProviderConfigToolCatalog.toolNames.contains(tool),
+           !IOSProviderConfigToolCatalog.highRiskToolNames.contains(tool) {
             return .advanced
         }
         if IOSThemePackToolCatalog.toolNames.contains(tool), tool != "theme_pack_import" {

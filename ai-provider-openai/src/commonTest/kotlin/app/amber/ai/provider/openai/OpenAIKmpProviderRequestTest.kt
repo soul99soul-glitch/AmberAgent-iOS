@@ -111,6 +111,36 @@ class OpenAIKmpProviderRequestTest {
         assertFalse(body.getValue("parallel_tool_calls").jsonPrimitive.boolean)
     }
 
+    /** MiMo 文档：工具可设 strict；思考模式多轮工具调用需保留全部历史 reasoning_content。 */
+    @Test
+    fun mimoChatCompletionsUsesStrictToolsAndKeepsHistoricalReasoning() {
+        val history = listOf(
+            UIMessage.user("first"),
+            UIMessage(
+                role = MessageRole.ASSISTANT,
+                parts = listOf(UIMessagePart.Reasoning(reasoning = "old thought"), UIMessagePart.Text("old answer")),
+            ),
+            UIMessage.user("second"),
+        )
+        fun request(provider: ProviderSetting.OpenAI) = this.provider.buildChatCompletionRequest(
+            providerSetting = provider,
+            messages = history,
+            params = TextGenerationParams(model = toolModel(), tools = listOf(testTool())),
+        )
+        fun historicalReasoning(body: kotlinx.serialization.json.JsonObject) = body.getValue("messages").jsonArray
+            .map { it.jsonObject }.single { it["role"]?.jsonPrimitive?.content == "assistant" }["reasoning_content"]
+        fun strict(body: kotlinx.serialization.json.JsonObject) = body.getValue("tools").jsonArray.single()
+            .jsonObject.getValue("function").jsonObject["strict"]
+
+        val mimo = request(setting.copy(brand = OpenAIBrand.MIMO, baseUrl = MIMO_API_DEFAULT_BASE_URL))
+        assertTrue(strict(mimo)!!.jsonPrimitive.boolean)
+        assertEquals("old thought", historicalReasoning(mimo)?.jsonPrimitive?.content)
+
+        val openAI = request(setting)
+        assertEquals(null, strict(openAI))
+        assertEquals(null, historicalReasoning(openAI))
+    }
+
     @Test
     fun responsesToolsDisableParallelToolCalls() {
         val body = provider.buildResponsesRequestBody(
@@ -170,6 +200,18 @@ class OpenAIKmpProviderRequestTest {
         )
 
         assertFalse(body.getValue("enable_thinking").jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun miniMaxAlwaysRequestsSplitReasoningEvenWithoutReasoningAbility() {
+        val body = provider.buildChatCompletionRequest(
+            providerSetting = setting.copy(brand = OpenAIBrand.MINIMAX, baseUrl = "https://api.minimaxi.com/v1"),
+            messages = listOf(UIMessage(role = MessageRole.USER, parts = listOf(UIMessagePart.Text("hi")))),
+            params = TextGenerationParams(model = Model(modelId = "MiniMax-M3", displayName = "MiniMax-M3")),
+            stream = true,
+        )
+
+        assertTrue(body.getValue("reasoning_split").jsonPrimitive.boolean)
     }
 
     @Test

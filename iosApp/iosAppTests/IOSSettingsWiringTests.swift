@@ -379,7 +379,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         XCTAssertTrue(detail.contains("IOSGrokWebConstants.cliProxyBaseUrl"))
         XCTAssertTrue(detail.contains("adoptGrokOAuthChatCatalog"))
         XCTAssertTrue(detail.contains("legacyWebModelIds"))
-        XCTAssertTrue(detail.contains("setCurrentChatModelId(grok46.id.description())"))
+        XCTAssertTrue(detail.contains("selectChatModelAsDefault(grok46.id.description())"))
         XCTAssertTrue(detail.contains("IOSGrokOAuthAuthStore.loadBackup"))
         XCTAssertTrue(detail.contains("grokSection"))
         XCTAssertTrue(detail.contains("tokenPlanSection"))

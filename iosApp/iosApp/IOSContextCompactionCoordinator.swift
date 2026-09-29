@@ -45,7 +45,7 @@ private struct IOSCompactPlan {
     let sourceMessageIds: [String]
 
     var sourceMessageCount: Int {
-        shouldCompact ? sourceEndIndex - sourceStartIndex + 1 : 0
+        shouldCompact ? sourceMessageIds.count : 0
     }
 }
 
@@ -73,11 +73,30 @@ final class IOSContextCompactionCoordinator {
 
     private let store = IOSConversationCompactStore()
     private var activeCompactionTasks: [String: Task<IOSConversationCompact?, Error>] = [:]
+    /// History length at the last failed pass. Every tool round re-prepares the request,
+    /// so without this a broken summarizer would be retried (at full input size) each round.
+    private var failedCompactionHistoryCount: [String: Int] = [:]
 
     private let textProvider: any IOSAgentTextProvider
 
     init(textProvider: any IOSAgentTextProvider = OpenAIKmpProviderAdapter()) {
         self.textProvider = textProvider
+    }
+
+    /// Deleting a conversation deletes its summaries too; an in-flight pass is cancelled
+    /// so it cannot recreate the file afterwards.
+    func removeCompacts(conversationIds: [String]) throws {
+        var firstError: Error?
+        for conversationId in conversationIds {
+            activeCompactionTasks[conversationId]?.cancel()
+            failedCompactionHistoryCount[conversationId] = nil
+            do {
+                try store.remove(conversationId: conversationId)
+            } catch {
+                firstError = firstError ?? error
+            }
+        }
+        if let firstError { throw firstError }
     }
 
     static func estimatedTokensForRequest(_ messages: [UIMessage]) -> Int {
@@ -181,29 +200,50 @@ final class IOSContextCompactionCoordinator {
             extraTokenEstimate: overheadEstimate
         )
 
-        if plan.shouldCompact && !policy.notifyOnly {
+        // A failed summary never blocks the send: the local budget fit below still
+        // trims (with a visible notice) and `assertFitsRequest` stays the hard gate.
+        // After a failure, retry only once a kept window's worth of new messages arrived.
+        let inFailureCooldown = failedCompactionHistoryCount[conversationKey].map {
+            historyMessages.count < $0 + max(policy.keepRecentTurns * 2, 2)
+        } ?? false
+        var compactFailed = false
+        func compactOrDegrade(policy: IOSCompactPolicy, reason: String, force: Bool) async throws -> IOSConversationCompact? {
+            compactFailed = false
+            do {
+                let compact = try await compactConversation(
+                    messages: historyMessages,
+                    conversationKey: conversationKey,
+                    settings: settings,
+                    policy: policy,
+                    model: params.model,
+                    fallbackProvider: fallbackProvider,
+                    reason: reason,
+                    force: force
+                )
+                failedCompactionHistoryCount[conversationKey] = nil
+                return compact
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw error }
+                failedCompactionHistoryCount[conversationKey] = historyMessages.count
+                NSLog("[ContextCompact] \(reason) failed, falling back to budget fit: \(error.localizedDescription)")
+                onEvent?(.failed(message: "上下文压缩失败，已改为省略较早消息：\((error as NSError).localizedDescription)"))
+                compactFailed = true
+                return nil
+            }
+        }
+
+        if plan.shouldCompact && !policy.notifyOnly && !inFailureCooldown {
             onEvent?(.planning)
             onEvent?(.compacting)
             let force = plan.reason == "force_threshold"
-            let result = try await compactConversation(
-                messages: historyMessages,
-                conversationKey: conversationKey,
-                settings: settings,
+            let result = try await compactOrDegrade(
                 policy: policy,
-                model: params.model,
-                fallbackProvider: fallbackProvider,
                 reason: force ? "auto_force" : "auto_precompact",
                 force: force
             )
             if let result {
                 onEvent?(.completed(summary: Self.timelineSummary(result.summary) ?? "上下文已压缩。"))
-            } else if force {
-                onEvent?(.failed(message: "没有可压缩的历史"))
-                throw NSError(
-                    domain: "AmberAgent.ContextCompaction", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "上下文已超过强制压缩阈值，但没有可压缩的历史。"]
-                )
-            } else {
+            } else if !compactFailed {
                 onEvent?(.idle)
             }
             compacts = store.load(conversationId: conversationKey)
@@ -229,7 +269,7 @@ final class IOSContextCompactionCoordinator {
         var estimate = Self.estimateTokens(preparedMessages) + overheadEstimate
 
         // At most one summary cycle per request; use the existing local budget fit afterwards.
-        if !policy.notifyOnly && estimate > forceBudget && !plan.shouldCompact {
+        if !policy.notifyOnly && estimate > forceBudget && !plan.shouldCompact && !inFailureCooldown {
             let fitPolicy = IOSCompactPolicy(
                 enabled: policy.enabled,
                 notifyOnly: policy.notifyOnly,
@@ -239,25 +279,16 @@ final class IOSContextCompactionCoordinator {
                 maxSummaryTokens: policy.maxSummaryTokens
             )
             onEvent?(.compacting)
-            let compact = try await compactConversation(
-                messages: historyMessages,
-                conversationKey: conversationKey,
-                settings: settings,
+            let compact = try await compactOrDegrade(
                 policy: fitPolicy,
-                model: params.model,
-                fallbackProvider: fallbackProvider,
                 reason: "auto_fit_model_window",
                 force: true
             )
             compacts = store.load(conversationId: conversationKey)
             if let compact {
                 onEvent?(.completed(summary: Self.timelineSummary(compact.summary) ?? "上下文已压缩。"))
-            } else if let latest = Self.selectCompactsForInjection(
-                activeCompacts: compacts,
-                existingMessageIds: Set(editedMessages.map(Self.messageId))
-            ).last {
-                onEvent?(.completed(summary: Self.timelineSummary(latest.summary) ?? "上下文已压缩。"))
-            } else {
+            } else if !compactFailed {
+                // No new summary: the budget fit below trims instead; do not replay an old one as "completed".
                 onEvent?(.idle)
             }
             preparedMessages = Self.prepareMessagesWithCompacts(
@@ -397,82 +428,116 @@ final class IOSContextCompactionCoordinator {
             ChatProviderConfiguration.provider(for: $0, providers: settings.providers)
         }
         let canUsePreferred = preferredProvider.map(Self.supportsTextGeneration) ?? false
-        let compressionModel = canUsePreferred ? (preferredCompressionModel ?? model) : model
-        let rawProvider = canUsePreferred ? (preferredProvider ?? fallbackProvider) : fallbackProvider
+        var compressionModel = canUsePreferred ? (preferredCompressionModel ?? model) : model
+        var rawProvider = canUsePreferred ? (preferredProvider ?? fallbackProvider) : fallbackProvider
 
-        let sourceMessages = Array(messages[plan.sourceStartIndex...plan.sourceEndIndex])
-        let sourceMessageIds = plan.sourceMessageIds
+        let planIds = Set(plan.sourceMessageIds)
+        let candidates = messages.filter { planIds.contains(Self.messageId($0)) }
         let existingMessageIds = Set(messages.map(Self.messageId))
         let previousCompacts = Self.selectCompactsForInjection(
             activeCompacts: compacts,
             existingMessageIds: existingMessageIds
         )
-        let coveredCompactIds = previousCompacts.map(\.id)
+        let offeredCompactIds = previousCompacts.map(\.id)
         let previousCompactContext = previousCompacts
             .map { Self.injectionText($0) }
             .joined(separator: "\n\n")
         let createdAt = Self.nowMillis()
-        let prompt = Self.buildCompressionPrompt(
-            basePrompt: settings.compressPrompt,
-            content: Self.buildCompressionInput(sourceMessages),
-            targetTokens: policy.maxSummaryTokens,
-            additionalPrompt: "",
-            sourceMessageIds: sourceMessageIds,
-            coveredCompactIds: coveredCompactIds,
-            previousCompactContext: previousCompactContext,
-            createdAt: createdAt
-        )
 
-        let rawSummary = try await generateCompactSummary(
-            provider: rawProvider,
-            model: compressionModel,
-            prompt: prompt,
-            conversationId: conversationKey
-        )
-        var normalizedSummary = Self.normalizedPayload(
-            rawSummary,
-            sourceMessageIds: sourceMessageIds,
-            coveredCompactIds: coveredCompactIds,
-            createdAt: createdAt,
-            sourceContent: Self.buildCompressionInput(sourceMessages),
-            carriedHandoffMarkdown: previousCompactContext
-        )
-
-        if !Self.isHighQualityPayload(normalizedSummary) {
-            let retryPrompt = Self.buildCompressionPrompt(
-                basePrompt: settings.compressPrompt,
-                content: Self.buildCompressionInput(sourceMessages),
-                targetTokens: policy.maxSummaryTokens,
-                additionalPrompt: "Retry because the previous compaction did not satisfy the schema or the timeline summary was too short. Return valid JSON only. `timeline_summary` must contain 4-5 complete sentences, and `handoff_markdown` must contain the required sections.",
-                sourceMessageIds: sourceMessageIds,
-                coveredCompactIds: coveredCompactIds,
-                previousCompactContext: previousCompactContext,
-                createdAt: createdAt
+        // The summary request must fit the model that actually runs it, not the chat
+        // model that triggered the plan. Oldest messages go first; the rest stay raw
+        // and are picked up by a later pass.
+        let candidateInputs = candidates.map { Self.buildCompressionInput([$0]) }
+        func fittingInputs(for candidateModel: Model) -> [String] {
+            let window = Self.estimateContextWindow(ChatContextSnapshot.resolvedContextWindowTokens(
+                modelWindow: Self.intValue(candidateModel.contextWindowTokens), modelId: candidateModel.modelId
+            ))
+            let base = Self.buildCompressionPrompt(
+                basePrompt: settings.compressPrompt, content: "", targetTokens: policy.maxSummaryTokens,
+                additionalPrompt: Self.compactionRetryPrompt, coveredCompactIds: offeredCompactIds,
+                previousCompactContext: previousCompactContext
             )
-            let retrySummary = try await generateCompactSummary(
+            var remaining = Int(Double(window) * Self.compressionInputRatio)
+                - max(policy.maxSummaryTokens, 1_024) - Self.estimatePromptTokens(base)
+            var selected: [String] = []
+            for input in candidateInputs {
+                let cost = Self.estimatePromptTokens(input) + 1
+                guard cost <= remaining else {
+                    // An oversized oldest message would otherwise block every later pass.
+                    // Budget tokens ≥ weighted chars / 4, so this many chars always fits.
+                    if selected.isEmpty, remaining >= 1_000 {
+                        selected.append(input.takeMiddle(maxChars: remaining))
+                    }
+                    break
+                }
+                remaining -= cost
+                selected.append(input)
+            }
+            return selected
+        }
+        var sourceInputs = fittingInputs(for: compressionModel)
+        if sourceInputs.count < min(candidates.count, 2), compressionModel.id != model.id {
+            // The configured summarizer is too small for even the oldest turns; use the chat model.
+            let chatInputs = fittingInputs(for: model)
+            if chatInputs.count > sourceInputs.count {
+                sourceInputs = chatInputs
+                compressionModel = model
+                rawProvider = fallbackProvider
+            }
+        }
+        guard !sourceInputs.isEmpty else {
+            throw NSError(
+                domain: "AmberAgent.ContextCompaction", code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "压缩模型的上下文窗口不足以容纳待压缩的历史。"]
+            )
+        }
+        let sourceMessageIds = candidates.prefix(sourceInputs.count).map(Self.messageId)
+        let sourceContent = sourceInputs.joined(separator: "\n\n")
+
+        func summarize(additionalPrompt: String) async throws -> String? {
+            let prompt = Self.buildCompressionPrompt(
+                basePrompt: settings.compressPrompt,
+                content: sourceContent,
+                targetTokens: policy.maxSummaryTokens,
+                additionalPrompt: additionalPrompt,
+                coveredCompactIds: offeredCompactIds,
+                previousCompactContext: previousCompactContext
+            )
+        let raw = try await generateCompactSummary(
                 provider: rawProvider,
                 model: compressionModel,
-                prompt: retryPrompt,
+                prompt: prompt,
                 conversationId: conversationKey
             )
-            normalizedSummary = Self.normalizedPayload(
-                retrySummary.isEmpty ? rawSummary : retrySummary,
+            return Self.normalizedPayload(
+                raw,
                 sourceMessageIds: sourceMessageIds,
-                coveredCompactIds: coveredCompactIds,
-                createdAt: createdAt,
-                sourceContent: Self.buildCompressionInput(sourceMessages),
-                carriedHandoffMarkdown: previousCompactContext
+                offeredCompactIds: offeredCompactIds,
+                createdAt: createdAt
+            )
+        }
+        // A summary that fails the gate is never saved: it would replace real history.
+        var acceptedSummary = try await summarize(additionalPrompt: "")
+        if acceptedSummary == nil {
+            acceptedSummary = try await summarize(additionalPrompt: Self.compactionRetryPrompt)
+        }
+        guard let normalizedSummary = acceptedSummary else {
+            throw NSError(
+                domain: "AmberAgent.ContextCompaction", code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "压缩模型没有返回可用的交接摘要。"]
             )
         }
 
+        let sourceIdSet = Set(sourceMessageIds)
+        let sourceIndices = messages.indices.filter { sourceIdSet.contains(Self.messageId(messages[$0])) }
         let compactId = UUID().uuidString.lowercased()
         let compact = IOSConversationCompact(
             id: compactId,
             conversationId: conversationKey,
             summary: normalizedSummary,
             level: 1,
-            sourceStartIndex: plan.sourceStartIndex,
-            sourceEndIndex: plan.sourceEndIndex,
+            sourceStartIndex: sourceIndices.first ?? 0,
+            sourceEndIndex: sourceIndices.last ?? 0,
             sourceMessageIds: sourceMessageIds,
             tokenEstimate: Self.estimateTokens([
                 UIMessage.companion.system(prompt: Self.injectionText(
@@ -486,12 +551,14 @@ final class IOSContextCompactionCoordinator {
             status: "completed",
             timelineAnchorMessageId: messages.last.map(Self.messageId)
         )
+        // A cancelled pass (request cancelled or conversation deleted) must not write.
+        try Task.checkCancellation()
         compacts = store.load(conversationId: conversationKey)
         if !compacts.contains(where: { $0.id == compact.id }) {
             compacts.append(compact)
         }
         try store.save(compacts, conversationId: conversationKey)
-        NSLog("[ContextCompact] \(reason) compacted \(plan.sourceMessageCount) messages into \(compact.id)")
+        NSLog("[ContextCompact] \(reason) compacted \(sourceMessageIds.count) messages into \(compact.id)")
         return compact
     }
 
@@ -571,14 +638,30 @@ private final class IOSConversationCompactStore {
         }
 
         let url = fileURL(conversationId: conversationId)
-        let compacts: [IOSConversationCompact]
+        var compacts: [IOSConversationCompact] = []
         if let data = try? Data(contentsOf: url) {
-            compacts = (try? decoder.decode([IOSConversationCompact].self, from: data)) ?? []
-        } else {
-            compacts = []
+            do {
+                compacts = try decoder.decode([IOSConversationCompact].self, from: data)
+            } catch {
+                // Keep the unreadable file for recovery instead of letting the next save overwrite it.
+                let aside = url.deletingPathExtension().appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970)).json")
+                try? FileManager.default.moveItem(at: url, to: aside)
+                NSLog("[ContextCompact] unreadable compact file moved aside: \(error.localizedDescription)")
+            }
         }
         cache[conversationId] = compacts
         return compacts
+    }
+
+    func remove(conversationId: String) throws {
+        cache[conversationId] = nil
+        let url = fileURL(conversationId: conversationId)
+        // Includes files moved aside by `load` as unreadable: they hold the same summaries.
+        let asidePrefix = url.deletingPathExtension().lastPathComponent + ".corrupt-"
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        for name in names where name == url.lastPathComponent || name.hasPrefix(asidePrefix) {
+            try FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+        }
     }
 
     func save(_ compacts: [IOSConversationCompact], conversationId: String) throws {
@@ -600,6 +683,13 @@ private extension IOSContextCompactionCoordinator {
     static let defaultContextWindowTokens = Int(ChatContextSnapshot.defaultContextWindowTokens)
     static let maxTimelineSummaryChars = 1_200
     static let maxHandoffChars = 24_000
+    static let maxCompressionTextChars = 48_000
+    /// Share of the summarizer's window the summary request may use (the rest is output).
+    static let compressionInputRatio = 0.75
+
+    static func estimatePromptTokens(_ text: String) -> Int {
+        text.weightedTokenChars / 4 + 1
+    }
 
     static func estimateTokens(_ messages: [UIMessage]) -> Int {
         let chars = messages.reduce(0) { total, message in
@@ -721,36 +811,21 @@ private extension IOSContextCompactionCoordinator {
             )
         }
 
+        // Coverage is by message id, not stored indices: deletions shift indices, and
+        // any uncovered message before the kept tail (including holes left by an
+        // invalidated compact) belongs in the next summary.
         let existingIds = Set(messages.map(messageId))
-        let latestCoveredEnd = validCompletedCompacts(activeCompacts, existingMessageIds: existingIds)
-            .map(\.sourceEndIndex)
-            .max() ?? -1
-        guard latestCoveredEnd < sourceEnd else {
+        let coveredIds = Set(validCompletedCompacts(activeCompacts, existingMessageIds: existingIds)
+            .flatMap(\.sourceMessageIds))
+        var sourceIndices = (0...sourceEnd).filter { !coveredIds.contains(messageId(messages[$0])) }
+        // A still-pending tool call at the boundary belongs to the in-flight turn.
+        while let last = sourceIndices.last, messageHasPendingTool(messages[last]) {
+            sourceIndices.removeLast()
+        }
+        guard sourceIndices.count >= 2 else {
             return IOSCompactPlan(
                 shouldCompact: false,
-                reason: "already_compacted",
-                estimatedTokens: estimatedTokens,
-                contextWindowTokens: contextWindow,
-                sourceStartIndex: 0,
-                sourceEndIndex: -1,
-                sourceMessageIds: []
-            )
-        }
-
-        var start = max(latestCoveredEnd + 1, 0)
-        var end = sourceEnd
-        while start <= end,
-              messages[start].role == MessageRole.assistant,
-              messageHasExecutedTool(messages[start]) {
-            start += 1
-        }
-        while end >= start, messageHasPendingTool(messages[end]) {
-            end -= 1
-        }
-        guard end - start + 1 >= 2 else {
-            return IOSCompactPlan(
-                shouldCompact: false,
-                reason: "not_enough_new_history",
+                reason: coveredIds.isEmpty ? "not_enough_new_history" : "already_compacted",
                 estimatedTokens: estimatedTokens,
                 contextWindowTokens: contextWindow,
                 sourceStartIndex: 0,
@@ -763,9 +838,9 @@ private extension IOSContextCompactionCoordinator {
             reason: ratio >= policy.forceRatio ? "force_threshold" : "precompact_threshold",
             estimatedTokens: estimatedTokens,
             contextWindowTokens: contextWindow,
-            sourceStartIndex: start,
-            sourceEndIndex: end,
-            sourceMessageIds: messages[start...end].map(messageId)
+            sourceStartIndex: sourceIndices[0],
+            sourceEndIndex: sourceIndices[sourceIndices.count - 1],
+            sourceMessageIds: sourceIndices.map { messageId(messages[$0]) }
         )
     }
 
@@ -868,10 +943,10 @@ private extension IOSContextCompactionCoordinator {
         }
         let coveredIds = Set(completed.flatMap(\.sourceMessageIds))
         let recentMessages = messages.filter { !coveredIds.contains(messageId($0)) }
-        let keepLimit = contextMessageSize > 0
-            ? contextMessageSize
-            : max(policy.keepRecentTurns * 2, 12)
-        return summaries + limitContext(recentMessages, size: keepLimit)
+        // Uncovered messages are the only copy of that history in the request; only an
+        // explicit user limit may cut them here. Token pressure is handled by the budget
+        // fit, which leaves a visible truncation notice.
+        return summaries + limitContext(recentMessages, size: contextMessageSize)
     }
 
     static func fitMessagesToTokenBudget(_ messages: [UIMessage], maxTokens: Int) -> [UIMessage] {
@@ -1109,24 +1184,19 @@ private extension IOSContextCompactionCoordinator {
         content: String,
         targetTokens: Int,
         additionalPrompt: String,
-        sourceMessageIds: [String],
         coveredCompactIds: [String],
-        previousCompactContext: String,
-        createdAt: Int64
+        previousCompactContext: String
     ) -> String {
         let coveredIds = coveredCompactIds.map { "\"\($0)\"" }.joined(separator: ", ")
-        let sourceIds = sourceMessageIds.map { "\"\($0)\"" }.joined(separator: ", ")
         let structured = """
         Return valid JSON only. Required schema:
         {
           "schema_version": 2,
           "timeline_summary": "4-5 complete human-readable sentences in the user's language for the chat timeline.",
           "handoff_markdown": "Dense Markdown continuation handoff with sections: Goal, Constraints, Progress, Decisions, Current State, Next Steps, Critical Context, Relevant Files.",
-          "covered_compact_ids": [\(coveredIds)],
-          "source_message_ids": [\(sourceIds)],
-          "created_at": \(createdAt)
+          "covered_compact_ids": [\(coveredIds)]
         }
-        `covered_compact_ids`, `source_message_ids`, and `created_at` must exactly match the values above.
+        Carry every previous handoff below forward; `covered_compact_ids` lists the ids whose content this handoff carries.
         Preserve concrete names, files, commands, errors, user preferences, rejected approaches, tool outcomes, and unresolved decisions.
         The timeline summary is for the human timeline; the handoff Markdown is what the next model will receive.
 
@@ -1136,46 +1206,94 @@ private extension IOSContextCompactionCoordinator {
         Previous compact handoffs to carry forward:
         \(previousCompactContext.isEmpty ? "None." : previousCompactContext)
         """
-        return basePrompt
-            .replacingOccurrences(of: "{content}", with: content)
-            .replacingOccurrences(of: "{target_tokens}", with: "\(targetTokens)")
-            .replacingOccurrences(of: "{additional_context}", with: [structured, additionalPrompt].filter { !$0.isEmpty }.joined(separator: "\n\n"))
-            .replacingOccurrences(of: "{locale}", with: Locale.current.localizedString(forIdentifier: Locale.current.identifier) ?? Locale.current.identifier)
+        let additional = [structured, additionalPrompt].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        var template = basePrompt
+        // A synced/custom prompt that lost a placeholder must still carry the schema and the source.
+        if !template.contains("{additional_context}") { template += "\n\n{additional_context}" }
+        if !template.contains("{content}") { template += "\n\n{content}" }
+        return fillTemplate(template, values: [
+            "content": content,
+            "target_tokens": "\(targetTokens)",
+            "additional_context": additional,
+            "locale": Locale.current.localizedString(forIdentifier: Locale.current.identifier) ?? Locale.current.identifier
+        ])
     }
 
+    /// Single pass over the template, so placeholder-looking text inside the
+    /// conversation content or previous handoffs is never substituted again.
+    static func fillTemplate(_ template: String, values: [String: String]) -> String {
+        let pattern = "\\{(" + values.keys.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|") + ")\\}"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return template }
+        let source = template as NSString
+        var result = ""
+        var cursor = 0
+        for match in regex.matches(in: template, range: NSRange(location: 0, length: source.length)) {
+            result += source.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            result += values[source.substring(with: match.range(at: 1))] ?? ""
+            cursor = match.range.location + match.range.length
+        }
+        return result + source.substring(from: cursor)
+    }
+
+    /// Returns nil when the model output is not a usable handoff; callers must not save it.
     static func normalizedPayload(
         _ raw: String,
         sourceMessageIds: [String],
-        coveredCompactIds: [String],
-        createdAt: Int64,
-        sourceContent: String,
-        carriedHandoffMarkdown: String
-    ) -> String {
+        offeredCompactIds: [String],
+        createdAt: Int64
+    ) -> String? {
         let object = parseJSONObject(raw)
+        let handoff: String
+        let carriedCompactIds: [String]
+        if let object {
+            handoff = cleanMarkdown(stringValue(object["handoff_markdown"]) ?? "")
+            // Ancestors drop out of injection only when the model says it carried them forward.
+            let claimed = Set(stringList(object["covered_compact_ids"]))
+            carriedCompactIds = offeredCompactIds.filter(claimed.contains)
+        } else {
+            let text = cleanMarkdown(raw
+                .replacingOccurrences(of: "```markdown", with: "")
+                .replacingOccurrences(of: "```", with: ""))
+            handoff = text.hasPrefix("{") ? "" : text
+            carriedCompactIds = []
+        }
+        guard isUsableHandoff(handoff) else { return nil }
         let timeline = coerceTimelineSummary(
             stringValue(object?["timeline_summary"])
                 ?? stringValue(object?["display_summary"])
                 ?? stringValue(object?["summary"])
-                ?? cleanHumanText(raw)
-                ?? fallbackTimeline(sourceContent)
-        )
-        let handoff = cleanMarkdown(
-            stringValue(object?["handoff_markdown"])
-                ?? plainTextHandoff(
-                    timeline: timeline,
-                    sourceMessageIds: sourceMessageIds,
-                    carriedHandoffMarkdown: carriedHandoffMarkdown
-                )
+                ?? String(handoff
+                    .split(separator: "\n")
+                    .filter { !$0.hasPrefix("#") }
+                    .joined(separator: " ")
+                    .prefix(280))
         )
         return jsonString([
             "schema_version": 2,
             "timeline_summary": String(timeline.prefix(maxTimelineSummaryChars)),
             "handoff_markdown": String(handoff.prefix(maxHandoffChars)),
-            "covered_compact_ids": Array(Set(coveredCompactIds)).sorted(),
+            "covered_compact_ids": Array(Set(carriedCompactIds)).sorted(),
             "source_message_ids": Array(Set(sourceMessageIds)).sorted(),
             "created_at": createdAt
         ])
     }
+
+    /// A handoff must be model-authored and structured: a refusal or "please retry"
+    /// reply is short and names none of the required sections.
+    static func isUsableHandoff(_ handoff: String) -> Bool {
+        guard handoff.count >= 120 else { return false }
+        let lower = handoff.lowercased()
+        let sections = handoffSectionNames.filter { names in names.contains { lower.contains($0) } }
+        return sections.count >= 2
+    }
+
+    static let handoffSectionNames: [[String]] = [
+        ["goal", "目标"], ["constraints", "约束"], ["progress", "进展", "进度"], ["decisions", "决策", "决定"],
+        ["current state", "当前状态"], ["next steps", "下一步"], ["critical context", "关键上下文"],
+        ["relevant files", "相关文件"]
+    ]
+
+    static let compactionRetryPrompt = "Retry because the previous compaction was not a usable handoff. Return valid JSON only. `handoff_markdown` must contain the required sections with concrete facts from the source messages, and `timeline_summary` must contain 4-5 complete sentences."
 
     static func injectionText(_ compact: IOSConversationCompact, removedToolResults: Int = 0) -> String {
         injectionText(
@@ -1211,13 +1329,6 @@ private extension IOSContextCompactionCoordinator {
         "Note: \(count) tool result(s) from older messages were removed or trimmed from this prepared context. If you need their exact original content, re-run the relevant tool — workspace files, file search, and web search can re-fetch it. The original conversation storage is unchanged."
     }
 
-    static func isHighQualityPayload(_ summary: String) -> Bool {
-        guard let payload = payloadObject(summary) else { return false }
-        let handoff = stringValue(payload["handoff_markdown"]) ?? ""
-        let timeline = stringValue(payload["timeline_summary"]) ?? ""
-        return handoff.count >= 80 && sentenceCount(timeline) >= 4
-    }
-
     static func timelineSummary(_ summary: String) -> String? {
         guard let payload = payloadObject(summary) else {
             return cleanHumanText(summary)
@@ -1251,17 +1362,25 @@ private extension IOSContextCompactionCoordinator {
         _ activeCompacts: [IOSConversationCompact],
         existingMessageIds: Set<String>
     ) -> [IOSConversationCompact] {
-        activeCompacts
-            .filter {
-                $0.status == "completed" &&
-                    !$0.sourceMessageIds.isEmpty &&
-                    $0.sourceMessageIds.allSatisfy(existingMessageIds.contains)
+        let byId = Dictionary(activeCompacts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var memo: [String: Bool] = [:]
+        // A compact is only as valid as the handoffs it absorbed: once an ancestor's
+        // source is deleted or replaced, a descendant would re-inject its stale facts.
+        func isValid(_ compact: IOSConversationCompact, visiting: Set<String>) -> Bool {
+            if let known = memo[compact.id] { return known }
+            guard !visiting.contains(compact.id) else { return false }
+            let ownValid = compact.status == "completed" &&
+                !compact.sourceMessageIds.isEmpty &&
+                compact.sourceMessageIds.allSatisfy(existingMessageIds.contains)
+            let valid = ownValid && stringList(payloadObject(compact.summary)?["covered_compact_ids"]).allSatisfy { id in
+                byId[id].map { isValid($0, visiting: visiting.union([compact.id])) } ?? true
             }
-            .sorted {
-                $0.sourceEndIndex == $1.sourceEndIndex
-                    ? $0.createdAt < $1.createdAt
-                    : $0.sourceEndIndex < $1.sourceEndIndex
-            }
+            memo[compact.id] = valid
+            return valid
+        }
+        return activeCompacts
+            .filter { isValid($0, visiting: []) }
+            .sorted { $0.createdAt < $1.createdAt }
     }
 }
 
@@ -1276,8 +1395,6 @@ private extension IOSContextCompactionCoordinator {
     - `timeline_summary`: 4-5 human-readable sentences in the user's language, written for the chat timeline
     - `handoff_markdown`: dense Markdown for the next model, with sections: Goal, Constraints, Progress, Decisions, Current State, Next Steps, Critical Context, Relevant Files
     - `covered_compact_ids`: the compact ids from the provided previous handoffs that this handoff carries forward
-    - `source_message_ids`: exactly the source ids provided for this compact pass
-    - `created_at`: the unix epoch millis provided by the app
 
     The timeline summary is for humans. The handoff Markdown is for the model. Preserve concrete names, files, commands, errors, user preferences, approvals, rejected approaches, and unresolved decisions. Do not include raw tool logs unless they are needed to continue safely.
     """
@@ -1351,7 +1468,9 @@ private extension IOSContextCompactionCoordinator {
     static func summaryLine(_ part: UIMessagePart) -> String {
         switch part {
         case let text as UIMessagePart.Text:
-            return "text: \(text.text.takeMiddle(maxChars: 8_000))"
+            // Message text is what the covered history is replaced with; keep it whole up
+            // to a generous cap (the summarizer budget fit decides how many messages go in).
+            return "text: \(text.text.takeMiddle(maxChars: maxCompressionTextChars))"
         case let reasoning as UIMessagePart.Reasoning:
             return "reasoning_marker: \(reasoning.reasoning.count) chars"
         case let tool as UIMessagePart.Tool:
@@ -1684,39 +1803,6 @@ private extension IOSContextCompactionCoordinator {
         }
         return String(cleaned.prefix(maxTimelineSummaryChars))
     }
-
-    static func fallbackTimeline(_ sourceContent: String) -> String {
-        let preview = sourceContent.takeMiddle(maxChars: 700)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-        return "Conversation history was compacted. Key source content included: \(preview)"
-    }
-
-    static func plainTextHandoff(
-        timeline: String,
-        sourceMessageIds: [String],
-        carriedHandoffMarkdown: String
-    ) -> String {
-        [
-            "# Goal",
-            timeline,
-            "",
-            "# Current State",
-            "The earlier conversation segment was compacted. Continue from the preserved timeline and concrete details.",
-            "",
-            "# Critical Context",
-            carriedHandoffMarkdown.isEmpty ? "No previous compact handoff." : carriedHandoffMarkdown,
-            "",
-            "# Relevant Source Messages",
-            sourceMessageIds.joined(separator: ", ")
-        ].joined(separator: "\n")
-    }
-
-    static func sentenceCount(_ text: String) -> Int {
-        let count = text.reduce(0) { partial, char in
-            "。！？.!?".contains(char) ? partial + 1 : partial
-        }
-        return max(count, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0 : 1)
-    }
 }
 
 #if DEBUG
@@ -1757,6 +1843,49 @@ enum ContextCompactionEditTestSupport {
             modelContextWindowTokens: 10_000, extraTokenEstimate: overheadTokens
         )
         return (plan.shouldCompact, plan.estimatedTokens)
+    }
+
+    /// Source ids the next automatic pass would summarize, given saved compacts
+    /// `(id, sourceIds, coveredCompactIds)` created in array order.
+    static func plannedSourceIds(
+        messages: [UIMessage], compacts: [(id: String, sources: [String], covered: [String])]
+    ) -> [String] {
+        IOSContextCompactionCoordinator.planCompaction(
+            messages: messages, activeCompacts: testCompacts(compacts),
+            policy: IOSCompactPolicy(enabled: true, notifyOnly: false, precompactRatio: 0,
+                                     forceRatio: 0.9, keepRecentTurns: 1, maxSummaryTokens: 200),
+            modelContextWindowTokens: 10_000, extraTokenEstimate: 0
+        ).sourceMessageIds
+    }
+
+    static func validCompactIds(
+        messages: [UIMessage], compacts: [(id: String, sources: [String], covered: [String])]
+    ) -> [String] {
+        IOSContextCompactionCoordinator.validCompletedCompacts(
+            testCompacts(compacts),
+            existingMessageIds: Set(messages.map { String(describing: $0.id) })
+        ).map(\.id)
+    }
+
+    /// Nil means the summary is rejected and must not be saved.
+    static func normalizedSummary(_ raw: String, offeredCompactIds: [String] = []) -> String? {
+        IOSContextCompactionCoordinator.normalizedPayload(
+            raw, sourceMessageIds: ["m1"], offeredCompactIds: offeredCompactIds, createdAt: 1
+        )
+    }
+
+    private static func testCompacts(
+        _ specs: [(id: String, sources: [String], covered: [String])]
+    ) -> [IOSConversationCompact] {
+        specs.enumerated().map { index, spec in
+            let covered = spec.covered.map { "\"\($0)\"" }.joined(separator: ",")
+            return IOSConversationCompact(
+                id: spec.id, conversationId: "conv",
+                summary: ##"{"schema_version":2,"handoff_markdown":"# Goal\nx","covered_compact_ids":["## + covered + "]}",
+                level: 1, sourceStartIndex: 0, sourceEndIndex: 0, sourceMessageIds: spec.sources,
+                tokenEstimate: 20, createdAt: Int64(index + 1), updatedAt: Int64(index + 1), status: "completed"
+            )
+        }
     }
 
     static func editedMessagesWithCount(

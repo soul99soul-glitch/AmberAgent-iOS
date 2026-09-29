@@ -84,6 +84,28 @@ private struct IOSChatBackgroundRetryMessages: @unchecked Sendable {
     let values: [UIMessage]
 }
 
+/// 后台续轮的逐轮窗口预算：交接后新增的工具结果 / mailbox 消息不断变长，每轮
+/// 按模型窗口裁剪（带可见截断提示）并做超窗校验。这里不做摘要压缩：上传已是
+/// 前台加工过的请求视图，拿它做摘要会用残缺内容永久替换原文。engine 的 working
+/// 仍是权威，这里只改本轮上传。KMP 实体非 Sendable，装盒后在 MainActor 上执行。
+private struct IOSChatBackgroundUploadPreparer: @unchecked Sendable {
+    let settings: Settings
+    let params: TextGenerationParams
+
+    func prepare(_ messages: [UIMessage]) async throws -> [UIMessage] {
+        let inbox = IOSChatBackgroundRetryMessages(values: messages)
+        return try await MainActor.run {
+            IOSChatBackgroundRetryMessages(
+                values: try IOSContextCompactionCoordinator.shared.finalizedMessagesForRequest(
+                    inbox.values,
+                    settings: settings,
+                    params: params
+                )
+            )
+        }.values
+    }
+}
+
 private struct IOSChatBackgroundDependencies {
     let conversationStore: IOSConversationStore
     let toolRuntime: ChatToolRuntime
@@ -2376,6 +2398,15 @@ final class IOSChatBackgroundGenerationCoordinator {
         // force（不受 P2-b 召回同集去抖影响）。
         let initialCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
         let retryCitationTracker = IOSMemoryCitationTracker(enforceCitationAllowlist: true)
+        let budgetSettings = dependencies?.sharedSettings.snapshot
+        func uploadPreparer(
+            params: TextGenerationParams
+        ) -> (@Sendable ([UIMessage]) async throws -> [UIMessage])? {
+            guard let budgetSettings else { return nil }
+            let preparer = IOSChatBackgroundUploadPreparer(settings: budgetSettings, params: params)
+            return { try await preparer.prepare($0) }
+        }
+        let initialUploadPreparer = uploadPreparer(params: requestParams)
         let operationTask = Task { () -> IOSAgentToolEngineResult in
             switch job.mode {
             case .continueModel, .resumeResponse:
@@ -2386,6 +2417,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     citationTracker: initialCitationTracker,
                     toolExposureBridge: job.toolExposureBridge,
                     mailboxDrain: mailboxDrain,
+                    prepareRequestMessages: initialUploadPreparer,
                     onAssistantTurnStarted: {
                         runState.resetGenerationRound()
                         assistantTextSnapshot.replace(with: "")
@@ -2486,6 +2518,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     citationTracker: retryCitationTracker,
                     toolExposureBridge: job.toolExposureBridge,
                     mailboxDrain: mailboxDrain,
+                    prepareRequestMessages: uploadPreparer(params: retryParams),
                     onAssistantTurnStarted: {
                         runState.resetGenerationRound()
                         assistantTextSnapshot.replace(with: "")

@@ -245,7 +245,7 @@ extension IOSSharedSettingsStore {
               let model = configuredProviders[0].models.first else {
             return false
         }
-        setCurrentChatModelId(model.id.description())
+        selectChatModelAsDefault(model.id.description())
         if let settingsStore {
             syncLegacySettingsStoreForCurrentChat(settingsStore)
         }

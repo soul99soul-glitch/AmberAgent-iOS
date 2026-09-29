@@ -4776,7 +4776,8 @@ final class ChatViewModel {
         let imageGenerationConfigured: Bool = {
             let snap = sharedSettings.snapshot
             guard let model = snap.findModelById(uuid: snap.imageGenerationModelId),
-                  let provider = ChatProviderConfiguration.provider(for: model, providers: snap.providers) else {
+                  let provider = ChatProviderConfiguration.provider(for: model, providers: snap.providers),
+                  provider.enabled else {
                 return false
             }
             // Codex image generation uses the OAuth bearer (no apiKey); gate on

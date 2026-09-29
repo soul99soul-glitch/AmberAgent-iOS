@@ -12,6 +12,7 @@ struct ProviderDetailView: View {
     let sharedSettings: IOSSharedSettingsStore
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     let providerId: String
 
@@ -20,6 +21,8 @@ struct ProviderDetailView: View {
     @State private var connectionStatus: ProviderConnectionStatus = .idle
     @State private var fetchState: ProviderModelFetchState = .idle
     @State private var availableModels: [Model] = []
+    @State private var modelFetchTask: Task<Void, Never>?
+    @State private var modelFetchRequestID: UUID?
     @State private var modelDraft: ProviderModelDraft?
 
     @State private var draftName = ""
@@ -74,6 +77,7 @@ struct ProviderDetailView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear(perform: loadDraft)
         .onChange(of: sharedSettings.revision) { _, _ in loadDraft() }
+        .onDisappear { cancelModelFetch() }
         .alert(item: $alert, content: makeAlert)
         .sheet(item: $modelDraft) { draft in
             ProviderModelEditorSheet(
@@ -85,15 +89,19 @@ struct ProviderDetailView: View {
             CodexLoginView(
                 providerId: providerId,
                 onAuthModeChange: { mode in
+                    cancelModelFetch(clearAvailableModels: true)
                     _ = sharedSettings.setOpenAIAuthMode(providerId: providerId, authMode: mode)
-                    availableModels = []
-                    fetchState = .idle
                     if isCurrentProvider {
                         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
                     }
                 },
                 onModelsFetched: { models in
+                    guard let provider,
+                          IOSCodexProviderResolver.isCodexProvider(provider),
+                          IOSCodexProviderResolver.isSignedIn(provider) else { return }
+                    cancelModelFetch()
                     availableModels = IOSCodexModelCatalog.models(discovered: models)
+                    fetchState = .success("已刷新 Codex 聊天模型；GPT Image 生图预设可在模型页单独添加。")
                     selectedTab = .models
                 }
             )
@@ -103,6 +111,7 @@ struct ProviderDetailView: View {
                 providerId: providerId,
                 providerBackup: grokProviderBackup,
                 onSignedIn: {
+                    cancelModelFetch(clearAvailableModels: true)
                     let previousUuid = currentModel?.id.description()
                     let previousModelId = currentModel?.modelId
                     let currentWasThisProvider = provider?.models.contains {
@@ -129,7 +138,7 @@ struct ProviderDetailView: View {
                            let grok46 = updated?.models.first(where: {
                                $0.type == ModelType.chat && $0.modelId == "grok-4.6"
                            }) {
-                            sharedSettings.setCurrentChatModelId(grok46.id.description())
+                            sharedSettings.selectChatModelAsDefault(grok46.id.description())
                         }
                     }
                     if isCurrentProvider {
@@ -138,6 +147,7 @@ struct ProviderDetailView: View {
                     loadDraft()
                 },
                 onLoggedOut: { backup in
+                    cancelModelFetch(clearAvailableModels: true)
                     if let backup {
                         _ = sharedSettings.updateProviderEndpoint(
                             providerId: providerId,
@@ -158,6 +168,7 @@ struct ProviderDetailView: View {
             AntigravityLoginView(
                 providerId: providerId,
                 onAuthModeChange: { mode in
+                    cancelModelFetch(clearAvailableModels: true)
                     _ = sharedSettings.setGoogleAuthMode(providerId: providerId, authMode: mode)
                     if isCurrentProvider {
                         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
@@ -165,6 +176,7 @@ struct ProviderDetailView: View {
                     loadDraft()
                 },
                 onSignedIn: {
+                    cancelModelFetch(clearAvailableModels: true)
                     let shouldSeedModels = provider?.models.contains { $0.type == ModelType.chat } != true
                     if shouldSeedModels {
                         _ = sharedSettings.updateProviderChatModels(
@@ -178,6 +190,7 @@ struct ProviderDetailView: View {
                     loadDraft()
                 },
                 onLoggedOut: {
+                    cancelModelFetch(clearAvailableModels: true)
                     if isCurrentProvider {
                         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
                     }
@@ -256,7 +269,9 @@ struct ProviderDetailView: View {
                     prominent: true
                 ) {
                     commitPendingTextInput {
-                        _ = saveConfig(showSuccess: true)
+                        if saveConfig(showSuccess: false) {
+                            dismiss()
+                        }
                     }
                 }
             }
@@ -325,7 +340,12 @@ struct ProviderDetailView: View {
                     if let openAI = provider as? ProviderSetting.OpenAI, isCodingPlan(openAI.authMode), openAI.brand != OpenAIBrand.mimo {
                         ProviderStaticRow(title: "API 地址", subtitle: "", value: draftBaseURL, valueStyle: .mono)
                     } else if isGeminiOAuth {
-                        ProviderStaticRow(title: "API 地址", subtitle: "", value: draftBaseURL, valueStyle: .mono)
+                        ProviderStaticRow(
+                            title: "API 地址",
+                            subtitle: "",
+                            value: IOSGeminiConstants.cloudcodePaBaseUrl,
+                            valueStyle: .mono
+                        )
                     } else {
                         ProviderEditableTextFieldRow(
                             title: "API 地址",
@@ -401,7 +421,8 @@ struct ProviderDetailView: View {
                 subtitle: "",
                 value: protocolOption?.title ?? "待移植",
                 valueStyle: .body,
-                showsChevron: provider is ProviderSetting.OpenAI || provider is ProviderSetting.Claude
+                showsChevron: provider is ProviderSetting.OpenAI || provider is ProviderSetting.Claude,
+                stacksValueOnAccessibility: true
             )
         }
         .buttonStyle(.plain)
@@ -491,6 +512,7 @@ struct ProviderDetailView: View {
 
     private func switchGoogleAuthMode(to mode: GoogleAuthMode) {
         guard saveConfig(showSuccess: false) else { return }
+        cancelModelFetch(clearAvailableModels: true)
         _ = sharedSettings.setGoogleAuthMode(providerId: providerId, authMode: mode)
         if isCurrentProvider {
             sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
@@ -885,7 +907,8 @@ struct ProviderDetailView: View {
                                     subtitle: displayName(for: model) == model.modelId ? "" : model.modelId,
                                     value: selection ?? (enabledModel == nil ? "添加" : (isEmbedding ? "已添加" : "使用")),
                                     valueStyle: selection == nil && enabledModel == nil ? .accent : .body,
-                                    showsChevron: false
+                                    showsChevron: false,
+                                    stacksValueOnAccessibility: true
                                 )
                             }
                             .buttonStyle(.plain)
@@ -905,26 +928,7 @@ struct ProviderDetailView: View {
 
     private var modelActions: some View {
         VStack(spacing: 10) {
-            HStack(spacing: 10) {
-                Button {
-                    fetchModels()
-                } label: {
-                    ProviderActionRow(
-                        systemImage: fetchState.isLoading ? "hourglass" : "arrow.down.circle",
-                        title: fetchState.isLoading ? "正在获取" : "自动获取",
-                        tint: AmberTheme.accent
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(fetchState.isLoading)
-
-                Button {
-                    modelDraft = ProviderModelDraft()
-                } label: {
-                    ProviderActionRow(systemImage: "plus.circle", title: "手动添加", tint: AmberTheme.accent)
-                }
-                .buttonStyle(.plain)
-            }
+            modelActionButtons
             .padding(.horizontal, 16)
             .padding(.top, 16)
 
@@ -932,6 +936,44 @@ struct ProviderDetailView: View {
                 ProviderDetailFooter(message)
             }
         }
+    }
+
+    @ViewBuilder
+    private var modelActionButtons: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 10) {
+                fetchModelsButton
+                addModelButton
+            }
+        } else {
+            HStack(spacing: 10) {
+                fetchModelsButton
+                addModelButton
+            }
+        }
+    }
+
+    private var fetchModelsButton: some View {
+        Button {
+            fetchModels()
+        } label: {
+            ProviderActionRow(
+                systemImage: fetchState.isLoading ? "hourglass" : "arrow.down.circle",
+                title: fetchState.isLoading ? "正在获取" : "自动获取",
+                tint: AmberTheme.accent
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(fetchState.isLoading)
+    }
+
+    private var addModelButton: some View {
+        Button {
+            modelDraft = ProviderModelDraft()
+        } label: {
+            ProviderActionRow(systemImage: "plus.circle", title: "手动添加", tint: AmberTheme.accent)
+        }
+        .buttonStyle(.plain)
     }
 
     private func loadDraft() {
@@ -974,6 +1016,31 @@ struct ProviderDetailView: View {
         }
         let path = draftChatPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "/chat/completions" : draftChatPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let enabled = forceEnabled || draftEnabled
+        let previousHeaderRecord = IOSProviderRequestHeaderStore.record(for: providerId)
+        let requestConfigurationChanged: Bool
+        if let openAI = provider as? ProviderSetting.OpenAI {
+            requestConfigurationChanged = openAI.apiKey != draftApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                || openAI.baseUrl != baseURL
+                || openAI.chatCompletionsPath != path
+                || openAI.useResponseApi != draftUseResponseAPI
+                || openAI.enabled != enabled
+        } else if let claude = provider as? ProviderSetting.Claude {
+            requestConfigurationChanged = claude.apiKey != draftApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                || claude.baseUrl != baseURL
+                || claude.enabled != enabled
+        } else if let google = provider as? ProviderSetting.Google {
+            requestConfigurationChanged = google.apiKey != draftApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                || google.baseUrl != baseURL
+                || google.enabled != enabled
+        } else {
+            requestConfigurationChanged = true
+        }
+        guard persistRequestHeaders() else {
+            alert = .requestHeadersSaveFailed
+            return false
+        }
+        let headersChanged = previousHeaderRecord != IOSProviderRequestHeaderStore.record(for: providerId)
+        cancelModelFetch(clearAvailableModels: requestConfigurationChanged || headersChanged)
         _ = sharedSettings.updateProviderBasics(providerId: providerId, name: name, enabled: enabled)
         if forceEnabled {
             draftEnabled = true
@@ -986,7 +1053,6 @@ struct ProviderDetailView: View {
             useResponseApi: draftUseResponseAPI,
             promptCaching: draftPromptCaching
         )
-        persistRequestHeaders()
         if isCurrentProvider {
             sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
         }
@@ -999,12 +1065,12 @@ struct ProviderDetailView: View {
         return true
     }
 
-    private func persistRequestHeaders() {
-        guard provider is ProviderSetting.OpenAI else { return }
+    private func persistRequestHeaders() -> Bool {
+        guard provider is ProviderSetting.OpenAI else { return true }
         let extra = draftExtraHeaders.map {
             IOSProviderRequestHeaderStore.Item(name: $0.name, value: $0.value)
         }
-        IOSProviderRequestHeaderStore.save(
+        return IOSProviderRequestHeaderStore.save(
             providerId: providerId,
             userAgent: draftUserAgent,
             extra: extra
@@ -1029,6 +1095,7 @@ struct ProviderDetailView: View {
 
     private func switchAuthMode(to mode: OpenAIAuthMode) {
         guard saveConfig(showSuccess: false) else { return }
+        cancelModelFetch(clearAvailableModels: true)
         _ = sharedSettings.setOpenAIAuthMode(providerId: providerId, authMode: mode)
         if !isCodingPlan(mode) {
             let stored = IOSProviderRequestHeaderStore.record(for: providerId)
@@ -1078,9 +1145,8 @@ struct ProviderDetailView: View {
             alert = .protocolSwitchFailed
             return
         }
+        cancelModelFetch(clearAvailableModels: true)
         connectionStatus = .idle
-        availableModels = []
-        fetchState = .idle
         loadDraft()
     }
 
@@ -1089,6 +1155,7 @@ struct ProviderDetailView: View {
         revealModels: Bool = false,
         reportsConnectionStatus: Bool = false
     ) {
+        cancelModelFetch()
         notice = nil
         if saveBeforeFetch {
             guard saveConfig(showSuccess: false) else { return }
@@ -1115,8 +1182,17 @@ struct ProviderDetailView: View {
             if reportsConnectionStatus { connectionStatus = .failure(message) }
             return
         }
+        let headersAtStart = IOSProviderRequestHeaderStore.headers(for: providerId)
+        let requestID = UUID()
+        modelFetchRequestID = requestID
         fetchState = .loading
-        Task { @MainActor in
+        modelFetchTask = Task { @MainActor in
+            defer {
+                if modelFetchRequestID == requestID {
+                    modelFetchRequestID = nil
+                    modelFetchTask = nil
+                }
+            }
             do {
                 let models: [Model]
                 let successMessage: String?
@@ -1170,7 +1246,7 @@ struct ProviderDetailView: View {
                 } else if let openAI = provider as? ProviderSetting.OpenAI {
                     models = try await OpenAIKmpProvider().listModelsWithHeadersOrThrow(
                         providerSetting: openAI,
-                        extraHeaders: IOSProviderRequestHeaderStore.headers(for: providerId)
+                        extraHeaders: headersAtStart
                     )
                     successMessage = nil
                 } else if let claude = provider as? ProviderSetting.Claude {
@@ -1180,6 +1256,7 @@ struct ProviderDetailView: View {
                     models = []
                     successMessage = nil
                 }
+                guard !Task.isCancelled, modelFetchRequestID == requestID else { return }
                 availableModels = models
                 let message = successMessage ?? (models.isEmpty
                     ? IOSAppLocalization.string(
@@ -1194,11 +1271,21 @@ struct ProviderDetailView: View {
                 fetchState = .success(message)
                 if reportsConnectionStatus { connectionStatus = .success(message) }
             } catch {
+                guard !Task.isCancelled, modelFetchRequestID == requestID else { return }
                 let message = ChatViewModel.userFacingGenerationError(error.localizedDescription, modelId: nil)
                 fetchState = .failure(message)
                 if reportsConnectionStatus { connectionStatus = .failure(message) }
             }
         }
+    }
+
+    private func cancelModelFetch(clearAvailableModels: Bool = false) {
+        modelFetchTask?.cancel()
+        modelFetchTask = nil
+        modelFetchRequestID = nil
+        if clearAvailableModels || fetchState.isLoading { fetchState = .idle }
+        if clearAvailableModels || connectionStatus.isTesting { connectionStatus = .idle }
+        if clearAvailableModels { availableModels = [] }
     }
 
     private func addFetchedModel(_ model: Model) {
@@ -1320,7 +1407,7 @@ struct ProviderDetailView: View {
     }
 
     private func selectCurrent(_ model: Model, showAlert: Bool) {
-        sharedSettings.setCurrentChatModelId(model.id.description())
+        sharedSettings.selectChatModelAsDefault(model.id.description())
         sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
         if showAlert {
             notice = IOSAppLocalization.formatted(
@@ -1343,6 +1430,7 @@ struct ProviderDetailView: View {
     }
 
     private func deleteModel(_ model: Model) {
+        guard saveConfig(showSuccess: false) else { return }
         let wasCurrentChat = currentModel?.id == model.id
         let wasDefaultImage = imageGenerationModel?.id == model.id
         _ = sharedSettings.removeProviderChatModel(providerId: providerId, modelUuid: model.id.description())
@@ -1521,6 +1609,7 @@ private enum ProviderModelFetchState: Equatable {
 private enum ProviderDetailAlert: Identifiable {
     case saved
     case invalidBaseURL
+    case requestHeadersSaveFailed
     case protocolSwitchFailed
     case unsupportedProtocol
     case modelRequired
@@ -1535,6 +1624,7 @@ private enum ProviderDetailAlert: Identifiable {
         switch self {
         case .saved: "saved"
         case .invalidBaseURL: "invalid-base-url"
+        case .requestHeadersSaveFailed: "request-headers-save-failed"
         case .protocolSwitchFailed: "protocol-switch-failed"
         case .unsupportedProtocol: "unsupported-protocol"
         case .modelRequired: "model-required"
@@ -1553,6 +1643,8 @@ private enum ProviderDetailAlert: Identifiable {
             IOSAppLocalization.string("已保存", defaultValue: "已保存")
         case .invalidBaseURL:
             IOSAppLocalization.string("API 地址无效", defaultValue: "API 地址无效")
+        case .requestHeadersSaveFailed:
+            IOSAppLocalization.string("请求头保存失败", defaultValue: "请求头保存失败")
         case .protocolSwitchFailed:
             IOSAppLocalization.string("协议切换失败", defaultValue: "协议切换失败")
         case .unsupportedProtocol:
@@ -1585,6 +1677,11 @@ private enum ProviderDetailAlert: Identifiable {
             IOSAppLocalization.string(
                 "请输入 HTTPS 地址，或使用 http://IP:端口形式的 API 地址。",
                 defaultValue: "请输入 HTTPS 地址，或使用 http://IP:端口形式的 API 地址。"
+            )
+        case .requestHeadersSaveFailed:
+            IOSAppLocalization.string(
+                "自定义请求头未能安全保存，服务商配置没有提交。请重试。",
+                defaultValue: "自定义请求头未能安全保存，服务商配置没有提交。请重试。"
             )
         case .protocolSwitchFailed:
             IOSAppLocalization.string(
@@ -1957,7 +2054,7 @@ private struct ProviderActionRow: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .frame(height: 50)
+        .frame(minHeight: 50)
         .padding(.horizontal, 12)
         .background(tint.opacity(0.075), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
@@ -1993,30 +2090,47 @@ private struct ProviderEditableTextFieldRow: View {
     let placeholder: String
     var isSecure = false
     var monospace = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(title)
-                .font(.body)
-                .foregroundStyle(AmberTheme.foreground)
-                .frame(width: 86, alignment: .leading)
-
-            Group {
-                if isSecure {
-                    SecureField(placeholder, text: $text)
-                } else {
-                    TextField(placeholder, text: $text, axis: .vertical)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    titleLabel
+                    textInput(alignment: .leading)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    titleLabel.frame(width: 86, alignment: .leading)
+                    textInput(alignment: .trailing)
                 }
             }
-            .font(monospace ? .system(size: 13, weight: .regular, design: .monospaced) : .body)
-            .foregroundStyle(AmberTheme.foreground)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .multilineTextAlignment(.trailing)
         }
         .frame(minHeight: 50)
         .padding(.horizontal, 14)
         .padding(.vertical, 4)
+    }
+
+    private var titleLabel: some View {
+        Text(title)
+            .font(.body)
+            .foregroundStyle(AmberTheme.foreground)
+    }
+
+    @ViewBuilder
+    private func textInput(alignment: TextAlignment) -> some View {
+        Group {
+            if isSecure {
+                SecureField(placeholder, text: $text)
+            } else {
+                TextField(placeholder, text: $text, axis: .vertical)
+            }
+        }
+        .font(monospace ? .system(size: 13, weight: .regular, design: .monospaced) : .body)
+        .foregroundStyle(AmberTheme.foreground)
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .multilineTextAlignment(alignment)
     }
 }
 
@@ -2107,8 +2221,18 @@ private struct ProviderRowContent: View {
     let value: String
     var valueStyle: ProviderRowValueStyle = .body
     var showsChevron = true
+    var stacksValueOnAccessibility = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        if stacksValueOnAccessibility && dynamicTypeSize.isAccessibilitySize {
+            accessibilityRow
+        } else {
+            standardRow
+        }
+    }
+
+    private var standardRow: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
@@ -2141,6 +2265,43 @@ private struct ProviderRowContent: View {
         .padding(.vertical, 4)
     }
 
+    private var accessibilityRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.body)
+                    .foregroundStyle(AmberTheme.foreground)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(value)
+                    .font(font)
+                    .foregroundStyle(color)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                if showsChevron {
+                    chevron
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 58)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var chevron: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AmberTheme.muted2)
+    }
+
     private var font: Font {
         switch valueStyle {
         case .body, .accent:
@@ -2171,54 +2332,19 @@ private struct ProviderModelRow: View {
     let onEdit: () -> Void
     let onSetCurrent: () -> Void
     let onDelete: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(isCurrent ? AmberTheme.accentGreen : AmberTheme.accent)
-                .frame(width: 36, height: 36)
-                .background(
-                    isCurrent ? AmberTheme.accentGreen.opacity(0.12) : AmberTheme.accentTint,
-                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke((isCurrent ? AmberTheme.accentGreen : AmberTheme.accent).opacity(0.13), lineWidth: 0.5)
-                }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(name)
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(AmberTheme.foreground)
-                    .lineLimit(1)
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.muted)
-                    .lineLimit(1)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                accessibilityRow
+            } else {
+                standardRow
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            ProviderModelBadge(text: badge, isCurrent: isCurrent)
-
-            Menu {
-                Button("编辑", action: onEdit)
-                if canSetCurrent && !isCurrent {
-                    Button(setCurrentTitle, action: onSetCurrent)
-                }
-                Button("删除", role: .destructive, action: onDelete)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(AmberTheme.muted)
-                    .frame(width: 32, height: 32)
-                    .background(AmberTheme.surface2.opacity(0.8), in: Circle())
-            }
-            .buttonStyle(.plain)
         }
         .frame(minHeight: 64)
         .padding(.horizontal, 14)
-        .padding(.vertical, 4)
+        .padding(.vertical, dynamicTypeSize.isAccessibilitySize ? 8 : 4)
         .background {
             if isCurrent {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -2230,6 +2356,81 @@ private struct ProviderModelRow: View {
             onEdit()
         }
     }
+
+    private var standardRow: some View {
+        HStack(spacing: 12) {
+            modelIcon
+            modelText
+            ProviderModelBadge(text: badge, isCurrent: isCurrent)
+            actionsMenu
+        }
+    }
+
+    private var accessibilityRow: some View {
+        HStack(alignment: .top, spacing: 12) {
+            modelIcon
+            VStack(alignment: .leading, spacing: 8) {
+                modelText
+                ProviderModelBadge(text: badge, isCurrent: isCurrent)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            actionsMenu
+        }
+    }
+
+    private var modelIcon: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(isCurrent ? AmberTheme.accentGreen : AmberTheme.accent)
+            .frame(width: 36, height: 36)
+            .background(
+                isCurrent ? AmberTheme.accentGreen.opacity(0.12) : AmberTheme.accentTint,
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke((isCurrent ? AmberTheme.accentGreen : AmberTheme.accent).opacity(0.13), lineWidth: 0.5)
+            }
+    }
+
+    private var modelText: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(name)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+            Text(summary)
+                .font(.caption)
+                .foregroundStyle(AmberTheme.muted)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var actionsMenu: some View {
+        Menu {
+            Button("编辑", action: onEdit)
+            if canSetCurrent && !isCurrent {
+                Button(setCurrentTitle, action: onSetCurrent)
+            }
+            Button("删除", role: .destructive, action: onDelete)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(AmberTheme.muted)
+                .frame(
+                    width: dynamicTypeSize.isAccessibilitySize ? 44 : 32,
+                    height: dynamicTypeSize.isAccessibilitySize ? 44 : 32
+                )
+                .background(AmberTheme.surface2.opacity(0.8), in: Circle())
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
 }
 
 private struct ProviderModelBadge: View {

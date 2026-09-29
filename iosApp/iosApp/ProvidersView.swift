@@ -22,6 +22,7 @@ struct ProvidersView: View {
     @Environment(RouterPath.self) private var router
     @Environment(\.dismiss) private var dismiss
     @State private var pendingDeleteProvider: ProviderDeleteCandidate?
+    @State private var searchText = ""
 
     var body: some View {
         ZStack {
@@ -88,13 +89,29 @@ struct ProvidersView: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(AmberTheme.muted.opacity(0.72))
 
-            Text("搜索服务商")
+            TextField("搜索服务商", text: $searchText)
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(AmberTheme.muted)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityLabel("搜索服务商")
 
-            Spacer()
+            if !searchText.isEmpty {
+                Button {
+                    searchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(AmberTheme.muted.opacity(0.72))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("清除搜索")
+            }
+
         }
-        .frame(height: 42)
+        .frame(minHeight: 44)
         .padding(.horizontal, 13)
         .background(
             AmberTheme.surface.opacity(0.76),
@@ -106,8 +123,6 @@ struct ProvidersView: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 2)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("搜索服务商")
     }
 
     private var sharedProviders: [ProviderSetting] {
@@ -118,16 +133,36 @@ struct ProvidersView: View {
         return sharedSettings.snapshot.providers
     }
 
+    private var filteredProviders: [ProviderListItem] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sharedProviders.compactMap { provider in
+            let model = ProviderRowModel(preset: provider)
+            guard query.isEmpty
+                || model.name.localizedStandardContains(query)
+                || model.endpoint.localizedStandardContains(query) else { return nil }
+            return ProviderListItem(id: provider.id.description(), provider: provider, model: model)
+        }
+    }
+
     private var savedProvidersList: some View {
         List {
             Section {
-                ForEach(Array(sharedProviders.enumerated()), id: \.offset) { _, provider in
-                    let providerId = provider.id.description()
+                if filteredProviders.isEmpty, !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("没有匹配的服务商")
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 16)
+                        .listRowBackground(AmberTheme.surface)
+                }
+                ForEach(filteredProviders) { item in
+                    let provider = item.provider
+                    let providerId = item.id
                     let hasKey = ChatProviderConfiguration.hasUsableCredential(provider)
                     let statusTitle = ChatProviderConfiguration.credentialStatusTitle(provider)
                     let isCustom = sharedSettings.canRemoveProvider(providerId: providerId)
                     RegistryProviderRow(
-                        model: ProviderRowModel(preset: provider),
+                        model: item.model,
                         isCustom: isCustom,
                         hasStoredKey: hasKey,
                         statusTitle: statusTitle
@@ -159,7 +194,6 @@ struct ProvidersView: View {
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 8, for: .scrollContent)
         .scrollIndicators(.hidden)
-        .id(sharedSettings.revision)
     }
 
     private func deleteProvider(_ candidate: ProviderDeleteCandidate) {
@@ -173,7 +207,15 @@ private struct ProviderDeleteCandidate: Identifiable {
     let name: String
 }
 
+private struct ProviderListItem: Identifiable {
+    let id: String
+    let provider: ProviderSetting
+    let model: ProviderRowModel
+}
+
 private struct RegistryProviderRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let model: ProviderRowModel
     let isCustom: Bool
     let hasStoredKey: Bool
@@ -182,24 +224,31 @@ private struct RegistryProviderRow: View {
 
     var body: some View {
         Button(action: onSelect) {
-            HStack(spacing: 12) {
+            HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
                 ProviderAvatar(initial: model.initial, hasStoredKey: hasStoredKey)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.name)
                         .font(.body.weight(.semibold))
                         .foregroundStyle(AmberTheme.foreground)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
 
                     Text(model.endpoint)
                         .font(.system(size: 11.5, weight: .regular, design: .monospaced))
                         .foregroundStyle(AmberTheme.muted)
-                        .lineLimit(1)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                         .minimumScaleFactor(0.82)
+                    if dynamicTypeSize.isAccessibilitySize {
+                        trailing.padding(.top, 5)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                trailing
+                if !dynamicTypeSize.isAccessibilitySize { trailing }
             }
             .frame(minHeight: 62)
             .padding(.horizontal, 14)
@@ -352,10 +401,7 @@ struct ProviderAddView: View {
                 dismissButton: .default(Text("知道了")) {
                     if let providerId = pendingDetailProviderId {
                         pendingDetailProviderId = nil
-                        dismiss()
-                        DispatchQueue.main.async {
-                            router.navigate(to: .providerDetail(id: providerId))
-                        }
+                        replaceProviderAddRoute(with: providerId)
                     }
                 }
             )
@@ -387,7 +433,7 @@ struct ProviderAddView: View {
                 Text("保存")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(AmberTheme.accent)
-                    .frame(height: 36)
+                    .frame(minHeight: 44)
                     .padding(.horizontal, 14)
                     .contentShape(Capsule())
             }
@@ -580,7 +626,7 @@ struct ProviderAddView: View {
         let hasChatModel: Bool
         if !trimmedKey.isEmpty,
            let chatModel = added.models.first(where: { $0.type == ModelType.chat }) {
-            sharedSettings.setCurrentChatModelId(chatModel.id.description())
+            sharedSettings.selectChatModelAsDefault(chatModel.id.description())
             sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
             hasChatModel = true
         } else {
@@ -593,10 +639,12 @@ struct ProviderAddView: View {
             alert = .modelRequired
             return
         }
-        dismiss()
-        DispatchQueue.main.async {
-            router.navigate(to: .providerDetail(id: providerId))
-        }
+        replaceProviderAddRoute(with: providerId)
+    }
+
+    private func replaceProviderAddRoute(with providerId: String) {
+        guard router.path.last == .providerAdd else { return }
+        router.path[router.path.count - 1] = .providerDetail(id: providerId)
     }
 
     private static func normalizedBaseURL(_ value: String) -> String {
@@ -803,7 +851,7 @@ private struct ProviderDivider: View {
     var body: some View {
         Divider()
             .overlay(AmberTheme.borderSoft)
-            .padding(.leading, 58)
+            .padding(.leading, 15)
     }
 }
 

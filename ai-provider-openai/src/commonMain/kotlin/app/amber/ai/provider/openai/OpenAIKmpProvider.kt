@@ -196,7 +196,9 @@ class OpenAIKmpProvider internal constructor(
         val choice = bodyJson["choices"]?.arr()?.firstOrNull()?.obj()
             ?: error("choices is null")
         val message = choice["message"]?.obj() ?: throw Exception("message is null")
-        val finishReason = choice.str("finish_reason") ?: "unknown"
+        val recovery = mimoTextToolCallRecovery(providerSetting, params)
+        val parsedMessage = parseMessage(message).let { recovery?.transformMessage(it) ?: it }
+        val finishReason = if (recovery?.recoveredAny == true) "tool_calls" else choice.str("finish_reason") ?: "unknown"
         val usage = parseTokenUsage(bodyJson["usage"]?.obj())
         return MessageChunk(
             id = id,
@@ -205,7 +207,7 @@ class OpenAIKmpProvider internal constructor(
                 UIMessageChoice(
                     index = 0,
                     delta = null,
-                    message = parseMessage(message),
+                    message = parsedMessage,
                     finishReason = finishReason,
                 )
             ),
@@ -229,13 +231,16 @@ class OpenAIKmpProvider internal constructor(
             configureGenerationAuth(providerSetting, messages, params.customHeaders)
             setBody(json.encodeToString(requestBody))
         }
+        val textToolRecovery = mimoTextToolCallRecovery(providerSetting, params)
         return flow {
             val terminal = OpenAIStreamTerminalState(OpenAIStreamKind.CHAT_COMPLETIONS)
             events.collect { event ->
                 when (event) {
                     is SseEvent.Event -> {
                         terminal.observe(event.data)
-                        parseChatCompletionStreamData(event.data).forEach { emit(it) }
+                        parseChatCompletionStreamData(event.data).forEach {
+                            emit(textToolRecovery?.transform(it) ?: it)
+                        }
                     }
 
                     is SseEvent.Failure -> throw event.throwable ?: Exception("Stream failed")
@@ -243,6 +248,7 @@ class OpenAIKmpProvider internal constructor(
                     is SseEvent.Open -> Unit
                 }
             }
+            textToolRecovery?.drain()?.let { emit(it) }
         }
     }
 
@@ -315,6 +321,7 @@ class OpenAIKmpProvider internal constructor(
                 transcript = transcript,
                 capabilities = capabilities,
                 toolPlan = toolPlan,
+                isMiMo = isMiMo,
             ),
         )
 
@@ -350,10 +357,19 @@ class OpenAIKmpProvider internal constructor(
                 )
             }
         }
+        // MiniMax 默认把思考写成正文里的 `<think>…</think>`，会原样显示给用户。reasoning_split 让思考
+        // 改走 reasoning_content；历史回传沿用 reasoning_content 即可（已实测 M3 能读到）。
+        // 不看 REASONING 能力：模型没勾能力时 M3 照样会思考。
+        if (providerSetting.brand == OpenAIBrand.MINIMAX ||
+            host.endsWith("minimaxi.com") ||
+            host.endsWith("minimax.io")
+        ) {
+            put("reasoning_split", true)
+        }
 
         if (toolPlan.requestTools.isNotEmpty()) {
             putJsonArray("tools") {
-                toolPlan.requestTools.forEach { add(it.toChatCompletionTool()) }
+                toolPlan.requestTools.forEach { add(it.toChatCompletionTool(strict = isMiMo)) }
             }
         }
         if (toolPlan.requestTools.isNotEmpty() || hasInlineToolAdditions(transcript.messages, toolPlan)) {
@@ -366,6 +382,7 @@ class OpenAIKmpProvider internal constructor(
         transcript: PromptTranscriptView,
         capabilities: PromptTranscriptCapabilities,
         toolPlan: PromptToolPlan,
+        isMiMo: Boolean = false,
     ): JsonArray = buildJsonArray {
         val uploadable = messages.filter {
             it.isValidToUpload() || (it.role == MessageRole.SYSTEM && PromptTranscript.event(it) != null)
@@ -373,10 +390,11 @@ class OpenAIKmpProvider internal constructor(
         val lastUserIndex = uploadable.indexOfLast { it.role == MessageRole.USER }
         uploadable.forEachIndexed { index, message ->
             if (message.role == MessageRole.ASSISTANT) {
-                // reasoning_content 只在「最后一条用户消息之后的当前轮」回传;历史里的思考不回传。
-                // 否则带思考 + tool_calls 的 assistant 消息被重发时,严格网关(mimo / DeepSeek 系)
+                // reasoning_content 默认只在「最后一条用户消息之后的当前轮」回传;历史里的思考不回传。
+                // 否则带思考 + tool_calls 的 assistant 消息被重发时,严格网关(DeepSeek 系)
                 // 会把请求体里不该出现的 reasoning_content 判为非法 → HTTP 500。对齐 Android 的 gating。
-                addAssistantMessages(message, includeReasoning = index > lastUserIndex)
+                // MiMo 官方文档要求思考模式多轮工具调用保留全部历史 reasoning_content，故全量回传。
+                addAssistantMessages(message, includeReasoning = isMiMo || index > lastUserIndex)
             } else {
                 val event = PromptTranscript.event(message)
                 if (message.role == MessageRole.SYSTEM && transcript.hasTranscript &&
@@ -386,7 +404,7 @@ class OpenAIKmpProvider internal constructor(
                     add(buildJsonObject {
                         put("role", "system")
                         putJsonArray("tools") {
-                            event.toolsAdded.forEach { add(it.toChatCompletionTool()) }
+                            event.toolsAdded.forEach { add(it.toChatCompletionTool(strict = isMiMo)) }
                         }
                     })
                 }
@@ -426,7 +444,11 @@ class OpenAIKmpProvider internal constructor(
         } == true
     }
 
-    private fun PromptToolDeclaration.toChatCompletionTool(): JsonObject = buildJsonObject {
+    /**
+     * [strict]：MiMo 的 `function.strict`（默认 false）让服务端按 schema 约束工具调用的生成，
+     * 减少模型手写 XML 工具调用时漏闭合标签、被网关当正文返回的情况。
+     */
+    private fun PromptToolDeclaration.toChatCompletionTool(strict: Boolean = false): JsonObject = buildJsonObject {
         put("type", "function")
         put("function", buildJsonObject {
             put("name", name)
@@ -434,6 +456,7 @@ class OpenAIKmpProvider internal constructor(
             parameters?.let { schema ->
                 put("parameters", json.encodeToJsonElement(InputSchema.serializer(), schema))
             }
+            if (strict) put("strict", true)
         })
     }
 
@@ -1601,6 +1624,17 @@ class OpenAIKmpProvider internal constructor(
 
     private fun isAstraModel(modelId: String): Boolean =
         modelId.substringAfterLast('/').lowercase().startsWith("gpt-6-astra")
+
+    /** 仅 MiMo 且本次声明了工具时启用正文 XML 工具调用兜底，见 [MiMoTextToolCallRecovery]。 */
+    private fun mimoTextToolCallRecovery(
+        providerSetting: ProviderSetting.OpenAI,
+        params: TextGenerationParams,
+    ): MiMoTextToolCallRecovery? {
+        if (params.tools.isEmpty()) return null
+        val host = hostOf(providerSetting.baseUrl)
+        if (!isMiMoProvider(providerSetting, host, params.model.modelId)) return null
+        return MiMoTextToolCallRecovery(params.tools)
+    }
 
     private fun isMiMoProvider(
         providerSetting: ProviderSetting.OpenAI,

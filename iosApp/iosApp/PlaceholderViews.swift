@@ -2448,6 +2448,16 @@ struct ConversationsView: View {
             // 新建：右下拇指区真浮层胶囊（非顶栏、非圆 FAB、非 safeAreaInset 假底栏）。
             List {
                 header.listRowInsets(EdgeInsets()).listRowBackground(Color.clear).listRowSeparator(.hidden).homeCascade(delay: 0.06, enabled: !cascadeComplete)
+                // 搜索条单独成行：顶栏行高恒定，键盘收起/搜索折叠时 AMBER 与齿轮不随行高动画跳动。
+                if isSearchExpanded {
+                    expandedSearchBar
+                        .padding(.horizontal, 16)
+                        .padding(.top, 15)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
                 controlCard
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
@@ -2663,7 +2673,7 @@ struct ConversationsView: View {
 
     /// E 版 + Liquid Glass skill：
     /// - 玻璃只上控制层（搜索/齿轮 + 展开条 + 右下新建胶囊）
-    /// - iOS 26：同一 `GlassEffectContainer` 内用 `glassEffectID("homeSearch")` 做胶囊→全宽条 morph
+    /// - 展开条在独立 List 行（顶栏行高恒定），胶囊与条之间不再跨行 morph
     /// - 关闭相邻玻璃的融合距离；搜索与齿轮留出 18pt，按压不再膨胀黏连
     /// - 展开 0.32s 对齐原型 cubic-bezier(0.2,.8,.2,1)；Reduce Motion 缩短
     private var header: some View {
@@ -2679,51 +2689,41 @@ struct ConversationsView: View {
         .animation(homeSearchMotion, value: isSearchExpanded)
     }
 
-    @ViewBuilder
     private func homeHeaderStack(useGlassEffectID: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                // Brand mark layer — HStack chrome layout frozen.
-                AmberBrandMarkView()
-                    .layoutPriority(1)
+        HStack(spacing: 10) {
+            // Brand mark layer — HStack chrome layout frozen.
+            AmberBrandMarkView()
+                .layoutPriority(1)
 
-                Spacer(minLength: 8)
+            Spacer(minLength: 8)
 
-                if !isSearchExpanded {
-                    homeSearchCapsuleButton
-                        .modifier(HomeOptionalGlassEffectID(
-                            id: useGlassEffectID ? "homeSearch" : nil,
-                            namespace: useGlassEffectID ? homeSearchNamespace : nil
-                        ))
-                        .padding(.trailing, 8)
-                }
-
-                homeSettingsGlassButton
+            if !isSearchExpanded {
+                homeSearchCapsuleButton
                     .modifier(HomeOptionalGlassEffectID(
-                        id: useGlassEffectID ? "homeSettings" : nil,
+                        id: useGlassEffectID ? "homeSearch" : nil,
                         namespace: useGlassEffectID ? homeSearchNamespace : nil
                     ))
-
-                Button {
-                    collapseSearchIfNeeded()
-                    router.navigate(to: .account)
-                } label: {
-                    // 与搜索 38 / 齿轮 38 同高，顶栏控制簇尺度一致。
-                    HomeAccountAvatar(initial: accountInitial, size: 38)
-                }
-                .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
-                .accessibilityLabel("我的账户")
+                    .padding(.trailing, 8)
             }
-            .frame(minHeight: 38)
-            .padding(.horizontal, 16)
 
-            if isSearchExpanded {
-                expandedSearchBar
-                    .padding(.horizontal, 16)
-                    .padding(.top, 15)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            homeSettingsGlassButton
+                .modifier(HomeOptionalGlassEffectID(
+                    id: useGlassEffectID ? "homeSettings" : nil,
+                    namespace: useGlassEffectID ? homeSearchNamespace : nil
+                ))
+
+            Button {
+                collapseSearchIfNeeded()
+                router.navigate(to: .account)
+            } label: {
+                // 与搜索 38 / 齿轮 38 同高，顶栏控制簇尺度一致。
+                HomeAccountAvatar(initial: accountInitial, size: 38)
             }
+            .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.92, haptic: .lightImpact))
+            .accessibilityLabel("我的账户")
         }
+        .frame(minHeight: 38)
+        .padding(.horizontal, 16)
     }
 
     private var homeSearchCapsuleButton: some View {
@@ -2762,7 +2762,7 @@ struct ConversationsView: View {
         }
     }
 
-    /// 展开后的全宽玻璃条：高 41、圆角 14（E 版实测）；与胶囊共用 glassEffectID 做 morph。
+    /// 展开后的全宽玻璃条：高 41、圆角 14（E 版实测）；独立 List 行，不改变顶栏行高。
     private var expandedSearchBar: some View {
         HStack(spacing: 14) {
             HomePhosphorIcon(.magnifyingGlass, size: 14)
@@ -2784,7 +2784,6 @@ struct ConversationsView: View {
         .frame(maxWidth: .infinity)
         .frame(height: 41)
         .homeGlassControl(cornerRadius: 14, interactive: false)
-        .homeGlassEffectID("homeSearch", in: homeSearchNamespace)
         .overlay {
             RoundedRectangle(cornerRadius: AmberTheme.controlRadius(14), style: .continuous)
                 .strokeBorder(AmberTheme.focusRing, lineWidth: 1.5)

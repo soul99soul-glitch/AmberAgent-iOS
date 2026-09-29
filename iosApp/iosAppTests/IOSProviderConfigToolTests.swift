@@ -417,6 +417,10 @@ final class IOSProviderConfigToolTests: XCTestCase {
         store.addCustomModel(name: "A", modelId: "alpha-unique-model", providerName: "ProvA")
         store.addCustomModel(name: "B", modelId: "beta-shared-token", providerName: "ProvB")
         store.addCustomModel(name: "C", modelId: "gamma-shared-token", providerName: "ProvC")
+        let alpha = try! XCTUnwrap(store.snapshot.providers.first { $0.name == "ProvA" }?.models.first)
+        let beta = try! XCTUnwrap(store.snapshot.providers.first { $0.name == "ProvB" }?.models.first)
+        let gamma = try! XCTUnwrap(store.snapshot.providers.first { $0.name == "ProvC" }?.models.first)
+        store.setCurrentAssistantChatModelId(beta.id.description())
         let service = makeService(store)
 
         let unique = await service.execute(
@@ -426,7 +430,17 @@ final class IOSProviderConfigToolTests: XCTestCase {
         let uniquePayload = parseJSON(unique)
         XCTAssertEqual(uniquePayload["ok"] as? Bool, true)
         XCTAssertEqual(uniquePayload["slot"] as? String, "chat")
-        XCTAssertFalse(store.snapshot.chatModelId.toHexDashString().isEmpty)
+        XCTAssertEqual(store.snapshot.chatModelId, alpha.id)
+        XCTAssertEqual(store.snapshot.getCurrentAssistant().chatModelId, beta.id)
+
+        let assistantChat = await service.execute(
+            toolName: "settings_set_model_slot",
+            argumentsJSON: #"{"slot":"assistant_chat","model_id":"\#(gamma.id.toHexDashString())"}"#
+        )
+        let assistantPayload = parseJSON(assistantChat)
+        XCTAssertEqual(assistantPayload["ok"] as? Bool, true)
+        XCTAssertEqual(store.snapshot.chatModelId, alpha.id)
+        XCTAssertEqual(store.snapshot.getCurrentAssistant().chatModelId, gamma.id)
 
         let amb = await service.execute(
             toolName: "settings_set_model_slot",
@@ -497,6 +511,38 @@ final class IOSProviderConfigToolTests: XCTestCase {
         XCTAssertTrue(status.contains("available_slots"), status)
         XCTAssertTrue(status.contains("assistant_chat"), status)
         XCTAssertTrue(status.contains("Agent Custom Endpoint"), status)
+    }
+
+    func testCreateRequiresApprovalBeforeWritingCredentials() async throws {
+        let store = makeStore()
+        let runtime = makeRuntime(store: store)
+        let count = store.snapshot.providers.count
+        let secret = "sk-secret-create-approval"
+        let call = makeToolCall(
+            name: "provider_config_create",
+            input: #"{"name":"Needs Approval","base_url":"https://example.test/v1","api_key":"\#(secret)"}"#
+        )
+        let pending = ChatPendingToolApproval(
+            toolCall: call, providerSetting: makeProviderSetting(),
+            params: makeParams(toolNames: [call.toolName]), runId: "create-approval",
+            startedAt: 1, inputDigest: "test", conversationId: nil,
+            baseMessages: [makeAssistantMessage(parts: [call])],
+            executionPolicy: IOSExecutionPolicySnapshot(
+                capabilityPolicies: [:], globalAutoApproveEnabled: false,
+                highRiskAutoApproveEnabled: false, execJavaScriptEnabled: false, webSearchEnabled: false
+            )
+        )
+        let result = await runtime.execute(ChatPendingToolCall(kind: .advanced, toolCall: call), context: pending)
+        guard case .waitingForApproval(.mcp(let request)) = result else {
+            return XCTFail("create must wait for approval")
+        }
+        XCTAssertFalse(request.argumentsPreview.contains(secret))
+        XCTAssertEqual(store.snapshot.providers.count, count)
+        let snapshot = IOSProviderConfigToolCatalog.redactedApprovalMessages(pending.baseMessages)
+        let persisted = try XCTUnwrap(snapshot.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first)
+        XCTAssertFalse(persisted.input.contains(secret))
+        _ = await runtime.finishMcpApproval(pending: pending, allow: false)
+        XCTAssertEqual(store.snapshot.providers.count, count)
     }
 
     func testBackgroundRegistersStatusOnlyDeniesMutations() async {

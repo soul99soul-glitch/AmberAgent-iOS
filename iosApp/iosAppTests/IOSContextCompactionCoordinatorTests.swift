@@ -412,6 +412,75 @@ final class IOSContextCompactionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testFailedCompactionDegradesToBudgetFitAndIsNotRetriedEveryRound() async throws {
+        let provider = FailingCompactProvider()
+        let coordinator = IOSContextCompactionCoordinator(textProvider: provider)
+        let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "CompactFail-\(UUID().uuidString)")!).snapshot
+        let model = Model(
+            modelId: "compact-test", displayName: "Compact Test", id: KotlinUuid.companion.random(),
+            type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [],
+            outputModalities: [], abilities: [], tools: Set<BuiltInTools>(),
+            contextWindowTokens: KotlinInt(value: 10_000), providerOverwrite: nil
+        )
+        let fallback = ProviderSetting.OpenAI(
+            id: KotlinUuid.companion.random(), enabled: true, name: "Test", models: [model],
+            balanceOption: BalanceOption(enabled: false, apiPath: "", resultPath: ""), builtIn: false,
+            descriptionText: nil, shortDescriptionText: nil, apiKey: "test", baseUrl: "https://example.test",
+            chatCompletionsPath: "/chat/completions", useResponseApi: false, authMode: .apiKey, brand: .generic
+        )
+        let params = TextGenerationParams(
+            model: model, temperature: nil, topP: nil, maxTokens: nil, tools: [], reasoningLevel: .off,
+            customHeaders: [], customBody: []
+        )
+        let conversationId = KotlinUuid.companion.random()
+        let history = (0..<26).map { _ in UIMessage.companion.user(prompt: String(repeating: "x", count: 1_400)) }
+        for round in 0..<2 {
+            let prepared = try await coordinator.prepareMessagesForRequest(
+                uploadMessages: history + [UIMessage.companion.user(prompt: "round \(round)")],
+                conversationId: conversationId, settings: settings, params: params, fallbackProvider: fallback
+            )
+            XCTAssertTrue(prepared.contains { $0.toText().contains("Context note:") }, "Failure must degrade to a visible budget fit")
+        }
+        XCTAssertEqual(provider.calls, 1, "A failed pass must not be retried on the very next round")
+    }
+
+    func testNextPassSummarizesToolTurnsRightAfterCompactBoundary() {
+        // 旧实现从边界起跳过已执行工具的 assistant 消息，留下永远不被摘要覆盖的空洞。
+        let u0 = UIMessage.companion.user(prompt: "u0"), u1 = UIMessage.companion.user(prompt: "u1")
+        let tool1 = makeMessage(parts: [makeToolPart(toolName: "file_read", outputChars: 10)])
+        let tool2 = makeMessage(parts: [makeToolPart(toolName: "file_read", outputChars: 10)])
+        let text = UIMessage.companion.assistant(prompt: "done"), u2 = UIMessage.companion.user(prompt: "u2")
+        let recent = [UIMessage.companion.user(prompt: "r1"), UIMessage.companion.user(prompt: "r2")]
+        let ids = { (messages: [UIMessage]) in messages.map { String(describing: $0.id) } }
+        let planned = ContextCompactionEditTestSupport.plannedSourceIds(
+            messages: [u0, u1, tool1, tool2, text, u2] + recent,
+            compacts: [(id: "A", sources: ids([u0, u1]), covered: [])]
+        )
+        XCTAssertEqual(planned, ids([tool1, tool2, text, u2]))
+    }
+
+    func testDescendantCompactIsInvalidOnceAncestorSourceIsDeleted() {
+        let messages = (0..<4).map { UIMessage.companion.user(prompt: "m\($0)") }
+        let ids = messages.map { String(describing: $0.id) }
+        let compacts = [
+            (id: "A", sources: Array(ids[0...1]), covered: [String]()),
+            (id: "B", sources: [ids[2]], covered: ["A"]),
+        ]
+        XCTAssertEqual(ContextCompactionEditTestSupport.validCompactIds(messages: messages, compacts: compacts), ["A", "B"])
+        XCTAssertEqual(ContextCompactionEditTestSupport.validCompactIds(
+            messages: Array(messages.dropFirst()), compacts: compacts
+        ), [], "B absorbed A's facts; it must not keep injecting them")
+    }
+
+    func testUnusableSummaryIsRejectedAndCarriedIdsComeFromTheModel() throws {
+        XCTAssertNil(ContextCompactionEditTestSupport.normalizedSummary(""))
+        XCTAssertNil(ContextCompactionEditTestSupport.normalizedSummary("无法总结。请重试。抱歉。谢谢。"))
+        XCTAssertNil(ContextCompactionEditTestSupport.normalizedSummary(#"{"timeline_summary":"a. b. c. d.","handoff_markdown":""}"#))
+        let raw = ##"{"timeline_summary":"Done.","handoff_markdown":"# Goal\nShip the compaction fix for long chats.\n# Progress\nPlanner rewritten to use message ids.\n# Next Steps\nRun the simulator tests.","covered_compact_ids":["A","X"]}"##
+        let summary = try XCTUnwrap(ContextCompactionEditTestSupport.normalizedSummary(raw, offeredCompactIds: ["A", "B"]))
+        XCTAssertTrue(summary.contains(#""covered_compact_ids":["A"]"#), "B was not carried forward, so it must stay injected")
+    }
+
     func testFinalizedMessagesForRequestRecoversGiantOutputSession() throws {
         // 真机复现形态：已持久化的巨量 search_web 输出在请求时被 fit 就地截断，
         // finalizedMessagesForRequest 不再抛错，估算回到预算内。
@@ -488,8 +557,17 @@ private final class SuccessfulCompactProvider: @preconcurrency IOSAgentTextProvi
         calls += 1
         return MessageChunk(id: "compact", model: "test", choices: [
             UIMessageChoice(index: 0, delta: nil,
-                message: UIMessage.companion.assistant(prompt: "The user is testing context compaction. Preserve the conversation history. Continue the current task. No external actions were performed."),
+                message: UIMessage.companion.assistant(prompt: ##"{"schema_version":2,"timeline_summary":"The user is testing context compaction. Preserve the conversation history. Continue the current task. No external actions were performed.","handoff_markdown":"# Goal\nKeep testing context compaction with long filler history.\n# Progress\nTwenty-six filler user messages were sent.\n# Next Steps\nContinue the current task.","covered_compact_ids":[]}"##),
                 finishReason: "stop")
         ], usage: nil)
+    }
+}
+
+@MainActor
+private final class FailingCompactProvider: @preconcurrency IOSAgentTextProvider {
+    var calls = 0
+    func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+        calls += 1
+        throw URLError(.badServerResponse)
     }
 }

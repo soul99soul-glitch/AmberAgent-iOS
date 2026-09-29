@@ -110,7 +110,7 @@ struct ModelDefaultsView: View {
                     ) {
                         ForEach(chatModelOptions) { option in
                             Button(option.menuTitle) {
-                                sharedSettings.setCurrentChatModelId(option.id)
+                                sharedSettings.selectChatModelAsDefault(option.id)
                                 sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
                             }
                         }
@@ -349,6 +349,8 @@ private struct ModelDefaultStaticRow: View {
 }
 
 private struct ModelDefaultRowContent: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     let systemImage: String
     let iconColor: Color
     let title: String
@@ -358,7 +360,7 @@ private struct ModelDefaultRowContent: View {
     var showsChevron = true
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: dynamicTypeSize.isAccessibilitySize ? .top : .center, spacing: 12) {
             Image(systemName: systemImage)
                 .font(.system(size: 16, weight: .medium))
                 .foregroundStyle(iconColor)
@@ -377,10 +379,19 @@ private struct ModelDefaultRowContent: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                if dynamicTypeSize.isAccessibilitySize, let value {
+                    Text(value)
+                        .font(.subheadline)
+                        .foregroundStyle(valueStyle)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 6)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let value {
+            if !dynamicTypeSize.isAccessibilitySize, let value {
                 Text(value)
                     .font(.subheadline)
                     .foregroundStyle(valueStyle)
