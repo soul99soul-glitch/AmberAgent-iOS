@@ -1278,3 +1278,130 @@ final class NovelDocumentValidationTests: XCTestCase {
         }
     }
 }
+
+// 引用完整性守护：校验器把循环内线性查找换成预建索引后，这些违规仍须原样报出。
+extension NovelDocumentValidationTests {
+    func testChapterVersionWithoutChapterIsRejected() throws {
+        let document = try documentWithDiscardableChapter()
+        let mutated = try rewritingJSON(document) { json in
+            var versions = json["chapterVersions"] as! [[String: Any]]
+            versions[0]["chapterID"] = ["rawValue": UUID().uuidString]
+            json["chapterVersions"] = versions
+        }
+        assertInvalid(mutated, containing: "has no chapter")
+    }
+
+    func testStateSnapshotMissingSettingProposalIsRejected() throws {
+        let document = try NovelTestFixtures.document()
+        let mutated = try rewritingJSON(document) { json in
+            var snapshots = json["stateSnapshots"] as! [[String: Any]]
+            snapshots[0]["settingProposalIDs"] = [["rawValue": UUID().uuidString]]
+            json["stateSnapshots"] = snapshots
+        }
+        assertInvalid(mutated, containing: "references a missing setting proposal")
+    }
+
+    func testStateSnapshotWithoutCheckpointReferenceIsRejected() throws {
+        let document = try NovelTestFixtures.document()
+        let mutated = try rewritingJSON(document) { json in
+            var snapshots = json["stateSnapshots"] as! [[String: Any]]
+            var orphan = snapshots[0]
+            orphan["id"] = ["rawValue": UUID().uuidString]
+            snapshots.append(orphan)
+            json["stateSnapshots"] = snapshots
+        }
+        assertInvalid(mutated, containing: "has no checkpoint reference")
+    }
+
+    func testCheckpointSessionCursorBeyondMessagesIsRejected() throws {
+        var document = try NovelTestFixtures.documentWithForkableCheckpoint()
+        let index = document.checkpoints.count - 1
+        document.checkpoints[index] = rebuilt(
+            document.checkpoints[index],
+            sessionCursor: .through(sequence: 999)
+        )
+        // 讨论归档也有同名文案；锚定 Checkpoint 前缀，确保命中的是 checkpoint 游标规则。
+        XCTAssertThrowsError(try NovelDocumentValidator.validate(document)) { error in
+            guard case .invalidDocument(let issues)? = error as? NovelError else {
+                return XCTFail("Expected invalidDocument, got \(error)")
+            }
+            XCTAssertTrue(
+                issues.contains { $0.hasPrefix("Checkpoint ") && $0.contains("invalid Session cursor") },
+                "Expected a checkpoint session-cursor issue, got \(issues)"
+            )
+        }
+    }
+
+    func testCheckpointChapterSelectionWithMismatchedChapterIsRejected() throws {
+        var document = try documentWithDiscardableChapter()
+        let index = try XCTUnwrap(document.checkpoints.firstIndex {
+            !$0.chapterSelections.isEmpty
+        })
+        let selection = document.checkpoints[index].chapterSelections[0]
+        document.checkpoints[index] = rebuilt(
+            document.checkpoints[index],
+            chapterSelections: [NovelChapterSelection(
+                chapterID: NovelChapterID(),
+                versionID: selection.versionID
+            )]
+        )
+        assertInvalid(document, containing: "invalid chapter selection")
+    }
+
+    func testOperationCreatingMultipleCheckpointsIsRejected() throws {
+        var document = try NovelTestFixtures.documentWithForkableCheckpoint()
+        let head = document.checkpoints[document.checkpoints.count - 1]
+        document.checkpoints.append(rebuilt(
+            head,
+            id: NovelCheckpointID(),
+            parentCheckpointID: head.id,
+            baseHeadRevision: 1
+        ))
+        assertInvalid(document, containing: "creates multiple checkpoints")
+    }
+
+    func testNonContiguousBranchCheckpointTimelineIsRejected() throws {
+        var document = try NovelTestFixtures.documentWithForkableCheckpoint()
+        let index = document.checkpoints.count - 1
+        document.checkpoints[index] = rebuilt(document.checkpoints[index], baseHeadRevision: 5)
+        assertInvalid(document, containing: "checkpoint timeline is not contiguous")
+    }
+
+    private func rewritingJSON(
+        _ document: NovelProjectDocumentV1,
+        _ mutate: (inout [String: Any]) -> Void
+    ) throws -> NovelProjectDocumentV1 {
+        var json = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(document)) as? [String: Any]
+        )
+        mutate(&json)
+        return try JSONDecoder().decode(
+            NovelProjectDocumentV1.self,
+            from: JSONSerialization.data(withJSONObject: json)
+        )
+    }
+
+    private func rebuilt(
+        _ checkpoint: NovelBranchCheckpointRecord,
+        id: NovelCheckpointID? = nil,
+        parentCheckpointID: NovelCheckpointID? = nil,
+        chapterSelections: [NovelChapterSelection]? = nil,
+        sessionCursor: NovelSessionCursor? = nil,
+        baseHeadRevision: Int64? = nil
+    ) -> NovelBranchCheckpointRecord {
+        NovelBranchCheckpointRecord(
+            id: id ?? checkpoint.id,
+            kind: checkpoint.kind,
+            createdOnBranchID: checkpoint.createdOnBranchID,
+            parentCheckpointID: parentCheckpointID ?? checkpoint.parentCheckpointID,
+            chapterSelections: chapterSelections ?? checkpoint.chapterSelections,
+            stateSnapshotID: checkpoint.stateSnapshotID,
+            sessionCursor: sessionCursor ?? checkpoint.sessionCursor,
+            branchOverrideRevisionIDs: checkpoint.branchOverrideRevisionIDs,
+            sourceCandidateID: checkpoint.sourceCandidateID,
+            baseHeadRevision: baseHeadRevision ?? checkpoint.baseHeadRevision,
+            operationID: checkpoint.operationID,
+            createdAt: checkpoint.createdAt
+        )
+    }
+}

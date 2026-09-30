@@ -685,8 +685,13 @@ enum NovelDocumentValidator {
         issues: inout [String]
     ) {
         let operationIDs = Set(document.appliedOperations.map(\.operationID))
+        // 预建索引：快照/版本循环里逐个线性查找在长篇项目上是 O(n·m)，
+        // 真机每次提交都整份校验，这里曾占校验耗时近半。
+        let chapterIDs = Set(document.chapters.map(\.id))
+        let settingProposalIDs = Set(document.settingProposals.map(\.id))
+        let checkpointStateSnapshotIDs = Set(document.checkpoints.map(\.stateSnapshotID))
         for version in document.chapterVersions {
-            if !document.chapters.contains(where: { $0.id == version.chapterID }) {
+            if !chapterIDs.contains(version.chapterID) {
                 issues.append("Chapter version \(version.id) has no chapter.")
             }
             if !operationIDs.contains(version.operationID) {
@@ -743,10 +748,10 @@ enum NovelDocumentValidator {
                 issues.append("State snapshot \(snapshot.id) repeats a setting proposal.")
             }
             for proposalID in snapshot.settingProposalIDs where
-                !document.settingProposals.contains(where: { $0.id == proposalID }) {
+                !settingProposalIDs.contains(proposalID) {
                 issues.append("State snapshot \(snapshot.id) references a missing setting proposal.")
             }
-            if !document.checkpoints.contains(where: { $0.stateSnapshotID == snapshot.id }) {
+            if !checkpointStateSnapshotIDs.contains(snapshot.id) {
                 issues.append("State snapshot \(snapshot.id) has no checkpoint reference.")
             }
         }
@@ -963,6 +968,19 @@ enum NovelDocumentValidator {
         if initialCheckpoints.count != 1 {
             issues.append("Project must have exactly one initial checkpoint.")
         }
+        // 预建索引，替代逐 checkpoint 的整表线性查找（语义同 first/contains(where:)）。
+        struct ChapterVersionKey: Hashable {
+            let versionID: NovelChapterVersionID
+            let chapterID: NovelChapterID
+        }
+        let stateSnapshotIDs = Set(document.stateSnapshots.map(\.id))
+        let chapterVersionKeys = Set(document.chapterVersions.map {
+            ChapterVersionKey(versionID: $0.id, chapterID: $0.chapterID)
+        })
+        let messageSequencesBySessionID = Dictionary(
+            document.sessions.map { ($0.id, Set($0.messages.map(\.sequence))) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         for checkpoint in document.checkpoints {
             if checkpoint.kind == .initial && checkpoint.parentCheckpointID != nil {
@@ -987,19 +1005,20 @@ enum NovelDocumentValidator {
                 continue
             }
             if case .through(let sequence) = checkpoint.sessionCursor,
-               !session.messages.contains(where: { $0.sequence == sequence }) {
+               messageSequencesBySessionID[session.id]?.contains(sequence) != true {
                 issues.append("Checkpoint \(checkpoint.id) has an invalid Session cursor.")
             }
-            if !document.stateSnapshots.contains(where: { $0.id == checkpoint.stateSnapshotID }) {
+            if !stateSnapshotIDs.contains(checkpoint.stateSnapshotID) {
                 issues.append("Checkpoint \(checkpoint.id) has a missing state snapshot.")
             }
             if Set(checkpoint.chapterSelections.map(\.chapterID)).count != checkpoint.chapterSelections.count {
                 issues.append("Checkpoint \(checkpoint.id) repeats a chapter.")
             }
             for selection in checkpoint.chapterSelections {
-                if !document.chapterVersions.contains(where: {
-                    $0.id == selection.versionID && $0.chapterID == selection.chapterID
-                }) {
+                if !chapterVersionKeys.contains(ChapterVersionKey(
+                    versionID: selection.versionID,
+                    chapterID: selection.chapterID
+                )) {
                     issues.append("Checkpoint \(checkpoint.id) has an invalid chapter selection.")
                 }
             }
@@ -2201,11 +2220,12 @@ enum NovelDocumentValidator {
             },
             uniquingKeysWith: { first, _ in first }
         )
+        var createdCountByOperationID: [NovelOperationID: Int] = [:]
+        for checkpoint in document.checkpoints where checkpoint.kind != .initial {
+            createdCountByOperationID[checkpoint.operationID, default: 0] += 1
+        }
         for operation in document.appliedOperations {
-            let created = document.checkpoints.filter {
-                $0.kind != .initial && $0.operationID == operation.operationID
-            }
-            if created.count > 1 {
+            if createdCountByOperationID[operation.operationID, default: 0] > 1 {
                 issues.append("Operation \(operation.operationID) creates multiple checkpoints.")
             }
         }
@@ -2768,13 +2788,15 @@ enum NovelDocumentValidator {
         var headRevision: Int64 = 0
         var workingRevision: Int64 = 0
         var consumedCheckpointIDs: Set<NovelCheckpointID> = []
+        // 按 operation 预分组（保持文档顺序），替代逐 operation 整表 filter。
+        var createdByOperationID: [NovelOperationID: [NovelBranchCheckpointRecord]] = [:]
+        for checkpoint in document.checkpoints where
+            checkpoint.kind != .initial && checkpoint.createdOnBranchID == branch.id {
+            createdByOperationID[checkpoint.operationID, default: []].append(checkpoint)
+        }
 
         for operation in document.appliedOperations {
-            let created = document.checkpoints.filter {
-                $0.kind != .initial &&
-                    $0.createdOnBranchID == branch.id &&
-                    $0.operationID == operation.operationID
-            }
+            let created = createdByOperationID[operation.operationID] ?? []
             for checkpoint in created {
                 if checkpoint.parentCheckpointID != headID ||
                     checkpoint.baseHeadRevision != headRevision {
