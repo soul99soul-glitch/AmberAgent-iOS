@@ -934,6 +934,87 @@ private struct NovelAskUserCard: View {
     }
 }
 
+/// 审批卡「审批 → 结果」原地变形的共享外壳：五张审批卡共用同一条弹簧、
+/// 同一套收起过渡与描边转色，保证观感一致。卡片高度随内容收拢，不做额外
+/// 高度补偿。成功触感由 ViewModel 在写入落定后发出（卡片本身是乐观变形）。
+/// 系统「减弱动态效果」开启时降级为短淡入淡出，不缩放。
+private enum NovelApprovalCollapseEdge {
+    /// 审批态独有的正文/详情：向上收起。
+    case content
+    /// 按钮区：向下收起。
+    case controls
+}
+
+private struct NovelApprovalCollapseModifier: ViewModifier {
+    let edge: NovelApprovalCollapseEdge
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.transition(transition)
+    }
+
+    private var transition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return switch edge {
+        case .content: .opacity.combined(with: .scale(scale: 0.97, anchor: .top))
+        case .controls: .opacity.combined(with: .scale(scale: 0.96, anchor: .bottom))
+        }
+    }
+}
+
+private struct NovelApprovalMorphModifier: ViewModifier {
+    let answer: String?
+    let isApproved: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        // 与 amberGlass 内部同源的主题圆角，裁剪、玻璃与描边三条边重合。
+        let shape = RoundedRectangle(cornerRadius: AmberTheme.controlRadius(18), style: .continuous)
+        content
+            .padding(16)
+            // 收拢过程中正在淡出的内容不得溢出正在缩小的卡片。
+            .clipShape(shape)
+            .amberGlass(cornerRadius: 18, interactive: false)
+            .overlay {
+                shape
+                    .stroke(
+                        isApproved
+                            ? AmberTheme.accentGreen.opacity(0.35)
+                            : AmberTheme.accent.opacity(0.18),
+                        lineWidth: 0.75
+                    )
+                    .allowsHitTesting(false)
+            }
+            .animation(
+                reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.5, bounce: 0.12),
+                value: answer
+            )
+    }
+}
+
+private extension View {
+    func novelApprovalMorph(answer: String?, isApproved: Bool) -> some View {
+        modifier(NovelApprovalMorphModifier(answer: answer, isApproved: isApproved))
+    }
+
+    func novelApprovalCollapse(_ edge: NovelApprovalCollapseEdge) -> some View {
+        modifier(NovelApprovalCollapseModifier(edge: edge))
+    }
+
+    /// 结果文字等按钮区淡出后再浮现，避免与正在收起的控件叠在一起。
+    func novelApprovalResultAppear() -> some View {
+        transition(.asymmetric(
+            insertion: .opacity.animation(.easeOut(duration: 0.2).delay(0.15)),
+            removal: .opacity
+        ))
+    }
+
+    /// 状态标题的图标在审批 → 结果时上下翻转替换。
+    func novelApprovalStatusTransition() -> some View {
+        contentTransition(.symbolEffect(.replace.downUp))
+    }
+}
+
 private struct NovelGhostwritePlanCard: View {
     let presentation: NovelAskUserPresentation
     let blocker: NovelSessionActionBlocker?
@@ -960,6 +1041,7 @@ private struct NovelGhostwritePlanCard: View {
             Label(statusTitle, systemImage: statusSymbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(statusColor)
+                .novelApprovalStatusTransition()
 
             if let proposal = presentation.prompt.ghostwritePlan {
                 Text(presentation.prompt.question)
@@ -997,51 +1079,49 @@ private struct NovelGhostwritePlanCard: View {
                 Text(response.answer)
                     .font(.subheadline)
                     .foregroundStyle(AmberTheme.foreground2)
+                    .novelApprovalResultAppear()
             } else {
-                chapterCountControl
+                VStack(alignment: .leading, spacing: 14) {
+                    chapterCountControl
+                        .disabled(blocker != nil)
+
+                    if let blocker {
+                        Text(localized(blocker.displayName))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
+                    }
+
+                    HStack(spacing: 10) {
+                        Button {
+                            onSubmit(NovelGhostwritePlanApproval.rejectOption)
+                        } label: {
+                            Text(verbatim: localized(NovelGhostwritePlanApproval.rejectOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .contentShape(Rectangle())
+
+                        Button {
+                            onSubmit(NovelGhostwritePlanApproval.approvedAnswer(
+                                chapterCount: selectedChapterCount
+                            ))
+                        } label: {
+                            Text(verbatim: IOSAppLocalization.formatted(
+                                "开始写 %@ 章",
+                                defaultValue: "开始写 %@ 章",
+                                arguments: [localizedNumber(selectedChapterCount)]
+                            ))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .contentShape(Rectangle())
+                    }
                     .disabled(blocker != nil)
-
-                if let blocker {
-                    Text(localized(blocker.displayName))
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.foreground2)
                 }
-
-                HStack(spacing: 10) {
-                    Button {
-                        onSubmit(NovelGhostwritePlanApproval.rejectOption)
-                    } label: {
-                        Text(verbatim: localized(NovelGhostwritePlanApproval.rejectOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.bordered)
-                    .contentShape(Rectangle())
-
-                    Button {
-                        onSubmit(NovelGhostwritePlanApproval.approvedAnswer(
-                            chapterCount: selectedChapterCount
-                        ))
-                    } label: {
-                        Text(verbatim: IOSAppLocalization.formatted(
-                            "开始写 %@ 章",
-                            defaultValue: "开始写 %@ 章",
-                            arguments: [localizedNumber(selectedChapterCount)]
-                        ))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .contentShape(Rectangle())
-                }
-                .disabled(blocker != nil)
+                .novelApprovalCollapse(.controls)
             }
         }
-        .padding(16)
-        .amberGlass(cornerRadius: 18, interactive: false)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.18), lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
+        .novelApprovalMorph(answer: presentation.response?.answer, isApproved: isApproved)
     }
 
     private var chapterCountControl: some View {
@@ -1105,6 +1185,12 @@ private struct NovelGhostwritePlanCard: View {
         }
     }
 
+    private var isApproved: Bool {
+        presentation.response.map {
+            NovelGhostwritePlanApproval.approvedChapterCount(from: $0.answer) != nil
+        } ?? false
+    }
+
     private var statusTitle: String {
         guard let answer = presentation.response?.answer else { return localized("代笔计划审批") }
         if let count = NovelGhostwritePlanApproval.approvedChapterCount(from: answer) {
@@ -1142,11 +1228,16 @@ private struct NovelChapterRevisionCard: View {
     let blocker: NovelSessionActionBlocker?
     let onSubmit: (String) -> Void
 
+    private var isApproved: Bool {
+        presentation.response?.answer == NovelChapterRevisionApproval.approveOption
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Label(statusTitle, systemImage: statusSymbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(statusColor)
+                .novelApprovalStatusTransition()
 
             if let revision = presentation.prompt.chapterRevision {
                 Text(rangeCaption(revision))
@@ -1162,8 +1253,11 @@ private struct NovelChapterRevisionCard: View {
                 }
 
                 if presentation.response == nil {
-                    revisionBlock(title: "原文", text: revision.oldText)
-                    revisionBlock(title: "改为", text: revision.newText)
+                    VStack(alignment: .leading, spacing: 14) {
+                        revisionBlock(title: "原文", text: revision.oldText)
+                        revisionBlock(title: "改为", text: revision.newText)
+                    }
+                    .novelApprovalCollapse(.content)
                 }
             }
 
@@ -1173,46 +1267,51 @@ private struct NovelChapterRevisionCard: View {
                 Text(response.answer)
                     .font(.subheadline)
                     .foregroundStyle(AmberTheme.foreground2)
+                    .novelApprovalResultAppear()
             }
 
             if presentation.response == nil {
-                if isSubmitting {
-                    ProgressView("正在保存改写")
-                        .font(.footnote)
-                        .foregroundStyle(AmberTheme.muted)
-                } else if let blocker {
-                    Text(localized(blocker.displayName))
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.foreground2)
-                }
-                HStack(spacing: 10) {
-                    Button {
-                        onSubmit(NovelChapterRevisionApproval.rejectOption)
-                    } label: {
-                        Text(verbatim: localized(NovelChapterRevisionApproval.rejectOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.bordered)
-                    .contentShape(Rectangle())
-
-                    Button {
-                        onSubmit(NovelChapterRevisionApproval.approveOption)
-                    } label: {
-                        Text(verbatim: localized(NovelChapterRevisionApproval.approveOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .contentShape(Rectangle())
-                }
-                .disabled(blocker != nil || isSubmitting)
+                approvalControls
+                    .novelApprovalCollapse(.controls)
             }
         }
-        .padding(16)
-        .amberGlass(cornerRadius: 18, interactive: false)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.18), lineWidth: 0.75)
-                .allowsHitTesting(false)
+        .novelApprovalMorph(answer: presentation.response?.answer, isApproved: isApproved)
+    }
+
+    @ViewBuilder
+    private var approvalControls: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // DEAD-CODE?: answerAskUser 在提交前就乐观写入 response，此控件区随即收起，
+            // 提交中这一分支实际不可见。仅标记，删除需授权。
+            if isSubmitting {
+                ProgressView("正在保存改写")
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.muted)
+            } else if let blocker {
+                Text(localized(blocker.displayName))
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.foreground2)
+            }
+            HStack(spacing: 10) {
+                Button {
+                    onSubmit(NovelChapterRevisionApproval.rejectOption)
+                } label: {
+                    Text(verbatim: localized(NovelChapterRevisionApproval.rejectOption))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.bordered)
+                .contentShape(Rectangle())
+
+                Button {
+                    onSubmit(NovelChapterRevisionApproval.approveOption)
+                } label: {
+                    Text(verbatim: localized(NovelChapterRevisionApproval.approveOption))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.borderedProminent)
+                .contentShape(Rectangle())
+            }
+            .disabled(blocker != nil || isSubmitting)
         }
     }
 
@@ -1298,6 +1397,7 @@ private struct NovelWorkspacePlotCard: View {
             Label(statusTitle, systemImage: statusSymbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(statusColor)
+                .novelApprovalStatusTransition()
 
             Text(presentation.prompt.question)
                 .font(.body.weight(.medium))
@@ -1312,40 +1412,41 @@ private struct NovelWorkspacePlotCard: View {
             }
 
             if presentation.response == nil {
-                if let blocker {
-                    Text(localized(blocker.displayName))
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.foreground2)
-                }
-                HStack(spacing: 10) {
-                    Button {
-                        onSubmit(NovelWorkspacePlotApproval.rejectOption)
-                    } label: {
-                        Text(verbatim: localized(NovelWorkspacePlotApproval.rejectOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                VStack(alignment: .leading, spacing: 14) {
+                    if let blocker {
+                        Text(localized(blocker.displayName))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
                     }
-                    .buttonStyle(.bordered)
-                    .contentShape(Rectangle())
+                    HStack(spacing: 10) {
+                        Button {
+                            onSubmit(NovelWorkspacePlotApproval.rejectOption)
+                        } label: {
+                            Text(verbatim: localized(NovelWorkspacePlotApproval.rejectOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .contentShape(Rectangle())
 
-                    Button {
-                        onSubmit(NovelWorkspacePlotApproval.approveOption)
-                    } label: {
-                        Text(verbatim: localized(NovelWorkspacePlotApproval.approveOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                        Button {
+                            onSubmit(NovelWorkspacePlotApproval.approveOption)
+                        } label: {
+                            Text(verbatim: localized(NovelWorkspacePlotApproval.approveOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .contentShape(Rectangle())
+                    .disabled(blocker != nil)
                 }
-                .disabled(blocker != nil)
+                .novelApprovalCollapse(.controls)
             }
         }
-        .padding(16)
-        .amberGlass(cornerRadius: 18, interactive: false)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.18), lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
+        .novelApprovalMorph(answer: presentation.response?.answer, isApproved: isApproved)
+    }
+
+    private var isApproved: Bool {
+        presentation.response?.answer == NovelWorkspacePlotApproval.approveOption
     }
 
     private var statusTitle: String {
@@ -1382,6 +1483,7 @@ private struct NovelManuscriptRevertCard: View {
             Label(statusTitle, systemImage: statusSymbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(statusColor)
+                .novelApprovalStatusTransition()
 
             Text(presentation.prompt.question)
                 .font(.body.weight(.medium))
@@ -1396,40 +1498,41 @@ private struct NovelManuscriptRevertCard: View {
             }
 
             if presentation.response == nil {
-                if let blocker {
-                    Text(localized(blocker.displayName))
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.foreground2)
-                }
-                HStack(spacing: 10) {
-                    Button {
-                        onSubmit(NovelManuscriptRevertApproval.rejectOption)
-                    } label: {
-                        Text(verbatim: localized(NovelManuscriptRevertApproval.rejectOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                VStack(alignment: .leading, spacing: 14) {
+                    if let blocker {
+                        Text(localized(blocker.displayName))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
                     }
-                    .buttonStyle(.bordered)
-                    .contentShape(Rectangle())
+                    HStack(spacing: 10) {
+                        Button {
+                            onSubmit(NovelManuscriptRevertApproval.rejectOption)
+                        } label: {
+                            Text(verbatim: localized(NovelManuscriptRevertApproval.rejectOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .contentShape(Rectangle())
 
-                    Button {
-                        onSubmit(NovelManuscriptRevertApproval.approveOption)
-                    } label: {
-                        Text(verbatim: localized(NovelManuscriptRevertApproval.approveOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                        Button {
+                            onSubmit(NovelManuscriptRevertApproval.approveOption)
+                        } label: {
+                            Text(verbatim: localized(NovelManuscriptRevertApproval.approveOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .contentShape(Rectangle())
+                    .disabled(blocker != nil)
                 }
-                .disabled(blocker != nil)
+                .novelApprovalCollapse(.controls)
             }
         }
-        .padding(16)
-        .amberGlass(cornerRadius: 18, interactive: false)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.18), lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
+        .novelApprovalMorph(answer: presentation.response?.answer, isApproved: isApproved)
+    }
+
+    private var isApproved: Bool {
+        presentation.response?.answer == NovelManuscriptRevertApproval.approveOption
     }
 
     private var statusTitle: String {
@@ -1466,6 +1569,7 @@ private struct NovelManuscriptDeleteCard: View {
             Label(statusTitle, systemImage: statusSymbol)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(statusColor)
+                .novelApprovalStatusTransition()
 
             Text(presentation.prompt.question)
                 .font(.body.weight(.medium))
@@ -1480,40 +1584,41 @@ private struct NovelManuscriptDeleteCard: View {
             }
 
             if presentation.response == nil {
-                if let blocker {
-                    Text(localized(blocker.displayName))
-                        .font(.caption)
-                        .foregroundStyle(AmberTheme.foreground2)
-                }
-                HStack(spacing: 10) {
-                    Button {
-                        onSubmit(NovelManuscriptDeleteApproval.rejectOption)
-                    } label: {
-                        Text(verbatim: localized(NovelManuscriptDeleteApproval.rejectOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                VStack(alignment: .leading, spacing: 14) {
+                    if let blocker {
+                        Text(localized(blocker.displayName))
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.foreground2)
                     }
-                    .buttonStyle(.bordered)
-                    .contentShape(Rectangle())
+                    HStack(spacing: 10) {
+                        Button {
+                            onSubmit(NovelManuscriptDeleteApproval.rejectOption)
+                        } label: {
+                            Text(verbatim: localized(NovelManuscriptDeleteApproval.rejectOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.bordered)
+                        .contentShape(Rectangle())
 
-                    Button {
-                        onSubmit(NovelManuscriptDeleteApproval.approveOption)
-                    } label: {
-                        Text(verbatim: localized(NovelManuscriptDeleteApproval.approveOption))
-                            .frame(maxWidth: .infinity, minHeight: 44)
+                        Button {
+                            onSubmit(NovelManuscriptDeleteApproval.approveOption)
+                        } label: {
+                            Text(verbatim: localized(NovelManuscriptDeleteApproval.approveOption))
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderedProminent)
-                    .contentShape(Rectangle())
+                    .disabled(blocker != nil)
                 }
-                .disabled(blocker != nil)
+                .novelApprovalCollapse(.controls)
             }
         }
-        .padding(16)
-        .amberGlass(cornerRadius: 18, interactive: false)
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(AmberTheme.accent.opacity(0.18), lineWidth: 0.75)
-                .allowsHitTesting(false)
-        }
+        .novelApprovalMorph(answer: presentation.response?.answer, isApproved: isApproved)
+    }
+
+    private var isApproved: Bool {
+        presentation.response?.answer == NovelManuscriptDeleteApproval.approveOption
     }
 
     private var statusTitle: String {

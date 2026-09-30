@@ -1599,7 +1599,22 @@ final class NovelSessionViewModel {
             locallyResolvedAskUser[promptMessageID] = nil
             // 投影下次从未叠加本地回答的 durable base 重建卡片。
         }
+        // 卡片在点击时已乐观变形；成功触感只在写入真正落定后发出，失败回滚不误报。
+        if answered, Self.isApprovedApproval(prompt: prompt, answer: optimisticResponse.answer) {
+            AmberHaptics.trigger(.success)
+        }
         return answered
+    }
+
+    private static func isApprovedApproval(prompt: NovelAskUserPrompt, answer: String) -> Bool {
+        if prompt.ghostwritePlan != nil {
+            return NovelGhostwritePlanApproval.approvedChapterCount(from: answer) != nil
+        }
+        if prompt.chapterRevision != nil { return answer == NovelChapterRevisionApproval.approveOption }
+        if prompt.workspacePlot != nil { return answer == NovelWorkspacePlotApproval.approveOption }
+        if prompt.manuscriptRevert != nil { return answer == NovelManuscriptRevertApproval.approveOption }
+        if prompt.manuscriptDelete != nil { return answer == NovelManuscriptDeleteApproval.approveOption }
+        return false
     }
 
     private func resolveAskUser(
