@@ -1537,6 +1537,13 @@ final class ChatKernelRunHost {
         }
     }
 
+    /// 提问（askUser）需要打字作答，不在灵动岛上给「允许 / 拒绝」。
+    private static func activityApproval(for prompt: ChatToolApprovalPrompt) -> AgentActivityApproval? {
+        guard category(of: prompt) != .askUser,
+              let requestId = requestId(of: prompt) else { return nil }
+        return AgentActivityApproval(requestId: requestId, title: prompt.toolTitle)
+    }
+
     private static func requestId(of prompt: ChatToolApprovalPrompt) -> String? {
         switch prompt {
         case .memory(let request): return request.id
@@ -1631,6 +1638,25 @@ final class ChatKernelRunHost {
                         force: true
                     )
                 }
+            } else {
+                // 工具之后的新一轮：先离开工具步骤（与后台路径每轮先发 preparing 一致）。
+                // 否则要等模型出第一个字才更新，非流式模型整轮都不会更新，
+                // 工具心跳还会一直续期，岛上停在"正在阅读网页"直到任务结束。
+                let preparing = AgentActivityPresentation.response(
+                    stage: AgentActivityResponseStagePolicy.initialStage
+                )
+                WatchTaskCoordinator.shared.publish(
+                    runId: runId,
+                    conversationId: self.currentConversationIdForRun?.toHexDashString(),
+                    presentation: preparing
+                )
+                Task { @MainActor [weak self] in
+                    guard let self, self.currentRunId == runId else { return }
+                    await self.dependencies.liveActivityController.update(
+                        runId: runId,
+                        presentation: preparing
+                    )
+                }
             }
         }
         callbacks.onToolExecutionStarted = { [weak self] toolName, input in
@@ -1643,7 +1669,7 @@ final class ChatKernelRunHost {
                 total: 4,
                 subtitle: IOSAppLocalization.string("正在执行工具", defaultValue: "正在执行工具")
             )
-            let presentation = AgentActivityPresentation.runningTool(toolName: toolName)
+            let presentation = AgentActivityPresentation.runningTool(toolName: toolName, input: input)
             WatchTaskCoordinator.shared.publish(
                 runId: runId,
                 conversationId: self.currentConversationIdForRun?.toHexDashString(),
@@ -1700,6 +1726,8 @@ final class ChatKernelRunHost {
         callbacks.onAssistantMessageSnapshot = { [weak self] message in
             guard let self, self.currentRunId == runId else { return }
             self.projection.publishProvisionalAssistant(message)
+            // 同一步骤长时间输出时续期灵动岛，避免仍在输出却被系统判为过期。
+            self.dependencies.liveActivityController.noteProgress(runId: runId)
         }
         return ChatRunKernelAdapter(runtime: toolRuntime, ledger: toolLedger, callbacks: callbacks)
     }
@@ -1747,7 +1775,10 @@ final class ChatKernelRunHost {
         keepaliveHeld = false
         await dependencies.liveActivityController.update(
             runId: runId,
-            presentation: .waitingForUser(kind: prompt.activityKind),
+            presentation: .waitingForUser(
+                kind: prompt.activityKind,
+                approval: Self.activityApproval(for: prompt)
+            ),
             force: true
         )
         guard currentRunId == runId, cancelCause == nil else { return nil }

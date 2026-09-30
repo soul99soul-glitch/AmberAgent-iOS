@@ -286,6 +286,7 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
     private var expiredOperationTask: Task<IOSAgentToolEngineResult, Never>?
     private var speedClock = ChatGenerationSpeedClock()
     private var presentationStage: AgentActivityStage = .preparing
+    private var lastProgressRefreshAt: Date?
 
     var isExpired: Bool {
         lock.lock()
@@ -373,10 +374,18 @@ final class IOSChatBackgroundRunState: @unchecked Sendable {
             && presentationStage == stage
     }
 
-    func noteVisibleDelta() {
+    /// 返回 true 表示该给 Live Activity 续期了（锁内节流，逐 chunk 调用也只放行一次/间隔）。
+    @discardableResult
+    func noteVisibleDelta(at date: Date = Date()) -> Bool {
         lock.lock()
-        speedClock.noteVisibleDelta()
-        lock.unlock()
+        defer { lock.unlock() }
+        speedClock.noteVisibleDelta(at: date)
+        if let lastProgressRefreshAt,
+           date.timeIntervalSince(lastProgressRefreshAt) < AgentActivityLifecyclePolicy.progressRefreshInterval {
+            return false
+        }
+        lastProgressRefreshAt = date
+        return true
     }
 
     func generationDuration() -> TimeInterval? {
@@ -1511,6 +1520,20 @@ final class IOSChatBackgroundGenerationCoordinator {
         )
     }
 
+    /// 可见输出续期 Live Activity 的过期时间。节流在 runState 锁内完成，
+    /// 逐 chunk 调用只在满间隔时才开一个 MainActor 任务。
+    private nonisolated static func noteVisibleProgress(
+        _ runState: IOSChatBackgroundRunState,
+        job: IOSChatBackgroundRuntimeJob
+    ) {
+        guard runState.noteVisibleDelta() else { return }
+        let runId = job.runId
+        let controller = job.liveActivityController
+        Task { @MainActor in
+            controller.noteProgress(runId: runId)
+        }
+    }
+
     private func publishRunningPresentation(
         _ presentation: AgentActivityPresentation,
         for job: IOSChatBackgroundRuntimeJob,
@@ -1617,7 +1640,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     customHeaders: job.params.customHeaders,
                     onChunk: { chunk in
                         if ChatGenerationSpeedClock.chunkHasVisibleContent(chunk) {
-                            runState.noteVisibleDelta()
+                            Self.noteVisibleProgress(runState, job: job)
                         }
                         let messages = accumulator.append(chunk)
                         job.messagesSnapshot.replace(with: messages)
@@ -2427,14 +2450,14 @@ final class IOSChatBackgroundGenerationCoordinator {
                             )
                         )
                     },
-                    onToolExecutionStarted: { toolName, _ in
+                    onToolExecutionStarted: { toolName, input in
                         presentationEvents.continuation.yield(
-                            AgentActivityPresentation.runningTool(toolName: toolName)
+                            AgentActivityPresentation.runningTool(toolName: toolName, input: input)
                         )
                     },
                     onAssistantStage: { stage in
                         if stage == .thinking || stage == .generating {
-                            runState.noteVisibleDelta()
+                            Self.noteVisibleProgress(runState, job: job)
                         }
                         presentationEvents.continuation.yield(
                             AgentActivityPresentation.response(stage: stage)
@@ -2442,7 +2465,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     },
                     onAssistantText: { text in
                         if !text.isEmpty {
-                            runState.noteVisibleDelta()
+                            Self.noteVisibleProgress(runState, job: job)
                         }
                         assistantTextSnapshot.replace(with: text)
                     },
@@ -2528,14 +2551,14 @@ final class IOSChatBackgroundGenerationCoordinator {
                             )
                         )
                     },
-                    onToolExecutionStarted: { toolName, _ in
+                    onToolExecutionStarted: { toolName, input in
                         presentationEvents.continuation.yield(
-                            AgentActivityPresentation.runningTool(toolName: toolName)
+                            AgentActivityPresentation.runningTool(toolName: toolName, input: input)
                         )
                     },
                     onAssistantStage: { stage in
                         if stage == .thinking || stage == .generating {
-                            runState.noteVisibleDelta()
+                            Self.noteVisibleProgress(runState, job: job)
                         }
                         presentationEvents.continuation.yield(
                             AgentActivityPresentation.response(stage: stage)
@@ -2543,7 +2566,7 @@ final class IOSChatBackgroundGenerationCoordinator {
                     },
                     onAssistantText: { text in
                         if !text.isEmpty {
-                            runState.noteVisibleDelta()
+                            Self.noteVisibleProgress(runState, job: job)
                         }
                         assistantTextSnapshot.replace(with: text)
                     },

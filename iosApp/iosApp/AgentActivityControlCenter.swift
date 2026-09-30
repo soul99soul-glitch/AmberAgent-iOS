@@ -106,6 +106,33 @@ final class AgentActivityControlCenter {
         )
     }
 
+    /// 请求 id 必须与当前待确认的一致，旧卡片上的按钮不能批准新的操作。
+    @discardableResult
+    func resolveApproval(
+        runId: String,
+        conversationId: String,
+        requestId: String,
+        allow: Bool
+    ) async -> Bool {
+        guard !requestId.isEmpty,
+              AgentActivityDeepLink.makeURL(
+                  runId: runId,
+                  conversationId: conversationId,
+                  focus: .confirmation
+              ) != nil else { return false }
+        let owner: ChatViewModel?
+        if let chatViewModel {
+            owner = chatViewModel
+        } else {
+            owner = await waitForOwner()
+        }
+        return owner?.resolvePendingToolApprovalFromWatch(
+            runId: runId,
+            requestId: requestId,
+            allow: allow
+        ) ?? false
+    }
+
     private func waitForOwner() async -> ChatViewModel? {
         if let chatViewModel { return chatViewModel }
         let waiterId = UUID()

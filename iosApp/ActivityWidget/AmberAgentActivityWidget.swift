@@ -134,46 +134,60 @@ struct AmberAgentActivityWidget: Widget {
                 state: context.state,
                 isStale: context.isStale
             )
-            .activityBackgroundTint(.black)
+            // 浅色壁纸上 0.55 时 40% 白的说明文字对比度只有约 2:1。
+            .activityBackgroundTint(.black.opacity(0.72))
             .activitySystemActionForegroundColor(.white)
             .widgetURL(context.attributes.destinationURL(for: context.state.presentation.action))
         } dynamicIsland: { context in
-            DynamicIsland {
-                DynamicIslandExpandedRegion(.leading) {
-                    AgentActivityStatusIcon(presentation: context.state.presentation, isStale: context.isStale)
-                        .frame(width: 28, height: 28)
-                        .accessibilityHidden(true)
+            let phase = context.state.presentation.displayPhase(isStale: context.isStale)
+            // 左右贴着摄像头放标志和时间并垂直居中；会话名与状态居中放在摄像头正下方，
+            // 填满中间；底部一行步骤或按钮。两侧优先分宽，标题拿剩下的，避免右上角被截断。边距用系统默认值，内容不进圆角。
+            return DynamicIsland {
+                DynamicIslandExpandedRegion(.leading, priority: 1) {
+                    // 两侧与中间的标题块底对齐；居中时比标题高约 8pt，看起来是歪的。
+                    AgentActivityMark(size: 30, faded: phase == .stale)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
                 }
-                DynamicIslandExpandedRegion(.trailing) {
-                    AgentActivityElapsedTimer(
+                DynamicIslandExpandedRegion(.trailing, priority: 1) {
+                    AgentActivityTrailingFact(
                         startedAt: context.attributes.startedAt,
                         state: context.state,
-                        isStale: context.isStale
+                        phase: phase
                     )
-                    .frame(height: 28)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
                 }
-                DynamicIslandExpandedRegion(.bottom) {
-                    AgentActivityDetails(
+                DynamicIslandExpandedRegion(.center) {
+                    AgentActivityHeadline(
                         attributes: context.attributes,
                         state: context.state,
-                        isStale: context.isStale
+                        phase: phase,
+                        centered: true
                     )
-                    .padding(.top, 4)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    AgentActivityBody(
+                        attributes: context.attributes,
+                        state: context.state,
+                        phase: phase
+                    )
+                    .padding(.top, 6)
                 }
             } compactLeading: {
-                AgentActivityStatusIcon(presentation: context.state.presentation, isStale: context.isStale)
-                    .frame(width: 22, height: 22)
-                    .accessibilityHidden(true)
+                AgentActivityCompactStatus(state: context.state, phase: phase)
             } compactTrailing: {
-                AgentActivityCompactStatus(state: context.state, isStale: context.isStale)
+                AgentActivityCompactTimer(
+                    startedAt: context.attributes.startedAt,
+                    state: context.state,
+                    phase: phase
+                )
             } minimal: {
-                AgentActivityStatusIcon(presentation: context.state.presentation, isStale: context.isStale)
-                    .frame(width: 22, height: 22)
-                    .accessibilityLabel(context.state.presentation.displayStage(isStale: context.isStale)
-                        .localizedTitle(languageCode: context.state.languageCode))
+                AgentActivityMinimalMark(phase: phase)
+                    // 标志和圆环都不是可读元素，需合成一个元素才能挂上标签。
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(AgentActivityMinimalMark.accessibilityLabel(state: context.state, phase: phase))
             }
             .widgetURL(context.attributes.destinationURL(for: context.state.presentation.action))
-            .keylineTint(context.state.presentation.displayPhase(isStale: context.isStale).activityColor)
+            .keylineTint(phase.keylineRole?.color)
         }
     }
 }
@@ -186,27 +200,51 @@ private let previewAttributes = AgentActivityAttributes(
     conversationTitle: "整理京都旅行攻略与值得一去的地方"
 )
 
+private let previewWaiting = AgentActivityPresentation.waitingForUser(
+    approval: AgentActivityApproval(requestId: "preview-request", title: "npm install three")
+)
+private let previewCompleted = AgentActivityPresentation.completed()
+private let previewFailed: AgentActivityPresentation = {
+    var presentation = AgentActivityPresentation.failed(retryable: true)
+    presentation.failureReason = .network
+    return presentation
+}()
+private let previewRunning: AgentActivityPresentation = {
+    var presentation = AgentActivityPresentation.runningTool(
+        toolName: "scrape_web",
+        input: #"{"url":"https://www.japan-guide.com/e/e3900.html"}"#
+    )
+    presentation.recentSteps = [
+        AgentActivityStep(stage: .searching, detail: "京都红叶 最佳时间"),
+        AgentActivityStep(stage: .readingWeb, count: 3),
+    ]
+    return presentation
+}()
+
 #Preview("Lock Screen", as: .content, using: previewAttributes) {
     AmberAgentActivityWidget()
 } contentStates: {
-    AgentActivityAttributes.ContentState(presentation: .defaultRunning, updatedAt: .now, languageCode: "zh-Hans")
-    AgentActivityAttributes.ContentState(presentation: .waitingForUser(), updatedAt: .now, languageCode: "zh-Hans")
-    AgentActivityAttributes.ContentState(presentation: .completed(), updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewRunning, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewWaiting, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewFailed, updatedAt: .now, languageCode: "zh-Hans")
 }
 
 #Preview("Expanded", as: .dynamicIsland(.expanded), using: previewAttributes) {
     AmberAgentActivityWidget()
 } contentStates: {
-    AgentActivityAttributes.ContentState(presentation: .defaultRunning, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewRunning, updatedAt: .now, languageCode: "zh-Hans")
     AgentActivityAttributes.ContentState(presentation: .measurablePreview(kind: .document, completed: 12, total: 30, unit: .item), updatedAt: .now, languageCode: "zh-Hans")
-    AgentActivityAttributes.ContentState(presentation: .waitingForUser(), updatedAt: .now, languageCode: "zh-Hans")
-    AgentActivityAttributes.ContentState(presentation: .failed(), updatedAt: .now, languageCode: "en")
+    AgentActivityAttributes.ContentState(presentation: previewWaiting, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewCompleted, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewFailed, updatedAt: .now, languageCode: "zh-Hans")
 }
 
 #Preview("Compact", as: .dynamicIsland(.compact), using: previewAttributes) {
     AmberAgentActivityWidget()
 } contentStates: {
-    AgentActivityAttributes.ContentState(presentation: .defaultRunning, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewRunning, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewWaiting, updatedAt: .now, languageCode: "zh-Hans")
+    AgentActivityAttributes.ContentState(presentation: previewCompleted, updatedAt: .now, languageCode: "zh-Hans")
     AgentActivityAttributes.ContentState(presentation: .reconnecting(), updatedAt: .now, languageCode: "en")
 }
 

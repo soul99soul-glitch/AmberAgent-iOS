@@ -26,6 +26,15 @@ struct AgentActivityPresentation: Codable, Hashable, Sendable {
     /// `true` only after the matching durable run was committed as failed.
     /// `nil` keeps previously encoded ActivityKit states decodable and fail-closed.
     var retryable: Bool?
+    /// 当前一步之前做完的步骤（最多保留两步）。
+    /// 以下字段均可选，旧 ActivityKit 状态仍能解码。
+    var recentSteps: [AgentActivityStep]?
+    /// 当前一步的对象（搜索词、网站域名、文件名），取自工具参数并截短。
+    /// 只在灵动岛展开态显示，锁屏只显示类别。
+    var stepDetail: String?
+    var failureReason: AgentActivityFailureReason?
+    /// 待确认的审批请求。只有带请求 id 时岛上才出现「拒绝 / 允许一次」。
+    var approval: AgentActivityApproval?
 
     init(
         kind: AgentActivityKind,
@@ -33,7 +42,8 @@ struct AgentActivityPresentation: Codable, Hashable, Sendable {
         stage: AgentActivityStage,
         metric: AgentActivityMetric = .none,
         action: AgentActivityAction? = .openTask,
-        retryable: Bool? = nil
+        retryable: Bool? = nil,
+        approval: AgentActivityApproval? = nil
     ) {
         self.kind = kind
         self.phase = phase
@@ -41,7 +51,77 @@ struct AgentActivityPresentation: Codable, Hashable, Sendable {
         self.metric = metric.validated
         self.action = action
         self.retryable = retryable
+        self.approval = approval
     }
+}
+
+struct AgentActivityStep: Codable, Hashable, Sendable {
+    var stage: AgentActivityStage
+    var detail: String?
+    /// 连续同类步骤合并后的次数，例如「读 3 个网页」。
+    var count: Int
+
+    init(stage: AgentActivityStage, detail: String? = nil, count: Int = 1) {
+        self.stage = stage
+        self.detail = detail
+        self.count = count
+    }
+}
+
+/// 步骤对象只从工具参数里取，不额外调用模型；截短以控制 ActivityKit 负载大小。
+enum AgentActivityStepDetailPolicy {
+    static let maxLength = 24
+    static let detailedStages: [AgentActivityStage] = [.searching, .readingWeb, .readingDocument]
+    static let countableStages: [AgentActivityStage] = [.searching, .readingWeb, .readingDocument, .generatingImage]
+    /// 写入类工具不是"读"，也不取对象；其参数带整段文件内容，不在主线程解析。
+    /// 须与 `IOSWorkspaceToolCatalog.writeToolNames` 一致（有测试守护）。
+    static let writeToolNames: Set<String> = [
+        "workspace_file_write", "workspace_artifact_delete", "workspace_file_edit", "workspace_file_move",
+    ]
+    /// 搜索词、网址、文件名的参数都很短；超长输入直接跳过，不做 JSON 解析。
+    static let maxParsedInputBytes = 4_096
+
+    static func detail(stage: AgentActivityStage, input: String?) -> String? {
+        guard detailedStages.contains(stage),
+              let input, input.utf8.count <= maxParsedInputBytes,
+              let data = input.data(using: .utf8),
+              let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        func firstString(_ keys: [String]) -> String? {
+            keys.lazy
+                .compactMap { (object[$0] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .first { !$0.isEmpty }
+        }
+        let raw: String?
+        switch stage {
+        case .searching:
+            raw = firstString(["query"])
+        case .readingWeb:
+            raw = firstString(["url", "link", "uri"]).map { value in
+                guard let host = URL(string: value)?.host() else { return value }
+                return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            }
+        case .readingDocument:
+            raw = firstString(["path", "file_path", "filename"]).map { ($0 as NSString).lastPathComponent }
+        default:
+            raw = nil
+        }
+        guard let raw else { return nil }
+        let collapsed = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        return collapsed.count > maxLength ? String(collapsed.prefix(maxLength - 1)) + "…" : collapsed
+    }
+}
+
+struct AgentActivityApproval: Codable, Hashable, Sendable {
+    let requestId: String
+    /// 操作标题（如终端命令名）。仅在灵动岛展开态显示，锁屏只显示类别。
+    let title: String
+}
+
+enum AgentActivityFailureReason: String, Codable, Hashable, Sendable {
+    case network
+    case quota
+    case tool
 }
 
 enum AgentActivityKind: String, Codable, Hashable, Sendable {
@@ -125,8 +205,8 @@ enum AgentActivityAction: String, Codable, Hashable, Sendable {
 }
 
 enum AgentActivityInlineControl: Equatable {
-    case open
-    case cancel
+    case deny
+    case approve
     case retry
 }
 
@@ -136,16 +216,15 @@ enum AgentActivityInlineControlPolicy {
         isStale: Bool,
         hasConversation: Bool
     ) -> [AgentActivityInlineControl] {
+        // 轻点整个岛/卡片即回到对话，按钮只留给确认和重试。
         guard hasConversation else { return [] }
         switch presentation.displayPhase(isStale: isStale) {
-        case .running, .reconnecting:
-            return [.cancel]
         case .waitingForUser:
-            return [.cancel, .open]
+            return presentation.approval == nil ? [] : [.deny, .approve]
         case .failed:
-            return presentation.retryable == true ? [.retry, .open] : [.open]
-        case .stale, .completed, .cancelled:
-            return [.open]
+            return presentation.retryable == true ? [.retry] : []
+        case .running, .reconnecting, .stale, .completed, .cancelled:
+            return []
         }
     }
 }
@@ -266,7 +345,20 @@ extension AgentActivityPresentation {
         )
     }
 
+    static func runningTool(toolName: String, input: String?) -> AgentActivityPresentation {
+        var presentation = runningTool(toolName: toolName)
+        presentation.stepDetail = AgentActivityStepDetailPolicy.detail(stage: presentation.stage, input: input)
+        return presentation
+    }
+
     static func runningTool(toolName: String) -> AgentActivityPresentation {
+        if AgentActivityStepDetailPolicy.writeToolNames.contains(toolName) {
+            return AgentActivityPresentation(
+                kind: .document,
+                phase: .running,
+                stage: .runningTool
+            )
+        }
         if toolName.hasPrefix("wm_") {
             return AgentActivityPresentation(
                 kind: .web,
@@ -319,12 +411,16 @@ extension AgentActivityPresentation {
         }
     }
 
-    static func waitingForUser(kind: AgentActivityKind = .command) -> AgentActivityPresentation {
+    static func waitingForUser(
+        kind: AgentActivityKind = .command,
+        approval: AgentActivityApproval? = nil
+    ) -> AgentActivityPresentation {
         AgentActivityPresentation(
             kind: kind,
             phase: .waitingForUser,
             stage: .waitingForConfirmation,
-            action: .openConfirmation
+            action: .openConfirmation,
+            approval: approval
         )
     }
 
@@ -433,8 +529,9 @@ extension AgentActivityPresentation {
         return phase
     }
 
+    /// 失联时保留最后一步动作文案，由 displayPhase 表达"后台暂停"。
     func displayStage(isStale: Bool) -> AgentActivityStage {
-        displayPhase(isStale: isStale) == .stale ? .stale : stage
+        stage
     }
 
     private static func kind(forPublicToolTitle title: String) -> AgentActivityKind {
@@ -455,6 +552,80 @@ extension AgentActivityPresentation {
             .response
         default:
             .workflow
+        }
+    }
+}
+
+/// 灵动岛步骤行的历史：运行中工具步骤或对象切换时，把上一步记为"做完"，只保留最近两步。
+/// 思考、生成只作为当前一步显示，不进历史，否则每轮工具之间都会插入一次"已思考"。
+/// 连续同类步骤（中间隔着思考也算连续）合并计数；对象不同时不保留单个名字，改显示数量。
+enum AgentActivityStepHistoryPolicy {
+    static let maxFinishedSteps = 2
+
+    static func history(
+        after previous: AgentActivityPresentation?,
+        current: [AgentActivityStep],
+        next: AgentActivityPresentation
+    ) -> [AgentActivityStep] {
+        // 转入待确认也算上一步做完，否则批准后的完成卡片里会少掉审批前那一步。
+        guard let previous,
+              previous.phase == .running,
+              next.phase == .running || next.phase == .waitingForUser,
+              previous.stage != next.stage || previous.stepDetail != next.stepDetail else { return current }
+        return appending(previous, to: current)
+    }
+
+    /// 任务结束时的历史：结束那一刻正在进行的工具步骤也算做完，完成卡片据此列出做过的事。
+    static func closing(last: AgentActivityPresentation?, current: [AgentActivityStep]) -> [AgentActivityStep] {
+        guard let last, last.phase == .running else { return current }
+        return appending(last, to: current)
+    }
+
+    private static func appending(
+        _ previous: AgentActivityPresentation,
+        to current: [AgentActivityStep]
+    ) -> [AgentActivityStep] {
+        guard previous.stage.isToolStage else { return current }
+        var steps = current
+        if let last = steps.last, last.stage == previous.stage {
+            steps[steps.count - 1] = AgentActivityStep(
+                stage: last.stage,
+                detail: last.detail == previous.stepDetail ? last.detail : nil,
+                count: last.count + 1
+            )
+        } else {
+            steps.append(AgentActivityStep(stage: previous.stage, detail: previous.stepDetail))
+        }
+        return Array(steps.suffix(maxFinishedSteps))
+    }
+}
+
+extension AgentActivityStage {
+    /// 由工具执行产生的步骤。只有这类步骤进历史，也只有这类静默步骤需要心跳续期。
+    var isToolStage: Bool {
+        switch self {
+        case .searching, .readingSources, .readingWeb, .generatingImage,
+             .readingDocument, .updatingMemory, .runningTool:
+            true
+        case .preparing, .thinking, .generating, .organizing, .waitingForConfirmation,
+             .reconnecting, .stale, .completed, .failed, .cancelled:
+            false
+        }
+    }
+}
+
+enum AgentActivityKeylineRole: Equatable {
+    case attention
+    case failure
+}
+
+extension AgentActivityPhase {
+    /// 待确认用琥珀金、失败用淡红描边，其余状态保持系统默认。
+    var keylineRole: AgentActivityKeylineRole? {
+        switch self {
+        case .waitingForUser: .attention
+        case .failed: .failure
+        case .running, .reconnecting, .stale, .completed, .cancelled: nil
         }
     }
 }
@@ -704,6 +875,8 @@ extension AgentActivityPresentation {
         }
     }
 
+    // DEAD-CODE(待确认删除)：灵动岛最小态已改用 AgentActivityMinimalMark.accessibilityLabel，
+    // 此处不再有调用方。
     func accessibilitySummary(isStale: Bool) -> String {
         [kind.title, priorityFact(isStale: isStale) ?? displayStage(isStale: isStale).title]
             .joined(separator: ", ")
@@ -731,6 +904,9 @@ enum AgentActivityLifecyclePolicy {
         return activityState == .active || activityState == .stale
     }
 
+    /// 同一步骤持续输出时，最迟隔这么久把过期时间往后推一次；须短于运行态的过期时长。
+    static let progressRefreshInterval: TimeInterval = 60
+
     static func staleDate(for phase: AgentActivityPhase, now: Date) -> Date? {
         switch phase {
         case .running:
@@ -756,6 +932,18 @@ enum AgentActivityLifecyclePolicy {
         case .completed:
             20
         case .cancelled:
+            0
+        }
+    }
+
+    /// 结束前在灵动岛上停留展示终态的时长。end 之后系统会立刻把活动撤出灵动岛，
+    /// 不停留的话用户在岛上看不到「完成 / 中断」。须短于系统给的后台时间。
+    static func islandLingerDuration(for phase: AgentActivityPhase) -> TimeInterval {
+        switch phase {
+        // 至少 20 秒让人看得到；系统给的后台时间约 30 秒，实际停留还会被剩余后台时间封顶。
+        case .completed, .failed:
+            25
+        case .running, .reconnecting, .waitingForUser, .stale, .cancelled:
             0
         }
     }
