@@ -213,6 +213,10 @@ private final class ChatConversationRunState {
     /// 增强 Phase E：当前 pending 审批的 Jev 分诊标注（三态中性事实）。
     /// nil = 无标注（未配置/失败/非 active）——审批卡片与原样一致。
     var jevApprovalTriage: IOSJevApprovalTriage?
+    /// Jev 自动批准复核：当前 pending 审批由复核收紧而来时的风险标签。
+    var jevAutoApprovalEscalation: [String]?
+    /// Jev 完成校验：触发提示的最终消息 id；它不再是最后一条消息时提示自动消失。
+    var jevCompletionNoticeMessageId: String?
     /// 分诊迟到守卫：每次触发/清除递增，迟到结果比对 token 决定是否落地。
     var approvalTriageToken: Int = 0
     var contextCompactState: ChatContextCompactState = .idle
@@ -379,6 +383,26 @@ final class ChatViewModel {
     var jevApprovalTriage: IOSJevApprovalTriage? {
         currentRun.state.jevApprovalTriage
     }
+    var jevAutoApprovalEscalation: [String]? {
+        currentRun.state.jevAutoApprovalEscalation
+    }
+    var showsJevCompletionNotice: Bool {
+        let state = currentRun.state
+        guard let id = state.jevCompletionNoticeMessageId, !isGenerationActiveForCurrentConversation else { return false }
+        return state.messages.last?.id.description() == id
+    }
+
+    /// "让助手验证"：输入框（含附件）为空时直接发送验证请求；有草稿时追加到草稿后由用户确认。
+    func requestCompletionVerification() {
+        let prompt = IOSJevCompletionCheckService.verificationPrompt
+        let draft = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard draft.isEmpty, pendingImages.isEmpty, pendingSelectedFilePreview == nil else {
+            if !draft.contains(prompt) { inputText = draft.isEmpty ? prompt : draft + "\n" + prompt }
+            return
+        }
+        inputText = prompt
+        if !sendMessage() { inputText = "" }
+    }
     /// Wave B2: recipe 审批卡（mutation step / recipe_import）。
     var pendingRecipeApproval: RecipeToolApprovalRequest? {
         get { currentRun.state.pendingRecipeApproval }
@@ -400,6 +424,7 @@ final class ChatViewModel {
     ) {
         state.approvalTriageToken &+= 1
         let token = state.approvalTriageToken
+        state.jevAutoApprovalEscalation = requestId.flatMap { IOSJevAutoApprovalGate.shared.escalationReasons(requestId: $0) }
         guard let requestId else {
             state.jevApprovalTriage = nil
             return
@@ -1602,6 +1627,11 @@ final class ChatViewModel {
                 },
                 onRunTerminal: { [weak self] conversationId, runId, terminalStatus, finalMessages in
                     self?.observeYieldedChildResults(state: state, runId: runId)
+                    // 只是在等子代理的前台让出不是最终答复。
+                    if terminalStatus.wireName == AgentRunStatus.completed.wireName,
+                       state.waitingForChildRunId != runId {
+                        Self.checkCompletionClaim(state: state, runId: runId, messages: finalMessages)
+                    }
                     await self?.orchestrationToolService.notifyRunTerminal(
                         conversationId: conversationId,
                         runId: runId,
@@ -2632,6 +2662,16 @@ final class ChatViewModel {
 
     /// Own the subscription at conversation scope, independent of the visible
     /// ChatView. Subscribe before peeking so completion during teardown is caught.
+    /// Jev 完成校验：运行结束后异步判断，不影响终态处理。
+    private static func checkCompletionClaim(state: ChatConversationRunState, runId: String, messages: [UIMessage]) {
+        state.jevCompletionNoticeMessageId = nil
+        guard let finalId = messages.last?.id.description() else { return }
+        Task { @MainActor in
+            guard await IOSJevCompletionCheckService.shared.needsVerification(messages: messages, runKey: runId) else { return }
+            state.jevCompletionNoticeMessageId = finalId
+        }
+    }
+
     private func observeYieldedChildResults(state: ChatConversationRunState, runId: String) {
         guard state.waitingForChildRunId == runId, let id = state.conversationId else { return }
         state.childResultWakeTask?.cancel()

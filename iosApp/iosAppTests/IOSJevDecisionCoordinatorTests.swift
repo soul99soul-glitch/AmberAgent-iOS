@@ -170,6 +170,72 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         XCTAssertEqual(reason, "timeout")
     }
 
+    /// 网页循环调用 decide 时不传等待预算；默认等待必须覆盖 webActions 的
+    /// 网络 deadline，否则 400ms 后到达的答案被当作 late 丢弃、循环直接 handback。
+    func testWebActionsDefaultWaitCoversExtendedDeadline() async {
+        let transport = JevStubTransport { _ in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        var settings = IOSJevSettings()
+        settings.setMode(.active, for: .webActions)
+        settings.pinnedModelVersion = "jev-fixed-v1"
+        settings.setScopes([.webContent, .selectedTaskText], for: .webActions)
+        let coordinator = makeCoordinator(settings: SettingsBox(settings), transport: transport)
+        let outcome = await coordinator.decide(
+            useCase: .webActions,
+            requiredScopes: [.webContent, .selectedTaskText],
+            state: "state text",
+            questions: [IOSJevQuestion.score(id: "t1", levels: ["0", "3"], instructions: "test")],
+            context: IOSJevRunContext(runId: "run-w", turnBudgetKey: "turn-w", inputHash: "h"),
+            cacheKey: nil
+        )
+        guard case .applied = outcome else { return XCTFail("webActions 默认等待应容纳 700ms 响应：\(outcome)") }
+    }
+
+    /// 审批分诊异步补标签、不挡主路径；默认等待应覆盖网络 deadline。
+    func testApprovalTriageDefaultWaitCoversNetworkDeadline() async {
+        let transport = JevStubTransport { _ in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+        }
+        var settings = IOSJevSettings()
+        settings.setMode(.active, for: .approvalTriage)
+        settings.pinnedModelVersion = "jev-fixed-v1"
+        settings.setScopes([.toolMetadata, .selectedTaskText], for: .approvalTriage)
+        let coordinator = makeCoordinator(settings: SettingsBox(settings), transport: transport)
+        let outcome = await coordinator.decide(
+            useCase: .approvalTriage,
+            requiredScopes: [.toolMetadata, .selectedTaskText],
+            state: "state text",
+            questions: [IOSJevQuestion.score(id: "t1", levels: ["0", "3"], instructions: "test")],
+            context: IOSJevRunContext(runId: "run-a", turnBudgetKey: "turn-a", inputHash: "h"),
+            cacheKey: nil
+        )
+        guard case .applied = outcome else { return XCTFail("approvalTriage 默认等待应容纳 700ms 响应：\(outcome)") }
+    }
+
+    /// shadow 等到网络 deadline 才放弃，但 active 只等本用途的等待预算；
+    /// 指标需标明该答案若在 active 下是否来得及应用。
+    func testShadowRecordsWhetherAnswerFitsActiveWaitBudget() async {
+        for (delayMs, expected) in [(0, 1.0), (600, 0.0)] {
+            let transport = JevStubTransport { _ in
+                if delayMs > 0 { try? await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000) }
+                return (self.scorePayload(["t1": 0.9]), self.httpResponse(status: 200))
+            }
+            let metrics = MetricsSpy()
+            let coordinator = makeCoordinator(settings: SettingsBox(makeSettings(mode: .shadow)), transport: transport, metrics: metrics)
+            let (scopes, state, questions, context) = makeDecideCall()
+            let outcome = await coordinator.decide(
+                useCase: .toolDiscovery, requiredScopes: scopes, state: state, questions: questions,
+                context: context, cacheKey: "k", waitBudgetMs: 1_200
+            )
+            guard case .observed = outcome else { return XCTFail("expected observed, got \(outcome)") }
+            let record = metrics.all().last { $0.outcome == "observed" }
+            XCTAssertEqual(record?.numbers?["within_active_wait_budget"], expected, "delay \(delayMs)ms")
+        }
+    }
+
     // MARK: Budgets
 
     func testPerTurnRequestBudgetEnforced() async {

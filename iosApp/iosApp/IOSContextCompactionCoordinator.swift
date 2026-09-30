@@ -173,9 +173,15 @@ final class IOSContextCompactionCoordinator {
 
         let edited: (messages: [UIMessage], removedToolResults: Int)
         if policy.enabled {
+            let keepRecentMessages = max(policy.keepRecentTurns * 2, 4)
             edited = Self.editPreparedContext(
                 messages: uploadMessages,
-                keepRecentMessages: max(policy.keepRecentTurns * 2, 4)
+                keepRecentMessages: keepRecentMessages,
+                retainedToolCallIds: IOSJevToolRetentionService.shared.retainedToolCallIds(
+                    messages: uploadMessages,
+                    conversationId: conversationId?.toHexDashString(),
+                    keepRecentMessages: keepRecentMessages
+                )
             )
         } else {
             edited = (uploadMessages, 0)
@@ -1151,9 +1157,16 @@ private extension IOSContextCompactionCoordinator {
     /// 发送前静默裁剪/清空旧消息工具结果的入口。返回处理后的消息,以及被改动过的
     /// 工具结果条数(trim 或 clear 任一生效都算,不重复计数),供 handoff 注入如实
     /// 标注历史空洞。
-    static func editPreparedContext(messages: [UIMessage], keepRecentMessages: Int) -> (messages: [UIMessage], removedToolResults: Int) {
+    /// retainedToolCallIds：Jev 压缩保留判定需保留原文的结果，只跳过清空（超长仍截成预览）。
+    static func editPreparedContext(
+        messages: [UIMessage],
+        keepRecentMessages: Int,
+        retainedToolCallIds: Set<String> = []
+    ) -> (messages: [UIMessage], removedToolResults: Int) {
         let trimmed = editMessageTools(messages: messages, keepRecentMessages: keepRecentMessages) { trimToolResult($0) }
-        let cleared = editMessageTools(messages: trimmed, keepRecentMessages: keepRecentMessages) { clearToolResult($0) }
+        let cleared = editMessageTools(messages: trimmed, keepRecentMessages: keepRecentMessages) {
+            retainedToolCallIds.contains($0.toolCallId) ? $0 : clearToolResult($0)
+        }
         var removedToolResults = 0
         for (original, edited) in zip(messages, cleared) {
             for (originalPart, editedPart) in zip(original.parts, edited.parts) {
@@ -1555,7 +1568,7 @@ private extension IOSContextCompactionCoordinator {
         guard canEditPreparedResult(tool),
               safeToClearPreparedResult(tool) else { return tool }
         let outputChars = outputChars(tool.output)
-        guard outputChars > 2_000 else { return tool }
+        guard outputChars > clearMinOutputChars else { return tool }
         return replacingToolOutput(tool, text: """
             \(compactedToolOutputMarker) — historical result removed from this prepared context.
             \(jsonString([
@@ -1805,6 +1818,22 @@ private extension IOSContextCompactionCoordinator {
     }
 }
 
+extension IOSContextCompactionCoordinator {
+    static let clearMinOutputChars = 2_000
+
+    /// Jev 压缩保留的候选口径：移出保留窗口后会被清空的结果（与 clearToolResult 同条件）。
+    static func wouldClearToolResult(_ tool: UIMessagePart.Tool, in message: UIMessage) -> Bool {
+        !messageHasMultimodalPart(message)
+            && canEditPreparedResult(tool)
+            && safeToClearPreparedResult(tool)
+            && outputChars(tool.output) > clearMinOutputChars
+    }
+
+    static func toolOutputCharacterCount(_ tool: UIMessagePart.Tool) -> Int {
+        outputChars(tool.output)
+    }
+}
+
 #if DEBUG
 @MainActor
 enum ChatGenerationRequestPreparationTestSupport {
@@ -1890,11 +1919,13 @@ enum ContextCompactionEditTestSupport {
 
     static func editedMessagesWithCount(
         messages: [UIMessage],
-        keepRecentMessages: Int
+        keepRecentMessages: Int,
+        retainedToolCallIds: Set<String> = []
     ) -> (messages: [UIMessage], removedToolResults: Int) {
         IOSContextCompactionCoordinator.editPreparedContext(
             messages: messages,
-            keepRecentMessages: keepRecentMessages
+            keepRecentMessages: keepRecentMessages,
+            retainedToolCallIds: retainedToolCallIds
         )
     }
 

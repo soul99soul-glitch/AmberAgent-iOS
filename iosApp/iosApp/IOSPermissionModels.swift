@@ -1791,6 +1791,25 @@ struct IOSExecutionPolicySnapshot: Codable, Equatable, Sendable {
         self.mcpEnabled = mcpEnabled
     }
 
+    /// Jev 自动批准复核收紧时使用：关闭全局与高风险自动批准，并把逐能力的自动批准
+    /// 降为每次询问（仅限该能力提供"每次询问"选项）；其余保持不变。
+    func withoutAutoApprove() -> IOSExecutionPolicySnapshot {
+        var policies = capabilityPolicies
+        for capability in IOSCapabilityRegistry.capabilities
+        where [.autoApprove, .autoApproveHighRisk].contains(policy(for: capability))
+            && IOSPermissionStore.availablePolicies(for: capability).contains(.askEveryTime) {
+            policies[capability.id] = IOSAgentPermissionPolicy.askEveryTime.rawValue
+        }
+        return IOSExecutionPolicySnapshot(
+            capabilityPolicies: policies,
+            globalAutoApproveEnabled: false,
+            highRiskAutoApproveEnabled: false,
+            execJavaScriptEnabled: execJavaScriptEnabled,
+            webSearchEnabled: webSearchEnabled,
+            mcpEnabled: mcpEnabled
+        )
+    }
+
     func policy(for capability: IOSPlatformCapability) -> IOSAgentPermissionPolicy {
         capabilityPolicies[capability.id]
             .flatMap(IOSAgentPermissionPolicy.init(rawValue:))

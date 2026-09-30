@@ -824,4 +824,45 @@ final class IOSJevMemoryRecallTests: XCTestCase {
         XCTAssertEqual(repeatedFirst?.ids, first?.ids)
         XCTAssertEqual(transport.calls, 2, "A 的结果应保存在 A 的 turnKey 下，工具循环不能重发")
     }
+
+    /// topic 的相关性分数不参与选择，不应占用相关性题目；候选名额按题数计，
+    /// 使置顶与 topic 较多时普通记忆仍能进入评分。topic 仍做注入筛查。
+    func testTopicsAreScreenedButNotScoredSoOrdinaryMemoriesFitThePool() async throws {
+        let pinned = (1...4).map { id in
+            JevFixtures.makeRecord(.init(
+                id: Int32(id), content: "置顶偏好 \(id)",
+                scope: .longTerm, kind: .note, pinned: true,
+                updatedAt: JevFixtures.memoryNow, confidence: 0.9,
+                archived: false, expiresAt: nil
+            ))
+        }
+        let topics = (100...111).map { id in
+            JevFixtures.makeRecord(.init(
+                id: Int32(id), content: "主题汇总 \(id)",
+                scope: .longTerm, kind: .topic, pinned: false,
+                updatedAt: JevFixtures.memoryNow, confidence: 0.9,
+                archived: false, expiresAt: nil
+            ))
+        }
+        let ordinary = JevFixtures.makeRecord(.init(
+            id: 500, content: "用户的猫叫年糕",
+            scope: .longTerm, kind: .note, pinned: false,
+            updatedAt: JevFixtures.memoryNow, confidence: 0.9,
+            archived: false, expiresAt: nil
+        ))
+        let transport = JevStubTransport { request in
+            (self.batchPayload(for: request, scores: ["m500": 3]), self.httpResponse(status: 200))
+        }
+        _ = await makeService(settings: makeSettings(mode: .active), transport: transport).prepareTurnSelection(
+            messages: [userMessage(text: "我的猫叫什么")], records: pinned + topics + [ordinary],
+            runtime: runtime, identity: identity()
+        )
+        let body = try XCTUnwrap(transport.lastBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        let questionIds = Set(try XCTUnwrap(json["questions"] as? [String: Any]).keys)
+        XCTAssertTrue(questionIds.contains("memory_recall.m500"), "普通记忆进入相关性评分")
+        XCTAssertFalse(questionIds.contains("memory_recall.m100"), "topic 不出相关性题")
+        XCTAssertTrue(questionIds.contains("memory_injection.inj100"), "topic 仍做注入筛查")
+        XCTAssertLessThanOrEqual(questionIds.count, IOSJevPolicy().maxQuestions)
+    }
 }

@@ -285,14 +285,14 @@ final class IOSJevSettingsTests: XCTestCase {
         XCTAssertEqual(reloaded3.jevSettings.pinnedModelVersion, "jev-2026-09-15")
     }
 
-    func testRecommendedConfigurationPersistsOnlyFiveShadowUseCases() {
+    func testRecommendedConfigurationPersistsOnlyLowRiskShadowUseCases() {
         let defaults = isolatedDefaults()
         let store = IOSSharedSettingsStore(userDefaults: defaults)
         var settings = store.jevSettings
         settings.applyRecommendedConfiguration()
         store.updateJevSettings(settings)
         let reloaded = IOSSharedSettingsStore(userDefaults: defaults).jevSettings
-        for useCase in [IOSJevUseCase.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .subagentIntent] {
+        for useCase in [IOSJevUseCase.toolDiscovery, .memoryRecall, .contextSelection, .toolResultRetention, .modelRouting, .subagentIntent, .completionCheck] {
             XCTAssertEqual(reloaded.effectiveMode(for: useCase), .shadow)
             XCTAssertEqual(reloaded.allowedScopes(for: useCase), useCase.defaultDataScopes)
         }

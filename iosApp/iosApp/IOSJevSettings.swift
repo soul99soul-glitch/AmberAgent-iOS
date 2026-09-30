@@ -7,17 +7,24 @@ import UIKit
 // 持久化）；API Key 走 IOSCredentialSideTable（Keychain），绝不写进这里。
 // 旧配置（无该 key）默认全用途 off。Jev 不进入普通聊天 provider/模型列表。
 
-/// Jev 用途。六个用途均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 =
-/// Phase 2，模型调度/网页操作 = Phase 3，意图路由 = 增强 Phase C）；
-/// webActions 的调用入口是 wm_run_goal 工具。
+/// Jev 用途，均已接线（工具发现/记忆召回 = Phase 1，上下文筛选 = Phase 2，
+/// 模型调度/网页操作 = Phase 3，意图路由 = 增强 Phase C，压缩保留/自动批准
+/// 复核/完成校验 = v2）；webActions 的调用入口是 wm_run_goal 工具。
 enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
+    // 声明顺序即设置页行与用量统计的展示顺序（持久化用 rawValue，与顺序无关）。
     case toolDiscovery
     case memoryRecall
     case contextSelection
+    /// 旧工具结果移出保留窗口前，判断原文是否仍需保留（不清空）。
+    case toolResultRetention
     case modelRouting
     case webActions
     case subagentIntent
     case approvalTriage
+    /// 自动批准生效时复核高风险调用，只会收紧为人工审批。
+    case autoApprovalGate
+    /// 本轮改过文件却未运行检查就宣称完成时，提示用户让助手验证。
+    case completionCheck
     /// exec 脚本经 `jev` 全局主动调用（只有 active 才注入，shadow 对脚本无意义）。
     case scriptJudgment
 
@@ -33,6 +40,9 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         case .subagentIntent: "意图路由"
         case .approvalTriage: "审批分诊"
         case .scriptJudgment: "脚本判断"
+        case .toolResultRetention: "压缩保留"
+        case .autoApprovalGate: "自动批准复核"
+        case .completionCheck: "完成校验"
         }
     }
 
@@ -47,6 +57,9 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         case .subagentIntent: [.selectedTaskText, .toolMetadata]
         case .approvalTriage: [.toolMetadata, .selectedTaskText]
         case .scriptJudgment: [.toolOutput]
+        case .toolResultRetention: [.selectedTaskText, .toolOutput, .toolMetadata]
+        case .autoApprovalGate: [.toolMetadata, .selectedTaskText]
+        case .completionCheck: [.selectedTaskText, .toolMetadata]
         }
     }
 }
@@ -266,6 +279,20 @@ struct IOSJevPolicy: Codable, Equatable, Sendable {
     var cooldownFailureThreshold: Int = 3
     /// 冷却时长（秒）。
     var cooldownSeconds: Int = 60
+
+    /// 各用途 active 调用方实际等待的时长：协调器默认等待与 shadow 的
+    /// "预算内返回"指标共用这一口径。不挡主路径的用途（审批分诊、网页
+    /// 循环自身）等到网络 deadline；T1/T2/T3 与按需判断用等待预算。
+    func activeWaitBudgetMs(for useCase: IOSJevUseCase) -> Int {
+        switch useCase {
+        case .memoryRecall: t1WaitBudgetMs
+        case .contextSelection: t2WaitBudgetMs
+        case .modelRouting, .subagentIntent: t3WaitBudgetMs
+        case .toolDiscovery: onDemandWaitBudgetMs
+        case .approvalTriage, .scriptJudgment, .toolResultRetention, .autoApprovalGate, .completionCheck: deadlineMs
+        case .webActions: webActionsDeadlineMs
+        }
+    }
 }
 
 /// 单条指标。默认不存业务原文，只存大小、耗时、结果与用量。
@@ -490,9 +517,9 @@ struct IOSJevSettings: Codable, Equatable, Sendable {
         revision += 1
     }
 
-    /// 推荐配置只开启五个低风险用途的 shadow 观测，保留其它用途原设置。
+    /// 推荐配置只开启低风险用途的 shadow 观测，保留其它用途原设置。
     mutating func applyRecommendedConfiguration() {
-        for useCase in [IOSJevUseCase.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .subagentIntent] {
+        for useCase in [IOSJevUseCase.toolDiscovery, .memoryRecall, .contextSelection, .toolResultRetention, .modelRouting, .subagentIntent, .completionCheck] {
             modes[useCase] = .shadow
             dataScopes[useCase] = useCase.defaultDataScopes
         }
@@ -636,6 +663,8 @@ enum IOSJevMetricsStore {
         var differenceRate: Double?
         var waitP50Ms: Int?
         var waitP95Ms: Int?
+        /// shadow 答案在 active 等待预算内返回的比例；nil 表示暂无 shadow 样本。
+        var withinActiveWaitRate: Double?
         var completionRate: Double?
         var exposureRatio: Double?
         var newToolUseRate: Double?
@@ -687,6 +716,7 @@ enum IOSJevMetricsStore {
             } else {
                 differenceRate = nil
             }
+            let activeWaitFits = group.compactMap { $0.numbers?["within_active_wait_budget"] }
             let waits = group.compactMap(\.waitedMs).sorted()
             func percentile(_ p: Double) -> Int? {
                 guard !waits.isEmpty else { return nil }
@@ -705,6 +735,7 @@ enum IOSJevMetricsStore {
                 differenceRate: differenceRate,
                 waitP50Ms: percentile(0.5),
                 waitP95Ms: percentile(0.95),
+                withinActiveWaitRate: activeWaitFits.isEmpty ? nil : activeWaitFits.reduce(0, +) / Double(activeWaitFits.count),
                 completionRate: completions.isEmpty ? nil : completions.reduce(0, +) / Double(completions.count),
                 exposureRatio: exposureRatios.isEmpty ? nil : exposureRatios.reduce(0, +) / Double(exposureRatios.count),
                 newToolUseRate: nextToolUses.isEmpty ? nil : nextToolUses.reduce(0, +) / Double(nextToolUses.count),

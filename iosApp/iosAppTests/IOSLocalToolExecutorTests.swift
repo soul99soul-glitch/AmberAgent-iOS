@@ -3890,6 +3890,28 @@ final class IOSLocalToolExecutorTests: XCTestCase {
         XCTAssertTrue((traversalObject["error"] as? String)?.contains("traversal") == true)
     }
 
+    /// Jev 自动批准复核收紧时依赖此事实：关闭自动批准的快照让写入回到审批卡。
+    func testWithoutAutoApproveSnapshotRestoresWorkspaceWriteApproval() async throws {
+        let executor = makeExecutor(workspaceStore: makeWorkspaceStore())
+        let input = #"{"path":"/workspace/notes/gate.md","content":"gate"}"#
+        let autoApprove = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [:], globalAutoApproveEnabled: true,
+            highRiskAutoApproveEnabled: true, execJavaScriptEnabled: false, webSearchEnabled: false
+        )
+        func run(_ policy: IOSExecutionPolicySnapshot) async -> IOSLocalToolExecutionOutput {
+            await executor.execute(IOSLocalToolExecutionRequest(
+                toolName: "workspace_file_write", operation: input, scopeDigest: "", payloadDigest: "",
+                isUserInitiated: false, executionPolicy: policy
+            ))
+        }
+        guard case .workspaceResult = await run(autoApprove) else {
+            return XCTFail("自动批准下写入应直接执行")
+        }
+        guard case .needsUserAction = await run(autoApprove.withoutAutoApprove()) else {
+            return XCTFail("关闭自动批准后写入应回到审批")
+        }
+    }
+
     func testWorkspaceArtifactReadAndDeleteUseApproval() async throws {
         let workspaceStore = makeWorkspaceStore()
         let artifact = try workspaceStore.saveArtifact(

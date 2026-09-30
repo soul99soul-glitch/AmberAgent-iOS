@@ -33,18 +33,28 @@ private func isWebMountInterruptedOutcome(_ text: String) -> Bool {
 private final class IOSClosureToolExecutor: IOSToolExecutor {
     private let handler: @MainActor (String, String, Bool) async -> IOSAgentToolOutcome
     private let executionPolicy: IOSExecutionPolicySnapshot?
+    /// Jev 自动批准复核：返回 true 时本次调用在关闭自动批准的策略下执行。
+    private let tighten: (@MainActor (String, String) async -> Bool)?
 
     init(
         executionPolicy: IOSExecutionPolicySnapshot? = IOSExecutionPolicyContext.snapshot,
+        tighten: (@MainActor (String, String) async -> Bool)? = nil,
         _ handler: @escaping @MainActor (String, String, Bool) async -> IOSAgentToolOutcome
     ) {
         self.handler = handler
         self.executionPolicy = executionPolicy
+        self.tighten = tighten
     }
 
     func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
         await IOSExecutionPolicyContext.$snapshot.withValue(executionPolicy) {
-            await handler(name, arguments, isUserInitiated)
+            if !isUserInitiated, let tighten, await tighten(name, arguments),
+               let tightened = executionPolicy?.withoutAutoApprove() {
+                return await IOSExecutionPolicyContext.$snapshot.withValue(tightened) {
+                    await handler(name, arguments, isUserInitiated)
+                }
+            }
+            return await handler(name, arguments, isUserInitiated)
         }
     }
 }
@@ -764,6 +774,18 @@ final class ChatToolRuntime {
     ) -> [String: any IOSToolExecutor] {
         var executors: [String: any IOSToolExecutor] = [:]
         let availableToolNames = Set(params.tools.map(\.name))
+        // Jev 自动批准复核：后台没有审批卡，收紧后各执行器按原逻辑返回"需回到 App 确认"。
+        let recentUserTexts = messages.filter { $0.role == MessageRole.user }.suffix(3).map { $0.toText() }
+        let tighten: @MainActor (String, String) async -> Bool = { [weak self] name, arguments in
+            guard let self else { return false }
+            return await self.shouldTightenAutoApproval(
+                toolCall: self.toolCall(name: name, input: arguments),
+                recentUserTexts: recentUserTexts,
+                runId: runId,
+                conversationId: conversationId,
+                toolExposureBridge: toolExposureBridge
+            )
+        }
 
         // P0-a: tool_search is a local discovery call, safe in background. The
         // background job owns its own bridge instance (rebuilt from the handoff
@@ -841,7 +863,7 @@ final class ChatToolRuntime {
 
         if localToolExecutor != nil {
             for name in IOSWorkspaceToolCatalog.supportedToolNames where availableToolNames.contains(name) {
-                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.workspaceToolExecutionOutput(toolCall, isUserInitiated: false)
@@ -854,7 +876,7 @@ final class ChatToolRuntime {
 
             for name in IOSAgentTerminalToolCatalog.supportedToolNames
             where availableToolNames.contains(name) {
-                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.ishToolExecutionOutput(
@@ -877,7 +899,7 @@ final class ChatToolRuntime {
         if isWebMountRuntimeEnabled {
             for name in IOSWebMountToolCatalog.supportedToolNames.union(IOSWebMountToolCatalog.unsupportedToolNames)
             where availableToolNames.contains(name) {
-                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+                executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                     guard let self else { return .failed("Chat runtime is unavailable.") }
                     let toolCall = self.toolCall(name: toolName, input: arguments)
                     let output = await self.webMountToolExecutionOutput(
@@ -995,7 +1017,7 @@ final class ChatToolRuntime {
         }
 
         if availableToolNames.contains("mcp_call") {
-            executors["mcp_call"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+            executors["mcp_call"] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 // High-risk gate mirrors the foreground path (executeAdvancedToolCall):
                 // MCP may touch external services, so only auto-run when the high-risk
@@ -1028,7 +1050,7 @@ final class ChatToolRuntime {
         // visible in the current round's params are registered.
         for tool in params.tools where ToolKt.isExpandedMcpToolName(name: tool.name) {
             let expandedName = tool.name
-            executors[expandedName] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+            executors[expandedName] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 guard self.effectiveHighRiskAutoApproveEnabled else {
                     return .denied("后台生成期间需要回到 App 确认 MCP 工具。")
@@ -1057,7 +1079,7 @@ final class ChatToolRuntime {
             .union(IOSMcpManagementToolCatalog.toolNames)
             .union([IOSSoulToolCatalog.toolName])
         for name in skillMcpNames where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 if Self.isHostPublishTool(toolName) {
                     return await self.backgroundHostPublishOutcome(
@@ -1094,7 +1116,7 @@ final class ChatToolRuntime {
         // 执行。独立 recipe__* 仍不进入后台目录；显式声明且只读的
         // plugin__* 工具已在上方按固定目录快照注册。
         for name in IOSRecipeToolCatalog.toolNames where availableToolNames.contains(name) {
-            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+            executors[name] = IOSClosureToolExecutor(executionPolicy: executionPolicy, tighten: tighten) { [weak self] toolName, arguments, _ in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 if Self.isHostPublishTool(toolName) {
                     return await self.backgroundHostPublishOutcome(
@@ -1465,6 +1487,90 @@ final class ChatToolRuntime {
             )
             return .completed(resolvedMessages)
         }
+        if await shouldTightenAutoApproval(pendingToolCall, context: context, toolExposureBridge: toolExposureBridge),
+           let tightened = (IOSExecutionPolicyContext.snapshot ?? localToolExecutor?.executionPolicySnapshot(
+               execJavaScriptEnabled: effectiveExecJavaScriptEnabled,
+               webSearchEnabled: effectiveWebSearchEnabled
+           ))?.withoutAutoApprove() {
+            return await IOSExecutionPolicyContext.$snapshot.withValue(tightened) {
+                await dispatchPendingToolCall(
+                    pendingToolCall,
+                    context: context,
+                    toolExposureBridge: toolExposureBridge,
+                    nestedToolRunner: nestedToolRunner,
+                    recipeCatalogSnapshot: recipeCatalogSnapshot
+                )
+            }
+        }
+        return await dispatchPendingToolCall(
+            pendingToolCall,
+            context: context,
+            toolExposureBridge: toolExposureBridge,
+            nestedToolRunner: nestedToolRunner,
+            recipeCatalogSnapshot: recipeCatalogSnapshot
+        )
+    }
+
+    /// Jev 自动批准复核（前台入口）：只看可能弹出审批卡的工具类别。
+    private func shouldTightenAutoApproval(
+        _ pendingToolCall: ChatPendingToolCall,
+        context: ChatPendingToolApproval,
+        toolExposureBridge: IosToolExposureBridge?
+    ) async -> Bool {
+        switch pendingToolCall.kind {
+        case .ish, .workspace, .webMount, .advanced, .search: break
+        default: return false
+        }
+        return await shouldTightenAutoApproval(
+            toolCall: context.toolCall,
+            recentUserTexts: context.recentUserTexts
+                ?? context.baseMessages.filter { $0.role == MessageRole.user }.suffix(3).map { $0.toText() },
+            runId: context.runId,
+            conversationId: context.conversationId,
+            toolExposureBridge: toolExposureBridge
+        )
+    }
+
+    /// 自动批准生效时，非低风险调用经 Jev 判定高风险则改为人工审批（前台与后台共用）。
+    private func shouldTightenAutoApproval(
+        toolCall: UIMessagePart.Tool,
+        recentUserTexts: [String],
+        runId: String,
+        conversationId: KotlinUuid?,
+        toolExposureBridge: IosToolExposureBridge?
+    ) async -> Bool {
+        guard effectiveGlobalAutoApproveEnabled || effectiveHighRiskAutoApproveEnabled,
+              sharedSettings.jevSettings.effectiveMode(for: .autoApprovalGate) != .off else { return false }
+        let name = toolCall.toolName
+        // 只读检索、编排/交互类工具（无审批分支，收紧快照还会传给子运行）、
+        // 已获会话/运行级授权的终端调用不复核。
+        guard !IOSJevContextSelectionService.isRereadableTool(name),
+              !Self.execNestedToolExclusions.contains(name),
+              !isIshAutoApproved(toolName: name, input: toolCall.input, runId: runId, conversationId: conversationId)
+        else { return false }
+        let facts = IOSJevApprovalTriageService.StaticFacts.registeredTool(
+            metadataJSON: toolExposureBridge?.approvalTriageFactsJsonForInvocation(
+                toolName: name,
+                argumentsJson: toolCall.input
+            )
+        )
+        guard !IOSJevAutoApprovalGate.isStaticallyLowRisk(facts) else { return false }
+        return await IOSJevAutoApprovalGate.shared.shouldEscalate(
+            requestId: ChatToolCallParsing.requestId(for: toolCall),
+            toolName: name,
+            argumentsJSON: toolCall.input,
+            recentUserTexts: recentUserTexts,
+            runKey: runId
+        )
+    }
+
+    private func dispatchPendingToolCall(
+        _ pendingToolCall: ChatPendingToolCall,
+        context: ChatPendingToolApproval,
+        toolExposureBridge: IosToolExposureBridge?,
+        nestedToolRunner: IosExecNestedToolRunner?,
+        recipeCatalogSnapshot: IOSDynamicToolCatalogSnapshot?
+    ) async -> ChatToolRuntimeResult {
         switch pendingToolCall.kind {
         case .toolSearch:
             return await executeToolSearchToolCall(context, toolExposureBridge: toolExposureBridge)
@@ -2892,7 +2998,7 @@ final class ChatToolRuntime {
 
         var jev: [String: Any] = [
             "role": "internal_fast_judgment",
-            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注、为待审批动作产出三态分诊标注（只标注不授权）；script_judgment 为 active 时 exec 脚本可经 `jev` 全局主动调用（数据范围为工具输出）。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
+            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注、为待审批动作产出三态分诊标注（只标注不授权）、判断压缩前旧工具结果是否保留原文、在自动批准生效时复核高风险调用（只会收紧为人工审批）、在本轮改动未验证却宣称完成时提示用户；script_judgment 为 active 时 exec 脚本可经 `jev` 全局主动调用（数据范围为工具输出）。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
             "service": jevSettings.apiStyle.serviceIdentifier,
             "api_mode": jevSettings.apiStyle.statusValue,
             "model": jevSettings.modelConfigured ? jevSettings.activeModelVersion : NSNull(),
@@ -2976,6 +3082,9 @@ final class ChatToolRuntime {
         case .subagentIntent: "subagent_intent"
         case .approvalTriage: "approval_triage"
         case .scriptJudgment: "script_judgment"
+        case .toolResultRetention: "tool_result_retention"
+        case .autoApprovalGate: "auto_approval_gate"
+        case .completionCheck: "completion_check"
         }
     }
 

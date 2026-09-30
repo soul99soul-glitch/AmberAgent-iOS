@@ -82,5 +82,27 @@ final class IOSJevApprovalChipsVisualEvidenceTests: XCTestCase {
             type: .accessibility3,
             size: CGSize(width: 320, height: 320)
         )
+        // 自动批准复核说明行 + 分诊标签（与 ChatView 审批区同一 VStack 间距）。
+        let escalated = VStack(alignment: .leading, spacing: 6) {
+            JevAutoApprovalEscalationNote(reasons: ["破坏性", "超出任务范围"])
+            JevApprovalTriageChips(triage: .init(
+                requestId: "r1", readonly: .no, reversible: .unknown, goalAligned: .no
+            ))
+        }
+        try await capture(escalated, name: "jev-escalation-note", size: CGSize(width: 393, height: 140))
+        try await capture(
+            escalated,
+            name: "jev-escalation-note-narrow-a11y3",
+            type: .accessibility3,
+            size: CGSize(width: 320, height: 420)
+        )
+        // 完成校验提示条。
+        try await capture(JevCompletionCheckNotice {}, name: "jev-completion-notice", size: CGSize(width: 393, height: 100))
+        try await capture(
+            JevCompletionCheckNotice {},
+            name: "jev-completion-notice-narrow-a11y3",
+            type: .accessibility3,
+            size: CGSize(width: 320, height: 320)
+        )
     }
 }

@@ -105,8 +105,8 @@ final class IOSJevMemoryRecallService {
             queryText: queryText
         )
 
-        // 候选：词面命中 + 新近 + 全量补充。每条候选要提交 Score 与 Noul 两题，
-        // 因此先按 maxQuestions / 2 限制候选数，避免同一次 T1 判断被拆批。
+        // 候选：词面命中 + 新近 + 全量补充。普通候选提交 Score 与 Noul 两题，
+        // topic 只做 Noul 筛查；按题数限制候选，避免同一次 T1 判断被拆批。
         var candidates = candidatePool(eligible: eligible, queryText: queryText, policy: settings.policy)
         while !candidates.isEmpty && !memoryBatchFits(candidates: candidates, queryText: queryText, settings: settings) {
             candidates.removeLast()
@@ -265,15 +265,25 @@ final class IOSJevMemoryRecallService {
     // MARK: Candidate pool
 
     /// 词面命中 + 新近（30 天窗口降序）+ 合法集合补充，去重后有界。
+    /// 评分候选不超过 candidatePoolLimit；topic 不评分只占一道筛查题，
+    /// 总题数不超过单请求 maxQuestions。
     private func candidatePool(eligible: [MemoryRecord], queryText: String, policy: IOSJevPolicy) -> [MemoryRecord] {
-        let maxCandidates = Self.candidatePoolLimit(policy: policy)
+        let maxScored = Self.candidatePoolLimit(policy: policy)
+        let maxQuestions = max(policy.maxQuestions, 0)
         let tokens = Set(ChatMemoryContextBuilder.recallTokens(from: queryText))
         var pool: [MemoryRecord] = []
         var seen = Set<Int32>()
+        var scoredCount = 0
+        var questionCount = 0
         func add(_ record: MemoryRecord) {
-            guard seen.insert(record.id).inserted else { return }
-            guard pool.count < maxCandidates else { return }
+            guard !seen.contains(record.id) else { return }
+            let isTopic = record.kind == .topic
+            let cost = isTopic ? 1 : 2
+            guard questionCount + cost <= maxQuestions, isTopic || scoredCount < maxScored else { return }
+            seen.insert(record.id)
             pool.append(record)
+            questionCount += cost
+            if !isTopic { scoredCount += 1 }
         }
         // 1) 先覆盖置顶/核心，再覆盖较低优先级的 topic，与最终保留顺序一致。
         for record in eligible where record.kind != .topic && (record.pinned || record.scope == .core) {
@@ -292,13 +302,13 @@ final class IOSJevMemoryRecallService {
         }
         // 4) 合法集合补充（保持原顺序）。
         for record in eligible {
-            if pool.count >= maxCandidates { break }
+            if questionCount >= maxQuestions { break }
             add(record)
         }
         return pool
     }
 
-    /// 相关性与注入筛查每候选各一题，因此候选池最多占用单请求题数的一半。
+    /// 评分候选（非 topic）相关性与注入筛查各一题，最多占用单请求题数的一半。
     static func candidatePoolLimit(policy: IOSJevPolicy) -> Int {
         min(max(policy.maxCandidates, 0), 32, max(policy.maxQuestions, 0) / 2)
     }
@@ -336,8 +346,9 @@ final class IOSJevMemoryRecallService {
         "3 = 明确相关，应注入当前上下文",
     ]
 
+    /// topic 的分数不参与选择（见 orderedSelection），不出相关性题。
     private func scoreQuestions(for candidates: [MemoryRecord]) -> [IOSJevQuestion] {
-        candidates.map { record in
+        candidates.filter { $0.kind != .topic }.map { record in
             IOSJevQuestion.score(
                 id: "m\(record.id)",
                 levels: Self.relevanceLevels,
@@ -350,7 +361,7 @@ final class IOSJevMemoryRecallService {
         var lines: [String] = []
         lines.append("当前任务文本：\(String(queryText.prefix(2_000)))")
         lines.append("候选记忆（id = m<记忆ID>）：")
-        for record in candidates {
+        for record in candidates where record.kind != .topic {
             let content = String(record.content.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))
                 .replacingOccurrences(of: "\n", with: " ")
             let pinned = record.pinned ? " (pinned)" : ""
@@ -422,7 +433,7 @@ final class IOSJevMemoryRecallService {
         ordered.append(contentsOf: strongKeep.filter { !candidateIds.contains($0.id) })
         selectedIds.formUnion(strongKeep.map(\.id))
 
-        // 3) topic 行（未外发、零评分）：保留原 mid-tier 语义，附在后面。
+        // 3) topic 行（只做注入筛查、不评分）：保留原 mid-tier 语义，附在后面。
         for record in eligible where record.kind == .topic {
             guard selectedIds.insert(record.id).inserted else { continue }
             ordered.append(record)

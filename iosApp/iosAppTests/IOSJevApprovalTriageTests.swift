@@ -206,3 +206,159 @@ final class IOSJevApprovalTriageTests: XCTestCase {
         XCTAssertNil(triage, "失败即无标注（fail-open 到原卡片）")
     }
 }
+
+// IOSJevAutoApprovalGateTests（v2 Phase 2 自动批准复核）：只收紧不放行、
+// 用户明确要求可豁免（外发除外）、shadow/off/失败维持自动批准。
+@MainActor
+final class IOSJevAutoApprovalGateTests: XCTestCase {
+    private func makeGate(
+        mode: IOSJevMode,
+        answers: [String: Double],
+        status: Int = 200
+    ) -> (IOSJevAutoApprovalGate, JevStubTransport) {
+        var configured = IOSJevSettings()
+        configured.setMode(mode, for: .autoApprovalGate)
+        configured.pinnedModelVersion = "jev-fixed-v1"
+        let settings = configured
+        let transport = JevStubTransport { _ in
+            let payload: [String: Any] = [
+                "model": "jev-latest",
+                "answers": Dictionary(uniqueKeysWithValues: answers.map { ("single.\($0.key)", ["type": "noul", "noul": $0.value]) }),
+            ]
+            return (try! JSONSerialization.data(withJSONObject: payload),
+                    HTTPURLResponse(url: IOSJevSettings.productionEndpoint, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport),
+            settingsProvider: { settings },
+            apiKeyProvider: { "test-key" },
+            now: { Date() },
+            metricsStore: { _, _ in }
+        ))
+        return (IOSJevAutoApprovalGate(deps: .init(coordinator: coordinator, settingsProvider: { settings })), transport)
+    }
+
+    private func ask(_ gate: IOSJevAutoApprovalGate, id: String = "call-1") async -> Bool {
+        await gate.shouldEscalate(
+            requestId: id, toolName: "terminal_execute", argumentsJSON: #"{"command":"rm -rf build"}"#,
+            recentUserTexts: ["帮我看看项目结构"], runKey: "run"
+        )
+    }
+
+    private let allAnswers = ["destructive": 0.1, "exfiltration": 0.1, "offTask": 0.1, "authorized": 0.1]
+
+    func testHighRiskEscalatesAndRecordsReason() async {
+        var answers = allAnswers
+        answers["destructive"] = 0.9
+        let (gate, _) = makeGate(mode: .active, answers: answers)
+        let escalated = await ask(gate)
+        XCTAssertTrue(escalated)
+        XCTAssertEqual(gate.escalationReasons(requestId: "call-1"), ["破坏性"])
+    }
+
+    func testExplicitlyRequestedActionIsNotEscalated() async {
+        var answers = allAnswers
+        answers["destructive"] = 0.9
+        answers["authorized"] = 0.9
+        let (gate, _) = makeGate(mode: .active, answers: answers)
+        let escalated = await ask(gate)
+        XCTAssertFalse(escalated)
+        XCTAssertNil(gate.escalationReasons(requestId: "call-1"))
+    }
+
+    func testExfiltrationIsEscalatedEvenWhenRequested() async {
+        var answers = allAnswers
+        answers["exfiltration"] = 0.9
+        answers["authorized"] = 0.9
+        let (gate, _) = makeGate(mode: .active, answers: answers)
+        let escalated = await ask(gate)
+        XCTAssertTrue(escalated)
+        XCTAssertEqual(gate.escalationReasons(requestId: "call-1"), ["外发数据"])
+    }
+
+    func testLowRiskKeepsAutoApproval() async {
+        let (gate, _) = makeGate(mode: .active, answers: allAnswers)
+        let escalated = await ask(gate)
+        XCTAssertFalse(escalated)
+    }
+
+    func testFailureKeepsAutoApproval() async {
+        let (gate, transport) = makeGate(mode: .active, answers: [:], status: 500)
+        let escalated = await ask(gate)
+        XCTAssertFalse(escalated)
+        XCTAssertGreaterThanOrEqual(transport.calls, 1, "客户端对 5xx 会按既有策略重试")
+    }
+
+    func testShadowNeverEscalates() async throws {
+        var answers = allAnswers
+        answers["destructive"] = 0.9
+        let (gate, transport) = makeGate(mode: .shadow, answers: answers)
+        let escalated = await ask(gate)
+        XCTAssertFalse(escalated)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(transport.calls, 1, "shadow 在后台观测")
+    }
+
+    /// 终端工具 mutates=false 但风险为 sensitive，不能按只读跳过复核。
+    func testOnlyNormalRiskNonMutatingCallsSkipReview() {
+        let terminal = IOSJevApprovalTriageService.StaticFacts.registeredTool(metadataJSON: #"{"mutates":false,"risk":"sensitive"}"#)
+        let read = IOSJevApprovalTriageService.StaticFacts.registeredTool(metadataJSON: #"{"mutates":false,"risk":"normal"}"#)
+        let write = IOSJevApprovalTriageService.StaticFacts.registeredTool(metadataJSON: #"{"mutates":true,"risk":"normal"}"#)
+        XCTAssertFalse(IOSJevAutoApprovalGate.isStaticallyLowRisk(terminal))
+        XCTAssertTrue(IOSJevAutoApprovalGate.isStaticallyLowRisk(read))
+        XCTAssertFalse(IOSJevAutoApprovalGate.isStaticallyLowRisk(write))
+        XCTAssertFalse(IOSJevAutoApprovalGate.isStaticallyLowRisk(nil), "无元数据时交给 Jev")
+    }
+
+    func testReaskClearsStaleEscalation() async {
+        final class Box: @unchecked Sendable { var destructive = 0.9 }
+        let box = Box()
+        var configured = IOSJevSettings()
+        configured.setMode(.active, for: .autoApprovalGate)
+        configured.pinnedModelVersion = "jev-fixed-v1"
+        let settings = configured
+        let transport = JevStubTransport { _ in
+            let answers: [String: Double] = ["destructive": box.destructive, "exfiltration": 0.1, "offTask": 0.1, "authorized": 0.1]
+            let payload: [String: Any] = ["model": "jev-latest", "answers": Dictionary(uniqueKeysWithValues: answers.map {
+                ("single.\($0.key)", ["type": "noul", "noul": $0.value])
+            })]
+            return (try! JSONSerialization.data(withJSONObject: payload),
+                    HTTPURLResponse(url: IOSJevSettings.productionEndpoint, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport), settingsProvider: { settings },
+            apiKeyProvider: { "test-key" }, now: { Date() }, metricsStore: { _, _ in }
+        ))
+        let gate = IOSJevAutoApprovalGate(deps: .init(coordinator: coordinator, settingsProvider: { settings }))
+        let first = await gate.shouldEscalate(requestId: "same", toolName: "terminal_execute", argumentsJSON: #"{"command":"rm -rf a"}"#, recentUserTexts: [], runKey: "run")
+        XCTAssertTrue(first)
+        box.destructive = 0.1
+        let second = await gate.shouldEscalate(requestId: "same", toolName: "terminal_execute", argumentsJSON: #"{"command":"ls a"}"#, recentUserTexts: [], runKey: "run")
+        XCTAssertFalse(second)
+        XCTAssertNil(gate.escalationReasons(requestId: "same"), "同一请求重新判定为低风险时清除旧标签")
+    }
+
+    /// 收紧快照同时把逐能力自动批准降为每次询问（该能力提供此选项时）。
+    func testWithoutAutoApproveDowngradesCapabilityAutoApprove() throws {
+        let capability = try XCTUnwrap(IOSCapabilityRegistry.capabilities.first {
+            let options = IOSPermissionStore.availablePolicies(for: $0)
+            return options.contains(.autoApprove) && options.contains(.askEveryTime)
+        })
+        let snapshot = IOSExecutionPolicySnapshot(
+            capabilityPolicies: [capability.id: IOSAgentPermissionPolicy.autoApprove.rawValue],
+            globalAutoApproveEnabled: true, highRiskAutoApproveEnabled: true,
+            execJavaScriptEnabled: false, webSearchEnabled: false
+        )
+        let tightened = snapshot.withoutAutoApprove()
+        XCTAssertFalse(tightened.globalAutoApproveEnabled)
+        XCTAssertFalse(tightened.highRiskAutoApproveEnabled)
+        XCTAssertEqual(tightened.policy(for: capability), .askEveryTime)
+    }
+
+    func testOffMakesZeroNetworkCalls() async {
+        let (gate, transport) = makeGate(mode: .off, answers: allAnswers)
+        let escalated = await ask(gate)
+        XCTAssertFalse(escalated)
+        XCTAssertEqual(transport.calls, 0)
+    }
+}

@@ -1,5 +1,61 @@
 import SwiftUI
 
+/// Jev 自动批准复核把本次调用改为人工审批时，在审批卡上方说明原因。
+struct JevAutoApprovalEscalationNote: View {
+    let reasons: [String]
+
+    var body: some View {
+        Label {
+            Text("已暂停自动批准：疑似\(reasons.joined(separator: "、"))")
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "hand.raised")
+        }
+        .font(.caption)
+        .foregroundStyle(AmberTheme.accentAmber)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Jev 完成校验：本轮改过文件却未运行检查就宣称完成时，提示用户让助手验证。
+struct JevCompletionCheckNotice: View {
+    let onVerify: () -> Void
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        let message = Label {
+            Text("本轮修改了文件，之后没有通过的检查。")
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "checkmark.seal")
+        }
+        .font(.caption)
+        .foregroundStyle(AmberTheme.accentAmber)
+        let button = Button("让助手验证", action: onVerify)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AmberTheme.accent)
+            .buttonStyle(.plain)
+            .fixedSize()
+            .contentShape(.interaction, Rectangle().inset(by: -12))
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) { message; button }
+            } else {
+                HStack(spacing: 8) {
+                    message
+                    Spacer(minLength: 8)
+                    button
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 2)
+    }
+}
+
 /// 增强 Phase E：审批分诊标签行（Jev approval triage chips）。
 ///
 /// 三个中性事实胶囊（只读/可逆/与任务相关：是·否·未知），等宽排布在审批卡

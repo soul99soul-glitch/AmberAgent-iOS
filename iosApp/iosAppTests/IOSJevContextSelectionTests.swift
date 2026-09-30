@@ -761,7 +761,8 @@ final class IOSJevContextSelectionTests: XCTestCase {
                              "shadow records the hypothetical hidden character count")
         XCTAssertEqual(Set(observation?.numbers?.keys.map { $0 } ?? []), Set([
             "shadow_hidden_characters", "shadow_original_characters",
-        ]), "shadow writes only the hypothetical projection numbers")
+            "within_active_wait_budget",
+        ]), "shadow writes only the hypothetical projection numbers plus the active wait-budget fit flag")
     }
 
     func testScopeNotAllowedSkipsNetwork() async {
@@ -859,5 +860,197 @@ final class IOSJevContextSelectionTests: XCTestCase {
             ),
             [0, 1], "不设阈值时两块都隐藏（对照）"
         )
+    }
+
+    /// marker 承诺"用相同参数重新调用即可取回原文"：同一轮内的同参重读
+    /// 不得被同一内容判断再次隐藏，也不再外发判断。
+    func testSameArgumentsRereadAfterHideKeepsFullText() async {
+        let transport = JevStubTransport { request in
+            (self.scorePayload(for: request), self.httpResponse(status: 200))
+        }
+        let service = makeService(settings: makeSettings(mode: .active), transport: transport)
+        let text = LongOutputFactory.paragraphs(count: 14)
+        let args = #"{"url":"https://example.com"}"#
+        let source = toolMessage(toolCallId: "call-1", toolArgs: args, text: text)
+        let first = await service.projectedMessages(source, identity: identity(runId: "reread-run"))
+        let firstText = ((first.last!.parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(firstText), "前置：首个输出被隐藏")
+        let history = source + [
+            makeMessage(role: .assistant, parts: [UIMessagePart.Tool(
+                toolCallId: "call-2", toolName: "scrape_web", input: #"{ "url" : "https://example.com" }"#,
+                output: [], approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]),
+            makeMessage(role: .tool, parts: [UIMessagePart.Tool(
+                toolCallId: "call-2", toolName: "scrape_web", input: #"{ "url" : "https://example.com" }"#,
+                output: [UIMessagePart.Text(text: text, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]),
+        ]
+        let callsBefore = transport.calls
+        let second = await service.projectedMessages(history, identity: identity(runId: "reread-run"))
+        let rereadText = ((second.last!.parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(rereadText, text, "同参重读返回全文")
+        let sourceText = ((second[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertTrue(IOSJevContextSelectionService.containsOmissionMarker(sourceText), "原输出的已固定投影不变（保护 prompt 缓存）")
+        XCTAssertEqual(transport.calls, callsBefore, "重读输出直接固定全文，不外发判断")
+        let third = await service.projectedMessages(history, identity: identity(runId: "reread-run"))
+        let replayText = ((third.last!.parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+        XCTAssertEqual(replayText, text, "后续步骤重放同一全文决策")
+    }
+}
+
+// IOSJevToolRetentionTests（v2 Phase 1 压缩保留）：保留窗口内后台判断、移出窗口
+// 按固定结果跳过清空、未判定即固定原行为、shadow 不应用、off 零网络。
+@MainActor
+final class IOSJevToolRetentionTests: XCTestCase {
+    private let timestamp = Kotlinx_datetimeLocalDateTime(
+        year: 2026, month: 9, day: 30, hour: 0, minute: 0, second: 0, nanosecond: 0
+    )
+
+    private func message(_ role: MessageRole, _ parts: [UIMessagePart]) -> UIMessage {
+        UIMessage(
+            id: KotlinUuid.companion.random(), role: role, parts: parts, annotations: [],
+            createdAt: timestamp, finishedAt: nil, modelId: nil, usage: nil, translation: nil
+        )
+    }
+
+    private let readOutput = String(repeating: "README 安装步骤：先执行 make setup，然后运行 make test。", count: 80)
+
+    /// 0 用户 / 1 助手调用 / 2 工具结果 / 3 助手回应 / 4 用户 / 5 助手
+    private func conversation() -> [UIMessage] {
+        let input = #"{"path":"README.md"}"#
+        return [
+            message(.user, [UIMessagePart.Text(text: "帮我整理 README 的安装步骤", metadata: nil)]),
+            message(.assistant, [UIMessagePart.Tool(
+                toolCallId: "call-r", toolName: "file_read", input: input, output: [],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]),
+            message(.tool, [UIMessagePart.Tool(
+                toolCallId: "call-r", toolName: "file_read", input: input,
+                output: [UIMessagePart.Text(text: readOutput, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]),
+            message(.assistant, [UIMessagePart.Text(text: "已读取 README，下面整理步骤。", metadata: nil)]),
+            message(.user, [UIMessagePart.Text(text: "再把测试命令单独列出来", metadata: nil)]),
+            message(.assistant, [UIMessagePart.Text(text: "好的。", metadata: nil)]),
+        ]
+    }
+
+    private func makeService(mode: IOSJevMode, keepProbability: Double, transport: inout JevStubTransport?) -> IOSJevToolRetentionService {
+        var configured = IOSJevSettings()
+        configured.setMode(mode, for: .toolResultRetention)
+        configured.pinnedModelVersion = "jev-fixed-v1"
+        let settings = configured
+        let stub = JevStubTransport { _ in
+            let answers = Dictionary(uniqueKeysWithValues: (0..<8).map { ("single.r\($0)", ["type": "noul", "noul": keepProbability] as [String: Any]) })
+            let payload: [String: Any] = ["model": "jev-latest", "answers": answers]
+            return (try! JSONSerialization.data(withJSONObject: payload),
+                    HTTPURLResponse(url: IOSJevSettings.productionEndpoint, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        transport = stub
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: stub),
+            settingsProvider: { settings },
+            apiKeyProvider: { "test-key" },
+            now: { Date() },
+            metricsStore: { _, _ in }
+        ))
+        return IOSJevToolRetentionService(deps: .init(coordinator: coordinator, settingsProvider: { settings }))
+    }
+
+    private func outputText(_ messages: [UIMessage]) -> String {
+        ((messages[2].parts.first as! UIMessagePart.Tool).output.first as! UIMessagePart.Text).text
+    }
+
+    func testActiveKeepDecisionSkipsClearingAfterResultLeavesRecentWindow() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .active, keepProbability: 0.9, transport: &transport)
+        let messages = conversation()
+        // 窗口 4：结果仍在保留窗口内，后台判断。
+        XCTAssertEqual(service.retainedToolCallIds(messages: messages, conversationId: "c1", keepRecentMessages: 4), [])
+        await service.waitForPendingEvaluations()
+        XCTAssertEqual(transport?.calls, 1)
+        // 窗口 2：结果已移出窗口，按判定保留。
+        let retained = service.retainedToolCallIds(messages: messages, conversationId: "c1", keepRecentMessages: 2)
+        XCTAssertEqual(retained, ["call-r"])
+        let kept = ContextCompactionEditTestSupport.editedMessagesWithCount(messages: messages, keepRecentMessages: 2, retainedToolCallIds: retained)
+        XCTAssertEqual(outputText(kept.messages), readOutput, "判定保留的结果不被清空")
+        let cleared = ContextCompactionEditTestSupport.editedMessagesWithCount(messages: messages, keepRecentMessages: 2)
+        XCTAssertTrue(outputText(cleared.messages).contains(ContextCompactionEditTestSupport.compactedToolOutputMarker), "对照：未保留时照旧清空")
+    }
+
+    func testLowKeepProbabilityClearsAsBefore() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .active, keepProbability: 0.3, transport: &transport)
+        _ = service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 4)
+        await service.waitForPendingEvaluations()
+        XCTAssertEqual(service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 2), [])
+    }
+
+    func testResultAgedBeforeDecisionIsPinnedToClearWithoutNetwork() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .active, keepProbability: 0.9, transport: &transport)
+        XCTAssertEqual(service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 2), [])
+        await service.waitForPendingEvaluations()
+        XCTAssertEqual(service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 2), [])
+        XCTAssertEqual(transport?.calls, 0, "已移出窗口的结果不再外发判断")
+    }
+
+    func testShadowEvaluatesButNeverRetains() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .shadow, keepProbability: 0.9, transport: &transport)
+        _ = service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 4)
+        await service.waitForPendingEvaluations()
+        XCTAssertEqual(transport?.calls, 1)
+        XCTAssertEqual(service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 2), [])
+    }
+
+    func testFailureInsideWindowStaysRetryable() async {
+        var configured = IOSJevSettings()
+        configured.setMode(.active, for: .toolResultRetention)
+        configured.pinnedModelVersion = "jev-fixed-v1"
+        let settings = configured
+        let transport = JevStubTransport { _ in
+            (Data(), HTTPURLResponse(url: IOSJevSettings.productionEndpoint, statusCode: 500, httpVersion: nil, headerFields: nil)!)
+        }
+        let coordinator = IOSJevDecisionCoordinator(deps: .init(
+            client: IOSJevClient(transport: transport), settingsProvider: { settings },
+            apiKeyProvider: { "test-key" }, now: { Date() }, metricsStore: { _, _ in }
+        ))
+        let service = IOSJevToolRetentionService(deps: .init(coordinator: coordinator, settingsProvider: { settings }))
+        _ = service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 4)
+        await service.waitForPendingEvaluations()
+        let firstCalls = transport.calls
+        XCTAssertGreaterThan(firstCalls, 0)
+        _ = service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 4)
+        await service.waitForPendingEvaluations()
+        XCTAssertGreaterThan(transport.calls, firstCalls, "窗口内失败不固定，下次准备时重试")
+    }
+
+    /// 中文按 UTF-8 约 3 字节/字：8 条长结果加长对话仍须在 state 上限内完成判断。
+    func testEightLongChineseResultsFitStateLimit() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .active, keepProbability: 0.9, transport: &transport)
+        let chinese = String(repeating: "这是一段较长的中文工具输出内容，用于检验字节预算。", count: 150)
+        var messages: [UIMessage] = []
+        for index in 0..<8 {
+            let input = #"{"path":"doc\#(index).md"}"#
+            messages.append(message(.user, [UIMessagePart.Text(text: String(repeating: "请继续阅读并整理这些中文文档的要点。", count: 20), metadata: nil)]))
+            messages.append(message(.tool, [UIMessagePart.Tool(
+                toolCallId: "call-\(index)", toolName: "file_read", input: input,
+                output: [UIMessagePart.Text(text: chinese, metadata: nil)],
+                approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)]))
+            messages.append(message(.assistant, [UIMessagePart.Text(text: "已阅读。", metadata: nil)]))
+        }
+        _ = service.retainedToolCallIds(messages: messages, conversationId: "c-zh", keepRecentMessages: messages.count)
+        await service.waitForPendingEvaluations()
+        let body = String(data: transport?.lastBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertFalse(body.isEmpty, "8 条候选在一次请求内发出，未因 state 超限在本地拒绝")
+        let retained = service.retainedToolCallIds(messages: messages, conversationId: "c-zh", keepRecentMessages: 0)
+        XCTAssertEqual(retained.count, 8)
+    }
+
+    func testOffMakesZeroNetworkCalls() async {
+        var transport: JevStubTransport?
+        let service = makeService(mode: .off, keepProbability: 0.9, transport: &transport)
+        _ = service.retainedToolCallIds(messages: conversation(), conversationId: "c1", keepRecentMessages: 4)
+        await service.waitForPendingEvaluations()
+        XCTAssertEqual(transport?.calls, 0)
     }
 }

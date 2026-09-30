@@ -211,12 +211,13 @@ final class IOSJevContextSelectionService {
 
         // 只把本次入口前已经固定为隐藏的输出作为归因来源。这样当同一历史快照
         // 首次得到隐藏决策时，不会把此前已经发生的同参调用倒算成“隐藏后重读”。
-        let rereadAfterHideCount = countRereadsAfterHide(
+        let rereadToolCallIds = rereadToolCallIdsAfterHide(
             in: messages,
             outputs: outputs,
             conversationId: conversationId,
             policyVersion: settings.policy.policyVersion
         )
+        let rereadAfterHideCount = rereadToolCallIds.count
 
         var projectedMessages = messages
         var hiddenCharacters = 0
@@ -258,6 +259,15 @@ final class IOSJevContextSelectionService {
                     )
                 }
             }
+        }
+
+        // 同参重读是模型按 marker 指示取回原文：固定全文，不再外发判断。
+        // 否则同一轮的 state 与首次相同，内容缓存会把原文再次隐藏。
+        if mode == .active, !rereadToolCallIds.isEmpty {
+            for group in undecided where rereadToolCallIds.contains(group.key.toolCallId) {
+                remember(.keepFull, for: group.key, maxEntries: settings.policy.cacheMaxEntries)
+            }
+            undecided.removeAll { rereadToolCallIds.contains($0.key.toolCallId) }
         }
 
         if mode == .active {
@@ -498,12 +508,12 @@ final class IOSJevContextSelectionService {
 
     /// 只统计已完成的工具输出：同一个 canonical toolCallId 会在后续上传中反复出现，
     /// 因而必须是来源输出之后的新 ID，且工具名和 JSON 参数完全一致。
-    private func countRereadsAfterHide(
+    private func rereadToolCallIdsAfterHide(
         in messages: [UIMessage],
         outputs: [OutputCandidate],
         conversationId: String,
         policyVersion: Int
-    ) -> Int {
+    ) -> Set<String> {
         let hiddenSources = outputs.compactMap { output -> HiddenOutputSource? in
             let key = ProjectionKey(
                 conversationId: conversationId,
@@ -524,7 +534,7 @@ final class IOSJevContextSelectionService {
                 inputHash: inputHash
             )
         }
-        guard !hiddenSources.isEmpty else { return 0 }
+        guard !hiddenSources.isEmpty else { return [] }
 
         var rereadToolCallIds: Set<String> = []
         for messageIndex in messages.indices {
@@ -548,7 +558,7 @@ final class IOSJevContextSelectionService {
                 }
             }
         }
-        return rereadToolCallIds.count
+        return rereadToolCallIds
     }
 
     /// 参数只在本地比较，metrics 仅存投影结果的数值。要求合法 JSON 对象，避免
@@ -991,5 +1001,226 @@ final class IOSJevContextSelectionService {
         let headCount = inspectedExcerptCharacters / 2
         let tailCount = inspectedExcerptCharacters - headCount
         return String(compact.prefix(headCount)) + " … " + String(compact.suffix(tailCount))
+    }
+}
+
+// MARK: - Jev 压缩保留（v2 Phase 1）
+//
+// 较早的可清除工具结果在移出保留窗口时会被压缩清空。模型已对某条结果作出反应、
+// 它仍在保留窗口内时，后台问 Jev 一次"原文是否仍需保留"；移出窗口时按固定结果
+// 决定是否跳过清空。请求准备路径从不等待网络：未判定完即按原行为清空并固定，
+// 保证同一结果在后续请求中不会在"清空/原文"之间翻转（保护 prompt 缓存）。
+
+@MainActor
+final class IOSJevToolRetentionService {
+    struct Dependencies {
+        let coordinator: IOSJevDecisionCoordinator
+        let settingsProvider: () -> IOSJevSettings
+    }
+
+    private struct Key: Hashable {
+        var conversationId: String
+        var toolCallId: String
+        var outputHash: String
+    }
+
+    private struct Candidate {
+        var key: Key
+        var messageIndex: Int
+        var tool: UIMessagePart.Tool
+    }
+
+    /// keep 只在 active 判定时生效；shadow 的判定只用于去重。
+    private struct Decision {
+        var keep: Bool
+        var applied: Bool
+    }
+
+    nonisolated static let keepMinProbability = 0.7
+    private static let maxCandidatesPerRequest = 8
+    /// state 上限按 UTF-8 字节计（中文约 3 字节/字）：大纲 16KB + 8 条样本各约 2.7KB，低于 48KB。
+    private static let maxOutlineBytes = 16_000
+    private static let maxDecisions = 512
+
+    private let deps: Dependencies
+    private var decisions: [Key: Decision] = [:]
+    private var inFlight: Set<Key> = []
+    private var pending: [Task<Void, Never>] = []
+
+    init(deps: Dependencies) {
+        self.deps = deps
+    }
+
+    static let shared = IOSJevToolRetentionService(deps: .init(
+        coordinator: .shared,
+        settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() }
+    ))
+
+    /// 返回应保留原文（跳过清空）的 toolCallId；同时为保留窗口内的新候选发起后台判断。
+    func retainedToolCallIds(
+        messages: [UIMessage],
+        conversationId: String?,
+        keepRecentMessages: Int
+    ) -> Set<String> {
+        let settings = deps.settingsProvider()
+        let mode = settings.effectiveMode(for: .toolResultRetention)
+        guard mode != .off, let conversationId, !conversationId.isEmpty else { return [] }
+
+        let boundary = messages.count - max(keepRecentMessages, 0)
+        var retained: Set<String> = []
+        var undecided: [Candidate] = []
+        for candidate in candidates(in: messages, conversationId: conversationId) {
+            let decision = decisions[candidate.key]
+            if candidate.messageIndex < boundary {
+                if let decision {
+                    // shadow 只观测：已应用的判定也不在 shadow 下生效。
+                    if mode == .active, decision.keep, decision.applied { retained.insert(candidate.key.toolCallId) }
+                } else {
+                    // 移出窗口时仍未判定：固定为原行为，迟到的结果不再改变它。
+                    decisions[candidate.key] = Decision(keep: false, applied: mode == .active)
+                }
+            } else if !inFlight.contains(candidate.key),
+                      decision == nil || (mode == .active && decision?.applied == false) {
+                // 窗口内结果仍是原文，重新判断不会造成 prompt 翻转（含 shadow 转 active）。
+                // 先清掉旧的 shadow 判定：若判断期间结果移出窗口，会按未判定固定为清空。
+                decisions[candidate.key] = nil
+                undecided.append(candidate)
+            }
+        }
+        if !undecided.isEmpty, settings.canSend(useCase: .toolResultRetention, required: IOSJevUseCase.toolResultRetention.defaultDataScopes) {
+            evaluate(Array(undecided.prefix(Self.maxCandidatesPerRequest)), messages: messages, conversationId: conversationId, settings: settings, mode: mode)
+        }
+        trimDecisions(keeping: conversationId)
+        return retained
+    }
+
+    /// 测试用：等待已发起的后台判断完成。
+    func waitForPendingEvaluations() async {
+        let tasks = pending
+        pending.removeAll()
+        for task in tasks { await task.value }
+    }
+
+    private func candidates(in messages: [UIMessage], conversationId: String) -> [Candidate] {
+        // 模型已对该结果作出反应（其后已有 assistant 消息）才值得判断。
+        guard let lastAssistant = messages.lastIndex(where: { $0.role == MessageRole.assistant }) else { return [] }
+        var result: [Candidate] = []
+        var seenToolCallIds: Set<String> = []
+        for index in messages.indices where index < lastAssistant {
+            let message = messages[index]
+            for part in message.parts {
+                guard let tool = part as? UIMessagePart.Tool,
+                      IOSContextCompactionCoordinator.wouldClearToolResult(tool, in: message),
+                      seenToolCallIds.insert(tool.toolCallId).inserted else { continue }
+                let text = tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+                let key = Key(conversationId: conversationId, toolCallId: tool.toolCallId, outputHash: IOSJevToolDiscoveryService.stableHash(text))
+                result.append(Candidate(key: key, messageIndex: index, tool: tool))
+            }
+        }
+        return result
+    }
+
+    private func evaluate(_ batch: [Candidate], messages: [UIMessage], conversationId: String, settings: IOSJevSettings, mode: IOSJevMode) {
+        let labels = Dictionary(uniqueKeysWithValues: batch.enumerated().map { ($1.key.toolCallId, "r\($0)") })
+        let state = Self.stateText(messages: messages, batch: batch, labels: labels)
+        let questions = batch.enumerated().map { index, _ in
+            IOSJevQuestion.noul(
+                id: "r\(index)",
+                instructions: "判断：结果 r\(index) 的原文在后续对话中是否仍需要逐字保留（后续步骤还要引用其中的具体内容、数值、代码或路径）。若其要点已被使用、任务已前进，或需要时可重新调用工具获取，则为否。"
+            )
+        }
+        let keys = batch.map(\.key)
+        keys.forEach { inFlight.insert($0) }
+        let context = IOSJevRunContext(
+            runId: nil,
+            turnBudgetKey: conversationId,
+            inputHash: IOSJevToolDiscoveryService.stableHash(state)
+        )
+        let coordinator = deps.coordinator
+        let task = Task { @MainActor [weak self] in
+            let outcome = await coordinator.decide(
+                useCase: .toolResultRetention,
+                requiredScopes: IOSJevUseCase.toolResultRetention.defaultDataScopes,
+                state: state,
+                questions: questions,
+                context: context,
+                waitBudgetMs: settings.policy.deadlineMs,
+                expectedSettingsRevision: settings.revision,
+                metricNumbersProvider: { decision in
+                    let kept = Self.keepFlags(decision, count: keys.count).filter { $0 }.count
+                    return ["difference": Double(kept) / Double(max(keys.count, 1))]
+                }
+            )
+            guard let self else { return }
+            keys.forEach { self.inFlight.remove($0) }
+            let flags: [Bool]
+            let applied: Bool
+            switch outcome {
+            case .applied(let decision): flags = Self.keepFlags(decision, count: keys.count); applied = true
+            case .observed(let decision): flags = Self.keepFlags(decision, count: keys.count); applied = false
+            // 未得到判断：窗口内保持未判定可重试；移出窗口时由调用方固定为清空。
+            case .skipped, .failed: return
+            }
+            for (key, keep) in zip(keys, flags) where self.decisions[key] == nil {
+                self.decisions[key] = Decision(keep: keep, applied: applied)
+            }
+        }
+        pending.append(task)
+        if pending.count > 16 { pending.removeFirst(pending.count - 16) }
+    }
+
+    nonisolated private static func keepFlags(_ decision: IOSJevDecision, count: Int) -> [Bool] {
+        (0..<count).map { index in
+            (decision.answers.first { $0.id == "r\(index)" }?.noul ?? 0) >= keepMinProbability
+        }
+    }
+
+    /// 对话大纲（用户消息、助手文本、工具调用单行摘要）+ 候选结果首尾样本。
+    private static func stateText(messages: [UIMessage], batch: [Candidate], labels: [String: String]) -> String {
+        var outline: [String] = []
+        for message in messages {
+            for part in message.parts {
+                if let text = part as? UIMessagePart.Text {
+                    let compact = text.text.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    guard !compact.isEmpty else { continue }
+                    if message.role == MessageRole.user {
+                        outline.append("用户：" + String(compact.prefix(400)))
+                    } else if message.role == MessageRole.assistant {
+                        outline.append("助手：" + String(compact.prefix(200)))
+                    }
+                } else if let tool = part as? UIMessagePart.Tool, tool.isExecuted {
+                    let label = labels[tool.toolCallId].map { "[\($0)] " } ?? ""
+                    let input = tool.input.split(whereSeparator: \.isNewline).joined(separator: " ")
+                    outline.append("\(label)工具 \(tool.toolName)(\(input.prefix(120))) → \(IOSContextCompactionCoordinator.toolOutputCharacterCount(tool)) 字")
+                }
+            }
+        }
+        // 超长时保留开头的任务描述与最近的对话。
+        var head = Array(outline.prefix(2))
+        var tail: [String] = []
+        var used = head.reduce(0) { $0 + $1.utf8.count }
+        for line in outline.dropFirst(2).reversed() {
+            guard used + line.utf8.count <= maxOutlineBytes else { break }
+            tail.insert(line, at: 0)
+            used += line.utf8.count
+        }
+        if tail.count < outline.count - head.count { head.append("…（中间省略）") }
+        var lines = ["对话大纲（从早到晚）："] + head + tail
+        lines.append("")
+        lines.append("待判断的工具结果（首尾样本）：")
+        for candidate in batch {
+            let text = candidate.tool.output.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+                .split(whereSeparator: \.isNewline).joined(separator: " ")
+            let sample = text.count > 900 ? String(text.prefix(600)) + " … " + String(text.suffix(300)) : text
+            lines.append("- \(labels[candidate.key.toolCallId] ?? "?")（\(candidate.tool.toolName)）：\(sample)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func trimDecisions(keeping conversationId: String) {
+        guard decisions.count > Self.maxDecisions else { return }
+        for key in decisions.keys where key.conversationId != conversationId {
+            decisions.removeValue(forKey: key)
+        }
     }
 }

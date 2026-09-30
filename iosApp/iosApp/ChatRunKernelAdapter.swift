@@ -721,7 +721,8 @@ final class ChatRunKernelAdapter {
             inputDigest: request.inputDigest,
             conversationId: request.conversationId,
             baseMessages: [syntheticMessage],
-            executionPolicy: request.executionPolicy
+            executionPolicy: request.executionPolicy,
+            recentUserTexts: working.filter { $0.role == MessageRole.user }.suffix(3).map { $0.toText() }
         )
         let effectClass = IOSToolEffectClassMapping.forChatKind(
             pendingToolCall.kind,

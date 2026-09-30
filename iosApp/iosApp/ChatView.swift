@@ -1605,6 +1605,11 @@ struct ChatView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
+            if let reasons = viewModel.jevAutoApprovalEscalation {
+                JevAutoApprovalEscalationNote(reasons: reasons)
+                    .transition(.opacity)
+            }
+
             // 增强 Phase E：审批分诊标签行——异步补充,缺失时审批卡与原样一致。
             if let triage = viewModel.jevApprovalTriage {
                 JevApprovalTriageChips(triage: triage)
@@ -1760,6 +1765,13 @@ struct ChatView: View {
     private var inputBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             if viewModel.hasPendingUserGate { pendingUserGateCards }
+
+            if viewModel.showsJevCompletionNotice {
+                JevCompletionCheckNotice {
+                    viewModel.requestCompletionVerification()
+                }
+                .transition(.opacity)
+            }
 
             if let record = displayedWebMountSession,
                !webMountSessionIsCompact(record) {
@@ -1969,6 +1981,7 @@ struct ChatView: View {
         // 自己，时间轴可用高度一帧被吃掉 → 底部锚定内容跳一下。给建议条显隐加
         // 布局动画，高度连续变化，滚动层逐帧重锚，内容平滑上移。
         .animation(.easeOut(duration: 0.2), value: viewModel.chatSuggestions.isEmpty)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: viewModel.showsJevCompletionNotice)
         .animation(browserTaskVisibilityAnimation, value: displayedWebMountSession?.id)
     }
 

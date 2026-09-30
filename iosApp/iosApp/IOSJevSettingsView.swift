@@ -29,9 +29,10 @@ struct IOSJevSettingsView: View {
         var text: String
     }
 
-    /// 已接线的用途（七个全部开放；网页操作由 wm_run_goal 工具真实驱动，
-    /// 意图路由作用于 spawn_agent 缺省角色定义的边界，审批分诊只标注不授权）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions, .subagentIntent, .approvalTriage, .scriptJudgment]
+    /// 已接线的用途（全部开放；网页操作由 wm_run_goal 工具真实驱动，意图路由
+    /// 作用于 spawn_agent 缺省角色定义的边界，审批分诊只标注不授权，自动批准
+    /// 复核只会收紧为人工审批）。
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .toolResultRetention, .modelRouting, .webActions, .subagentIntent, .approvalTriage, .autoApprovalGate, .completionCheck, .scriptJudgment]
 
     var body: some View {
         NavigationStack {
@@ -486,8 +487,8 @@ struct IOSJevSettingsView: View {
             AmberFormGroup {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(IOSAppLocalization.string(
-                        "先用 Shadow 观测五个用途，再根据对比结果逐项决定是否启用。",
-                        defaultValue: "先用 Shadow 观测五个用途，再根据对比结果逐项决定是否启用。"
+                        "先用 Shadow 观测低风险用途，再根据对比结果逐项决定是否启用。",
+                        defaultValue: "先用 Shadow 观测低风险用途，再根据对比结果逐项决定是否启用。"
                     ))
                     .font(.subheadline)
                     .foregroundStyle(AmberTheme.foreground)
@@ -516,8 +517,8 @@ struct IOSJevSettingsView: View {
                 .padding(.vertical, 12)
             }
             Text(IOSAppLocalization.string(
-                "只观测、不应用判断；网页操作、审批分诊与脚本判断保持原设置。",
-                defaultValue: "只观测、不应用判断；网页操作、审批分诊与脚本判断保持原设置。"
+                "只观测、不应用判断；网页操作、审批分诊、自动批准复核与脚本判断保持原设置。",
+                defaultValue: "只观测、不应用判断；网页操作、审批分诊、自动批准复核与脚本判断保持原设置。"
             ))
             .font(.caption)
             .foregroundStyle(AmberTheme.muted)
@@ -537,8 +538,8 @@ struct IOSJevSettingsView: View {
             Button(IOSAppLocalization.string("取消", defaultValue: "取消"), role: .cancel) {}
         } message: {
             Text(IOSAppLocalization.string(
-                "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊和脚本判断不变。",
-                defaultValue: "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊和脚本判断不变。"
+                "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。",
+                defaultValue: "工具发现、记忆召回、上下文筛选、压缩保留、模型调度、意图路由和完成校验将设为 Shadow，并使用各自默认数据范围。当前任务文本、助手回复、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊、自动批准复核和脚本判断不变。"
             ))
         }
     }
@@ -607,6 +608,9 @@ struct IOSJevSettingsView: View {
                     case .subagentIntent: "signpost.and.arrowtriangle.up"
                     case .approvalTriage: "checklist"
                     case .scriptJudgment: "curlybraces"
+                    case .toolResultRetention: "tray.full"
+                    case .autoApprovalGate: "hand.raised"
+                    case .completionCheck: "checkmark.seal"
                     }
                 }())
                     .font(.system(size: 16, weight: .medium))
@@ -787,6 +791,9 @@ struct IOSJevSettingsView: View {
                     metricLine("差异率", value: summary.differenceRate.map(formatRate))
                     metricLine("等待 p50", value: summary.waitP50Ms.map(formatMilliseconds))
                     metricLine("等待 p95", value: summary.waitP95Ms.map(formatMilliseconds))
+                    if let rate = summary.withinActiveWaitRate {
+                        metricLine("shadow 预算内返回率", value: formatRate(rate))
+                    }
                     if summary.useCase == .toolDiscovery {
                         metricLine("预测/实际暴露数比", value: summary.exposureRatio.map(formatRatio))
                         metricLine("前台 tool_search 新工具使用率", value: summary.newToolUseRate.map(formatRate))

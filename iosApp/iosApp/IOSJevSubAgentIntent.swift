@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import Shared
 
 // MARK: - Jev 子任务意图路由 + 对齐回执（增强 Phase C）
 //
@@ -161,5 +162,139 @@ final class IOSJevSubAgentIntentService {
             cacheKey: part.cacheKey
         )
         return Self.suggestion(from: outcome, settings: settings)
+    }
+}
+
+// MARK: - Jev 完成校验（v2 Phase 3）
+//
+// 事实先行：本轮（最后一条用户消息之后）成功写入过非文档类工作区文件，且最后
+// 一次写入之后没有成功运行过测试/构建/检查类终端命令，才问 Jev 最终回复是否
+// 宣称完成或已验证。命中时由界面提示用户，用户点"让助手验证"走正常发送；不自动
+// 续跑。已知宽松：关键词按词匹配（如 `ls tests` 也算检查，偏向不提示）；exec
+// 脚本内嵌套调用与后台运行不在事实范围内。
+
+@MainActor
+final class IOSJevCompletionCheckService {
+    struct Dependencies {
+        let coordinator: IOSJevDecisionCoordinator
+        let settingsProvider: () -> IOSJevSettings
+    }
+
+    struct Facts: Equatable {
+        var changedFiles: [String]
+        var finalReply: String
+    }
+
+    nonisolated static let claimThreshold = 0.8
+    nonisolated static let verificationPrompt = "请运行与刚才修改相关的测试、构建或检查来验证；如果当前环境无法运行，请说明哪些内容尚未验证。"
+    nonisolated private static let writeToolNames: Set<String> = [
+        "workspace_file_write", "workspace_file_edit", "workspace_file_move",
+    ]
+    /// 同步返回结果的终端命令（后台作业的"已启动"不代表检查通过）。
+    nonisolated private static let commandToolNames: Set<String> = [
+        "terminal_execute", IOSAmberShellToolCatalog.executeToolName,
+    ]
+    /// 只改这些文档类文件时不提示（没有可运行的检查）。
+    nonisolated private static let documentExtensions: Set<String> = [
+        "md", "markdown", "txt", "csv", "rtf", "docx", "pdf", "html",
+    ]
+    nonisolated private static let checkPattern = try! NSRegularExpression(
+        pattern: #"\b(test|tests|pytest|jest|vitest|build|lint|check|typecheck|tsc|ctest)\b"#,
+        options: [.caseInsensitive]
+    )
+
+    private let deps: Dependencies
+
+    init(deps: Dependencies) {
+        self.deps = deps
+    }
+
+    static let shared = IOSJevCompletionCheckService(deps: .init(
+        coordinator: .shared,
+        settingsProvider: { IOSSharedSettingsStore.loadPersistedJevSettings() }
+    ))
+
+    /// 本轮改过文件且之后没有运行检查时返回事实；否则 nil（不外发）。
+    nonisolated static func unverifiedChanges(in messages: [UIMessage]) -> Facts? {
+        let start = (messages.lastIndex { $0.role == MessageRole.user }).map { $0 + 1 } ?? 0
+        guard start < messages.count else { return nil }
+        var changedFiles: [String] = []
+        var checkedAfterLastWrite = false
+        for message in messages[start...] {
+            for part in message.parts {
+                guard let tool = part as? UIMessagePart.Tool,
+                      writeToolNames.contains(tool.toolName) || commandToolNames.contains(tool.toolName),
+                      !tool.output.isEmpty else { continue }
+                let analysis = ChatToolOutputAnalysis(output: tool.output)
+                guard analysis.failureReason == nil else { continue }
+                if writeToolNames.contains(tool.toolName) {
+                    // 内容未变的编辑不算写入。
+                    guard analysis.firstJSONObject?["changed"] as? Bool != false,
+                          let path = analysis.firstJSONObject?["path"] as? String else { continue }
+                    if !changedFiles.contains(path) { changedFiles.append(path) }
+                    checkedAfterLastWrite = false
+                } else if let input = (try? JSONSerialization.jsonObject(with: Data(tool.input.utf8))) as? [String: Any],
+                          let command = input["command"] as? String,
+                          checkPattern.firstMatch(in: command, range: NSRange(command.startIndex..., in: command)) != nil {
+                    checkedAfterLastWrite = true
+                }
+            }
+        }
+        guard !checkedAfterLastWrite,
+              changedFiles.contains(where: { !documentExtensions.contains(($0 as NSString).pathExtension.lowercased()) })
+        else { return nil }
+        let finalReply = messages[start...].last { $0.role == MessageRole.assistant }?
+            .parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !finalReply.isEmpty else { return nil }
+        return Facts(changedFiles: changedFiles, finalReply: finalReply)
+    }
+
+    /// true = 需要提示用户验证。shadow 只在后台观测并返回 false。
+    func needsVerification(messages: [UIMessage], runKey: String) async -> Bool {
+        let settings = deps.settingsProvider()
+        let mode = settings.effectiveMode(for: .completionCheck)
+        let requiredScopes = IOSJevUseCase.completionCheck.defaultDataScopes
+        guard mode != .off,
+              settings.canSend(useCase: .completionCheck, required: requiredScopes),
+              let facts = Self.unverifiedChanges(in: messages) else { return false }
+        let state = [
+            "本轮事实（本地判定）：修改了 \(facts.changedFiles.prefix(10).joined(separator: "、"))；修改之后没有运行任何测试、构建或检查命令。",
+            "助手的最终回复：",
+            String(facts.finalReply.prefix(2_000)),
+        ].joined(separator: "\n")
+        let questions = [
+            IOSJevQuestion.noul(id: "claims_done", instructions: "判断：助手的最终回复是否宣称任务已经完成。"),
+            IOSJevQuestion.noul(id: "claims_verified", instructions: "判断：助手的最终回复是否宣称已经验证、测试通过或确认可以正常运行。"),
+        ]
+        let context = IOSJevRunContext(
+            runId: runKey,
+            turnBudgetKey: runKey,
+            inputHash: IOSJevToolDiscoveryService.stableHash(state)
+        )
+        let coordinator = deps.coordinator
+        let decide: @MainActor () async -> IOSJevDecisionOutcome = {
+            await coordinator.decide(
+                useCase: .completionCheck,
+                requiredScopes: requiredScopes,
+                state: state,
+                questions: questions,
+                context: context,
+                expectedSettingsRevision: settings.revision,
+                metricNumbersProvider: { ["difference": Self.claimsUnverifiedCompletion($0) ? 1 : 0] }
+            )
+        }
+        if mode == .shadow {
+            Task { @MainActor in _ = await decide() }
+            return false
+        }
+        guard case .applied(let decision) = await decide() else { return false }
+        return Self.claimsUnverifiedCompletion(decision)
+    }
+
+    nonisolated static func claimsUnverifiedCompletion(_ decision: IOSJevDecision) -> Bool {
+        ["claims_done", "claims_verified"].contains { id in
+            (decision.answers.first { $0.id == id }?.noul ?? 0) >= claimThreshold
+        }
     }
 }

@@ -299,7 +299,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             }
             if let key, let cached = deps.client.cachedDecision(cacheKey: key) {
                 let outcome: IOSJevDecisionOutcome = mode == .active ? .applied(cached) : .observed(cached)
-                record(useCase: part.useCase, mode: mode, model: model, outcome: mode == .active ? "applied" : "observed", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: nil, suggestion: part.metricSuggestionProvider?(cached), headline: Self.headlineMetrics(from: cached), runId: context.runId, waitedMs: 0, numbers: part.metricNumbersProvider?(cached), ids: part.metricIdsProvider?(cached))
+                record(useCase: part.useCase, mode: mode, model: model, outcome: mode == .active ? "applied" : "observed", latencyMs: 0, requestBytes: 0, responseBytes: 0, usage: nil, reason: nil, suggestion: part.metricSuggestionProvider?(cached), headline: Self.headlineMetrics(from: cached), runId: context.runId, waitedMs: 0, numbers: Self.withActiveWaitFit(part.metricNumbersProvider?(cached), mode: mode, useCase: part.useCase, latencyMs: 0, policy: policy), ids: part.metricIdsProvider?(cached))
                 results[part.id] = outcome
                 continue
             }
@@ -316,7 +316,9 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             }
             return results
         }
-        let budgetMs = max(0, waitBudgetMs ?? policy.onDemandWaitBudgetMs)
+        let budgetMs = max(0, waitBudgetMs
+            ?? prepared.map { policy.activeWaitBudgetMs(for: $0.part.useCase) }.max()
+            ?? policy.onDemandWaitBudgetMs)
         let waitStarted = Date()
         let waitDeadline = waitStarted.addingTimeInterval(Double(budgetMs) / 1_000)
         let box = ResultBox()
@@ -490,7 +492,7 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
                 deps.client.storeCachedDecision(cacheKey: key, decision: decision, ttlSeconds: settings.policy.cacheTTLSeconds, maxEntries: settings.policy.cacheMaxEntries)
             }
             results[item.part.id] = item.mode == .active ? .applied(decision) : .observed(decision)
-            record(useCase: item.part.useCase, mode: item.mode, model: model, outcome: late ? "late" : (item.mode == .active ? "applied" : "observed"), latencyMs: decision.latencyMs, requestBytes: decision.requestBytes, responseBytes: decision.responseBytes, usage: decision.usage, reason: late ? "late" : nil, suggestion: item.part.metricSuggestionProvider?(decision), headline: Self.headlineMetrics(from: decision), runId: context.runId, waitedMs: min(Int(Date().timeIntervalSince(waitStarted) * 1_000), Int(waitDeadline.timeIntervalSince(waitStarted) * 1_000)), numbers: item.part.metricNumbersProvider?(decision), ids: item.part.metricIdsProvider?(decision))
+            record(useCase: item.part.useCase, mode: item.mode, model: model, outcome: late ? "late" : (item.mode == .active ? "applied" : "observed"), latencyMs: decision.latencyMs, requestBytes: decision.requestBytes, responseBytes: decision.responseBytes, usage: decision.usage, reason: late ? "late" : nil, suggestion: item.part.metricSuggestionProvider?(decision), headline: Self.headlineMetrics(from: decision), runId: context.runId, waitedMs: min(Int(Date().timeIntervalSince(waitStarted) * 1_000), Int(waitDeadline.timeIntervalSince(waitStarted) * 1_000)), numbers: Self.withActiveWaitFit(item.part.metricNumbersProvider?(decision), mode: item.mode, useCase: item.part.useCase, latencyMs: decision.latencyMs, policy: settings.policy), ids: item.part.metricIdsProvider?(decision))
         }
         return results
     }
@@ -743,6 +745,15 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
             ),
             deps.now()
         )
+    }
+
+    /// shadow 会等到网络 deadline，active 只等本用途的等待预算；标出该答案在
+    /// active 下是否来得及应用，避免 shadow 指标高估启用效果。
+    static func withActiveWaitFit(_ numbers: [String: Double]?, mode: IOSJevMode, useCase: IOSJevUseCase, latencyMs: Int, policy: IOSJevPolicy) -> [String: Double]? {
+        guard mode == .shadow else { return numbers }
+        var merged = numbers ?? [:]
+        merged["within_active_wait_budget"] = latencyMs <= policy.activeWaitBudgetMs(for: useCase) ? 1 : 0
+        return merged
     }
 
     /// 决策头条数值：跨答案的最大置信与最高分（非有限值剔除）。
