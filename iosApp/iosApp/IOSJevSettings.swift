@@ -18,6 +18,8 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
     case webActions
     case subagentIntent
     case approvalTriage
+    /// exec 脚本经 `jev` 全局主动调用（只有 active 才注入，shadow 对脚本无意义）。
+    case scriptJudgment
 
     var id: String { rawValue }
 
@@ -30,6 +32,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         case .webActions: "网页操作"
         case .subagentIntent: "意图路由"
         case .approvalTriage: "审批分诊"
+        case .scriptJudgment: "脚本判断"
         }
     }
 
@@ -43,6 +46,7 @@ enum IOSJevUseCase: String, Codable, CaseIterable, Identifiable, Sendable {
         case .webActions: [.webContent, .selectedTaskText]
         case .subagentIntent: [.selectedTaskText, .toolMetadata]
         case .approvalTriage: [.toolMetadata, .selectedTaskText]
+        case .scriptJudgment: [.toolOutput]
         }
     }
 }

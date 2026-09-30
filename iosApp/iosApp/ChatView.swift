@@ -1128,6 +1128,7 @@ struct ChatView: View {
             } ?? [],
             adoptedVersions: currentConversationIdString.map { conversationStore.artifactStore.adoptedVersions(for: $0) } ?? [:],
             conversationTitle: conversationStore.currentConversation?.title ?? "对话成果",
+            onExportConversation: exportConversation,
             onLocateSnippet: { snippet in
                 guard let id = currentConversationIdString,
                       let anchor = ChatArtifactPinning.anchor(
@@ -1270,6 +1271,15 @@ struct ChatView: View {
         } catch {
             showArtifactError(error.localizedDescription)
             return false
+        }
+    }
+
+    /// 消息集合只在点击时读取，避免 topBar 随流式内容重算；进度与失败由 `IOSShareActivity` 浮层呈现。
+    private func exportConversation(_ format: IOSConversationExportFormat) {
+        let title = conversationStore.currentConversation?.title ?? ""
+        let messages = viewModel.messages
+        Task { @MainActor in
+            await IOSConversationExporter.share(format: format, title: title, messages: messages)
         }
     }
 

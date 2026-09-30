@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 struct LanguageSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -83,6 +84,7 @@ struct LanguageSettingsView: View {
             Task { @MainActor in
                 await AgentLiveActivityController.shared.refreshLanguage()
                 WatchTaskCoordinator.shared.refreshLanguage()
+                UNUserNotificationCenter.current().setNotificationCategories(IOSWatchDecisionNotification.categories)
             }
         } label: {
             HStack(spacing: 12) {

@@ -2201,9 +2201,15 @@ final class ChatViewModel {
     /// pipeline as a normal text turn. Watch input is accepted only while the
     /// phone is idle, so an existing draft or run can never be commandeered.
     @discardableResult
+    /// The reply-length request is appended after validation and stays visible.
+    static func watchMessage(_ text: String, replyInstruction: String?) -> String {
+        replyInstruction.map { "\(text)\n\n\($0)" } ?? text
+    }
+
     func startWatchQuestion(
         text: String,
-        conversationId requestedConversationId: String? = nil
+        conversationId requestedConversationId: String? = nil,
+        replyInstruction: String? = nil
     ) async -> IOSWatchQuestionStartResult {
         startDeferredGenerationNow()
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -2273,7 +2279,7 @@ final class ChatViewModel {
             return .failure("iPhone 状态已改变，请稍后重试")
         }
 
-        inputText = trimmed
+        inputText = Self.watchMessage(trimmed, replyInstruction: replyInstruction)
         guard sendMessage() else {
             return .failure(configurationError ?? selectedFileContextError ?? "iPhone 无法发送这条消息")
         }

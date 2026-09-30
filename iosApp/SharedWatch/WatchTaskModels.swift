@@ -52,12 +52,31 @@ struct WatchLibrarySnapshot: Codable, Hashable, Sendable {
     var recent: [WatchRecentConversation]
     var activities: [WatchRecentActivity]? = nil
     var updatedAt: Date
+    /// The phone theme accent as 0xRRGGBB. `nil` from older phones keeps
+    /// the Watch on its built-in copper.
+    var accentHex: UInt32? = nil
 }
 
 struct WatchQuickAction: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var title: String
     var prompt: String
+
+    /// A prompt containing one of these asks the Watch for a fill-in first.
+    static let placeholders = ["{输入}", "{輸入}", "{input}"]
+
+    var isTemplate: Bool { Self.placeholders.contains { prompt.contains($0) } }
+
+    func filled(with value: String) -> String? {
+        guard isTemplate else { return nil }
+        return Self.placeholders.reduce(prompt) { $0.replacingOccurrences(of: $1, with: value) }
+    }
+
+    /// The question the phone runs for text sent by the Watch: the unchanged
+    /// prompt (older Watches, plain actions) or a template's fill-in.
+    func prompt(forSent text: String) -> String? {
+        text == prompt ? text : filled(with: text)
+    }
 
     static func supports(prompt: String) -> Bool {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)

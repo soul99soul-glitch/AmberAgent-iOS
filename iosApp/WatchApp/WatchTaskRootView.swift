@@ -4,9 +4,11 @@ struct WatchTaskRootView: View {
     @ObservedObject var model: WatchTaskViewModel
     @ObservedObject private var store: WatchLocalStore
     @Environment(\.isLuminanceReduced) private var isLuminanceReduced
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cancelRunId: String?
     @State private var confirmsClear = false
     @State private var discardedDraftKey: String?
+    @StateObject private var speech = WatchSpeech()
 
     init(model: WatchTaskViewModel) {
         self.model = model
@@ -23,16 +25,20 @@ struct WatchTaskRootView: View {
                     }
                     .frame(width: 16, height: 18)
                     .scaleEffect(0.9)
-                    .foregroundStyle(Color(red: 0.80, green: 0.38, blue: 0.19))
+                    .foregroundStyle(model.accentPalette.accent.color)
+                    .phaseAnimator(logoBreathes ? [1, 0.4] : [1]) { logo, opacity in
+                        logo.opacity(opacity)
+                    } animation: { _ in .easeInOut(duration: 1.2) }
                     .accessibilityHidden(true)
                     Text("Amber").font(.system(size: 18, weight: .medium))
                 }
                 .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38, alignment: .bottomLeading)
                 .padding(.horizontal, 14)
+                if store.settings.asksFirst { askButton.padding(.horizontal, 6) }
                 page(spacing: 4) { home }.clipped()
-                askButton.padding(.horizontal, 9)
+                if !store.settings.asksFirst { askButton.padding(.horizontal, 9) }
             }
-                .padding(.bottom, 12)
+                .padding(.bottom, store.settings.asksFirst ? 0 : 12)
                 .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .navigationTitle("")
                 .toolbar(.visible, for: .navigationBar)
@@ -41,9 +47,11 @@ struct WatchTaskRootView: View {
                     switch route {
                     case .compose(let key): page { composer(key: key) }.navigationTitle(composerTitle(key))
                     case .task(let runId): page { task(runId: runId) }.navigationTitle(t("任务"))
+                        .onDisappear { speech.stop() }
                     case .recent: page { recent }.navigationTitle(t("近期动态"))
                     case .activity(let entry): page { activity(entry) }.navigationTitle(t("成果详情"))
                         .onAppear { store.markViewed(entry) }
+                        .onDisappear { speech.stop() }
                     case .conversation(let id): page { conversation(id: id) }.navigationTitle(t("对话"))
                     case .note(let id): page { note(id: id) }.navigationTitle(t("随手记"))
                     case .settings: page { settings }.navigationTitle(t("设置与连接"))
@@ -52,7 +60,7 @@ struct WatchTaskRootView: View {
                     .toolbar(.visible, for: .navigationBar)
                 }
         }
-        .tint(Color(red: 0.83, green: 0.39, blue: 0.20))
+        .tint(model.accentPalette.accent.color)
         .environment(\.locale, WatchTaskLocalization.language(for: model.snapshot.languageCode).resolvedLocale())
         .confirmationDialog(t("取消当前任务？"), isPresented: Binding(
             get: { cancelRunId != nil }, set: { if !$0 { cancelRunId = nil } }
@@ -115,21 +123,22 @@ struct WatchTaskRootView: View {
                 WatchResultCard(status: t(phaseTitle), symbol: phaseSymbol,
                     title: model.snapshot.headline,
                     summary: model.snapshot.summary ?? model.snapshot.detail ?? "",
-                    updatedAt: model.snapshot.updatedAt)
+                    updatedAt: model.snapshot.updatedAt, palette: model.accentPalette)
             }
             .buttonStyle(.plain).privacySensitive()
             .accessibilityIdentifier("watch.current-task")
         } else if let entry = model.activities.first {
             Button { model.openActivity(entry) } label: {
                 WatchResultCard(status: t(entry.statusKey), symbol: entry.statusSymbol,
-                    title: entry.resultTitle ?? entry.title, summary: entry.summary, updatedAt: entry.updatedAt)
+                    title: entry.resultTitle ?? entry.title, summary: entry.summary, updatedAt: entry.updatedAt,
+                    palette: model.accentPalette)
                     .accessibilityValue(!store.hasViewed(entry) ? t("未读") : "")
             }
             .buttonStyle(.plain).privacySensitive()
             .accessibilityIdentifier("watch.latest-result")
         } else {
             WatchResultCard(status: "Amber", symbol: "sparkles", title: t("准备好了"),
-                summary: t("问一个问题，或先记下一点想法。"))
+                summary: t("问一个问题，或先记下一点想法。"), palette: model.accentPalette)
                 .accessibilityIdentifier("watch.empty-home")
         }
         Button { model.path.append(.recent) } label: {
@@ -137,7 +146,7 @@ struct WatchTaskRootView: View {
                 Text(t("近期动态"))
                 Spacer(minLength: 4)
                 if model.activities.contains(where: { !store.hasViewed($0) }) {
-                    Circle().fill(Color.orange).frame(width: 5, height: 5).accessibilityHidden(true)
+                    Circle().fill(model.accentPalette.accent.color).frame(width: 5, height: 5).accessibilityHidden(true)
                 }
                 Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
             }
@@ -195,11 +204,12 @@ struct WatchTaskRootView: View {
             Label(t("问 Amber"), systemImage: "mic.fill")
                 .font(.body.weight(.semibold))
                 .frame(maxWidth: .infinity, minHeight: 40)
-                .foregroundStyle(.white)
-                .background(Color(red: 0.82, green: 0.36, blue: 0.17), in: Capsule())
+                .foregroundStyle(model.accentPalette.onAccent.color)
+                .background(model.accentPalette.accent.color, in: Capsule())
                 .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .handGestureShortcut(.primaryAction, isEnabled: model.path.isEmpty)
         .accessibilityIdentifier("watch.ask")
     }
 
@@ -213,15 +223,23 @@ struct WatchTaskRootView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            if draft.pendingRequest != nil || draft.quickActionId != nil {
-                Text(draft.text).font(.body).fixedSize(horizontal: false, vertical: true).privacySensitive()
+            let template = model.template(for: draft)
+            let sentText = template?.filled(with: draft.text) ?? draft.text
+            if draft.pendingRequest != nil || (draft.quickActionId != nil && template == nil) {
+                Text(template?.filled(with: draft.text) ?? draft.text)
+                    .font(.body).fixedSize(horizontal: false, vertical: true).privacySensitive()
             } else {
-                TextField(t("听写或输入文字"), text: Binding(
+                TextField(t(template == nil ? "听写或输入文字" : "填写空白处"), text: Binding(
                     get: { store.draft(forKey: key)?.text ?? "" },
                     set: { store.updateDraftText(key: key, text: $0) }
                 ), axis: .vertical)
                 .lineLimit(3...8).accessibilityIdentifier("watch.composer")
-                if draft.text.isEmpty {
+                if let template {
+                    // Shows exactly what will be sent once the blank is filled.
+                    Text(draft.text.isEmpty ? template.prompt : template.filled(with: draft.text) ?? draft.text)
+                        .font(.body).foregroundStyle(draft.text.isEmpty ? Color.secondary : Color.primary)
+                        .fixedSize(horizontal: false, vertical: true).privacySensitive()
+                } else if draft.text.isEmpty {
                     Text(t("使用系统听写或文字输入，检查后再发送。"))
                         .font(.caption2).foregroundStyle(.secondary)
                 } else {
@@ -230,14 +248,15 @@ struct WatchTaskRootView: View {
                     Text(draft.text).font(.body).fixedSize(horizontal: false, vertical: true).privacySensitive()
                 }
             }
-            Text("\(draft.text.count) / 2000").font(.caption2.monospacedDigit())
-                .foregroundStyle(draft.text.count > 2_000 ? Color.red : Color.secondary)
+            Text("\(sentText.count) / 2000").font(.caption2.monospacedDigit())
+                .foregroundStyle(sentText.count > 2_000 ? Color.red : Color.secondary)
             if model.isSending { ProgressView(t("正在发送")) }
             actionButton(t(draft.composerMode == .note ? "保存记事" : draft.pendingRequest != nil ? "确认接收结果" : "发送问题")) {
                 model.submitDraft(key: key)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(model.isSending || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.text.count > 2_000)
+            .handGestureShortcut(.primaryAction, isEnabled: model.path.last == .compose(key))
+            .disabled(model.isSending || draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || sentText.count > 2_000)
             .accessibilityIdentifier("watch.submit")
             if draft.composerMode == .ask, !model.isPhoneReachable {
                 Text(t("无法连接 iPhone，问题已保留为草稿")).font(.caption2).foregroundStyle(.orange)
@@ -277,6 +296,7 @@ struct WatchTaskRootView: View {
                     sectionTitle("回答节选")
                     Text(summary).font(.body).fixedSize(horizontal: false, vertical: true)
                 }.privacySensitive()
+                speakButton(summary)
             }
             if model.isSending { ProgressView(t("正在发送")) }
             if model.snapshot.actions.contains(.retry) {
@@ -326,7 +346,10 @@ struct WatchTaskRootView: View {
                 } label: {
                     Text(option.title).font(.caption.weight(.medium))
                         .fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity)
-                }.disabled(!model.canControl)
+                }
+                .handGestureShortcut(.primaryAction, isEnabled: model.path.last == .task(runId) && decision.riskLevel != .high
+                    && option.id == decision.options.first(where: { $0.style == .approve || $0.style == .choice })?.id)
+                .disabled(!model.canControl)
             }
             if decision.allowsVoice {
                 TextField(t("输入或听写回答"), text: $model.draftAnswer, axis: .vertical)
@@ -352,7 +375,7 @@ struct WatchTaskRootView: View {
                                 .font(.caption2).foregroundStyle(.orange)
                             Spacer(minLength: 0)
                             if !store.hasViewed(entry) {
-                                Circle().fill(Color.orange).frame(width: 5, height: 5)
+                                Circle().fill(model.accentPalette.accent.color).frame(width: 5, height: 5)
                                     .accessibilityLabel(t("未读"))
                             }
                         }
@@ -413,6 +436,7 @@ struct WatchTaskRootView: View {
         if !entry.summary.isEmpty {
             sectionTitle("内容节选")
             Text(entry.summary).font(.body).fixedSize(horizontal: false, vertical: true).privacySensitive()
+            speakButton(entry.summary)
         }
         if let id = entry.conversationId {
             actionButton(t("继续追问")) { model.compose(mode: .ask, conversationId: id) }
@@ -463,6 +487,13 @@ struct WatchTaskRootView: View {
             }
             Text(t("在 iPhone 的设置 → Apple Watch 中查看同步的记事。"))
                 .font(.caption2).foregroundStyle(.secondary)
+            let handOffs = Self.noteInstructions.filter { model.noteQuestion(note, instruction: $0.instruction).count <= 2_000 }
+            if !handOffs.isEmpty {
+                sectionTitle("交给 Amber")
+                ForEach(handOffs, id: \.title) { item in
+                    actionButton(t(item.title)) { model.composeFromNote(note, instruction: item.instruction) }
+                }
+            }
         } else { Text(t("找不到这条记事")) }
     }
 
@@ -486,8 +517,31 @@ struct WatchTaskRootView: View {
             } else { Text(t("请在 iPhone 打开 Amber 完成首次同步。")).font(.caption2) }
             actionButton(t("重新同步")) { model.refresh() }.disabled(model.isBusy)
         }
+        sectionTitle("触感")
         Toggle(t("触感反馈"), isOn: Binding(
             get: { store.settings.hapticsEnabled }, set: { value in store.updateSettings { $0.hapticsEnabled = value } }
+        ))
+        if store.settings.hapticsEnabled {
+            Toggle(t("任务完成"), isOn: Binding(
+                get: { store.settings.hapticsOnCompleted }, set: { value in store.updateSettings { $0.hapticsOnCompleted = value } }
+            ))
+            Toggle(t("需要你回答"), isOn: Binding(
+                get: { store.settings.hapticsOnWaiting }, set: { value in store.updateSettings { $0.hapticsOnWaiting = value } }
+            ))
+            Toggle(t("任务失败"), isOn: Binding(
+                get: { store.settings.hapticsOnFailed }, set: { value in store.updateSettings { $0.hapticsOnFailed = value } }
+            ))
+        }
+        sectionTitle("显示")
+        Picker(t("首页"), selection: Binding(
+            get: { store.settings.asksFirst }, set: { value in store.updateSettings { $0.asksFirst = value } }
+        )) {
+            Text(t("成果优先")).tag(false)
+            Text(t("提问优先")).tag(true)
+        }
+        .pickerStyle(.navigationLink)
+        Toggle(t("跟随 iPhone 配色"), isOn: Binding(
+            get: { store.settings.followsPhoneAccent }, set: { model.setFollowsPhoneAccent($0) }
         ))
         Toggle(t("内容预览"), isOn: Binding(
             get: { store.settings.showContentPreview }, set: { value in store.updateSettings { $0.showContentPreview = value } }
@@ -506,6 +560,17 @@ struct WatchTaskRootView: View {
         Button(role: role, action: action) {
             Text(title).multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Read-aloud stops when its page is popped (see the task/activity routes),
+    /// not when a lowered wrist swaps the content for the privacy placeholder.
+    private func speakButton(_ text: String) -> some View {
+        let speaking = speech.speakingText == text
+        return Button { speech.toggle(text) } label: {
+            Label(t(speaking ? "停止朗读" : "朗读"), systemImage: speaking ? "stop.fill" : "speaker.wave.2.fill")
                 .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity)
@@ -557,6 +622,14 @@ struct WatchTaskRootView: View {
         case "stale": "clock.badge.exclamationmark"
         default: "sparkles"
         }
+    }
+    private static let noteInstructions: [(title: String, instruction: String)] = [
+        ("整理成要点", "请把这条记事整理成要点："),
+        ("提取待办", "请从这条记事中提取待办事项："),
+        ("扩写成段落", "请把这条记事扩写成完整的一段话：")
+    ]
+    private var logoBreathes: Bool {
+        ["running", "reconnecting"].contains(model.snapshot.phase) && !reduceMotion && !isLuminanceReduced
     }
     private func t(_ key: String) -> String { model.localized(key) }
 }

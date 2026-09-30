@@ -222,6 +222,26 @@ struct IOSWatchSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(configurationIssue == nil ? AmberTheme.muted : .orange)
                 }
+                rowDivider
+                Menu {
+                    Picker("回答长度", selection: Binding(
+                        get: { service.replyLength }, set: { service.setReplyLength($0) }
+                    )) {
+                        ForEach(IOSWatchReplyLength.allCases) { option in
+                            Text(LocalizedStringKey(option.title)).tag(option)
+                        }
+                    }
+                } label: {
+                    settingsRow(icon: "text.alignleft", title: "回答长度", detail: "手表发起的问题") {
+                        HStack(spacing: 4) {
+                            Text(LocalizedStringKey(service.replyLength.title))
+                            Image(systemName: "chevron.up.chevron.down").font(.caption2.weight(.semibold))
+                        }
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.muted)
+                    }
+                }
+                .buttonStyle(.plain)
             }
         }
     }
@@ -374,6 +394,8 @@ struct IOSWatchSettingsView: View {
                 TextField("完整问题", text: $actionPrompt, axis: .vertical)
                     .lineLimit(4...12)
                 Text("名称最多 40 字，问题最多 2000 字。保存后仍需在手表确认发送。")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("在问题中写入 {输入}，手表会先请你填写这一处。")
                     .font(.caption).foregroundStyle(.secondary)
                 if actionError { Text("无法保存快捷动作，请检查内容后重试。").foregroundStyle(.orange) }
                 if editingActionID != nil {

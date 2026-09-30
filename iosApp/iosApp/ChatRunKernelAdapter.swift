@@ -765,11 +765,13 @@ final class ChatRunKernelAdapter {
                 markDurabilityFailure()
                 return Self.nestedExecToolUnavailable(name: name)
             }
-            return await resolveNestedExecApproval(
-                prompt,
-                pending: pending,
-                request: request
-            )
+            return await withNestedApprovalTurn {
+                await resolveNestedExecApproval(
+                    prompt,
+                    pending: pending,
+                    request: request
+                )
+            }
         case .durabilityFailure:
             markDurabilityFailure()
             return Self.nestedExecToolUnavailable(name: name)
@@ -790,6 +792,28 @@ final class ChatRunKernelAdapter {
             )
             return Self.nestedExecToolOutputText(from: messages, toolCallId: toolCall.toolCallId)
         }
+    }
+
+    /// exec 的 `parallel()` 可并发发起嵌套调用，但审批卡一次只能展示一张：
+    /// 嵌套审批在此逐个排队（先到先得），其余调用照常并发执行。
+    private var nestedApprovalBusy = false
+    private var nestedApprovalWaiters: [CheckedContinuation<Void, Never>] = []
+
+    private func withNestedApprovalTurn<T>(_ body: () async -> T) async -> T {
+        if nestedApprovalBusy {
+            // 轮次由上一位直接移交（busy 保持 true），新来者无法插队。
+            await withCheckedContinuation { nestedApprovalWaiters.append($0) }
+        } else {
+            nestedApprovalBusy = true
+        }
+        defer {
+            if nestedApprovalWaiters.isEmpty {
+                nestedApprovalBusy = false
+            } else {
+                nestedApprovalWaiters.removeFirst().resume()
+            }
+        }
+        return await body()
     }
 
     private func resolveNestedExecApproval(

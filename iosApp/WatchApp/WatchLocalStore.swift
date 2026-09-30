@@ -14,6 +14,27 @@ final class WatchLocalStore: ObservableObject {
     struct Settings: Codable, Hashable, Sendable {
         var hapticsEnabled: Bool = true
         var showContentPreview: Bool = false
+        var followsPhoneAccent: Bool = true
+        var hapticsOnCompleted: Bool = true
+        var hapticsOnWaiting: Bool = true
+        var hapticsOnFailed: Bool = true
+        /// Home puts the ask button on top instead of the latest result.
+        var asksFirst: Bool = false
+
+        init() {}
+
+        // Earlier caches predate newer toggles; a missing key must not fail
+        // the whole state decode and drop unsynced notes.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            hapticsEnabled = try container.decodeIfPresent(Bool.self, forKey: .hapticsEnabled) ?? true
+            showContentPreview = try container.decodeIfPresent(Bool.self, forKey: .showContentPreview) ?? false
+            followsPhoneAccent = try container.decodeIfPresent(Bool.self, forKey: .followsPhoneAccent) ?? true
+            hapticsOnCompleted = try container.decodeIfPresent(Bool.self, forKey: .hapticsOnCompleted) ?? true
+            hapticsOnWaiting = try container.decodeIfPresent(Bool.self, forKey: .hapticsOnWaiting) ?? true
+            hapticsOnFailed = try container.decodeIfPresent(Bool.self, forKey: .hapticsOnFailed) ?? true
+            asksFirst = try container.decodeIfPresent(Bool.self, forKey: .asksFirst) ?? false
+        }
     }
 
     @Published private(set) var notes: [WatchNote]

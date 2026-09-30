@@ -26,6 +26,7 @@ struct ChatTopBarTrailingDock: View {
     let loadPreview: (String) async -> String?
     var previewRevision: (String) -> String? = { _ in nil }
     var onOpenShelf: () -> Void = {}
+    var onExportConversation: (IOSConversationExportFormat) -> Void = { _ in }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var loadedPreview: String?
@@ -76,6 +77,7 @@ struct ChatTopBarTrailingDock: View {
                     .contextMenu {
                         Button("产物架", systemImage: "tray.full", action: onOpenShelf)
                         Button("新对话", systemImage: "plus.message", action: onNewConversation)
+                        // 这里的预览是其他会话的提醒，不放「导出对话」，避免误以为导出的是预览里的会话。
                     } preview: {
                         noticePreview(notice)
                     }
@@ -83,8 +85,21 @@ struct ChatTopBarTrailingDock: View {
                 dockButtonContent
                     .contextMenu {
                         Button("新对话", systemImage: "plus.message", action: onNewConversation)
+                        exportMenu
                     }
             }
+        }
+    }
+
+    private var exportMenu: some View {
+        Menu {
+            ForEach(IOSConversationExportFormat.allCases) { format in
+                Button(format.title, systemImage: format.systemImage) {
+                    onExportConversation(format)
+                }
+            }
+        } label: {
+            Label("导出对话", systemImage: "square.and.arrow.up")
         }
     }
 

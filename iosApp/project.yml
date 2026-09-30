@@ -637,6 +637,7 @@ targets:
       - path: WatchWidgets/AmberWatchWidgets.swift
       - path: SharedWatch/WatchTaskModels.swift
       - path: SharedWatch/WatchWidgetCache.swift
+      - path: SharedWatch/WatchAccentPalette.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: WatchWidgets/Localizable.xcstrings
         buildPhase: resources
@@ -670,6 +671,7 @@ targets:
       - path: WatchWidgets/AmberWatchWidgets.swift
       - path: SharedWatch/WatchTaskModels.swift
       - path: SharedWatch/WatchWidgetCache.swift
+      - path: SharedWatch/WatchAccentPalette.swift
       - path: iosApp/IOSAppLanguage.swift
       - path: WatchWidgets/Localizable.xcstrings
         buildPhase: resources

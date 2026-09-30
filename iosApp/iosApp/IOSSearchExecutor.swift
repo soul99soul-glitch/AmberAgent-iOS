@@ -23,8 +23,7 @@ struct IOSSearchResult: Equatable {
 }
 
 enum IOSSearchRoute: String, Equatable {
-    case duckDuckGoLite = "duckduckgo_lite"
-    case bingHTML = "bing_html"
+    case freeAggregate = "free_aggregate"
     case tavilyAPI = "tavily_api"
     case exaAPI = "exa_api"
     case zhipuAPI = "zhipu_api"
@@ -281,6 +280,7 @@ enum IOSSearchExecutorError: LocalizedError, Equatable {
     case httpStatus(String, Int)
     case emptyResponse(String)
     case responseTooLarge(Int)
+    case freeSearchExhausted(String)
 
     var errorDescription: String? {
         switch self {
@@ -308,6 +308,8 @@ enum IOSSearchExecutorError: LocalizedError, Equatable {
             return "\(provider) returned no parseable content."
         case .responseTooLarge(let limit):
             return "Response exceeds the \(limit)-byte limit."
+        case .freeSearchExhausted(let detail):
+            return "免费搜索源均未返回结果（\(detail)）。免费源受网络环境和反爬限制，结果不稳定；如需稳定搜索，可在「搜索服务」中添加有免费额度的 Tavily、Serper、Exa、Brave 或国内可用的智谱。"
         }
     }
 }
@@ -350,7 +352,15 @@ struct IOSSearchExecutor {
             return format(query: execution.request.query, results: execution.results, selection: execution.selection)
         case "scrape_web":
             let request = try scrapeRequest(from: toolInput)
-            return try await scrapeWeb(request: request, transport: transport)
+            do {
+                return try await scrapeWeb(request: request, transport: transport)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // 知乎等站点对直连返回 403，由 Jina Reader 代读正文。
+                guard settings?.searchBuiltinJinaEnabled == true else { throw error }
+                return try await readWithJinaReader(request: request, transport: transport)
+            }
         default:
             throw IOSSearchExecutorError.unsupportedTool(toolName)
         }
@@ -368,16 +378,11 @@ struct IOSSearchExecutor {
         let selection = searchProviderSelection(settings: settings)
         let results: [IOSSearchResult]
         switch selection.route {
-        case .duckDuckGoLite:
-            results = try await searchDuckDuckGoLite(
+        case .freeAggregate:
+            results = try await searchFreeAggregate(
                 query: request.query,
                 maxResults: request.maxResults,
-                transport: transport
-            )
-        case .bingHTML:
-            results = try await searchBingHTML(
-                query: request.query,
-                maxResults: request.maxResults,
+                settings: settings,
                 transport: transport
             )
         case .tavilyAPI:
@@ -426,9 +431,9 @@ struct IOSSearchExecutor {
     static func searchProviderSelection(settings: Settings?) -> IOSSearchProviderSelection {
         guard let settings else {
             return IOSSearchProviderSelection(
-                route: .duckDuckGoLite,
-                providerName: "DuckDuckGo Lite",
-                providerType: "duckduckgo_builtin",
+                route: .freeAggregate,
+                providerName: IOSFreeSearchAggregator.providerName,
+                providerType: IOSFreeSearchAggregator.providerType,
                 serviceId: nil,
                 fallbackReason: nil
             )
@@ -509,63 +514,18 @@ struct IOSSearchExecutor {
     }
 
     @MainActor
-    static func searchDuckDuckGoLite(
+    static func searchFreeAggregate(
         query: String,
         maxResults: Int = 5,
+        settings: Settings? = nil,
         transport: any IOSSearchHTTPTransport = IOSURLSessionSearchHTTPTransport()
     ) async throws -> [IOSSearchResult] {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else { throw IOSSearchExecutorError.missingQuery }
-
-        var components = URLComponents(string: "https://lite.duckduckgo.com/lite/")
-        components?.queryItems = [URLQueryItem(name: "q", value: trimmedQuery)]
-        guard let url = components?.url else { throw IOSSearchExecutorError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Mozilla/5.0 AmberAgent-iOS Search", forHTTPHeaderField: "User-Agent")
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 8
-
-        let (response, data) = try await transport.send(request)
-        guard (200...299).contains(response.statusCode) else {
-            throw IOSSearchExecutorError.httpStatus("DuckDuckGo Lite", response.statusCode)
-        }
-
-        let html = String(decoding: data, as: UTF8.self)
-        let results = parseDuckDuckGoLite(html: html, maxResults: maxResults)
-        guard !results.isEmpty else { throw IOSSearchExecutorError.emptyResponse("DuckDuckGo Lite") }
-        return results
-    }
-
-    @MainActor
-    static func searchBingHTML(
-        query: String,
-        maxResults: Int = 5,
-        transport: any IOSSearchHTTPTransport = IOSURLSessionSearchHTTPTransport()
-    ) async throws -> [IOSSearchResult] {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else { throw IOSSearchExecutorError.missingQuery }
-
-        var components = URLComponents(string: "https://www.bing.com/search")
-        components?.queryItems = [URLQueryItem(name: "q", value: trimmedQuery)]
-        guard let url = components?.url else { throw IOSSearchExecutorError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Mozilla/5.0 AmberAgent-iOS Search", forHTTPHeaderField: "User-Agent")
-        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
-        request.timeoutInterval = 8
-
-        let (response, data) = try await transport.send(request)
-        guard (200...299).contains(response.statusCode) else {
-            throw IOSSearchExecutorError.httpStatus("Bing HTML", response.statusCode)
-        }
-
-        let html = String(decoding: data, as: UTF8.self)
-        let results = parseBingHTML(html: html, maxResults: maxResults)
-        guard !results.isEmpty else { throw IOSSearchExecutorError.emptyResponse("Bing HTML") }
-        return results
+        try await IOSFreeSearchAggregator.search(
+            query: query,
+            maxResults: maxResults,
+            googleFallbackEnabled: settings?.searchGoogleWebViewFallbackEnabled ?? false,
+            transport: transport
+        )
     }
 
     @MainActor
@@ -842,38 +802,6 @@ struct IOSSearchExecutor {
         return IOSScrapeRequest(url: url, maxChars: maxChars)
     }
 
-    static func parseDuckDuckGoLite(html: String, maxResults: Int) -> [IOSSearchResult] {
-        let cappedMaxResults = sanitizedMaxResults(maxResults)
-        let pattern = #"<a[^>]*class=["']?result-link["']?[^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>"#
-        var matches = regexMatches(pattern: pattern, in: html)
-
-        if matches.isEmpty {
-            let fallbackPattern = #"<a[^>]*href=["']([^"']*uddg=(?:[^"']+))["'][^>]*>(.*?)</a>"#
-            matches = regexMatches(pattern: fallbackPattern, in: html)
-        }
-
-        if matches.isEmpty {
-            let fallbackPattern2 = #"<a[^>]*class=["'][^"']*result[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>(.*?)</a>"#
-            matches = regexMatches(pattern: fallbackPattern2, in: html)
-        }
-
-        return matches.prefix(cappedMaxResults).compactMap { match in
-            guard match.numberOfRanges >= 3,
-                  let hrefRange = Range(match.range(at: 1), in: html),
-                  let titleRange = Range(match.range(at: 2), in: html) else {
-                return nil
-            }
-
-            let rawURL = String(html[hrefRange])
-            let rawTitle = String(html[titleRange])
-            let snippet = snippet(after: match.range, in: html)
-            let title = cleanHTML(rawTitle)
-            let url = cleanResultURL(rawURL)
-            guard !title.isEmpty, !url.isEmpty else { return nil }
-            return IOSSearchResult(title: title, url: url, snippet: snippet)
-        }
-    }
-
     static func parseBingHTML(html: String, maxResults: Int) -> [IOSSearchResult] {
         let cappedMaxResults = sanitizedMaxResults(maxResults)
         let primaryPattern = #"<li[^>]*class=["'][^"']*\bb_algo\b[^"']*["'][^>]*>(.*?)</li>"#
@@ -967,6 +895,43 @@ struct IOSSearchExecutor {
         let heroImages = extractHeroImageURLs(from: raw)
         if !heroImages.isEmpty { output["images"] = heroImages }
         return cappedScrapeOutput(output)
+    }
+
+    /// Jina Reader 无 Key 可用（有频率限制）。必须用非浏览器 UA：浏览器 UA 会被其
+    /// Cloudflare 拦截到 "Just a moment" 验证页（2026-09 实测）。
+    @MainActor
+    static func readWithJinaReader(
+        request: IOSScrapeRequest,
+        transport: any IOSSearchHTTPTransport
+    ) async throws -> String {
+        guard let url = URL(string: "https://r.jina.ai/" + request.url.absoluteString) else {
+            throw IOSSearchExecutorError.invalidURL
+        }
+        var urlRequest = URLRequest(url: url)
+        urlRequest.setValue("AmberAgent-iOS/1.0 (reader)", forHTTPHeaderField: "User-Agent")
+        urlRequest.setValue("text/plain", forHTTPHeaderField: "Accept")
+        urlRequest.timeoutInterval = 20
+        let (response, data) = try await transport.sendPublic(urlRequest, maximumResponseBytes: 512 * 1_024)
+        guard (200...299).contains(response.statusCode) else {
+            throw IOSSearchExecutorError.httpStatus("Jina Reader", response.statusCode)
+        }
+        let raw = String(decoding: data, as: UTF8.self)
+        let title = firstCapture(pattern: #"^Title:\s*(.*?)\n"#, text: raw)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var body = raw
+        if let marker = raw.range(of: "Markdown Content:") {
+            body = String(raw[marker.upperBound...])
+        }
+        let content = String(body.trimmingCharacters(in: .whitespacesAndNewlines).prefix(request.maxChars))
+        guard !content.isEmpty else { throw IOSSearchExecutorError.emptyResponse("Jina Reader") }
+        return cappedScrapeOutput([
+            "status": "ok",
+            "url": request.url.absoluteString,
+            "title": title,
+            "content": content,
+            "chars": content.count,
+            "via": "jina_reader",
+        ])
     }
 
     /// scrape_web 的 JSON 输出保形截断：总长超上限时收缩 content 字段（含截断
@@ -1152,21 +1117,18 @@ struct IOSSearchExecutor {
         return ""
     }
 
+    /// iOS 设置页把 DuckDuckGo / Bing 两个旧开关合并成一个「免费聚合搜索」开关，
+    /// 两个字段仍保留（Android 在用），任一为开即视为聚合搜索开启。
+    static func freeAggregateEnabled(_ settings: Settings) -> Bool {
+        settings.searchBuiltinDuckDuckGoEnabled || settings.searchBuiltinBingEnabled
+    }
+
     private static func builtInFallback(settings: Settings, reason: String) -> IOSSearchProviderSelection {
-        if settings.searchBuiltinDuckDuckGoEnabled {
+        if freeAggregateEnabled(settings) {
             return IOSSearchProviderSelection(
-                route: .duckDuckGoLite,
-                providerName: "DuckDuckGo Lite",
-                providerType: "duckduckgo_builtin",
-                serviceId: nil,
-                fallbackReason: reason
-            )
-        }
-        if settings.searchBuiltinBingEnabled {
-            return IOSSearchProviderSelection(
-                route: .bingHTML,
-                providerName: "Bing HTML",
-                providerType: "bing_builtin",
+                route: .freeAggregate,
+                providerName: IOSFreeSearchAggregator.providerName,
+                providerType: IOSFreeSearchAggregator.providerType,
                 serviceId: nil,
                 fallbackReason: reason
             )
@@ -1205,7 +1167,7 @@ struct IOSSearchExecutor {
     private static func providerDescriptor(for service: SearchServiceOptions) -> IOSSearchProviderDescriptor {
         switch service {
         case is SearchServiceOptions.BingLocalOptions:
-            return IOSSearchProviderDescriptor(name: "Bing HTML", type: "bing_local", route: .bingHTML, requiresAPIKey: false)
+            return IOSSearchProviderDescriptor(name: IOSFreeSearchAggregator.providerName, type: "bing_local", route: .freeAggregate, requiresAPIKey: false)
         case is SearchServiceOptions.TavilyOptions:
             return IOSSearchProviderDescriptor(name: "Tavily", type: "tavily", route: .tavilyAPI, requiresAPIKey: true)
         case is SearchServiceOptions.ExaOptions:
@@ -1248,25 +1210,7 @@ struct IOSSearchExecutor {
         }
     }
 
-    private static func snippet(after anchorRange: NSRange, in html: String) -> String {
-        let start = anchorRange.location + anchorRange.length
-        let end = min(html.utf16.count, start + 3_000)
-        guard start < end,
-              let searchRange = Range(NSRange(location: start, length: end - start), in: html) else {
-            return ""
-        }
-
-        let fragment = String(html[searchRange])
-        let pattern = #"<td[^>]*class=["']?result-snippet["']?[^>]*>(.*?)</td>"#
-        guard let match = regexMatches(pattern: pattern, in: fragment).first,
-              match.numberOfRanges >= 2,
-              let range = Range(match.range(at: 1), in: fragment) else {
-            return ""
-        }
-        return cleanHTML(String(fragment[range]))
-    }
-
-    private static func cleanResultURL(_ rawURL: String) -> String {
+    static func cleanResultURL(_ rawURL: String) -> String {
         let decoded = decodeHTMLEntities(rawURL)
         guard let components = URLComponents(string: decoded),
               let uddg = components.queryItems?.first(where: { $0.name == "uddg" })?.value,
@@ -1285,9 +1229,22 @@ struct IOSSearchExecutor {
         }
         if let target = queryItems.first(where: { $0.name == "u" || $0.name == "url" })?.value,
            !target.isEmpty {
-            return target
+            return unwrapBingTrackingTarget(target) ?? target
         }
         return decoded
+    }
+
+    /// Bing /ck/a 跳转链接的 u 参数是 "a1" + base64url(原始链接)（同 ddgs unwrap_bing_url）。
+    private static func unwrapBingTrackingTarget(_ value: String) -> String? {
+        guard value.hasPrefix("a1"), value.count > 2 else { return nil }
+        var base64 = String(value.dropFirst(2))
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64),
+              let url = String(data: data, encoding: .utf8),
+              url.hasPrefix("http") else { return nil }
+        return url
     }
 
     static func allowedPublicHTTPURL(from rawURL: String) throws -> URL {
@@ -1408,6 +1365,21 @@ struct IOSSearchExecutor {
             return String(text.prefix(maxChars)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return text
+    }
+
+    static func plainText(fromHTML html: String) -> String {
+        cleanHTML(html)
+    }
+
+    static func decodeEntities(_ text: String) -> String {
+        decodeHTMLEntities(text)
+    }
+
+    static func regexCaptures(_ pattern: String, in text: String, group: Int = 1) -> [String] {
+        regexMatches(pattern: pattern, in: text).compactMap { match in
+            guard match.numberOfRanges > group, let range = Range(match.range(at: group), in: text) else { return nil }
+            return String(text[range])
+        }
     }
 
     private static func cleanHTML(_ html: String) -> String {

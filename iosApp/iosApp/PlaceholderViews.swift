@@ -2880,6 +2880,9 @@ struct ConversationsView: View {
                 },
                 onDelete: {
                     deletingConversationId = summary.id
+                },
+                onExport: { format in
+                    exportConversation(id: summary.id, title: summary.title, format: format)
                 }
             )
             .equatable()
@@ -3066,6 +3069,18 @@ struct ConversationsView: View {
         }
     }
 
+    private func exportConversation(id: KotlinUuid, title: String, format: IOSConversationExportFormat) {
+        Task { @MainActor in
+            await IOSConversationExporter.share(format: format, title: title) {
+                // 存储层的错误弹窗只挂在聊天页，会话列表上看不到，所以这里始终由浮层给出提示。
+                guard let messages = await conversationStore.messages(for: id) else {
+                    return .failed("无法读取这段对话，可能已被删除或读取失败。")
+                }
+                return .loaded(messages)
+            }
+        }
+    }
+
     private func openConversation(_ conversationID: KotlinUuid) {
         collapseSearchIfNeeded()
         conversationNavigationTask?.cancel()
@@ -3117,6 +3132,8 @@ struct ConversationSummaryRow: View, Equatable {
     let onRename: () -> Void
     let onTogglePin: () -> Void
     let onDelete: () -> Void
+    /// 与 onRename 同理：只捕获 `summary.id` 与已参与比较的 `summary.title`。
+    var onExport: (IOSConversationExportFormat) -> Void = { _ in }
     @Environment(\.displayScale) private var displayScale
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -3275,6 +3292,15 @@ struct ConversationSummaryRow: View, Equatable {
                 onRename()
             } label: {
                 Label("重命名", systemImage: "pencil")
+            }
+            Menu {
+                ForEach(IOSConversationExportFormat.allCases) { format in
+                    Button(format.title, systemImage: format.systemImage) {
+                        onExport(format)
+                    }
+                }
+            } label: {
+                Label("导出对话", systemImage: "square.and.arrow.up")
             }
             Button(role: .destructive) {
                 onDelete()

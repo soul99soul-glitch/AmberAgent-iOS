@@ -44,8 +44,23 @@ class ExecToolDeclarationTest {
             "last expression's value", "synchronous", "no await/Promise needed",
             "nested calls inherit each tool's own approval policy", "ALL_TOOLS",
             "filter it to discover tools instead of guessing names", "NOT for generating SVG/widgets/HTML",
+            "parallel([{tool, args}], {concurrency})", "JSON Schema `parameters`", "store(key, value)",
+            "jev.ask({state, questions})", "`typeof jev` is undefined otherwise",
         ).forEach { semantic ->
             assertTrue(semantic in description, "exec 描述缺少模型可见语义: $semantic")
         }
+    }
+
+    @Test
+    fun parametersJsonSchemaMatchesProviderShape() {
+        val schema = kotlinx.serialization.json.Json.parseToJsonElement(
+            createExecToolDeclaration().parametersJsonSchema()!!
+        ).jsonObject
+        assertEquals("object", schema["type"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("[\"code\"]", schema["required"].toString())
+        assertEquals(
+            "string",
+            schema["properties"]!!.jsonObject["code"]!!.jsonObject["type"]?.jsonPrimitive?.contentOrNull,
+        )
     }
 }

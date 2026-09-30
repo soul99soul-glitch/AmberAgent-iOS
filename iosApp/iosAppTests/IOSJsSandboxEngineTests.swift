@@ -798,6 +798,234 @@ final class IOSJsSandboxEngineTests: XCTestCase {
         }
         XCTAssertEqual(output.result, #""undefined""#)
     }
+
+    // MARK: - Codemode：ALL_TOOLS 参数 schema、parallel()、jev
+
+    func testAllToolsCarriesFrozenParameterSchemas() async {
+        let engine = IOSJsSandboxEngine()
+        let result = await engine.evaluate(
+            code: #"""
+            const search = ALL_TOOLS.filter(t => t.name === 'search_web')[0];
+            const memory = ALL_TOOLS.filter(t => t.name === 'memory_tool')[0];
+            search.parameters.properties.query.type = 'evil';
+            ({
+              required: search.parameters.required,
+              queryType: search.parameters.properties.query.type,
+              deepFrozen: Object.isFrozen(search.parameters.properties.query),
+              missing: memory.parameters
+            })
+            """#,
+            timeoutMs: 5000,
+            maxOutputChars: 10000,
+            tools: IOSJsSandboxTools(
+                availableToolNames: ["search_web", "memory_tool"],
+                hostCall: { _, _ in "{}" },
+                toolSchemas: [
+                    "search_web": #"{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}"#,
+                ]
+            )
+        )
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        // 有 schema 的工具带可读的 parameters（深冻结不可篡改）；没有的为 null。
+        XCTAssertEqual(
+            output.result,
+            #"{"required":["query"],"queryType":"string","deepFrozen":true,"missing":null}"#
+        )
+    }
+
+    func testParallelRunsCallsConcurrentlyAndKeepsOrder() async {
+        let engine = IOSJsSandboxEngine()
+        let tracker = IOSJsConcurrencyTracker()
+        let started = Date()
+        let result = await engine.evaluate(
+            code: #"""
+            parallel([
+              {tool: 'slow', args: {i: 0}},
+              {tool: 'slow', args: {i: 1}},
+              {tool: 'slow', args: {i: 2}},
+              {tool: 'slow', args: {i: 3}},
+            ], {concurrency: 4}).map(r => r.i)
+            """#,
+            timeoutMs: 10000,
+            maxOutputChars: 10000,
+            tools: IOSJsSandboxTools(
+                availableToolNames: ["slow"],
+                hostCall: { _, arguments in
+                    tracker.enter()
+                    // 反序完成：后发的先返回，验证结果仍按调用顺序排列。
+                    let index = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Int])?["i"] ?? 0
+                    try? await Task.sleep(nanoseconds: UInt64(400 - index * 50) * 1_000_000)
+                    tracker.leave()
+                    return #"{"i":\#(index)}"#
+                }
+            )
+        )
+        let elapsed = Date().timeIntervalSince(started)
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(output.result, "[0,1,2,3]")
+        XCTAssertEqual(tracker.maxInFlight, 4, "four calls must be in flight together")
+        XCTAssertLessThan(elapsed, 1.2, "4×~0.4s calls must overlap, took \(elapsed)s")
+    }
+
+    func testParallelRespectsConcurrencyLimitAndIsolatesFailures() async {
+        let engine = IOSJsSandboxEngine()
+        let tracker = IOSJsConcurrencyTracker()
+        let result = await engine.evaluate(
+            code: #"""
+            const calls = [];
+            for (let i = 0; i < 6; i++) { calls.push({tool: 'work', args: {i: i}}); }
+            calls.push({tool: 'not_whitelisted', args: {}});
+            calls.push({tool: 'offline', args: {}});
+            const out = parallel(calls, {concurrency: 2});
+            ({count: out.length, first: out[0].ok, unknown: out[6].error, offline: out[7].error})
+            """#,
+            timeoutMs: 10000,
+            maxOutputChars: 10000,
+            tools: IOSJsSandboxTools(
+                availableToolNames: ["work", "offline"],
+                hostCall: { name, _ in
+                    if name == "offline" { return nil }
+                    tracker.enter()
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    tracker.leave()
+                    return #"{"ok":true}"#
+                }
+            )
+        )
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(tracker.maxInFlight, 2, "concurrency option must cap in-flight host calls")
+        XCTAssertEqual(
+            output.result,
+            #"{"count":8,"first":true,"unknown":"tool not available in exec: not_whitelisted","offline":"tool not available in exec: offline"}"#,
+            "failed slots must carry {error} without failing the batch: \(output.result)"
+        )
+    }
+
+    func testParallelInfiniteConcurrencyClampsToMaximum() async {
+        let engine = IOSJsSandboxEngine()
+        let tracker = IOSJsConcurrencyTracker()
+        let result = await engine.evaluate(
+            code: #"""
+            const calls = [];
+            for (let i = 0; i < 12; i++) { calls.push({tool: 'work', args: {i: i}}); }
+            parallel(calls, {concurrency: Infinity}).length
+            """#,
+            timeoutMs: 10000,
+            maxOutputChars: 10000,
+            tools: IOSJsSandboxTools(
+                availableToolNames: ["work"],
+                hostCall: { _, _ in
+                    tracker.enter()
+                    try? await Task.sleep(nanoseconds: 80_000_000)
+                    tracker.leave()
+                    return "1"
+                }
+            )
+        )
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(output.result, "12")
+        XCTAssertEqual(tracker.maxInFlight, IOSJsSandboxEngine.maxParallelConcurrency, "Infinity 应钳到上限而非回绕成 1")
+    }
+
+    func testParallelNotInstalledForPluginScripts() async {
+        let engine = IOSJsSandboxEngine()
+        let result = await engine.evaluate(
+            code: #"typeof parallel + '|' + typeof tools"#,
+            timeoutMs: 5000,
+            maxOutputChars: 10000,
+            tools: IOSJsSandboxTools(availableToolNames: ["search_web"], hostCall: { _, _ in "{}" }),
+            restrictedPluginMode: true
+        )
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(output.result, #""undefined|object""#)
+    }
+
+    func testJevGlobalRoundTripsBatchAndThrowsOnSingleError() async {
+        let engine = IOSJsSandboxEngine()
+        let received = IOSJsSandboxToolCallRecorder()
+        let result = await engine.evaluate(
+            code: #"""
+            const all = jev.askAll([
+              {state: 'a', questions: [{id: 'q', type: 'noul', instructions: 'x?'}]},
+              {state: 'b', questions: [{id: 'q', type: 'noul', instructions: 'x?'}]},
+            ]);
+            let thrown = '';
+            try { jev.ask({state: 'fail', questions: []}); } catch (e) { thrown = String(e.message); }
+            ({first: all[0].answers.q.probability, second: all[1].error, thrown: thrown, frozen: Object.isFrozen(jev)})
+            """#,
+            timeoutMs: 5000,
+            maxOutputChars: 10000,
+            jev: IOSJsSandboxJev(askBatch: { requests in
+                received.record(name: "jev", arguments: requests)
+                if requests.contains("fail") { return #"[{"error":"bad request"}]"# }
+                return #"[{"answers":{"q":{"type":"noul","probability":0.9}}},{"error":"late"}]"#
+            })
+        )
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(received.calls.count, 2, "askAll must be ONE host batch; ask one more")
+        XCTAssertEqual(
+            output.result,
+            #"{"first":0.9,"second":"late","thrown":"jev.ask: bad request","frozen":true}"#
+        )
+    }
+
+    func testExecToolSchemasConvertKmpDeclarationsToJSONSchema() throws {
+        // 真实 KMP 声明 → ALL_TOOLS.parameters 的 JSON Schema（与 provider 同形）。
+        let declarations = ToolKt.iosToolDeclarations(names: ["exec", "workspace_file_read"])
+        let schemas = ChatToolRuntime.execToolSchemas(from: declarations, whitelist: ["exec", "workspace_file_read"])
+        let json = try XCTUnwrap(schemas["exec"])
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        XCTAssertEqual(object["type"] as? String, "object")
+        XCTAssertEqual(object["required"] as? [String], ["code"])
+        let code = try XCTUnwrap((object["properties"] as? [String: Any])?["code"] as? [String: Any])
+        XCTAssertEqual(code["type"] as? String, "string")
+        XCTAssertNotNil(schemas["workspace_file_read"], "每个白名单工具都应带 schema")
+        XCTAssertTrue(
+            ChatToolRuntime.execToolSchemas(from: declarations, whitelist: []).isEmpty,
+            "白名单之外的声明不得出现"
+        )
+    }
+
+    func testJevAbsentWithoutBridge() async {
+        let engine = IOSJsSandboxEngine()
+        let result = await engine.evaluate(code: #"typeof jev"#, timeoutMs: 5000, maxOutputChars: 10000)
+        guard case .success(let output) = result else {
+            return XCTFail("expected success, got \(result)")
+        }
+        XCTAssertEqual(output.result, #""undefined""#)
+    }
+}
+
+/// Tracks the maximum number of simultaneously running host calls.
+private final class IOSJsConcurrencyTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var inFlight = 0
+    private var peak = 0
+
+    func enter() {
+        lock.withLock {
+            inFlight += 1
+            peak = max(peak, inFlight)
+        }
+    }
+
+    func leave() {
+        lock.withLock { inFlight -= 1 }
+    }
+
+    var maxInFlight: Int { lock.withLock { peak } }
 }
 
 /// IOSToolExecutor is not Sendable; box it for the async actor boundary

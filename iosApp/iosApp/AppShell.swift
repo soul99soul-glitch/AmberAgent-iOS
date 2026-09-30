@@ -261,6 +261,11 @@ struct AppShell: View {
                 await WatchTaskCoordinator.shared.refreshWatchSnapshot()
             }
         }
+        .onChange(of: AmberThemeRuntime.shared.accentHex) { _, _ in
+            Task { @MainActor in
+                await WatchTaskCoordinator.shared.refreshWatchSnapshot()
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIDevice.batteryStateDidChangeNotification)) { _ in
             IOSMemoryExtractionCoordinator.shared.resume()
         }
@@ -377,6 +382,8 @@ struct AppShell: View {
         .onOpenURL { url in
             enqueueAppURL(url)
         }
+        // 分享/导出的进度与失败浮层：App 级单一挂载点。
+        .iosShareActivityOverlay()
     }
 
     private var shouldShowThemeTryOnBar: Bool {

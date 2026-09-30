@@ -47,6 +47,19 @@ private actor HighlightTaskManager: ObservableObject {
   }
 }
 
+private struct CodeBlockCopyHitOutsetKey: EnvironmentKey {
+  static let defaultValue: CGFloat? = nil
+}
+
+public extension EnvironmentValues {
+  /// Optional outset that enlarges the header "Copy" control's tap area (icon + label) without changing layout.
+  /// The default nil keeps the original text-only tap target.
+  var swiftStreamingMarkdownCodeCopyHitOutset: CGFloat? {
+    get { self[CodeBlockCopyHitOutsetKey.self] }
+    set { self[CodeBlockCopyHitOutsetKey.self] = newValue }
+  }
+}
+
 public struct CodeBlockView: View {
 
   let language: String
@@ -57,6 +70,7 @@ public struct CodeBlockView: View {
   let headerAccessory: AnyView?
 
   @State private var expanded = false
+  @Environment(\.swiftStreamingMarkdownCodeCopyHitOutset) private var copyHitOutset
 
   @State var copied: Bool = false
   @State var attributedString: AttributedString?
@@ -70,6 +84,14 @@ public struct CodeBlockView: View {
     self.autoWrap = autoWrap
     self.autoCollapse = autoCollapse
     self.headerAccessory = headerAccessory
+  }
+
+  private func copyCode() {
+    copied = true
+    UIPasteboard.general.string = code
+    if let onCodeCopied {
+      onCodeCopied()
+    }
   }
 
   private func updateAttributedString(code: String) async {
@@ -143,21 +165,29 @@ public struct CodeBlockView: View {
         Spacer()
         headerAccessory
           .foregroundStyle(Color.Static.Stone.Stone350)
-        HStack(alignment: .firstTextBaseline, spacing: 6.0) {
-          Image("copyIcon14", bundle: .module)
-            .renderingMode(.template)
-            .foregroundStyle(Color.Static.Stone.Stone350)
-          Text(copied ? String.codeCopiedLabel : String.codeCopyLabel)
-            .accessibilityAddTraits(.isButton)
-            .font(Typography.smallTextFonts)
-            .foregroundStyle(Color.Static.Stone.Stone350)
-            .onTapGesture {
-              copied = true
-              UIPasteboard.general.string = code
-              if let onCodeCopied {
-                onCodeCopied()
-              }
-            }
+        if let copyHitOutset {
+          HStack(alignment: .firstTextBaseline, spacing: 6.0) {
+            Image("copyIcon14", bundle: .module)
+              .renderingMode(.template)
+              .foregroundStyle(Color.Static.Stone.Stone350)
+            Text(copied ? String.codeCopiedLabel : String.codeCopyLabel)
+              .accessibilityAddTraits(.isButton)
+              .font(Typography.smallTextFonts)
+              .foregroundStyle(Color.Static.Stone.Stone350)
+          }
+          .contentShape(Rectangle().inset(by: -copyHitOutset))
+          .onTapGesture(perform: copyCode)
+        } else {
+          HStack(alignment: .firstTextBaseline, spacing: 6.0) {
+            Image("copyIcon14", bundle: .module)
+              .renderingMode(.template)
+              .foregroundStyle(Color.Static.Stone.Stone350)
+            Text(copied ? String.codeCopiedLabel : String.codeCopyLabel)
+              .accessibilityAddTraits(.isButton)
+              .font(Typography.smallTextFonts)
+              .foregroundStyle(Color.Static.Stone.Stone350)
+              .onTapGesture(perform: copyCode)
+          }
         }
       }.frame(maxWidth: .infinity)
         .padding(.horizontal, 16)

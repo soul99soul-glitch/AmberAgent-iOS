@@ -107,38 +107,23 @@ struct SearchServicesView: View {
 
             AmberFormGroup {
                 builtinRow(
-                    title: "Jina Search / Reader",
-                    subtitle: "可无 Key 使用，尽量以 Markdown 搜索和读取网页。",
+                    title: IOSFreeSearchAggregator.providerName,
+                    subtitle: "无需 Key，同时查询 Bing、Brave、DuckDuckGo、夸克、360、维基百科等，单个源失败或遇验证页自动跳过。",
+                    isOn: sharedSettings.searchBuiltinDuckDuckGoEnabled || sharedSettings.searchBuiltinBingEnabled
+                ) {
+                    sharedSettings.setSearchBuiltinDuckDuckGoEnabled($0)
+                    sharedSettings.setSearchBuiltinBingEnabled($0)
+                }
+                SearchServicesDivider()
+                builtinRow(
+                    title: "Jina Reader 读全文",
+                    subtitle: "网页直连读取失败（如知乎 403）时，改由 Jina Reader 代读正文；无需 Key，有频率限制。",
                     isOn: sharedSettings.searchBuiltinJinaEnabled
                 ) { sharedSettings.setSearchBuiltinJinaEnabled($0) }
                 SearchServicesDivider()
                 builtinRow(
-                    title: "DuckDuckGo Lite",
-                    subtitle: "无需 API Key 的免费公共召回源。",
-                    isOn: sharedSettings.searchBuiltinDuckDuckGoEnabled
-                ) { sharedSettings.setSearchBuiltinDuckDuckGoEnabled($0) }
-                SearchServicesDivider()
-                builtinRow(
-                    title: "Bing HTML",
-                    subtitle: "免费公共兜底，遇到验证页会明确报错。",
-                    isOn: sharedSettings.searchBuiltinBingEnabled
-                ) { sharedSettings.setSearchBuiltinBingEnabled($0) }
-                SearchServicesDivider()
-                builtinRow(
-                    title: "Wikipedia",
-                    subtitle: "实体和背景知识源，适合百科类问题。",
-                    isOn: sharedSettings.searchBuiltinWikipediaEnabled
-                ) { sharedSettings.setSearchBuiltinWikipediaEnabled($0) }
-                SearchServicesDivider()
-                builtinRow(
-                    title: "Hacker News",
-                    subtitle: "技术、开源和 AI 工具生态讨论源。",
-                    isOn: sharedSettings.searchBuiltinHackerNewsEnabled
-                ) { sharedSettings.setSearchBuiltinHackerNewsEnabled($0) }
-                SearchServicesDivider()
-                builtinRow(
                     title: "Google WebView 兜底",
-                    subtitle: "普通搜索弱或深度搜索时，打开可见搜索页兜底。",
+                    subtitle: "免费聚合结果少于 3 条时，在后台网页中打开 Google 搜索补充结果。",
                     isOn: sharedSettings.searchGoogleWebViewFallbackEnabled
                 ) { sharedSettings.setSearchGoogleWebViewFallbackEnabled($0) }
             }
@@ -364,11 +349,8 @@ struct SearchServicesView: View {
 
     private var builtinEnabledCount: Int {
         [
+            sharedSettings.searchBuiltinDuckDuckGoEnabled || sharedSettings.searchBuiltinBingEnabled,
             sharedSettings.searchBuiltinJinaEnabled,
-            sharedSettings.searchBuiltinDuckDuckGoEnabled,
-            sharedSettings.searchBuiltinBingEnabled,
-            sharedSettings.searchBuiltinWikipediaEnabled,
-            sharedSettings.searchBuiltinHackerNewsEnabled,
             sharedSettings.searchGoogleWebViewFallbackEnabled,
         ].lazy.filter { $0 }.count
     }

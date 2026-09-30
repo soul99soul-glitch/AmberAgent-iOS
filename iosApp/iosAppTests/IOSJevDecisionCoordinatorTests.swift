@@ -743,6 +743,98 @@ final class IOSJevDecisionCoordinatorTests: XCTestCase {
         XCTAssertEqual(records[1].latencyMs, 0, "缓存命中零延迟")
         XCTAssertEqual(transport.calls, 1)
     }
+
+    // MARK: - exec 脚本判断（jev 全局的宿主侧）
+
+    private func scriptJudgmentSettings(mode: IOSJevMode) -> IOSJevSettings {
+        var settings = IOSJevSettings()
+        settings.setMode(mode, for: .scriptJudgment)
+        settings.pinnedModelVersion = "jev-fixed-v1"
+        settings.setScopes([.toolOutput], for: .scriptJudgment)
+        return settings
+    }
+
+    func testExecJevBridgeOnlyInstalledWhenScriptJudgmentActive() {
+        XCTAssertNil(IOSExecJevBridge.makeBridge(runKey: "run", settings: IOSJevSettings()), "默认关闭：不注入 jev")
+        XCTAssertNil(IOSExecJevBridge.makeBridge(runKey: "run", settings: scriptJudgmentSettings(mode: .shadow)),
+                     "shadow 结果不应用，脚本侧不注入")
+        var unpinned = scriptJudgmentSettings(mode: .active)
+        unpinned.pinnedModelVersion = nil
+        XCTAssertNil(IOSExecJevBridge.makeBridge(runKey: "run", settings: unpinned), "未固定版本的 active 按 shadow 收口")
+        XCTAssertNotNil(IOSExecJevBridge.makeBridge(runKey: "run", settings: scriptJudgmentSettings(mode: .active)))
+    }
+
+    func testExecJevAskBatchMapsAnswersAndIsolatesInvalidRequests() async throws {
+        let settings = SettingsBox(scriptJudgmentSettings(mode: .active))
+        let transport = JevStubTransport { _ in
+            let payload: [String: Any] = [
+                "model": "jev-fixed-v1",
+                "answers": [
+                    "r0.mood": ["type": "choice", "choice": "high", "confidence": 0.8],
+                    "r2.flag": ["type": "noul", "noul": 0.9],
+                ],
+            ]
+            return (try JSONSerialization.data(withJSONObject: payload), jevResponse(200))
+        }
+        let coordinator = makeCoordinator(settings: settings, transport: transport)
+        let requests = #"""
+        [
+          {"state": "this is broken again", "questions": [{"id": "mood", "type": "choice", "options": ["none", "mild", "high"], "instructions": "frustration?"}]},
+          {"state": "x", "questions": [{"id": "mood", "type": "choice"}]},
+          {"state": "ship it", "questions": [{"id": "flag", "type": "noul", "instructions": "urgent?"}]}
+        ]
+        """#
+        let output = await IOSExecJevBridge.askBatch(
+            requests, runKey: "run-script", maxQuestions: 32, maxCandidates: 64, coordinator: coordinator
+        )
+        let results = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: Any]])
+        XCTAssertEqual(results.count, 3, "结果与请求一一对应")
+        XCTAssertEqual(transport.calls, 1, "有效请求合并成一次出站批次")
+
+        let mood = try XCTUnwrap((results[0]["answers"] as? [String: Any])?["mood"] as? [String: Any])
+        XCTAssertEqual(mood["choice"] as? String, "high")
+        XCTAssertEqual(mood["confidence"] as? Double, 0.8)
+        XCTAssertTrue((results[1]["error"] as? String)?.contains("options") == true, "无效请求就地报错: \(results[1])")
+        let flag = try XCTUnwrap((results[2]["answers"] as? [String: Any])?["flag"] as? [String: Any])
+        XCTAssertEqual(flag["probability"] as? Double, 0.9)
+    }
+
+    func testExecJevBridgeRequiresToolOutputScope() {
+        var settings = scriptJudgmentSettings(mode: .active)
+        settings.setScopes([], for: .scriptJudgment)
+        XCTAssertNil(IOSExecJevBridge.makeBridge(runKey: "run", settings: settings),
+                     "未允许发送工具输出时不注入 jev（否则每次调用都会 scope_not_allowed）")
+    }
+
+    func testExecJevAskBatchPacksChunksByStateBytes() async throws {
+        let settings = SettingsBox(scriptJudgmentSettings(mode: .active))
+        let transport = JevStubTransport { _ in
+            (try JSONSerialization.data(withJSONObject: ["model": "jev-fixed-v1", "answers": [:]]), jevResponse(200))
+        }
+        let coordinator = makeCoordinator(settings: settings, transport: transport)
+        // 30 个各 2KB 的请求：单个都合法，合在一块（~60KB）会超过 48KB state 上限。
+        let state = String(repeating: "a", count: 2 * 1024)
+        let requests = (0..<30).map { _ in
+            ["state": state, "questions": [["id": "q", "type": "noul"]]] as [String: Any]
+        }
+        let payload = String(data: try JSONSerialization.data(withJSONObject: requests), encoding: .utf8)!
+        let output = await IOSExecJevBridge.askBatch(
+            payload, runKey: "run-pack", maxQuestions: 32, maxCandidates: 64, coordinator: coordinator
+        )
+        XCTAssertFalse(output.contains("state_too_large"), "按字节分块后不应因同块拼接而超限: \(output.prefix(300))")
+        XCTAssertEqual(transport.calls, 2, "约 60KB 的 state 应拆成两块")
+    }
+
+    func testExecJevAskBatchRejectsNonArrayPayload() async {
+        let settings = SettingsBox(scriptJudgmentSettings(mode: .active))
+        let transport = JevStubTransport { _ in (Data(), jevResponse(500)) }
+        let output = await IOSExecJevBridge.askBatch(
+            #"{"state":"x"}"#, runKey: "run", maxQuestions: 32, maxCandidates: 64,
+            coordinator: makeCoordinator(settings: settings, transport: transport)
+        )
+        XCTAssertTrue(output.contains("requests must be an array"), output)
+        XCTAssertEqual(transport.calls, 0)
+    }
 }
 
 /// 简单异步门（测试专用）。

@@ -49,6 +49,43 @@ private final class IOSClosureToolExecutor: IOSToolExecutor {
     }
 }
 
+/// Closure executor that needs the engine's real tool call (toolCallId), e.g.
+/// background `exec`, whose store writes are tagged with their source call.
+private final class IOSToolCallClosureToolExecutor: IOSToolExecutor {
+    private let handler: @MainActor (UIMessagePart.Tool) async -> IOSAgentToolOutcome
+    private let executionPolicy: IOSExecutionPolicySnapshot?
+
+    init(
+        executionPolicy: IOSExecutionPolicySnapshot? = IOSExecutionPolicyContext.snapshot,
+        _ handler: @escaping @MainActor (UIMessagePart.Tool) async -> IOSAgentToolOutcome
+    ) {
+        self.handler = handler
+        self.executionPolicy = executionPolicy
+    }
+
+    func execute(tool: UIMessagePart.Tool, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+        await IOSExecutionPolicyContext.$snapshot.withValue(executionPolicy) {
+            await handler(tool)
+        }
+    }
+
+    /// Callers without a real tool call get a synthetic one (fresh id).
+    func execute(name: String, arguments: String, isUserInitiated: Bool) async -> IOSAgentToolOutcome {
+        await execute(
+            tool: UIMessagePart.Tool(
+                toolCallId: "direct-\(name)-\(UUID().uuidString)",
+                toolName: name,
+                input: arguments,
+                output: [],
+                approvalState: ToolApprovalState.Auto.shared,
+                streamIndex: nil,
+                metadata: nil
+            ),
+            isUserInitiated: isUserInitiated
+        )
+    }
+}
+
 private extension IOSLocalToolExecutionOutput {
     var isSuccessfulToolResult: Bool {
         switch self {
@@ -1173,7 +1210,9 @@ final class ChatToolRuntime {
         // P3-c: 后台 run 同样按会话注册 cell（conversationId 由 job 传入），
         // 前台 yield 的 cell 后台可以 wait，反之亦然——注册表跨 run/前后台共享。
         if availableToolNames.contains("exec") {
-            executors["exec"] = IOSClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] toolName, arguments, _ in
+            // store 分支可见性：写入按真实 toolCallId 标记来源，可见集取 job 冻结
+            // 的分支消息（本轮写入经 runId 始终可见），所以用携带 tool 的执行器。
+            executors["exec"] = IOSToolCallClosureToolExecutor(executionPolicy: executionPolicy) { [weak self] tool in
                 guard let self else { return .failed("Chat runtime is unavailable.") }
                 guard self.effectiveExecJavaScriptEnabled else {
                     return .failed("exec 未开启。请先在设置中启用 JavaScript 执行工具。")
@@ -1191,12 +1230,14 @@ final class ChatToolRuntime {
                     toolDescriptions: Self.execToolDescriptions(
                         from: params.tools,
                         whitelist: whitelist
-                    )
+                    ),
+                    toolSchemas: Self.execToolSchemas(from: params.tools, whitelist: whitelist)
                 )
                 return .filled(await self.dispatchExecToolCall(
-                    self.toolCall(name: toolName, input: arguments),
+                    tool,
                     nestedTools: nestedTools,
-                    conversationId: conversationId
+                    conversationId: conversationId,
+                    storeScope: Self.execStoreScope(toolCall: tool, runId: runId, branchMessages: messages)
                 ))
             }
         }
@@ -1494,6 +1535,39 @@ final class ChatToolRuntime {
         return descriptions
     }
 
+    /// `ALL_TOOLS[i].parameters`: each whitelisted declaration's input schema
+    /// as JSON Schema text (KMP serializes it with the providers' serializer).
+    /// Tools without a schema are omitted (the engine reports `null`).
+    static func execToolSchemas(from tools: [Tool], whitelist: Set<String>) -> [String: String] {
+        var schemas: [String: String] = [:]
+        for tool in tools where whitelist.contains(tool.name) {
+            if let json = tool.parametersJsonSchema() {
+                schemas[tool.name] = json
+            }
+        }
+        return schemas
+    }
+
+    /// store/load branch scope for one exec call: its own toolCallId, its run,
+    /// and every tool call id on the branch the run works on. An empty branch
+    /// snapshot means "unknown" (every version visible), never "nothing".
+    static func execStoreScope(
+        toolCall: UIMessagePart.Tool,
+        runId: String,
+        branchMessages: [UIMessage]
+    ) -> IOSJsStoreScope {
+        let visible: Set<String>? = branchMessages.isEmpty ? nil : Set(
+            branchMessages.flatMap { message in
+                message.parts.compactMap { ($0 as? UIMessagePart.Tool)?.toolCallId }
+            }
+        )
+        return IOSJsStoreScope(
+            sourceToolCallId: toolCall.toolCallId,
+            runId: runId,
+            visibleToolCallIds: visible
+        )
+    }
+
     /// P3-b: builds the sandbox bridge from the run's exposure bridge and the
     /// coordinator-provided nested runner. Nil when there is no runner or no
     /// bridge (the evaluation then runs without a `tools` object, exactly like
@@ -1515,7 +1589,8 @@ final class ChatToolRuntime {
             },
             // P3-d: ALL_TOOLS 与白名单同一来源（同轮可见工具集），描述直接来自
             // 可见声明的 KMP description。
-            toolDescriptions: execToolDescriptions(from: visible, whitelist: whitelist)
+            toolDescriptions: execToolDescriptions(from: visible, whitelist: whitelist),
+            toolSchemas: execToolSchemas(from: visible, whitelist: whitelist)
         )
     }
 
@@ -2817,7 +2892,7 @@ final class ChatToolRuntime {
 
         var jev: [String: Any] = [
             "role": "internal_fast_judgment",
-            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注、为待审批动作产出三态分诊标注（只标注不授权）。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
+            "summary": "Jev 是宿主侧快速判断服务，不是模型也不可被直接调用。host 用它排序 tool_search 候选、召回记忆、筛选超长工具输出、为子代理选模型、驱动 wm_run_goal 网页循环、为缺省角色定义的 spawn 荐角色并产出对齐标注、为待审批动作产出三态分诊标注（只标注不授权）；script_judgment 为 active 时 exec 脚本可经 `jev` 全局主动调用（数据范围为工具输出）。出站契约见 api_mode（systemone=TypeSafe 原生，vercel_gateway=Vercel AI Gateway）。每个用途独立 off/shadow/active；off 零网络，shadow 只观测不改业务结果，active 需已验收固定模型版本。",
             "service": jevSettings.apiStyle.serviceIdentifier,
             "api_mode": jevSettings.apiStyle.statusValue,
             "model": jevSettings.modelConfigured ? jevSettings.activeModelVersion : NSNull(),
@@ -2900,6 +2975,7 @@ final class ChatToolRuntime {
         case .webActions: "web_actions"
         case .subagentIntent: "subagent_intent"
         case .approvalTriage: "approval_triage"
+        case .scriptJudgment: "script_judgment"
         }
     }
 
@@ -3565,7 +3641,12 @@ final class ChatToolRuntime {
             runId: pending.runId,
             conversationId: pending.conversationId,
             nestedTools: nestedTools,
-            toolExposureBridge: toolExposureBridge
+            toolExposureBridge: toolExposureBridge,
+            // store 分支可见性：run 的 working 消息就是它所在分支（重新生成时
+            // 已不含旧变体；压缩只作用于上传，不裁剪 working）。
+            execStoreScope: toolName == "exec"
+                ? Self.execStoreScope(toolCall: pending.toolCall, runId: pending.runId, branchMessages: pending.baseMessages)
+                : nil
         )
         return .completed(messagesByFinishingToolCall(
             pending.toolCall,
@@ -5650,23 +5731,12 @@ final class ChatToolRuntime {
             ) else {
                 throw error
             }
-            let results: [IOSSearchResult]
-            switch fallbackSelection.route {
-            case .duckDuckGoLite:
-                results = try await IOSSearchExecutor.searchDuckDuckGoLite(
-                    query: request.query,
-                    maxResults: request.maxResults,
-                    transport: searchTransport
-                )
-            case .bingHTML:
-                results = try await IOSSearchExecutor.searchBingHTML(
-                    query: request.query,
-                    maxResults: request.maxResults,
-                    transport: searchTransport
-                )
-            default:
-                throw error
-            }
+            let results = try await IOSSearchExecutor.searchFreeAggregate(
+                query: request.query,
+                maxResults: request.maxResults,
+                settings: settings,
+                transport: searchTransport
+            )
             return IOSSearchExecutor.format(
                 query: request.query,
                 results: results,
@@ -5681,25 +5751,14 @@ final class ChatToolRuntime {
         initialError: Error
     ) -> IOSSearchProviderSelection? {
         let reason = "原搜索服务 \(selection.providerName) 失败：\(searchErrorSummary(initialError))"
-        if selection.route != .duckDuckGoLite, settings.searchBuiltinDuckDuckGoEnabled {
-            return IOSSearchProviderSelection(
-                route: .duckDuckGoLite,
-                providerName: "DuckDuckGo Lite",
-                providerType: "duckduckgo_builtin",
-                serviceId: nil,
-                fallbackReason: reason
-            )
-        }
-        if selection.route != .bingHTML, settings.searchBuiltinBingEnabled {
-            return IOSSearchProviderSelection(
-                route: .bingHTML,
-                providerName: "Bing HTML",
-                providerType: "bing_builtin",
-                serviceId: nil,
-                fallbackReason: reason
-            )
-        }
-        return nil
+        guard selection.route != .freeAggregate, IOSSearchExecutor.freeAggregateEnabled(settings) else { return nil }
+        return IOSSearchProviderSelection(
+            route: .freeAggregate,
+            providerName: IOSFreeSearchAggregator.providerName,
+            providerType: IOSFreeSearchAggregator.providerType,
+            serviceId: nil,
+            fallbackReason: reason
+        )
     }
 
     private func searchErrorSummary(_ error: Error) -> String {
@@ -6207,7 +6266,8 @@ final class ChatToolRuntime {
         runId: String,
         conversationId: KotlinUuid? = nil,
         nestedTools: IOSJsSandboxTools? = nil,
-        toolExposureBridge: IosToolExposureBridge? = nil
+        toolExposureBridge: IosToolExposureBridge? = nil,
+        execStoreScope: IOSJsStoreScope? = nil
     ) async -> String {
         guard isAdvancedToolEnabled(toolCall.toolName) else {
             return IOSWorkspaceStore.json([
@@ -6588,7 +6648,8 @@ final class ChatToolRuntime {
             return await dispatchExecToolCall(
                 toolCall,
                 nestedTools: nestedTools,
-                conversationId: conversationId
+                conversationId: conversationId,
+                storeScope: execStoreScope
             )
         case "wait":
             // P3-c: 续取本会话的 exec cell（yield/wait/terminate 三路径）。
@@ -6626,7 +6687,8 @@ final class ChatToolRuntime {
     private func dispatchExecToolCall(
         _ toolCall: UIMessagePart.Tool,
         nestedTools: IOSJsSandboxTools? = nil,
-        conversationId: KotlinUuid? = nil
+        conversationId: KotlinUuid? = nil,
+        storeScope: IOSJsStoreScope? = nil
     ) async -> String {
         guard let args = ChatToolCallParsing.jsonObject(toolCall.input),
               let code = args["code"] as? String, !code.isEmpty else {
@@ -6656,12 +6718,13 @@ final class ChatToolRuntime {
 
         // P3-c: session-scoped store/load bridge — shared by every cell of the
         // conversation, persisted by the registry (single writer).
+        // 分支可见性：写入标记来源 exec 调用；读取只取当前分支可见的最新值。
         let storeBridge = IOSJsSandboxStore(
             load: { [registry = jsCellRegistry] key in
-                await registry.loadValue(sessionKey: sessionKey, key: key)
+                await registry.loadValue(sessionKey: sessionKey, key: key, scope: storeScope)
             },
             store: { [registry = jsCellRegistry] key, value in
-                switch await registry.storeValue(sessionKey: sessionKey, key: key, valueJSON: value) {
+                switch await registry.storeValue(sessionKey: sessionKey, key: key, valueJSON: value, scope: storeScope) {
                 case .stored:
                     return nil
                 case .overLimit(let reason):
@@ -6675,6 +6738,11 @@ final class ChatToolRuntime {
             maxOutputChars: maxOutputChars,
             tools: nestedTools,
             store: storeBridge,
+            // 「脚本判断」用途生效为 active 时注入 jev（off/shadow 不注入）。
+            jev: IOSExecJevBridge.makeBridge(
+                runKey: storeScope?.runId ?? sessionKey,
+                settings: sharedSettings.jevSettings
+            ),
             completion: { [registry = jsCellRegistry] final in
                 Task { @Sendable in
                     await registry.finishCell(

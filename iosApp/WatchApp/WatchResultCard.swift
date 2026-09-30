@@ -7,13 +7,16 @@ struct WatchResultCard: View {
     let title: String
     let summary: String
     var updatedAt: Date? = nil
+    var palette: WatchAccentPalette = .copper
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.locale) private var locale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.isLuminanceReduced) private var isLuminanceReduced
     @ScaledMetric(relativeTo: .headline) private var titleSize = 23.0
     @ScaledMetric(relativeTo: .caption2) private var metadataSize = 14.0
     @ScaledMetric(relativeTo: .caption) private var summarySize = 12.5
 
-    private let copper = Color(red: 0.91, green: 0.47, blue: 0.25)
+    private var copper: Color { palette.cardAccent.color }
     private let ivory = Color(red: 1, green: 0.97, blue: 0.91)
 
     var body: some View {
@@ -35,9 +38,7 @@ struct WatchResultCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: 20)
-                .fill(LinearGradient(colors: [Color(red: 0.29, green: 0.14, blue: 0.085),
-                                             Color(red: 0.10, green: 0.065, blue: 0.05),
-                                             Color(red: 0.055, green: 0.035, blue: 0.03)],
+                .fill(LinearGradient(colors: palette.cardGradient.map(\.color),
                                      startPoint: .topLeading, endPoint: .bottomTrailing))
         }
         .overlay {
@@ -70,6 +71,8 @@ struct WatchResultCard: View {
                         }
                     }
                     .foregroundStyle(copper)
+                    .symbolEffect(.bounce, value: symbol)
+                    .symbolEffectsRemoved(reduceMotion || isLuminanceReduced)
                     .accessibilityHidden(true)
             }
             Text(title)

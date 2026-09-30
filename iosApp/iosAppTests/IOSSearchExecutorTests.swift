@@ -4,6 +4,10 @@ import XCTest
 
 @MainActor
 final class IOSSearchExecutorTests: XCTestCase {
+    override func setUp() async throws {
+        IOSFreeSearchAggregator.resetCooldowns()
+    }
+
     func testSearchRequestParsesToolJSON() throws {
         let request = try IOSSearchExecutor.searchRequest(
             from: #"{"query":"swift concurrency","max_results":3}"#,
@@ -32,7 +36,7 @@ final class IOSSearchExecutorTests: XCTestCase {
 
         let selection = IOSSearchExecutor.searchProviderSelection(settings: store.snapshot)
 
-        XCTAssertEqual(selection.route, .bingHTML)
+        XCTAssertEqual(selection.route, .freeAggregate)
         XCTAssertEqual(selection.providerType, "bing_local")
         XCTAssertEqual(selection.serviceId, selectedService.id.description())
         XCTAssertTrue(
@@ -41,7 +45,7 @@ final class IOSSearchExecutorTests: XCTestCase {
         )
     }
 
-    func testDisabledSelectedProviderFallsBackToDuckDuckGo() {
+    func testDisabledSelectedProviderFallsBackToFreeAggregate() {
         let store = makeIsolatedStore()
         let selectedService = store.snapshot.searchServices[Int(store.snapshot.searchServiceSelected)]
         store.restoreSnapshot(
@@ -54,39 +58,32 @@ final class IOSSearchExecutorTests: XCTestCase {
 
         let selection = IOSSearchExecutor.searchProviderSelection(settings: store.snapshot)
 
-        XCTAssertEqual(selection.route, .duckDuckGoLite)
-        XCTAssertEqual(selection.providerType, "duckduckgo_builtin")
+        XCTAssertEqual(selection.route, .freeAggregate)
+        XCTAssertEqual(selection.providerType, IOSFreeSearchAggregator.providerType)
         XCTAssertTrue(selection.fallbackReason?.contains("disabled") == true)
     }
 
-    func testDuckDuckGoRouteUsesMockTransport() async throws {
-        let transport = MockSearchTransport(responses: [
-            .html("""
-            <html><body>
-            <a rel="nofollow" class='result-link' href="/l/?kh=-1&amp;uddg=https%3A%2F%2Fexample.com%2Fone">First &amp; Result</a>
-            <td class='result-snippet'>First snippet.</td>
-            </body></html>
-            """)
+    func testDefaultRouteAggregatesFreeEnginesThroughMockTransport() async throws {
+        let transport = MockSearchTransport(responses: [], hostResponses: [
+            "www.bing.com": .html(Self.bingHTML(url: "https://example.com/bing", title: "Bing Result")),
+            "html.duckduckgo.com": .html(Self.duckDuckGoHTML(url: "https://example.com/ddg", title: "DDG Result")),
         ])
 
         let output = try await IOSSearchExecutor.execute(
-            toolInput: #"{"query":"swift concurrency","max_results":1}"#,
+            toolInput: #"{"query":"swift concurrency","max_results":5}"#,
             transport: transport
         )
 
-        XCTAssertEqual(transport.requests.first?.url?.host, "lite.duckduckgo.com")
-        XCTAssertTrue(output.contains("来源：DuckDuckGo Lite"))
-        XCTAssertTrue(output.contains("https://example.com/one"))
+        XCTAssertTrue(output.contains("来源：\(IOSFreeSearchAggregator.providerName)"))
+        XCTAssertTrue(output.contains("https://example.com/bing"))
+        XCTAssertTrue(output.contains("https://example.com/ddg"))
+        let hosts = Set(transport.requests.compactMap { $0.url?.host })
+        XCTAssertTrue(hosts.isSuperset(of: ["www.bing.com", "html.duckduckgo.com", "search.brave.com", "www.so.com", "quark.sm.cn", "en.wikipedia.org", "hn.algolia.com"]))
     }
 
     func testSearchResultsCanBecomeDeepReadSources() async throws {
-        let transport = MockSearchTransport(responses: [
-            .html("""
-            <html><body>
-            <a rel="nofollow" class='result-link' href="/l/?kh=-1&amp;uddg=https%3A%2F%2Fexample.com%2Fdeep">Deep Result</a>
-            <td class='result-snippet'>Snippet for deep reading.</td>
-            </body></html>
-            """)
+        let transport = MockSearchTransport(responses: [], hostResponses: [
+            "html.duckduckgo.com": .html(Self.duckDuckGoHTML(url: "https://example.com/deep", title: "Deep Result")),
         ])
 
         let execution = try await IOSSearchExecutor.searchResults(
@@ -105,10 +102,11 @@ final class IOSSearchExecutorTests: XCTestCase {
         XCTAssertEqual(sources.first?.url, "https://example.com/deep")
     }
 
-    func testSelectedBingRouteUsesMockTransport() async throws {
+    func testSelectedBingLocalServiceRoutesToFreeAggregate() async throws {
         let store = makeIsolatedStore()
-        let transport = MockSearchTransport(responses: [
-            .html("""
+        store.setSearchGoogleWebViewFallbackEnabled(false)
+        let transport = MockSearchTransport(responses: [], hostResponses: [
+            "www.bing.com": .html("""
             <html><body>
             <ol id="b_results">
               <li class="b_algo">
@@ -126,9 +124,25 @@ final class IOSSearchExecutorTests: XCTestCase {
             transport: transport
         )
 
-        XCTAssertEqual(transport.requests.first?.url?.host, "www.bing.com")
-        XCTAssertTrue(output.contains("来源：Bing HTML"))
+        XCTAssertTrue(output.contains("来源：\(IOSFreeSearchAggregator.providerName)"))
         XCTAssertTrue(output.contains("Bing snippet with markup."))
+    }
+
+    static func bingHTML(url: String, title: String) -> String {
+        """
+        <html><body><ol id="b_results"><li class="b_algo">
+        <h2><a href="\(url)">\(title)</a></h2><p>\(title) snippet.</p>
+        </li></ol></body></html>
+        """
+    }
+
+    static func duckDuckGoHTML(url: String, title: String) -> String {
+        """
+        <div class="result results_links web-result"><div class="links_main result__body">
+        <h2 class="result__title"><a rel="nofollow" class="result__a" href="\(url)">\(title)</a></h2>
+        <a class="result__snippet" href="\(url)">\(title) <b>snippet</b>.</a>
+        </div></div>
+        """
     }
 
     func testTavilyRouteUsesMockTransportAndAPIKey() async throws {
@@ -307,7 +321,7 @@ final class IOSSearchExecutorTests: XCTestCase {
 
         let selection = IOSSearchExecutor.searchProviderSelection(settings: store.snapshot)
 
-        XCTAssertTrue([IOSSearchRoute.duckDuckGoLite, .bingHTML].contains(selection.route))
+        XCTAssertEqual(selection.route, .freeAggregate)
         XCTAssertNotEqual(selection.providerType, "tavily")
         XCTAssertTrue(selection.fallbackReason?.contains("no API key") == true)
     }
@@ -753,26 +767,6 @@ final class IOSSearchExecutorTests: XCTestCase {
         }
     }
 
-    func testParseDuckDuckGoLiteResults() {
-        let html = """
-        <html><body>
-        <a rel="nofollow" class='result-link' href="/l/?kh=-1&amp;uddg=https%3A%2F%2Fexample.com%2Fone">First &amp; Result</a>
-        <td class='result-snippet'>First snippet with <b>markup</b>.</td>
-        <a rel="nofollow" class="result-link" href="https://example.org/two">Second Result</a>
-        <td class="result-snippet">Second&nbsp;snippet.</td>
-        </body></html>
-        """
-
-        let results = IOSSearchExecutor.parseDuckDuckGoLite(html: html, maxResults: 10)
-
-        XCTAssertEqual(results.count, 2)
-        XCTAssertEqual(results[0].title, "First & Result")
-        XCTAssertEqual(results[0].url, "https://example.com/one")
-        XCTAssertEqual(results[0].snippet, "First snippet with markup.")
-        XCTAssertEqual(results[1].url, "https://example.org/two")
-        XCTAssertEqual(results[1].snippet, "Second snippet.")
-    }
-
     func testSearchWebCapsGiantOutputWithTruncationMarker() async throws {
         // 真机复现基线：Exa/Tavily 把全文灌进 snippet，format 无上限 → 1MB+ 输出
         // 被持久化。格式化侧必须把总输出压到 IOSToolOutputLimits 内并追加截断标记。
@@ -882,13 +876,9 @@ final class ChatViewModelSearchToolDeclarationTests: XCTestCase {
                 enabled: false
             )
         )
-        let transport = MockSearchTransport(responses: [
-            .html("""
-            <html><body>
-            <a rel="nofollow" class='result-link' href="/l/?kh=-1&amp;uddg=https%3A%2F%2Fexample.com%2Fhistory">History</a>
-            <td class='result-snippet'>Verified history source.</td>
-            </body></html>
-            """)
+        store.setSearchGoogleWebViewFallbackEnabled(false)
+        let transport = MockSearchTransport(responses: [], hostResponses: [
+            "www.bing.com": .html(IOSSearchExecutorTests.bingHTML(url: "https://example.com/history", title: "History")),
         ])
         let runtime = ChatToolRuntime(
             settingsStore: SettingsStore(),
@@ -911,7 +901,7 @@ final class ChatViewModelSearchToolDeclarationTests: XCTestCase {
             return XCTFail("Expected a filled search result.")
         }
         XCTAssertTrue(output.contains("History"))
-        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertTrue(transport.requests.contains { $0.url?.host == "www.bing.com" })
     }
 
     func testNovelDiscussionSearchExecutorsFollowTheGlobalSearchSwitch() {
@@ -1077,15 +1067,18 @@ private final class MockSearchTransport: IOSSearchHTTPTransport {
     }
 
     private var responses: [Response]
+    private let hostResponses: [String: Response]
     private(set) var requests: [URLRequest] = []
 
-    init(responses: [Response]) {
+    init(responses: [Response], hostResponses: [String: Response] = [:]) {
         self.responses = responses
+        self.hostResponses = hostResponses
     }
 
     func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
         requests.append(request)
-        let response = responses.isEmpty ? .html("") : responses.removeFirst()
+        let response = request.url?.host.flatMap { hostResponses[$0] }
+            ?? (responses.isEmpty ? .html("") : responses.removeFirst())
         let http = HTTPURLResponse(
             url: request.url ?? URL(string: "https://example.com")!,
             statusCode: response.status,

@@ -93,6 +93,7 @@ final class IOSWatchCompanionService {
     private let activitiesURL: URL
     private let defaults: UserDefaults
     private let selectedQuickActionIDsKey = "app.amber.ios.watch.selectedQuickActionIDs"
+    private let replyLengthKey = "app.amber.ios.watch.replyLength"
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
@@ -102,6 +103,7 @@ final class IOSWatchCompanionService {
     private(set) var recentActivities: [WatchRecentActivity] = []
     private(set) var selectedQuickActionIDs: [String] = []
     private(set) var hasConfiguredQuickActionSelection = false
+    private(set) var replyLength: IOSWatchReplyLength = .standard
     private(set) var storageError: String?
     private var receipts: [String: Receipt] = [:]
     private var receiptOrder: [String] = []
@@ -157,6 +159,12 @@ final class IOSWatchCompanionService {
         self.decoder = decoder
 
         load()
+        replyLength = defaults.string(forKey: replyLengthKey).flatMap(IOSWatchReplyLength.init(rawValue:)) ?? .standard
+    }
+
+    func setReplyLength(_ value: IOSWatchReplyLength) {
+        replyLength = value
+        defaults.set(value.rawValue, forKey: replyLengthKey)
     }
 
     // MARK: - Notes
@@ -479,7 +487,8 @@ final class IOSWatchCompanionService {
             quickActions: quickActions,
             recent: recent,
             activities: activities.isEmpty ? nil : activities,
-            updatedAt: now
+            updatedAt: now,
+            accentHex: AmberThemeRuntime.shared.accentHex
         )
     }
 
@@ -653,5 +662,33 @@ final class IOSWatchCompanionService {
             setStorageError(IOSAppLocalization.string("Watch 数据无法保存", defaultValue: "Watch 数据无法保存") + ": " + error.localizedDescription)
             return false
         }
+    }
+}
+
+/// How long answers to Watch-originated questions should be. The choice is
+/// appended to the sent message as a visible request, never hidden context.
+enum IOSWatchReplyLength: String, CaseIterable, Identifiable, Sendable {
+    case standard, oneSentence, threeSentences, bullets
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .standard: "默认"
+        case .oneSentence: "一句话"
+        case .threeSentences: "三句话"
+        case .bullets: "要点"
+        }
+    }
+
+    var instruction: String? {
+        let key: String
+        switch self {
+        case .standard: return nil
+        case .oneSentence: key = "请用一句话回答。"
+        case .threeSentences: key = "请用不超过三句话回答。"
+        case .bullets: key = "请用简短要点回答。"
+        }
+        return IOSAppLocalization.string(key, defaultValue: key)
     }
 }

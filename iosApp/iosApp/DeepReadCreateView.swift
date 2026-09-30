@@ -179,8 +179,8 @@ enum IOSDeepReadLauncher {
             return failRun(
                 taskId: taskId,
                 message: IOSAppLocalization.string(
-                    "深度阅读生成失败：没有可用来源，请检查搜索/网页抓取配置后重试。",
-                    defaultValue: "深度阅读生成失败：没有可用来源，请检查搜索/网页抓取配置后重试。"
+                    "深度阅读生成失败：没有找到可用来源。免费搜索受网络环境和反爬限制，结果不稳定；可在「设置 › 搜索服务」添加有免费额度的 Tavily、Serper、Exa、Brave 或智谱后重试。",
+                    defaultValue: "深度阅读生成失败：没有找到可用来源。免费搜索受网络环境和反爬限制，结果不稳定；可在「设置 › 搜索服务」添加有免费额度的 Tavily、Serper、Exa、Brave 或智谱后重试。"
                 ),
                 store: store,
                 onStatus: onStatus,

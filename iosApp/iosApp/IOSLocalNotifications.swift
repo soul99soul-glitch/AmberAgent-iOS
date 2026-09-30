@@ -20,6 +20,8 @@ struct IOSLocalNotificationRequest: Equatable {
     let body: String
     let fireDate: Date
     let deepLink: URL
+    var categoryIdentifier: String? = nil
+    var userInfo: [String: String] = [:]
 }
 
 @MainActor
@@ -61,7 +63,8 @@ final class IOSUserNotificationCenterAdapter: IOSLocalNotificationCenter {
         content.body = request.body
         content.sound = .default
         content.threadIdentifier = "amber.local"
-        content.userInfo = ["deepLink": request.deepLink.absoluteString]
+        content.userInfo = request.userInfo.merging(["deepLink": request.deepLink.absoluteString]) { _, link in link }
+        if let category = request.categoryIdentifier { content.categoryIdentifier = category }
 
         let interval = max(1, request.fireDate.timeIntervalSince(now()))
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
@@ -190,12 +193,25 @@ final class IOSLocalNotificationService {
               let deepLink = IOSAppDeepLink.url(for: .agentActivity(AgentActivityDeepLink.Target(
                 runId: snapshot.runId, conversationId: conversationID, focus: .confirmation
               ))) else { return }
+        let category = IOSWatchDecisionNotification.category(for: decision)
         try await center.add(IOSLocalNotificationRequest(
             identifier: identifier,
-            title: IOSAppLocalization.string("Amber 需要你回答", defaultValue: "Amber 需要你回答"),
-            body: IOSAppLocalization.string("点按查看任务并继续。", defaultValue: "点按查看任务并继续。"),
+            title: category == nil
+                ? IOSAppLocalization.string("Amber 需要你回答", defaultValue: "Amber 需要你回答")
+                : IOSAppLocalization.string("Amber 需要你确认", defaultValue: "Amber 需要你确认"),
+            // Approval titles name the operation type only; question text and
+            // tool parameters never enter the notification.
+            body: category == nil
+                ? IOSAppLocalization.string("点按查看任务并继续。", defaultValue: "点按查看任务并继续。")
+                : decision.title,
             fireDate: now().addingTimeInterval(1),
-            deepLink: deepLink
+            deepLink: deepLink,
+            categoryIdentifier: category,
+            userInfo: category == nil ? [:] : [
+                IOSWatchDecisionNotification.runIdKey: snapshot.runId,
+                IOSWatchDecisionNotification.decisionIdKey: decision.id,
+                IOSWatchDecisionNotification.conversationIdKey: conversationID
+            ]
         ))
         guard cancellationRevision == completionCancellationRevision,
               completionNotificationsEnabled(), isStillCurrent() else {
@@ -452,6 +468,56 @@ final class IOSDeepLinkInbox {
     }
 }
 
+/// Notification buttons for approvals. Each button replays the exact Watch
+/// approval request, so the coordinator's run/decision checks still apply.
+enum IOSWatchDecisionNotification {
+    static let approvalCategory = "amber.watch-approval"
+    static let denyOnlyCategory = "amber.watch-deny"
+    static let approveAction = "amber.watch.approve"
+    static let denyAction = "amber.watch.deny"
+    static let runIdKey = "watchRunId"
+    static let decisionIdKey = "watchDecisionId"
+    static let conversationIdKey = "watchConversationId"
+
+    static func category(for decision: WatchDecision) -> String? {
+        guard decision.type == .approval else { return nil }
+        return decision.options.contains { $0.style == .approve } ? approvalCategory : denyOnlyCategory
+    }
+
+    static var categories: Set<UNNotificationCategory> {
+        let approve = UNNotificationAction(
+            identifier: approveAction,
+            title: IOSAppLocalization.string("允许", defaultValue: "允许"),
+            options: [.authenticationRequired]
+        )
+        let deny = UNNotificationAction(
+            identifier: denyAction,
+            title: IOSAppLocalization.string("拒绝", defaultValue: "拒绝"),
+            options: [.destructive]
+        )
+        return [
+            UNNotificationCategory(identifier: approvalCategory, actions: [deny, approve], intentIdentifiers: []),
+            UNNotificationCategory(identifier: denyOnlyCategory, actions: [deny], intentIdentifiers: [])
+        ]
+    }
+
+    static func request(actionIdentifier: String, userInfo: [AnyHashable: Any]) -> WatchTaskActionRequest? {
+        let action: WatchInboundAction
+        switch actionIdentifier {
+        case approveAction: action = .approve
+        case denyAction: action = .deny
+        default: return nil
+        }
+        guard let runId = userInfo[runIdKey] as? String,
+              let decisionId = userInfo[decisionIdKey] as? String else { return nil }
+        return WatchTaskActionRequest(
+            requestId: UUID().uuidString, runId: runId,
+            conversationId: userInfo[conversationIdKey] as? String, decisionId: decisionId,
+            action: action, optionId: action == .approve ? "approve" : "deny", text: nil, createdAt: Date()
+        )
+    }
+}
+
 @MainActor
 final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency UNUserNotificationCenterDelegate {
     func application(
@@ -461,6 +527,7 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         IOSJevMetricsStore.setApplicationBackgroundState(application.applicationState == .background)
         IOSBackgroundLifecycleLog.bootstrap()
         UNUserNotificationCenter.current().delegate = self
+        UNUserNotificationCenter.current().setNotificationCategories(IOSWatchDecisionNotification.categories)
         WatchConnectivityBridge.shared.startReceiving(
             actionHandler: WatchTaskCoordinator.shared
         )
@@ -488,6 +555,20 @@ final class AmberAppDelegate: NSObject, UIApplicationDelegate, @preconcurrency U
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        if let request = IOSWatchDecisionNotification.request(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: response.notification.request.content.userInfo
+        ) {
+            let result = await WatchTaskCoordinator.shared.handleWatchAction(request)
+            if !result.accepted, let message = result.message {
+                // A stale or rejected button must not fail silently.
+                let content = UNMutableNotificationContent()
+                content.title = IOSAppLocalization.string("操作未完成", defaultValue: "操作未完成")
+                content.body = message
+                try? await center.add(UNNotificationRequest(identifier: "amber.watch-decision-result", content: content, trigger: nil))
+            }
+            return
+        }
         guard let value = response.notification.request.content.userInfo["deepLink"] as? String,
               let url = URL(string: value),
               IOSAppDeepLink.parse(url) != nil else { return }

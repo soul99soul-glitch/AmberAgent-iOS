@@ -10,6 +10,7 @@ import WidgetKit
 enum WatchWidgetCache {
     static let appGroupInfoKey = "AmberWatchAppGroupIdentifier"
     static let cacheKey = "amber.watch.widget.snapshot.v1"
+    static let accentKey = "amber.watch.widget.accent.v1"
 
     private static let logger = Logger(
         subsystem: "app.amber.ios.watch",
@@ -75,6 +76,20 @@ enum WatchWidgetCache {
         return load(from: defaults)
     }
 
+    /// The accent the Watch app currently shows; `nil` means Amber copper.
+    static func saveAccentHex(_ hex: UInt32?, defaults injectedDefaults: UserDefaults? = nil) {
+        guard let defaults = injectedDefaults ?? sharedDefaults,
+              loadAccentHex(defaults: defaults) != hex else { return }
+        if let hex { defaults.set(Int(hex), forKey: accentKey) } else { defaults.removeObject(forKey: accentKey) }
+        #if os(watchOS)
+        WidgetCenter.shared.reloadAllTimelines()
+        #endif
+    }
+
+    static func loadAccentHex(defaults injectedDefaults: UserDefaults? = nil) -> UInt32? {
+        (injectedDefaults ?? sharedDefaults)?.object(forKey: accentKey).flatMap { $0 as? Int }.map { UInt32($0) }
+    }
+
     static func clear() {
         sharedDefaults?.removeObject(forKey: cacheKey)
         #if os(watchOS)
@@ -129,5 +144,26 @@ enum WatchWidgetCache {
     ) -> Bool {
         guard incoming != existing else { return false }
         return !WatchSnapshotOrdering.accepts(incoming, after: existing)
+    }
+}
+
+/// Smart Stack ranking for the current-task widget. Only real task phases
+/// raise it; an idle or expired state never competes for the top slot.
+enum WatchWidgetRelevance {
+    static let recentTerminalWindow: TimeInterval = 30 * 60
+
+    /// `duration` 0 means "until the next timeline entry".
+    static func score(for snapshot: WatchTaskSnapshot, now: Date) -> (score: Float, duration: TimeInterval) {
+        guard snapshot.isActive, !snapshot.isStale else { return (0, 0) }
+        switch snapshot.phase {
+        case "waitingForUser", "running", "reconnecting":
+            // Matches the widget's own expiry: an unconfirmed live state stops ranking.
+            guard now.timeIntervalSince(snapshot.updatedAt) < WatchSnapshotFreshnessPolicy.staleAfter else { return (0, 0) }
+            return (snapshot.phase == "waitingForUser" ? 100 : 60, 0)
+        case "completed", "failed":
+            let remaining = recentTerminalWindow - now.timeIntervalSince(snapshot.updatedAt)
+            return remaining > 0 ? (30, remaining) : (0, 0)
+        default: return (0, 0)
+        }
     }
 }

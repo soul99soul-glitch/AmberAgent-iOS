@@ -32,13 +32,70 @@ struct IOSJsCellRecord: Codable, Equatable {
     var error: String?
 }
 
+/// One stored value plus its provenance: the exec tool call that wrote it
+/// and the run that call belonged to. Legacy values (written before
+/// provenance existed) have both nil and stay visible on every branch.
+struct IOSJsStoreVersion: Codable, Equatable {
+    var valueJSON: String
+    var sourceToolCallId: String?
+    var runId: String?
+}
+
+/// Branch visibility for one exec evaluation's `store`/`load`.
+///
+/// A version is visible when it was written by the current run, or when its
+/// source exec call is still part of the conversation's active branch
+/// (`visibleToolCallIds`). Switching variants, truncating or regenerating
+/// therefore hides values written by exec calls that are no longer in the
+/// transcript, and makes them visible again when their branch is selected.
+/// `visibleToolCallIds == nil` means the branch is unknown: every version is
+/// visible (pre-provenance behavior).
+struct IOSJsStoreScope: Sendable, Equatable {
+    let sourceToolCallId: String
+    let runId: String
+    let visibleToolCallIds: Set<String>?
+
+    func isVisible(_ version: IOSJsStoreVersion) -> Bool {
+        guard let source = version.sourceToolCallId else { return true }
+        if source == sourceToolCallId || version.runId == runId { return true }
+        return visibleToolCallIds?.contains(source) ?? true
+    }
+}
+
 /// Per-session persisted state: cells + the `store`/`load` KV namespace.
 /// One sidecar file per conversation (`Documents/js-cells/{conversationId}.json`)
 /// holds BOTH — the cell records reference the session store implicitly (same
 /// file, same session key), so "store 引用" needs no extra field.
+///
+/// The store keeps every branch's latest value per key (`storeVersions`,
+/// oldest first); `load` returns the newest version visible from the caller's
+/// branch. Sidecars written before provenance carry a flat `store` map, which
+/// decodes into legacy (always visible) versions.
 struct IOSJsSessionState: Codable, Equatable {
     var cells: [IOSJsCellRecord] = []
-    var store: [String: String] = [:]
+    var storeVersions: [String: [IOSJsStoreVersion]] = [:]
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case cells, storeVersions, store
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        cells = try container.decodeIfPresent([IOSJsCellRecord].self, forKey: .cells) ?? []
+        storeVersions = try container.decodeIfPresent([String: [IOSJsStoreVersion]].self, forKey: .storeVersions) ?? [:]
+        let legacy = try container.decodeIfPresent([String: String].self, forKey: .store) ?? [:]
+        for (key, value) in legacy where storeVersions[key] == nil {
+            storeVersions[key] = [IOSJsStoreVersion(valueJSON: value, sourceToolCallId: nil, runId: nil)]
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(cells, forKey: .cells)
+        try container.encode(storeVersions, forKey: .storeVersions)
+    }
 }
 
 enum IOSJsStartCellOutcome: Equatable {
@@ -315,8 +372,21 @@ actor IOSJsCellRegistry {
     // MARK: - store/load KV
 
     /// Stores a JSON-encoded value, enforcing the per-key 64 KB and per-session
-    /// 1 MB limits (UTF-8 bytes of the JSON text). Persists atomically.
-    func storeValue(sessionKey: String, key: String, valueJSON: String) -> IOSJsStoreOutcome {
+    /// 1 MB limits (UTF-8 bytes of the JSON text, summed over every branch's
+    /// versions). Persists atomically.
+    ///
+    /// With a `scope`, the value becomes a new version tagged with its source
+    /// exec call (replacing that call's earlier write of the same key); when
+    /// the session is over capacity, versions invisible from this branch, then
+    /// versions shadowed by a newer visible one, are evicted oldest first
+    /// before the write is rejected. Without a scope the
+    /// write replaces the key's legacy version (pre-provenance behavior).
+    func storeValue(
+        sessionKey: String,
+        key: String,
+        valueJSON: String,
+        scope: IOSJsStoreScope? = nil
+    ) -> IOSJsStoreOutcome {
         guard !key.isEmpty else {
             return .overLimit(reason: "store key must not be empty")
         }
@@ -324,22 +394,85 @@ actor IOSJsCellRegistry {
         guard valueBytes <= Self.maxStoreValueBytes else {
             return .overLimit(reason: "store value exceeds the 64 KB per-key limit (\(valueBytes) bytes)")
         }
+        // Providers can leave a tool call id empty; no id means no provenance.
+        let scope = scope?.sourceToolCallId.isEmpty == false ? scope : nil
         var state = sessionState(sessionKey)
-        let otherBytes = state.store.reduce(0) { total, entry in
-            total + (entry.key == key ? 0 : entry.value.utf8.count)
+        var versions = state.storeVersions[key] ?? []
+        versions.removeAll { $0.sourceToolCallId == scope?.sourceToolCallId }
+        versions.append(IOSJsStoreVersion(
+            valueJSON: valueJSON,
+            sourceToolCallId: scope?.sourceToolCallId,
+            runId: scope?.runId
+        ))
+        state.storeVersions[key] = versions
+        if let scope {
+            Self.evictInvisibleVersions(in: &state, scope: scope, protectedKey: key)
         }
-        guard otherBytes + valueBytes <= Self.maxStoreTotalBytes else {
+        guard Self.storeBytes(state) <= Self.maxStoreTotalBytes else {
             return .overLimit(reason: "session store exceeds the 1 MB total limit")
         }
-        state.store[key] = valueJSON
         sessions[sessionKey] = state
         persist(state, sessionKey: sessionKey)
         return .stored
     }
 
-    /// Loads a stored JSON-encoded value; nil when absent (JS sees undefined).
-    func loadValue(sessionKey: String, key: String) -> String? {
-        sessionState(sessionKey).store[key]
+    /// Loads the newest JSON-encoded value visible from `scope`'s branch; nil
+    /// when absent (JS sees undefined). Without a scope, the newest version.
+    func loadValue(sessionKey: String, key: String, scope: IOSJsStoreScope? = nil) -> String? {
+        let versions = sessionState(sessionKey).storeVersions[key] ?? []
+        guard let scope, !scope.sourceToolCallId.isEmpty else { return versions.last?.valueJSON }
+        return versions.last(where: scope.isVisible)?.valueJSON
+    }
+
+    /// Copies the store (not the cells) of `source` into `destination`, e.g.
+    /// when a conversation is forked: the fork's transcript keeps the source
+    /// exec calls, so their values stay visible there. Existing destination
+    /// keys win.
+    func copyStore(fromSessionKey source: String, toSessionKey destination: String) {
+        let sourceVersions = sessionState(source).storeVersions
+        guard !sourceVersions.isEmpty else { return }
+        var state = sessionState(destination)
+        state.storeVersions.merge(sourceVersions) { existing, _ in existing }
+        sessions[destination] = state
+        persist(state, sessionKey: destination)
+    }
+
+    private static func storeBytes(_ state: IOSJsSessionState) -> Int {
+        state.storeVersions.values.reduce(0) { total, versions in
+            total + versions.reduce(0) { $0 + $1.valueJSON.utf8.count }
+        }
+    }
+
+    /// Until the session fits the total limit, drops versions invisible from
+    /// `scope`'s branch, then versions shadowed by a newer visible version of
+    /// the same key (a linear conversation rewriting one key every turn) —
+    /// oldest first within each key, keys in name order. The newest visible
+    /// version of each key, including the one just written, is never evicted.
+    private static func evictInvisibleVersions(
+        in state: inout IOSJsSessionState,
+        scope: IOSJsStoreScope,
+        protectedKey: String
+    ) {
+        var bytes = storeBytes(state)
+        for shadowedPass in [false, true] {
+            for key in state.storeVersions.keys.sorted() where bytes > maxStoreTotalBytes {
+                guard let versions = state.storeVersions[key] else { continue }
+                let newestVisible = versions.lastIndex(where: scope.isVisible)
+                var kept: [IOSJsStoreVersion] = []
+                for (index, version) in versions.enumerated() {
+                    let protected = key == protectedKey && index == versions.count - 1
+                    let evictable = shadowedPass
+                        ? scope.isVisible(version) && index != newestVisible
+                        : !scope.isVisible(version)
+                    if !protected, evictable, bytes > maxStoreTotalBytes {
+                        bytes -= version.valueJSON.utf8.count
+                    } else {
+                        kept.append(version)
+                    }
+                }
+                state.storeVersions[key] = kept.isEmpty ? nil : kept
+            }
+        }
     }
 
     // MARK: - Persistence
@@ -384,7 +517,7 @@ actor IOSJsCellRegistry {
     /// the file (zero trace, mirroring the steer-queue sidecar precedent).
     private func persist(_ state: IOSJsSessionState, sessionKey: String) {
         let url = sessionFileURL(sessionKey)
-        if state.cells.isEmpty && state.store.isEmpty {
+        if state.cells.isEmpty && state.storeVersions.isEmpty {
             try? FileManager.default.removeItem(at: url)
             return
         }

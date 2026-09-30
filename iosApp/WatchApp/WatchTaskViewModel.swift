@@ -44,7 +44,9 @@ final class WatchTaskViewModel: ObservableObject {
     private var recoveredRefreshGeneration: Int?
     private var started = false
     private var isPreview = false
-    private var hasReceivedSnapshot = false
+    /// Last phone-authored snapshot before stale presentation, so haptics
+    /// compare real phase changes rather than local expiry.
+    private var lastReceived: WatchTaskSnapshot?
     private var answerRunId: String?
     private var answerDecisionId: String?
     private enum StatusMessageSource: Equatable {
@@ -63,6 +65,10 @@ final class WatchTaskViewModel: ObservableObject {
         return isPhoneReachable ? .connected : .offline
     }
     var library: WatchLibrarySnapshot? { snapshot.library }
+    var accentPalette: WatchAccentPalette {
+        guard store.settings.followsPhoneAccent, let hex = library?.accentHex else { return .copper }
+        return WatchAccentPalette(hex: hex)
+    }
     var activities: [WatchRecentActivity] {
         WatchActivityPresentation.activities(library: library, notes: store.notes)
     }
@@ -182,20 +188,79 @@ final class WatchTaskViewModel: ObservableObject {
     }
 
     func compose(mode: WatchComposerMode, conversationId: String? = nil, quickAction: WatchQuickAction? = nil) {
-        let key = mode == .note ? "note" : quickAction.map { "quick:\($0.id)" }
+        // A template draft holds only the fill-in under its own key, so it
+        // survives prompt edits and never inherits a full-prompt draft.
+        let key = mode == .note ? "note" : quickAction.map { ($0.isTemplate ? "quick-fill:" : "quick:") + $0.id }
             ?? conversationId.map { "ask:\($0)" } ?? "ask"
-        if let quickAction, let old = store.draft(forKey: key),
-           old.pendingRequest == nil, old.text != quickAction.prompt {
-            store.removeDraft(key: key)
+        if let quickAction, let old = store.draft(forKey: "quick:\(quickAction.id)"),
+           old.pendingRequest == nil, quickAction.isTemplate || old.text != quickAction.prompt {
+            store.removeDraft(key: "quick:\(quickAction.id)")
         }
-        _ = store.ensureDraft(key: key, mode: mode, conversationId: conversationId,
-                              quickActionId: quickAction?.id, initialText: quickAction?.prompt ?? "")
+        _ = store.ensureDraft(key: key, mode: mode, conversationId: conversationId, quickActionId: quickAction?.id,
+                              initialText: quickAction.map { $0.isTemplate ? "" : $0.prompt } ?? "")
         guard store.draft(forKey: key) != nil else {
             setStatus(localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试"))
             return
         }
         clearStatus()
         path.append(.compose(key))
+    }
+
+    /// Siri / Shortcuts: open the new-question composer, optionally prefilled.
+    func startAsk(prefill: String?) {
+        path = []
+        compose(mode: .ask)
+        if let prefill, !prefill.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            store.updateDraftText(key: "ask", text: prefill)
+        }
+    }
+
+    func startQuickAction(id: String) {
+        guard let action = library?.quickActions.first(where: { $0.id == id }) else {
+            setStatus(localized("快捷动作已更新，请从手表刷新"))
+            return
+        }
+        path = []
+        compose(mode: .ask, quickAction: action)
+    }
+
+    /// Saves a note without opening the composer; returns an error message.
+    func saveNote(text: String) -> String? {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 2_000 else {
+            return localized("请输入 1–2000 个字符")
+        }
+        guard store.saveNote(WatchNote(id: UUID().uuidString, text: text, createdAt: Date())) else {
+            return localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试")
+        }
+        syncNotes()
+        return nil
+    }
+
+    /// Turns a saved note into a new, reviewable question. The note itself
+    /// is unchanged; nothing is sent until the user confirms.
+    func composeFromNote(_ note: WatchNote, instruction: String) {
+        let key = "note-ask:\(note.id)"
+        let text = noteQuestion(note, instruction: instruction)
+        if let old = store.draft(forKey: key), old.pendingRequest == nil, old.text != text {
+            store.removeDraft(key: key)
+        }
+        _ = store.ensureDraft(key: key, mode: .ask, initialText: text)
+        guard store.draft(forKey: key) != nil else {
+            setStatus(localized(store.storageError ?? "手表本地缓存保存失败，请稍后重试"))
+            return
+        }
+        clearStatus()
+        path.append(.compose(key))
+    }
+
+    func noteQuestion(_ note: WatchNote, instruction: String) -> String {
+        "\(localized(instruction))\n\n\(note.text)"
+    }
+
+    /// The template behind a fill-in draft; `nil` for every other draft.
+    func template(for draft: WatchComposerDraft) -> WatchQuickAction? {
+        guard draft.key.hasPrefix("quick-fill:") else { return nil }
+        return draft.quickActionId.flatMap { id in library?.quickActions.first { $0.id == id && $0.isTemplate } }
     }
 
     func submitDraft(key: String) {
@@ -407,14 +472,15 @@ final class WatchTaskViewModel: ObservableObject {
         }
         answerRunId = value.runId
         answerDecisionId = value.decision?.id
-        if hasReceivedSnapshot, !value.isStale,
-           value.runId == snapshot.runId, value.phase != snapshot.phase,
-           ["waitingForUser", "completed", "failed"].contains(value.phase) {
-            feedback(value.phase == "failed" ? .failure : .notification)
+        if let previous = lastReceived, !value.isStale,
+           value.runId == previous.runId, value.phase != previous.phase,
+           let kind = Self.phaseFeedback(for: value.phase, settings: store.settings) {
+            feedback(kind)
         }
-        hasReceivedSnapshot = true
+        lastReceived = value
         snapshot = WatchSnapshotFreshnessPolicy.presented(value, isPhoneReachable: isPhoneReachable)
         _ = WatchWidgetCache.save(value)
+        syncWidgetAccent()
         freshnessTask?.cancel()
         guard value.isActive, !isPhoneReachable,
               !["completed", "failed", "cancelled", "stale"].contains(value.phase) else { return }
@@ -423,6 +489,27 @@ final class WatchTaskViewModel: ObservableObject {
             try? await Task.sleep(for: .seconds(remaining))
             guard !Task.isCancelled, let self else { return }
             self.snapshot = WatchSnapshotFreshnessPolicy.presented(self.bridge.latestSnapshot, isPhoneReachable: self.bridge.isCompanionReachable)
+        }
+    }
+
+    func setFollowsPhoneAccent(_ value: Bool) {
+        store.updateSettings { $0.followsPhoneAccent = value }
+        syncWidgetAccent()
+    }
+
+    private func syncWidgetAccent() {
+        guard !isPreview else { return }
+        WatchWidgetCache.saveAccentHex(store.settings.followsPhoneAccent ? library?.accentHex : nil)
+    }
+
+    /// Task phase changes each have their own feel so the wrist can tell them
+    /// apart without looking; each can be silenced on its own.
+    static func phaseFeedback(for phase: String, settings: WatchLocalStore.Settings) -> Feedback? {
+        switch phase {
+        case "completed": settings.hapticsOnCompleted ? .success : nil
+        case "waitingForUser": settings.hapticsOnWaiting ? .notification : nil
+        case "failed": settings.hapticsOnFailed ? .failure : nil
+        default: nil
         }
     }
 
@@ -490,6 +577,10 @@ final class WatchTaskViewModel: ObservableObject {
                 : [],
             recent: [WatchRecentConversation(id: "sample", title: "一次短途旅行", preview: "周末可以先去公园走走，再找一家咖啡店。", updatedAt: Date())], updatedAt: Date()
         )
+        store.updateSettings { $0.asksFirst = ProcessInfo.processInfo.arguments.contains("-amber-watch-ask-first") }
+        sample.library?.accentHex = ProcessInfo.processInfo.arguments
+            .first { $0.hasPrefix("-amber-watch-accent=") }
+            .flatMap { UInt32($0.dropFirst("-amber-watch-accent=".count), radix: 16) }
         if ["home-result", "home-real-result", "home-active", "home-failed", "home-offline", "activity", "activities", "home-long"].contains(state) {
             let result = WatchRecentActivity(id: "run:preview-completed", runId: "preview-completed", conversationId: "sample",
                 kind: "chat", phase: "completed", title: "周末行程\n已整理好", summary: "两天安排与出行建议",
@@ -577,6 +668,12 @@ final class WatchTaskViewModel: ObservableObject {
             _ = store.saveNote(WatchNote(id: "preview-note", text: "周末去公园时，带一本书和一瓶水。\n这条记事已保存在手表，连接手机后再同步。", createdAt: Date()))
             isPhoneReachable = false
             path = [.note("preview-note")]
+        } else if state == "compose-template" {
+            let template = WatchQuickAction(id: "preview-template", title: "翻译成英文", prompt: "把「{输入}」翻译成自然的英文。")
+            sample.library?.quickActions = [template]
+            snapshot = sample
+            compose(mode: .ask, quickAction: template)
+            store.updateDraftText(key: "quick-fill:preview-template", text: "周末愉快")
         } else if state == "compose" {
             _ = store.ensureDraft(key: "preview-ask", mode: .ask, initialText: "帮我想一个轻松的周末安排")
             path = [.compose("preview-ask")]

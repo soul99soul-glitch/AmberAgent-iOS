@@ -211,6 +211,8 @@ struct MessageBubbleView: View {
         }
         // 只注入可判等的值：新建闭包每次都不相等，会让所有代码块与 Markdown 随气泡重算失效。
         .environment(\.chatArtifactMessageID, artifactPinAction == nil ? nil : ChatMessageProjector.messageId(for: message))
+        // vendor 默认「复制」只有文字可点；Amber 显式放大到整组图标+文字、约 44pt 高（不改布局）。
+        .environment(\.swiftStreamingMarkdownCodeCopyHitOutset, 13)
         // 流式 block 渲染路径的代码块头部同样放“收进产物架”，与 AmberMarkdownView 一致。
         .environment(
             \.swiftStreamingMarkdownCodeBlockHeaderAccessory,
@@ -365,6 +367,51 @@ struct MessageBubbleView: View {
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } label: {
             Label("复制", systemImage: "doc.on.doc")
+        }
+        // contextMenu 的内容在每次 body 求值时构建；文本只在点击时取，避免流式期间逐帧拼全文。
+        // 正在流式生成的消息不提供分享：内容未完成，也避免每个 chunk 多构建菜单项。
+        if !(isGenerating && isLastMessage && !isUser) {
+            Button {
+                shareMessage(asImage: false)
+            } label: {
+                Label("分享", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                shareMessage(asImage: true)
+            } label: {
+                Label("分享为图片", systemImage: "photo.on.rectangle")
+            }
+        }
+    }
+
+    private func shareMessage(asImage: Bool) {
+        let text = IOSConversationExporter.shareText(for: message)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let isUser = isUser
+        Task { @MainActor in
+            let activity = IOSShareActivity.shared
+            guard !text.isEmpty else {
+                activity.notify("这条消息没有可分享的文字。")
+                return
+            }
+            // 与整段导出共用同一状态：避免两个分享面板相互顶掉，进行中时排队提示而不是静默忽略。
+            // 分享文本是瞬时操作，不显示进度，只占住互斥。
+            guard activity.begin(asImage ? "正在生成分享图片…" : nil) else {
+                activity.notify(IOSConversationExporter.busyMessage)
+                return
+            }
+            let item: Any
+            if asImage {
+                guard let image = IOSMessageImageRenderer.render(text: text, isUser: isUser) else {
+                    activity.end(failure: "生成分享图片失败，请稍后重试。")
+                    return
+                }
+                item = image
+            } else {
+                item = text
+            }
+            let presented = await IOSShareSheet.present([item])
+            activity.end(failure: presented ? nil : "当前无法弹出分享面板，请稍后重试。")
         }
     }
 
@@ -3247,14 +3294,22 @@ private struct ChatGeneratedImageTile: View {
                 HStack(spacing: 6) {
                     if let url {
                         ShareLink(item: url) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(AmberTheme.accent)
-                                .frame(width: 36, height: 28)
-                                .background(AmberTheme.accentTint, in: Capsule())
+                            generatedImageShareLabel
                         }
                         .accessibilityLabel("分享图片")
                         .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
+                    } else if case .success(let decodedDataImage) = dataImageState {
+                        let sharedImage = Image(uiImage: decodedDataImage)
+                        ShareLink(item: sharedImage, preview: SharePreview("生成的图片", image: sharedImage)) {
+                            generatedImageShareLabel
+                        }
+                        .accessibilityLabel("分享图片")
+                        .buttonStyle(AmberPressFeedbackStyle(pressedScale: 0.94, haptic: .lightImpact))
+                    } else {
+                        // 解码完成前先占住同尺寸的位置，避免出现时挤动保存/修改按钮。
+                        generatedImageShareLabel
+                            .opacity(0.4)
+                            .accessibilityHidden(true)
                     }
 
                     Button {
@@ -3310,6 +3365,14 @@ private struct ChatGeneratedImageTile: View {
                 dismissButton: .default(Text("好"))
             )
         }
+    }
+
+    private var generatedImageShareLabel: some View {
+        Image(systemName: "square.and.arrow.up")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AmberTheme.accent)
+            .frame(width: 36, height: 28)
+            .background(AmberTheme.accentTint, in: Capsule())
     }
 
     private func saveImageToPhotos() {
@@ -3415,19 +3478,20 @@ struct ChatGeneratedImagePreview: View {
                         }
                 )
 
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(.white.opacity(0.18), in: Circle())
+            HStack(spacing: 12) {
+                previewShareButton
+
+                Button {
+                    dismiss()
+                } label: {
+                    previewControlLabel(systemImage: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("关闭大图")
             }
-            .buttonStyle(.plain)
-            .padding(.top, 20)
-            .padding(.trailing, 16)
-            .accessibilityLabel("关闭大图")
+            // 36pt 圆放在 44pt 热区内，padding 各减 4，可见圆位置与改动前一致。
+            .padding(.top, 16)
+            .padding(.trailing, 12)
         }
         .task(id: urlString) {
             guard isDataURL else { return }
@@ -3437,6 +3501,34 @@ struct ChatGeneratedImagePreview: View {
             guard !Task.isCancelled else { return }
             dataImageState = resolved
         }
+    }
+
+    @ViewBuilder
+    private var previewShareButton: some View {
+        if case .success(let image) = dataImageState {
+            let sharedImage = Image(uiImage: image)
+            ShareLink(item: sharedImage, preview: SharePreview("生成的图片", image: sharedImage)) {
+                previewControlLabel(systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("分享图片")
+        } else if !isDataURL, let url {
+            ShareLink(item: url) {
+                previewControlLabel(systemImage: "square.and.arrow.up")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("分享图片")
+        }
+    }
+
+    private func previewControlLabel(systemImage: String) -> some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 36, height: 36)
+            .background(.white.opacity(0.18), in: Circle())
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
     }
 
     @ViewBuilder

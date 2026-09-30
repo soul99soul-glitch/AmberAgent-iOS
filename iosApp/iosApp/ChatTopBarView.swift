@@ -29,6 +29,7 @@ struct ChatTopBarView: View {
     var snippets: [IOSPinnedSnippet] = []
     var adoptedVersions: [String: String] = [:]
     var conversationTitle = "对话成果"
+    var onExportConversation: (IOSConversationExportFormat) -> Void = { _ in }
     var onLocateSnippet: (IOSPinnedSnippet) -> Bool = { _ in false }
     var onUnpinSnippet: (String) -> Void = { _ in }
     var onAdoptVersion: (String, String) -> Void = { _, _ in }
@@ -95,7 +96,8 @@ struct ChatTopBarView: View {
                         state: dockState, onTap: tapDock, onDismiss: onDismiss,
                         onNewConversation: onNewConversation, loadPreview: loadPreview,
                         previewRevision: previewRevision,
-                        onOpenShelf: { panel = .shelf }
+                        onOpenShelf: { panel = .shelf },
+                        onExportConversation: onExportConversation
                     )
                     .scaleEffect(reduceMotion ? 1 : dockScale)
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { tapRegions.dock = $0 }

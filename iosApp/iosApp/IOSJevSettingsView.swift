@@ -31,7 +31,7 @@ struct IOSJevSettingsView: View {
 
     /// 已接线的用途（七个全部开放；网页操作由 wm_run_goal 工具真实驱动，
     /// 意图路由作用于 spawn_agent 缺省角色定义的边界，审批分诊只标注不授权）。
-    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions, .subagentIntent, .approvalTriage]
+    private let activeUseCases: [IOSJevUseCase] = [.toolDiscovery, .memoryRecall, .contextSelection, .modelRouting, .webActions, .subagentIntent, .approvalTriage, .scriptJudgment]
 
     var body: some View {
         NavigationStack {
@@ -516,8 +516,8 @@ struct IOSJevSettingsView: View {
                 .padding(.vertical, 12)
             }
             Text(IOSAppLocalization.string(
-                "只观测、不应用判断；网页操作与审批分诊保持原设置。",
-                defaultValue: "只观测、不应用判断；网页操作与审批分诊保持原设置。"
+                "只观测、不应用判断；网页操作、审批分诊与脚本判断保持原设置。",
+                defaultValue: "只观测、不应用判断；网页操作、审批分诊与脚本判断保持原设置。"
             ))
             .font(.caption)
             .foregroundStyle(AmberTheme.muted)
@@ -537,8 +537,8 @@ struct IOSJevSettingsView: View {
             Button(IOSAppLocalization.string("取消", defaultValue: "取消"), role: .cancel) {}
         } message: {
             Text(IOSAppLocalization.string(
-                "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作和审批分诊不变。",
-                defaultValue: "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作和审批分诊不变。"
+                "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊和脚本判断不变。",
+                defaultValue: "工具发现、记忆召回、上下文筛选、模型调度和意图路由将设为 Shadow，并使用各自默认数据范围。当前任务文本、工具目录信息、候选模型与服务商信息、个人记忆内容或工具输出会按用途发送给 Jev；结果只观测、不应用。网页操作、审批分诊和脚本判断不变。"
             ))
         }
     }
@@ -606,6 +606,7 @@ struct IOSJevSettingsView: View {
                     case .webActions: "globe"
                     case .subagentIntent: "signpost.and.arrowtriangle.up"
                     case .approvalTriage: "checklist"
+                    case .scriptJudgment: "curlybraces"
                     }
                 }())
                     .font(.system(size: 16, weight: .medium))
@@ -615,7 +616,10 @@ struct IOSJevSettingsView: View {
                     Text(IOSAppLocalization.string(useCase.displayName, defaultValue: useCase.displayName))
                         .font(.body)
                         .foregroundStyle(AmberTheme.foreground)
-                    Text(IOSAppLocalization.string(effectiveMode.detail, defaultValue: effectiveMode.detail))
+                    // 脚本判断只有启用才注入 jev，没有"只观测"语义。
+                    let detail = useCase == .scriptJudgment && effectiveMode != .active
+                        ? "关闭：脚本中不提供 jev。" : effectiveMode.detail
+                    Text(IOSAppLocalization.string(detail, defaultValue: detail))
                         .font(.caption)
                         .foregroundStyle(AmberTheme.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -623,7 +627,7 @@ struct IOSJevSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 Menu {
-                    ForEach(IOSJevMode.allCases) { mode in
+                    ForEach(IOSJevMode.allCases.filter { useCase != .scriptJudgment || $0 != .shadow }) { mode in
                         Button {
                             updateMode(mode, for: useCase)
                         } label: {
@@ -668,7 +672,10 @@ struct IOSJevSettingsView: View {
                 }
             }
             if configuredMode == .active && effectiveMode == .shadow {
-                Text(IOSAppLocalization.string("需固定模型版本才会真启用，当前按 Shadow 运行。", defaultValue: "需固定模型版本才会真启用，当前按 Shadow 运行。"))
+                let hint = useCase == .scriptJudgment
+                    ? "需固定模型版本才会真启用，当前脚本中不提供 jev。"
+                    : "需固定模型版本才会真启用，当前按 Shadow 运行。"
+                Text(IOSAppLocalization.string(hint, defaultValue: hint))
                     .font(.caption)
                     .foregroundStyle(AmberTheme.accentAmber)
                     .padding(.leading, 40)

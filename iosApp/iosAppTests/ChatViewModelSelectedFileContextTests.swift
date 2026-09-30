@@ -1524,7 +1524,7 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         ))
         XCTAssertEqual(request.title, "执行网络搜索")
         XCTAssertEqual(request.target, "swift concurrency")
-        XCTAssertEqual(request.providerName, "Bing HTML")
+        XCTAssertEqual(request.providerName, IOSFreeSearchAggregator.providerName)
         XCTAssertEqual(request.providerType, "bing_local")
 
         let deniedOutput = await viewModel.searchToolApprovalOutputForTesting(
@@ -1543,8 +1543,10 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         let sharedSettings = IOSSharedSettingsStore(userDefaults: isolatedDefaults())
         sharedSettings.setEnableWebSearch(true)
         sharedSettings.addSearchProvider(name: "Bing", serviceType: "bing_local")
-        let transport = ChatSearchTransport(responses: [
-            .html("""
+        sharedSettings.setSearchGoogleWebViewFallbackEnabled(false)
+        IOSFreeSearchAggregator.resetCooldowns()
+        let transport = ChatSearchTransport(responses: [], hostResponses: [
+            "www.bing.com": .html("""
             <html><body>
             <ol id="b_results">
               <li class="b_algo">
@@ -1568,8 +1570,8 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
             allow: true
         )
 
-        XCTAssertEqual(transport.requests.first?.url?.host, "www.bing.com")
-        XCTAssertTrue(output.contains("来源：Bing HTML"))
+        XCTAssertTrue(transport.requests.contains { $0.url?.host == "www.bing.com" })
+        XCTAssertTrue(output.contains("来源：\(IOSFreeSearchAggregator.providerName)"))
         XCTAssertTrue(output.contains("Bing snippet from chat approval."))
     }
 
@@ -1597,7 +1599,9 @@ final class ChatViewModelSelectedFileContextTests: XCTestCase {
         searchTask.cancel()
         let output = await searchTask.value
 
-        XCTAssertEqual(transport.requests.count, 1, "取消不应被当作失败后继续发起备用搜索")
+        // 免费聚合一轮会并发请求多个引擎；取消后不得再发起第二轮（备用搜索会重复请求同一主机）。
+        let hosts = transport.requests.compactMap { $0.url?.host }
+        XCTAssertEqual(hosts.count, Set(hosts).count, "取消不应被当作失败后继续发起备用搜索")
         let payload = try jsonObject(output)
         XCTAssertEqual(payload["reason"] as? String, "User cancelled.")
         XCTAssertEqual(payload["cancelled"] as? Bool, true)
@@ -2264,15 +2268,18 @@ private final class ChatSearchTransport: IOSSearchHTTPTransport {
     }
 
     private var responses: [Response]
+    private let hostResponses: [String: Response]
     private(set) var requests: [URLRequest] = []
 
-    init(responses: [Response]) {
+    init(responses: [Response], hostResponses: [String: Response] = [:]) {
         self.responses = responses
+        self.hostResponses = hostResponses
     }
 
     func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
         requests.append(request)
-        let response = responses.isEmpty ? .html("") : responses.removeFirst()
+        let response = request.url?.host.flatMap { hostResponses[$0] }
+            ?? (responses.isEmpty ? .html("") : responses.removeFirst())
         let http = HTTPURLResponse(
             url: request.url ?? URL(string: "https://example.com")!,
             statusCode: response.status,

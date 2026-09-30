@@ -47,5 +47,9 @@
     <array>
         <string>UIInterfaceOrientationPortrait</string>
     </array>
+    <key>WKBackgroundModes</key>
+    <array>
+        <string>audio</string>
+    </array>
 </dict>
 </plist>

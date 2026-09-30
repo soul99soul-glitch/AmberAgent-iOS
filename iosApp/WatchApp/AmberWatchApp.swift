@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 
 @main
@@ -9,6 +10,7 @@ struct AmberWatchApp: App {
     init() {
         let model = WatchTaskViewModel()
         _model = StateObject(wrappedValue: model)
+        AppDependencyManager.shared.add(dependency: model)
         model.start()
     }
 
@@ -24,6 +26,9 @@ struct AmberWatchApp: App {
                     if phase == .active { model.resume() }
                 }
                 .onOpenURL { model.handleURL($0) }
+                .onChange(of: model.library?.quickActions, initial: true) { _, _ in
+                    AmberWatchShortcuts.updateAppShortcutParameters()
+                }
         }
         .backgroundTask(.watchConnectivity) {
             await model.receiveBackgroundConnectivity()

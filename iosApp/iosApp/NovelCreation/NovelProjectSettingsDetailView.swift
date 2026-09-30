@@ -134,7 +134,7 @@ struct NovelProjectSettingsDetailView: View {
 
                 exportButton(
                     "导出正文",
-                    systemImage: "square.and.arrow.up",
+                    systemImage: "doc.text",
                     kind: .markdown,
                     isEnabled: currentProject != nil && !viewModel.isPerforming,
                     action: exportMarkdown
@@ -147,11 +147,27 @@ struct NovelProjectSettingsDetailView: View {
                     isEnabled: currentProject != nil && !viewModel.isPerforming,
                     action: exportWorkspace
                 )
+
+                exportButton(
+                    "分享项目包",
+                    systemImage: "square.and.arrow.up.on.square",
+                    kind: .shareProject,
+                    isEnabled: currentProject != nil && !viewModel.isPerforming && !hasRunningRun,
+                    action: shareProject
+                )
+
+                exportButton(
+                    "分享正文",
+                    systemImage: "square.and.arrow.up",
+                    kind: .shareMarkdown,
+                    isEnabled: currentProject != nil && !viewModel.isPerforming,
+                    action: shareMarkdown
+                )
             } header: {
                 Text("管理")
             } footer: {
                 if hasRunningRun {
-                    Text("生成结束后才能导出项目包；正文和工作区仍可导出。")
+                    Text("生成结束后才能导出或分享项目包；正文仍可导出和分享，工作区仍可导出。")
                 } else {
                     Text("工作区是章节和设定的 Markdown 目录，可再导入为新项目。")
                 }
@@ -458,7 +474,7 @@ struct NovelProjectSettingsDetailView: View {
                         Image(systemName: systemImage)
                     }
                 }
-                .frame(width: 16, height: 16)
+                .frame(width: 24, height: 16)
 
                 Text(title)
                     .lineLimit(1)
@@ -513,6 +529,39 @@ struct NovelProjectSettingsDetailView: View {
         }
     }
 
+    private func shareProject() {
+        guard exportingKind == nil else { return }
+        exportingKind = .shareProject
+        Task { @MainActor in
+            defer { exportingKind = nil }
+            guard let artifact = await viewModel.exportProjectPackage() else { return }
+            let stem = NovelPresentation.fileName(artifact.projectName, fallback: "Novel")
+            await presentShare(artifact.data, fileName: stem, pathExtension: "ambernovel")
+        }
+    }
+
+    private func shareMarkdown() {
+        guard exportingKind == nil else { return }
+        exportingKind = .shareMarkdown
+        Task { @MainActor in
+            defer { exportingKind = nil }
+            guard let artifact = await viewModel.exportBranchMarkdown() else { return }
+            let stem = (artifact.fileName as NSString).deletingPathExtension
+            await presentShare(Data(artifact.markdown.utf8), fileName: stem, pathExtension: "md")
+        }
+    }
+
+    private func presentShare(_ data: Data, fileName: String, pathExtension: String) async {
+        do {
+            let url = try IOSShareFileWriter.write(data, fileName: fileName, pathExtension: pathExtension)
+            if !(await IOSShareSheet.present([url])) {
+                viewModel.presentError(NovelError.invalidInput("当前无法弹出分享面板，请稍后重试。"))
+            }
+        } catch {
+            viewModel.presentError(error)
+        }
+    }
+
     private func handleExportResult(_ result: Result<URL, Error>) {
         if case .failure(let error) = result {
             viewModel.presentError(error)
@@ -524,6 +573,8 @@ private enum NovelProjectExportKind: Equatable {
     case project
     case markdown
     case workspace
+    case shareProject
+    case shareMarkdown
 }
 
 private enum NovelProjectSettingsDetailSheet: Identifiable {

@@ -988,7 +988,8 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             }
             let started = await chatViewModel.startWatchQuestion(
                 text: request.text ?? "",
-                conversationId: request.conversationId
+                conversationId: request.conversationId,
+                replyInstruction: companionService.replyLength.instruction
             )
             guard started.started,
                   let conversationId = started.conversationId,
@@ -1016,13 +1017,18 @@ final class WatchTaskCoordinator: WatchTaskActionHandling {
             }) else {
                 return rejected(request, "快捷动作已更新，请从手表刷新")
             }
-            guard action.prompt == text else {
+            // Template actions carry only the fill-in; older Watches send the
+            // unchanged prompt, which stays valid either way.
+            guard let prompt = action.prompt(forSent: text) else {
                 return rejected(request, "快捷动作内容已更新，请从手表刷新")
             }
             guard let chatViewModel else {
                 return rejected(request, "iPhone 聊天状态不可用")
             }
-            let started = await chatViewModel.startWatchQuestion(text: text)
+            let started = await chatViewModel.startWatchQuestion(
+                text: prompt,
+                replyInstruction: companionService.replyLength.instruction
+            )
             guard started.started,
                   let conversationId = started.conversationId,
                   let runId = started.runId else {

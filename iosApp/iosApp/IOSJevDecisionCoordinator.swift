@@ -379,18 +379,28 @@ final class IOSJevDecisionCoordinator: @unchecked Sendable {
 
         // Local policy is 32 questions/request. The official API describes typed question
         // maps but does not publish a total request question limit; chunks run concurrently.
+        // Chunks are also packed by combined state bytes (same heading layout as
+        // executeChunk), so parts that fit alone never fail as state_too_large
+        // only because they share a chunk.
         let maxQuestions = max(1, settings.policy.maxQuestions)
         var chunks: [BatchChunk] = []
+        var chunkStateBytes = 0
         for item in prepared {
+            let partStateBytes = "## \(item.part.useCase.rawValue).\(item.part.id)\n\n\n".utf8.count
+                + item.part.state.utf8.count
             for original in item.part.questions {
                 var question = original
                 question.id = item.part.id + "." + original.id
-                if chunks.isEmpty || chunks[chunks.count - 1].questions.count >= maxQuestions {
+                let joinsChunk = chunks.last?.parts.contains(where: { $0.part.id == item.part.id }) ?? false
+                if chunks.isEmpty || chunks[chunks.count - 1].questions.count >= maxQuestions
+                    || (!joinsChunk && chunkStateBytes + partStateBytes > settings.policy.maxStateBytes) {
                     chunks.append(BatchChunk(parts: [], questions: []))
+                    chunkStateBytes = 0
                 }
                 let index = chunks.count - 1
                 if !chunks[index].parts.contains(where: { $0.part.id == item.part.id }) {
                     chunks[index].parts.append(item)
+                    chunkStateBytes += partStateBytes
                 }
                 chunks[index].questions.append(BatchQuestion(partId: item.part.id, question: question))
             }
@@ -817,4 +827,175 @@ extension IOSJevDecisionCoordinator {
         apiKeyProvider: { IOSCredentialSideTable.load(key: IOSCredentialSideTable.jevApiKey) ?? "" },
         now: { Date() }
     ))
+}
+
+// MARK: - exec 脚本判断入口（`jev` 全局）
+
+/// exec 沙箱里 `jev.ask` / `jev.askAll` 的宿主侧：解析脚本请求 → 一次
+/// `decideBatch`（分块、槽位、预算、指标全部沿用协调器）→ 按请求序回 JSON。
+/// 只在「脚本判断」用途生效为 active 时注入；数据范围固定为工具输出。
+enum IOSExecJevBridge {
+    /// 单次 askAll 的请求数上限（每个请求再受协调器的题数/体积上限约束）。
+    static let maxRequestsPerCall = 256
+    /// 脚本侧等待预算：JS 线程阻塞等待，exec 自身的 timeout 仍是外层兜底。
+    static let waitBudgetMs = 20_000
+
+    static func makeBridge(
+        runKey: String,
+        settings: IOSJevSettings,
+        coordinator: IOSJevDecisionCoordinator = .shared
+    ) -> IOSJsSandboxJev? {
+        guard settings.effectiveMode(for: .scriptJudgment) == .active,
+              settings.canSend(useCase: .scriptJudgment, required: [.toolOutput]) else { return nil }
+        let maxQuestions = settings.policy.maxQuestions
+        let maxCandidates = settings.policy.maxCandidates
+        return IOSJsSandboxJev { requestsJSON in
+            await askBatch(
+                requestsJSON,
+                runKey: runKey,
+                maxQuestions: maxQuestions,
+                maxCandidates: maxCandidates,
+                coordinator: coordinator
+            )
+        }
+    }
+
+    static func askBatch(
+        _ requestsJSON: String,
+        runKey: String,
+        maxQuestions: Int,
+        maxCandidates: Int,
+        coordinator: IOSJevDecisionCoordinator
+    ) async -> String {
+        guard let data = requestsJSON.data(using: .utf8),
+              let rawRequests = (try? JSONSerialization.jsonObject(with: data)) as? [Any] else {
+            return encode(["error": "requests must be an array of {state, questions}"])
+        }
+        guard rawRequests.count <= maxRequestsPerCall else {
+            return encode(["error": "at most \(maxRequestsPerCall) requests per call"])
+        }
+        var results = [[String: Any]](repeating: [:], count: rawRequests.count)
+        var parts: [IOSJevBatchPart] = []
+        for (index, raw) in rawRequests.enumerated() {
+            switch parseRequest(raw, maxQuestions: maxQuestions, maxCandidates: maxCandidates) {
+            case .failure(let message):
+                results[index] = ["error": message]
+            case .success(let request):
+                parts.append(IOSJevBatchPart(
+                    id: "r\(index)",
+                    useCase: .scriptJudgment,
+                    requiredScopes: [.toolOutput],
+                    state: request.state,
+                    questions: request.questions
+                ))
+            }
+        }
+        if !parts.isEmpty {
+            let context = IOSJevRunContext(
+                runId: runKey,
+                turnBudgetKey: runKey,
+                inputHash: IOSJevToolDiscoveryService.stableHash(requestsJSON)
+            )
+            let outcomes = await coordinator.decideBatch(
+                parts: parts,
+                context: context,
+                waitBudgetMs: waitBudgetMs
+            )
+            for part in parts {
+                guard let index = Int(part.id.dropFirst()) else { continue }
+                results[index] = resultObject(outcomes[part.id])
+            }
+        }
+        return encode(results)
+    }
+
+    struct ParsedRequest {
+        var state: String
+        var questions: [IOSJevQuestion]
+    }
+
+    enum ParseResult {
+        case success(ParsedRequest)
+        case failure(String)
+    }
+
+    /// `{state: string, questions: [{id, type: noul|choice|score, options?, levels?, instructions?}]}`；
+    /// choice 的 options 可为字符串数组或 {选项: 说明}。
+    static func parseRequest(_ raw: Any, maxQuestions: Int, maxCandidates: Int) -> ParseResult {
+        guard let object = raw as? [String: Any] else { return .failure("request must be an object") }
+        guard let state = object["state"] as? String else { return .failure("state must be a string") }
+        guard let rawQuestions = object["questions"] as? [Any], !rawQuestions.isEmpty else {
+            return .failure("questions must be a non-empty array")
+        }
+        guard rawQuestions.count <= maxQuestions else {
+            return .failure("at most \(maxQuestions) questions per request")
+        }
+        var questions: [IOSJevQuestion] = []
+        var seen = Set<String>()
+        for rawQuestion in rawQuestions {
+            guard let question = rawQuestion as? [String: Any],
+                  let id = question["id"] as? String, !id.isEmpty else {
+                return .failure("each question needs a non-empty string id")
+            }
+            guard seen.insert(id).inserted else { return .failure("duplicate question id: \(id)") }
+            let instructions = question["instructions"] as? String ?? ""
+            switch question["type"] as? String {
+            case "noul":
+                questions.append(.noul(id: id, instructions: instructions))
+            case "choice":
+                let options: [String: String?]
+                if let list = question["options"] as? [String] {
+                    options = Dictionary(list.map { ($0, nil) }, uniquingKeysWith: { first, _ in first })
+                } else if let map = question["options"] as? [String: String] {
+                    options = map.mapValues { Optional($0) }
+                } else {
+                    return .failure("choice question \(id) needs options (string array or {option: description})")
+                }
+                guard (2...max(2, maxCandidates)).contains(options.count) else {
+                    return .failure("choice question \(id) needs 2...\(maxCandidates) distinct options")
+                }
+                questions.append(.choice(id: id, options: options, instructions: instructions))
+            case "score":
+                guard let levels = question["levels"] as? [String], levels.count >= 2 else {
+                    return .failure("score question \(id) needs at least two levels")
+                }
+                questions.append(.score(id: id, levels: levels, instructions: instructions))
+            default:
+                return .failure("question \(id) type must be noul, choice or score")
+            }
+        }
+        return .success(ParsedRequest(state: state, questions: questions))
+    }
+
+    private static func resultObject(_ outcome: IOSJevDecisionOutcome?) -> [String: Any] {
+        switch outcome {
+        case .applied(let decision):
+            var answers: [String: Any] = [:]
+            for answer in decision.answers {
+                var entry: [String: Any] = ["type": answer.type]
+                if let noul = answer.noul { entry["probability"] = noul }
+                if let choice = answer.choice { entry["choice"] = choice }
+                if let score = answer.score { entry["score"] = score }
+                if let confidence = answer.confidence { entry["confidence"] = confidence }
+                answers[answer.id] = entry
+            }
+            return ["answers": answers, "model": decision.modelVersion]
+        case .observed:
+            return ["error": "script_judgment is not active (shadow results are never applied)"]
+        case .skipped(let reason):
+            return ["error": "skipped: \(reason)"]
+        case .failed(let reason):
+            return ["error": "failed: \(reason)"]
+        case nil:
+            return ["error": "no result"]
+        }
+    }
+
+    private static func encode(_ value: Any) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: value),
+              let text = String(data: data, encoding: .utf8) else {
+            return #"{"error":"jev result serialization failed"}"#
+        }
+        return text
+    }
 }

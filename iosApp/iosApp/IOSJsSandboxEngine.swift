@@ -12,8 +12,9 @@ import JavaScriptCore
 /// The bridge is SYNCHRONOUS by JSC's nature: a native block runs inline on
 /// the evaluation thread with no event-loop pump, so `tools.x(args)` blocks
 /// the JS thread until the host execution finishes (no await/Promise needed;
-/// concurrent `Promise.all` across tools is not supported in v1 — sequential
-/// calls only). The host execution runs off the JS queue (on the MainActor),
+/// concurrent `Promise.all` across tools is not supported — batch concurrency
+/// goes through the synchronous `parallel()` global instead). The host
+/// execution runs off the JS queue (on the MainActor),
 /// so the block must never deadlock the JS thread against a MainActor that
 /// is itself waiting on the JS queue — see `runEvaluation`'s sync bridge.
 struct IOSJsSandboxTools: Sendable {
@@ -33,15 +34,30 @@ struct IOSJsSandboxTools: Sendable {
     /// discovery metadata can never disagree with what is callable.
     let toolDescriptions: [String: String]
 
+    /// Per-tool input JSON Schema (JSON text) for `ALL_TOOLS[i].parameters`,
+    /// keyed by whitelisted name. Missing/invalid entries surface as `null`,
+    /// so scripts can read argument names instead of guessing them.
+    let toolSchemas: [String: String]
+
     init(
         availableToolNames: [String],
         hostCall: @escaping @MainActor (String, String) async -> String?,
-        toolDescriptions: [String: String] = [:]
+        toolDescriptions: [String: String] = [:],
+        toolSchemas: [String: String] = [:]
     ) {
         self.availableToolNames = availableToolNames
         self.hostCall = hostCall
         self.toolDescriptions = toolDescriptions
+        self.toolSchemas = toolSchemas
     }
+}
+
+/// `jev` global bridge: `askBatch` receives a JSON array of
+/// `{state, questions}` requests and returns a JSON array of the same length
+/// (each entry `{answers, model}` or `{error}`). Only installed when the host
+/// decided Jev may be used from scripts in this evaluation.
+struct IOSJsSandboxJev: Sendable {
+    let askBatch: @Sendable (String) async -> String
 }
 
 /// P3-c: session-scoped `store`/`load` bridge, installed as JS globals on
@@ -117,6 +133,12 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
     static let defaultTimeoutMs = 10000
     static let defaultMaxOutputChars = 10000
 
+    /// `parallel()` limits: default/maximum host-side concurrency and the
+    /// maximum number of calls in one batch.
+    static let defaultParallelConcurrency = 4
+    static let maxParallelConcurrency = 8
+    static let maxParallelCalls = 500
+
     /// timeout_ms clamp (declaration contract: [1000, 30000], default 10000).
     static func clampTimeoutMs(_ value: Int) -> Int {
         min(max(value, 1000), 30000)
@@ -139,6 +161,7 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
         maxOutputChars: Int = IOSJsSandboxEngine.defaultMaxOutputChars,
         tools: IOSJsSandboxTools? = nil,
         store: IOSJsSandboxStore? = nil,
+        jev: IOSJsSandboxJev? = nil,
         restrictedPluginMode: Bool = false,
         completion: (@Sendable (IOSJsSandboxResult) -> Void)? = nil
     ) async -> IOSJsSandboxResult {
@@ -174,6 +197,7 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
                             maxOutputChars: maxOutputChars,
                             tools: tools,
                             store: store,
+                            jev: jev,
                             restrictedPluginMode: restrictedPluginMode,
                             gate: gate
                         )
@@ -220,6 +244,7 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
         maxOutputChars: Int,
         tools: IOSJsSandboxTools? = nil,
         store: IOSJsSandboxStore? = nil,
+        jev: IOSJsSandboxJev? = nil,
         restrictedPluginMode: Bool = false,
         gate: IOSJsNestedToolsGate? = nil
     ) -> IOSJsSandboxResult {
@@ -269,6 +294,15 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
         // abandon (P3-c): post-yield nested calls fail honestly.
         if let tools {
             installNestedTools(tools, gate: gate, into: context)
+            // `parallel()` is an interactive-exec convenience; installed plugin
+            // scripts keep their reviewed sequential host-call contract.
+            if !restrictedPluginMode {
+                installParallel(tools, gate: gate, into: context)
+            }
+        }
+
+        if let jev {
+            installJev(jev, gate: gate, into: context)
         }
 
         // P3-c: session-scoped store/load globals (JSON-serializable values,
@@ -331,6 +365,10 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
             tools.toolDescriptions as NSDictionary,
             forKeyedSubscript: "__amberToolDescriptions" as NSString
         )
+        context.setObject(
+            tools.toolSchemas as NSDictionary,
+            forKeyedSubscript: "__amberToolSchemas" as NSString
+        )
         let nestedCall: @convention(block) (JSValue, JSValue) -> JSValue = { nameValue, argsJSONValue in
             let name = nameValue.toString() ?? ""
             let argumentsJSON = argsJSONValue.toString() ?? "{}"
@@ -392,11 +430,28 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
           // script cannot tamper with its own view and mislead itself or a
           // later cell about what is callable.
           const descriptions = globalThis.__amberToolDescriptions || {};
+          // Input JSON Schema per tool (deep-frozen like the entry itself);
+          // null when the host has no parseable schema for that tool.
+          const schemas = globalThis.__amberToolSchemas || {};
+          const parse = JSON.parse;
+          const deepFreeze = (value) => {
+            if (value !== null && typeof value === 'object') {
+              Object.keys(value).forEach((key) => deepFreeze(value[key]));
+              Object.freeze(value);
+            }
+            return value;
+          };
+          const schemaOf = (name) => {
+            const raw = schemas[name];
+            if (typeof raw !== 'string') { return null; }
+            try { return deepFreeze(parse(raw)); } catch (e) { return null; }
+          };
           const entries = [];
           for (let i = 0; i < whitelist.length; i++) {
             entries.push(Object.freeze({
               name: whitelist[i],
-              description: descriptions[whitelist[i]] || ''
+              description: descriptions[whitelist[i]] || '',
+              parameters: schemaOf(whitelist[i])
             }));
           }
           Object.defineProperty(globalThis, 'ALL_TOOLS', {
@@ -409,7 +464,184 @@ final class IOSJsSandboxEngine: @unchecked Sendable {
         delete globalThis.__amberNestedToolCall;
         delete globalThis.__amberToolsWhitelist;
         delete globalThis.__amberToolDescriptions;
+        delete globalThis.__amberToolSchemas;
         """)
+    }
+
+    /// Installs `parallel(calls, {concurrency})`: one SYNCHRONOUS JS call that
+    /// runs several whitelisted nested tool calls concurrently on the host
+    /// (bounded, default 4, max 8) and returns their outputs in call order.
+    /// A failed/unavailable call yields `{error}` in its slot instead of
+    /// failing the whole batch. Same deadlock argument as `tools.*`: the JS
+    /// thread blocks on a semaphore while the batch runs on the MainActor.
+    /// Approval-requiring tools are still resolved one card at a time by the
+    /// host's nested runner.
+    private static func installParallel(
+        _ tools: IOSJsSandboxTools,
+        gate: IOSJsNestedToolsGate?,
+        into context: JSContext
+    ) {
+        let parallelCall: @convention(block) (JSValue, JSValue) -> JSValue = { callsValue, concurrencyValue in
+            guard gate?.isOpen ?? true else {
+                context.exception = context.objectForKeyedSubscript("Error")
+                    .call(withArguments: ["tool not available in exec: nested tools unavailable after the exec call yielded or was abandoned"])
+                return JSValue(undefinedIn: context)
+            }
+            let callsJSON = callsValue.toString() ?? "[]"
+            guard let data = callsJSON.data(using: .utf8),
+                  let rawCalls = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+                context.exception = context.objectForKeyedSubscript("Error")
+                    .call(withArguments: ["parallel: calls must be an array of {tool, args}"])
+                return JSValue(undefinedIn: context)
+            }
+            let calls: [(name: String, arguments: String)] = rawCalls.map {
+                (($0["tool"] as? String) ?? "", ($0["args"] as? String) ?? "null")
+            }
+            let raw = concurrencyValue.isNumber ? concurrencyValue.toDouble() : .nan
+            let concurrency = raw.isNaN
+                ? defaultParallelConcurrency
+                : Int(min(max(raw, 1), Double(maxParallelConcurrency)))
+            let whitelist = Set(tools.availableToolNames)
+            let semaphore = DispatchSemaphore(value: 0)
+            let resultBox = IOSJsNestedToolResultBox()
+            Task { @MainActor in
+                let entries = await runBounded(count: calls.count, concurrency: concurrency) { index -> IOSJsBatchEntry in
+                    let call = calls[index]
+                    guard whitelist.contains(call.name) else {
+                        return .error("tool not available in exec: \(call.name)")
+                    }
+                    guard gate?.isOpen ?? true else {
+                        return .error("tool not available in exec: nested tools unavailable after the exec call yielded or was abandoned")
+                    }
+                    guard let output = await tools.hostCall(call.name, call.arguments) else {
+                        return .error("tool not available in exec: \(call.name)")
+                    }
+                    return .ok(output)
+                }
+                let payload = (try? JSONSerialization.data(withJSONObject: entries.map(\.jsonObject)))
+                    .flatMap { String(data: $0, encoding: .utf8) }
+                resultBox.store(payload ?? "[]")
+                semaphore.signal()
+            }
+            let output = resultBox.waitForValue(semaphore: semaphore) ?? "[]"
+            return JSValue(object: output, in: context)
+        }
+        context.setObject(parallelCall, forKeyedSubscript: "__amberParallelCall" as NSString)
+
+        context.evaluateScript("""
+        (function () {
+          const stringify = JSON.stringify;
+          const parse = JSON.parse;
+          const isArray = Array.isArray;
+          const callNative = globalThis.__amberParallelCall;
+          const maxCalls = \(maxParallelCalls);
+          globalThis.parallel = function (calls, options) {
+            if (!isArray(calls)) { throw new Error('parallel: calls must be an array of {tool, args}'); }
+            if (calls.length > maxCalls) { throw new Error('parallel: at most ' + maxCalls + ' calls per batch'); }
+            const wire = calls.map(function (call) {
+              if (call === null || typeof call !== 'object' || typeof call.tool !== 'string') {
+                throw new Error('parallel: each call must be {tool: string, args: object}');
+              }
+              return { tool: call.tool, args: stringify(call.args === undefined ? null : call.args) };
+            });
+            const concurrency = options && typeof options.concurrency === 'number' ? options.concurrency : undefined;
+            const entries = parse(callNative(stringify(wire), concurrency));
+            return entries.map(function (entry) {
+              if (!entry.ok) { return { error: entry.error }; }
+              try { return parse(entry.output); } catch (e) { return entry.output; }
+            });
+          };
+        })();
+        delete globalThis.__amberParallelCall;
+        """)
+    }
+
+    /// Installs the `jev` global: `jev.askAll([{state, questions}])` returns
+    /// one result per request (`{answers, model}` or `{error}`);
+    /// `jev.ask(request)` returns a single result and throws on error. The
+    /// host batches all requests through the Jev coordinator (chunking,
+    /// slots, budgets, metrics). Blocked after the evaluation was abandoned so
+    /// a yielded script cannot keep spending Jev budget.
+    private static func installJev(
+        _ jev: IOSJsSandboxJev,
+        gate: IOSJsNestedToolsGate?,
+        into context: JSContext
+    ) {
+        let jevCall: @convention(block) (JSValue) -> JSValue = { requestsValue in
+            guard gate?.isOpen ?? true else {
+                context.exception = context.objectForKeyedSubscript("Error")
+                    .call(withArguments: ["jev unavailable after the exec call yielded or was abandoned"])
+                return JSValue(undefinedIn: context)
+            }
+            let requestsJSON = requestsValue.toString() ?? "[]"
+            let semaphore = DispatchSemaphore(value: 0)
+            let resultBox = IOSJsNestedToolResultBox()
+            Task {
+                resultBox.store(await jev.askBatch(requestsJSON))
+                semaphore.signal()
+            }
+            let output = resultBox.waitForValue(semaphore: semaphore) ?? "[]"
+            return JSValue(object: output, in: context)
+        }
+        context.setObject(jevCall, forKeyedSubscript: "__amberJevCall" as NSString)
+
+        context.evaluateScript("""
+        (function () {
+          const stringify = JSON.stringify;
+          const parse = JSON.parse;
+          const isArray = Array.isArray;
+          const callNative = globalThis.__amberJevCall;
+          const askAll = function (requests) {
+            if (!isArray(requests)) { throw new Error('jev.askAll: requests must be an array'); }
+            const results = parse(callNative(stringify(requests)));
+            if (!isArray(results)) {
+              throw new Error('jev: ' + ((results && results.error) || 'invalid host response'));
+            }
+            return results;
+          };
+          const ask = function (request) {
+            const result = askAll([request])[0];
+            if (!result || result.error) { throw new Error('jev.ask: ' + ((result && result.error) || 'no result')); }
+            return result;
+          };
+          Object.defineProperty(globalThis, 'jev', {
+            value: Object.freeze({ ask: ask, askAll: askAll }),
+            writable: false,
+            configurable: false,
+            enumerable: true
+          });
+        })();
+        delete globalThis.__amberJevCall;
+        """)
+    }
+
+    /// Runs `count` async jobs with at most `concurrency` in flight and
+    /// returns their results in index order.
+    static func runBounded<T: Sendable>(
+        count: Int,
+        concurrency: Int,
+        _ body: @escaping @Sendable (Int) async -> T
+    ) async -> [T] {
+        guard count > 0 else { return [] }
+        var results = [T?](repeating: nil, count: count)
+        await withTaskGroup(of: (Int, T).self) { group in
+            var next = 0
+            let initial = min(max(concurrency, 1), count)
+            while next < initial {
+                let index = next
+                group.addTask { (index, await body(index)) }
+                next += 1
+            }
+            for await (index, value) in group {
+                results[index] = value
+                if next < count {
+                    let queued = next
+                    group.addTask { (queued, await body(queued)) }
+                    next += 1
+                }
+            }
+        }
+        return results.compactMap { $0 }
     }
 
     /// P3-c: installs the session-scoped `store(key, value)` / `load(key)`
@@ -545,6 +777,19 @@ private final class IOSJsNestedToolResultBox: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return value
+    }
+}
+
+/// One `parallel()` slot result crossing from the host back to the JS thread.
+enum IOSJsBatchEntry: Sendable, Equatable {
+    case ok(String)
+    case error(String)
+
+    var jsonObject: [String: Any] {
+        switch self {
+        case .ok(let output): ["ok": true, "output": output]
+        case .error(let message): ["ok": false, "error": message]
+        }
     }
 }
 

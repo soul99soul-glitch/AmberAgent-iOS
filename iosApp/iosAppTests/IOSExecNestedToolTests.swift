@@ -332,6 +332,57 @@ final class IOSExecNestedToolTests: XCTestCase {
         XCTAssertEqual(completed.toolCallId, started.last?.toolCallId)
     }
 
+    func testParallelNestedApprovalsAreShownOneAtATime() async throws {
+        // parallel() 并发发起两次需审批的写入：审批卡必须逐张出现（同一时刻至多
+        // 一个 approvalDecider 在等），两次写入都在批准后落盘，结果按序回到 JS。
+        let ledger = IOSExecNestedRecordingLedger()
+        let state = IOSExecNestedBindingState()
+        let (workspaceStore, directory) = try makeWorkspaceStore()
+        let executor = IOSLocalToolExecutor(
+            permissionStore: IOSPermissionStore(userDefaults: isolatedDefaults()),
+            documentStore: DocumentAccessStore(),
+            workspaceStore: workspaceStore
+        )
+        let (adapter, runtime) = makeAdapterAndRuntime(executor: executor, ledger: ledger, state: state)
+        let declarations = ToolKt.iosToolDeclarations(names: ["exec", "workspace_file_write"])
+        let bridge = IosToolExposureBridge(tools: declarations)
+        let params = makeParams(tools: declarations)
+
+        let toolCall = execToolCall(input: #"{"code":"parallel([{tool: 'workspace_file_write', args: {path: '/workspace/notes/p1.md', content: 'one'}}, {tool: 'workspace_file_write', args: {path: '/workspace/notes/p2.md', content: 'two'}}]).map(r => r.ok)","timeout_ms":30000}"#)
+        var inFlight = 0
+        var peak = 0
+        var prompts = 0
+        let result = await runExecThroughAdapter(
+            adapter: adapter,
+            runtime: runtime,
+            toolCall: toolCall,
+            bridge: bridge,
+            providerSetting: makeProviderSetting(),
+            params: params,
+            runId: "run-exec-parallel-approval",
+            approvalDecider: { _ in
+                inFlight += 1
+                prompts += 1
+                peak = max(peak, inFlight)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                inFlight -= 1
+                return .approve
+            }
+        )
+        guard case .completed(let messages) = result else {
+            return XCTFail("exec must complete after both approvals, got \(result)")
+        }
+        let resultText = try XCTUnwrap(execResultText(from: toolOutputText(messages)))
+        XCTAssertEqual(resultText, "[true,true]", "both approved writes must succeed in call order")
+        XCTAssertEqual(prompts, 2, "each write needs its own approval")
+        XCTAssertEqual(peak, 1, "nested approval cards must never be pending at the same time")
+        for name in ["p1.md", "p2.md"] {
+            XCTAssertTrue(FileManager.default.fileExists(
+                atPath: directory.appendingPathComponent("AmberWorkspace/files/notes/\(name)").path
+            ), "\(name) must reach the workspace store")
+        }
+    }
+
     func testNestedApprovalDeniedReturnsStructuredDenialToJS() async throws {
         let ledger = IOSExecNestedRecordingLedger()
         let state = IOSExecNestedBindingState()

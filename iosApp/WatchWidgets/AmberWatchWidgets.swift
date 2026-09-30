@@ -119,18 +119,36 @@ private struct AmberWatchQuickProvider: TimelineProvider {
     }
 }
 
+private enum AmberWatchWidgetAccent {
+    static var color: Color {
+        (WatchWidgetCache.loadAccentHex().map(WatchAccentPalette.init(hex:)) ?? .copper).accent.color
+    }
+}
+
 private struct AmberWatchQuickView: View {
     let action: AmberWatchWidgetAction
+    @Environment(\.widgetFamily) private var family
 
     var body: some View {
-        VStack(spacing: 2) {
-            Image(systemName: action.symbol)
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.orange)
-            Text(action.title)
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+        Group {
+            if family == .accessoryCorner {
+                Image(systemName: action.symbol)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(AmberWatchWidgetAccent.color)
+                    .widgetAccentable()
+                    .widgetLabel(action.title)
+            } else {
+                VStack(spacing: 2) {
+                    Image(systemName: action.symbol)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(AmberWatchWidgetAccent.color)
+                        .widgetAccentable()
+                    Text(action.title)
+                        .font(.caption2.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
         }
         .containerBackground(for: .widget) {
             Color.black
@@ -150,6 +168,10 @@ private struct AmberWatchQuickView: View {
 private struct AmberWatchTaskEntry: TimelineEntry {
     let date: Date
     let snapshot: WatchTaskSnapshot
+    var relevance: TimelineEntryRelevance? {
+        let (score, duration) = WatchWidgetRelevance.score(for: snapshot, now: date)
+        return TimelineEntryRelevance(score: score, duration: duration)
+    }
 }
 
 private struct AmberWatchTaskProvider: TimelineProvider {
@@ -203,13 +225,40 @@ private struct AmberWatchTaskProvider: TimelineProvider {
 
 private struct AmberWatchTaskView: View {
     let entry: AmberWatchTaskEntry
+    @Environment(\.widgetFamily) private var family
 
     var body: some View {
+        Group {
+            switch family {
+            case .accessoryCorner:
+                Image(systemName: statusSymbol)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(statusColor)
+                    .widgetAccentable()
+                    .widgetLabel(statusTitle)
+            case .accessoryInline:
+                Label {
+                    Text(verbatim: "Amber · \(statusTitle)")
+                } icon: {
+                    Image(systemName: statusSymbol)
+                }
+            default:
+                rectangular
+            }
+        }
+        .containerBackground(for: .widget) {
+            Color.black
+        }
+        .widgetURL(targetURL)
+    }
+
+    private var rectangular: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Image(systemName: statusSymbol)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(statusColor)
+                    .widgetAccentable()
                 Text("Amber")
                     .font(.caption2.weight(.semibold))
                     .lineLimit(1)
@@ -231,10 +280,6 @@ private struct AmberWatchTaskView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
-        .containerBackground(for: .widget) {
-            Color.black
-        }
-        .widgetURL(targetURL)
     }
 
     private var targetURL: URL? {
@@ -356,8 +401,7 @@ private struct AmberWatchTaskView: View {
         switch entry.snapshot.phase {
         case "completed": return .green
         case "failed": return .red
-        case "waitingForUser": return .orange
-        default: return .orange
+        default: return AmberWatchWidgetAccent.color
         }
     }
 }
@@ -372,7 +416,7 @@ struct AmberWatchAskWidget: Widget {
         }
         .configurationDisplayName("Ask Amber")
         .description("Start a question from your watch face.")
-        .supportedFamilies([.accessoryCircular])
+        .supportedFamilies([.accessoryCircular, .accessoryCorner])
     }
 }
 
@@ -414,7 +458,7 @@ struct AmberWatchCurrentTaskWidget: Widget {
         }
         .configurationDisplayName("Current task")
         .description("View the current task's private status.")
-        .supportedFamilies([.accessoryRectangular])
+        .supportedFamilies([.accessoryRectangular, .accessoryCorner, .accessoryInline])
     }
 }
 

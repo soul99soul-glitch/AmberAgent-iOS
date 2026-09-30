@@ -1,3 +1,4 @@
+import UserNotifications
 import XCTest
 @testable import iosApp
 
@@ -108,6 +109,52 @@ final class WatchNotificationTests: XCTestCase {
         }
         try await service.scheduleWatchAttention(snapshot: waitingSnapshot(), isStillCurrent: { true })
         XCTAssertTrue(center.requests.isEmpty)
+    }
+
+    func testApprovalNotificationCarriesButtonsButNotToolParameters() async throws {
+        let suite = "WatchNotificationTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let center = WatchNotificationCenter()
+        let service = IOSLocalNotificationService(
+            center: center, completionNotificationsEnabled: { true }, watchNotificationDefaults: defaults
+        )
+        var snapshot = waitingSnapshot()
+        snapshot.decision = WatchDecision(
+            id: "approval-1", type: .approval, title: "搜索网页", body: "secret query",
+            options: [WatchDecisionOption(id: "deny", title: "拒绝", style: .deny),
+                      WatchDecisionOption(id: "approve", title: "允许", style: .approve)],
+            riskLevel: .low, allowsVoice: false
+        )
+        try await service.scheduleWatchAttention(snapshot: snapshot, isStillCurrent: { true })
+
+        let request = try XCTUnwrap(center.requests.first)
+        XCTAssertEqual(request.categoryIdentifier, IOSWatchDecisionNotification.approvalCategory)
+        XCTAssertEqual(request.body, "搜索网页")
+        XCTAssertFalse(request.body.contains("secret query"))
+
+        let approve = try XCTUnwrap(IOSWatchDecisionNotification.request(
+            actionIdentifier: IOSWatchDecisionNotification.approveAction, userInfo: request.userInfo
+        ))
+        XCTAssertEqual(approve.action, .approve)
+        XCTAssertEqual(approve.optionId, "approve")
+        XCTAssertEqual(approve.runId, "run-1")
+        XCTAssertEqual(approve.decisionId, "approval-1")
+        XCTAssertEqual(approve.conversationId, snapshot.conversationId)
+        XCTAssertNil(IOSWatchDecisionNotification.request(
+            actionIdentifier: UNNotificationDefaultActionIdentifier, userInfo: request.userInfo
+        ), "a plain tap still only opens the task")
+    }
+
+    func testPhoneOnlyApprovalGetsDenyOnlyAndQuestionsGetNoButtons() {
+        let phoneOnly = WatchDecision(
+            id: "a", type: .approval, title: "运行命令", body: "rm -rf",
+            options: [WatchDecisionOption(id: "deny", title: "拒绝", style: .deny),
+                      WatchDecisionOption(id: "open-phone", title: "在 iPhone 查看", style: .openOnPhone)],
+            riskLevel: .high, allowsVoice: false
+        )
+        XCTAssertEqual(IOSWatchDecisionNotification.category(for: phoneOnly), IOSWatchDecisionNotification.denyOnlyCategory)
+        XCTAssertNil(IOSWatchDecisionNotification.category(for: waitingSnapshot().decision!))
     }
 
     private func waitingSnapshot() -> WatchTaskSnapshot {

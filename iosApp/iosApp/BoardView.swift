@@ -1014,16 +1014,33 @@ struct IOSDeepReadTaskDetailView: View {
                         retry()
                     }
                 case .done:
-                    ShareLink(item: "\(task.title)\n\n\(task.resultMarkdown)") {
+                    Menu {
+                        ShareLink(item: "\(task.title)\n\n\(task.resultMarkdown)") {
+                            Label("分享文本", systemImage: "text.alignleft")
+                        }
+                        Button("导出为 Markdown", systemImage: "doc.plaintext") {
+                            AmberHaptics.trigger(.lightImpact)
+                            shareDeepRead(task, asPDF: false)
+                        }
+                        Button("导出为 PDF", systemImage: "doc.richtext") {
+                            AmberHaptics.trigger(.lightImpact)
+                            shareDeepRead(task, asPDF: true)
+                        }
+                    } label: {
+                        // 与左侧 AmberGlassCircleButton 同一套玻璃圆形样式、图标字号与颜色；
+                        // 导出进度与失败走 App 级 IOSShareActivity 浮层，与对话导出一致。
                         Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(AmberTheme.foreground2)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Circle())
+                            .foregroundStyle(AmberTheme.foreground)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .buttonStyle(.plain)
-                    .amberGlass(cornerRadius: 22)
-                    .accessibilityLabel("分享")
+                    .menuStyle(.button)
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.mini)
+                    .buttonSizing(.flexible)
+                    .frame(width: 44, height: 44)
+                    .accessibilityLabel("分享与导出")
                 case .generating:
                     EmptyView()
                 }
@@ -1428,7 +1445,54 @@ struct IOSDeepReadTaskDetailView: View {
         }
     }
 
-    private func editorialHTML(_ task: IOSDeepReadTask) -> String {
+    private func shareDeepRead(_ task: IOSDeepReadTask, asPDF: Bool) {
+        let activity = IOSShareActivity.shared
+        guard activity.begin(asPDF ? "正在生成 PDF…" : "正在导出 Markdown…") else {
+            activity.notify(IOSConversationExporter.busyMessage)
+            return
+        }
+        Task { @MainActor in
+            do {
+                let url: URL
+                if asPDF {
+                    let data = try await IOSHTMLPDFRenderer.render(html: try pdfHTML(task))
+                    url = try IOSShareFileWriter.write(data, fileName: task.title, pathExtension: "pdf")
+                } else {
+                    let body = task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // 正文已自带一级标题时不再重复加。
+                    let markdown = body.hasPrefix("# ") ? body : "# \(task.title)\n\n\(body)"
+                    url = try IOSShareFileWriter.write(Data(markdown.utf8), fileName: task.title, pathExtension: "md")
+                }
+                let presented = await IOSShareSheet.present([url])
+                activity.end(failure: presented ? nil : "当前无法弹出分享面板，请稍后重试。")
+            } catch {
+                activity.end(failure: error.localizedDescription)
+            }
+        }
+    }
+
+    /// PDF 与详情页同一版式：自定义模板走模板渲染（同样先过模板校验）；默认版式固定浅色并带标题，
+    /// 因为详情页的原生标题/封面不会进入 PDF。
+    private func pdfHTML(_ task: IOSDeepReadTask) throws -> String {
+        let usesCustomTemplate = task.templateId.hasPrefix(IOSDeepReadTemplate.customPrefix)
+            && templateStore.template(id: task.templateId) != nil
+        guard usesCustomTemplate else {
+            return IOSHTMLPDFRenderer.printFriendly(editorialHTML(task, forPrint: true))
+        }
+        // 模板存在却渲染失败时明确报错，不静默退回默认版式（模板已删除时详情页与 PDF 都用默认版式）。
+        guard let html = customTemplateHTML(task) else {
+            throw IOSShareError("自定义模板渲染失败，无法按模板导出 PDF。")
+        }
+        let validation = IOSDeepReadTemplateValidator.validateHTML(html, requirePlaceholders: false)
+        guard validation.ok else {
+            throw IOSShareError("模板校验失败：\(validation.error ?? "未知错误")")
+        }
+        return IOSHTMLPDFRenderer.printFriendly(html)
+    }
+
+    /// `forPrint` 用于导出 PDF：固定浅色、带标题（详情页的原生标题/封面不会进入 PDF）。
+    private func editorialHTML(_ task: IOSDeepReadTask, forPrint: Bool = false) -> String {
+        let dark = !forPrint && colorScheme == .dark
         // Structured output (when the LLM produced it) drives the rich cards; else the
         // renderer falls back to the flat-markdown body.
         let structured: IOSDeepReadOutput? = task.structuredJSON
@@ -1440,9 +1504,11 @@ struct IOSDeepReadTaskDetailView: View {
         // Resolve the app theme's canvas palette for the current appearance, so the reader
         // follows the chosen background (paper or immersive) — same colors as the native
         // masthead/sources around it. Immersive canvases share one palette across light/dark.
-        let palette = colorScheme == .dark
-            ? AmberThemeRuntime.shared.paper.darkPalette
-            : AmberThemeRuntime.shared.paper.lightPalette
+        let paper = AmberThemeRuntime.shared.paper
+        // 沉浸色画布没有真正的浅色版（深底浅字），导出 PDF 时回退到纸张浅色，保证打印可读。
+        let palette = dark
+            ? paper.darkPalette
+            : (forPrint && paper.isImmersive ? AmberTheme.paperLight : paper.lightPalette)
         func hex(_ value: UInt32) -> String { String(format: "#%06X", value) }
         return IOSDeepReadEditorialRenderer.renderHTML(
             IOSDeepReadEditorialRenderer.Input(
@@ -1455,9 +1521,9 @@ struct IOSDeepReadTaskDetailView: View {
                 heroImageURL: nil,
                 heroCaption: nil,
                 sourceLabel: nil,
-                dark: colorScheme == .dark,
+                dark: dark,
                 structured: structured,
-                showHeadline: false,
+                showHeadline: forPrint,
                 accentHex: hex(AmberThemeRuntime.shared.accentHex),
                 fontMode: sharedSettings?.todayBoard.boardReadingFontMode.wireName ?? "serif",
                 bgHex: hex(palette.background),

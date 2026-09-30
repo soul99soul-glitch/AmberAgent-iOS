@@ -230,6 +230,8 @@ final class IOSThreadOrchestrationToolService {
     /// child marker; followups do not read the parent's current settings again.
     private let sharedSettingsProvider: () -> IOSSharedSettingsStore?
     private let jevCoordinator: IOSJevDecisionCoordinator
+    /// exec store 的单一所有者；fork 时把父会话的 store 复制给子会话。
+    private let jsCellRegistry: IOSJsCellRegistry
     private let jevSettingsProvider: () -> IOSJevSettings
     private let modelPool = IOSSubAgentModelPool()
     /// P1-d: wait_agent 超时 clamp 区间与默认值（测试注入小下限避免真实等待）。
@@ -280,7 +282,8 @@ final class IOSThreadOrchestrationToolService {
         soulMarkdown: @escaping () -> String = { "" },
         sharedSettingsProvider: @escaping () -> IOSSharedSettingsStore? = { nil },
         jevCoordinator: IOSJevDecisionCoordinator = .shared,
-        jevSettingsProvider: @escaping () -> IOSJevSettings = { IOSSharedSettingsStore.loadPersistedJevSettings() }
+        jevSettingsProvider: @escaping () -> IOSJevSettings = { IOSSharedSettingsStore.loadPersistedJevSettings() },
+        jsCellRegistry: IOSJsCellRegistry = .shared
     ) {
         self.conversationStoreProvider = conversationStoreProvider
         self.mailboxDaoProvider = mailboxDaoProvider
@@ -301,6 +304,7 @@ final class IOSThreadOrchestrationToolService {
         self.soulMarkdown = soulMarkdown
         self.sharedSettingsProvider = sharedSettingsProvider
         self.jevCoordinator = jevCoordinator
+        self.jsCellRegistry = jsCellRegistry
         self.jevSettingsProvider = jevSettingsProvider
     }
 
@@ -571,6 +575,14 @@ final class IOSThreadOrchestrationToolService {
                 toolName: "spawn_agent",
                 code: ErrorCode.startFailed,
                 reason: "子会话持久化失败，请重试。"
+            )
+        }
+        // fork 的转录保留了父会话的 exec 调用：复制 store，使这些调用写入的值
+        // 在子会话按分支可见性照常可读（不带任何 exec 调用的 fork 读不到）。
+        if !forked.currentMessages.isEmpty {
+            await jsCellRegistry.copyStore(
+                fromSessionKey: parentConversationId.description(),
+                toSessionKey: childConversationId.description()
             )
         }
 

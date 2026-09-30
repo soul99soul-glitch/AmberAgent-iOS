@@ -564,6 +564,180 @@ final class IOSJsCellTests: XCTestCase {
         let leftover = await registry.cells(sessionKey: conversationId.description())
         XCTAssertTrue(leftover.isEmpty, "闭环后注册表不应残留 cell")
     }
+
+    // MARK: - store 分支可见性
+
+    private func scope(_ source: String, run: String, branch: Set<String>?) -> IOSJsStoreScope {
+        IOSJsStoreScope(sourceToolCallId: source, runId: run, visibleToolCallIds: branch)
+    }
+
+    func testStoreValuesFollowTheActiveBranch() async {
+        let registry = IOSJsCellRegistry(directory: tempDirectory())
+        // 变体 A 的 exec-a 写 1；重新生成出变体 B（新 run，分支不含 exec-a）。
+        let storedA = await registry.storeValue(
+            sessionKey: "sess-branch", key: "k", valueJSON: "1",
+            scope: scope("exec-a", run: "run-a", branch: ["exec-a"])
+        )
+        XCTAssertEqual(storedA, .stored)
+        let seenFromB = await registry.loadValue(
+            sessionKey: "sess-branch", key: "k",
+            scope: scope("exec-b1", run: "run-b", branch: ["exec-b1"])
+        )
+        XCTAssertNil(seenFromB, "变体 B 不得读到被替换掉的变体 A 写入的值")
+
+        // 变体 B 自己写 2：同 run 的后续 exec 立即可见（尚未进入持久化分支）。
+        _ = await registry.storeValue(
+            sessionKey: "sess-branch", key: "k", valueJSON: "2",
+            scope: scope("exec-b1", run: "run-b", branch: ["exec-b1"])
+        )
+        let sameRun = await registry.loadValue(
+            sessionKey: "sess-branch", key: "k",
+            scope: scope("exec-b2", run: "run-b", branch: [])
+        )
+        XCTAssertEqual(sameRun, "2", "同一 run 内的写入必须可见")
+
+        // 切回变体 A：A 的值重新可见，B 的值不可见。
+        let backOnA = await registry.loadValue(
+            sessionKey: "sess-branch", key: "k",
+            scope: scope("exec-a2", run: "run-a2", branch: ["exec-a"])
+        )
+        XCTAssertEqual(backOnA, "1", "切回原分支后应恢复该分支的值")
+
+        // 分支未知（nil）时退回旧语义：最新写入。
+        let unknown = await registry.loadValue(sessionKey: "sess-branch", key: "k")
+        XCTAssertEqual(unknown, "2")
+    }
+
+    func testSameExecCallRewriteReplacesItsOwnVersion() async {
+        let registry = IOSJsCellRegistry(directory: tempDirectory())
+        let s = scope("exec-1", run: "run-1", branch: ["exec-1"])
+        for value in ["1", "2", "3"] {
+            _ = await registry.storeValue(sessionKey: "sess-rewrite", key: "k", valueJSON: value, scope: s)
+        }
+        let loaded = await registry.loadValue(sessionKey: "sess-rewrite", key: "k", scope: s)
+        XCTAssertEqual(loaded, "3")
+        // 同一 exec 调用反复写同一 key 不累积版本：总量只算一份。
+        let chunk = String(repeating: "z", count: 60 * 1024)
+        for _ in 0..<20 {
+            let outcome = await registry.storeValue(sessionKey: "sess-rewrite", key: "big", valueJSON: chunk, scope: s)
+            XCTAssertEqual(outcome, .stored, "重写自身版本不得触发总量上限")
+        }
+    }
+
+    func testLinearTurnsRewritingOneKeyEvictShadowedVersions() async {
+        let registry = IOSJsCellRegistry(directory: tempDirectory())
+        let chunk = String(repeating: "s", count: 60 * 1024)
+        var branch: Set<String> = []
+        // 线性对话：每轮一个新 exec 调用写同一 key；旧版本仍在分支上但已被遮蔽。
+        for turn in 1...20 {
+            let source = "exec-\(turn)"
+            branch.insert(source)
+            let outcome = await registry.storeValue(
+                sessionKey: "sess-linear", key: "state", valueJSON: chunk + "\(turn)",
+                scope: scope(source, run: "run-\(turn)", branch: branch)
+            )
+            XCTAssertEqual(outcome, .stored, "第 \(turn) 轮：被遮蔽的旧版本应让位，而不是拒绝写入")
+        }
+        let loaded = await registry.loadValue(
+            sessionKey: "sess-linear", key: "state", scope: scope("exec-21", run: "run-21", branch: branch)
+        )
+        XCTAssertEqual(loaded, chunk + "20")
+    }
+
+    func testEmptyToolCallIdFallsBackToUnscopedStore() async {
+        let registry = IOSJsCellRegistry(directory: tempDirectory())
+        _ = await registry.storeValue(sessionKey: "sess-empty", key: "k", valueJSON: "1",
+                                      scope: scope("", run: "run-a", branch: ["x"]))
+        _ = await registry.storeValue(sessionKey: "sess-empty", key: "k", valueJSON: "2",
+                                      scope: scope("", run: "run-b", branch: ["y"]))
+        // 空 id 不能当作"同一来源"互相覆盖/互相可见：退回无来源的旧语义。
+        let loaded = await registry.loadValue(sessionKey: "sess-empty", key: "k",
+                                              scope: scope("exec-c", run: "run-c", branch: ["z"]))
+        XCTAssertEqual(loaded, "2")
+    }
+
+    func testOverCapacityEvictsInvisibleBranchVersionsFirst() async {
+        let registry = IOSJsCellRegistry(directory: tempDirectory())
+        let chunk = String(repeating: "y", count: 64 * 1024)
+        // 旧分支写满 1MB（16 × 64KB）。
+        for index in 1...16 {
+            let outcome = await registry.storeValue(
+                sessionKey: "sess-evict", key: "k\(index)", valueJSON: chunk,
+                scope: scope("old-\(index)", run: "run-old", branch: nil)
+            )
+            XCTAssertEqual(outcome, .stored)
+        }
+        // 新分支（看不到 old-*）继续写：淘汰不可见版本腾空间，而不是拒绝。
+        let fresh = scope("new-1", run: "run-new", branch: ["new-1"])
+        let outcome = await registry.storeValue(sessionKey: "sess-evict", key: "fresh", valueJSON: chunk, scope: fresh)
+        XCTAssertEqual(outcome, .stored, "不可见分支的旧值应被淘汰以容纳当前分支写入")
+        let loaded = await registry.loadValue(sessionKey: "sess-evict", key: "fresh", scope: fresh)
+        XCTAssertEqual(loaded, chunk)
+
+        // 全部可见时仍按 1MB 上限拒绝（不会淘汰当前分支能看到的值）。
+        let registry2 = IOSJsCellRegistry(directory: tempDirectory())
+        let visibleAll = scope("w", run: "run-w", branch: nil)
+        for index in 1...16 {
+            _ = await registry2.storeValue(sessionKey: "sess-full", key: "k\(index)", valueJSON: chunk,
+                                           scope: scope("w\(index)", run: "run-w", branch: nil))
+        }
+        let rejected = await registry2.storeValue(sessionKey: "sess-full", key: "k17", valueJSON: chunk, scope: visibleAll)
+        guard case .overLimit = rejected else {
+            return XCTFail("可见值占满时必须拒绝: \(rejected)")
+        }
+    }
+
+    func testLegacySidecarStoreDecodesAsAlwaysVisible() async throws {
+        let directory = tempDirectory()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // 旧版 sidecar：扁平 store map，没有来源信息。
+        let legacy = #"{"cells":[],"store":{"k":"{\"a\":1}"}}"#
+        try Data(legacy.utf8).write(to: directory.appendingPathComponent("sess-legacy.json"))
+        let registry = IOSJsCellRegistry(directory: directory)
+        let loaded = await registry.loadValue(
+            sessionKey: "sess-legacy", key: "k",
+            scope: scope("exec-x", run: "run-x", branch: ["exec-x"])
+        )
+        XCTAssertEqual(loaded, #"{"a":1}"#, "旧数据没有来源信息，必须对所有分支可见")
+    }
+
+    func testCopyStoreCarriesValuesIntoForkedSession() async {
+        let registry = IOSJsCellRegistry(directory: tempDirectory())
+        _ = await registry.storeValue(
+            sessionKey: "parent", key: "k", valueJSON: "7",
+            scope: scope("exec-p", run: "run-p", branch: ["exec-p"])
+        )
+        await registry.copyStore(fromSessionKey: "parent", toSessionKey: "child")
+        // 子会话的转录保留了 exec-p：可见；不含 exec-p 的分支：不可见。
+        let visible = await registry.loadValue(
+            sessionKey: "child", key: "k",
+            scope: scope("exec-c", run: "run-c", branch: ["exec-p", "exec-c"])
+        )
+        XCTAssertEqual(visible, "7")
+        let hidden = await registry.loadValue(
+            sessionKey: "child", key: "k",
+            scope: scope("exec-c", run: "run-c", branch: ["exec-c"])
+        )
+        XCTAssertNil(hidden)
+    }
+
+    func testExecStoreScopeCollectsBranchToolCallIds() {
+        let toolA = UIMessagePart.Tool(toolCallId: "exec-a", toolName: "exec", input: "{}", output: [],
+                                       approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        let toolB = UIMessagePart.Tool(toolCallId: "search-b", toolName: "search_web", input: "{}", output: [],
+                                       approvalState: ToolApprovalState.Auto.shared, streamIndex: nil, metadata: nil)
+        let message = UIMessage(
+            id: KotlinUuid.companion.random(), role: MessageRole.assistant, parts: [toolA, toolB],
+            annotations: [], createdAt: Kotlinx_datetimeLocalDateTime(year: 2026, month: 9, day: 30, hour: 0, minute: 0, second: 0, nanosecond: 0),
+            finishedAt: nil, modelId: nil, usage: nil, translation: nil
+        )
+        let scoped = ChatToolRuntime.execStoreScope(toolCall: toolA, runId: "run-1", branchMessages: [message])
+        XCTAssertEqual(scoped.visibleToolCallIds, ["exec-a", "search-b"])
+        XCTAssertEqual(scoped.sourceToolCallId, "exec-a")
+        // 空分支快照 = 未知，不得当成"什么都不可见"。
+        let unknown = ChatToolRuntime.execStoreScope(toolCall: toolA, runId: "run-1", branchMessages: [])
+        XCTAssertNil(unknown.visibleToolCallIds)
+    }
 }
 
 /// P3-c: 脚本化 provider —— 第一轮发 exec（长脚本 + 短超时 → yield），第二轮从

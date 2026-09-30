@@ -862,9 +862,14 @@ fun createExecToolDeclaration(): Tool = Tool(
         Run JavaScript (ES2020) in a sandbox. No DOM, no Node, no fs, no network, no imports.
         Use console.log for output; the last expression's value is returned.
         Inside the sandbox, `tools` exposes the tools visible in this run; tools.* calls are
-        synchronous (no await/Promise needed; Promise.all concurrency is not supported in v1),
+        synchronous (no await/Promise needed; Promise.all is not supported),
         and nested calls inherit each tool's own approval policy.
-        The global `ALL_TOOLS` lists every callable tool's `name` and `description`; filter it to discover tools instead of guessing names.
+        For many independent calls use `parallel([{tool, args}], {concurrency})` (synchronous, default 4, max 8):
+        it returns the outputs in call order, with `{error}` in place of a failed call.
+        The global `ALL_TOOLS` lists every callable tool's `name`, `description` and JSON Schema `parameters`; filter it to discover tools instead of guessing names or arguments.
+        `store(key, value)`/`load(key)` keep JSON values across exec calls on the current conversation branch.
+        When the user enabled Jev script judgment, `jev.ask({state, questions})`/`jev.askAll([...])` classify text fast
+        (question types: noul -> probability, choice with `options` -> choice+confidence, score with `levels` -> score); `typeof jev` is undefined otherwise.
         NOT for generating SVG/widgets/HTML.
     """.trimIndent().replace("\n", " "),
     parameters = { execParameters() },
@@ -4558,3 +4563,14 @@ sealed class InputSchema {
         @SerialName("enum") val enumValues: JsonArray? = null,
     ) : InputSchema()
 }
+
+private val inputSchemaJson = Json
+
+/**
+ * The tool's input schema as JSON Schema text (same serializer the providers
+ * use for request bodies), or null when the tool declares none. Swift reads
+ * this string instead of bridging [InputSchema.Obj.properties]: nested
+ * JsonObject values surface as NSDictionary and do not bridge as JsonElement.
+ */
+fun Tool.parametersJsonSchema(): String? =
+    parameters()?.let { inputSchemaJson.encodeToString(InputSchema.serializer(), it) }

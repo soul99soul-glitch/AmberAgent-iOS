@@ -458,13 +458,13 @@ final class IOSMiniAppBridgeRuntime {
                 let requestedLimit = (params["limit"] as? Int) ?? (params["max_results"] as? Int) ?? 6
                 let limit = min(8, max(1, requestedLimit))
                 try audit(method: method, permission: .search, summary: "MiniApp search request", payload: ["query": query])
-                let results = try await IOSSearchExecutor.searchDuckDuckGoLite(query: query, maxResults: limit)
+                let results = try await IOSSearchExecutor.searchFreeAggregate(query: query, maxResults: limit)
                 let payload: [IOSMiniAppJSONValue] = results.map { result in
                     .object([
                         "title": .string(result.title),
                         "url": .string(result.url),
                         "snippet": .string(result.snippet),
-                        "source": .string("DuckDuckGo Lite"),
+                        "source": .string(IOSFreeSearchAggregator.providerName),
                     ])
                 }
                 return .success(.object(["items": .array(payload)]))

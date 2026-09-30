@@ -163,6 +163,28 @@ final class WatchLocalStoreTests: XCTestCase {
         XCTAssertTrue(store.notes.isEmpty)
     }
 
+    func testCacheWrittenBeforeAccentToggleStillLoadsNotesAndFollowsPhone() throws {
+        let url = makeURL("legacy-settings.json")
+        let note = WatchNote(id: "note-legacy", text: "旧版本记事", createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        let first = WatchLocalStore(fileURL: url)
+        XCTAssertTrue(first.saveNote(note))
+        first.updateSettings { $0.showContentPreview = true }
+
+        var state = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+        var settings = try XCTUnwrap(state["settings"] as? [String: Any])
+        settings.removeValue(forKey: "followsPhoneAccent")
+        state["settings"] = settings
+        try JSONSerialization.data(withJSONObject: state).write(to: url, options: .atomic)
+
+        let relaunched = WatchLocalStore(fileURL: url)
+        XCTAssertNil(relaunched.storageError)
+        XCTAssertEqual(relaunched.note(id: note.id)?.text, note.text)
+        XCTAssertTrue(relaunched.settings.showContentPreview)
+        XCTAssertTrue(relaunched.settings.followsPhoneAccent)
+        XCTAssertTrue(relaunched.settings.hapticsOnWaiting)
+        XCTAssertFalse(relaunched.settings.asksFirst)
+    }
+
     private func makeURL(_ name: String) -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("amber-watch-tests-\(UUID().uuidString)", isDirectory: true)

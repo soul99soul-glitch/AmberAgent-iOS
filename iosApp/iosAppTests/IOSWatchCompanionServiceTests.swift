@@ -185,6 +185,7 @@ final class IOSWatchCompanionServiceTests: XCTestCase {
             conversationStore: nil,
             now: Date(timeIntervalSince1970: 500)
         )
+        XCTAssertEqual(library.accentHex, AmberThemeRuntime.shared.accentHex)
         let activity = try XCTUnwrap(library.activities?.first)
         XCTAssertEqual(activity.id, "note:note-history-1")
         XCTAssertNil(activity.runId)
