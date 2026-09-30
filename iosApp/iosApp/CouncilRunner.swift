@@ -2753,6 +2753,96 @@ private extension String {
     }
 }
 
+/// Live transcript of a `model_council_run` tool call, observed by
+/// `ChatToolDetailSheet`. The tool path feeds it the same room events the
+/// Council room view consumes, so the chat capsule is no longer a black box.
+@MainActor
+@Observable
+final class CouncilLiveModel {
+    private(set) var taskId: String?
+    private(set) var state: String?
+    private(set) var speakers: [IOSCouncilRoomSpeaker] = []
+    private(set) var activeSpeakerId: String?
+    private(set) var failedSpeakerIds: Set<String> = []
+    private(set) var messages: [IOSCouncilRoomMessageEvent] = []
+    private(set) var isRunning = true
+
+    func ingest(_ event: IOSCouncilRoomEvent) {
+        switch event {
+        case .taskStarted(let id):
+            taskId = id
+        case .state(let value):
+            state = value
+        case .roster(let roster, let activeId, let failedIds):
+            speakers = roster
+            activeSpeakerId = activeId
+            failedSpeakerIds = failedIds
+        case .append(let message):
+            messages.append(message)
+        case .updateMessage(let id, let body, let status, _):
+            guard let index = messages.lastIndex(where: { $0.id == id }) else { return }
+            messages[index] = messages[index].with(body: body, status: status)
+        }
+    }
+
+    /// The runner's error exit (e.g. a thrown host synthesis) appends a system
+    /// failure without closing the in-flight message; close it here, the same
+    /// way the Council room's `finishStreamingMessages` does.
+    func finish(completed: Bool) {
+        isRunning = false
+        activeSpeakerId = nil
+        for index in messages.indices where messages[index].status == .speaking {
+            messages[index] = messages[index].with(status: completed ? .completed : .failed)
+        }
+    }
+}
+
+private extension IOSCouncilRoomMessageEvent {
+    func with(body: String? = nil, status: IOSCouncilRoomMessageStatus) -> IOSCouncilRoomMessageEvent {
+        IOSCouncilRoomMessageEvent(
+            id: id,
+            kind: kind,
+            speakerId: speakerId,
+            author: author,
+            body: body ?? self.body,
+            subtitle: subtitle,
+            status: status
+        )
+    }
+}
+
+/// Links a `model_council_run` tool call to its live model (same shape as
+/// `SubAgentLiveRegistry`), bounded with FIFO eviction. Observable so a detail
+/// sheet opened before approval picks up the model once the run registers it.
+@MainActor
+@Observable
+final class CouncilLiveRegistry {
+    static let shared = CouncilLiveRegistry()
+
+    private var models: [String: CouncilLiveModel] = [:]
+    @ObservationIgnored private var order: [String] = []
+    @ObservationIgnored private let capacity = 16
+
+    func register(toolCallId: String, _ model: CouncilLiveModel) {
+        guard !toolCallId.isEmpty else { return }
+        if models[toolCallId] == nil {
+            order.append(toolCallId)
+        }
+        models[toolCallId] = model
+        while order.count > capacity {
+            models.removeValue(forKey: order.removeFirst())
+        }
+    }
+
+    /// Some providers reuse short tool-call ids ("call_1"); when the finished
+    /// tool output names its task, a live model from another task is rejected.
+    func model(forToolCallId id: String, taskId: String?) -> CouncilLiveModel? {
+        guard let model = models[id] else { return nil }
+        guard let taskId, let liveTaskId = model.taskId else { return model }
+        return liveTaskId == taskId ? model : nil
+    }
+}
+
 /// Chat-tool entry point for the iOS Council Room. Formal runs use
 /// `IOSCouncilRoomRunner` so iOS can stream the host and seats as a real room
 /// without pretending to support cross-provider model mixing.
@@ -2790,7 +2880,8 @@ final class CouncilRunner {
         outputBudgetChars: Int? = nil,
         providerSetting: ProviderSetting,
         currentModel: Model,
-        baseParams: TextGenerationParams
+        baseParams: TextGenerationParams,
+        toolCallId: String? = nil
     ) async -> String {
         let currentModelId = currentModel.modelId
         var roomSettings = roomSettingsStore.settings.normalized(currentModelId: currentModelId)
@@ -2830,7 +2921,12 @@ final class CouncilRunner {
             dynamicSeatGeneration: seats.isEmpty ? roomSettingsStore.dynamicSeatGeneration : false
         )
         let roomRunner = IOSCouncilRoomRunner(streamer: roomStreamer, taskStore: taskStore)
-        let outcome = await roomRunner.run(request: request)
+        let live = CouncilLiveModel()
+        if let toolCallId {
+            CouncilLiveRegistry.shared.register(toolCallId: toolCallId, live)
+        }
+        let outcome = await roomRunner.run(request: request) { live.ingest($0) }
+        live.finish(completed: outcome.status == .completed)
         lastTask = taskStore.tasks.first { $0.id == outcome.taskId }
         let runSummary = outcome.status == .completed
             ? "模型议会已完成，席位：\(outcome.seatNames.joined(separator: ", "))。"

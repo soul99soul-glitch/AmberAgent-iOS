@@ -813,6 +813,139 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         ])
     }
 
+    func testCouncilApprovalFollowsGlobalAutoApproveSwitches() {
+        func requires(_ policy: IOSAgentPermissionPolicy?, global: Bool = false, highRisk: Bool = false) -> Bool {
+            ChatToolRuntime.councilRequiresApproval(
+                policy: policy,
+                globalAutoApprove: global,
+                highRiskAutoApprove: highRisk
+            )
+        }
+        XCTAssertTrue(requires(.askEveryTime))
+        XCTAssertTrue(requires(.allowOncePerRun))
+        XCTAssertFalse(requires(.askEveryTime, global: true), "开启自动批准后议会默认自动批准")
+        XCTAssertFalse(requires(.askEveryTime, highRisk: true), "开启高风险自动批准后议会默认自动批准")
+        XCTAssertFalse(requires(.allowOncePerRun, global: true, highRisk: true))
+        XCTAssertFalse(requires(.autoApprove))
+        XCTAssertFalse(requires(nil))
+    }
+
+    func testChatCouncilToolPublishesLiveTranscriptForToolCall() async {
+        let toolCallId = "council-live-\(UUID().uuidString)"
+        let result = await runChatCouncilTool(
+            outputs: [.success("最终议题"), .success("工程发言"), .success("风险发言"), .success("主持总结")],
+            toolCallId: toolCallId
+        )
+
+        guard let live = CouncilLiveRegistry.shared.model(forToolCallId: toolCallId, taskId: nil) else {
+            return XCTFail("tool-path council must register a live model for its tool call")
+        }
+        XCTAssertFalse(live.isRunning)
+        XCTAssertEqual(live.taskId, result["task_id"] as? String)
+        XCTAssertFalse(live.speakers.isEmpty)
+        let bodies = live.messages.map(\.body)
+        XCTAssertTrue(bodies.contains("工程发言"), "\(bodies)")
+        XCTAssertTrue(bodies.contains("风险发言"), "\(bodies)")
+        XCTAssertFalse(live.messages.contains { $0.status == .speaking })
+    }
+
+    func testChatCouncilLiveTranscriptClosesSpeakingMessageWhenSynthesisThrows() async {
+        let toolCallId = "council-live-fail-\(UUID().uuidString)"
+        let result = await runChatCouncilTool(
+            outputs: [.success("最终议题"), .success("工程发言"), .success("风险发言"), .failure(CouncilTestError.unexpectedCall)],
+            toolCallId: toolCallId
+        )
+
+        XCTAssertEqual(result["ok"] as? Bool, false)
+        let live = CouncilLiveRegistry.shared.model(forToolCallId: toolCallId, taskId: nil)
+        XCTAssertEqual(live?.isRunning, false)
+        XCTAssertEqual(
+            live?.messages.filter { $0.status == .speaking }.map(\.author) ?? ["<no live model>"],
+            [],
+            "a failed council must not leave a message spinning as speaking"
+        )
+    }
+
+    func testCouncilSheetShowsFailureReasonUnlessTranscriptAlreadyHasOne() {
+        func msg(_ kind: IOSCouncilRoomMessageKind, _ status: IOSCouncilRoomMessageStatus) -> IOSCouncilRoomMessageEvent {
+            IOSCouncilRoomMessageEvent(id: UUID(), kind: kind, speakerId: nil, author: "a", body: "b", subtitle: nil, status: status)
+        }
+        XCTAssertTrue(ChatToolDetailSheet.councilShowsFailureReason(liveMessages: nil))
+        XCTAssertTrue(
+            ChatToolDetailSheet.councilShowsFailureReason(liveMessages: [msg(.seat, .failed)]),
+            "interrupted/cancelled exits append no system message; the reason must still be shown"
+        )
+        XCTAssertFalse(ChatToolDetailSheet.councilShowsFailureReason(liveMessages: [msg(.seat, .completed), msg(.system, .failed)]))
+    }
+
+    func testCouncilLiveRegistryRejectsModelFromAnotherTask() {
+        let registry = CouncilLiveRegistry()
+        let model = CouncilLiveModel()
+        model.ingest(.taskStarted("task-new"))
+        registry.register(toolCallId: "call_1", model)
+
+        XCTAssertTrue(registry.model(forToolCallId: "call_1", taskId: nil) === model)
+        XCTAssertTrue(registry.model(forToolCallId: "call_1", taskId: "task-new") === model)
+        XCTAssertNil(
+            registry.model(forToolCallId: "call_1", taskId: "task-old"),
+            "a reused short tool-call id must not show another council's transcript"
+        )
+    }
+
+    func testCouncilLiveRegistryNotifiesObserversWhenModelRegisters() {
+        let registry = CouncilLiveRegistry()
+        let changed = expectation(description: "registry lookup observed a registration")
+        withObservationTracking {
+            _ = registry.model(forToolCallId: "call_pending", taskId: nil)
+        } onChange: {
+            changed.fulfill()
+        }
+
+        registry.register(toolCallId: "call_pending", CouncilLiveModel())
+
+        // A sheet opened before approval must pick up the live model once it registers.
+        wait(for: [changed], timeout: 0.1)
+    }
+
+    private func runChatCouncilTool(
+        outputs: [Result<String, Error>],
+        toolCallId: String
+    ) async -> [String: Any] {
+        let defaults = isolatedDefaults()
+        let roomSettingsStore = IOSCouncilRoomSettingsStore(
+            userDefaults: defaults,
+            storageKey: "tool-live-room-settings",
+            currentModelId: "gpt-main"
+        )
+        roomSettingsStore.settings = compactRoomSettings(defaultRounds: 1)
+        roomSettingsStore.dynamicSeatGeneration = false
+        let models = ["gpt-main", "gpt-host", "gpt-engineer", "gpt-risk"].map(makeCouncilModel)
+        let currentModel = models[0]
+        let runner = CouncilRunner(
+            taskStore: IOSAdvancedTaskStore(userDefaults: defaults, storageKey: "tasks"),
+            roomSettingsStore: roomSettingsStore,
+            roomStreamer: ScriptedCouncilStreamer(outputs)
+        )
+        let text = await runner.run(
+            objective: "验证过程可见",
+            providerSetting: makeCouncilProvider(models: models),
+            currentModel: currentModel,
+            baseParams: TextGenerationParams(
+                model: currentModel,
+                temperature: nil,
+                topP: nil,
+                maxTokens: nil,
+                tools: [],
+                reasoningLevel: .off,
+                customHeaders: [],
+                customBody: []
+            ),
+            toolCallId: toolCallId
+        )
+        let data = Data(text.utf8)
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
     func testCouncilConnectivityTesterShowsUnsupportedConfiguredModelFallback() async throws {
         let models = ["gpt-main", "gpt-host", "gpt-engineer"].map(makeCouncilModel)
         let provider = makeCouncilProvider(models: models)

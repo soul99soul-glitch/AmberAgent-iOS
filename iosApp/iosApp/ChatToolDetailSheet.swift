@@ -60,6 +60,22 @@ struct ChatToolDetailSheet: View {
             || tool.toolName == "followup_task"
     }
 
+    private var isCouncil: Bool { tool.toolName == "model_council_run" }
+
+    private var councilResult: [String: Any]? {
+        isCouncil ? ChatToolStepModel.firstJSONObject(in: tool.output) : nil
+    }
+
+    /// Resolved inside `body` so the observable registry re-renders a sheet that
+    /// was opened before approval once the run registers its live transcript.
+    private var councilLive: CouncilLiveModel? {
+        guard isCouncil else { return nil }
+        return CouncilLiveRegistry.shared.model(
+            forToolCallId: tool.toolCallId,
+            taskId: councilResult?["task_id"] as? String
+        )
+    }
+
     private var isSubAgentOrchestration: Bool {
         tool.toolName == "spawn_agent" || tool.toolName == "followup_task"
     }
@@ -100,6 +116,7 @@ struct ChatToolDetailSheet: View {
 
     private var isRunning: Bool {
         if let live { return live.isRunning }
+        if let councilLive { return councilLive.isRunning }
         return !executed
     }
 
@@ -130,6 +147,8 @@ struct ChatToolDetailSheet: View {
                     }
                     if isSubAgent {
                         subAgentSections
+                    } else if isCouncil {
+                        councilSections
                     } else {
                         toolSections
                     }
@@ -197,6 +216,116 @@ struct ChatToolDetailSheet: View {
                 }
             }
         }
+    }
+
+    // MARK: - Council
+
+    @ViewBuilder private var councilSections: some View {
+        let result = councilResult
+        let live = councilLive
+        let finalAnswer = (result?["final_answer"] as? String)?.trimmedNilIfBlank
+
+        if let objective = (ChatToolCallParsing.jsonObject(tool.input)?["objective"] as? String)?.trimmedNilIfBlank {
+            section("议题") {
+                LazyToolTextBlock(text: objective, style: .markdown)
+            }
+        }
+
+        if let live, isRunning {
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                statusLine(live.state ?? "准备议会")
+            }
+        }
+
+        if let finalAnswer {
+            section("结论") {
+                AmberMarkdownView(markdown: finalAnswer, style: .compact)
+                    .font(.callout)
+                    .foregroundStyle(AmberTheme.foreground)
+                    .textSelection(.enabled)
+                    .padding(12)
+                    .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            }
+        } else if Self.councilShowsFailureReason(liveMessages: live?.messages),
+                  let reason = outputFailureReason ?? (result?["reason"] as? String) {
+            // 讨论过程里已有失败系统消息时不再重复。
+            section("结论") {
+                Text(reason)
+                    .font(.footnote)
+                    .foregroundStyle(AmberTheme.accentRed)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+
+        if let live {
+            if !live.speakers.isEmpty {
+                section("席位") {
+                    CouncilRosterStrip(
+                        speakers: live.speakers,
+                        activeSpeakerId: live.activeSpeakerId,
+                        failedSpeakerIds: live.failedSpeakerIds
+                    )
+                }
+            }
+            section("讨论过程") {
+                let messages = councilTranscript(live.messages, finalAnswer: finalAnswer)
+                if messages.isEmpty {
+                    statusLine(isRunning ? "等待发言…" : "(无发言记录)")
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(messages) { message in
+                            CouncilTranscriptRow(message: message)
+                                .equatable()
+                        }
+                    }
+                }
+            }
+        } else if let log = councilStoredLog(taskId: result?["task_id"] as? String) {
+            // 本次 App 会话之外的运行：没有实时模型，回退到任务日志（仅保留末尾约 24K 字）。
+            section("讨论记录") {
+                LazyToolTextBlock(text: log, style: .markdown)
+            }
+        } else if isRunning {
+            // 运行一开始就会登记实时模型；没有实时模型又没有输出，说明还在等审批或即将启动。
+            statusLine("等待开始…")
+        }
+
+        DisclosureGroup("调用详情") { toolSections }
+            .font(.subheadline)
+    }
+
+    /// The host synthesis is already shown under 结论; drop its duplicate tail
+    /// together with the "主持总结" divider that introduces it.
+    private func councilTranscript(
+        _ messages: [IOSCouncilRoomMessageEvent],
+        finalAnswer: String?
+    ) -> [IOSCouncilRoomMessageEvent] {
+        guard let finalAnswer,
+              let lastIndex = messages.lastIndex(where: { $0.kind != .divider }),
+              messages[lastIndex].kind == .host,
+              messages[lastIndex].body.trimmingCharacters(in: .whitespacesAndNewlines) == finalAnswer else {
+            return messages
+        }
+        var start = lastIndex
+        if start > 0, messages[start - 1].kind == .divider { start -= 1 }
+        return Array(messages[..<start]) + messages[(lastIndex + 1)...]
+    }
+
+    /// The runner's interrupted/cancelled and empty-objective exits return without
+    /// appending a system failure message, so the transcript alone may not say why.
+    static func councilShowsFailureReason(liveMessages: [IOSCouncilRoomMessageEvent]?) -> Bool {
+        guard let liveMessages else { return true }
+        return !liveMessages.contains { $0.kind == .system && $0.status == .failed }
+    }
+
+    private func councilStoredLog(taskId: String?) -> String? {
+        guard let taskId,
+              let log = IOSAdvancedTaskStore.shared.tasks.first(where: { $0.id == taskId })?.logTail
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !log.isEmpty else { return nil }
+        return log
     }
 
     // MARK: - Subagent
@@ -390,6 +519,7 @@ struct ChatToolDetailSheet: View {
             return ChatToolStepModel.friendlyToolTitle(tool.toolName, executed: executed)
         }
         if isSubAgent { return "子智能体" }
+        if isCouncil { return "模型议会" }
         if tool.toolName == "terminal_execute" { return "Remote SSH 执行" }
         if tool.toolName == IOSAmberShellToolCatalog.executeToolName {
             return IOSAppLocalization.string("AmberShell 执行", defaultValue: "AmberShell 执行")
@@ -480,6 +610,152 @@ struct ChatToolDetailSheet: View {
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         )) ?? AttributedString(text)
+    }
+}
+
+private extension String {
+    var trimmedNilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+/// One council transcript entry. Equatable so streaming updates re-render only
+/// the message that changed. Speaking and finished bodies share `.callout` so
+/// completion does not jump; finished bodies render Markdown.
+private struct CouncilTranscriptRow: View, Equatable {
+    let message: IOSCouncilRoomMessageEvent
+
+    var body: some View {
+        if message.kind == .divider {
+            Text(message.body)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(AmberTheme.muted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 4)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                header
+                bodyText
+                    .font(.callout)
+                    .foregroundStyle(message.status == .failed ? AmberTheme.accentRed : AmberTheme.foreground)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(12)
+            .background(AmberTheme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(AmberTheme.borderSoft, lineWidth: 1)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(message.author)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(AmberTheme.foreground)
+                .lineLimit(1)
+                .layoutPriority(1)
+            if let subtitle = message.subtitle?.trimmedNilIfBlank {
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(AmberTheme.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+        }
+        // 状态图标（转圈/失败）放在 overlay 里，不参与行高，各状态下头部高度一致。
+        .padding(.trailing, message.status == .completed ? 0 : 22)
+        .overlay(alignment: .trailing) {
+            if message.status == .speaking {
+                ProgressView()
+                    .controlSize(.mini)
+                    .accessibilityHidden(true)
+            } else if message.status == .failed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(AmberTheme.accentRed)
+                    .accessibilityHidden(true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(
+            message.status == .speaking
+                ? IOSAppLocalization.string("发言中", defaultValue: "发言中")
+                : (message.status == .failed ? IOSAppLocalization.string("失败", defaultValue: "失败") : "")
+        )
+    }
+
+    @ViewBuilder private var bodyText: some View {
+        if message.status == .completed {
+            AmberMarkdownView(markdown: message.body, style: .compact)
+        } else {
+            // 流式中用纯文本，避免每拍重排 Markdown。
+            Text(message.body)
+        }
+    }
+}
+
+/// Council seats as a single scrollable row of chips: host marked with a
+/// crown, the active speaker tinted, failed seats in red.
+private struct CouncilRosterStrip: View {
+    let speakers: [IOSCouncilRoomSpeaker]
+    let activeSpeakerId: String?
+    let failedSpeakerIds: Set<String>
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(speakers) { speaker in
+                    chip(speaker)
+                }
+            }
+        }
+        // 滚到 sheet 内边距之外再裁切，避免标签在内容边缘被硬切。
+        .scrollClipDisabled()
+    }
+
+    private func chip(_ speaker: IOSCouncilRoomSpeaker) -> some View {
+        let failed = failedSpeakerIds.contains(speaker.id)
+        let active = !failed && speaker.id == activeSpeakerId
+        let tint = failed ? AmberTheme.accentRed : (active ? AmberTheme.accent : AmberTheme.muted)
+        return HStack(spacing: 4) {
+            if speaker.isHost {
+                Image(systemName: "crown.fill")
+                    .font(.system(size: 10, weight: .semibold))
+            } else if failed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+            } else if active {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            Text(speaker.name)
+                .font(.footnote.weight(speaker.isHost || active ? .semibold : .regular))
+                .lineLimit(1)
+        }
+        .foregroundStyle(failed || active ? tint : AmberTheme.foreground)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(tint.opacity(failed || active ? 0.12 : 0.08), in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityLabel(speaker, failed: failed, active: active))
+    }
+
+    private func accessibilityLabel(_ speaker: IOSCouncilRoomSpeaker, failed: Bool, active: Bool) -> String {
+        var parts = [speaker.name]
+        if speaker.isHost { parts.append(IOSAppLocalization.string("主持", defaultValue: "主持")) }
+        if failed {
+            parts.append(IOSAppLocalization.string("失败", defaultValue: "失败"))
+        } else if active {
+            parts.append(IOSAppLocalization.string("发言中", defaultValue: "发言中"))
+        }
+        return parts.joined(separator: "，")
     }
 }
 

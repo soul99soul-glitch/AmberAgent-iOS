@@ -6461,7 +6461,8 @@ final class ChatToolRuntime {
                 maxSeats: maxSeats,
                 providerSetting: providerSetting,
                 currentModel: params.model,
-                baseParams: params
+                baseParams: params,
+                toolCallId: toolCall.toolCallId
             )
         case "mcp_call":
             guard let args = ChatToolCallParsing.jsonObject(toolCall.input),
@@ -7223,7 +7224,20 @@ final class ChatToolRuntime {
         } else {
             policy = localToolExecutor?.permissionPolicy(capabilityId: capabilityId)
         }
-        guard let policy else {
+        return Self.councilRequiresApproval(
+            policy: policy,
+            globalAutoApprove: effectiveGlobalAutoApproveEnabled,
+            highRiskAutoApprove: effectiveHighRiskAutoApproveEnabled
+        )
+    }
+
+    /// 议会是"询问"类能力：任一全局自动批准开关开启时直接执行，与 Skill/MCP 配置写入同口径。
+    static func councilRequiresApproval(
+        policy: IOSAgentPermissionPolicy?,
+        globalAutoApprove: Bool,
+        highRiskAutoApprove: Bool
+    ) -> Bool {
+        guard let policy, !globalAutoApprove, !highRiskAutoApprove else {
             return false
         }
         return policy == .askEveryTime || policy == .allowOncePerRun
