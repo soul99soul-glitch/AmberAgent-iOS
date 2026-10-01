@@ -1504,11 +1504,13 @@ struct IOSDeepReadTaskDetailView: View {
         // Resolve the app theme's canvas palette for the current appearance, so the reader
         // follows the chosen background (paper or immersive) — same colors as the native
         // masthead/sources around it. Immersive canvases share one palette across light/dark.
-        let paper = AmberThemeRuntime.shared.paper
-        // 沉浸色画布没有真正的浅色版（深底浅字），导出 PDF 时回退到纸张浅色，保证打印可读。
-        let palette = dark
-            ? paper.darkPalette
-            : (forPrint && paper.isImmersive ? AmberTheme.paperLight : paper.lightPalette)
+        // 详情页与原生 AmberTheme 同源（含设计主题的颜色覆盖）；正文保持纯色底，不透出纹理以保可读。
+        // PDF 仍用纸张调色板：沉浸色画布没有真正的浅色版（深底浅字），回退到纸张浅色，保证打印可读。
+        let runtime = AmberThemeRuntime.shared
+        let paper = runtime.paper
+        let palette = forPrint
+            ? (paper.isImmersive ? AmberTheme.paperLight : paper.lightPalette)
+            : AmberTheme.resolvedCanvasPalette(paper: paper, design: runtime.design, dark: dark)
         func hex(_ value: UInt32) -> String { String(format: "#%06X", value) }
         return IOSDeepReadEditorialRenderer.renderHTML(
             IOSDeepReadEditorialRenderer.Input(

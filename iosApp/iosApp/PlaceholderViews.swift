@@ -126,11 +126,20 @@ enum AmberTheme {
     ) -> Color {
         let paper = AmberThemeRuntime.shared.paper
         let design = AmberThemeRuntime.shared.design
-        let lightHex = (design?.light?.resolving(paper.lightPalette) ?? paper.lightPalette)[keyPath: lightKey]
-        let darkHex = (design?.dark?.resolving(paper.darkPalette) ?? paper.darkPalette)[keyPath: darkKey]
+        let lightHex = resolvedCanvasPalette(paper: paper, design: design, dark: false)[keyPath: lightKey]
+        let darkHex = resolvedCanvasPalette(paper: paper, design: design, dark: true)[keyPath: darkKey]
         return Color(uiColor: UIColor { trait in
             UIColor(hex: trait.userInterfaceStyle == .dark ? darkHex : lightHex, alpha: alpha)
         })
+    }
+
+    /// Canvas palette for one appearance: the paper palette with the design theme's color
+    /// overrides applied. Single source for native tokens and web surfaces (deep-read reader).
+    static func resolvedCanvasPalette(
+        paper: AmberThemeRuntime.Paper, design: AmberThemeDesign?, dark: Bool
+    ) -> AmberPalette {
+        let base = dark ? paper.darkPalette : paper.lightPalette
+        return (dark ? design?.dark : design?.light)?.resolving(base) ?? base
     }
 
     static var background: Color { base(\.background) }

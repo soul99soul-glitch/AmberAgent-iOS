@@ -155,4 +155,22 @@ final class IOSDeepReadStructuredRendererTests: XCTestCase {
         )
         XCTAssertTrue(output.analysis.quotes.isEmpty)
     }
+
+    // 正文配色必须与原生 AmberTheme 同源：设计主题的颜色覆盖要生效。
+    func testResolvedCanvasPaletteAppliesDesignOverrides() {
+        let design = AmberThemeDesign(
+            light: .init(background: "#EEF2FA", surface: "#FFFFFF", foreground: "#111111", mutedForeground: "#666666", border: "#CCCCCC"),
+            dark: .init(background: "#101418", surface: "#1A1F24", foreground: "#FFFFFF", mutedForeground: "#AAAAAA", border: "#444444"),
+            gradient: nil,
+            patterns: []
+        )
+        let light = AmberTheme.resolvedCanvasPalette(paper: .paper, design: design, dark: false)
+        XCTAssertEqual(light.background, 0xEEF2FA)
+        XCTAssertEqual(light.foreground, 0x111111)
+        let dark = AmberTheme.resolvedCanvasPalette(paper: .paper, design: design, dark: true)
+        XCTAssertEqual(dark.background, 0x101418)
+
+        let plain = AmberTheme.resolvedCanvasPalette(paper: .paper, design: nil, dark: false)
+        XCTAssertEqual(plain.background, AmberTheme.paperLight.background)
+    }
 }
