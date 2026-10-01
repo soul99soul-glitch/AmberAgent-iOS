@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+@preconcurrency import Shared
 
 struct ChatArtifactShelfPanel: View {
     let artifacts: ConversationArtifactIndex
@@ -13,9 +14,12 @@ struct ChatArtifactShelfPanel: View {
     var onUnpinSnippet: (String) -> Void = { _ in }
     var onAdoptVersion: (String, String) -> Void = { _, _ in }
     var onContinue: (ChatArtifactContinuation) async -> Bool = { _ in false }
+    var generativeUiSetting: GenerativeUiSetting? = nil
+    var onOpenMiniApp: (String) -> Void = { _ in }
 
     @State private var selectedImage: ConversationArtifactIndex.Image?
     @State private var selectedDetail: ChatArtifactDetail?
+    @State private var openedWidget: IOSGenerativeWidgetExpandedTarget?
     @State private var canScrollDown = false
     @State private var headerHeight: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
@@ -81,6 +85,9 @@ struct ChatArtifactShelfPanel: View {
         .sheet(item: $selectedDetail) { detail in
             ChatArtifactDetailSheet(detail: detail)
         }
+        // 与聊天卡片内的打开按钮一致：full_html 自己处理拖拽，必须全屏；其余用弹层。
+        .sheet(item: widgetPresentation(fullScreen: false)) { $0.view }
+        .fullScreenCover(item: widgetPresentation(fullScreen: true)) { $0.view }
         .alert("操作未完成", isPresented: Binding(
             get: { failureMessage != nil }, set: { if !$0 { failureMessage = nil } }
         )) {
@@ -134,6 +141,9 @@ struct ChatArtifactShelfPanel: View {
             }
             if !artifacts.webPages.isEmpty {
                 webPagesSection
+            }
+            if !artifacts.htmlPages.isEmpty {
+                htmlPagesSection
             }
             if !snippets.isEmpty {
                 snippetsSection
@@ -194,7 +204,7 @@ struct ChatArtifactShelfPanel: View {
             Text("本对话还没有产物")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AmberTheme.foreground)
-            Text("图片、文件和网页会集中收集在这里；长按消息可收进产物架。")
+            Text("图片、文件、网页和 HTML 都收在这里；长按消息可收进产物架。")
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.muted)
                 .multilineTextAlignment(.center)
@@ -266,6 +276,49 @@ struct ChatArtifactShelfPanel: View {
         }
     }
 
+    private var htmlPagesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionTitle("HTML", count: artifacts.htmlPages.count)
+            ForEach(artifacts.htmlPages) { page in
+                ChatArtifactHTMLPageRow(
+                    page: page,
+                    isSelecting: isSelecting,
+                    isSelected: selectedArtifactIDs.contains(ChatArtifactActions.selectionID(for: page)),
+                    onToggleSelection: { toggleSelection(ChatArtifactActions.selectionID(for: page)) },
+                    onContinue: { continueFrom(.htmlPage(page)) },
+                    onOpen: { open(page) },
+                    onLocate: { onLocate(page.source) }
+                )
+            }
+        }
+    }
+
+    private func widgetPresentation(fullScreen: Bool) -> Binding<IOSGenerativeWidgetExpandedTarget?> {
+        Binding(
+            get: { openedWidget?.prefersFullScreen == fullScreen ? openedWidget : nil },
+            set: { openedWidget = $0 }
+        )
+    }
+
+    private func open(_ page: ConversationArtifactIndex.HTMLPage) {
+        if isSelecting {
+            toggleSelection(ChatArtifactActions.selectionID(for: page))
+            return
+        }
+        switch page.content {
+        case .widget(let widget):
+            // 卡片自身也打不开的（净化未通过、缺 spec）退回定位到原消息，不弹空白页。
+            if let target = IOSGenerativeWidgetExpandedTarget(widget: widget, settings: IOSGenerativeWidgetSettings(generativeUiSetting)) {
+                openedWidget = target
+            } else {
+                onLocate(page.source)
+            }
+        case .miniApp(let id):
+            onClose()
+            onOpenMiniApp(id)
+        }
+    }
+
     private var snippetsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle("片段", count: snippets.count)
@@ -297,6 +350,7 @@ struct ChatArtifactShelfPanel: View {
             artifacts.images.map(ChatArtifactActions.selectionID(for:))
                 + artifacts.files.map(ChatArtifactActions.selectionID(for:))
                 + artifacts.webPages.map(ChatArtifactActions.selectionID(for:))
+                + artifacts.htmlPages.map(ChatArtifactActions.selectionID(for:))
                 + snippets.map(ChatArtifactActions.selectionID(for:))
         )
     }
@@ -323,7 +377,7 @@ struct ChatArtifactShelfPanel: View {
             parts.append("\(skipped) 项无法读取，已跳过")
         }
         if let reportOnly = exportState.export?.reportOnlyCount, reportOnly > 0 {
-            parts.append("\(reportOnly) 个文件无正文，仅写入报告")
+            parts.append("\(reportOnly) 项无正文，仅写入报告")
         }
         return parts.joined(separator: " · ")
     }
@@ -792,7 +846,7 @@ private struct ChatArtifactFileVersionCard: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("定位到第 \(currentVersion.source.turn) 轮")
-                    .accessibilityIdentifier("chat-artifact-locate.\(currentVersion.source.messageID).\(currentVersion.source.toolCallID)")
+                    .accessibilityIdentifier("chat-artifact-locate.\(currentVersion.source.messageID).\(currentVersion.source.toolCallID ?? "")")
                 }
             }
         }
@@ -980,7 +1034,83 @@ private struct ChatArtifactWebPageRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("定位到第 \(page.source.turn) 轮")
-            .accessibilityIdentifier("chat-artifact-locate.\(page.source.messageID).\(page.source.toolCallID)")
+            .accessibilityIdentifier("chat-artifact-locate.\(page.source.messageID).\(page.source.toolCallID ?? "")")
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(AmberTheme.surface2, in: RoundedRectangle(cornerRadius: AmberTheme.radiusLarge, style: .continuous))
+        .chatArtifactSelectionTap(isSelecting, perform: onToggleSelection)
+        .contextMenu {
+            Button(action: onContinue) {
+                Label("基于它继续", systemImage: "arrowshape.turn.up.left")
+            }
+        }
+    }
+}
+
+private struct ChatArtifactHTMLPageRow: View {
+    let page: ConversationArtifactIndex.HTMLPage
+    let isSelecting: Bool
+    let isSelected: Bool
+    let onToggleSelection: () -> Void
+    let onContinue: () -> Void
+    let onOpen: () -> Void
+    let onLocate: () -> Void
+
+    /// 无障碍标识不带冒号，便于 UI 测试按前缀查询。
+    private var identifierSuffix: String { page.id.replacingOccurrences(of: ":", with: "-") }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if isSelecting {
+                Button(action: onToggleSelection) {
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(isSelected ? AmberTheme.accent : AmberTheme.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isSelected ? "取消选择 HTML" : "选择 HTML")
+            }
+            Button(action: onOpen) {
+                HStack(spacing: 10) {
+                    Image(systemName: page.systemImage)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(AmberTheme.accent)
+                        .frame(width: 30, height: 30)
+                        .background(AmberTheme.accent.opacity(0.08), in: Circle())
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(page.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(AmberTheme.foreground)
+                            .lineLimit(1)
+                        Text(page.kindLabel)
+                            .font(.caption2)
+                            .foregroundStyle(AmberTheme.muted)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(page.title)，\(page.kindLabel)")
+            .accessibilityHint(isSelecting ? "切换选择" : "打开")
+            .accessibilityIdentifier("chat-artifact-html-open.\(identifierSuffix)")
+            Button(action: onLocate) {
+                // 热区补足 44pt，负边距抵消，不改变行高。
+                Text("第 \(page.source.turn) 轮 ↗")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(AmberTheme.accent)
+                    .fixedSize()
+                    .frame(minWidth: 44, minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, -7)
+            .accessibilityLabel("定位到第 \(page.source.turn) 轮")
+            .accessibilityIdentifier("chat-artifact-locate.\(page.source.messageID).\(identifierSuffix)")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)

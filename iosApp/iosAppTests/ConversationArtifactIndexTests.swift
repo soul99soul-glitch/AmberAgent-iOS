@@ -252,6 +252,128 @@ final class ConversationArtifactIndexTests: XCTestCase {
         ))
     }
 
+    func testIndexesGenerativeHtmlAndMiniAppsFromAssistantMessages() throws {
+        let deckHTML = #"<!DOCTYPE html><html><body><canvas id="saturn"></canvas></body></html>"#
+        let widgetText = """
+        来了——土星 · 环之帝国。
+        ```show-widget
+        {"title":"土星 · 环之帝国","renderer":"full_html","spec":{"html":\(jsonLiteral(deckHTML))}}
+        ```
+        环的视觉是怎么堆出来的：
+        ```show-widget
+        {"title":"环系结构","widget_code":"<svg viewBox=\\"0 0 680 240\\"><text x=\\"24\\" y=\\"48\\">C 环、B 环、卡西尼缝、A 环、恩克缝与 F 环</text></svg>"}
+        ```
+        """
+        let user = userMessage(text: "做一个 three.js 土星")
+        let widgets = message(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: widgetText, metadata: nil)])
+        let miniApp = message(role: MessageRole.assistant, parts: [UIMessagePart.MiniApp(
+            appId: "app-avg", title: "雨夜侦探 AVG", description: "文字冒险",
+            iconEmoji: "🕵️", category: "game", permissions: [], htmlHash: "h1", version: 2, metadata: nil
+        )])
+        // 用户自己粘贴的 HTML 不是产物。
+        let pasted = userMessage(text: widgetText)
+
+        let index = ConversationArtifactIndex.make(from: [user, widgets, pasted, miniApp])
+
+        XCTAssertEqual(index.htmlPages.map(\.title), ["土星 · 环之帝国", "环系结构", "雨夜侦探 AVG"])
+        XCTAssertEqual(index.htmlPages.map(\.source.turn), [1, 1, 2])
+        XCTAssertEqual(Set(index.htmlPages.map(\.id)).count, 3)
+        let deck = try XCTUnwrap(index.htmlPages.first?.widget)
+        XCTAssertEqual(deck.renderer, IOSGuizangHtmlDeckValidator.renderer)
+        XCTAssertEqual(index.htmlPages[0].exportHTML, deckHTML)
+        XCTAssertEqual(index.htmlPages[2].miniAppID, "app-avg")
+        XCTAssertNil(index.htmlPages[2].exportHTML)
+        XCTAssertEqual(index.count, 3)
+
+        var disabledSettings = IOSGenerativeWidgetSettings()
+        disabledSettings.enabled = false
+        let disabled = ConversationArtifactIndex.make(from: [user, widgets, miniApp], widgetSettings: disabledSettings)
+        XCTAssertEqual(disabled.htmlPages.map(\.title), ["雨夜侦探 AVG"])
+
+        // 修改后的小程序沿用同一 appId，只保留最新卡片。
+        let revised = message(role: MessageRole.assistant, parts: [UIMessagePart.MiniApp(
+            appId: "app-avg", title: "雨夜侦探 AVG（加长版）", description: "",
+            iconEmoji: nil, category: "game", permissions: [], htmlHash: "h2", version: 3, metadata: nil
+        )])
+        let revisedIndex = ConversationArtifactIndex.make(from: [user, miniApp, userMessage(text: "再长一点"), revised])
+        XCTAssertEqual(revisedIndex.htmlPages.map(\.title), ["雨夜侦探 AVG（加长版）"])
+        XCTAssertEqual(revisedIndex.htmlPages.first?.source.turn, 2)
+    }
+
+    func testSkipsWidgetsTheChatCardCannotOpenAndExportsStandaloneHTML() throws {
+        // 超过 maxWidgetCodeChars 的卡片在气泡里退化为代码块，不算产物。
+        let oversized = String(repeating: "环", count: IOSGenerativeWidgetSettings().maxWidgetCodeChars + 10)
+        let text = """
+        ```show-widget
+        {"title":"太大","widget_code":"<div>\(oversized)</div>"}
+        ```
+        ```show-widget
+        {"title":"小卡片","widget_code":"<div><h3>土星环</h3><p>C 环、B 环、卡西尼缝、A 环与 F 环的结构示意</p></div>"}
+        ```
+        """
+        let assistant = message(role: MessageRole.assistant, parts: [UIMessagePart.Text(text: text, metadata: nil)])
+
+        let index = ConversationArtifactIndex.make(from: [userMessage(), assistant])
+
+        XCTAssertEqual(index.htmlPages.map(\.title), ["小卡片"])
+        let html = try XCTUnwrap(index.htmlPages.first?.exportHTML)
+        XCTAssertTrue(html.hasPrefix("<!DOCTYPE html>"))
+        XCTAssertTrue(html.contains(#"<meta charset="utf-8">"#))
+        XCTAssertTrue(html.contains("<h3>土星环</h3>"))
+    }
+
+    func testWidgetCacheReusesParsedMessagesAndDropsStaleEntries() {
+        let cache = ConversationArtifactWidgetCache()
+        let settings = IOSGenerativeWidgetSettings()
+        var computeCount = 0
+        let widget = IOSGenerativeWidget(id: "w", title: "T", widgetCode: "<div>x</div>", complete: true)
+        func lookup(_ text: String) -> [IOSGenerativeWidget] {
+            cache.widgets(key: "m:0", text: text, settings: settings) {
+                computeCount += 1
+                return [widget]
+            }
+        }
+
+        _ = lookup("a"); cache.prune()
+        _ = lookup("a"); cache.prune()
+        XCTAssertEqual(computeCount, 1, "正文未变不重解析")
+        _ = lookup("ab"); cache.prune()
+        XCTAssertEqual(computeCount, 2, "正文变化重解析")
+        cache.prune()
+        _ = lookup("ab")
+        XCTAssertEqual(computeCount, 3, "未访问的条目在 prune 时被淘汰")
+    }
+
+    func testExportInlinesBundledFullHtmlRuntime() {
+        let html = #"<!DOCTYPE html><html><body><script src="https://amberagent.local/full-html/three.min.js"></script><script>new THREE.Scene()</script></body></html>"#
+
+        let exported = ChatArtifactShelfExporter.inliningLocalRuntimes(in: html)
+
+        XCTAssertFalse(exported.contains("amberagent.local"))
+        XCTAssertGreaterThan(exported.utf8.count, 100_000, "three.min.js 已内联")
+        XCTAssertTrue(exported.hasSuffix("<script>new THREE.Scene()</script></body></html>"))
+    }
+
+    func testMessageOnlySourceAnchorsWhileMessageRemainsInBranch() throws {
+        let assistant = message(role: MessageRole.assistant, parts: [UIMessagePart.MiniApp(
+            appId: "app", title: "计时器", description: "", iconEmoji: nil, category: nil,
+            permissions: [], htmlHash: nil, version: 1, metadata: nil
+        )])
+        let source = try XCTUnwrap(ConversationArtifactIndex.make(from: [assistant]).htmlPages.first?.source)
+        XCTAssertNil(source.toolCallID)
+
+        let anchor = ConversationArtifactIndex.anchor(for: source, conversationID: "c", messages: [assistant])
+        XCTAssertEqual(anchor?.messageID, source.messageID)
+        XCTAssertNil(anchor?.toolCallID)
+        XCTAssertNil(ConversationArtifactIndex.anchor(for: source, conversationID: "c", messages: []))
+    }
+
+    private func jsonLiteral(_ value: String) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: [value])
+        let array = String(decoding: data, as: UTF8.self)
+        return String(array.dropFirst().dropLast())
+    }
+
     private func userMessage(
         text: String = "hello",
         parts: [UIMessagePart]? = nil

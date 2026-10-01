@@ -372,6 +372,32 @@ private enum IOSGenerativeWidgetSheetTarget: Identifiable {
     }
 }
 
+/// 卡片外入口（产物架）打开生成式 UI：与卡片内「打开」按钮同一判定和视图；full_html 需全屏呈现。
+struct IOSGenerativeWidgetExpandedTarget: Identifiable {
+    let widget: IOSGenerativeWidget
+    let html: String
+    let settings: IOSGenerativeWidgetSettings
+    var id: String { widget.id }
+
+    var prefersFullScreen: Bool { widget.renderer == IOSGuizangHtmlDeckValidator.renderer }
+
+    /// 净化未就绪或富渲染缺 spec 时返回 nil，避免打开空白页。
+    init?(widget: IOSGenerativeWidget, settings: IOSGenerativeWidgetSettings) {
+        guard settings.enabled else { return nil }
+        let sanitized = IOSGenerativeWidgetSanitizer.sanitize(widget.widgetCode, setting: settings)
+        let needsSpec = ["vchart", "slides", IOSGuizangHtmlDeckValidator.renderer].contains(widget.renderer)
+        guard widget.complete, sanitized.status == .ready, !needsSpec || widget.specJson != nil else { return nil }
+        self.widget = widget
+        self.html = sanitized.html
+        self.settings = settings
+    }
+
+    @MainActor
+    var view: some View {
+        IOSGenerativeWidgetExpandedSheet(widget: widget, html: html, settings: settings)
+    }
+}
+
 @MainActor
 private struct IOSGenerativeWidgetExpandedSheet: View {
     let widget: IOSGenerativeWidget

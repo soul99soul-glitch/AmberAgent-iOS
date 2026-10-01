@@ -4,7 +4,7 @@ import Foundation
 struct ChatArtifactShelfExport: Equatable {
     let shareURLs: [URL]
     let reportURL: URL
-    /// 未保留正文的文件版本只写进报告，不生成分享文件。
+    /// 未保留正文的文件版本与小程序只写进报告，不生成分享文件。
     let reportOnlyCount: Int
     /// 读取或写入失败而跳过的项（例如本地图片已被删除）。
     let skippedCount: Int
@@ -146,6 +146,14 @@ enum ChatArtifactShelfExporter {
             }
         }
 
+        for page in index.htmlPages where selectedIDs.contains(ChatArtifactActions.selectionID(for: page)) {
+            guard let html = page.exportHTML else {
+                reportOnlyCount += 1
+                continue
+            }
+            writeFile(Data(inliningLocalRuntimes(in: html).utf8), name: "\(page.title).html")
+        }
+
         for snippet in snippets where selectedIDs.contains(ChatArtifactActions.selectionID(for: snippet)) {
             writeFile(Data(snippet.text.utf8), name: "片段-第\(snippet.turn)轮.md")
         }
@@ -178,6 +186,25 @@ enum ChatArtifactShelfExporter {
             counter += 1
         }
         return candidate
+    }
+
+    /// full_html 用 `<script src>` 引用的 three/motion/lucide 只有 App 内运行时能解析；
+    /// 导出时换成内联的打包脚本，App 外打开也能运行。读不到的保持原样。
+    nonisolated static func inliningLocalRuntimes(in html: String) -> String {
+        let pattern = #"<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>\s*</script\s*>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return html }
+        var result = html
+        let matches = regex.matches(in: html, range: NSRange(html.startIndex..., in: html))
+        for match in matches.reversed() {
+            guard let tagRange = Range(match.range, in: result),
+                  let srcRange = Range(match.range(at: 1), in: result),
+                  let asset = IOSGuizangHtmlDeckValidator.runtimeAssetForURL(String(result[srcRange])),
+                  let url = Bundle.main.url(forResource: asset.resourceName, withExtension: "js", subdirectory: "generative-libs/guizang")
+                    ?? Bundle.main.url(forResource: asset.resourceName, withExtension: "js"),
+                  let script = try? String(contentsOf: url, encoding: .utf8) else { continue }
+            result.replaceSubrange(tagRange, with: "<script>\n\(script)\n</script>")
+        }
+        return result
     }
 
     private nonisolated static func imageExtension(for data: Data) -> String {

@@ -5,6 +5,7 @@ enum ChatArtifactContinuationSource {
     case file(path: String)
     case snippet(IOSPinnedSnippet)
     case webPage(ConversationArtifactIndex.WebPage)
+    case htmlPage(ConversationArtifactIndex.HTMLPage)
 }
 
 enum ChatArtifactContinuation: Equatable {
@@ -24,6 +25,8 @@ enum ChatArtifactActions {
             .text(quote(snippet.text))
         case .webPage(let page):
             .text(link(page))
+        case .htmlPage(let page):
+            .text("基于第 \(page.source.turn) 轮的\(page.kindLabel)「\(inlineText(page.title))」继续：")
         }
     }
 
@@ -37,6 +40,10 @@ enum ChatArtifactActions {
 
     static func selectionID(for page: ConversationArtifactIndex.WebPage) -> String {
         "web:\(page.id)"
+    }
+
+    static func selectionID(for page: ConversationArtifactIndex.HTMLPage) -> String {
+        "html:\(page.id)"
     }
 
     static func selectionID(for snippet: IOSPinnedSnippet) -> String {
@@ -99,6 +106,13 @@ enum ChatArtifactActions {
         if !pages.isEmpty {
             sections.append("## 网页\n\n" + pages.map { page in
                 "- \(link(page))（第 \(page.source.turn) 轮）"
+            }.joined(separator: "\n"))
+        }
+
+        let htmlPages = index.htmlPages.filter { isSelected(selectionID(for: $0), selectedIDs) }
+        if !htmlPages.isEmpty {
+            sections.append("## HTML\n\n" + htmlPages.map { page in
+                "- \(page.kindLabel)：\(inlineText(page.title))（第 \(page.source.turn) 轮）"
             }.joined(separator: "\n"))
         }
 

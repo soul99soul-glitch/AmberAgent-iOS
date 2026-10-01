@@ -223,15 +223,16 @@ final class ChatArtifactAnchorLayoutTests: XCTestCase {
         XCTAssertEqual(anchor.conversationID, "phase3-native-anchor")
         XCTAssertEqual(anchor.messageID, source.messageID)
         XCTAssertEqual(anchor.toolCallID, source.toolCallID)
+        let toolCallID = try XCTUnwrap(source.toolCallID)
         XCTAssertEqual(
             NativeTimelineMessageAnchorPolicy.targetEntryID(
                 request: anchor,
                 consumed: nil,
                 currentConversationID: "phase3-native-anchor",
                 availableMessageIDs: Set(model.messages.map { ChatMessageProjector.messageId(for: $0) }),
-                availableToolCallIDsByMessageID: [source.messageID: [source.toolCallID]]
+                availableToolCallIDsByMessageID: [source.messageID: [toolCallID]]
             ),
-            ChatToolCallAnchorTarget.id(messageID: source.messageID, toolCallID: source.toolCallID)
+            ChatToolCallAnchorTarget.id(messageID: source.messageID, toolCallID: toolCallID)
         )
 
         let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in

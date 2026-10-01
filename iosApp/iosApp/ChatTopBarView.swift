@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+@preconcurrency import Shared
 
 enum ChatTopBarPanel: Hashable, Identifiable {
     case shelf
@@ -34,6 +35,8 @@ struct ChatTopBarView: View {
     var onUnpinSnippet: (String) -> Void = { _ in }
     var onAdoptVersion: (String, String) -> Void = { _, _ in }
     var onContinueArtifact: (ChatArtifactContinuation) async -> Bool = { _ in false }
+    var generativeUiSetting: GenerativeUiSetting? = nil
+    var onOpenMiniApp: (String) -> Void = { _ in }
     var artifactArrival: ChatArtifactArrival? = nil
     var onLocateArtifact: (ConversationArtifactIndex.Source) -> Bool = { _ in false }
     var dismissShelfRevision = 0
@@ -414,7 +417,9 @@ struct ChatTopBarView: View {
             },
             onUnpinSnippet: onUnpinSnippet,
             onAdoptVersion: onAdoptVersion,
-            onContinue: onContinueArtifact
+            onContinue: onContinueArtifact,
+            generativeUiSetting: generativeUiSetting,
+            onOpenMiniApp: onOpenMiniApp
         )
     }
 

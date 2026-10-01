@@ -229,6 +229,8 @@ struct ChatView: View {
     @State private var composerInputController = ComposerInputController()
     @State private var chatListSummary = ChatListSummarySnapshot()
     @State private var artifactShelf = ChatArtifactShelfState()
+    /// 产物架索引的生成式 UI 解析缓存；引用类型，命中与淘汰不触发视图刷新。
+    @State private var artifactWidgetCache = ConversationArtifactWidgetCache()
     @State private var artifactShelfDismissRevision = 0
     @State private var dockTapRegions = ChatDockTapRegions()
     @State private var artifactShelfStripHeight: CGFloat = 0
@@ -703,6 +705,8 @@ struct ChatView: View {
     private func handleSharedSettingsRevisionChange() {
         repairCurrentChatModelIfNeeded()
         viewModel.bumpMessageRevision(reason: .settingsRefresh)
+        // 关闭/开启生成式 UI 后，产物架与气泡同步增减 HTML 条目。
+        refreshArtifactShelf(reason: .settingsRefresh)
     }
 
     private var userVisibleErrorBinding: Binding<IOSUserVisibleError?> {
@@ -1147,6 +1151,8 @@ struct ChatView: View {
                 updateArtifactShelf { store, id in try store.adopt(versionID: versionID, path: path, for: id) }
             },
             onContinueArtifact: continueFromArtifact,
+            generativeUiSetting: sharedSettings.agentRuntime.generativeUi,
+            onOpenMiniApp: { router.navigate(to: .miniAppRunner(appId: $0)) },
             artifactArrival: artifactShelf.arrival,
             onLocateArtifact: { source in
                 guard let conversationID = currentConversationIdString,
@@ -1418,8 +1424,13 @@ struct ChatView: View {
 
     private func refreshArtifactShelf(reason: ChatMessageUpdateReason) {
         let isReload = reason == .initialLoad || reason == .conversationSwitch || reason == .branchChange
+            || reason == .settingsRefresh
         artifactShelf.update(
-            ConversationArtifactIndex.make(from: viewModel.messages),
+            ConversationArtifactIndex.make(
+                from: viewModel.messages,
+                widgetSettings: IOSGenerativeWidgetSettings(sharedSettings.agentRuntime.generativeUi),
+                widgetCache: artifactWidgetCache
+            ),
             conversationID: currentConversationIdString,
             isForegroundRunning: scenePhase == .active && viewModel.artifactUpdateWasRunning,
             allowArrival: !isReload

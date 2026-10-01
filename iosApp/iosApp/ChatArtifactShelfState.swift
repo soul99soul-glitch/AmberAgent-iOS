@@ -32,5 +32,6 @@ struct ChatArtifactShelfState {
         index.images.map { .init(id: $0.id, systemImage: "photo") }
             + index.files.map { .init(id: "file:\($0.path)", systemImage: "doc.text") }
             + index.webPages.map { .init(id: $0.id, systemImage: "globe") }
+            + index.htmlPages.map { .init(id: "html:\($0.id)", systemImage: $0.systemImage) }
     }
 }

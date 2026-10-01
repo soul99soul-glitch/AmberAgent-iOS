@@ -1666,8 +1666,10 @@ final class ChatViewModel {
         )
         // 独立保留产物刷新信号，避免工具结果与后续文字 chunk 合并上屏时丢失。
         switch reason {
-        case .initialLoad, .conversationSwitch, .branchChange, .toolResultAppended:
-            artifactUpdateWasRunning = reason == .toolResultAppended && isGenerationActiveForCurrentConversation
+        // 生成式 UI 修复重试直接发布定稿正文（.assistantStreamClosed），也要重建索引。
+        case .initialLoad, .conversationSwitch, .branchChange, .toolResultAppended, .assistantStreamClosed:
+            artifactUpdateWasRunning = (reason == .toolResultAppended || reason == .assistantStreamClosed)
+                && isGenerationActiveForCurrentConversation
             artifactUpdateSignal = messageUpdateSignal
         default:
             break
