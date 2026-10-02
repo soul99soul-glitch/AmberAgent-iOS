@@ -161,7 +161,7 @@ enum NovelSessionScrollGeometryPolicy {
 struct NovelSessionView: View {
     let workspace: NovelCreationViewModel
     let viewModel: NovelSessionViewModel
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
 
     @Binding var inputText: String
     @Binding var injectionOverrides: NovelInjectionOverrides
@@ -477,7 +477,7 @@ struct NovelSessionView: View {
             switch phase {
             case .tracking, .interacting:
                 if isNativeScrollDriverActive {
-                    guard NativeChatTimelineView.shouldBeginNativeUserDrag(
+                    guard NativeTimelineUserDragPolicy.shouldBegin(
                         phase: phase,
                         isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting
                     ) else { return }
@@ -1365,7 +1365,7 @@ struct NovelSessionView: View {
 
     private var sendOnEnter: Bool {
         _ = sharedSettings.revision
-        return sharedSettings.displaySetting.sendOnEnter
+        return sharedSettings.snapshot.displaySetting.sendOnEnter
     }
 
     private func sendEnabled(for text: String) -> Bool {

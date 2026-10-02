@@ -850,7 +850,7 @@ enum NovelPresentation {
         case "cancelled", "polish_abandoned":
             return localized("生成已取消。")
         case "global_model_missing", "global_provider_missing":
-            return localized("还没有可用的全局聊天模型，请先在设置里配好服务商和默认模型。")
+            return localized(NovelGlobalModelWording.current.missingModelMessage)
         case "fixed_provider_missing", "fixed_model_missing":
             return localized("项目绑定的模型已失效（服务商或模型 ID 已变）。请在右上角「项目模型覆盖」重新选择，或改回跟随全局。")
         case "effective_provider_missing", "provider_disabled",
@@ -1361,7 +1361,7 @@ extension NovelPresentation {
     @MainActor
     static func providerID(
         forModelID modelID: String,
-        sharedSettings: IOSSharedSettingsStore
+        sharedSettings: any IOSSettingsSnapshotSource
     ) -> String? {
         sharedSettings.snapshot.providers.first { provider in
             provider.models.contains { $0.id.description() == modelID }
@@ -1373,7 +1373,7 @@ extension NovelPresentation {
     @MainActor
     static func creationModelContext(
         for policy: NovelProjectModelPolicy,
-        sharedSettings: IOSSharedSettingsStore
+        sharedSettings: any IOSSettingsSnapshotSource
     ) -> (modelId: String, contextWindowTokens: Int?)? {
         switch policy {
         case .global:
@@ -1409,7 +1409,7 @@ extension NovelPresentation {
     @MainActor
     static func modelDisplayName(
         for policy: NovelProjectModelPolicy,
-        sharedSettings: IOSSharedSettingsStore
+        sharedSettings: any IOSSettingsSnapshotSource
     ) -> String {
         switch policy {
         case .global:
@@ -1441,7 +1441,7 @@ extension NovelPresentation {
     @MainActor
     static func selectedModelID(
         for policy: NovelProjectModelPolicy,
-        sharedSettings: IOSSharedSettingsStore
+        sharedSettings: any IOSSettingsSnapshotSource
     ) -> String {
         switch policy {
         case .global:

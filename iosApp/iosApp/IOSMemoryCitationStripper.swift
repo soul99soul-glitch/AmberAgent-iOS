@@ -202,7 +202,7 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
             if message.role == MessageRole.system {
                 for part in message.parts {
                     guard let text = part as? UIMessagePart.Text else { continue }
-                    ids.formUnion(ChatRuntimeContextBuilder.memoryCitationIds(in: text))
+                    ids.formUnion(IOSMemoryCitation.recordIds(in: text))
                 }
             }
             for part in message.parts {
@@ -357,5 +357,19 @@ public final class IOSMemoryCitationTracker: @unchecked Sendable {
             usage: message.usage,
             translation: message.translation
         )
+    }
+}
+
+extension IOSMemoryCitation {
+    /// Text-part metadata key carrying the memory record ids a reply cited.
+    static let recordIdsMetadataKey = "amber_memory_record_ids"
+
+    static func recordIds(in part: UIMessagePart.Text) -> [Int32] {
+        guard let json = IosToolOutputJsonBridge.shared.metadataJson(part: part),
+              let data = json.data(using: .utf8),
+              let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ids = metadata[recordIdsMetadataKey] as? [Any],
+              let idsData = try? JSONSerialization.data(withJSONObject: ids) else { return [] }
+        return (try? JSONDecoder().decode([Int32].self, from: idsData)) ?? []
     }
 }

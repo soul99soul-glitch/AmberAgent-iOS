@@ -267,7 +267,7 @@ enum ChatMemoryContextBuilder {
 }
 
 struct ChatRuntimeContextBuilder {
-    static let memoryCitationMetadataKey = "amber_memory_record_ids"
+    static let memoryCitationMetadataKey = IOSMemoryCitation.recordIdsMetadataKey
 
     struct MiniAppTurnContext: Equatable {
         let currentUserIndex: Int
@@ -494,12 +494,7 @@ struct ChatRuntimeContextBuilder {
     }
 
     static func memoryCitationIds(in part: UIMessagePart.Text) -> [Int32] {
-        guard let json = IosToolOutputJsonBridge.shared.metadataJson(part: part),
-              let data = json.data(using: .utf8),
-              let metadata = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ids = metadata[Self.memoryCitationMetadataKey] as? [Any],
-              let idsData = try? JSONSerialization.data(withJSONObject: ids) else { return [] }
-        return (try? JSONDecoder().decode([Int32].self, from: idsData)) ?? []
+        IOSMemoryCitation.recordIds(in: part)
     }
 
     /// Jev Phase 1：override 是本轮唯一一次计算得到的统一选中集合（prompt /

@@ -18,7 +18,9 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         let composition = try source("iosApp/NovelCreation/NovelCreationComposition.swift")
 
         XCTAssertTrue(appShell.contains("toolRuntime: backgroundToolRuntime"))
-        XCTAssertTrue(composition.contains("toolRuntime: ChatToolRuntime?"))
+        let bridge = try source("iosApp/NovelCreationAmberBridge.swift")
+        XCTAssertTrue(composition.contains("toolRuntime: (any NovelDiscussionToolHost)?"))
+        XCTAssertTrue(bridge.contains("extension ChatToolRuntime: NovelDiscussionToolHost"))
         XCTAssertTrue(composition.contains("toolRuntime: toolRuntime"))
     }
 
@@ -675,7 +677,7 @@ final class IOSNovelCreationWiringTests: XCTestCase {
 
     func testNovelContextPanelUsesLatestInjectionReceiptDetails() throws {
         let session = try source("iosApp/NovelCreation/NovelSessionView.swift")
-        let composer = try source("iosApp/ChatComposerViews.swift")
+        let composer = try source("iosApp/ComposerDockComponents.swift")
         let planner = try source("iosApp/NovelCreation/NovelInjectionPlanner.swift")
 
         XCTAssertTrue(session.contains("NovelSessionContextRing.snapshot"))
@@ -749,7 +751,15 @@ final class IOSNovelCreationWiringTests: XCTestCase {
         XCTAssertFalse(workspace.contains("NovelProjectPanelSheet("))
         XCTAssertTrue(workspace.contains("ToolbarItem(id: NovelCreationToolbarID.settings"))
         XCTAssertTrue(workspace.contains("NovelCreationSettingsToolbarButton"))
-        XCTAssertTrue(workspace.contains(".novelCreationSettings"))
+        XCTAssertTrue(workspace.contains("onOpenSettings()"))
+        XCTAssertTrue(try source("iosApp/AppShell.swift").contains(
+            """
+                                    projectID: projectID,
+                                    onOpenSettings: {
+                                        router.navigate(to: .novelCreationSettings)
+                                    }
+            """
+        ))
         XCTAssertFalse(workspace.contains(".matchedTransitionSource("))
         XCTAssertFalse(workspace.contains(".disabled(viewModel.projectSnapshot == nil"))
         XCTAssertFalse(workspace.contains("activeSheet = .projectSettings"))

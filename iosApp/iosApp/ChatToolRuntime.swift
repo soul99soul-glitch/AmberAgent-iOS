@@ -5767,34 +5767,12 @@ final class ChatToolRuntime {
     }
 
     private func dispatchSearchToolCall(_ toolCall: UIMessagePart.Tool) async -> String {
-        guard effectiveWebSearchEnabled else {
-            return ChatToolOutputFormatter.toolFailureJSON(
-                toolName: toolCall.toolName,
-                reason: "Web search is disabled in settings."
-            )
-        }
-        do {
-            if toolCall.toolName == "search_web" {
-                return try await executeSearchWebWithFallback(toolCall)
-            }
-            return try await IOSSearchExecutor.execute(
-                toolName: toolCall.toolName,
-                toolInput: toolCall.input,
-                settings: sharedSettings.snapshot,
-                transport: searchTransport
-            )
-        } catch is CancellationError {
-            return ChatToolOutputFormatter.toolFailureJSON(
-                toolName: toolCall.toolName,
-                reason: "User cancelled.",
-                cancelled: true
-            )
-        } catch {
-            return ChatToolOutputFormatter.toolFailureJSON(
-                toolName: toolCall.toolName,
-                reason: (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-            )
-        }
+        await IOSSearchToolDispatch.dispatch(
+            toolCall,
+            settings: sharedSettings.snapshot,
+            webSearchEnabled: effectiveWebSearchEnabled,
+            transport: searchTransport
+        )
     }
 
     private func shouldExecuteSearchInBackground(toolName: String, arguments: String) -> Bool {
@@ -5807,73 +5785,6 @@ final class ChatToolRuntime {
             reason: "网络搜索和网页读取会访问外部站点，需要你确认。",
             settings: sharedSettings.snapshot
         ) == nil
-    }
-
-    private func executeSearchWebWithFallback(_ toolCall: UIMessagePart.Tool) async throws -> String {
-        let settings = sharedSettings.snapshot
-        let maxResults = Int(settings.searchCommonOptions.resultSize)
-        let request = try IOSSearchExecutor.searchRequest(
-            from: toolCall.input,
-            defaultMaxResults: maxResults
-        )
-        let initialSelection = IOSSearchExecutor.searchProviderSelection(settings: settings)
-        do {
-            let execution = try await IOSSearchExecutor.searchResults(
-                toolInput: toolCall.input,
-                maxResults: maxResults,
-                settings: settings,
-                transport: searchTransport
-            )
-            return IOSSearchExecutor.format(
-                query: execution.request.query,
-                results: execution.results,
-                selection: execution.selection
-            )
-        } catch is CancellationError {
-            throw CancellationError()
-        } catch {
-            try Task.checkCancellation()
-            guard let fallbackSelection = chatSearchFallbackSelection(
-                after: initialSelection,
-                settings: settings,
-                initialError: error
-            ) else {
-                throw error
-            }
-            let results = try await IOSSearchExecutor.searchFreeAggregate(
-                query: request.query,
-                maxResults: request.maxResults,
-                settings: settings,
-                transport: searchTransport
-            )
-            return IOSSearchExecutor.format(
-                query: request.query,
-                results: results,
-                selection: fallbackSelection
-            )
-        }
-    }
-
-    private func chatSearchFallbackSelection(
-        after selection: IOSSearchProviderSelection,
-        settings: Settings,
-        initialError: Error
-    ) -> IOSSearchProviderSelection? {
-        let reason = "原搜索服务 \(selection.providerName) 失败：\(searchErrorSummary(initialError))"
-        guard selection.route != .freeAggregate, IOSSearchExecutor.freeAggregateEnabled(settings) else { return nil }
-        return IOSSearchProviderSelection(
-            route: .freeAggregate,
-            providerName: IOSFreeSearchAggregator.providerName,
-            providerType: IOSFreeSearchAggregator.providerType,
-            serviceId: nil,
-            fallbackReason: reason
-        )
-    }
-
-    private func searchErrorSummary(_ error: Error) -> String {
-        let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        guard message.count > 120 else { return message }
-        return String(message.prefix(120)) + "..."
     }
 
     private func workspaceToolExecutionOutput(

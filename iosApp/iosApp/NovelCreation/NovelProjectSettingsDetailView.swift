@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct NovelProjectManagementView: View {
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
     let viewModel: NovelCreationViewModel
 
     var body: some View {
@@ -46,7 +46,7 @@ struct NovelProjectManagementView: View {
 }
 
 struct NovelProjectSettingsDetailView: View {
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
     let viewModel: NovelCreationViewModel
     let projectID: NovelProjectID
 

@@ -3,7 +3,7 @@ import SwiftUI
 // 该视图当前无生产调用点(设定页实际使用 NovelCompendiumView)
 struct NovelMaterialsView: View {
     let viewModel: NovelCreationViewModel
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
     let onEditMaterial: (NovelMaterialRecord?) -> Void
     let onChooseFixedModel: () -> Void
     let onEditPolishPreference: () -> Void

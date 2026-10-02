@@ -1,0 +1,253 @@
+name: AmberNovel
+options:
+  bundleIdPrefix: app.amber.novel
+  deploymentTarget:
+    iOS: "26.0"
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "6.1"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+  configs:
+    Debug:
+      SHARED_FRAMEWORK_CONFIGURATION: debugFramework
+    Release:
+      SHARED_FRAMEWORK_CONFIGURATION: releaseFramework
+packages:
+  swift-nio:
+    url: https://github.com/apple/swift-nio.git
+    from: 2.81.0
+  SwiftStreamingMarkdown:
+    path: ../vendor/SwiftStreamingMarkdown
+  ChatLayout:
+    url: https://github.com/ekazaev/ChatLayout.git
+    exactVersion: 2.4.2
+targets:
+  Novel:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: ../iosApp/NovelCreation
+        excludes:
+          - AGENTS.md
+      - path: ../iosApp/AgentActivityModels.swift
+      - path: ../iosApp/AmberDesignSystem.swift
+      - path: ../iosApp/AmberThemeDesign.swift
+      - path: ../iosApp/AmberThemePack.swift
+      - path: ../iosApp/AmberThemePackLibrary.swift
+      - path: ../iosApp/BackgroundAudioKeepAlive.swift
+      - path: ../iosApp/BackgroundGenerationKeepAlive.swift
+      - path: ../iosApp/BackgroundLocationKeepAlive.swift
+      - path: ../iosApp/ChatArtifactPinAction.swift
+      - path: ../iosApp/ChatAssistantMarkdownView.swift
+      - path: ../iosApp/ChatContextSnapshot.swift
+      - path: ../iosApp/ChatKoboyoIcons.swift
+      - path: ../iosApp/ChatMessageEnvironment.swift
+      - path: ../iosApp/ChatMessageListSupport.swift
+      - path: ../iosApp/ChatMiscViews.swift
+      - path: ../iosApp/ChatPerfTrace.swift
+      - path: ../iosApp/ChatProviderConfiguration.swift
+      - path: ../iosApp/ChatStreamPrimitives.swift
+      - path: ../iosApp/ChatStreamingTailPolicy.swift
+      - path: ../iosApp/ChatTextWindow.swift
+      - path: ../iosApp/ChatToolCallParsing.swift
+      - path: ../iosApp/ChatTopBarLayout.swift
+      - path: ../iosApp/ComposerDockComponents.swift
+      - path: ../iosApp/ComposerModelPicker.swift
+      - path: ../iosApp/DeepReadCore/IOSDeepReadHTMLSecurity.swift
+      - path: ../iosApp/DeepReadStructures.swift
+      - path: ../iosApp/HomePhosphorIcons.swift
+      - path: ../iosApp/IOSAgentRunLedgerTypes.swift
+      - path: ../iosApp/IOSAgentToolEngine.swift
+      - path: ../iosApp/IOSAntigravityOAuthClient.swift
+      - path: ../iosApp/IOSAppLanguage.swift
+      - path: ../iosApp/IOSBackgroundLifecycleLog.swift
+      - path: ../iosApp/IOSCodexOAuthClient.swift
+      - path: ../iosApp/IOSCodexProviderResolver.swift
+      - path: ../iosApp/IOSCredentialRedactor.swift
+      - path: ../iosApp/IOSCredentialSideTable.swift
+      - path: ../iosApp/IOSDeepReadEditorialRenderer.swift
+      - path: ../iosApp/IOSDeepReadStructuredRenderer.swift
+      - path: ../iosApp/IOSDocumentExportSupport.swift
+      - path: ../iosApp/IOSDurableRunStore.swift
+      - path: ../iosApp/IOSExecutionPreferenceKeys.swift
+      - path: ../iosApp/IOSFreeSearchAggregator.swift
+      - path: ../iosApp/IOSGeminiProvider.swift
+      - path: ../iosApp/IOSGenerativeWidgetCard.swift
+      - path: ../iosApp/IOSGenerativeWidgetParser.swift
+      - path: ../iosApp/IOSGenerativeWidgetRenderer.swift
+      - path: ../iosApp/IOSGenerativeWidgetSanitizer.swift
+      - path: ../iosApp/IOSGoogleWebViewSearch.swift
+      - path: ../iosApp/IOSGrokOAuthClient.swift
+      - path: ../iosApp/IOSGrokWebProvider.swift
+      - path: ../iosApp/IOSJevRunSummary.swift
+      - path: ../iosApp/IOSMemoryCitationStripper.swift
+      - path: ../iosApp/IOSProviderConfigToolCatalog.swift
+      - path: ../iosApp/IOSProviderRequestHeaders.swift
+      - path: ../iosApp/IOSSearchExecutor.swift
+      - path: ../iosApp/IOSSearchToolDispatch.swift
+      - path: ../iosApp/IOSSettingsSnapshotSource.swift
+      - path: ../iosApp/IOSShareSupport.swift
+      - path: ../iosApp/IOSSharedExtensions.swift
+      - path: ../iosApp/IOSToolFailurePayload.swift
+      - path: ../iosApp/IOSToolLoopGuard.swift
+      - path: ../iosApp/IOSToolOutputLimits.swift
+      - path: ../iosApp/IOSVerifiedHTTPScrapeTransport.swift
+      - path: ../iosApp/IOSWebMountPublicDNS.swift
+      - path: ../iosApp/MarkdownBridge.swift
+      - path: ../iosApp/MarkdownView.swift
+      - path: ../iosApp/NativeTimelineScrollCore.swift
+      - path: ../iosApp/NativeTimelineScrollDriver.swift
+      - path: ../iosApp/PackedAstReader.swift
+      - path: Resources/Info.plist
+        buildPhase: none
+      - path: Resources/Assets.xcassets
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
+      - path: ../Resources/Fonts/noto_serif_sc.otf
+        buildPhase: resources
+      - path: ../Resources/Fonts/jetbrains_mono.ttf
+        buildPhase: resources
+      - path: ../iosApp/Localizable.xcstrings
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.novel
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        PRODUCT_NAME: AmberNovel
+        PRODUCT_MODULE_NAME: iosApp
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Resources/Info.plist
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        INFOPLIST_KEY_CFBundleDisplayName: 小说创作
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_TESTABILITY: YES
+        FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../shared/build/bin/iosSimulatorArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+        FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../shared/build/bin/iosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+        LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../native/AmberNative.xcframework/ios-arm64-sim"
+        LIBRARY_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../native/AmberNative.xcframework/ios-arm64"
+        HEADER_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../native/AmberNative.xcframework/ios-arm64-sim/Headers"
+        HEADER_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../native/AmberNative.xcframework/ios-arm64/Headers"
+        OTHER_LDFLAGS: "$(inherited) -lamber_ffi"
+    dependencies:
+      - framework: Shared.framework
+        embed: false
+        link: true
+        implicit: true
+      - package: swift-nio
+        product: NIOCore
+      - package: swift-nio
+        product: NIOEmbedded
+      - package: swift-nio
+        product: NIOHTTP1
+      - package: SwiftStreamingMarkdown
+        product: SwiftStreamingMarkdown
+      - package: ChatLayout
+        product: ChatLayout
+    preBuildScripts:
+      - name: Build Shared KMP Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          case "${SDK_NAME:-}" in
+            iphonesimulator*) kotlin_target="IosSimulatorArm64" ;;
+            iphoneos*) kotlin_target="IosArm64" ;;
+            *) exit 1 ;;
+          esac
+          if [ -z "${JAVA_HOME:-}" ] && [ -x /opt/homebrew/opt/openjdk@17/bin/java ]; then
+            export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+            export PATH="$JAVA_HOME/bin:$PATH"
+          fi
+          cd "${SRCROOT}/../.."
+          ./gradlew ":shared:link${CONFIGURATION}Framework${kotlin_target}"
+    postBuildScripts:
+      - name: Embed Shared KMP Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          case "${SDK_NAME:-}" in
+            iphonesimulator*) kotlin_dir="iosSimulatorArm64" ;;
+            iphoneos*) kotlin_dir="iosArm64" ;;
+            *) exit 1 ;;
+          esac
+          config_dir="$(printf '%s' "${CONFIGURATION}" | tr '[:upper:]' '[:lower:]')Framework"
+          framework_src="${SRCROOT}/../../shared/build/bin/${kotlin_dir}/${config_dir}/Shared.framework"
+          framework_dst="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/Shared.framework"
+          mkdir -p "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+          ditto "${framework_src}" "${framework_dst}"
+          if [ "${CODE_SIGNING_ALLOWED:-YES}" != NO ] && [ -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]; then
+            codesign --force --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$framework_dst"
+          fi
+  NovelTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+      - path: ../iosAppTests/IOSNovelCreationWiringTests.swift
+      - path: ../iosAppTests/IOSNovelProjectToolExecutorTests.swift
+      - path: ../iosAppTests/NovelBatchPolishTests.swift
+      - path: ../iosAppTests/NovelBranchLifecycleTests.swift
+      - path: ../iosAppTests/NovelChapterReplacementStateTests.swift
+      - path: ../iosAppTests/NovelCharacterIdentityCandidateTests.swift
+      - path: ../iosAppTests/NovelCollaborationModeTests.swift
+      - path: ../iosAppTests/NovelCollectionTests.swift
+      - path: ../iosAppTests/NovelCompatibilityLineageTests.swift
+      - path: ../iosAppTests/NovelContinuityAuditTests.swift
+      - path: ../iosAppTests/NovelCreationModuleTests.swift
+      - path: ../iosAppTests/NovelCreationPresentationTests.swift
+      - path: ../iosAppTests/NovelCreationViewModelTests.swift
+      - path: ../iosAppTests/NovelDocumentValidationTests.swift
+      - path: ../iosAppTests/NovelFactOutputValidationAnchorTests.swift
+      - path: ../iosAppTests/NovelFactTransactionLifecycleTests.swift
+      - path: ../iosAppTests/NovelForkTests.swift
+      - path: ../iosAppTests/NovelGenerationLifecycleTests.swift
+      - path: ../iosAppTests/NovelGenerationReducerTests.swift
+      - path: ../iosAppTests/NovelInjectionPlannerTests.swift
+      - path: ../iosAppTests/NovelLiveModelAdapterTests.swift
+      - path: ../iosAppTests/NovelManualEditSyncTests.swift
+      - path: ../iosAppTests/NovelModelAdapterTests.swift
+      - path: ../iosAppTests/NovelPolishIntegrityTests.swift
+      - path: ../iosAppTests/NovelPolishTestSupport.swift
+      - path: ../iosAppTests/NovelPolishTests.swift
+      - path: ../iosAppTests/NovelProjectConfigurationTests.swift
+      - path: ../iosAppTests/NovelProjectFileDocumentTests.swift
+      - path: ../iosAppTests/NovelProjectLifecycleOperationTests.swift
+      - path: ../iosAppTests/NovelProjectPackageTests.swift
+      - path: ../iosAppTests/NovelProjectRepositoryTests.swift
+      - path: ../iosAppTests/NovelPromptCatalogTests.swift
+      - path: ../iosAppTests/NovelRecentChapterRevertTests.swift
+      - path: ../iosAppTests/NovelReducerTests.swift
+      - path: ../iosAppTests/NovelSessionReplayTests.swift
+      - path: ../iosAppTests/NovelSessionViewModelTests.swift
+      - path: ../iosAppTests/NovelStructuredModelExecutorTests.swift
+      - path: ../iosAppTests/NovelStructuredOutputTests.swift
+      - path: ../iosAppTests/NovelTestFixtures.swift
+      - path: ../iosAppTests/NovelTestSupport.swift
+      - path: ../iosAppTests/NovelWorkspaceBackupTests.swift
+      - path: ../iosAppTests/NovelWorkspaceContextTests.swift
+      - path: ../iosAppTests/NovelWorkspaceContractTests.swift
+      - path: ../iosAppTests/NovelWorkspaceLedgerTests.swift
+      - path: ../iosAppTests/NovelWorkspaceRepositoryTests.swift
+    dependencies:
+      - target: Novel
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: app.amber.novel.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/AmberNovel.app/AmberNovel"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]: "$(SRCROOT)/../../shared/build/bin/iosSimulatorArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+        FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]: "$(SRCROOT)/../../shared/build/bin/iosArm64/$(SHARED_FRAMEWORK_CONFIGURATION)"
+schemes:
+  Novel:
+    build:
+      targets:
+        Novel: all
+    test:
+      targets:
+        - NovelTests

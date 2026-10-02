@@ -5,8 +5,8 @@ enum NovelCreationComposition {
     private static var productionCreation: (any NovelCreation)?
 
     static func makeViewModel(
-        sharedSettings: IOSSharedSettingsStore,
-        toolRuntime: ChatToolRuntime? = nil,
+        sharedSettings: any IOSSettingsSnapshotSource,
+        toolRuntime: (any NovelDiscussionToolHost)? = nil,
         rootDirectory: URL? = nil
     ) throws -> NovelCreationViewModel {
         if let rootDirectory {
@@ -32,8 +32,8 @@ enum NovelCreationComposition {
     }
 
     private static func makeCreation(
-        sharedSettings: IOSSharedSettingsStore,
-        toolRuntime: ChatToolRuntime?,
+        sharedSettings: any IOSSettingsSnapshotSource,
+        toolRuntime: (any NovelDiscussionToolHost)?,
         rootDirectory: URL
     ) -> any NovelCreation {
         let repository = NovelFileProjectRepository(

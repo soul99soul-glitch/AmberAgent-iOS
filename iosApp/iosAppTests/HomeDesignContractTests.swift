@@ -701,7 +701,13 @@ final class HomeDesignContractTests: XCTestCase {
         // E 版当前会话头像呼吸光晕：只挂 isCurrent，Reduce Motion 关闭动画。
         XCTAssertTrue(source.contains("CurrentConversationAvatarGlow()"))
         XCTAssertTrue(source.contains("enum HomeCurrentAvatarBreath"))
-        XCTAssertTrue(source.contains("static var activeAvatarGlow"))
+        let designSystem = try String(
+            contentsOf: testsDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("iosApp/AmberDesignSystem.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(designSystem.contains("static var activeAvatarGlow"))
     }
 
     func testCurrentAvatarBreathIntensityMatchesPrototypeTiming() {

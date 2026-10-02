@@ -185,9 +185,9 @@ actor NovelLiveModelAdapter: NovelDurableModelRunning {
 
     @MainActor
     init(
-        sharedSettings: IOSSharedSettingsStore,
+        sharedSettings: any IOSSettingsSnapshotSource,
         streamingProvider: any IOSAgentTextProvider & IOSAgentStreamingProvider = OpenAIKmpProviderAdapter(),
-        toolRuntime: ChatToolRuntime? = nil,
+        toolRuntime: (any NovelDiscussionToolHost)? = nil,
         grokTransport: NovelLiveTransport? = nil,
         geminiTransport: NovelLiveTransport? = nil
     ) {
@@ -1799,10 +1799,10 @@ private final class NovelResponsesCursorBox: @unchecked Sendable {
 }
 
 private final class NovelSharedSettingsSource: @unchecked Sendable {
-    private let sharedSettings: IOSSharedSettingsStore
+    private let sharedSettings: any IOSSettingsSnapshotSource
 
     @MainActor
-    init(_ sharedSettings: IOSSharedSettingsStore) {
+    init(_ sharedSettings: any IOSSettingsSnapshotSource) {
         self.sharedSettings = sharedSettings
     }
 

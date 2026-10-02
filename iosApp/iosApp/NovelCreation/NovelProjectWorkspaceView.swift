@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct NovelProjectWorkspaceView: View {
-    @Environment(RouterPath.self) private var router
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let viewModel: NovelCreationViewModel
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
     let projectID: NovelProjectID
+    let onOpenSettings: () -> Void
 
     @State private var sessionViewModel: NovelSessionViewModel
     @State private var section: NovelWorkspaceSection = .creation
@@ -55,12 +55,14 @@ struct NovelProjectWorkspaceView: View {
     init(
         viewModel: NovelCreationViewModel,
         sessionViewModel: NovelSessionViewModel,
-        sharedSettings: IOSSharedSettingsStore,
-        projectID: NovelProjectID
+        sharedSettings: any IOSSettingsSnapshotSource,
+        projectID: NovelProjectID,
+        onOpenSettings: @escaping () -> Void
     ) {
         self.viewModel = viewModel
         self.sharedSettings = sharedSettings
         self.projectID = projectID
+        self.onOpenSettings = onOpenSettings
         self._sessionViewModel = State(initialValue: sessionViewModel)
     }
 
@@ -249,7 +251,7 @@ struct NovelProjectWorkspaceView: View {
 
         ToolbarItem(id: NovelCreationToolbarID.settings, placement: .topBarTrailing) {
             NovelCreationSettingsToolbarButton {
-                router.navigate(to: .novelCreationSettings)
+                onOpenSettings()
             }
         }
     }

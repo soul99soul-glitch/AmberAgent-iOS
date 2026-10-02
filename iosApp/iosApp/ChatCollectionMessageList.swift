@@ -724,16 +724,10 @@ struct NativeChatTimelineView: View {
         phase: ScrollPhase,
         isUIKitUserInteracting: Bool
     ) -> Bool {
-        switch phase {
-        case .tracking:
-            return true
-        case .interacting:
-            return isUIKitUserInteracting
-        case .idle, .decelerating, .animating:
-            return false
-        @unknown default:
-            return false
-        }
+        NativeTimelineUserDragPolicy.shouldBegin(
+            phase: phase,
+            isUIKitUserInteracting: isUIKitUserInteracting
+        )
     }
 
     /// 轻点误伤恢复：触碰（.tracking）即暂停跟随防打架是有意的所有权设计，
@@ -1577,30 +1571,6 @@ enum ChatSwiftUIExplicitBottomPolicy {
             viewportState: next,
             animated: source == .button && distanceToBottom > ChatLayout.bottomStickThreshold
         )
-    }
-}
-
-struct ChatSwiftUIStreamingTailVisibilityState: Equatable {
-    var messageID: String?
-    var isVisible: Bool?
-
-    init(messageID: String? = nil, isVisible: Bool? = nil) {
-        self.messageID = messageID
-        self.isVisible = isVisible
-    }
-}
-
-enum ChatSwiftUIStreamingTailRenderPolicy {
-    static func shouldSuspend(
-        isLastAssistant: Bool,
-        hasEverStreamed: Bool,
-        messageID: String,
-        visibility: ChatSwiftUIStreamingTailVisibilityState
-    ) -> Bool {
-        isLastAssistant &&
-            hasEverStreamed &&
-            visibility.messageID == messageID &&
-            visibility.isVisible == false
     }
 }
 

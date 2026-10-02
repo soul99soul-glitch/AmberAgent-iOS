@@ -2203,7 +2203,7 @@ final class NovelSessionReplayTests: XCTestCase {
         XCTAssertTrue(source.contains("NativeTimelineScrollReturnPolicy.returnedToBottom("))
         XCTAssertTrue(source.contains("dispatchFollowEvent(.userDragEnded(isAtBottom: returnedToBottom))"))
         XCTAssertTrue(source.contains("ChatLayout.nearBottomResumeThreshold"))
-        XCTAssertTrue(source.contains("NativeChatTimelineView.shouldBeginNativeUserDrag("))
+        XCTAssertTrue(source.contains("NativeTimelineUserDragPolicy.shouldBegin("))
         XCTAssertTrue(
             source.contains("isUIKitUserInteracting: scrollDriver.isUIKitUserInteracting"),
             "程序化 setContentOffset 产生的 interacting 不能被小说页误判成用户拖拽。"

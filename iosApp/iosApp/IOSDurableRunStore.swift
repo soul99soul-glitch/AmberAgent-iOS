@@ -315,3 +315,7 @@ final class IOSDurableRunStore: @unchecked Sendable {
         )
     }
 }
+
+extension Notification.Name {
+    static let amberSubAgentRunsDidChange = Notification.Name("app.amber.ios.subAgentRunsDidChange")
+}

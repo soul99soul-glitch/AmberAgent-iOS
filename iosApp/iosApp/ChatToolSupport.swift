@@ -240,20 +240,6 @@ private let chatToolOutputAnalysisCache = ChatToolOutputAnalysisCache()
 /// 工具输出硬上限（对齐 exec 工具 `max_output_chars` 语义）。所有工具的文本输出
 /// 经统一收口：总输出超限时截断并追加可见标记；JSON 形态输出保形截断，不破坏
 /// ok/status/exit_code 等判定键。
-enum IOSToolOutputLimits {
-    /// 单次工具输出（search_web 格式化结果 / scrape_web JSON / 漏斗文本）总上限。
-    static let maxOutputChars = 12_000
-    /// 搜索结果单条 snippet 上限。
-    static let maxSnippetChars = 1_200
-    /// 与 IOSContextCompactionCoordinator.compactedToolOutputMarker 同文的压缩占位
-    /// 标记（压缩处理过的输出豁免收口截断，避免二次截断）。
-    static let compactedToolOutputMarker = "[tool output compacted]"
-    /// 截断标记：`\n…[truncated N chars]`
-    static func truncationMarker(droppedChars: Int) -> String {
-        "\n…[truncated \(droppedChars) chars]"
-    }
-}
-
 struct MemoryToolApprovalRequest: Identifiable, Equatable {
     let id: String
     let action: String
@@ -686,57 +672,6 @@ struct IshHandoffToolApprovalRequest: Identifiable, Equatable {
         case .remoteSSH, .remoteJobStart, .remoteJobStop:
             "审批前检查完整的 Remote SSH 命令"
         }
-    }
-}
-
-enum ChatToolCallParsing {
-    static func jsonObject(_ string: String) -> [String: Any]? {
-        guard let data = string.data(using: .utf8) else { return nil }
-        return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-    }
-
-    static func stringArray(_ value: Any?) -> [String]? {
-        if let values = value as? [String] {
-            return values
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        }
-        if let text = value as? String {
-            let values = text
-                .split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            return values.isEmpty ? nil : values
-        }
-        return nil
-    }
-
-    static func requestId(for toolCall: UIMessagePart.Tool) -> String {
-        let rawId = toolCall.toolCallId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return rawId.isEmpty ? inputDigest(for: toolCall.input) : rawId
-    }
-
-    static func truncatedMcpArguments(_ value: Any?, maxLength: Int = 360) -> String {
-        guard let value else { return "{}" }
-        let text: String
-        if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]),
-           let serialized = String(data: data, encoding: .utf8) {
-            text = serialized
-        } else {
-            text = String(describing: value)
-        }
-        guard text.count > maxLength else { return text }
-        return String(text.prefix(maxLength)) + "..."
-    }
-
-    static func truncatedSearchTarget(_ value: String, maxLength: Int = 180) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > maxLength else { return trimmed }
-        return String(trimmed.prefix(maxLength)) + "..."
-    }
-
-    private static func inputDigest(for text: String) -> String {
-        chatInputDigest(for: text)
     }
 }
 
@@ -1385,26 +1320,9 @@ enum ChatToolOutputFormatter {
         cancelled: Bool = false,
         status: String? = nil
     ) -> String {
-        var payload: [String: Any] = [
-            "ok": false,
-            "tool": toolName,
-            "reason": reason
-        ]
-        if let status {
-            payload["status"] = status
-        }
-        if denied {
-            payload["denied"] = true
-            payload["policy"] = "user_denied"
-        }
-        if cancelled {
-            payload["cancelled"] = true
-        }
-        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-              let text = String(data: data, encoding: .utf8) else {
-            return "\(toolName) failed: \(reason)"
-        }
-        return text
+        IOSToolFailurePayload.json(
+            toolName: toolName, reason: reason, denied: denied, cancelled: cancelled, status: status
+        )
     }
 
     /// Structured error for a tool call whose `input` failed

@@ -427,7 +427,7 @@ final class NovelSessionViewModelTests: XCTestCase {
             document: document,
             scripts: [NovelModelScript(steps: [.pause])]
         )
-        let settings = IOSSharedSettingsStore(
+        let settings = makeNovelTestSettings(
             userDefaults: UserDefaults(suiteName: "NovelSessionLayout-\(UUID().uuidString)")!
         )
         let host = UIHostingController(rootView: NovelSessionLayoutHarness(
@@ -509,7 +509,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.mode = .writeProse
         harness.session.granularity = .wholeChapter
 
-        let settings = IOSSharedSettingsStore(
+        let settings = makeNovelTestSettings(
             userDefaults: UserDefaults(suiteName: "NovelReasoningCadence-\(UUID().uuidString)")!
         )
         let host = UIHostingController(rootView: NovelSessionLayoutHarness(
@@ -622,7 +622,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.mode = .writeProse
         harness.session.granularity = .wholeChapter
 
-        let settings = IOSSharedSettingsStore(
+        let settings = makeNovelTestSettings(
             userDefaults: UserDefaults(suiteName: "NovelTimeProfilerProse-\(UUID().uuidString)")!
         )
         let host = UIHostingController(rootView: NovelSessionLayoutHarness(
@@ -680,7 +680,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         harness.session.mode = .writeProse
         harness.session.granularity = .wholeChapter
 
-        let settings = IOSSharedSettingsStore(
+        let settings = makeNovelTestSettings(
             userDefaults: UserDefaults(suiteName: "NovelAppendHookProse-\(UUID().uuidString)")!
         )
         let host = UIHostingController(rootView: NovelSessionLayoutHarness(
@@ -4770,7 +4770,7 @@ private extension NovelSessionViewModelTests {
     struct NovelSessionLayoutHarness: View {
         let workspace: NovelCreationViewModel
         let session: NovelSessionViewModel
-        let settings: IOSSharedSettingsStore
+        let settings: any IOSSettingsSnapshotSource
 
         @State private var inputText = ""
         @State private var injectionOverrides = NovelInjectionOverrides.none

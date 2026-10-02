@@ -25,10 +25,6 @@ struct IOSSubAgentActivity: Identifiable, Equatable, Codable, Sendable {
     }
 }
 
-extension Notification.Name {
-    static let amberSubAgentRunsDidChange = Notification.Name("app.amber.ios.subAgentRunsDidChange")
-}
-
 enum IOSSubAgentAutoDismissDelay: Int, CaseIterable, Identifiable {
     case never = 0
     case after15Seconds = 15

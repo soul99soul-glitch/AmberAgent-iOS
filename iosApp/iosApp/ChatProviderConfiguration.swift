@@ -227,28 +227,3 @@ enum ChatProviderConfiguration {
         return ""
     }
 }
-
-extension IOSSharedSettingsStore {
-    @discardableResult
-    func repairCurrentChatModelIfNeeded(_ settingsStore: SettingsStore? = nil) -> Bool {
-        if let currentModel = snapshot.getCurrentChatModel(),
-           let provider = ChatProviderConfiguration.provider(for: currentModel, providers: snapshot.providers),
-           ChatProviderConfiguration.issue(for: currentModel, provider: provider) == nil {
-            if let settingsStore {
-                syncLegacySettingsStoreForCurrentChat(settingsStore)
-            }
-            return false
-        }
-
-        let configuredProviders = ChatProviderConfiguration.configuredChatModels(in: snapshot.providers)
-        guard configuredProviders.count == 1,
-              let model = configuredProviders[0].models.first else {
-            return false
-        }
-        selectChatModelAsDefault(model.id.description())
-        if let settingsStore {
-            syncLegacySettingsStoreForCurrentChat(settingsStore)
-        }
-        return true
-    }
-}

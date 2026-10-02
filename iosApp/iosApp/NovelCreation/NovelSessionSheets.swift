@@ -1134,7 +1134,7 @@ struct NovelWritingContextSheet: View {
 
     let workspace: NovelCreationViewModel
     let session: NovelSessionViewModel
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
     let mode: NovelSessionMode
     let granularity: NovelGenerationGranularity
     let userText: String
@@ -1170,7 +1170,7 @@ struct NovelWritingContextSheet: View {
     init(
         workspace: NovelCreationViewModel,
         session: NovelSessionViewModel,
-        sharedSettings: IOSSharedSettingsStore,
+        sharedSettings: any IOSSettingsSnapshotSource,
         mode: NovelSessionMode,
         granularity: NovelGenerationGranularity,
         userText: String,

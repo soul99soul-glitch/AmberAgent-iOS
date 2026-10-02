@@ -129,7 +129,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         let list = try source("iosApp/ChatCollectionMessageList.swift")
         let projection = try source("iosApp/ChatMessageProjection.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
-        let keys = try source("iosApp/PlaceholderViews.swift")
+        let keys = try source("iosApp/AmberDesignSystem.swift")
 
         // native timeline 已 hardcode 为唯一 Chat 列表路径：route 判定层（route enum /
         // policy / eligibility / 开关 flag）整层退役，ChatView 直接渲染 NativeChatTimelineView。
@@ -195,7 +195,7 @@ final class IOSSettingsWiringTests: XCTestCase {
         // islandSideGutter's only consumer is now availableIslandWidth(in:) inside
         // the same ChatTopBarLayout enum, so it is referenced bare (no qualifier)
         // there; just confirm the width-adaptive constant itself still exists.
-        XCTAssertTrue(chatView.contains("static let islandSideGutter"))
+        XCTAssertTrue(try source("iosApp/ChatTopBarLayout.swift").contains("static let islandSideGutter"))
         // Width-adaptive: the island's max width is computed upfront from the
         // gutter constant and handed down, instead of a fixedSize+padding wrapper.
         XCTAssertTrue(
@@ -254,7 +254,7 @@ final class IOSSettingsWiringTests: XCTestCase {
     }
 
     func testActivityIslandEdgeGlowIsOptionalAndDefaultsOff() throws {
-        let keys = try source("iosApp/PlaceholderViews.swift")
+        let keys = try source("iosApp/AmberDesignSystem.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
         let activityIsland = try source("iosApp/ChatActivityIslandView.swift")
         let storageDeclaration =
@@ -277,7 +277,7 @@ final class IOSSettingsWiringTests: XCTestCase {
     /// 完成回调消费，三点齐备。刻意不复用 KMP enableMessageGenerationHapticEffect
     /// （Android-only 接线且默认关），避免改变 Android 默认行为。
     func testCompletionHapticToggleIsWiredWithDefaultOn() throws {
-        let keys = try source("iosApp/PlaceholderViews.swift")
+        let keys = try source("iosApp/AmberDesignSystem.swift")
         let settings = try source("iosApp/DisplayFontSettingsView.swift")
         let viewModel = try source("iosApp/ChatViewModel.swift")
         let storageDeclaration =

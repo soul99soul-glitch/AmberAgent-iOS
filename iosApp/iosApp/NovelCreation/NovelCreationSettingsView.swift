@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct NovelCreationSettingsView: View {
-    let sharedSettings: IOSSharedSettingsStore
+    let sharedSettings: any IOSSettingsSnapshotSource
     let viewModel: NovelCreationViewModel?
     var preferences: NovelCreationModelPreferences
 
@@ -9,7 +9,7 @@ struct NovelCreationSettingsView: View {
     @State private var revision = 0
 
     init(
-        sharedSettings: IOSSharedSettingsStore,
+        sharedSettings: any IOSSettingsSnapshotSource,
         viewModel: NovelCreationViewModel?,
         preferences: NovelCreationModelPreferences = .shared
     ) {
@@ -59,7 +59,7 @@ struct NovelCreationSettingsView: View {
                             systemImage: "folder",
                             title: "管理项目",
                             value: "\(viewModel.projects.count) 个",
-                            showsChevron: true
+                            showsChevron: false
                         )
                     }
                 }
@@ -75,8 +75,8 @@ struct NovelCreationSettingsView: View {
                 currentModel: selectedModelID(for: purpose),
                 title: purpose.pickerTitle,
                 fallbackTitle: IOSAppLocalization.string(
-                    "跟随当前聊天模型",
-                    defaultValue: "跟随当前聊天模型"
+                    NovelGlobalModelWording.current.followTitle,
+                    defaultValue: NovelGlobalModelWording.current.followTitle
                 ),
                 onFallback: { setModelPolicy(.global, for: purpose) }
             ) { option in
@@ -106,8 +106,8 @@ struct NovelCreationSettingsView: View {
         let name = NovelPresentation.modelDisplayName(for: policy, sharedSettings: sharedSettings)
         if case .global = policy {
             return IOSAppLocalization.formatted(
-                "跟随聊天 · %@",
-                defaultValue: "跟随聊天 · %@",
+                NovelGlobalModelWording.current.followValueFormat,
+                defaultValue: NovelGlobalModelWording.current.followValueFormat,
                 arguments: [name]
             )
         }

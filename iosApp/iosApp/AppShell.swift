@@ -1201,7 +1201,10 @@ private extension View {
                         viewModel: novelCreationViewModel,
                         sessionViewModel: novelSessionViewModel,
                         sharedSettings: sharedSettings,
-                        projectID: projectID
+                        projectID: projectID,
+                        onOpenSettings: {
+                            router.navigate(to: .novelCreationSettings)
+                        }
                     )
                     .novelCreationErrorAlert(viewModel: novelCreationViewModel)
                 } else {

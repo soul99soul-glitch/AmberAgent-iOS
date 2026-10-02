@@ -940,7 +940,7 @@ final class ChatMessageProjectionTests: XCTestCase {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let source = try String(
             contentsOf: testDirectory.deletingLastPathComponent()
-                .appendingPathComponent("iosApp/MessageBubbleView.swift"),
+                .appendingPathComponent("iosApp/ChatAssistantMarkdownView.swift"),
             encoding: .utf8
         )
 
@@ -1207,7 +1207,7 @@ final class ChatMessageProjectionTests: XCTestCase {
         let testDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let source = try String(
             contentsOf: testDirectory.deletingLastPathComponent()
-                .appendingPathComponent("iosApp/MessageBubbleView.swift"),
+                .appendingPathComponent("iosApp/ChatAssistantMarkdownView.swift"),
             encoding: .utf8
         )
 

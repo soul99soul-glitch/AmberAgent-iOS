@@ -1447,7 +1447,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     } ?? assistant
                     working.append(recorded)
                     let outputs = pendingToolCalls(in: assistant).map { tool in
-                        (tool: tool, parts: [UIMessagePart.Text(text: ChatToolOutputFormatter.toolFailureJSON(
+                        (tool: tool, parts: [UIMessagePart.Text(text: IOSToolFailurePayload.json(
                             toolName: tool.toolName,
                             reason: cancelled ? "Generation cancelled." : "Generation failed before the tool call completed.",
                             denied: cancelled,
@@ -2317,12 +2317,12 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )
             case .denied(let reason):
                 outcome = "denied"
-                resultParts = [UIMessagePart.Text(text: ChatToolOutputFormatter.toolFailureJSON(
+                resultParts = [UIMessagePart.Text(text: IOSToolFailurePayload.json(
                     toolName: tool.toolName, reason: reason, denied: true, status: "denied"
                 ), metadata: nil)]
             case .failed(let reason):
                 outcome = "failed"
-                resultParts = [UIMessagePart.Text(text: ChatToolOutputFormatter.toolFailureJSON(
+                resultParts = [UIMessagePart.Text(text: IOSToolFailurePayload.json(
                     toolName: tool.toolName, reason: reason, status: "failed"
                 ), metadata: nil)]
             case .durabilityFailure(let reason):

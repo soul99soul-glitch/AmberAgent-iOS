@@ -748,16 +748,7 @@ enum IOSJevMetricsStore {
         }
     }
 
-    struct RunSummary: Equatable {
-        var decisions: Int
-        var memorySelected: Int?
-        var memoryInjectionHits: Int?
-        var hiddenCharacters: Int?
-        var selectedModelId: String?
-        var firstVisibleDeltaMs: Int?
-        var modelSteps: Int?
-        var cacheHitRatio: Double?
-    }
+    typealias RunSummary = IOSJevRunSummary
 
     /// 端到端数字以 summary 行保存；全用途 off 时保持零 Jev 指标。
     static func appendRunNumbers(runId: String, numbers: [String: Double], now: Date = Date()) {
