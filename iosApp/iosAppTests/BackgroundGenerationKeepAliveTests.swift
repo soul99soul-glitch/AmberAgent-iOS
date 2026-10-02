@@ -26,6 +26,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         /// Fail the first N submit attempts, then succeed.
         var remainingSubmitFailures: Int = 0
         let audio = AudioSpy()
+        let location = LocationSpy()
 
         func makeKeepAlive(
             systemSubmitRetryDelayNanoseconds: UInt64 = 1_500_000_000,
@@ -68,6 +69,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
                 systemSubmitRetryDelayNanoseconds: systemSubmitRetryDelayNanoseconds,
                 isApplicationForeground: isApplicationForeground,
                 audioKeepAlive: audio,
+                locationKeepAlive: location,
                 isAudioKeepAliveEnabled: isAudioKeepAliveEnabled
             )
         }
@@ -109,6 +111,12 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
             isStarting = false
             isActive = success
         }
+    }
+
+    @MainActor
+    private final class LocationSpy: BackgroundLocationKeepAliveControlling {
+        var isActive = false
+        func setNeeded(_ needed: Bool) {}
     }
 
     private struct SubmitFailure: Error {}
@@ -566,11 +574,9 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         keepAlive.begin("run-1", title: "t", subtitle: "s")
         XCTAssertTrue(spy.audio.isActive)
         XCTAssertEqual(spy.audio.startCount, 1)
-        XCTAssertTrue(spy.submittedRequests.isEmpty)
-        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .uiOnly)
-
-        keepAlive.promoteSystemTaskIfNeeded("run-1", subtitle: "有可见输出")
-        XCTAssertTrue(spy.submittedRequests.isEmpty)
+        // 音频会被其他 App 打断，系统任务与它并存，不再让位。
+        XCTAssertEqual(spy.submittedRequests.count, 1)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
 
         keepAlive.end("run-1")
         XCTAssertFalse(spy.audio.isActive)
@@ -618,6 +624,7 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
 
     func testUITaskExpirationRearmsStoppedAudioInsteadOfKillingRun() {
         let spy = SystemSpy()
+        spy.submitError = SubmitFailure()
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
         var expired = 0
 
@@ -671,64 +678,50 @@ final class BackgroundGenerationKeepAliveTests: XCTestCase {
         XCTAssertFalse(spy.audio.isActive)
     }
 
-    func testAudioOwnedLeaseDoesNotSubmitSystemTaskAfterForeground() async {
-        let spy = SystemSpy()
-        let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
-
-        keepAlive.begin("run-1", title: "t", subtitle: "s")
-        spy.expirationHandlers.first?()
-        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
-        XCTAssertTrue(spy.submittedRequests.isEmpty)
-
-        NotificationCenter.default.post(name: UIApplication.didBecomeActiveNotification, object: nil)
-        try? await Task.sleep(nanoseconds: 80_000_000)
-
-        XCTAssertTrue(spy.submittedRequests.isEmpty)
-        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .audio)
-        XCTAssertTrue(keepAlive.holdsLease("run-1"))
-    }
-
-    /// `BackgroundAudioKeepAlive.start()` no longer resolves synchronously — a
-    /// recovery attempt can still be in flight when `begin()` checks whether it
-    /// needs a system task fallback. That check must treat "starting" the same
-    /// as "active" so it doesn't submit a system card that a moment later
-    /// becomes redundant once the audio leg actually comes up.
-    func testBeginDoesNotSubmitSystemTaskWhileAudioIsStarting() {
+    /// 2026-10-02 真机：音频腿在前台已起来时系统任务被压下，后台音频被其他 App
+    /// 打断后无腿可用，生图 SSE 断成 -1005。启动中同样要提交。
+    func testBeginSubmitsSystemTaskWhileAudioIsStarting() {
         let spy = SystemSpy()
         spy.audio.startsSynchronously = false
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         keepAlive.begin("run-1", title: "t", subtitle: "s")
 
-        XCTAssertEqual(spy.audio.startCount, 1)
         XCTAssertTrue(spy.audio.isStarting)
-        XCTAssertFalse(spy.audio.isActive)
-        XCTAssertTrue(spy.submittedRequests.isEmpty)
-        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .uiOnly)
+        XCTAssertEqual(spy.submittedRequests.count, 1)
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
     }
 
-    /// When the in-flight attempt from `testBeginDoesNotSubmitSystemTaskWhileAudioIsStarting`
-    /// definitively fails, `BackgroundAudioKeepAlive` posts
-    /// `.amberBackgroundAudioKeepAliveChanged`; the lease still owes a system
-    /// task, so the notification observer's `resubmitSystemTasksAfterForeground()`
-    /// call must submit it (foreground here) instead of leaving the run with
-    /// only its 30s UIKit window.
-    func testAudioDefinitiveFailureSubmitsSystemTaskInForeground() async {
+    func testAudioBecomingActiveDoesNotRetireSystemTask() async {
         let spy = SystemSpy()
         spy.audio.startsSynchronously = false
         let keepAlive = spy.makeKeepAlive(isAudioKeepAliveEnabled: { true })
 
         keepAlive.begin("run-1", title: "t", subtitle: "s")
-        XCTAssertTrue(spy.submittedRequests.isEmpty)
-
-        spy.audio.completeStart(success: false)
+        spy.audio.completeStart(success: true)
         NotificationCenter.default.post(name: .amberBackgroundAudioKeepAliveChanged, object: nil)
-        // The observer is registered with `queue: .main`, which delivers on the
-        // next run loop turn rather than inline with `post`.
         try? await Task.sleep(nanoseconds: 80_000_000)
 
         XCTAssertEqual(spy.submittedRequests.count, 1)
+        XCTAssertFalse(spy.cancelledIdentifiers.contains(keepAlive.identifier(for: "run-1")))
         XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
+    }
+
+    /// 2026-10-02 真机：后台 15 秒定位腿报 active 后，系统任务被撤，进程随即
+    /// 挂起，生图 SSE 回前台时报 -1005。定位腿撑不住进程，不能替代系统任务。
+    func testActiveLocationDoesNotRetireSystemTask() async {
+        let spy = SystemSpy()
+        let keepAlive = spy.makeKeepAlive()
+
+        keepAlive.begin("run-1", title: "t", subtitle: "s")
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
+
+        spy.location.isActive = true
+        NotificationCenter.default.post(name: .amberBackgroundLocationKeepAliveChanged, object: nil)
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        XCTAssertEqual(keepAlive.executionAssertion(for: "run-1"), .submitted)
+        XCTAssertFalse(spy.cancelledIdentifiers.contains(keepAlive.identifier(for: "run-1")))
     }
 
     func testAudioKeepAlivePreferenceHonorsBuildDefaultOverrideAndRequiresBackgroundMode() {

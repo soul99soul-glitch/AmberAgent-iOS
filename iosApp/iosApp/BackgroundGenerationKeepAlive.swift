@@ -14,12 +14,14 @@ import UIKit
 /// - 深度阅读整条 pipeline
 /// - MiniApp AI
 ///
-/// 默认先拿 UIKit 短窗，再从两条长执行腿中选一条：
+/// 默认先拿 UIKit 短窗，再叠加长执行腿：
 /// - `beginBackgroundTask`：调用即生效，覆盖「提交」到「系统真正调度」之间的
 ///   空窗。没有它，App 可能在 BG 任务启动前就被挂起。上限约 30 秒。
-/// - 音频偏好开启且播放器真实启动时，使用极轻音频循环。前台 mix，后台独占，
-///   生成结束立刻停；此时不再同时创建 continued-processing 系统任务卡。
-/// - 音频关闭或启动失败时，才提交 `BGContinuedProcessingTask` 作为长窗。
+/// - `BGContinuedProcessingTask`：只要调用方允许就提交，不因音频/定位腿让位。
+///   2026-10-02 真机：音频会被其他 App 打断，定位腿撑不住进程；只靠它们时
+///   进程挂起，生图 SSE 回前台报 -1005。系统任务是唯一不会被抢走的长腿。
+/// - 音频偏好开启时，再叠加极轻音频循环。前台 mix，后台独占，生成结束立刻停；
+///   系统任务被系统收走时，音频若还在就接着撑，不掐断这一轮。
 ///
 /// 系统任务提交失败时，UIKit 短窗仍覆盖有限收尾；已排队但还没 adopt 时，
 /// request 仍留给系统接管。调用方也可显式关闭系统任务，只保留短窗和音频语义。
@@ -220,9 +222,9 @@ final class BackgroundGenerationKeepAlive {
     ///   只还 UIKit 腿，不触发。正常跑完也不会触发。
     /// - Parameter onSystemTaskExpiration: 系统进度活动被取消或终止时回调。
     ///   未提供时沿用 `onExpire`，保持既有非 Chat 调用方语义。
-    /// - Parameter submitSystemTask: 音频没有真实启动时，是否允许提交系统
-    ///   continued-processing task。关闭时仍持有 UIKit 短任务；短窗到期时若
-    ///   音频腿还在则继续跑，否则执行 `onExpire`。
+    /// - Parameter submitSystemTask: 是否允许提交系统 continued-processing
+    ///   task。关闭时仍持有 UIKit 短任务；短窗到期时若音频腿还在则继续跑，
+    ///   否则执行 `onExpire`。
     func begin(
         _ leaseId: String,
         title: String,
@@ -257,17 +259,7 @@ final class BackgroundGenerationKeepAlive {
 
         syncAudioKeepAlive()
         if submitSystemTask {
-            // A start attempt still in flight (not yet confirmed active) also
-            // suppresses submission: submitting here and having the attempt
-            // succeed a moment later would leave two competing assertions.
-            if audioKeepAlive.isStartingOrActive || locationKeepAlive.isActive {
-                IOSBackgroundLifecycleLog.record(
-                    "keepAliveSystemSuppressedByBackgroundMode(\(leaseId))",
-                    detail: snapshotDetail
-                )
-            } else {
-                submitContinuedTask(leaseId, title: title, subtitle: subtitle)
-            }
+            submitContinuedTask(leaseId, title: title, subtitle: subtitle)
         }
         IOSBackgroundLifecycleLog.record("keepAliveBegin(\(leaseId))", detail: snapshotDetail)
     }
@@ -346,13 +338,6 @@ final class BackgroundGenerationKeepAlive {
         if let subtitle { lease.subtitle = subtitle }
         lease.submitSystemTask = true
         leases[leaseId] = lease
-        if audioKeepAlive.isStartingOrActive || locationKeepAlive.isActive {
-            IOSBackgroundLifecycleLog.record(
-                "keepAlivePromoteHeldByAudio(\(leaseId))",
-                detail: snapshotDetail
-            )
-            return
-        }
         submitContinuedTask(leaseId, title: lease.title, subtitle: lease.subtitle)
         IOSBackgroundLifecycleLog.record("keepAlivePromoteSystem(\(leaseId))", detail: snapshotDetail)
     }
@@ -510,14 +495,6 @@ final class BackgroundGenerationKeepAlive {
     }
 
     private func submitContinuedTask(_ leaseId: String, title: String, subtitle: String) {
-        guard !audioKeepAlive.isStartingOrActive, !locationKeepAlive.isActive else {
-            cancelSystemSubmitRetry(for: leaseId)
-            IOSBackgroundLifecycleLog.record(
-                "keepAliveSystemSuppressedByBackgroundMode(\(leaseId))",
-                detail: snapshotDetail
-            )
-            return
-        }
         guard isApplicationForeground() else {
             IOSBackgroundLifecycleLog.record(
                 "keepAliveSubmitSkippedBackground(\(leaseId))",
@@ -713,6 +690,19 @@ final class BackgroundGenerationKeepAlive {
     /// 只由 `expirationHandler` 调用，`setTaskCompleted` 已经在那里同步报过了。
     private func handleSystemExpiration(_ leaseId: String, task: BGContinuedProcessingTask) {
         guard leases[leaseId]?.systemTask === task else { return }
+        if audioKeepAlive.isActive, var lease = leases[leaseId] {
+            // 音频腿还在：只摘系统任务，这一轮继续跑。不再重投系统卡——
+            // 它刚被用户或系统收走。
+            lease.waiter?.resume()
+            lease.waiter = nil
+            lease.systemTask = nil
+            lease.didSubmitSystemTask = false
+            lease.submitSystemTask = false
+            lease.heldByAudio = true
+            leases[leaseId] = lease
+            IOSBackgroundLifecycleLog.record("keepAliveSystemExpiredHeldByAudio(\(leaseId))", detail: snapshotDetail)
+            return
+        }
         guard let lease = removeLease(leaseId) else { return }
         if lease.uiTaskId != .invalid {
             endBackgroundTask(lease.uiTaskId)
@@ -750,7 +740,7 @@ final class BackgroundGenerationKeepAlive {
             locationKeepAlive.setNeeded(true)
             if isAudioKeepAliveEnabled() { audioKeepAlive.start() }
             else { audioKeepAlive.stop() }
-            preferActiveBackgroundMode()
+            markAudioHeldLeases()
             return
         }
         guard !isApplicationForeground(),
@@ -794,20 +784,12 @@ final class BackgroundGenerationKeepAlive {
         syncAudioKeepAlive()
     }
 
-    /// Once a real audio/location assertion is available, retire the secondary
-    /// system card. A late expiration for that retired card cannot cancel the
-    /// independently-owned run. Preserve eligibility for a later foreground
-    /// fallback if the background mode becomes unavailable.
-    private func preferActiveBackgroundMode() {
-        guard audioKeepAlive.isActive || locationKeepAlive.isActive else { return }
-        for leaseId in Array(leases.keys) {
-            guard let lease = leases[leaseId] else { continue }
-            if lease.systemTask != nil || lease.didSubmitSystemTask {
-                let allowsFallback = lease.submitSystemTask
-                abandonSystemAssertion(leaseId)
-                leases[leaseId]?.submitSystemTask = allowsFallback
-            }
-            if leases[leaseId]?.uiTaskId == .invalid { leases[leaseId]?.heldByAudio = true }
+    /// 音频腿起来后，已还掉 UIKit 短窗的租约记为音频持有。系统任务不因此
+    /// 撤掉：音频会被其他 App 打断，两条腿并存才不会在后台断档。
+    private func markAudioHeldLeases() {
+        guard audioKeepAlive.isActive else { return }
+        for leaseId in Array(leases.keys) where leases[leaseId]?.uiTaskId == .invalid {
+            leases[leaseId]?.heldByAudio = true
         }
     }
 
@@ -828,33 +810,28 @@ final class BackgroundGenerationKeepAlive {
                      .amberBackgroundLocationKeepAliveChanged] {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
-                    // Same signal, two opposite-polarity reactions: audio/location
-                    // just became active retires a redundant system card
-                    // (`preferActiveBackgroundMode`); audio/location just
-                    // definitively failed to start submits one that was withheld
-                    // while the attempt was in flight (`resubmitSystemTasksAfterForeground`,
-                    // itself a no-op while still starting or already active).
-                    self?.preferActiveBackgroundMode()
+                    // Audio just became active marks UIKit-released leases as
+                    // audio-held; a lease that still owes a system task (e.g. a
+                    // foreground submit refused earlier) gets it submitted.
+                    self?.markAudioHeldLeases()
                     self?.resubmitSystemTasksAfterForeground()
                 }
             }
         }
     }
 
-    /// 音频/位置腿此刻确定用不上（未启动、启动中也没有）时，为仍欠系统任务的
-    /// 租约补交。触发方在前台变化和音频/位置状态变化通知两处：前者覆盖“回到
-    /// 前台”，后者覆盖“begin 时曾因音频启动中而压下提交、启动最终失败”这条
-    /// 新增路径——两者判定基本一致，不必按 `heldByAudio` 区分，因为一个仍在
-    /// UIKit 短窗内、从未被 `handleUITaskExpiration` 标记过的租约同样可能欠着
-    /// 系统任务。`submitContinuedTask` 内部的 `isApplicationForeground` 守卫
-    /// 负责真正的前台约束。
+    /// 为仍欠系统任务的租约补交（例如 begin 时已在后台、提交被跳过）。触发方
+    /// 在前台变化和音频/位置状态变化通知两处；与音频/位置腿是否在跑无关，
+    /// 系统任务与它们并存。不必按 `heldByAudio` 区分，因为一个仍在 UIKit 短窗
+    /// 内、从未被 `handleUITaskExpiration` 标记过的租约同样可能欠着系统任务。
+    /// `submitContinuedTask` 内部的 `isApplicationForeground` 守卫负责真正的
+    /// 前台约束。
     ///
     /// 已经挂着一次性重试（`systemSubmitRetryScheduled`）的租约必须排除：那条
     /// 路径自己会在到期时重投，这里再直接调一次 `submitContinuedTask` 会绕过
     /// 它的去重（`scheduleSystemSubmitRetryIfNeeded` 只在集合里没有这个
     /// leaseId 时才会重新排队），造成一次多余、不受管理的提交。
     private func resubmitSystemTasksAfterForeground() {
-        guard !audioKeepAlive.isStartingOrActive, !locationKeepAlive.isActive else { return }
         let pending = leases.compactMap { leaseId, lease -> (String, String, String)? in
             guard lease.submitSystemTask,
                   lease.systemTask == nil,

@@ -167,7 +167,8 @@ final class IOSChatBackgroundExecutionTests: XCTestCase {
         start(first, on: coordinator)
         start(second, on: coordinator)
         try await waitUntil { await provider.hasStarted(second.handoff.params.model.modelId) }
-        XCTAssertTrue(assertions.submissions.isEmpty, "Audio-owned children must not create a second scheduler owner")
+        // 音频与系统任务并存：每个子任务都提交自己的系统任务（2026-10-02）。
+        XCTAssertEqual(assertions.submissions.count, 2)
         assertions.expirations.forEach { $0() }
         XCTAssertEqual(coordinator.activeJobCount, 2)
         XCTAssertEqual(coordinator.activeSubAgentJobCount, 2)
