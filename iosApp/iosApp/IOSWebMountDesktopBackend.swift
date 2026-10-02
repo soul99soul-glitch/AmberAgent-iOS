@@ -145,6 +145,7 @@ enum IOSWebMountDesktopBackendError: Error, Equatable, LocalizedError {
     case notConnected(String)
     case sensitiveFieldRequiresHuman
     case staleSnapshot
+    case controlUnavailable
 
     var errorCode: String {
         switch self {
@@ -157,6 +158,7 @@ enum IOSWebMountDesktopBackendError: Error, Equatable, LocalizedError {
         case .notConnected: "desktop_gateway_unavailable"
         case .sensitiveFieldRequiresHuman: "sensitive_field_requires_human"
         case .staleSnapshot: "stale_snapshot"
+        case .controlUnavailable: "control_unavailable"
         }
     }
 
@@ -172,6 +174,7 @@ enum IOSWebMountDesktopBackendError: Error, Equatable, LocalizedError {
         case .notConnected: "Desktop WebMount session is not connected."
         case .sensitiveFieldRequiresHuman: "Sensitive fields stay in local, user-controlled WebMount."
         case .staleSnapshot: "Observe the page again before mutating this desktop session."
+        case .controlUnavailable: "WebMount control changed before the desktop action was dispatched."
         }
     }
 }
@@ -379,7 +382,8 @@ final class IOSWebMountDesktopBackendAdapter {
         toolName: String,
         arguments: [String: Any],
         logicalSessionId: String,
-        approvedHighConsequence: Bool = false
+        approvedHighConsequence: Bool = false,
+        canDispatchMutation: (() -> Bool)? = nil
     ) async -> String {
         let sessionId: String
         do {
@@ -542,6 +546,9 @@ final class IOSWebMountDesktopBackendAdapter {
                 remoteTool: remoteTool,
                 sessionId: sessionId
             )
+            if mapping.mutating, canDispatchMutation?() == false {
+                throw IOSWebMountDesktopBackendError.controlUnavailable
+            }
             didDispatchMutation = mapping.mutating
             let rawResult = try await connection.client.callTool(
                 name: mapping.remoteToolName,
@@ -1681,6 +1688,9 @@ final class IOSWebMountDesktopBackendAdapter {
             "verified": false,
             "error": Self.redactedError(error)
         ]) { _, new in new }
+        if (error as? IOSWebMountDesktopBackendError) == .controlUnavailable {
+            output["status"] = "rejected"
+        }
         if error is IOSWebMountDesktopBackendError,
            (error as? IOSWebMountDesktopBackendError) == .sensitiveFieldRequiresHuman {
             output["requires_human"] = true

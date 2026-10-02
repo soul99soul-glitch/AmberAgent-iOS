@@ -224,8 +224,9 @@ enum NovelWorkspaceAuthority {
             uniquingKeysWith: { first, _ in first }
         )
         var result: [String: ChapterBody] = [:]
+        let branchSlugs = NovelWorkspaceBackup.allocatedBranchSlugs(in: document)
         for branch in document.branches where branch.lifecycle == .active {
-            let branchSlug = NovelWorkspaceBackup.slug(branch.name)
+            let branchSlug = branchSlugs[branch.id] ?? NovelWorkspaceBackup.slug(branch.name)
             for selection in branch.workingChapterSelections {
                 guard chapterByID[selection.chapterID]?.discardedAt == nil,
                       let version = versionsByID[selection.versionID],

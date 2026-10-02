@@ -6766,7 +6766,8 @@ final class IOSWebMountController {
             toolName: toolName,
             arguments: routedArgs,
             logicalSessionId: record.id,
-            approvedHighConsequence: isUserInitiated
+            approvedHighConsequence: isUserInitiated,
+            canDispatchMutation: { !ownershipLost() }
         )
         let actionObject = Self.parseObject(output)
         let interactionMutation = Self.interactionMutatingToolNames.contains(toolName)

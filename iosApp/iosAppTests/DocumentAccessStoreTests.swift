@@ -372,6 +372,58 @@ final class DocumentAccessStoreTests: XCTestCase {
         XCTAssertNil(store.grantSummary)
     }
 
+    func testWorkspaceUTF8PreviewBudgetDoesNotSplitChineseCharacters() async throws {
+        let body = "苏未晚把那封信烧了，灰烬落进河里。"
+        let result = await DocumentAccessStore.previewFileForWorkspace(
+            url: try makeTempFile(text: body, extension: "txt"), fileType: "text/plain",
+            maxReadableBytes: 20 * 1024 * 1024, maxPreviewBytes: 13, maxPreviewCharacters: 60_000
+        )
+        let preview = try result.get()
+        XCTAssertEqual(preview.preview, "苏未晚把")
+        XCTAssertTrue(preview.isTruncated)
+        XCTAssertEqual(preview.bytesRead, body.utf8.count)
+    }
+
+    func testWorkspaceGB18030PreviewBudgetDecodesBeforeTruncation() async throws {
+        let body = "赵大踏进渡口的雾里，船工没有抬头。"
+        let encoding = CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+        )
+        let data = try XCTUnwrap((body as NSString).data(using: encoding))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("txt")
+        try data.write(to: url)
+        let result = await DocumentAccessStore.previewFileForWorkspace(
+            url: url, fileType: "text/plain", maxReadableBytes: 20 * 1024 * 1024,
+            maxPreviewBytes: 13, maxPreviewCharacters: 60_000
+        )
+        let preview = try result.get()
+        XCTAssertEqual(preview.preview, "赵大踏进")
+        XCTAssertTrue(preview.isTruncated)
+        XCTAssertEqual(preview.bytesRead, data.count)
+    }
+
+    func testWorkspacePreviewBudgetCountsDecodedUTF8Bytes() async throws {
+        let gb18030 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+        ))
+        for (body, encoding, expected, truncated) in [
+            ("赵大踏进", gb18030, "赵大踏", true),
+            ("Amber", String.Encoding.utf16, "Amber", false)
+        ] {
+            let data = try XCTUnwrap(body.data(using: encoding))
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("txt")
+            try data.write(to: url)
+            let result = await DocumentAccessStore.previewFileForWorkspace(
+                url: url, fileType: "text/plain", maxReadableBytes: 20 * 1024 * 1024,
+                maxPreviewBytes: 10, maxPreviewCharacters: 60_000
+            )
+            let preview = try result.get()
+            XCTAssertEqual(preview.preview, expected)
+            XCTAssertEqual(preview.isTruncated, truncated)
+            XCTAssertEqual(preview.bytesRead, data.count)
+        }
+    }
+
     func testWorkspaceImportStoresMetadataPreviewAndReloads() async throws {
         let baseDirectory = makeTempDirectory()
         let store = IOSWorkspaceStore(baseDirectory: baseDirectory)
@@ -474,6 +526,317 @@ final class DocumentAccessStoreTests: XCTestCase {
             XCTAssertTrue(message.contains("Workspace import limit"))
             XCTAssertTrue(message.contains(DocumentAccessStore.formatBytes(store.maxImportBytes)))
         }
+    }
+
+    func testWorkspaceReparseKeepsIdentityWhenAnotherFileIsInserted() async throws {
+        let gate = WorkspaceParseGate()
+        let store = makeWorkspaceStore(gate: gate)
+        let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+        gate.shouldPause = true
+        let task = Task { try await store.reparseFile(id: record.id) }
+        await gate.waitUntilPaused()
+        let other = try await store.importFile(url: makeTempFile(text: "other", extension: "txt"))
+        gate.resume()
+        _ = try await task.value
+        XCTAssertEqual(store.files.count, 2)
+        XCTAssertEqual(store.files.first(where: { $0.id == other.id })?.preview, "other")
+        XCTAssertEqual(store.files.first(where: { $0.id == record.id })?.preview, "original")
+    }
+
+    func testWorkspaceReparseRejectsDeletedTarget() async throws {
+        let gate = WorkspaceParseGate()
+        let store = makeWorkspaceStore(gate: gate)
+        let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+        gate.shouldPause = true
+        let task = Task { try await store.reparseFile(id: record.id) }
+        await gate.waitUntilPaused()
+        try store.removeFile(id: record.id)
+        gate.resume()
+        do {
+            _ = try await task.value
+            XCTFail("A deleted record must not be restored by a stale parse.")
+        } catch {
+            XCTAssertEqual(error as? IOSWorkspaceStoreError, .missingFile)
+        }
+        XCTAssertTrue(store.files.isEmpty)
+    }
+
+    func testWorkspaceReparseRejectsMovedOrEditedTarget() async throws {
+        for tool in ["workspace_file_move", "workspace_file_edit"] {
+            let gate = WorkspaceParseGate()
+            let store = makeWorkspaceStore(gate: gate)
+            let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+            gate.shouldPause = true
+            let task = Task { try await store.reparseFile(id: record.id) }
+            await gate.waitUntilPaused()
+            let args: [String: Any] = tool == "workspace_file_move"
+                ? ["file_id": record.id, "destination_path": "moved.txt"]
+                : ["file_id": record.id, "find": "original", "replace": "edited"]
+            let result = await store.executeTool(toolName: tool, input: try jsonInput(args))
+            XCTAssertEqual(try jsonObject(result)["ok"] as? Bool, true)
+            let current = store.files
+            gate.resume()
+            do {
+                _ = try await task.value
+                XCTFail("A stale parse must not replace a newer file record.")
+            } catch {
+                XCTAssertTrue(error.localizedDescription.contains("changed"))
+            }
+            XCTAssertEqual(store.files, current)
+        }
+    }
+
+    func testWorkspacePendingWriteAndEditRejectMovedOrRemovedTarget() async throws {
+        for tool in ["workspace_file_write", "workspace_file_edit"] {
+            for shouldMove in [true, false] {
+                let gate = WorkspaceParseGate()
+                let store = makeWorkspaceStore(gate: gate)
+                let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+                gate.shouldPause = true
+                let args: [String: Any] = tool == "workspace_file_write"
+                    ? ["path": record.workspacePath, "content": "replacement", "overwrite": true]
+                    : ["file_id": record.id, "find": "original", "replace": "replacement"]
+                let input = try jsonInput(args)
+                let task = Task { await store.executeTool(toolName: tool, input: input) }
+                await gate.waitUntilPaused()
+                if shouldMove {
+                    let move = await store.executeTool(toolName: "workspace_file_move", input: try jsonInput([
+                        "file_id": record.id, "destination_path": "moved.txt"
+                    ]))
+                    XCTAssertEqual(try jsonObject(move)["ok"] as? Bool, true)
+                } else {
+                    try store.removeFile(id: record.id)
+                }
+                let currentFiles = store.files
+                gate.resume()
+                let result = try jsonObject(await task.value)
+                XCTAssertEqual(result["ok"] as? Bool, false, "\(tool) must reject a target changed while parsing.")
+                XCTAssertEqual(store.files, currentFiles)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL(for: record).path))
+                if let moved = store.files.first {
+                    XCTAssertEqual(moved.workspacePath, "moved.txt")
+                    XCTAssertEqual(try String(contentsOf: store.fileURL(for: moved), encoding: .utf8), "original")
+                    XCTAssertEqual(moved.preview, "original")
+                }
+            }
+        }
+    }
+
+    func testAmberShellPendingMutationsRejectRemovedSource() async throws {
+        for operation in ["write", "touch", "copy", "move"] {
+            let gate = WorkspaceParseGate()
+            let store = makeWorkspaceStore(gate: gate)
+            let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+            let path = "/workspace/\(record.workspacePath)"
+            gate.shouldPause = true
+            let task = Task {
+                switch operation {
+                case "write": try await store.amberShellWriteText(path: path, text: "replacement")
+                case "touch": try await store.amberShellTouch(path: path)
+                case "copy": try await store.amberShellCopy(from: path, to: "/workspace/copied.txt")
+                default: try await store.amberShellMove(from: path, to: "/workspace/moved.txt")
+                }
+            }
+            await gate.waitUntilPaused()
+            try store.removeFile(id: record.id)
+            let current = store.files
+            gate.resume()
+            do {
+                try await task.value
+                XCTFail("\(operation) must reject a source removed while preparing the operation.")
+            } catch {}
+            XCTAssertEqual(store.files, current)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: store.fileURL(for: record).path))
+            let root = store.fileURL(for: record).deletingLastPathComponent().deletingLastPathComponent()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("copied.txt").path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("moved.txt").path))
+        }
+    }
+
+    func testAmberShellPendingWriteCannotOverwriteNewerEdit() async throws {
+        let gate = WorkspaceParseGate()
+        let store = makeWorkspaceStore(gate: gate)
+        let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+        gate.shouldPause = true
+        let task = Task { try await store.amberShellWriteText(path: "/workspace/\(record.workspacePath)", text: "pending") }
+        await gate.waitUntilPaused()
+        let result = await store.executeTool(toolName: "workspace_file_write", input: try jsonInput([
+            "path": record.workspacePath, "content": "newer", "overwrite": true
+        ]))
+        XCTAssertEqual(try jsonObject(result)["ok"] as? Bool, true)
+        let current = store.files
+        gate.resume()
+        do {
+            try await task.value
+            XCTFail("An older prepared write must not overwrite a newer committed write.")
+        } catch {}
+        XCTAssertEqual(store.files, current)
+        XCTAssertEqual(try String(contentsOf: store.fileURL(for: record), encoding: .utf8), "newer")
+    }
+
+    func testAmberShellFailurePreservesUnrelatedCommitDuringParse() async throws {
+        let base = makeTempDirectory()
+        let gate = WorkspaceParseGate()
+        let store = makeWorkspaceStore(gate: gate, baseDirectory: base)
+        let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+        gate.shouldPause = true
+        let task = Task { try await store.amberShellWriteText(path: "/workspace/\(record.workspacePath)", text: "pending") }
+        await gate.waitUntilPaused()
+        let other = try await store.importFile(url: makeTempFile(text: "other", extension: "txt"))
+        let current = store.files
+        try blockWorkspaceIndex(at: base)
+        gate.resume()
+        do {
+            try await task.value
+            XCTFail("Expected index save to fail.")
+        } catch {}
+        XCTAssertEqual(store.files, current)
+        XCTAssertEqual(store.files.first(where: { $0.id == other.id })?.preview, "other")
+        XCTAssertEqual(try String(contentsOf: store.fileURL(for: record), encoding: .utf8), "original")
+    }
+
+    func testAmberShellMutationsRollbackWhenIndexCannotBeSaved() async throws {
+        for operation in ["write", "touch", "copy", "move", "remove"] {
+            let base = makeTempDirectory()
+            let store = IOSWorkspaceStore(baseDirectory: base)
+            let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+            let originalFiles = store.files
+            let path = "/workspace/\(record.workspacePath)"
+            let date = try store.fileURL(for: record).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            try blockWorkspaceIndex(at: base)
+            do {
+                switch operation {
+                case "write": try await store.amberShellWriteText(path: path, text: "replacement")
+                case "touch": try await store.amberShellTouch(path: path)
+                case "copy": try await store.amberShellCopy(from: path, to: "/workspace/copied.txt")
+                case "move": try await store.amberShellMove(from: path, to: "/workspace/moved.txt")
+                default: try store.amberShellRemove(path: path)
+                }
+                XCTFail("Expected \(operation) index save to fail.")
+            } catch {}
+            XCTAssertEqual(store.files, originalFiles)
+            XCTAssertEqual(try String(contentsOf: store.fileURL(for: record), encoding: .utf8), "original")
+            let restoredDate = try store.fileURL(for: record).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            XCTAssertEqual(try XCTUnwrap(restoredDate).timeIntervalSince1970,
+                           try XCTUnwrap(date).timeIntervalSince1970, accuracy: 0.000_001)
+        }
+    }
+
+    func testWorkspaceReparseKeepsMetadataWhenIndexCannotBeSaved() async throws {
+        let base = makeTempDirectory()
+        let store = IOSWorkspaceStore(baseDirectory: base)
+        let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+        let originalFiles = store.files
+        let revision = store.revision
+        try blockWorkspaceIndex(at: base)
+        do {
+            _ = try await store.reparseFile(id: record.id, now: Date(timeIntervalSince1970: 42))
+            XCTFail("Expected index save to fail.")
+        } catch {}
+        XCTAssertEqual(store.files, originalFiles)
+        XCTAssertEqual(store.revision, revision)
+    }
+
+    func testWorkspaceWriteAndEditRollbackWhenIndexCannotBeSaved() async throws {
+        for tool in ["workspace_file_write", "workspace_file_edit"] {
+            let base = makeTempDirectory()
+            let store = IOSWorkspaceStore(baseDirectory: base)
+            let initial = await store.executeTool(toolName: "workspace_file_write", input: try jsonInput([
+                "path": "note.txt", "content": "original"
+            ]))
+            XCTAssertEqual(try jsonObject(initial)["ok"] as? Bool, true)
+            let originalFiles = store.files
+            let revision = store.revision
+            let record = try XCTUnwrap(originalFiles.first)
+            try blockWorkspaceIndex(at: base)
+            let args: [String: Any] = tool == "workspace_file_write"
+                ? ["path": "note.txt", "content": "replacement", "overwrite": true]
+                : ["path": "note.txt", "find": "original", "replace": "replacement"]
+            let result = await store.executeTool(toolName: tool, input: try jsonInput(args))
+            XCTAssertEqual(try jsonObject(result)["ok"] as? Bool, false)
+            XCTAssertEqual(store.files, originalFiles)
+            XCTAssertEqual(store.revision, revision)
+            XCTAssertEqual(try String(contentsOf: store.fileURL(for: record), encoding: .utf8), "original")
+        }
+    }
+
+    func testWorkspaceMoveAndRemoveRollbackWhenIndexCannotBeSaved() async throws {
+        for shouldMove in [true, false] {
+            let base = makeTempDirectory()
+            let store = IOSWorkspaceStore(baseDirectory: base)
+            let record = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+            let originalFiles = store.files
+            try blockWorkspaceIndex(at: base)
+            if shouldMove {
+                let result = await store.executeTool(toolName: "workspace_file_move", input: try jsonInput([
+                    "file_id": record.id, "destination_path": "moved.txt"
+                ]))
+                XCTAssertEqual(try jsonObject(result)["ok"] as? Bool, false)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: base.appendingPathComponent("AmberWorkspace/files/moved.txt").path))
+            } else {
+                XCTAssertThrowsError(try store.removeFile(id: record.id))
+            }
+            XCTAssertEqual(store.files, originalFiles)
+            XCTAssertEqual(try String(contentsOf: store.fileURL(for: record), encoding: .utf8), "original")
+        }
+    }
+
+    func testWorkspaceImportAndNewWriteRemovePayloadWhenIndexCannotBeSaved() async throws {
+        for shouldImport in [true, false] {
+            let base = makeTempDirectory()
+            let store = IOSWorkspaceStore(baseDirectory: base)
+            try blockWorkspaceIndex(at: base)
+            if shouldImport {
+                do {
+                    _ = try await store.importFile(url: makeTempFile(text: "original", extension: "txt"))
+                    XCTFail("Expected index save to fail.")
+                } catch {}
+            } else {
+                let result = await store.executeTool(toolName: "workspace_file_write", input: try jsonInput([
+                    "path": "new.txt", "content": "original"
+                ]))
+                XCTAssertEqual(try jsonObject(result)["ok"] as? Bool, false)
+            }
+            XCTAssertTrue(store.files.isEmpty)
+            let contents = FileManager.default.enumerator(at: base.appendingPathComponent("AmberWorkspace/files"), includingPropertiesForKeys: [.isRegularFileKey])
+            let urls = try XCTUnwrap(contents).allObjects.compactMap { $0 as? URL }
+            XCTAssertTrue(try urls.filter { try $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true }.isEmpty)
+        }
+    }
+
+    func testWorkspaceArtifactSaveAndDeleteRollbackWhenIndexCannotBeSaved() throws {
+        let base = makeTempDirectory()
+        let store = IOSWorkspaceStore(baseDirectory: base)
+        let artifact = try store.saveArtifact(title: "keep", content: "original", type: .note, sourceKind: "test")
+        let originalArtifacts = store.artifacts
+        try blockWorkspaceIndex(at: base)
+        XCTAssertThrowsError(try store.saveArtifact(title: "new", content: "new", type: .note, sourceKind: "test"))
+        XCTAssertEqual(store.artifacts, originalArtifacts)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: base.appendingPathComponent("AmberWorkspace/artifacts").path), [artifact.contentPath])
+        XCTAssertThrowsError(try store.deleteArtifact(id: artifact.id))
+        XCTAssertEqual(store.artifacts, originalArtifacts)
+        XCTAssertEqual(try store.artifactContent(id: artifact.id), "original")
+    }
+
+    private func makeWorkspaceStore(gate: WorkspaceParseGate, baseDirectory: URL? = nil) -> IOSWorkspaceStore {
+        IOSWorkspaceStore(baseDirectory: baseDirectory ?? makeTempDirectory(), previewParser: { url, fileType in
+            let result = await DocumentAccessStore.previewFileForWorkspace(
+                url: url, fileType: fileType, maxReadableBytes: 20 * 1024 * 1024,
+                maxPreviewBytes: 64 * 1024, maxPreviewCharacters: 60_000
+            )
+            await gate.pauseIfNeeded()
+            return result
+        })
+    }
+
+    private func blockWorkspaceIndex(at base: URL) throws {
+        let url = base.appendingPathComponent("AmberWorkspace/workspace.json")
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+    }
+
+    private func jsonInput(_ args: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
     }
 
     private func makeExecutor(documentStore: DocumentAccessStore) -> IOSLocalToolExecutor {
@@ -644,5 +1007,34 @@ private extension Data {
         append(UInt8((value >> 8) & 0xff))
         append(UInt8((value >> 16) & 0xff))
         append(UInt8((value >> 24) & 0xff))
+    }
+}
+
+@MainActor
+private final class WorkspaceParseGate {
+    var shouldPause = false
+    private var paused = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiter: CheckedContinuation<Void, Never>?
+
+    func pauseIfNeeded() async {
+        guard shouldPause else { return }
+        shouldPause = false
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            paused = true
+            waiter?.resume()
+            waiter = nil
+        }
+    }
+
+    func waitUntilPaused() async {
+        guard !paused else { return }
+        await withCheckedContinuation { waiter = $0 }
+    }
+
+    func resume() {
+        continuation?.resume()
+        continuation = nil
     }
 }

@@ -760,7 +760,13 @@ struct SyncBackupView: View {
                     threadEdges: threadEdges
                 )
             }
-            sharedSettings.restoreSnapshot(result.settings)
+            guard sharedSettings.restoreSnapshot(result.settings) else {
+                let detail = sharedSettings.credentialPersistenceError ?? "备份设置未能安全保存。"
+                throw NSError(domain: "IOSSyncBackup", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: restoredConversationCount > 0
+                        ? "对话已恢复，但备份设置没有提交：\(detail)" : detail
+                ])
+            }
             if let snapshot = pendingRestore.snapshot {
                 sharedSettings.recordRemoteDownload(snapshot: snapshot, preview: result.preview)
             } else {

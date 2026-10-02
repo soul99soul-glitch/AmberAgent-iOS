@@ -1041,18 +1041,21 @@ struct ProviderDetailView: View {
         }
         let headersChanged = previousHeaderRecord != IOSProviderRequestHeaderStore.record(for: providerId)
         cancelModelFetch(clearAvailableModels: requestConfigurationChanged || headersChanged)
-        _ = sharedSettings.updateProviderBasics(providerId: providerId, name: name, enabled: enabled)
-        if forceEnabled {
-            draftEnabled = true
+        guard sharedSettings.updateProviderConfiguration(
+            providerId: providerId, name: name, enabled: enabled,
+            apiKey: draftApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseUrl: baseURL, chatCompletionsPath: path,
+            useResponseApi: draftUseResponseAPI, promptCaching: draftPromptCaching
+        ) else {
+            let restoredHeaders = IOSProviderRequestHeaderStore.save(
+                providerId: providerId, userAgent: previousHeaderRecord.userAgent, extra: previousHeaderRecord.extra
+            )
+            var message = sharedSettings.credentialPersistenceError ?? "服务商配置未能保存。"
+            if !restoredHeaders { message += "请求头未能恢复，请重新保存。" }
+            alert = .configurationSaveFailed(message)
+            return false
         }
-        _ = sharedSettings.updateProviderApiKey(providerId: providerId, apiKey: draftApiKey.trimmingCharacters(in: .whitespacesAndNewlines))
-        _ = sharedSettings.updateProviderEndpoint(
-            providerId: providerId,
-            baseUrl: baseURL,
-            chatCompletionsPath: path,
-            useResponseApi: draftUseResponseAPI,
-            promptCaching: draftPromptCaching
-        )
+        if forceEnabled { draftEnabled = true }
         if isCurrentProvider {
             sharedSettings.syncLegacySettingsStoreForCurrentChat(settingsStore)
         }
@@ -1610,6 +1613,7 @@ private enum ProviderDetailAlert: Identifiable {
     case saved
     case invalidBaseURL
     case requestHeadersSaveFailed
+    case configurationSaveFailed(String)
     case protocolSwitchFailed
     case unsupportedProtocol
     case modelRequired
@@ -1625,6 +1629,7 @@ private enum ProviderDetailAlert: Identifiable {
         case .saved: "saved"
         case .invalidBaseURL: "invalid-base-url"
         case .requestHeadersSaveFailed: "request-headers-save-failed"
+        case .configurationSaveFailed: "configuration-save-failed"
         case .protocolSwitchFailed: "protocol-switch-failed"
         case .unsupportedProtocol: "unsupported-protocol"
         case .modelRequired: "model-required"
@@ -1645,6 +1650,8 @@ private enum ProviderDetailAlert: Identifiable {
             IOSAppLocalization.string("API 地址无效", defaultValue: "API 地址无效")
         case .requestHeadersSaveFailed:
             IOSAppLocalization.string("请求头保存失败", defaultValue: "请求头保存失败")
+        case .configurationSaveFailed:
+            IOSAppLocalization.string("服务商保存失败", defaultValue: "服务商保存失败")
         case .protocolSwitchFailed:
             IOSAppLocalization.string("协议切换失败", defaultValue: "协议切换失败")
         case .unsupportedProtocol:
@@ -1680,9 +1687,11 @@ private enum ProviderDetailAlert: Identifiable {
             )
         case .requestHeadersSaveFailed:
             IOSAppLocalization.string(
-                "自定义请求头未能安全保存，服务商配置没有提交。请重试。",
-                defaultValue: "自定义请求头未能安全保存，服务商配置没有提交。请重试。"
+                "自定义请求头未能安全保存，请重试。",
+                defaultValue: "自定义请求头未能安全保存，请重试。"
             )
+        case .configurationSaveFailed(let message):
+            message
         case .protocolSwitchFailed:
             IOSAppLocalization.string(
                 "没有找到可切换的服务商配置。",

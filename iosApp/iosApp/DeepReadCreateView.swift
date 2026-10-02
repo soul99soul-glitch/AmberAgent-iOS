@@ -37,7 +37,7 @@ enum IOSDeepReadLauncher {
     ) throws {
         let store = IOSDeepReadStore.shared
         let task = try store.createTask(title: title, sources: sources, templateId: templateId)
-        store.markRunning(id: task.id)
+        guard store.markRunning(id: task.id) else { throw IOSDeepReadStoreError.persistenceFailed }
         navigate(task.id)
 
         IOSDeepReadBackgroundCoordinator.shared.start(
@@ -57,12 +57,15 @@ enum IOSDeepReadLauncher {
         // Single-section retry (Android runSection parity): when the task completed
         // with missing sections, only regenerate those — seeding the stored
         // structured output so the targeted stages see the rest of the article.
-        let current = store.task(id: taskId)
-        let missing = current?.missingSections ?? []
-        // prepareRetry below wipes the article; keep the last good draft so a
-        // failed retry run can restore it instead of destroying user content.
+        guard let current = store.task(id: taskId) else {
+            onStatus(IOSAppLocalization.string("深度阅读记录不存在。", defaultValue: "深度阅读记录不存在。"), true)
+            return
+        }
+        let missing = current.missingSections ?? []
+        // Keep the last good draft through retry preparation and generation;
+        // a failed result save must not destroy the existing article.
         let priorCompletion: IOSDeepReadPriorCompletion?
-        if let current, current.status == .succeeded, !missing.isEmpty {
+        if !current.resultMarkdown.isEmpty {
             priorCompletion = IOSDeepReadPriorCompletion(
                 markdown: current.resultMarkdown,
                 structuredJSON: current.structuredJSON,
@@ -71,12 +74,14 @@ enum IOSDeepReadLauncher {
         } else {
             priorCompletion = nil
         }
-        let initialOutput: IOSDeepReadOutput? = current?.structuredJSON
+        let initialOutput: IOSDeepReadOutput? = current.structuredJSON
             .flatMap { $0.data(using: .utf8) }
             .flatMap { try? JSONDecoder().decode(IOSDeepReadOutput.self, from: $0) }
         let targetStages: Set<String>? = missing.isEmpty ? nil : Set(missing)
-        store.prepareRetry(id: taskId)
-        store.markRunning(id: taskId)
+        guard store.prepareRetry(id: taskId, preservingResult: priorCompletion != nil) else {
+            reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+            return
+        }
         let title = store.task(id: taskId)?.title ?? "深度阅读"
         IOSDeepReadBackgroundCoordinator.shared.start(
             taskId: taskId,
@@ -145,7 +150,9 @@ enum IOSDeepReadLauncher {
             onActivityStage?(stage, detail)
         }
 
-        store.markRunning(id: taskId)
+        guard store.markRunning(id: taskId) else {
+            return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+        }
         updateProgress(
             0,
             IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
@@ -185,7 +192,9 @@ enum IOSDeepReadLauncher {
         )
         guard isCurrentRun() else { return false }
 
-        store.replaceSources(id: taskId, sources: enriched)
+        guard store.replaceSources(id: taskId, sources: enriched) else {
+            return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+        }
         running.sources = enriched
         guard enriched.contains(where: isUsableSourceForGeneration) else {
             return failRun(
@@ -253,15 +262,16 @@ enum IOSDeepReadLauncher {
             IOSAppLocalization.string("正在保存结果", defaultValue: "正在保存结果")
         )
         reportStage(.organizing)
-        store.complete(
+        guard store.complete(
             id: taskId,
             markdown: output,
             structuredJSON: structuredJSON,
             missingSections: missingSections.isEmpty ? nil : missingSections
-        )
+        ) else {
+            return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+        }
         do {
             try workspaceArtifactSaver(running.title, output, .deepRead, "deep_read", running.id)
-            store.clearWorkspaceSyncFailure(id: taskId)
             if missingSections.isEmpty {
                 onStatus?(
                     IOSAppLocalization.string(
@@ -282,7 +292,10 @@ enum IOSDeepReadLauncher {
             }
         } catch {
             let message = IOSDeepReadUserFacingText.fromError(error)
-            store.markWorkspaceSyncFailed(id: taskId, message: message)
+            guard store.markWorkspaceSyncFailed(id: taskId, message: message) else {
+                reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
+                return true // The article itself is already durable.
+            }
             onStatus?(
                 IOSAppLocalization.formatted(
                     "深度阅读已生成，但保存到 Workspace 失败：%@",
@@ -293,6 +306,64 @@ enum IOSDeepReadLauncher {
             )
         }
         return true
+    }
+
+    static func retryWorkspaceSync(
+        taskId: String,
+        store: IOSDeepReadStore = .shared,
+        workspaceStore: IOSWorkspaceStore = .shared,
+        workspaceArtifactSaver: WorkspaceArtifactSaver? = nil,
+        onStatus: StatusHandler
+    ) {
+        guard let task = store.task(id: taskId) else {
+            onStatus(IOSAppLocalization.string("深度阅读记录不存在。", defaultValue: "深度阅读记录不存在。"), true)
+            return
+        }
+        guard task.workspaceSyncFailed != nil else {
+            if let message = store.persistenceError(for: taskId) {
+                onStatus(message, true)
+            } else {
+                onStatus(IOSAppLocalization.string("已保存到 Workspace", defaultValue: "已保存到 Workspace"), false)
+            }
+            return
+        }
+        do {
+            // A previous payload save may have succeeded while clearing its
+            // warning failed. Check that exact article even after relaunch.
+            var alreadySaved = false
+            for artifact in workspaceStore.artifacts where artifact.sourceKind == "deep_read"
+                && artifact.sourceId == task.id && artifact.title == task.title {
+                let content = try workspaceStore.artifactContent(id: artifact.id)
+                if content.utf8.elementsEqual(task.resultMarkdown.utf8) {
+                    alreadySaved = true
+                    break
+                }
+            }
+            if !alreadySaved {
+                if let workspaceArtifactSaver {
+                    try workspaceArtifactSaver(task.title, task.resultMarkdown, .deepRead, "deep_read", task.id)
+                } else {
+                    _ = try workspaceStore.saveArtifact(
+                        title: task.title, content: task.resultMarkdown, type: .deepRead,
+                        sourceKind: "deep_read", sourceId: task.id
+                    )
+                }
+            }
+            if store.clearWorkspaceSyncFailure(id: task.id) {
+                onStatus(IOSAppLocalization.string("已保存到 Workspace", defaultValue: "已保存到 Workspace"), false)
+            } else {
+                onStatus(store.persistenceError(for: task.id) ?? IOSDeepReadStoreError.persistenceFailed.localizedDescription, true)
+            }
+        } catch {
+            let message = IOSDeepReadUserFacingText.fromError(error)
+            if store.markWorkspaceSyncFailed(id: task.id, message: message) {
+                onStatus(IOSAppLocalization.formatted(
+                    "保存到 Workspace 失败：%@", defaultValue: "保存到 Workspace 失败：%@", arguments: [message]
+                ), true)
+            } else {
+                onStatus(store.persistenceError(for: task.id) ?? IOSDeepReadStoreError.persistenceFailed.localizedDescription, true)
+            }
+        }
     }
 
     private static func defaultWorkspaceArtifactSaver(
@@ -318,27 +389,42 @@ enum IOSDeepReadLauncher {
         onStatus: StatusHandler?,
         priorCompletion: IOSDeepReadPriorCompletion? = nil
     ) -> Bool {
+        let saved: Bool
         if let priorCompletion {
-            restorePriorCompletion(priorCompletion, taskId: taskId, store: store)
+            saved = restorePriorCompletion(priorCompletion, taskId: taskId, store: store)
         } else {
-            store.fail(id: taskId, message: message)
+            saved = store.fail(id: taskId, message: message)
+        }
+        guard saved else {
+            return reportPersistenceFailure(taskId: taskId, store: store, onStatus: onStatus)
         }
         onStatus?(message, true)
         return false
     }
 
-    /// Reinstates the article snapshot captured before a retry wiped the task.
+    /// Reinstates the completed state captured before a retry started.
+    @discardableResult
     static func restorePriorCompletion(
         _ prior: IOSDeepReadPriorCompletion,
         taskId: String,
         store: IOSDeepReadStore
-    ) {
+    ) -> Bool {
         store.complete(
             id: taskId,
             markdown: prior.markdown,
             structuredJSON: prior.structuredJSON,
             missingSections: prior.missingSections
         )
+    }
+
+    @discardableResult
+    private static func reportPersistenceFailure(
+        taskId: String,
+        store: IOSDeepReadStore,
+        onStatus: StatusHandler?
+    ) -> Bool {
+        onStatus?(store.persistenceError(for: taskId) ?? IOSDeepReadStoreError.persistenceFailed.localizedDescription, true)
+        return false
     }
 
     private static func isUsableSourceForGeneration(_ source: IOSDeepReadSource) -> Bool {
@@ -612,7 +698,7 @@ final class IOSDeepReadBackgroundCoordinator {
                     } else {
                         IOSDeepReadStore.shared.fail(id: taskId, message: interruptMessage)
                     }
-                    onStatus(interruptMessage, true)
+                    onStatus(IOSDeepReadStore.shared.persistenceError(for: taskId) ?? interruptMessage, true)
                 }
                 await AgentLiveActivityController.shared.end(runId: durableRunId, presentation: .failed())
                 _ = try? await self.durableRunStore.transitionFromAnyActive(
@@ -670,6 +756,14 @@ final class IOSDeepReadBackgroundCoordinator {
                 inputDigest: IOSDurableRunStore.inputDigest(title),
                 inputSnapshotRef: "deep_read:\(taskId)"
             )) == true
+            guard self.runRegistry.isCurrent(taskId: taskId, generationID: generationID) else {
+                _ = try? await self.durableRunStore.transitionFromAnyActive(
+                    runId: durableRunId,
+                    to: .interrupted,
+                    detail: "background_expiration"
+                )
+                return
+            }
             guard didStartDurably else {
                 let message = IOSAppLocalization.string(
                     "无法保存运行状态，深度阅读未启动。",
@@ -682,15 +776,7 @@ final class IOSDeepReadBackgroundCoordinator {
                 } else {
                     IOSDeepReadStore.shared.fail(id: taskId, message: message)
                 }
-                onStatus(message, true)
-                return
-            }
-            guard self.runRegistry.isCurrent(taskId: taskId, generationID: generationID) else {
-                _ = try? await self.durableRunStore.transitionFromAnyActive(
-                    runId: durableRunId,
-                    to: .interrupted,
-                    detail: "background_expiration"
-                )
+                onStatus(IOSDeepReadStore.shared.persistenceError(for: taskId) ?? message, true)
                 return
             }
             didSucceed = await IOSDeepReadLauncher.runExistingTask(
@@ -716,11 +802,11 @@ final class IOSDeepReadBackgroundCoordinator {
             // Expiration removes the registry owner and owns the interrupted
             // settlement above; do not race it with a generic failed mapping.
             guard self.runRegistry.isCurrent(taskId: taskId, generationID: generationID) else { return }
-            let taskStatus = IOSDeepReadStore.shared.task(id: taskId)?.status ?? .failed
             _ = try? await self.durableRunStore.transitionFromAnyActive(
                 runId: durableRunId,
-                to: Self.durableStatus(for: taskStatus),
-                detail: IOSDeepReadStore.shared.task(id: taskId)?.failureMessage
+                to: didSucceed ? .completed : .failed,
+                detail: IOSDeepReadStore.shared.persistenceError(for: taskId)
+                    ?? IOSDeepReadStore.shared.task(id: taskId)?.failureMessage
             )
         }
         runRegistry.attach(operationTask, taskId: taskId, generationID: generationID)

@@ -619,6 +619,10 @@ struct ProviderAddView: View {
         }
 
         let added = sharedSettings.addProvider(provider)
+        if let error = sharedSettings.credentialPersistenceError {
+            alert = .credentialSaveFailed(error)
+            return
+        }
 
         // When a key was provided, set this provider's first chat model as the
         // current chat model (mirrors Android: choosing a model resolves to its
@@ -666,6 +670,7 @@ private enum ProviderAddAlert: Identifiable {
     case unsupportedPath
     case invalidBaseURL
     case activationFailed
+    case credentialSaveFailed(String)
     case modelRequired
 
     var id: String {
@@ -675,6 +680,7 @@ private enum ProviderAddAlert: Identifiable {
         case .unsupportedPath: "path"
         case .invalidBaseURL: "base-url"
         case .activationFailed: "activation"
+        case .credentialSaveFailed: "credential-save"
         case .modelRequired: "model-required"
         }
     }
@@ -686,6 +692,7 @@ private enum ProviderAddAlert: Identifiable {
         case .unsupportedPath: "暂不支持自定义路径"
         case .invalidBaseURL: "API 地址无效"
         case .activationFailed: "服务商未激活"
+        case .credentialSaveFailed: "服务商保存失败"
         case .modelRequired: "需要填写模型"
         }
     }
@@ -702,6 +709,8 @@ private enum ProviderAddAlert: Identifiable {
             "请填写 HTTPS 地址，或使用 HTTP IP 地址，例如 http://203.0.113.10:8080/v1。"
         case .activationFailed:
             "API Key 没有成功保存到本机钥匙串，当前聊天服务商未切换。请重新保存一次。"
+        case .credentialSaveFailed(let message):
+            message
         case .modelRequired:
             "服务商已保存，但还没有聊天模型。接下来请在服务商详情里自动获取或手动添加模型。"
         }

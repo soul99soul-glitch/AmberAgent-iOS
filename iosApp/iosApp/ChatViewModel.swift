@@ -188,7 +188,7 @@ extension ChatContextSnapshot {
     }
 }
 
-private struct PendingAssistantRegeneration {
+struct PendingAssistantRegeneration {
     let conversationId: KotlinUuid
     let targetMessageIndex: Int
     let generatedMessageIndex: Int
@@ -197,7 +197,7 @@ private struct PendingAssistantRegeneration {
 /// A live run keeps its presentation even while another conversation is on screen.
 /// The Host's bindings capture this state, never the currently selected conversation.
 @MainActor @Observable
-private final class ChatConversationRunState {
+final class ChatConversationRunState {
     let conversationId: KotlinUuid?
     var messages: [UIMessage] = []
     var isLoading = false
@@ -240,6 +240,24 @@ private final class ChatConversationRunState {
     var toolExposureBridge: IosToolExposureBridge?
     var inputText = ""
     var generationConfiguration: (provider: ProviderSetting, params: TextGenerationParams, dynamicSnapshot: IOSDynamicToolCatalogSnapshot?)?
+    @ObservationIgnored private var lastMemoryUsageRunId: String?
+    @ObservationIgnored private var lastMarkedMemoryIds: Set<Int32> = []
+
+    @discardableResult
+    func recordMemoryUsage(
+        ids: Set<Int32>, runId: String?, now: Int64 = Int64(Date().timeIntervalSince1970 * 1_000),
+        force: Bool = false, persistence: IOSMemoryPersistence = .shared
+    ) -> Bool {
+        if !force, let runId, runId == lastMemoryUsageRunId, ids == lastMarkedMemoryIds {
+            return false
+        }
+        guard persistence.markUsed(ids: ids, now: now, force: force) else { return false }
+        if let runId {
+            lastMemoryUsageRunId = runId
+            lastMarkedMemoryIds = ids
+        }
+        return true
+    }
 
     init(conversationId: KotlinUuid?) {
         self.conversationId = conversationId
@@ -1600,7 +1618,7 @@ final class ChatViewModel {
                     self?.memoryRecallResultForRun(messages) ?? ChatMemoryContextBuilder.RecallResult(prompt: nil, records: [])
                 },
                 recordMemoryUsage: { [weak self] ids, force in
-                    self?.recordMemoryUsage(ids, force: force)
+                    self?.recordMemoryUsage(ids, force: force, state: state)
                 },
                 generationSucceeded: { [weak self] in
                     self?.onGenerationCompleted(state: state)
@@ -4274,12 +4292,15 @@ final class ChatViewModel {
         )
     }
 
-    private func recordMemoryUsage(_ ids: [Int32], force: Bool = false) {
+    private func recordMemoryUsage(_ ids: [Int32], force: Bool = false, state: ChatConversationRunState) {
         // P2-b: 注入即使用（injected into upload = used）。去抖与原子写在
-        // IOSMemoryPersistence.markUsed 内：同一 run 同集合不重复写盘。
+        // 原会话的 state 持有本 run 的去抖；切会话后仍绑定该 state 的 host。
         // P2-c 修复 2：模型显式引用（citation flush）传 force: true，绕过
         // 同集去抖——引用是模型信号，与召回标记语义不同，应始终生效。
-        IOSMemoryPersistence.shared.markUsed(ids: Set(ids), force: force)
+        let ownerKey = state.conversationId?.toHexDashString() ?? ""
+        state.recordMemoryUsage(
+            ids: Set(ids), runId: conversationRuns[ownerKey]?.host?.currentRunId, force: force
+        )
     }
 
     private static func isLocalGenerationError(_ message: UIMessage) -> Bool {

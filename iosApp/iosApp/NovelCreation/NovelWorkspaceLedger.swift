@@ -539,7 +539,8 @@ enum NovelWorkspacePlotCommit {
         path: String,
         body: String,
         now: Date = Date(),
-        chapterPlots: [NovelChapterPlotModule]? = nil
+        chapterPlots: [NovelChapterPlotModule]? = nil,
+        approvalResponse: NovelAskUserResponse? = nil
     ) throws -> NovelProjectDocumentV1 {
         guard let branch = document.branches.first(where: { $0.id == branchID }) else {
             throw NovelError.branchNotFound(branchID)
@@ -600,6 +601,7 @@ enum NovelWorkspacePlotCommit {
                 chapterPlots: chapterPlots ?? old.chapterPlots
             )
         )
+        try NovelApprovalCommit.append(approvalResponse, branchID: branchID, to: &next, now: now)
         let session = next.sessions.first { $0.id == branch.sessionID }
         let cursor: NovelSessionCursor = session?.messages.last.map {
             .through(sequence: $0.sequence)
@@ -615,7 +617,9 @@ enum NovelWorkspacePlotCommit {
             NovelAppliedOperationRecord(
                 operationID: operationID,
                 kind: .workspacePlot,
-                payloadSHA256: NovelDocumentValidator.sha256(path + "\n" + body),
+                payloadSHA256: try NovelApprovalCommit.payloadSHA256(
+                    NovelDocumentValidator.sha256(path + "\n" + body), response: approvalResponse
+                ),
                 outcome: outcome,
                 appliedProjectRevision: finalRevision,
                 appliedAt: now

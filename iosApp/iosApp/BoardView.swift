@@ -947,6 +947,7 @@ struct IOSDeepReadTaskDetailView: View {
 
     private func state(for task: IOSDeepReadTask) -> DetailState {
         if task.status == .failed || task.status == .unsupported { return .failed }
+        if task.status == .queued || task.status == .running { return .generating }
         if !task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .done }
         return .generating
     }
@@ -968,6 +969,9 @@ struct IOSDeepReadTaskDetailView: View {
 
                     if let task {
                         masthead(task)
+                        if store.persistenceError(for: task.id) != nil, state(for: task) == .done {
+                            failBanner(task)
+                        }
                         workspaceSyncBanner(task)
                         partialSectionsBanner(task)
                         content(task)
@@ -1157,31 +1161,40 @@ struct IOSDeepReadTaskDetailView: View {
             )
         case .failed:
             failBanner(task)
-            DeepReadMagazineSkeleton(dimmed: true)
-        case .done:
-            if let html = customTemplateHTML(task) {
-                IOSDeepReadTemplateWebView(html: html)
-                    .frame(minHeight: 560)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+            if task.resultMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                DeepReadMagazineSkeleton(dimmed: true)
             } else {
-                // 完成:编辑器 HTML 阅读器(body-only,标题由上方 masthead 提供)。关掉 WebView
-                // 内部滚动、按内容高度自适应,整篇随详情页一起滚动。
-                IOSDeepReadEditorialWebView(html: editorialHTML(task), contentHeight: $editorialHeight)
-                    .frame(height: editorialHeight)
-                    .frame(maxWidth: .infinity)
-                    .id(task.id)
-                if AmberThemeRuntime.shared.showsCanvasTexture(on: .app) {
-                    // 纹理/渐变画布上正文是纯色块：底边渐隐回页面背景，避免硬边。
-                    LinearGradient(
-                        colors: [AmberTheme.background, AmberTheme.background.opacity(0)],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 24)
-                } else {
-                    Color.clear.frame(height: 12)
-                }
+                articleContent(task)
+            }
+        case .done:
+            articleContent(task)
+        }
+    }
+
+    @ViewBuilder
+    private func articleContent(_ task: IOSDeepReadTask) -> some View {
+        if let html = customTemplateHTML(task) {
+            IOSDeepReadTemplateWebView(html: html)
+                .frame(minHeight: 560)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+        } else {
+            // 完成:编辑器 HTML 阅读器(body-only,标题由上方 masthead 提供)。关掉 WebView
+            // 内部滚动、按内容高度自适应,整篇随详情页一起滚动。
+            IOSDeepReadEditorialWebView(html: editorialHTML(task), contentHeight: $editorialHeight)
+                .frame(height: editorialHeight)
+                .frame(maxWidth: .infinity)
+                .id(task.id)
+            if AmberThemeRuntime.shared.showsCanvasTexture(on: .app) {
+                // 纹理/渐变画布上正文是纯色块：底边渐隐回页面背景，避免硬边。
+                LinearGradient(
+                    colors: [AmberTheme.background, AmberTheme.background.opacity(0)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 24)
+            } else {
+                Color.clear.frame(height: 12)
             }
         }
     }
@@ -1283,7 +1296,7 @@ struct IOSDeepReadTaskDetailView: View {
     // 失败 inline 琥珀横幅(非浮卡、非 modal)。优先展示真实 failureMessage。
     @ViewBuilder
     private func failBanner(_ task: IOSDeepReadTask) -> some View {
-        let detail = task.failureMessage?
+        let detail = (store.persistenceError(for: task.id) ?? task.failureMessage)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let text = (detail?.isEmpty == false)
             ? IOSDeepReadUserFacingText.sanitize(detail ?? "")
@@ -1392,26 +1405,10 @@ struct IOSDeepReadTaskDetailView: View {
     private func retryWorkspaceSync(_ task: IOSDeepReadTask) {
         guard !isRetryingWorkspaceSync else { return }
         isRetryingWorkspaceSync = true
-        do {
-            _ = try IOSWorkspaceStore.shared.saveArtifact(
-                title: task.title,
-                content: task.resultMarkdown,
-                type: .deepRead,
-                sourceKind: "deep_read",
-                sourceId: task.id
-            )
-            store.clearWorkspaceSyncFailure(id: task.id)
-            showToast(IOSAppLocalization.string("已保存到 Workspace", defaultValue: "已保存到 Workspace"))
-        } catch {
-            let message = IOSDeepReadUserFacingText.fromError(error)
-            store.markWorkspaceSyncFailed(id: task.id, message: message)
-            showToast(IOSAppLocalization.formatted(
-                "保存到 Workspace 失败：%@",
-                defaultValue: "保存到 Workspace 失败：%@",
-                arguments: [message]
-            ))
+        defer { isRetryingWorkspaceSync = false }
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: store) { message, _ in
+            showToast(message)
         }
-        isRetryingWorkspaceSync = false
     }
 
     /// Builds the Android-style editorial HTML for a completed deep read: title

@@ -72,6 +72,15 @@ struct NovelComposerDraftOwner: Hashable, Sendable {
     let branchID: NovelBranchID
 }
 
+struct NovelChapterPlanDraft: Equatable, Sendable {
+    let outlinePlacement: String
+    let goalAndConflict: String
+    let mustHappen: [String]
+    let mustNotHappen: [String]
+    let endingHook: String
+    let visibleFacts: [String]
+}
+
 private struct NovelQuickStartOwner: Hashable, Sendable {
     let projectID: NovelProjectID
     let branchID: NovelBranchID
@@ -314,6 +323,7 @@ final class NovelCreationViewModel {
     @ObservationIgnored private var quickStartCreationStartRunIDs: Set<NovelRunID> = []
     @ObservationIgnored private var cancelledQuickStartRunIDs: Set<NovelRunID> = []
     @ObservationIgnored private var composerDrafts: [NovelComposerDraftOwner: NovelComposerDraft] = [:]
+    @ObservationIgnored private var chapterPlanDrafts: [NovelProjectID: [NovelBranchID: NovelChapterPlanDraft]] = [:]
     @ObservationIgnored private var lastSelectedBranchIDs: [NovelProjectID: NovelBranchID] = [:]
     @ObservationIgnored private var operationOwnerID: UUID?
     @ObservationIgnored private var stateSyncActivityOwnerID: UUID?
@@ -524,6 +534,26 @@ final class NovelCreationViewModel {
 
     func acquireSessionOperation(ownerID: UUID) -> Bool {
         acquireOperation(ownerID: ownerID)
+    }
+
+    func chapterPlanDraft(projectID: NovelProjectID, branchID: NovelBranchID) -> NovelChapterPlanDraft? {
+        chapterPlanDrafts[projectID]?[branchID]
+    }
+
+    func retainChapterPlanDraft(_ draft: NovelChapterPlanDraft, projectID: NovelProjectID, branchID: NovelBranchID) {
+        chapterPlanDrafts[projectID, default: [:]][branchID] = draft
+    }
+
+    func clearChapterPlanDraft(ifMatching draft: NovelChapterPlanDraft, projectID: NovelProjectID, branchID: NovelBranchID) {
+        guard chapterPlanDrafts[projectID]?[branchID] == draft else { return }
+        clearChapterPlanDraft(projectID: projectID, branchID: branchID)
+    }
+
+    func clearChapterPlanDraft(projectID: NovelProjectID, branchID: NovelBranchID) {
+        chapterPlanDrafts[projectID]?[branchID] = nil
+        if chapterPlanDrafts[projectID]?.isEmpty == true {
+            chapterPlanDrafts[projectID] = nil
+        }
     }
 
     func releaseSessionOperation(ownerID: UUID) {
@@ -1869,11 +1899,16 @@ final class NovelCreationViewModel {
     }
 
     @discardableResult
-    func setCollaborationMode(_ mode: NovelCollaborationMode) async -> Bool {
+    func setCollaborationMode(
+        _ mode: NovelCollaborationMode,
+        approvalResponse: NovelAskUserResponse? = nil
+    ) async -> Bool {
         guard let project = projectSnapshot,
               let branchID = selectedBranchID else { return false }
         return await perform(.setCollaborationMode(NovelSetCollaborationModeCommand(
-            context: mutationContext(configRevision: project.project.configRevision),
+            context: mutationContext(
+                configRevision: project.project.configRevision, approvalResponse: approvalResponse
+            ),
             projectID: project.project.id,
             branchID: branchID,
             mode: mode
@@ -1900,7 +1935,8 @@ final class NovelCreationViewModel {
         mustHappen: [String],
         mustNotHappen: [String],
         endingHook: String,
-        visibleFacts: [String]
+        visibleFacts: [String],
+        approvalResponse: NovelAskUserResponse? = nil
     ) async -> Bool {
         guard let project = projectSnapshot,
               let branchID = selectedBranchID else { return false }
@@ -1908,7 +1944,9 @@ final class NovelCreationViewModel {
             ?? project.chapterPlan(for: branchID)?.id
             ?? NovelChapterPlanID()
         return await perform(.upsertChapterPlan(NovelUpsertChapterPlanCommand(
-            context: mutationContext(configRevision: project.project.configRevision),
+            context: mutationContext(
+                configRevision: project.project.configRevision, approvalResponse: approvalResponse
+            ),
             projectID: project.project.id,
             branchID: branchID,
             planID: resolvedPlanID,
@@ -1923,6 +1961,72 @@ final class NovelCreationViewModel {
     }
 
     @discardableResult
+    func saveChapterPlanDraft(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        outlinePlacement: String,
+        goalAndConflict: String,
+        mustHappen: [String],
+        mustNotHappen: [String],
+        endingHook: String,
+        visibleFacts: [String],
+        retainingDraft: Bool = true
+    ) async -> Bool {
+        let draft = NovelChapterPlanDraft(
+            outlinePlacement: outlinePlacement, goalAndConflict: goalAndConflict,
+            mustHappen: mustHappen, mustNotHappen: mustNotHappen,
+            endingHook: endingHook, visibleFacts: visibleFacts
+        )
+        if retainingDraft {
+            retainChapterPlanDraft(draft, projectID: projectID, branchID: branchID)
+        }
+        let ownerID = UUID()
+        guard acquireOperation(ownerID: ownerID) else {
+            report(NovelError.projectBusy(projectID))
+            return false
+        }
+        defer { releaseOperation(ownerID: ownerID) }
+        do {
+            // The sheet may have disappeared while an earlier save finished.
+            // Read the source project's current version instead of UI selection.
+            let source = try await project(id: projectID)
+            let action = NovelAction.upsertChapterPlan(NovelUpsertChapterPlanCommand(
+                context: mutationContext(configRevision: source.project.configRevision),
+                projectID: projectID,
+                branchID: branchID,
+                planID: source.chapterPlan(for: branchID)?.id ?? NovelChapterPlanID(),
+                status: .draft,
+                outlinePlacement: outlinePlacement,
+                goalAndConflict: goalAndConflict,
+                mustHappen: mustHappen,
+                mustNotHappen: mustNotHappen,
+                endingHook: endingHook,
+                visibleFacts: visibleFacts
+            ))
+            let reloadSourceSelection = selectedProjectID == projectID
+            let saved = await perform(
+                action,
+                reload: reloadSourceSelection,
+                refreshProjectList: false,
+                reservedOwnerID: ownerID
+            )
+            if saved, !reloadSourceSelection {
+                await refreshProjectSummaryAfterMutation(
+                    projectID: projectID,
+                    selectionReloaded: false
+                )
+            }
+            if saved {
+                clearChapterPlanDraft(ifMatching: draft, projectID: projectID, branchID: branchID)
+            }
+            return saved
+        } catch {
+            report(error)
+            return false
+        }
+    }
+
+    @discardableResult
     func clearChapterPlan(branchID: NovelBranchID? = nil) async -> Bool {
         guard let project = projectSnapshot,
               let branchID = branchID ?? selectedBranchID else { return false }
@@ -1934,11 +2038,17 @@ final class NovelCreationViewModel {
     }
 
     @discardableResult
-    func upsertUpcomingArc(beats: [String], branchID: NovelBranchID? = nil) async -> Bool {
+    func upsertUpcomingArc(
+        beats: [String],
+        branchID: NovelBranchID? = nil,
+        approvalResponse: NovelAskUserResponse? = nil
+    ) async -> Bool {
         guard let project = projectSnapshot,
               let branchID = branchID ?? selectedBranchID else { return false }
         return await perform(.upsertUpcomingArc(NovelUpsertUpcomingArcCommand(
-            context: mutationContext(configRevision: project.project.configRevision),
+            context: mutationContext(
+                configRevision: project.project.configRevision, approvalResponse: approvalResponse
+            ),
             projectID: project.project.id,
             branchID: branchID,
             beats: beats
@@ -2158,7 +2268,10 @@ final class NovelCreationViewModel {
         )))
     }
 
-    func revertRecentChapters(_ proposal: NovelManuscriptRevertProposal) async -> Bool {
+    func revertRecentChapters(
+        _ proposal: NovelManuscriptRevertProposal,
+        approvalResponse: NovelAskUserResponse? = nil
+    ) async -> Bool {
         guard let project = projectSnapshot,
               let branch = branchSnapshot else {
             errorMessage = "项目尚未就绪，请重新载入后再试。"
@@ -2194,7 +2307,8 @@ final class NovelCreationViewModel {
                 let undone = await perform(.undoBranchHead(NovelUndoBranchHeadCommand(
                     context: mutationContext(
                         projectRevision: currentProject.project.revision,
-                        branchHeadRevision: currentBranch.branch.headRevision
+                        branchHeadRevision: currentBranch.branch.headRevision,
+                        approvalResponse: step == plan.undoStepCount ? approvalResponse : nil
                     ),
                     projectID: currentProject.project.id,
                     branchID: currentBranch.branch.id,
@@ -2291,7 +2405,10 @@ final class NovelCreationViewModel {
     }
 
     /// 从当前分支正文目录删除一章（工作稿不再包含；历史检查点仍保留引用）。
-    func deleteChapterFromManuscript(chapterID: NovelChapterID) async -> Bool {
+    func deleteChapterFromManuscript(
+        chapterID: NovelChapterID,
+        approvalResponse: NovelAskUserResponse? = nil
+    ) async -> Bool {
         guard let project = projectSnapshot,
               let branch = branchSnapshot else {
             errorMessage = "项目尚未就绪，请重新载入后再试。"
@@ -2308,7 +2425,8 @@ final class NovelCreationViewModel {
         let deleted = await perform(.deleteChapterFromManuscript(NovelDeleteChapterFromManuscriptCommand(
             context: mutationContext(
                 projectRevision: project.project.revision,
-                branchHeadRevision: branch.branch.headRevision
+                branchHeadRevision: branch.branch.headRevision,
+                approvalResponse: approvalResponse
             ),
             projectID: project.project.id,
             branchID: branch.branch.id,
@@ -2368,7 +2486,8 @@ final class NovelCreationViewModel {
     func saveManualRewrite(
         chapterID: NovelChapterID,
         title: String,
-        content: String
+        content: String,
+        approvalResponse: NovelAskUserResponse? = nil
     ) async -> Bool {
         guard let project = projectSnapshot,
               let branch = branchSnapshot,
@@ -2381,7 +2500,8 @@ final class NovelCreationViewModel {
             context: mutationContext(
                 projectRevision: project.project.revision,
                 configRevision: project.project.configRevision,
-                branchHeadRevision: branch.branch.headRevision
+                branchHeadRevision: branch.branch.headRevision,
+                approvalResponse: approvalResponse
             ),
             projectID: project.project.id,
             branchID: branch.branch.id,
@@ -3353,7 +3473,11 @@ final class NovelCreationViewModel {
         }
     }
 
-    func applyWorkspacePlot(path: String, body: String) async -> String? {
+    func applyWorkspacePlot(
+        path: String,
+        body: String,
+        approvalResponse: NovelAskUserResponse? = nil
+    ) async -> String? {
         guard let projectID = selectedProjectID, let branchID = selectedBranchID else {
             return "当前没有打开的小说项目。"
         }
@@ -3362,7 +3486,8 @@ final class NovelCreationViewModel {
                 projectID: projectID,
                 branchID: branchID,
                 path: path,
-                body: body
+                body: body,
+                approvalResponse: approvalResponse
             )
             errorMessage = nil
             return nil
@@ -4298,13 +4423,15 @@ final class NovelCreationViewModel {
     private func mutationContext(
         projectRevision: Int64? = nil,
         configRevision: Int64? = nil,
-        branchHeadRevision: Int64? = nil
+        branchHeadRevision: Int64? = nil,
+        approvalResponse: NovelAskUserResponse? = nil
     ) -> NovelMutationContext {
         NovelMutationContext(
             operationID: NovelOperationID(),
             expectedProjectRevision: projectRevision,
             expectedConfigRevision: configRevision,
-            expectedBranchHeadRevision: branchHeadRevision
+            expectedBranchHeadRevision: branchHeadRevision,
+            approvalResponse: approvalResponse
         )
     }
 

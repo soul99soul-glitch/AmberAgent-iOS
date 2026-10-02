@@ -1,0 +1,215 @@
+{
+  "baseline_sha": "ec93292148a9a1db4c028d10a55484b77a43b5f8",
+  "confirmed_issue_groups": 31,
+  "xcode_result_bundle": "/tmp/amber-review-final-integration-green3-20261002.xcresult",
+  "xcode_exit_code": 0,
+  "swift_summary": {
+    "result": "Passed",
+    "totalTestCount": 1446,
+    "passedTests": 1443,
+    "failedTests": 0,
+    "skippedTests": 3,
+    "runtimeWarnings": [
+      {
+        "issueType": "Runtime Warning",
+        "message": "Accessing State's value outside of being installed on a View. This will result in a constant Binding of the initial value and will not update.",
+        "sourceURL": "file:///Users/arquiel/Downloads/AI/amberagent-ios/iosApp/iosAppTests/IOSSharedSettingsStoreProvidersWriteBackTests.swift"
+      }
+    ]
+  },
+  "swift_class_count": 50,
+  "swift_class_results": {
+    "ChatMessageProjectionTests": {
+      "Passed": 94
+    },
+    "ChatReasoningCardTests": {
+      "Passed": 24
+    },
+    "ChatRowContentHashCacheTests": {
+      "Passed": 12
+    },
+    "ChatSwiftUIStreamReplayTests": {
+      "Passed": 36,
+      "Skipped": 1
+    },
+    "ChatViewportPolicyTests": {
+      "Passed": 4
+    },
+    "DocumentAccessStoreTests": {
+      "Passed": 36
+    },
+    "IOSAgentToolEngineKernelHookTests": {
+      "Passed": 10
+    },
+    "IOSAgentToolEngineTests": {
+      "Passed": 40
+    },
+    "IOSAmberShellWorkspaceStoreTests": {
+      "Passed": 3
+    },
+    "IOSBoardPersistenceTests": {
+      "Passed": 30
+    },
+    "IOSChatKernelLoopRoutingTests": {
+      "Passed": 4
+    },
+    "IOSChatKernelRunHostTests": {
+      "Passed": 27
+    },
+    "IOSConversationStoreTests": {
+      "Passed": 36
+    },
+    "IOSCouncilRunnerMechanicsTests": {
+      "Passed": 88,
+      "Skipped": 1
+    },
+    "IOSDeepReadPipelineTests": {
+      "Passed": 36
+    },
+    "IOSEmbeddedIshUTF8StreamDecoderTests": {
+      "Passed": 6
+    },
+    "IOSForegroundToolExecutorsTests": {
+      "Passed": 5
+    },
+    "IOSGeminiProviderTests": {
+      "Passed": 53
+    },
+    "IOSLocalToolExecutorTests": {
+      "Passed": 94
+    },
+    "IOSMcpClientTests": {
+      "Passed": 35
+    },
+    "IOSMcpConfigStoreTests": {
+      "Passed": 10
+    },
+    "IOSMcpExpandedToolTests": {
+      "Passed": 11
+    },
+    "IOSMcpManagerTests": {
+      "Passed": 11
+    },
+    "IOSMemoryCitationTests": {
+      "Passed": 16
+    },
+    "IOSMemoryPersistenceTests": {
+      "Passed": 8
+    },
+    "IOSMemoryRecallPolicyTests": {
+      "Passed": 10
+    },
+    "IOSMemoryUsageMarkingTests": {
+      "Passed": 6
+    },
+    "IOSParityRedLightTests": {
+      "Passed": 61
+    },
+    "IOSProviderConfigToolTests": {
+      "Passed": 20
+    },
+    "IOSSSHBackendIntegrationTests": {
+      "Passed": 2
+    },
+    "IOSSSHCredentialTests": {
+      "Passed": 7
+    },
+    "IOSSSHOutputRedactorTests": {
+      "Passed": 4
+    },
+    "IOSSSHPrivateKeyTests": {
+      "Passed": 7
+    },
+    "IOSSharedSettingsStoreProvidersWriteBackTests": {
+      "Passed": 30
+    },
+    "IOSSyncBackupTests": {
+      "Passed": 17
+    },
+    "IOSTerminalCapabilityContractTests": {
+      "Passed": 2
+    },
+    "IOSTerminalSSHRuntimeTests": {
+      "Passed": 26
+    },
+    "IOSWebMountDesktopBackendTests": {
+      "Passed": 38
+    },
+    "NativeTimelineScrollCoreTests": {
+      "Passed": 55
+    },
+    "NovelContinuityAuditTests": {
+      "Passed": 39
+    },
+    "NovelCreationViewModelTests": {
+      "Passed": 56
+    },
+    "NovelDocumentValidationTests": {
+      "Passed": 39
+    },
+    "NovelGenerationLifecycleTests": {
+      "Passed": 55
+    },
+    "NovelManualEditSyncTests": {
+      "Passed": 23
+    },
+    "NovelProjectPackageTests": {
+      "Passed": 17
+    },
+    "NovelSessionReplayTests": {
+      "Passed": 54
+    },
+    "NovelSessionViewModelTests": {
+      "Passed": 107,
+      "Skipped": 1
+    },
+    "NovelWorkspaceBackupTests": {
+      "Passed": 7
+    },
+    "NovelWorkspaceRepositoryTests": {
+      "Passed": 24
+    },
+    "ProviderCredentialAndHeaderTests": {
+      "Passed": 8
+    }
+  },
+  "skipped_tests": [
+    "ChatSwiftUIStreamReplayTests/testReasoningStreamCostOverTimeSample()",
+    "IOSCouncilRunnerMechanicsTests/testTimeProfilerLongCouncilStreamSample()",
+    "NovelSessionViewModelTests/testTimeProfilerLongProseStreamSample()"
+  ],
+  "jvm_modules": {
+    "core/conversation-storage": {
+      "tests": 42,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ai-core": {
+      "tests": 145,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ai-provider-claude": {
+      "tests": 25,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "ai-provider-openai": {
+      "tests": 76,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "jvm_total_tests": 288,
+  "unexecuted_gates": [
+    "real provider acceptance",
+    "physical device background and permissions",
+    "physical Watch link",
+    "live external SSH/MCP services",
+    "120Hz performance"
+  ]
+}

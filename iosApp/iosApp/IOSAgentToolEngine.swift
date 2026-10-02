@@ -445,6 +445,12 @@ private struct UncheckedUIMessageBox: @unchecked Sendable {
     init(_ value: [UIMessage]) { self.value = value }
 }
 
+/// Carries the canonical in-flight turn when streaming exits without complete.
+private struct StreamStepFailure: Error, @unchecked Sendable {
+    let underlying: Error
+    let assistant: UIMessage?
+}
+
 private final class StreamStepState: @unchecked Sendable {
     struct AssistantUpdate {
         let text: String?
@@ -465,6 +471,22 @@ private final class StreamStepState: @unchecked Sendable {
     private var lastAssistantSnapshotAt: ContinuousClock.Instant?
 
     init(accumulator: MessageStreamAccumulator) { self.accumulator = accumulator }
+
+    func append(_ chunk: MessageChunk) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !resumed, !cancellationRequested else { return false }
+        accumulator.append(chunk: chunk)
+        return true
+    }
+
+    func assistantSnapshot() -> UIMessage? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let last = accumulator.snapshot().last,
+              last.role == MessageRole.assistant else { return nil }
+        return last
+    }
 
     /// B2 provisional 快照的推送节流(前台内核路径专属;hook 为 nil 的后台/
     /// 子代理流根本不调 snapshot——O(n²) 红线由
@@ -767,8 +789,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
     ) {
         guard let hook,
               state.claimAssistantSnapshotPublish(minimumInterval: assistantSnapshotPublishInterval),
-              let provisional = state.accumulator.snapshot().last,
-              provisional.role == MessageRole.assistant else { return }
+              let provisional = state.assistantSnapshot() else { return }
         hook(provisional)
     }
 
@@ -859,71 +880,76 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let state = StreamStepState(accumulator: MessageStreamAccumulator(initialMessages: [seed], model: nil))
         let collectAssistantText = onAssistantText != nil
         let collectAssistantReasoning = onAssistantReasoning != nil
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MessageChunk, Error>) in
-                state.install(continuation: continuation)
-                guard !Task.isCancelled else {
-                    state.cancel()
-                    return
-                }
-                let job = streaming.streamText(
-                    providerSetting: request.providerSetting,
-                    messages: messages,
-                    params: request.params,
-                    onChunk: { chunk in
-                        // P2-c: 后台流在进入 accumulator 前剥离 citation 隐藏
-                        // 标记（与前台 sink 同语义——所有下游消费者只见到已剥离的
-                        // 可见文本；nil → 原样零变化）。
-                        let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
-                        state.accumulator.append(chunk: strippedChunk)
-                        let update = state.appendAssistantDelta(
-                            from: strippedChunk,
-                            collectText: collectAssistantText,
-                            collectReasoning: collectAssistantReasoning
-                        )
-                        if let stage = update.stage {
-                            onAssistantStage?(stage)
-                        }
-                        if let reasoning = update.reasoning {
-                            onAssistantReasoning?(reasoning)
-                        }
-                        if let text = update.text {
-                            onAssistantText?(text)
-                        }
-                        // B2 前台内核投影:节流后的在途 assistant 累加器快照
-                        // (与终态消息同 id;citation 已在上游剥离)。
-                        Self.deliverAssistantSnapshotIfDue(
-                            state: state,
-                            hook: onAssistantMessageSnapshot
-                        )
-                    },
-                    onComplete: {
-                        let last = state.accumulator.snapshot().last
-                        let finalMessage: UIMessage = (last?.role == MessageRole.assistant) ? last! : Self.emptyAssistant()
-                        state.resume(returning: MessageChunk(
-                            id: "",
-                            model: "",
-                            choices: [UIMessageChoice(
-                                index: 0,
-                                delta: nil,
-                                message: finalMessage,
-                                finishReason: state.terminalFinishReason() ?? "stop"
-                            )],
-                            usage: nil
-                        ))
-                    },
-                    onError: { error in
-                        state.resume(throwing: NSError(
-                            domain: "AmberAgent.SubAgentStream",
-                            code: 1,
-                            userInfo: [NSLocalizedDescriptionKey: error.message ?? "stream failed"]
-                        ))
+        do {
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<MessageChunk, Error>) in
+                    state.install(continuation: continuation)
+                    guard !Task.isCancelled else {
+                        state.cancel()
+                        return
                     }
-                )
-                state.install(job: job)
+                    let job = streaming.streamText(
+                        providerSetting: request.providerSetting,
+                        messages: messages,
+                        params: request.params,
+                        onChunk: { chunk in
+                            // P2-c: 后台流在进入 accumulator 前剥离 citation 隐藏
+                            // 标记（与前台 sink 同语义——所有下游消费者只见到已剥离的
+                            // 可见文本；nil → 原样零变化）。
+                            let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
+                            guard state.append(strippedChunk) else { return }
+                            let update = state.appendAssistantDelta(
+                                from: strippedChunk,
+                                collectText: collectAssistantText,
+                                collectReasoning: collectAssistantReasoning
+                            )
+                            if let stage = update.stage {
+                                onAssistantStage?(stage)
+                            }
+                            if let reasoning = update.reasoning {
+                                onAssistantReasoning?(reasoning)
+                            }
+                            if let text = update.text {
+                                onAssistantText?(text)
+                            }
+                            // B2 前台内核投影:节流后的在途 assistant 累加器快照
+                            // (与终态消息同 id;citation 已在上游剥离)。
+                            Self.deliverAssistantSnapshotIfDue(
+                                state: state,
+                                hook: onAssistantMessageSnapshot
+                            )
+                        },
+                        onComplete: {
+                            let last = state.assistantSnapshot()
+                            let finalMessage: UIMessage = (last?.role == MessageRole.assistant) ? last! : Self.emptyAssistant()
+                            state.resume(returning: MessageChunk(
+                                id: "",
+                                model: "",
+                                choices: [UIMessageChoice(
+                                    index: 0,
+                                    delta: nil,
+                                    message: finalMessage,
+                                    finishReason: state.terminalFinishReason() ?? "stop"
+                                )],
+                                usage: nil
+                            ))
+                        },
+                        onError: { error in
+                            state.resume(throwing: NSError(
+                                domain: "AmberAgent.SubAgentStream",
+                                code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: error.message ?? "stream failed"]
+                            ))
+                        }
+                    )
+                    state.install(job: job)
+                }
+            } onCancel: {
+                state.cancel()
             }
-        } onCancel: {
+        } catch {
             state.cancel()
+            throw StreamStepFailure(underlying: error, assistant: state.assistantSnapshot())
         }
     }
 
@@ -959,7 +985,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 providerId: IOSGrokWebProviderResolver.providerKey(provider)
             ).streamText(messages: boxed.value, params: params) { chunk in
                 let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
-                state.accumulator.append(chunk: strippedChunk)
+                guard state.append(strippedChunk) else { return }
                 let update = state.appendAssistantDelta(
                     from: strippedChunk,
                     collectText: collectAssistantText,
@@ -974,12 +1000,18 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 )
             }
         }
-        try await withTaskCancellationHandler {
-            try await task.value
-        } onCancel: {
-            task.cancel()
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                state.cancel()
+                task.cancel()
+            }
+        } catch {
+            state.cancel()
+            throw StreamStepFailure(underlying: error, assistant: state.assistantSnapshot())
         }
-        let last = state.accumulator.snapshot().last
+        let last = state.assistantSnapshot()
         let finalMessage: UIMessage = last?.role == MessageRole.assistant
             ? last!
             : Self.emptyAssistant()
@@ -1023,13 +1055,13 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
         let collectAssistantText = onAssistantText != nil
         let collectAssistantReasoning = onAssistantReasoning != nil
         let boxed = UncheckedUIMessageBox(messages)
-        try await Task { @MainActor in
+        let task = Task { @MainActor in
             try await IOSGeminiClient(provider: provider).streamText(
                 messages: boxed.value,
                 params: params
             ) { chunk in
                 let strippedChunk = citationTracker?.stripped(chunk) ?? chunk
-                state.accumulator.append(chunk: strippedChunk)
+                guard state.append(strippedChunk) else { return }
                 let update = state.appendAssistantDelta(
                     from: strippedChunk,
                     collectText: collectAssistantText,
@@ -1050,8 +1082,19 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     hook: onAssistantMessageSnapshot
                 )
             }
-        }.value
-        let last = state.accumulator.snapshot().last
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                state.cancel()
+                task.cancel()
+            }
+        } catch {
+            state.cancel()
+            throw StreamStepFailure(underlying: error, assistant: state.assistantSnapshot())
+        }
+        let last = state.assistantSnapshot()
         let finalMessage: UIMessage = (last?.role == MessageRole.assistant) ? last! : Self.emptyAssistant()
         return MessageChunk(
             id: "",
@@ -1188,6 +1231,34 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             onMessagesUpdated: onMessagesUpdated
         )
         return Self.finishingCitation(result, tracker: citationTracker)
+    }
+
+    private func providerFailureResult(
+        _ error: Error,
+        working: [UIMessage],
+        steps: Int,
+        onMessagesUpdated: (@Sendable ([UIMessage]) -> Void)?
+    ) -> IOSAgentToolEngineResult {
+        let failureMessage = UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: [UIMessagePart.Text(text: "[engine] provider error: \(error.localizedDescription)", metadata: nil)],
+            annotations: [],
+            createdAt: Self.nowLocalDateTime(),
+            finishedAt: Self.nowLocalDateTime(),
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+        let failedMessages = working + [failureMessage]
+        onMessagesUpdated?(failedMessages)
+        return IOSAgentToolEngineResult(
+            messages: failedMessages,
+            stepsExecuted: steps,
+            pendingApproval: nil,
+            hitStepLimit: false,
+            providerFailureMessage: error.localizedDescription
+        )
     }
 
     /// The loop body; every terminal return path funnels through the `run`
@@ -1368,38 +1439,34 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                     onAssistantReasoning: onAssistantReasoning,
                     onAssistantMessageSnapshot: onAssistantMessageSnapshot
                 )
+            } catch let failure as StreamStepFailure {
+                let cancelled = failure.underlying is CancellationError || Task.isCancelled
+                if let assistant = failure.assistant {
+                    let recorded = transcriptRequest.map {
+                        PromptTranscript.shared.recordResponse(message: assistant, request: $0)
+                    } ?? assistant
+                    working.append(recorded)
+                    let outputs = pendingToolCalls(in: assistant).map { tool in
+                        (tool: tool, parts: [UIMessagePart.Text(text: ChatToolOutputFormatter.toolFailureJSON(
+                            toolName: tool.toolName,
+                            reason: cancelled ? "Generation cancelled." : "Generation failed before the tool call completed.",
+                            denied: cancelled,
+                            status: cancelled ? "denied" : "failed"
+                        ), metadata: nil)] as [UIMessagePart])
+                    }
+                    working = applyToolOutputs(outputs, to: working)
+                }
+                if cancelled {
+                    onMessagesUpdated?(working)
+                    return IOSAgentToolEngineResult(messages: working, stepsExecuted: steps,
+                                                    pendingApproval: nil, hitStepLimit: false, wasCancelled: true)
+                }
+                return providerFailureResult(failure.underlying, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
             } catch is CancellationError {
-                return IOSAgentToolEngineResult(
-                    messages: working,
-                    stepsExecuted: steps,
-                    pendingApproval: nil,
-                    hitStepLimit: false,
-                    wasCancelled: true
-                )
+                return IOSAgentToolEngineResult(messages: working, stepsExecuted: steps,
+                                                pendingApproval: nil, hitStepLimit: false, wasCancelled: true)
             } catch {
-                // A provider failure ends the loop. Surface the assistant
-                // transcript so far plus an honest failure turn rather than
-                // silently dropping the run.
-                let failureMessage = UIMessage(
-                    id: KotlinUuid.companion.random(),
-                    role: MessageRole.assistant,
-                    parts: [UIMessagePart.Text(text: "[engine] provider error: \(error.localizedDescription)", metadata: nil)],
-                    annotations: [],
-                    createdAt: Self.nowLocalDateTime(),
-                    finishedAt: Self.nowLocalDateTime(),
-                    modelId: nil,
-                    usage: nil,
-                    translation: nil
-                )
-                let failedMessages = working + [failureMessage]
-                onMessagesUpdated?(failedMessages)
-                return IOSAgentToolEngineResult(
-                    messages: failedMessages,
-                    stepsExecuted: steps,
-                    pendingApproval: nil,
-                    hitStepLimit: false,
-                    providerFailureMessage: error.localizedDescription
-                )
+                return providerFailureResult(error, working: working, steps: steps, onMessagesUpdated: onMessagesUpdated)
             }
 
             let rawAssistantMessage = assistantMessage(from: chunk)
@@ -1719,6 +1786,7 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
             )
         }
 
+        var transcriptRequest: PromptTranscriptRequest?
         do {
             await onAssistantTurnStarted?()
             try Task.checkCancellation()
@@ -1729,7 +1797,6 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 providerSetting: providerSetting,
                 params: params.replacingTools([])
             )
-            var transcriptRequest: PromptTranscriptRequest?
             let transcriptCapabilities = PromptTranscriptCapabilities.companion.resolve(
                 setting: preparedRequest.providerSetting,
                 model: preparedRequest.params.model
@@ -1787,6 +1854,34 @@ public final class IOSAgentToolEngine: @unchecked Sendable {
                 providerFailureMessage: reachedOutputLimit ? "模型收尾回复达到输出上限，请重试。" : nil,
                 hitOutputLimit: reachedOutputLimit,
                 guardStopped: true
+            )
+        } catch let failure as StreamStepFailure {
+            let cancelled = failure.underlying is CancellationError || Task.isCancelled
+            var finalMessages = messages
+            if let assistant = failure.assistant {
+                let parts = assistant.parts.filter { !($0 is UIMessagePart.Tool) }
+                if !parts.isEmpty {
+                    let toolFreeAssistant = UIMessage(
+                        id: assistant.id, role: assistant.role, parts: parts,
+                        annotations: assistant.annotations, createdAt: assistant.createdAt,
+                        finishedAt: assistant.finishedAt, modelId: assistant.modelId,
+                        usage: assistant.usage, translation: assistant.translation
+                    )
+                    let recorded = transcriptRequest.map {
+                        PromptTranscript.shared.recordResponse(message: toolFreeAssistant, request: $0)
+                    } ?? toolFreeAssistant
+                    finalMessages.append(recorded)
+                }
+            }
+            if !cancelled {
+                finalMessages.append(Self.toolLoopGuardFallbackMessage(error: failure.underlying.localizedDescription))
+            }
+            onMessagesUpdated?(finalMessages)
+            return IOSAgentToolEngineResult(
+                messages: finalMessages, stepsExecuted: stepsExecuted,
+                pendingApproval: nil, hitStepLimit: false,
+                providerFailureMessage: cancelled ? nil : failure.underlying.localizedDescription,
+                wasCancelled: cancelled, guardStopped: true
             )
         } catch is CancellationError {
             return IOSAgentToolEngineResult(

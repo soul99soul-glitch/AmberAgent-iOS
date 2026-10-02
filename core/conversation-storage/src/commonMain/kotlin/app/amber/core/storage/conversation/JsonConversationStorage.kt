@@ -51,6 +51,7 @@ class JsonConversationStorage(
     internal var beforeUpdateMetadataSaveForTesting: (suspend () -> Unit)? = null
     internal var beforeSummaryDecodeForTesting: (() -> Unit)? = null
     internal var beforeConversationDecodeForTesting: (() -> Unit)? = null
+    internal var beforeImportCommitForTesting: ((Int) -> Unit)? = null
 
     init {
         // 确保目录存在；不存在则静默创建（首次启动/全新安装场景）。
@@ -172,15 +173,74 @@ class JsonConversationStorage(
             conversation to encodeConversation(conversation)
         }
 
-        // Clear before writing so a partial write failure cannot leave a stale decoded
-        // snapshot for any document that was already replaced in this batch.
-        conversationCache.clear()
-        validated.forEach { (conversation, text) ->
-            conversationFile(conversation.id).writeText(text)
+        // Preserve last-entry-wins semantics for duplicate IDs, with one backup per file.
+        val replacements = validated.associate { (conversation, text) -> conversation.id to text }
+        if (replacements.isEmpty()) return@withLock
+        val batchId = Uuid.random()
+        val prepared = mutableListOf<ImportDocument>()
+        val committed = mutableListOf<ImportDocument>()
+        val retainedBackups = mutableSetOf<String>()
+        try {
+            replacements.forEach { (id, text) ->
+                val target = conversationFile(id)
+                val original = if (target.exists()) {
+                    target.readText() ?: throw ConversationStorageException(
+                        "Cannot read existing conversation before import: ${target.path}"
+                    )
+                } else null
+                val document = ImportDocument(
+                    target = target,
+                    staged = baseDir.child("$id.$batchId.import"),
+                    backup = original?.let { baseDir.child("$id.$batchId.backup") },
+                )
+                prepared += document
+                document.backup?.writeText(original!!)
+                document.staged.writeText(text)
+            }
+
+            // Every new document and original backup is on disk before replacing any file.
+            conversationCache.clear()
+            summaryCache.clear()
+            try {
+                prepared.forEachIndexed { index, document ->
+                    beforeImportCommitForTesting?.invoke(index)
+                    document.staged.moveTo(document.target)
+                    committed += document
+                }
+            } catch (commitFailure: Throwable) {
+                val failure = ConversationStorageException("Failed to commit conversation import", commitFailure)
+                committed.asReversed().forEach { document ->
+                    try {
+                        if (document.backup != null) {
+                            document.backup.moveTo(document.target)
+                        } else if (!document.target.delete()) {
+                            throw ConversationStorageException("Failed to remove imported conversation: ${document.target.path}")
+                        }
+                    } catch (rollbackFailure: Throwable) {
+                        document.backup?.let { retainedBackups += it.path }
+                        failure.addSuppressed(rollbackFailure)
+                    }
+                }
+                throw failure
+            }
+            // Rebuilding tolerates derived index write failure, matching saveConversation.
+            rebuildIndex()
+        } finally {
+            prepared.forEach { document ->
+                runCatching { document.staged.delete() }
+                document.backup?.takeIf { it.path !in retainedBackups }?.let {
+                    runCatching { it.delete() }
+                }
+            }
         }
-        rebuildIndex()
         Unit
     }
+
+    private data class ImportDocument(
+        val target: ConversationFile,
+        val staged: ConversationFile,
+        val backup: ConversationFile?,
+    )
 
     private fun encodeConversation(conversation: Conversation): String = runCatching {
         JsonInstant.encodeToString(conversation)
@@ -310,7 +370,9 @@ class JsonConversationStorage(
      */
     private suspend fun rebuildIndex(): List<ConversationSummary> {
         val summaries = readConversationFileSummaries()
-        if (summaries.isNotEmpty()) writeIndex(summaries)
+        // Canonical files remain readable even if this derived cache cannot be repaired.
+        // Match the valid-but-stale index path in listSummaries.
+        if (summaries.isNotEmpty()) runCatching { writeIndex(summaries) }
         return summaries
     }
 

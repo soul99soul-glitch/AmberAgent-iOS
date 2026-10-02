@@ -862,7 +862,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         let didStart = await harness.session.send(text: "帮我梳理人物动机")
         XCTAssertTrue(didStart)
         let didAsk = await eventually {
-            !harness.session.isRunning &&
+            !harness.session.isRunning && harness.session.canSend &&
                 harness.session.durableMessages.last?.interaction == .askUser(prompt)
         }
         XCTAssertTrue(didAsk)
@@ -873,14 +873,16 @@ final class NovelSessionViewModelTests: XCTestCase {
             promptMessageID: promptMessage.id,
             answer: "家人"
         )
-        XCTAssertTrue(didAnswer)
+        XCTAssertTrue(didAnswer, harness.session.operationErrorMessage ?? "No answer error was reported.")
         let didFinish = await eventually {
             !harness.session.isRunning && harness.session.durableMessages.count == 4
         }
         XCTAssertTrue(didFinish)
         XCTAssertEqual(harness.session.durableMessages.count, 4)
-        XCTAssertEqual(harness.session.durableMessages[2].content, "家人")
-        XCTAssertEqual(harness.session.durableMessages[3].content, "那就先强化他保护家人的选择。")
+        let answerMessage = try XCTUnwrap(harness.session.durableMessages.dropFirst(2).first)
+        let nextAssistantMessage = try XCTUnwrap(harness.session.durableMessages.dropFirst(3).first)
+        XCTAssertEqual(answerMessage.content, "家人")
+        XCTAssertEqual(nextAssistantMessage.content, "那就先强化他保护家人的选择。")
     }
 
     func testFailedAskUserAnswerRestoresCachedCard() async throws {
@@ -927,6 +929,23 @@ final class NovelSessionViewModelTests: XCTestCase {
     }
 
     func testGhostwritePlanApprovalPersistsPlanAndStartsSelectedBatch() async throws {
+        try await assertGhostwritePlanApprovalPersistsAndStarts(initialMode: .cocreation, proposedArc: [])
+    }
+
+    func testGhostwritePlanApprovalInGhostwriteModeCanSupplyMissingPlan() async throws {
+        try await assertGhostwritePlanApprovalPersistsAndStarts(initialMode: .ghostwrite, proposedArc: [])
+    }
+
+    func testGhostwritePlanApprovalRecordsAnswerWithFinalArcSave() async throws {
+        try await assertGhostwritePlanApprovalPersistsAndStarts(
+            initialMode: .ghostwrite, proposedArc: ["按批准计划推进下一章"]
+        )
+    }
+
+    private func assertGhostwritePlanApprovalPersistsAndStarts(
+        initialMode: NovelCollaborationMode,
+        proposedArc: [String]
+    ) async throws {
         var document = try NovelTestFixtures.document()
         for (kind, title, content) in [
             (NovelMaterialKind.masterOutline, "总纲", "主角必须夺回信物。"),
@@ -952,6 +971,12 @@ final class NovelSessionViewModelTests: XCTestCase {
             branchID: document.branches[0].id,
             beats: preservedArc
         )), to: document).document
+        if initialMode == .ghostwrite {
+            document = try NovelReducer.apply(.setCollaborationMode(NovelSetCollaborationModeCommand(
+                context: NovelTestFixtures.context(configRevision: document.project.configRevision),
+                projectID: document.project.id, branchID: document.branches[0].id, mode: initialMode
+            )), to: document).document
+        }
         let branch = document.branches[0]
         let proposal = NovelGhostwritePlanProposal(
             projectID: document.project.id,
@@ -966,7 +991,7 @@ final class NovelSessionViewModelTests: XCTestCase {
             mustNotHappen: ["幕后主使立刻现身"],
             endingHook: "卷宗上出现父亲的签名",
             visibleFacts: ["林晚只知道卷宗被替换过"],
-            upcomingArc: [],
+            upcomingArc: proposedArc,
             suggestedChapterCount: 3,
             reason: "承接刚才确认的父女矛盾"
         )
@@ -1010,8 +1035,14 @@ final class NovelSessionViewModelTests: XCTestCase {
         )
         XCTAssertEqual(
             harness.workspace.projectSnapshot?.upcomingArc(for: branch.id)?.beats,
-            preservedArc
+            proposedArc.isEmpty ? preservedArc : proposedArc
         )
+        let saved = try await harness.repository.loadProject(id: harness.projectID).document
+        let response = NovelAskUserResponse(
+            promptMessageID: promptMessage.id,
+            answer: NovelGhostwritePlanApproval.approvedAnswer(chapterCount: 4)
+        )
+        XCTAssertEqual(saved.sessions[0].messages.filter { $0.interaction == .askUserAnswer(response) }.count, 1)
         harness.session.pauseGhostwrite()
     }
 
@@ -1117,7 +1148,7 @@ final class NovelSessionViewModelTests: XCTestCase {
         let didStart = await harness.session.send(text: "章节标题有问题")
         XCTAssertTrue(didStart)
         let didAsk = await eventually {
-            !harness.session.isRunning &&
+            !harness.session.isRunning && harness.session.canSend &&
                 harness.session.durableMessages.last?.interaction == .askUser(prompt)
         }
         XCTAssertTrue(didAsk)
@@ -1127,11 +1158,15 @@ final class NovelSessionViewModelTests: XCTestCase {
             promptMessageID: promptMessage.id,
             answer: "5、6、8、10、15、16"
         )
-        XCTAssertTrue(didAnswer)
+        XCTAssertTrue(didAnswer, harness.session.operationErrorMessage ?? "No answer error was reported.")
         let failed = await eventually {
-            harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed
+            harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed &&
+                harness.session.canSend
         }
-        XCTAssertTrue(failed)
+        XCTAssertTrue(
+            failed,
+            "Discussion retry was not ready: busy=\(harness.session.isBusy), running=\(harness.session.isRunning), error=\(harness.session.errorMessage ?? "none")"
+        )
         let failedRunID = try XCTUnwrap(harness.workspace.projectSnapshot?.activeRuns.last?.id)
         let failedUser = try XCTUnwrap(
             harness.workspace.branchSnapshot?.session.messages.first(where: {
@@ -1176,7 +1211,8 @@ final class NovelSessionViewModelTests: XCTestCase {
             scripts: [
                 NovelModelScript(steps: [.askUser(prompt, preface: "先确定世界规则。")]),
                 NovelModelScript(steps: [.delta(quickStartSuggestionsJSON), .complete]),
-            ]
+            ],
+            usesSnapshotGate: true
         )
 
         let startedRunID = await harness.workspace.startQuickStartSuggestions()
@@ -1185,7 +1221,10 @@ final class NovelSessionViewModelTests: XCTestCase {
         let firstRunCompleted = await eventually {
             harness.workspace.projectSnapshot?.activeRuns.first(where: {
                 $0.id == firstRunID
-            })?.status == .completed
+            })?.status == .completed && {
+                if case .awaitingUser = harness.workspace.quickStartStatus { return true }
+                return false
+            }()
         }
         XCTAssertTrue(firstRunCompleted)
         await harness.session.bindToCurrentSelection()
@@ -1201,13 +1240,25 @@ final class NovelSessionViewModelTests: XCTestCase {
             .awaitingUser(promptMessageID: promptMessage.id)
         )
 
-        let didAnswer = await harness.session.answerAskUser(
-            promptMessageID: promptMessage.id,
-            answer: "失去记忆"
-        )
+        let gate = try XCTUnwrap(harness.snapshotGate)
+        await gate.blockNextBindingRestore()
+        let answerTask = Task { @MainActor in
+            await harness.session.answerAskUser(promptMessageID: promptMessage.id, answer: "失去记忆")
+        }
+        let bindingBlocked = await eventually { await gate.bindingRestoreIsBlocked() }
+        XCTAssertTrue(bindingBlocked)
+        let completedBeforeBindingReturned = await eventually {
+            harness.workspace.projectSnapshot?.settingProposals.count == 4 &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.status == .completed &&
+                harness.workspace.quickStartStatus == .idle
+        }
+        XCTAssertTrue(completedBeforeBindingReturned)
+        await gate.resumeBlockedBindingRestore()
+        let didAnswer = await answerTask.value
         XCTAssertTrue(didAnswer)
         let proposalsCompleted = await eventually {
-            harness.workspace.projectSnapshot?.settingProposals.count == 4
+            harness.workspace.projectSnapshot?.settingProposals.count == 4 &&
+                !harness.session.isRunning && harness.session.canSend
         }
         XCTAssertTrue(proposalsCompleted)
         await harness.session.bindToCurrentSelection()
@@ -2777,6 +2828,60 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertNotEqual(harness.workspace.projectSnapshot?.activeRuns.last?.id, failedRunID)
     }
 
+    func testQuickStartRetryReportsAcceptedWhenRunCompletesDuringBinding() async throws {
+        let failure = NovelModelFailure(
+            code: "quick_start_failed", message: "快速开始暂时失败", isRetryable: true
+        )
+        let harness = try await makeHarness(
+            document: try quickStartDocument(),
+            scripts: [
+                NovelModelScript(steps: [.fail(failure)]),
+                NovelModelScript(steps: [.delta(quickStartSuggestionsJSON), .complete]),
+            ],
+            usesSnapshotGate: true
+        )
+        let startedID = await harness.workspace.startQuickStartSuggestions()
+        let failedRunID = try XCTUnwrap(startedID)
+        let failed = await eventually {
+            harness.workspace.projectSnapshot?.activeRuns.last?.status == .failed &&
+                harness.workspace.quickStartStartingRun == nil
+        }
+        XCTAssertTrue(failed)
+        await harness.session.bindToCurrentSelection()
+
+        let busyOwner = UUID()
+        XCTAssertTrue(harness.workspace.acquireSessionOperation(ownerID: busyOwner))
+        let rejected = await harness.session.retryGeneration(runID: failedRunID)
+        XCTAssertFalse(rejected)
+        XCTAssertEqual(harness.workspace.projectSnapshot?.activeRuns.count, 1)
+        harness.workspace.releaseSessionOperation(ownerID: busyOwner)
+
+        let gate = try XCTUnwrap(harness.snapshotGate)
+        await gate.blockNextBindingRestore()
+        let retryTask = Task { @MainActor in
+            await harness.session.retryGeneration(runID: failedRunID)
+        }
+        let bindingBlocked = await eventually { await gate.bindingRestoreIsBlocked() }
+        XCTAssertTrue(bindingBlocked)
+        let completedBeforeBindingReturned = await eventually {
+            harness.workspace.projectSnapshot?.activeRuns.last?.status == .completed &&
+                harness.workspace.projectSnapshot?.activeRuns.last?.id != failedRunID &&
+                harness.workspace.projectSnapshot?.settingProposals.count == 4 &&
+                harness.workspace.quickStartStatus == .idle
+        }
+        XCTAssertTrue(completedBeforeBindingReturned)
+        await gate.resumeBlockedBindingRestore()
+        let accepted = await retryTask.value
+        XCTAssertTrue(accepted, harness.session.operationErrorMessage ?? "Completed retry was reported as rejected.")
+        XCTAssertFalse(harness.session.isRunning)
+        let persisted = try await harness.repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(persisted.activeRuns.count, 2)
+        XCTAssertEqual(persisted.activeRuns.last?.status, .completed)
+        let userInputs = persisted.sessions[0].messages.filter { $0.role == .user }
+        XCTAssertEqual(userInputs.count, 2)
+        XCTAssertEqual(userInputs.first?.content, userInputs.last?.content)
+    }
+
     func testInitialPausedQuickStartRefreshesAndAttachesSession() async throws {
         let harness = try await makeHarness(
             document: try quickStartDocument(),
@@ -4001,10 +4106,72 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertEqual(persisted.branches[0].syncStatus, .synchronized)
         XCTAssertTrue(persisted.pendingOperations.isEmpty)
         XCTAssertEqual(persisted.checkpoints.last?.kind, .manualSync)
-        XCTAssertEqual(harness.session.durableMessages.count, messageCountBefore)
+        let response = NovelAskUserResponse(
+            promptMessageID: promptMessage.id,
+            answer: NovelChapterRevisionApproval.approveOption
+        )
+        XCTAssertEqual(persisted.sessions[0].messages.last?.interaction, .askUserAnswer(response))
+        let coldSession = NovelSessionViewModel(workspace: harness.workspace)
+        await coldSession.bindToCurrentSelection()
+        let coldList = try XCTUnwrap(coldSession.projectedListModel(
+            project: XCTUnwrap(harness.workspace.projectSnapshot),
+            branch: XCTUnwrap(harness.workspace.branchSnapshot)
+        ))
+        XCTAssertEqual(coldList.rows.first { $0.id == promptMessage.id }?.askUser?.response, response)
+        let answeredAgain = await coldSession.answerAskUser(
+            promptMessageID: promptMessage.id,
+            answer: NovelChapterRevisionApproval.approveOption
+        )
+        XCTAssertFalse(answeredAgain)
+        let afterRepeat = try await harness.repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(afterRepeat, persisted)
+        XCTAssertEqual(coldSession.durableMessages.count, messageCountBefore + 1)
         XCTAssertFalse(harness.session.isRunning)
         let requests = await harness.adapter.requests
         XCTAssertEqual(requests.count, 1)
+    }
+
+    func testFailedChapterRevisionApprovalDoesNotPersistBodyOrAnswer() async throws {
+        let fixture = try documentWithChapter(content: "原正文。")
+        let promptID = NovelMessageID()
+        let prompt = NovelAskUserPrompt(
+            question: "批准修改？",
+            options: NovelChapterRevisionApproval.options,
+            chapterRevision: NovelChapterRevisionProposal(
+                chapterID: fixture.chapterID, chapterOrdinal: 1, chapterTitle: "第一章",
+                startParagraph: 1, endParagraph: 1, oldText: "原正文。", newText: "修改后的正文。", reason: nil
+            )
+        )
+        var document = fixture.document
+        document.sessions[0].messages.append(NovelSessionMessageRecord(
+            id: promptID, sequence: 0, role: .assistant, mode: .discussPlan, kind: .discussion,
+            content: "批准修改？", createdAt: document.project.updatedAt,
+            runID: nil, candidateID: nil, interaction: .askUser(prompt)
+        ))
+        document.sessions[0].revision += 1
+        let repository = NovelSessionFailingRepository()
+        let harness = try await makeHarness(repository: repository, document: document, scripts: [])
+        await repository.failNextCommits(1)
+        let failed = await harness.session.answerAskUser(
+            promptMessageID: promptID, answer: NovelChapterRevisionApproval.approveOption
+        )
+        XCTAssertFalse(failed)
+        let afterFailure = try await repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(afterFailure, document)
+        let list = try XCTUnwrap(harness.session.projectedListModel(
+            project: XCTUnwrap(harness.workspace.projectSnapshot),
+            branch: XCTUnwrap(harness.workspace.branchSnapshot)
+        ))
+        XCTAssertNil(list.rows.first { $0.id == promptID }?.askUser?.response)
+        let retried = await harness.session.answerAskUser(
+            promptMessageID: promptID, answer: NovelChapterRevisionApproval.approveOption
+        )
+        XCTAssertTrue(retried)
+        let saved = try await repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(saved.chapterVersions.last?.content, "修改后的正文。")
+        XCTAssertEqual(saved.sessions[0].messages.last?.interaction, .askUserAnswer(NovelAskUserResponse(
+            promptMessageID: promptID, answer: NovelChapterRevisionApproval.approveOption
+        )))
     }
 
     func testChapterRevisionApprovalPublishesSubmittingStateUntilCommitCompletes() async throws {
@@ -4069,6 +4236,11 @@ final class NovelSessionViewModelTests: XCTestCase {
         let didAnswer = await answerTask.value
         XCTAssertTrue(didAnswer)
         XCTAssertNil(harness.session.answeringAskUserMessageID)
+        let saved = try await repository.loadProject(id: harness.projectID).document
+        XCTAssertEqual(saved.sessions[0].messages.last?.interaction, .askUserAnswer(NovelAskUserResponse(
+            promptMessageID: promptMessageID,
+            answer: NovelChapterRevisionApproval.approveOption
+        )))
     }
 
     func testAutomaticManualSyncDoesNotOuterRetryValidationFailures() async throws {
@@ -5118,9 +5290,38 @@ private actor NovelSessionSnapshotFailingCreation: NovelCreation {
     private var blockedPerformContinuation: CheckedContinuation<Void, Never>?
     private var shouldBlockInterruptReturn = false
     private var blockedInterruptContinuation: CheckedContinuation<Void, Never>?
+    private var shouldBlockNextBindingRestore = false
+    private var blockedBindingRestoreContinuation: CheckedContinuation<Void, Never>?
 
     init(base: any NovelCreation) {
         self.base = base
+    }
+
+    func blockNextBindingRestore() {
+        shouldBlockNextBindingRestore = true
+    }
+
+    func bindingRestoreIsBlocked() -> Bool {
+        blockedBindingRestoreContinuation != nil
+    }
+
+    func resumeBlockedBindingRestore() {
+        let continuation = blockedBindingRestoreContinuation
+        blockedBindingRestoreContinuation = nil
+        continuation?.resume()
+    }
+
+    // Binding restores this sidecar after warming the transcript. Holding that
+    // await lets the accepted Quick Start finish before binding returns.
+    func loadGhostwriteBatchProgress(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID
+    ) async throws -> NovelGhostwriteBatchProgressRecord? {
+        if shouldBlockNextBindingRestore {
+            shouldBlockNextBindingRestore = false
+            await withCheckedContinuation { blockedBindingRestoreContinuation = $0 }
+        }
+        return try await base.loadGhostwriteBatchProgress(projectID: projectID, branchID: branchID)
     }
 
     func failNextSnapshots(_ count: Int) {

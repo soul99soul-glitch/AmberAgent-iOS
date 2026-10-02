@@ -8,6 +8,7 @@ struct SearchProviderView: View {
 
     @State private var providerType: SearchProviderType = .bing
     @State private var apiKey = ""
+    @State private var saveFailed = false
     @State private var searXNGURL = ""
     @State private var searXNGEngines = ""
     @State private var searXNGLanguage = ""
@@ -39,6 +40,11 @@ struct SearchProviderView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .alert("保存失败", isPresented: $saveFailed) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(sharedSettings.credentialPersistenceError ?? "凭据未能安全保存，请重试。")
+        }
     }
 
     private var header: some View {
@@ -207,6 +213,10 @@ struct SearchProviderView: View {
                 Button {
                     let trimmedName = providerType.title
                     sharedSettings.addSearchProvider(name: trimmedName, apiKey: apiKey, serviceType: providerType.serialName)
+                    guard sharedSettings.credentialPersistenceError == nil else {
+                        saveFailed = true
+                        return
+                    }
                     sharedSettings.setEnableWebSearch(true)
                     apiKey = ""
                 } label: {

@@ -4,6 +4,77 @@ import XCTest
 final class NovelManualEditSyncTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_700_200_000)
 
+    func testNilApprovalKeepsLegacyActionHash() throws {
+        let projectID = NovelProjectID(try XCTUnwrap(UUID(uuidString: "00000000-0000-0000-0000-000000000001")))
+        let original = NovelRenameProjectCommand(
+            context: NovelTestFixtures.context(), projectID: projectID, name: "Renamed"
+        )
+        XCTAssertEqual(
+            try NovelAction.renameProject(original).canonicalPayloadSHA256(),
+            "38eccd8a3fc6081cb19911a209808e11733b3add1e3e8d725f2bab7c9c891cd0"
+        )
+        var context = original.context
+        context.approvalResponse = NovelAskUserResponse(
+            promptMessageID: NovelMessageID(), answer: NovelChapterRevisionApproval.approveOption
+        )
+        let approved = NovelRenameProjectCommand(context: context, projectID: projectID, name: "Renamed")
+        XCTAssertNotEqual(
+            try NovelAction.renameProject(approved).canonicalPayloadSHA256(),
+            try NovelAction.renameProject(original).canonicalPayloadSHA256()
+        )
+    }
+
+    func testManualEditApprovalIsRecordedBeforeCheckpointCursorWithoutCompletedRun() throws {
+        var document = NovelWorkspaceProjectStore.persistableAtRest(
+            try NovelBranchTestFixtures.documentWithCollectedCandidate(content: "Original prose.")
+        )
+        let now = document.project.updatedAt.addingTimeInterval(1)
+        let branch = document.branches[0]
+        let chapterID = try XCTUnwrap(branch.workingChapterSelections.first?.chapterID)
+        let promptID = NovelMessageID()
+        let prompt = NovelAskUserPrompt(
+            question: "Approve this edit?", options: NovelChapterRevisionApproval.options,
+            chapterRevision: NovelChapterRevisionProposal(
+                chapterID: chapterID, chapterOrdinal: 1, chapterTitle: "Chapter One",
+                startParagraph: 1, endParagraph: 1, oldText: "Original prose.",
+                newText: "Edited prose.", reason: nil
+            )
+        )
+        let promptSequence = (document.sessions[0].messages.last?.sequence ?? -1) + 1
+        document.sessions[0].messages.append(NovelSessionMessageRecord(
+            id: promptID, sequence: promptSequence, role: .assistant, mode: .discussPlan,
+            kind: .discussion, content: "Approve this edit?", createdAt: now,
+            runID: nil, candidateID: nil, interaction: .askUser(prompt)
+        ))
+        document.sessions[0].revision += 1
+        XCTAssertTrue(document.activeRuns.isEmpty)
+        let response = NovelAskUserResponse(
+            promptMessageID: promptID, answer: NovelChapterRevisionApproval.approveOption
+        )
+        let command = NovelSaveManualEditCommand(
+            context: NovelMutationContext(
+                operationID: NovelOperationID(), expectedProjectRevision: document.project.revision,
+                expectedConfigRevision: document.project.configRevision,
+                expectedBranchHeadRevision: branch.headRevision, approvalResponse: response
+            ),
+            projectID: document.project.id, branchID: branch.id, chapterID: chapterID,
+            versionID: NovelChapterVersionID(), title: "Chapter One", content: "Edited prose.",
+            factCompatibilityID: UUID(), expectedWorkingRevision: branch.workingRevision
+        )
+        let saved = try NovelFactTransactionReducer.saveManualEditWithPlot(
+            command, payloadSHA256: command.canonicalPayloadSHA256(), moduleText: nil,
+            summaryOverride: nil, in: document, now: now
+        ).document
+        XCTAssertEqual(saved.project.revision, document.project.revision + 1)
+        XCTAssertEqual(saved.sessions[0].messages.last?.interaction, .askUserAnswer(response))
+        XCTAssertEqual(saved.checkpoints.last?.sessionCursor, .through(sequence: promptSequence + 1))
+        let replayed = try NovelFactTransactionReducer.saveManualEditWithPlot(
+            command, payloadSHA256: command.canonicalPayloadSHA256(), moduleText: nil,
+            summaryOverride: nil, in: saved, now: now
+        ).document
+        XCTAssertEqual(replayed, saved)
+    }
+
     func testManualSyncModelInputOmitsCorrectionWhenThereIsNoPreviousError() {
         let input = NovelManualSyncChunker.modelInput(
             chunk: "Mara opened the archive.",

@@ -15,6 +15,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import app.amber.ai.core.MessageRole
 import app.amber.ai.core.TokenUsage
+import app.amber.ai.provider.CustomBody
 import app.amber.ai.provider.Model
 import app.amber.ai.util.json
 import kotlin.concurrent.Volatile
@@ -29,6 +30,7 @@ import kotlin.uuid.Uuid
 const val STREAM_TOOL_INDEX_METADATA_KEY = "stream_tool_index"
 const val RESPONSES_ITEM_ID_METADATA_KEY = "responses_item_id"
 const val THOUGHT_SIGNATURE_METADATA_KEY = "thoughtSignature"
+const val GEMINI_WIRE_CALL_ID_METADATA_KEY = "gemini_wire_call_id"
 const val LOCAL_GENERATION_ERROR_METADATA_KEY = "amber_local_kind"
 const val LOCAL_GENERATION_ERROR_METADATA_VALUE = "generation_error"
 const val LOCAL_OUTPUT_LIMIT_NOTICE_METADATA_VALUE = "output_limit_notice"
@@ -277,7 +279,7 @@ data class UIMessage(
             is UIMessagePart.Video -> part.url.isNotBlank()
             is UIMessagePart.Audio -> part.url.isNotBlank()
             is UIMessagePart.Document -> part.url.isNotBlank()
-            is UIMessagePart.Reasoning -> part.reasoning.isNotBlank()
+            is UIMessagePart.Reasoning -> part.reasoning.isNotBlank() || part.metadata.hasProtocolReasoningContent()
             else -> true
         }
     }
@@ -667,6 +669,32 @@ fun geminiToolPart(
     streamIndex = streamIndex,
     metadata = thoughtSignatureMetadata(thoughtSignature),
 )
+
+/** Serialize the owned value before Kotlin/Native bridges JSON collections to Foundation. */
+fun customBodyValueJson(body: CustomBody): String = body.value.toString()
+
+/** Retain the server ID separately from IDs synthesized for older Gemini responses. */
+fun geminiWireToolPart(
+    wireCallId: String,
+    toolName: String,
+    input: String,
+    output: List<UIMessagePart> = emptyList(),
+    streamIndex: Int? = null,
+    thoughtSignature: String? = null,
+): UIMessagePart.Tool = geminiToolPart(
+    toolCallId = wireCallId,
+    toolName = toolName,
+    input = input,
+    output = output,
+    streamIndex = streamIndex,
+    thoughtSignature = thoughtSignature,
+).copy(metadata = buildJsonObject {
+    put(GEMINI_WIRE_CALL_ID_METADATA_KEY, wireCallId)
+    thoughtSignature?.takeIf { it.isNotBlank() }?.let { put(THOUGHT_SIGNATURE_METADATA_KEY, it) }
+})
+
+fun UIMessagePart.Tool.geminiWireCallId(): String? =
+    metadata?.get(GEMINI_WIRE_CALL_ID_METADATA_KEY)?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
 
 /**
  * Combine the tool name of an existing streaming part with that of a [delta].

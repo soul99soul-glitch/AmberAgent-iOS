@@ -720,7 +720,8 @@ final class IOSTerminalCapabilityContractTests: XCTestCase {
         XCTAssertTrue(remoteSSH.supportsLongRunningJobs)
 
         let localTools = IOSTerminalRuntimeCapabilities.capability(for: .localIOSTools)
-        XCTAssertFalse(localTools.supportsFileSync)
+        // AmberShell and chat share the app-owned /workspace.
+        XCTAssertTrue(localTools.supportsFileSync)
 
         let remoteMosh = IOSTerminalRuntimeCapabilities.capability(for: .remoteMosh)
         XCTAssertFalse(remoteMosh.supportsPTY)

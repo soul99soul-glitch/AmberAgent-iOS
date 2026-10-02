@@ -211,8 +211,14 @@ final class IOSWorkspaceStore {
     @ObservationIgnored private let fileManager: FileManager
     @ObservationIgnored private let encoder = JSONEncoder()
     @ObservationIgnored private let decoder = JSONDecoder()
+    @ObservationIgnored private let previewParser: (@MainActor (URL, String) async -> Result<SelectedDocumentReadResult, Error>)?
 
-    init(baseDirectory: URL? = nil, fileManager: FileManager = .default) {
+    init(
+        baseDirectory: URL? = nil,
+        fileManager: FileManager = .default,
+        previewParser: (@MainActor (URL, String) async -> Result<SelectedDocumentReadResult, Error>)? = nil
+    ) {
+        self.previewParser = previewParser
         self.fileManager = fileManager
         let root = baseDirectory
             ?? fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -308,32 +314,58 @@ final class IOSWorkspaceStore {
             source: source
         )
         record = await parsedRecord(record, now: now)
-        files.insert(record, at: 0)
-        try persist()
+        var nextFiles = files
+        nextFiles.insert(record, at: 0)
+        do {
+            try persist(files: nextFiles)
+        } catch {
+            try rollbackPayload(after: error) {
+                try fileManager.removeItem(at: destination)
+            }
+        }
         publish()
         return record
     }
 
     @discardableResult
     func reparseFile(id: String, now: Date = Date()) async throws -> IOSWorkspaceFileRecord {
+        guard let original = files.first(where: { $0.id == id }) else {
+            throw IOSWorkspaceStoreError.missingFile
+        }
+        let next = await parsedRecord(original, now: now)
         guard let index = files.firstIndex(where: { $0.id == id }) else {
             throw IOSWorkspaceStoreError.missingFile
         }
-        let next = await parsedRecord(files[index], now: now)
-        files[index] = next
-        try persist()
+        guard files[index] == original else {
+            throw IOSWorkspaceStoreError.storage("Workspace file changed while it was being parsed. Retry with the current file.")
+        }
+        var nextFiles = files
+        nextFiles[index] = next
+        try persist(files: nextFiles)
         publish()
         return next
     }
 
     func removeFile(id: String) throws {
         guard let index = files.firstIndex(where: { $0.id == id }) else { return }
-        let record = files.remove(at: index)
+        let record = files[index]
         let url = fileURL(forWorkspacePath: record.workspacePath)
-        if fileManager.fileExists(atPath: url.path) {
+        let data = fileManager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        let modificationDate = data != nil
+            ? try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            : nil
+        if data != nil {
             try fileManager.removeItem(at: url)
         }
-        try persist()
+        var nextFiles = files
+        nextFiles.remove(at: index)
+        do {
+            try persist(files: nextFiles)
+        } catch {
+            try rollbackPayload(after: error) {
+                try restorePayload(at: url, data: data, modificationDate: modificationDate)
+            }
+        }
         publish()
     }
 
@@ -366,8 +398,15 @@ final class IOSWorkspaceStore {
             sourceKind: sourceKind,
             sourceId: sourceId
         )
-        artifacts.insert(record, at: 0)
-        try persist()
+        var nextArtifacts = artifacts
+        nextArtifacts.insert(record, at: 0)
+        do {
+            try persist(artifacts: nextArtifacts)
+        } catch {
+            try rollbackPayload(after: error) {
+                try fileManager.removeItem(at: destination)
+            }
+        }
         publish()
         return record
     }
@@ -381,12 +420,24 @@ final class IOSWorkspaceStore {
 
     func deleteArtifact(id: String) throws {
         guard let index = artifacts.firstIndex(where: { $0.id == id }) else { return }
-        let record = artifacts.remove(at: index)
+        let record = artifacts[index]
         let url = artifactsDirectory.appendingPathComponent(record.contentPath, isDirectory: false)
-        if fileManager.fileExists(atPath: url.path) {
+        let data = fileManager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        let modificationDate = data != nil
+            ? try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            : nil
+        if data != nil {
             try fileManager.removeItem(at: url)
         }
-        try persist()
+        var nextArtifacts = artifacts
+        nextArtifacts.remove(at: index)
+        do {
+            try persist(artifacts: nextArtifacts)
+        } catch {
+            try rollbackPayload(after: error) {
+                try restorePayload(at: url, data: data, modificationDate: modificationDate)
+            }
+        }
         publish()
     }
 
@@ -487,45 +538,26 @@ final class IOSWorkspaceStore {
                 "File exceeds the AmberShell write limit of \(DocumentAccessStore.formatBytes(Int64(maxBytes)))."
             )
         }
-
         try ensureDirectories()
         let relativePath = try amberShellRelativePath(path, allowingRoot: false)
         let file = try amberShellURL(for: relativePath, finalMayBeMissing: true)
+        let original = files.first(where: { $0.workspacePath == relativePath })
         let existed = fileManager.fileExists(atPath: file.path)
-        let previousData: Data?
-        let previousModificationDate: Date?
-        if existed {
-            try amberShellRequireRegularFile(at: file)
-            previousData = try Data(contentsOf: file)
-            previousModificationDate = try file.resourceValues(
-                forKeys: [.contentModificationDateKey]
-            ).contentModificationDate
-        } else {
-            previousData = nil
-            previousModificationDate = nil
-        }
-        let previousFiles = files
-
+        if existed { try amberShellRequireRegularFile(at: file) }
+        let previousData = existed ? try Data(contentsOf: file) : nil
+        let modificationDate = existed
+            ? try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            : nil
+        let record = try await amberShellPreparedRecord(
+            path: relativePath, file: file, data: data, source: "amber_shell_write", original: original
+        )
+        try amberShellRequireUnchanged(path: relativePath, record: original, data: previousData)
         try data.write(to: file, options: [.atomic])
         do {
-            try await amberShellSyncFileRecord(
-                path: relativePath,
-                file: file,
-                source: "amber_shell_write"
-            )
+            try commitFileRecord(record)
         } catch {
-            try amberShellRollback(after: error, restoring: previousFiles) {
-                if let previousData {
-                    try previousData.write(to: file, options: [.atomic])
-                    if let previousModificationDate {
-                        try fileManager.setAttributes(
-                            [.modificationDate: previousModificationDate],
-                            ofItemAtPath: file.path
-                        )
-                    }
-                } else if fileManager.fileExists(atPath: file.path) {
-                    try fileManager.removeItem(at: file)
-                }
+            try rollbackPayload(after: error) {
+                try restorePayload(at: file, data: previousData, modificationDate: modificationDate)
             }
         }
     }
@@ -559,26 +591,29 @@ final class IOSWorkspaceStore {
         try ensureDirectories()
         let relativePath = try amberShellRelativePath(path, allowingRoot: false)
         let file = try amberShellURL(for: relativePath, finalMayBeMissing: true)
+        let original = files.first(where: { $0.workspacePath == relativePath })
         let existed = fileManager.fileExists(atPath: file.path)
-        let previousModificationDate = existed
+        if existed { try amberShellRequireRegularFile(at: file) }
+        let previousData = existed ? try Data(contentsOf: file) : nil
+        let modificationDate = existed
             ? try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             : nil
-        let previousFiles = files
+        let record = try await amberShellPreparedRecord(
+            path: relativePath, file: file, data: previousData ?? Data(), source: "amber_shell_touch", original: original
+        )
+        try amberShellRequireUnchanged(path: relativePath, record: original, data: previousData)
         if existed {
-            try amberShellRequireRegularFile(at: file)
             try fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
         } else {
-            guard fileManager.createFile(atPath: file.path, contents: Data()) else {
-                throw IOSWorkspaceStoreError.storage("Unable to create Workspace file.")
-            }
+            try Data().write(to: file, options: [.atomic])
         }
         do {
-            try await amberShellSyncFileRecord(path: relativePath, file: file, source: "amber_shell_touch")
+            try commitFileRecord(record)
         } catch {
-            try amberShellRollback(after: error, restoring: previousFiles) {
-                if existed, let previousModificationDate {
-                    try fileManager.setAttributes([.modificationDate: previousModificationDate], ofItemAtPath: file.path)
-                } else if !existed, fileManager.fileExists(atPath: file.path) {
+            try rollbackPayload(after: error) {
+                if existed, let modificationDate {
+                    try fileManager.setAttributes([.modificationDate: modificationDate], ofItemAtPath: file.path)
+                } else if !existed {
                     try fileManager.removeItem(at: file)
                 }
             }
@@ -599,16 +634,19 @@ final class IOSWorkspaceStore {
         guard String(data: data, encoding: .utf8) != nil else {
             throw IOSWorkspaceStoreError.invalidPath("Workspace file is not valid UTF-8 text.")
         }
-        let previousFiles = files
+        let originalSource = files.first(where: { $0.workspacePath == sourcePath })
+        let originalDestination = files.first(where: { $0.workspacePath == destinationPath })
+        let record = try await amberShellPreparedRecord(
+            path: destinationPath, file: destinationURL, data: data,
+            source: "amber_shell_copy", original: originalDestination
+        )
+        try amberShellRequireUnchanged(path: sourcePath, record: originalSource, data: data)
+        try amberShellRequireUnchanged(path: destinationPath, record: originalDestination, data: nil)
         try fileManager.copyItem(at: sourceURL, to: destinationURL)
         do {
-            try await amberShellSyncFileRecord(
-                path: destinationPath,
-                file: destinationURL,
-                source: "amber_shell_copy"
-            )
+            try commitFileRecord(record)
         } catch {
-            try amberShellRollback(after: error, restoring: previousFiles) {
+            try rollbackPayload(after: error) {
                 try fileManager.removeItem(at: destinationURL)
             }
         }
@@ -624,24 +662,20 @@ final class IOSWorkspaceStore {
         if fileManager.fileExists(atPath: destinationURL.path) {
             throw IOSWorkspaceStoreError.writeWouldOverwrite("/workspace/\(destinationPath)")
         }
-        let previousFiles = files
+        let data = try Data(contentsOf: sourceURL)
+        let originalSource = files.first(where: { $0.workspacePath == sourcePath })
+        let originalDestination = files.first(where: { $0.workspacePath == destinationPath })
+        let record = try await amberShellPreparedRecord(
+            path: destinationPath, file: destinationURL, data: data,
+            source: "amber_shell_move", original: originalSource
+        )
+        try amberShellRequireUnchanged(path: sourcePath, record: originalSource, data: data)
+        try amberShellRequireUnchanged(path: destinationPath, record: originalDestination, data: nil)
         try fileManager.moveItem(at: sourceURL, to: destinationURL)
         do {
-            if let index = files.firstIndex(where: { $0.workspacePath == sourcePath }) {
-                var record = files[index]
-                record.workspacePath = destinationPath
-                record.displayName = destinationURL.lastPathComponent
-                files.remove(at: index)
-                files.removeAll { $0.workspacePath == destinationPath }
-                files.insert(record, at: 0)
-            }
-            try await amberShellSyncFileRecord(
-                path: destinationPath,
-                file: destinationURL,
-                source: "amber_shell_move"
-            )
+            try commitFileRecord(record)
         } catch {
-            try amberShellRollback(after: error, restoring: previousFiles) {
+            try rollbackPayload(after: error) {
                 try fileManager.moveItem(at: destinationURL, to: sourceURL)
             }
         }
@@ -656,14 +690,14 @@ final class IOSWorkspaceStore {
         let previousModificationDate = try file.resourceValues(
             forKeys: [.contentModificationDateKey]
         ).contentModificationDate
-        let previousFiles = files
+        var nextFiles = files
+        nextFiles.removeAll { $0.workspacePath == relativePath }
         try fileManager.removeItem(at: file)
-        files.removeAll { $0.workspacePath == relativePath }
         do {
-            try persist()
+            try persist(files: nextFiles)
             publish()
         } catch {
-            try amberShellRollback(after: error, restoring: previousFiles) {
+            try rollbackPayload(after: error) {
                 try data.write(to: file, options: [.atomic])
                 if let previousModificationDate {
                     try fileManager.setAttributes([.modificationDate: previousModificationDate], ofItemAtPath: file.path)
@@ -776,15 +810,17 @@ final class IOSWorkspaceStore {
         return values.isSymbolicLink == true
     }
 
-    private func amberShellSyncFileRecord(path: String, file: URL, source: String) async throws {
+    private func amberShellPreparedRecord(
+        path: String, file: URL, data: Data, source: String, original: IOSWorkspaceFileRecord?
+    ) async throws -> IOSWorkspaceFileRecord {
         let now = Date()
-        var record = files.first(where: { $0.workspacePath == path }) ?? IOSWorkspaceFileRecord(
+        var record = original ?? IOSWorkspaceFileRecord(
             id: UUID().uuidString,
             displayName: file.lastPathComponent,
             originalFileName: file.lastPathComponent,
             workspacePath: path,
             mimeType: path.hasSuffix(".md") ? "text/markdown" : "text/plain",
-            sizeBytes: Int64(Self.fileSize(for: file) ?? 0),
+            sizeBytes: Int64(data.count),
             importedAtMillis: Self.millis(now),
             updatedAtMillis: Self.millis(now),
             status: .ready,
@@ -794,31 +830,54 @@ final class IOSWorkspaceStore {
             characterCount: 0,
             source: source
         )
+        record.workspacePath = path
         record.displayName = file.lastPathComponent
-        record.sizeBytes = Int64(Self.fileSize(for: file) ?? 0)
-        record.updatedAtMillis = Self.millis(now)
+        record.sizeBytes = Int64(data.count)
         record.source = source
-        record = await parsedRecord(record, now: now)
-        files.removeAll { $0.id == record.id || $0.workspacePath == path }
-        files.insert(record, at: 0)
-        try persist()
+        return try await parsedProposedRecord(record, data: data, now: now)
+    }
+
+    private func amberShellRequireUnchanged(
+        path: String, record: IOSWorkspaceFileRecord?, data: Data?
+    ) throws {
+        // Resolve again after parsing: a parent can have moved or become a symlink.
+        let file = try amberShellURL(for: path, finalMayBeMissing: true)
+        let existed = fileManager.fileExists(atPath: file.path)
+        if existed { try amberShellRequireRegularFile(at: file) }
+        let currentData = existed ? try Data(contentsOf: file) : nil
+        guard files.first(where: { $0.workspacePath == path }) == record, currentData == data else {
+            throw IOSWorkspaceStoreError.storage("Workspace file changed while the command was being prepared. Retry with the current file.")
+        }
+    }
+
+    private func commitFileRecord(_ record: IOSWorkspaceFileRecord) throws {
+        var nextFiles = files
+        nextFiles.removeAll { $0.id == record.id || $0.workspacePath == record.workspacePath }
+        nextFiles.insert(record, at: 0)
+        try persist(files: nextFiles)
         publish()
     }
 
-    private func amberShellRollback(
-        after originalError: Error,
-        restoring previousFiles: [IOSWorkspaceFileRecord],
-        _ rollback: () throws -> Void
-    ) throws -> Never {
-        files = previousFiles
+    private func rollbackPayload(after originalError: Error, _ rollback: () throws -> Void) throws -> Never {
         do {
             try rollback()
         } catch {
             throw IOSWorkspaceStoreError.storage(
-                "Workspace update failed and its file rollback also failed: \(error.localizedDescription)"
+                "Workspace update failed: \(originalError.localizedDescription). Its file rollback also failed: \(error.localizedDescription)"
             )
         }
         throw originalError
+    }
+
+    private func restorePayload(at url: URL, data: Data?, modificationDate: Date?) throws {
+        if let data {
+            try data.write(to: url, options: [.atomic])
+            if let modificationDate {
+                try fileManager.setAttributes([.modificationDate: modificationDate], ofItemAtPath: url.path)
+            }
+        } else if fileManager.fileExists(atPath: url.path) {
+            try fileManager.removeItem(at: url)
+        }
     }
 
     private func workspaceFileReadJSON(_ args: [String: Any]) async throws -> String {
@@ -960,10 +1019,15 @@ final class IOSWorkspaceStore {
         if fileManager.fileExists(atPath: url.path), !overwrite {
             throw IOSWorkspaceStoreError.writeWouldOverwrite("/workspace/\(path)")
         }
-        try Data(content.utf8).write(to: url, options: [.atomic])
+        let originalRecord = files.first(where: { $0.workspacePath == path })
+        let previousData = fileManager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        let modificationDate = previousData != nil
+            ? try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            : nil
+        let contentData = Data(content.utf8)
         let now = Date()
         let mime = path.hasSuffix(".md") ? "text/markdown" : "text/plain"
-        var record = files.first(where: { $0.workspacePath == path }) ?? IOSWorkspaceFileRecord(
+        var record = originalRecord ?? IOSWorkspaceFileRecord(
             id: UUID().uuidString,
             displayName: path.components(separatedBy: "/").last ?? path,
             originalFileName: path.components(separatedBy: "/").last ?? path,
@@ -981,10 +1045,23 @@ final class IOSWorkspaceStore {
         )
         record.sizeBytes = Int64(content.utf8.count)
         record.updatedAtMillis = Self.millis(now)
-        record = await parsedRecord(record, now: now)
-        files.removeAll { $0.id == record.id || $0.workspacePath == record.workspacePath }
-        files.insert(record, at: 0)
-        try persist()
+        record = try await parsedProposedRecord(record, data: contentData, now: now)
+        let currentData = fileManager.fileExists(atPath: url.path) ? try Data(contentsOf: url) : nil
+        guard files.first(where: { $0.workspacePath == path }) == originalRecord,
+              currentData == previousData else {
+            throw IOSWorkspaceStoreError.storage("Workspace file changed while the write was being prepared. Retry with the current file.")
+        }
+        try contentData.write(to: url, options: [.atomic])
+        var nextFiles = files
+        nextFiles.removeAll { $0.id == record.id || $0.workspacePath == record.workspacePath }
+        nextFiles.insert(record, at: 0)
+        do {
+            try persist(files: nextFiles)
+        } catch {
+            try rollbackPayload(after: error) {
+                try restorePayload(at: url, data: previousData, modificationDate: modificationDate)
+            }
+        }
         publish()
         return Self.json([
             "ok": true,
@@ -1046,15 +1123,29 @@ final class IOSWorkspaceStore {
             ])
         }
         let diff = Self.workspaceEditDiffPreview(original: original, edited: edited, path: record.workspacePath)
-        try Data(edited.utf8).write(to: url, options: [.atomic])
+        let modificationDate = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        let editedData = Data(edited.utf8)
         let now = Date()
         var updated = record
         updated.sizeBytes = Int64(edited.utf8.count)
         updated.updatedAtMillis = Self.millis(now)
-        updated = await parsedRecord(updated, now: now)
-        files.removeAll { $0.id == updated.id }
-        files.insert(updated, at: 0)
-        try persist()
+        updated = try await parsedProposedRecord(updated, data: editedData, now: now)
+        guard files.first(where: { $0.id == record.id }) == record,
+              fileManager.fileExists(atPath: url.path),
+              try Data(contentsOf: url) == originalBytes else {
+            throw IOSWorkspaceStoreError.storage("Workspace file changed while the edit was being prepared. Retry with the current file.")
+        }
+        try editedData.write(to: url, options: [.atomic])
+        var nextFiles = files
+        nextFiles.removeAll { $0.id == updated.id }
+        nextFiles.insert(updated, at: 0)
+        do {
+            try persist(files: nextFiles)
+        } catch {
+            try rollbackPayload(after: error) {
+                try restorePayload(at: url, data: originalBytes, modificationDate: modificationDate)
+            }
+        }
         publish()
         return Self.json([
             "ok": true,
@@ -1202,9 +1293,16 @@ final class IOSWorkspaceStore {
         record.workspacePath = destPath
         record.displayName = destPath.components(separatedBy: "/").last ?? destPath
         record.updatedAtMillis = Self.millis(Date())
-        files.removeAll { $0.id == record.id }
-        files.insert(record, at: 0)
-        try persist()
+        var nextFiles = files
+        nextFiles.removeAll { $0.id == record.id }
+        nextFiles.insert(record, at: 0)
+        do {
+            try persist(files: nextFiles)
+        } catch {
+            try rollbackPayload(after: error) {
+                try fileManager.moveItem(at: destURL, to: sourceURL)
+            }
+        }
         publish()
         return Self.json([
             "ok": true,
@@ -1238,22 +1336,41 @@ final class IOSWorkspaceStore {
         return Self.json(["ok": true, "id": id, "deleted": true])
     }
 
-    private func parsedRecord(_ record: IOSWorkspaceFileRecord, now: Date) async -> IOSWorkspaceFileRecord {
+    private func parsedProposedRecord(
+        _ record: IOSWorkspaceFileRecord, data: Data, now: Date
+    ) async throws -> IOSWorkspaceFileRecord {
+        let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? fileManager.removeItem(at: directory) }
+        // Keep the extension and MIME type so preview parsing matches the eventual target.
+        let stagedFile = directory.appendingPathComponent(fileURL(for: record).lastPathComponent)
+        try data.write(to: stagedFile, options: [.atomic])
+        return await parsedRecord(record, now: now, sourceURL: stagedFile)
+    }
+
+    private func parsedRecord(
+        _ record: IOSWorkspaceFileRecord, now: Date, sourceURL: URL? = nil
+    ) async -> IOSWorkspaceFileRecord {
         var next = record
-        let url = fileURL(forWorkspacePath: record.workspacePath)
+        let url = sourceURL ?? fileURL(forWorkspacePath: record.workspacePath)
         guard fileManager.fileExists(atPath: url.path) else {
             next.status = .missing
             next.statusMessage = "The copied Workspace file is missing. Import it again."
             next.updatedAtMillis = Self.millis(now)
             return next
         }
-        let parseResult = await DocumentAccessStore.previewFileForWorkspace(
-            url: url,
-            fileType: record.mimeType,
-            maxReadableBytes: maxImportBytes,
-            maxPreviewBytes: 64 * 1024,
-            maxPreviewCharacters: maxPreviewCharacters
-        )
+        let parseResult: Result<SelectedDocumentReadResult, Error>
+        if let previewParser {
+            parseResult = await previewParser(url, record.mimeType)
+        } else {
+            parseResult = await DocumentAccessStore.previewFileForWorkspace(
+                url: url,
+                fileType: record.mimeType,
+                maxReadableBytes: maxImportBytes,
+                maxPreviewBytes: 64 * 1024,
+                maxPreviewCharacters: maxPreviewCharacters
+            )
+        }
         switch parseResult {
         case .success(let preview):
             next.status = .ready
@@ -1313,11 +1430,16 @@ final class IOSWorkspaceStore {
         try fileManager.createDirectory(at: artifactsDirectory, withIntermediateDirectories: true)
     }
 
-    private func persist() throws {
+    private func persist(
+        files nextFiles: [IOSWorkspaceFileRecord]? = nil,
+        artifacts nextArtifacts: [IOSWorkspaceArtifactRecord]? = nil
+    ) throws {
         try ensureDirectories()
-        let state = IOSWorkspaceState(files: files, artifacts: artifacts)
+        let state = IOSWorkspaceState(files: nextFiles ?? files, artifacts: nextArtifacts ?? artifacts)
         let data = try encoder.encode(state)
         try data.write(to: stateURL, options: [.atomic])
+        if let nextFiles, files != nextFiles { files = nextFiles }
+        if let nextArtifacts, artifacts != nextArtifacts { artifacts = nextArtifacts }
     }
 
     private func publish() {
@@ -1413,8 +1535,8 @@ final class DocumentAccessStore {
     let ttlSeconds: TimeInterval = 10 * 60
     let maxUses = 1
     let maxReadableBytes: Int64 = 20 * 1024 * 1024
-    let maxPreviewBytes = 64 * 1024
-    let maxPreviewCharacters = 60_000
+    let maxPreviewBytes = Int.max
+    let maxPreviewCharacters = Int.max
 
     var grantSummary: SelectedDocumentGrantSummary? {
         grant.map { current in
@@ -1635,6 +1757,7 @@ final class DocumentAccessStore {
                         url: url,
                         fileType: fileType,
                         fileSize: fileSize,
+                        maxReadableBytes: maxReadableBytes,
                         maxPreviewBytes: maxPreviewBytes,
                         maxPreviewCharacters: maxPreviewCharacters
                     )
@@ -1724,23 +1847,31 @@ final class DocumentAccessStore {
         url: URL,
         fileType: String,
         fileSize: Int64,
+        maxReadableBytes: Int64,
         maxPreviewBytes: Int,
         maxPreviewCharacters: Int
     ) throws -> SelectedDocumentReadResult {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        let data = try handle.read(upToCount: maxPreviewBytes + 1) ?? Data()
-        let truncatedByBytes = data.count > maxPreviewBytes || fileSize > Int64(maxPreviewBytes)
-        let previewData = data.prefix(maxPreviewBytes)
-        guard let decoded = decodeText(previewData) else {
+        let data = try handle.read(upToCount: Int(maxReadableBytes) + 1) ?? Data()
+        guard data.count <= maxReadableBytes else { throw DocumentAccessError.fileTooLarge }
+        guard let decoded = decodeText(data) else {
             throw DocumentAccessError.unsupportedFileType("此文件不是可解码的文本，无法作为文件上下文读取。")
         }
+        let truncatedByBytes = decoded.utf8.count > maxPreviewBytes
+        var previewBytes = 0
+        let previewText = truncatedByBytes ? String(decoded.prefix { character in
+            let count = character.utf8.count
+            guard previewBytes + count <= maxPreviewBytes else { return false }
+            previewBytes += count
+            return true
+        }) : decoded
         return buildReadResult(
             fileName: url.lastPathComponent,
             fileType: fileType,
             fileSize: fileSize,
-            bytesRead: previewData.count,
-            text: decoded,
+            bytesRead: data.count,
+            text: previewText,
             truncatedBySource: truncatedByBytes,
             maxPreviewBytes: maxPreviewBytes,
             maxPreviewCharacters: maxPreviewCharacters
@@ -1888,7 +2019,7 @@ final class DocumentAccessStore {
         let preview = truncatedByCharacters ? String(normalized.prefix(maxPreviewCharacters)) : normalized
         let isTruncated = truncatedBySource || truncatedByCharacters
         let note = isTruncated
-            ? "内容已截断：最多读取 \(formatBytes(Int64(maxPreviewBytes))) / \(maxPreviewCharacters) 字符。"
+            ? "内容已截断：预览最多显示 \(formatBytes(Int64(maxPreviewBytes))) / \(maxPreviewCharacters) 字符。"
             : nil
         return SelectedDocumentReadResult(
             fileName: fileName,
@@ -1902,15 +2033,18 @@ final class DocumentAccessStore {
         )
     }
 
-    nonisolated private static func decodeText(_ data: Data.SubSequence) -> String? {
-        let value = Data(data)
-        let encodings: [String.Encoding] = [.utf8, .utf16, .utf16LittleEndian, .utf16BigEndian, .isoLatin1, .ascii]
-        for encoding in encodings {
-            if let text = String(data: value, encoding: encoding) {
-                return text
-            }
+    nonisolated private static func decodeText(_ data: Data) -> String? {
+        if data.starts(with: [0xFF, 0xFE]) || data.starts(with: [0xFE, 0xFF]) {
+            return String(data: data, encoding: .utf16)
         }
-        return nil
+        if data.starts(with: [0xEF, 0xBB, 0xBF]) {
+            return String(data: data.dropFirst(3), encoding: .utf8)
+        }
+        if let text = String(data: data, encoding: .utf8) { return text }
+        let gb18030 = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)
+        ))
+        return String(data: data, encoding: gb18030)
     }
 
     nonisolated private static func normalizeExtractedText(_ text: String) -> String {

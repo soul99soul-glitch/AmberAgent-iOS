@@ -54,6 +54,9 @@ internal data class ConversationFileVersion(
 /** 返回文件版本；平台无法取得完整指纹时返回 null，不缓存该文件。 */
 internal expect fun ConversationFile.fileVersion(): ConversationFileVersion?
 
+/** Atomically move a prepared file over [destination] on the same filesystem. */
+internal expect fun ConversationFile.moveTo(destination: ConversationFile)
+
 /** 拼接子文件路径。 */
 fun ConversationFile.child(name: String): ConversationFile =
     ConversationFile(this.path + separatorChar() + name)

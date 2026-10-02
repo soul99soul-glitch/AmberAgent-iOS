@@ -280,6 +280,127 @@ final class NovelWorkspaceRepositoryTests: XCTestCase {
 
     // MARK: - Workspace engine corruption safety net
 
+    func testCollidingBranchSlugsAdoptOnlyEditedFork() async throws {
+        let root = try makeRoot()
+        let document = try NovelBranchTestFixtures.documentWithCollectedCandidate()
+        let main = document.branches[0]
+        let command = NovelBranchTestFixtures.forkCommand(
+            document: document,
+            sourceBranchID: main.id,
+            checkpointID: main.headCheckpointID,
+            name: main.name.uppercased()
+        )
+        let forked = try NovelReducer.apply(.forkBranch(command), to: document).document
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        _ = try await repository.createProject(forked, workspaceNative: true)
+        let project = projectDirectory(root, document.project.id)
+        let forkFile = try XCTUnwrap(try chapterFiles(in: project).first {
+            $0.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "main-2"
+        })
+        let original = try String(contentsOf: forkFile, encoding: .utf8)
+        try (original + "\nOnly the colliding fork changed.\n").write(
+            to: forkFile,
+            atomically: true,
+            encoding: .utf8
+        )
+        let restarted = NovelFileProjectRepository(rootDirectory: root)
+        let loaded = try await restarted.loadProject(id: document.project.id).document
+        let fork = try XCTUnwrap(loaded.branches.first { $0.id == command.branchID })
+        let forkSelection = try XCTUnwrap(fork.workingChapterSelections.first)
+        let forkVersion = try XCTUnwrap(loaded.chapterVersions.first { $0.id == forkSelection.versionID })
+        XCTAssertTrue(forkVersion.content.contains("Only the colliding fork changed."))
+        XCTAssertEqual(forkVersion.kind, .manualEdit)
+        XCTAssertEqual(
+            loaded.branches.first { $0.id == main.id }?.workingChapterSelections,
+            main.workingChapterSelections
+        )
+        XCTAssertTrue(NovelWorkspaceAuthority.worktreeCoversWorkingManuscript(
+            loaded,
+            checkoutDirectory: NovelWorkspaceProjectStore.checkoutDirectory(in: project)
+        ))
+        let reloaded = try await restarted.loadProject(id: document.project.id).document
+        XCTAssertEqual(reloaded, loaded)
+    }
+
+    func testCaseInsensitiveBranchSlugsKeepSeparateBodiesAndAdoptFork() async throws {
+        let root = try makeRoot()
+        let initial = try NovelBranchTestFixtures.documentWithCollectedCandidate(content: "Main baseline.")
+        let initialMain = initial.branches[0]
+        let document = try NovelReducer.apply(
+            .renameBranch(NovelRenameBranchCommand(
+                context: NovelMutationContext(
+                    operationID: NovelOperationID(),
+                    expectedProjectRevision: initial.project.revision,
+                    expectedConfigRevision: initial.project.configRevision,
+                    expectedBranchHeadRevision: initialMain.headRevision
+                ),
+                projectID: initial.project.id,
+                branchID: initialMain.id,
+                name: "Main2"
+            )),
+            to: initial
+        ).document
+        let main = document.branches[0]
+        let forkCommand = NovelBranchTestFixtures.forkCommand(
+            document: document,
+            sourceBranchID: main.id,
+            checkpointID: main.headCheckpointID,
+            name: "main2"
+        )
+        let forked = try NovelReducer.apply(.forkBranch(forkCommand), to: document).document
+        let fork = try XCTUnwrap(forked.branches.first { $0.id == forkCommand.branchID })
+        let selection = try XCTUnwrap(fork.workingChapterSelections.first)
+        let edit = NovelSaveManualEditCommand(
+            context: NovelMutationContext(
+                operationID: NovelOperationID(),
+                expectedProjectRevision: forked.project.revision,
+                expectedConfigRevision: forked.project.configRevision,
+                expectedBranchHeadRevision: fork.headRevision
+            ),
+            projectID: forked.project.id,
+            branchID: fork.id,
+            chapterID: selection.chapterID,
+            versionID: NovelChapterVersionID(),
+            title: "Chapter One",
+            content: "Fork baseline.",
+            factCompatibilityID: UUID(),
+            expectedWorkingRevision: fork.workingRevision
+        )
+        let edited = try NovelFactTransactionReducer.saveManualEdit(
+            edit,
+            payloadSHA256: edit.canonicalPayloadSHA256(),
+            in: forked,
+            now: NovelBranchTestFixtures.timestamp(for: forked, offset: 1)
+        ).document
+        let files = try NovelWorkspaceBackup.export(edited)
+        XCTAssertEqual(files.filter { $0.path.contains("/chapters/") }.count, 2)
+        XCTAssertTrue(files.contains { $0.path.hasPrefix("branches/Main2/chapters/") })
+        XCTAssertTrue(files.contains { $0.path.hasPrefix("branches/main2-2/chapters/") })
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        _ = try await repository.createProject(edited, workspaceNative: true)
+        let project = projectDirectory(root, edited.project.id)
+        XCTAssertEqual(try chapterFiles(in: project).count, 2)
+        let clean = try await repository.loadProject(id: edited.project.id).document
+        XCTAssertEqual(clean, persisted(edited))
+        let forkFile = try XCTUnwrap(try chapterFiles(in: project).first {
+            $0.deletingLastPathComponent().deletingLastPathComponent().lastPathComponent == "main2-2"
+        })
+        let original = try String(contentsOf: forkFile, encoding: .utf8)
+        try (original + "\nOnly the lowercase fork changed.\n").write(
+            to: forkFile, atomically: true, encoding: .utf8
+        )
+        let restarted = NovelFileProjectRepository(rootDirectory: root)
+        let loaded = try await restarted.loadProject(id: edited.project.id).document
+        let loadedFork = try XCTUnwrap(loaded.branches.first { $0.id == fork.id })
+        let loadedSelection = try XCTUnwrap(loadedFork.workingChapterSelections.first)
+        let loadedVersion = try XCTUnwrap(loaded.chapterVersions.first { $0.id == loadedSelection.versionID })
+        XCTAssertTrue(loadedVersion.content.contains("Fork baseline."))
+        XCTAssertTrue(loadedVersion.content.contains("Only the lowercase fork changed."))
+        XCTAssertEqual(loaded.branches.first { $0.id == main.id }?.workingChapterSelections, main.workingChapterSelections)
+        let reloaded = try await restarted.loadProject(id: edited.project.id).document
+        XCTAssertEqual(reloaded, loaded)
+    }
+
     func testWorkspaceEngineCorruptionFallsBackToPreviousAndRestores() async throws {
         let root = try makeRoot()
         let first = try NovelTestFixtures.document()

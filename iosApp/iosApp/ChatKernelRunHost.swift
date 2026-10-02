@@ -1168,6 +1168,7 @@ final class ChatKernelRunHost {
     ) -> Bool {
         guard let runId = currentRunId,
               cancelCause == nil,
+              !didFinalizeTerminal,
               !hasPendingToolApproval else { return false }
         if detachDurableResponse(runId: runId) { return true }
         if honorKeepAliveLease {
@@ -1300,6 +1301,7 @@ final class ChatKernelRunHost {
     private func detachDurableResponse(runId: String) -> Bool {
         guard currentRunId == runId,
               cancelCause == nil,
+              !didFinalizeTerminal,
               durableCheckpointPersisted,
               canHandoffActiveTool,
               !hasPendingToolApproval else { return false }

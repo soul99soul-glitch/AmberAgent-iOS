@@ -159,17 +159,18 @@ final class IOSProviderConfigToolService {
             return fail("provider_config_create", "api_key 必须是字符串。")
         }
 
-        // Shell first (empty key); then optional key via the same Keychain path as apply.
+        // Submit endpoint and credentials together so a failed save leaves no shell.
         let shell = IosSettingsMutations.shared.buildBlankOpenAIProvider(
             name: name,
-            apiKey: "",
+            apiKey: apiKey ?? "",
             baseUrl: baseUrl
         )
-        _ = sharedSettings.addProvider(shell)
+        var proposed = IosSettingsMutations.shared.addProvider(settings: sharedSettings.snapshot, provider: shell)
         let providerId = shell.id.description() as String
         var changed: [String] = ["created"]
         if let path, !path.isEmpty {
-            _ = sharedSettings.updateProviderEndpoint(
+            proposed = IosSettingsMutations.shared.updateProviderEndpoint(
+                settings: proposed,
                 providerId: providerId,
                 baseUrl: baseUrl,
                 chatCompletionsPath: path,
@@ -179,8 +180,10 @@ final class IOSProviderConfigToolService {
             changed.append("chat_completions_path")
         }
         if let apiKey, !apiKey.isEmpty {
-            _ = sharedSettings.updateProviderApiKey(providerId: providerId, apiKey: apiKey)
             changed.append("api_key")
+        }
+        guard sharedSettings.restoreSnapshot(proposed) else {
+            return fail("provider_config_create", sharedSettings.credentialPersistenceError ?? "凭据保存失败，配置没有提交。")
         }
         let updated = sharedSettings.snapshot.providers.first {
             ($0.id.description() as String) == providerId
@@ -256,11 +259,13 @@ final class IOSProviderConfigToolService {
             return fail("provider_config_apply", "未提供任何可应用的字段。")
         }
 
+        var proposed = sharedSettings.snapshot
         var changed: [String] = []
         if willChangeBasics {
             let nameToSet = (newName?.isEmpty == false) ? newName! : provider.name
             let enabledToSet = enabled ?? provider.enabled
-            _ = sharedSettings.updateProviderBasics(
+            proposed = IosSettingsMutations.shared.updateProviderBasics(
+                settings: proposed,
                 providerId: providerId,
                 name: nameToSet,
                 enabled: enabledToSet
@@ -276,7 +281,8 @@ final class IOSProviderConfigToolService {
             let currentPath = openAI?.chatCompletionsPath ?? "/chat/completions"
             let currentResponse = openAI?.useResponseApi ?? false
             let currentPromptCaching = claude?.promptCaching ?? false
-            _ = sharedSettings.updateProviderEndpoint(
+            proposed = IosSettingsMutations.shared.updateProviderEndpoint(
+                settings: proposed,
                 providerId: providerId,
                 baseUrl: (baseUrl?.isEmpty == false) ? baseUrl! : currentBase,
                 chatCompletionsPath: (path?.isEmpty == false) ? path! : currentPath,
@@ -290,9 +296,12 @@ final class IOSProviderConfigToolService {
 
         var keyStatus = "unchanged"
         if let keyToWrite {
-            _ = sharedSettings.updateProviderApiKey(providerId: providerId, apiKey: keyToWrite)
+            proposed = IosSettingsMutations.shared.updateProviderApiKey(settings: proposed, providerId: providerId, apiKey: keyToWrite)
             keyStatus = keyToWrite.isEmpty ? "cleared" : "updated"
             changed.append("api_key")
+        }
+        guard sharedSettings.restoreSnapshot(proposed) else {
+            return fail("provider_config_apply", sharedSettings.credentialPersistenceError ?? "凭据保存失败，配置没有提交。")
         }
 
         let updated = sharedSettings.snapshot.providers.first {

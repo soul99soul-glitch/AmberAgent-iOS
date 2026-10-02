@@ -54,7 +54,11 @@ final class IOSGeminiProviderTests: XCTestCase {
         )
     }
 
-    private func makeParams(model: Model, tools: [Tool] = []) -> TextGenerationParams {
+    private func makeParams(
+        model: Model,
+        tools: [Tool] = [],
+        customBody: [CustomBody] = []
+    ) -> TextGenerationParams {
         TextGenerationParams(
             model: model,
             temperature: nil,
@@ -63,7 +67,7 @@ final class IOSGeminiProviderTests: XCTestCase {
             tools: tools,
             reasoningLevel: ReasoningLevel.off,
             customHeaders: [],
-            customBody: []
+            customBody: customBody
         )
     }
 
@@ -193,9 +197,9 @@ final class IOSGeminiProviderTests: XCTestCase {
             #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":{"query":"x"}},"thoughtSignature":"sig-1"}]}}]}"#
         )
         XCTAssertEqual(frames, [
-            IOSGeminiStreamFrame(kind: .functionCallName(index: 0, name: "search_web")),
-            IOSGeminiStreamFrame(kind: .functionCallArgs(index: 0, delta: #"{"query":"x"}"#)),
-            IOSGeminiStreamFrame(kind: .functionCallSignature(index: 0, signature: "sig-1")),
+            IOSGeminiStreamFrame(kind: .completeFunctionCall(
+                index: 0, id: nil, name: "search_web", args: #"{"query":"x"}"#, signature: "sig-1"
+            )),
         ])
     }
 
@@ -203,7 +207,9 @@ final class IOSGeminiProviderTests: XCTestCase {
         let nameFrame = IOSGeminiStreamParser.parse(
             #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web"}}]}}]}"#
         )
-        XCTAssertEqual(nameFrame, [IOSGeminiStreamFrame(kind: .functionCallName(index: 0, name: "search_web"))])
+        XCTAssertEqual(nameFrame, [IOSGeminiStreamFrame(kind: .provisionalFunctionCall(
+            index: 0, id: nil, name: "search_web", signature: nil
+        ))])
 
         let argsFragment = IOSGeminiStreamParser.parse(
             #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"args":"{\"query\":"}}]}}]}"#
@@ -216,8 +222,9 @@ final class IOSGeminiProviderTests: XCTestCase {
             #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":{"query":"x"}}}]},"finishReason":"STOP"}]}"#
         )
         XCTAssertEqual(frames, [
-            IOSGeminiStreamFrame(kind: .functionCallName(index: 0, name: "search_web")),
-            IOSGeminiStreamFrame(kind: .functionCallArgs(index: 0, delta: #"{"query":"x"}"#)),
+            IOSGeminiStreamFrame(kind: .completeFunctionCall(
+                index: 0, id: nil, name: "search_web", args: #"{"query":"x"}"#, signature: nil
+            )),
             IOSGeminiStreamFrame(kind: .finish("STOP")),
         ])
     }
@@ -659,6 +666,328 @@ final class IOSGeminiProviderTests: XCTestCase {
         XCTAssertEqual(toolInputs, [#"{"query":"amber"}"#])
     }
 
+    private func streamFixture(_ lines: [String]) async throws -> [UIMessagePart.Tool] {
+        GeminiStreamStubURLProtocol.reset()
+        GeminiStreamStubURLProtocol.lines = lines.map { $0 + "\n" }
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GeminiStreamStubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = IOSGeminiClient(provider: makeGoogleProvider(), session: session)
+        var tools: [UIMessagePart.Tool] = []
+        try await client.streamText(
+            messages: [userMessage("hi")],
+            params: makeParams(model: makeModel())
+        ) { chunk in
+            for choice in chunk.choices {
+                tools.append(contentsOf: (choice.delta?.parts ?? []).compactMap { $0 as? UIMessagePart.Tool })
+            }
+        }
+        return tools
+    }
+
+    private func executedAssistant(_ tools: [UIMessagePart.Tool]) -> UIMessage {
+        let parts = tools.map { tool in
+            PromptTranscript.shared.doCopyTool(
+                tool: tool,
+                input: tool.input,
+                output: [UIMessagePart.Text(text: "result-\(tool.toolCallId)", metadata: nil)]
+            )
+        }
+        return UIMessage(
+            id: KotlinUuid.companion.random(),
+            role: MessageRole.assistant,
+            parts: parts,
+            annotations: [],
+            createdAt: chatNowLocalDateTime(),
+            finishedAt: nil,
+            modelId: nil,
+            usage: nil,
+            translation: nil
+        )
+    }
+
+    func testStreamPreservesWireCallIDThroughToolResultReplay() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"wire-call-42","name":"search_web","args":{"query":"amber"}},"thoughtSignature":"sig-42"}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 1)
+        let tool = try XCTUnwrap(tools.first)
+        XCTAssertEqual(tool.toolCallId, "wire-call-42")
+        let contents = IOSGeminiPayloadBuilder.makeContents([userMessage("hi"), executedAssistant(tools)])
+        let modelParts = try XCTUnwrap(contents[1]["parts"] as? [[String: Any]])
+        let responseParts = try XCTUnwrap(contents[2]["parts"] as? [[String: Any]])
+        XCTAssertEqual((modelParts.first?["functionCall"] as? [String: Any])?["id"] as? String, "wire-call-42")
+        XCTAssertEqual((responseParts.first?["functionResponse"] as? [String: Any])?["id"] as? String, "wire-call-42")
+        XCTAssertEqual(modelParts.first?["thoughtSignature"] as? String, "sig-42")
+    }
+
+    func testStreamKeepsCompleteCallsWithDifferentIDsAcrossFrames() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call-a","name":"search_web","args":{"query":"alpha"}}}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call-b","name":"search_web","args":{"query":"beta"}}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.map(\.toolCallId), ["call-a", "call-b"])
+        XCTAssertEqual(tools.map(\.toolName), ["search_web", "search_web"])
+        let args = try tools.map { try JSONSerialization.jsonObject(with: Data($0.input.utf8)) as? [String: String] }
+        XCTAssertEqual(args, [["query": "alpha"], ["query": "beta"]])
+    }
+
+    func testStreamKeepsCompleteCallsWithoutWireIDsAcrossFrames() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":{"query":"alpha"}}}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":{"query":"beta"}}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 2)
+        XCTAssertEqual(Set(tools.map(\.toolCallId)).count, 2)
+        let args = try tools.map { try JSONSerialization.jsonObject(with: Data($0.input.utf8)) as? [String: String] }
+        XCTAssertEqual(args, [["query": "alpha"], ["query": "beta"]])
+        let contents = IOSGeminiPayloadBuilder.makeContents([userMessage("hi"), executedAssistant(tools)])
+        XCTAssertEqual(contents.count, 3)
+        for turn in contents.dropFirst() {
+            for part in turn["parts"] as? [[String: Any]] ?? [] {
+                XCTAssertNil((part["functionCall"] as? [String: Any])?["id"])
+                XCTAssertNil((part["functionResponse"] as? [String: Any])?["id"])
+            }
+        }
+    }
+
+    func testStreamClosesIDFragmentWithCompleteObjectAndKeepsSignature() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"fragment-id","name":"search_web","args":"{\"query\":"},"thoughtSignature":"fragment-signature"}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":{"query":"amber"}}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 1)
+        XCTAssertEqual(tools.first?.toolCallId, "fragment-id")
+        XCTAssertEqual(tools.first?.input, #"{"query":"amber"}"#)
+        XCTAssertEqual(tools.first?.thoughtSignature(), "fragment-signature")
+    }
+
+    func testStreamAttachesLateWireIDToExistingJSONFragment() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":"{\"query\":"},"thoughtSignature":"late-id-signature"}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"late-id","name":"search_web","args":"\"amber\"}"}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 1)
+        XCTAssertEqual(tools.first?.toolCallId, "late-id")
+        XCTAssertEqual(tools.first?.input, #"{"query":"amber"}"#)
+        XCTAssertEqual(tools.first?.thoughtSignature(), "late-id-signature")
+    }
+
+    private func assertNameOnlyCallsSurvive(_ names: [String]) async throws {
+        let lines = names.map { name in
+            "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"\(name)\"}}]}}]}"
+        } + [#"data: {"candidates":[{"finishReason":"STOP"}]}"#]
+        let tools = try await streamFixture(lines)
+        XCTAssertEqual(tools.map(\.toolName), names)
+        XCTAssertEqual(tools.map(\.input), names.map { _ in "{}" })
+        XCTAssertEqual(Set(tools.map(\.toolCallId)).count, names.count)
+        let contents = IOSGeminiPayloadBuilder.makeContents([userMessage("hi"), executedAssistant(tools)])
+        XCTAssertEqual(contents.count, 3)
+        let calls = try XCTUnwrap(contents[1]["parts"] as? [[String: Any]])
+        let results = try XCTUnwrap(contents.last?["parts"] as? [[String: Any]])
+        XCTAssertEqual(calls.compactMap { ($0["functionCall"] as? [String: Any])?["name"] as? String }, names)
+        XCTAssertEqual(results.compactMap { ($0["functionResponse"] as? [String: Any])?["name"] as? String }, names)
+        for part in calls {
+            let call = try XCTUnwrap(part["functionCall"] as? [String: Any])
+            XCTAssertEqual(call["args"] as? NSDictionary, [:] as NSDictionary)
+            XCTAssertNil(call["id"])
+        }
+    }
+
+    func testStreamKeepsDifferentNameOnlyCallsWithOmittedArgs() async throws {
+        try await assertNameOnlyCallsSurvive(["runtime_status", "wm_tab_list"])
+    }
+
+    func testStreamKeepsSameNameOnlyCallsWithOmittedArgs() async throws {
+        try await assertNameOnlyCallsSurvive(["runtime_status", "runtime_status"])
+    }
+
+    func testStreamUpgradesNameOnlyCallWithLaterJSONFragments() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web"},"thoughtSignature":"name-only-signature"}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"args":"{\"query\":"}}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":"\"amber\"}"}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 1)
+        XCTAssertEqual(tools.first?.toolName, "search_web")
+        XCTAssertEqual(tools.first?.input, #"{"query":"amber"}"#)
+        XCTAssertEqual(tools.first?.thoughtSignature(), "name-only-signature")
+    }
+
+    func testNoArgumentCallSurvivesFollowingDifferentNameJSONFragment() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"runtime_status"}}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":"{\"query\":"}}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":"\"amber\"}"}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.map(\.toolName), ["runtime_status", "search_web"])
+        XCTAssertEqual(tools.map(\.input), ["{}", #"{"query":"amber"}"#])
+    }
+
+    func testNameOnlyRestatementDuringJSONFragmentKeepsExistingCall() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":"{\"query\":"},"thoughtSignature":"restated-signature"}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web"}}]}}]}"#,
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"args":"\"amber\"}"}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 1)
+        XCTAssertEqual(tools.first?.input, #"{"query":"amber"}"#)
+        XCTAssertEqual(tools.first?.thoughtSignature(), "restated-signature")
+    }
+
+    func testStreamPreservesUnknownAndLimitFinishCompatibility() async throws {
+        for reason in ["OTHER", "FINISH_REASON_UNSPECIFIED", "CONTEXT_LIMIT", "BUDGET_LIMIT", "FUTURE_REASON"] {
+            let tools = try await streamFixture([
+                #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"search_web","args":{}}}]}}]}"#,
+                "data: {\"candidates\":[{\"finishReason\":\"\(reason)\"}]}",
+            ])
+            XCTAssertEqual(tools.count, 1, reason)
+            XCTAssertEqual(tools.first?.input, "{}", reason)
+        }
+    }
+
+    func testStreamMaxTokensKeepsPartialTextAndTerminalReason() async throws {
+        GeminiStreamStubURLProtocol.reset()
+        GeminiStreamStubURLProtocol.lines = [
+            #"data: {"candidates":[{"content":{"parts":[{"text":"partial"}]},"finishReason":"MAX_TOKENS"}]}"# + "\n",
+        ]
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GeminiStreamStubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var texts: [String] = []
+        var finishes: [String] = []
+        try await IOSGeminiClient(provider: makeGoogleProvider(), session: session).streamText(
+            messages: [userMessage("hi")], params: makeParams(model: makeModel())
+        ) { chunk in
+            for choice in chunk.choices {
+                if let finish = choice.finishReason { finishes.append(finish) }
+                texts.append(contentsOf: (choice.delta?.parts ?? []).compactMap { ($0 as? UIMessagePart.Text)?.text })
+            }
+        }
+        XCTAssertEqual(texts, ["partial"])
+        XCTAssertEqual(finishes, ["MAX_TOKENS"])
+    }
+
+    func testParallelCallsReplayAsOneModelTurnAndOneResultTurn() async throws {
+        let tools = try await streamFixture([
+            #"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"parallel-a","name":"search_web","args":{"query":"alpha"}},"thoughtSignature":"group-signature"},{"functionCall":{"id":"parallel-b","name":"search_web","args":{"query":"beta"}}}]},"finishReason":"STOP"}]}"#,
+        ])
+        XCTAssertEqual(tools.count, 2)
+        let contents = IOSGeminiPayloadBuilder.makeContents([userMessage("hi"), executedAssistant(tools)])
+        XCTAssertEqual(contents.count, 3)
+        XCTAssertEqual(contents.compactMap { $0["role"] as? String }, ["user", "model", "user"])
+        let modelParts = try XCTUnwrap(contents[1]["parts"] as? [[String: Any]])
+        let resultParts = try XCTUnwrap(contents.last?["parts"] as? [[String: Any]])
+        XCTAssertEqual(modelParts.count, 2)
+        XCTAssertEqual(resultParts.count, 2)
+        XCTAssertEqual(modelParts.compactMap { ($0["functionCall"] as? [String: Any])?["id"] as? String }, ["parallel-a", "parallel-b"])
+        XCTAssertEqual(resultParts.compactMap { ($0["functionResponse"] as? [String: Any])?["id"] as? String }, ["parallel-a", "parallel-b"])
+        XCTAssertEqual(modelParts.first?["thoughtSignature"] as? String, "group-signature")
+        XCTAssertNil(modelParts.last?["thoughtSignature"])
+    }
+
+    private func assertRejectedFinishReason(_ reason: String, includePartialText: Bool) async {
+        GeminiStreamStubURLProtocol.reset()
+        var lines: [String] = []
+        if includePartialText {
+            lines.append(#"data: {"candidates":[{"content":{"parts":[{"text":"partial answer"}]}}]}"# + "\n")
+        }
+        // A pending call must not be dispatched when the candidate is rejected.
+        lines.append(#"data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"rejected-call","name":"search_web","args":{"query":"x"}}}]}}]}"# + "\n")
+        lines.append("data: {\"candidates\":[{\"finishReason\":\"\(reason)\"}]}\n")
+        GeminiStreamStubURLProtocol.lines = lines
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GeminiStreamStubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let client = IOSGeminiClient(provider: makeGoogleProvider(), session: session)
+        var tools: [UIMessagePart.Tool] = []
+        var texts: [String] = []
+        do {
+            try await client.streamText(
+                messages: [userMessage("hi")],
+                params: makeParams(model: makeModel())
+            ) { chunk in
+                for choice in chunk.choices {
+                    for part in choice.delta?.parts ?? [] {
+                        if let tool = part as? UIMessagePart.Tool { tools.append(tool) }
+                        if let text = part as? UIMessagePart.Text { texts.append(text.text) }
+                    }
+                }
+            }
+            XCTFail("Expected a stream error for \(reason)")
+        } catch let error as IOSGeminiError {
+            if case .stream(let message) = error {
+                XCTAssertTrue(message.contains(reason), "Unexpected error detail: \(message)")
+            } else {
+                XCTFail("Unexpected Gemini error: \(error)")
+            }
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+        XCTAssertTrue(tools.isEmpty)
+        XCTAssertEqual(texts, includePartialText ? ["partial answer"] : [])
+    }
+
+    func testStreamRejectsSafetyAfterPartialTextWithoutDispatchingTools() async {
+        await assertRejectedFinishReason("SAFETY", includePartialText: true)
+    }
+
+    func testStreamRejectsMalformedFunctionCallWithoutDispatchingTools() async {
+        await assertRejectedFinishReason("MALFORMED_FUNCTION_CALL", includePartialText: false)
+    }
+
+    func testStreamRejectsOtherExplicitFailureReasons() async {
+        for reason in [
+            "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII",
+            "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT",
+            "IMAGE_RECITATION", "IMAGE_OTHER", "NO_IMAGE", "MISSING_THOUGHT_SIGNATURE",
+            "MALFORMED_RESPONSE", "ESCALATION", "PUP_LIMITED_DISABLED",
+        ] {
+            await assertRejectedFinishReason(reason, includePartialText: false)
+        }
+    }
+
+    func testCustomBodyJSONTypesAndOverrideOrderReachActualRequest() async throws {
+        GeminiStreamStubURLProtocol.reset()
+        GeminiStreamStubURLProtocol.lines = [#"data: {"candidates":[{"finishReason":"STOP"}]}"# + "\n"]
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [GeminiStreamStubURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let json = Kotlinx_serialization_jsonJson.companion
+        let customBody = [
+            CustomBody(key: "generationConfig", value: json.parseToJsonElement(string: #"{"temperature":0.25}"#)),
+            CustomBody(key: "array_value", value: json.parseToJsonElement(string: #"[1,"two",false,null]"#)),
+            CustomBody(key: "string_value", value: json.parseToJsonElement(string: #""configured""#)),
+            CustomBody(key: "bool_value", value: json.parseToJsonElement(string: "true")),
+            CustomBody(key: "number_value", value: json.parseToJsonElement(string: "2.5")),
+            CustomBody(key: "null_value", value: json.parseToJsonElement(string: "null")),
+            CustomBody(key: "generationConfig", value: json.parseToJsonElement(string: #"{"temperature":0.75,"maxOutputTokens":123}"#)),
+        ]
+        let client = IOSGeminiClient(provider: makeGoogleProvider(), session: session)
+        try await client.streamText(
+            messages: [userMessage("hi")],
+            params: makeParams(model: makeModel(), customBody: customBody),
+            onChunk: { _ in }
+        )
+        let data = try XCTUnwrap(GeminiStreamStubURLProtocol.lastRequestBody)
+        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body["generationConfig"] as? NSDictionary, ["temperature": 0.75, "maxOutputTokens": 123] as NSDictionary)
+        XCTAssertEqual(body["array_value"] as? NSArray, [1, "two", false, NSNull()] as NSArray)
+        XCTAssertEqual(body["string_value"] as? String, "configured")
+        let bool = try XCTUnwrap(body["bool_value"] as? NSNumber)
+        XCTAssertTrue(bool.boolValue)
+        XCTAssertEqual(String(cString: bool.objCType), "c")
+        let number = try XCTUnwrap(body["number_value"] as? NSNumber)
+        XCTAssertEqual(number.doubleValue, 2.5)
+        XCTAssertEqual(String(cString: number.objCType), "d")
+        XCTAssertTrue(body["null_value"] is NSNull)
+        XCTAssertNotNil(body["contents"] as? [[String: Any]])
+    }
+
     func testCloudCodeAssistWrapperLooksLikeAntigravityAgent() {
         let wrapper = IOSGeminiPayloadBuilder.makeCloudCodeAssistWrapper(
             modelId: "gemini-3.7-flash",
@@ -817,11 +1146,13 @@ final class IOSGeminiProviderTests: XCTestCase {
 private final class GeminiStreamStubURLProtocol: URLProtocol {
     nonisolated(unsafe) private static var stubStatusCode = 200
     nonisolated(unsafe) static var lastRequestHeaders: [String: String]?
+    nonisolated(unsafe) static var lastRequestBody: Data?
     nonisolated(unsafe) static var lines: [String]?
 
     static func reset(statusCode: Int = 200) {
         stubStatusCode = statusCode
         lastRequestHeaders = nil
+        lastRequestBody = nil
         lines = nil
     }
 
@@ -831,6 +1162,19 @@ private final class GeminiStreamStubURLProtocol: URLProtocol {
 
     override func startLoading() {
         Self.lastRequestHeaders = request.allHTTPHeaderFields
+        Self.lastRequestBody = request.httpBody
+        if Self.lastRequestBody == nil, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var body = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                guard count > 0 else { break }
+                body.append(buffer, count: count)
+            }
+            Self.lastRequestBody = body
+        }
         let response = HTTPURLResponse(
             url: request.url!,
             statusCode: Self.stubStatusCode,

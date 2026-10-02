@@ -1044,6 +1044,12 @@ enum NovelFactTransactionReducer {
             appliedProjectRevision: finalRevision,
             appliedAt: now
         ))
+        try NovelApprovalCommit.append(
+            command.context.approvalResponse,
+            branchID: command.branchID,
+            to: &next,
+            now: now
+        )
         advanceProjectRevision(in: &next, now: now)
         try validateTransition(from: document, to: next)
         return (next, outcome)
@@ -1170,6 +1176,12 @@ enum NovelFactTransactionReducer {
             chapterVersionID: version.id,
             workingRevision: next.branches[branchIndex].workingRevision,
             revision: finalRevision
+        )
+        try NovelApprovalCommit.append(
+            command.context.approvalResponse,
+            branchID: command.branchID,
+            to: &next,
+            now: now
         )
         let session = next.sessions.first { $0.id == branch.sessionID }
         let cursor: NovelSessionCursor = session?.messages.last.map {

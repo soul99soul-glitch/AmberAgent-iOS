@@ -571,6 +571,8 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
     private let redactor: IOSSSHOutputRedactor
     private let output: (@Sendable (IOSSSHOutputChunk) -> Void)?
     private var completePromise: EventLoopPromise<IOSSSHCommandResult>?
+    private var stdoutDecoder = IOSEmbeddedIshUTF8StreamDecoder()
+    private var stderrDecoder = IOSEmbeddedIshUTF8StreamDecoder()
     private var stdoutBuffer = ""
     private var stderrBuffer = ""
     private var exitCode: Int?
@@ -607,10 +609,21 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let data = unwrapInboundIn(data)
         guard case .byteBuffer(var bytes) = data.data else { return }
-        let rawChunk = bytes.readString(length: bytes.readableBytes) ?? ""
-        guard !rawChunk.isEmpty else { return }
-        let rawOutput = IOSSSHOutputChunk(text: rawChunk, isStderr: data.type == .stdErr)
-        guard let chunk = redactor.redact(rawOutput) else { return }
+        guard let rawBytes = bytes.readBytes(length: bytes.readableBytes) else { return }
+        let isStderr = data.type == .stdErr
+        let text = isStderr
+            ? stderrDecoder.decode(appending: Data(rawBytes))
+            : stdoutDecoder.decode(appending: Data(rawBytes))
+        consumeDecoded(text, isStderr: isStderr)
+    }
+
+    private func consumeDecoded(_ text: String, isStderr: Bool) {
+        guard !text.isEmpty,
+              let chunk = redactor.redact(IOSSSHOutputChunk(text: text, isStderr: isStderr)) else { return }
+        appendOutput(chunk)
+    }
+
+    private func appendOutput(_ chunk: IOSSSHOutputChunk) {
         if chunk.isStderr {
             stderrBuffer = limitedTail(stderrBuffer + chunk.text)
         } else {
@@ -642,7 +655,7 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
         guard let completePromise else { return }
         self.completePromise = nil
         timeoutTask?.cancel()
-        flushRedactor()
+        finishOutput()
         completePromise.succeed(IOSSSHCommandResult(
             stdout: stdoutBuffer,
             stderr: stderrBuffer,
@@ -654,18 +667,15 @@ private final class IOSSSHExecHandler: ChannelInboundHandler, @unchecked Sendabl
         guard let completePromise else { return }
         self.completePromise = nil
         timeoutTask?.cancel()
-        flushRedactor()
+        finishOutput()
         completePromise.fail(error)
     }
 
-    private func flushRedactor() {
+    private func finishOutput() {
+        consumeDecoded(stdoutDecoder.finish(), isStderr: false)
+        consumeDecoded(stderrDecoder.finish(), isStderr: true)
         for chunk in redactor.finish() {
-            if chunk.isStderr {
-                stderrBuffer = limitedTail(stderrBuffer + chunk.text)
-            } else {
-                stdoutBuffer = limitedTail(stdoutBuffer + chunk.text)
-            }
-            output?(chunk)
+            appendOutput(chunk)
         }
     }
 

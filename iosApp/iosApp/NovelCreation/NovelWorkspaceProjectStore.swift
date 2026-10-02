@@ -467,8 +467,9 @@ enum NovelWorkspaceProjectStore {
             uniquingKeysWith: { first, _ in first }
         )
         var missing: [String] = []
+        let branchSlugs = NovelWorkspaceBackup.allocatedBranchSlugs(in: document)
         for branch in document.branches where branch.lifecycle == .active {
-            let branchSlug = NovelWorkspaceBackup.slug(branch.name)
+            let branchSlug = branchSlugs[branch.id] ?? NovelWorkspaceBackup.slug(branch.name)
             for selection in branch.workingChapterSelections {
                 guard chapterByID[selection.chapterID]?.discardedAt == nil else {
                     continue
@@ -511,9 +512,10 @@ enum NovelWorkspaceProjectStore {
             uniquingKeysWith: { first, _ in first }
         )
         var adopted = false
+        let branchSlugs = NovelWorkspaceBackup.allocatedBranchSlugs(in: document)
         for branchIndex in next.branches.indices where next.branches[branchIndex].lifecycle == .active {
             let branch = next.branches[branchIndex]
-            let branchSlug = NovelWorkspaceBackup.slug(branch.name)
+            let branchSlug = branchSlugs[branch.id] ?? NovelWorkspaceBackup.slug(branch.name)
             for selection in branch.workingChapterSelections {
                 guard chapterByID[selection.chapterID]?.discardedAt == nil,
                       let disk = onDisk[NovelWorkspaceAuthority.chapterBodyKey(

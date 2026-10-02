@@ -16,6 +16,7 @@ import platform.Foundation.stringByDeletingLastPathComponent
 import platform.Foundation.stringWithContentsOfFile
 import platform.Foundation.writeToFile
 import platform.posix.stat
+import platform.posix.rename
 
 @OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
 actual class ConversationFile actual constructor(actual val path: String) {
@@ -102,6 +103,13 @@ internal actual fun ConversationFile.fileVersion(): ConversationFileVersion? = m
 }
 
 actual fun separatorChar(): Char = '/'
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual fun ConversationFile.moveTo(destination: ConversationFile) {
+    if (rename(path, destination.path) != 0) {
+        throw IllegalStateException("Failed to move conversation file from $path to ${destination.path}")
+    }
+}
 
 private fun NSError?.message(): String =
     this?.localizedDescription ?: "unknown Foundation error"

@@ -88,16 +88,30 @@ extension DefaultNovelCreation {
         path: String,
         body: String
     ) async throws {
+        try await applyWorkspacePlot(
+            projectID: projectID, branchID: branchID, path: path, body: body, approvalResponse: nil
+        )
+    }
+
+    func applyWorkspacePlot(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        path: String,
+        body: String,
+        approvalResponse: NovelAskUserResponse?
+    ) async throws {
         let loaded = try await loadCommittedProject(id: projectID)
         guard loaded.access == .readWrite else {
             throw NovelError.degradedReadOnly(projectID: projectID)
         }
+        let savedAt = now()
         let next = try NovelWorkspacePlotCommit.apply(
             to: loaded.document,
             branchID: branchID,
             path: path,
             body: body,
-            now: now()
+            now: savedAt,
+            approvalResponse: approvalResponse
         )
         let committed = try await repository.commitProject(
             next,
@@ -323,7 +337,13 @@ extension DefaultNovelCreation {
         }
         try guardNoActiveGenerationRuntime(projectID: command.projectID)
         let payloadSHA256 = try NovelAction.importProject(command).canonicalPayloadSHA256()
-        let targetSHA256 = try projectDocumentSHA256(prepared.document)
+        // Workspace-native imports persist the quiet-rest projection. Use that
+        // same target for the install, lifecycle hash, and retry comparisons;
+        // the original package still supplies identity-collision evidence below.
+        let targetDocument = repository is NovelFileProjectRepository
+            ? NovelWorkspaceProjectStore.persistableAtRest(prepared.document)
+            : prepared.document
+        let targetSHA256 = try projectDocumentSHA256(targetDocument)
         let outcome = NovelOutcome.projectImported(
             sourceProjectID: prepared.sourceProjectID,
             projectID: prepared.destinationProjectID,
@@ -341,9 +361,6 @@ extension DefaultNovelCreation {
             unregisterPendingLifecycleOperation(existing)
             return existing.outcome
         }
-        if let existing, existing.targetProjectSHA256 != targetSHA256 {
-            throw NovelError.idempotencyConflict(command.context.operationID)
-        }
         try guardDocumentDoesNotUseLifecycleOperationID(
             prepared.document,
             operationID: command.context.operationID
@@ -352,6 +369,21 @@ extension DefaultNovelCreation {
             prepared.document,
             projectID: command.projectID
         )
+        if let existing, existing.targetProjectSHA256 != targetSHA256 {
+            // Earlier imports recorded the full package hash before the file
+            // repository pruned completed runtime history. The original retry
+            // package supplies that missing evidence; never infer it on startup.
+            guard repository is NovelFileProjectRepository,
+                  existing.targetProjectSHA256 == (try projectDocumentSHA256(prepared.document)) else {
+                throw NovelError.idempotencyConflict(command.context.operationID)
+            }
+            let current = try await loadCommittedProject(id: command.projectID)
+            guard current.access == .readWrite,
+                  current.document == targetDocument else {
+                throw NovelError.storageIndeterminate(command.projectID)
+            }
+            return try await persistCompletedLifecycleOperation(existing)
+        }
 
         let intent: NovelProjectLifecycleOperationIntent
         if let existing {
@@ -371,7 +403,7 @@ extension DefaultNovelCreation {
         case .importCreate:
             do {
                 let current = try await loadCommittedProject(id: command.projectID)
-                if let existing, current.document == prepared.document {
+                if let existing, current.document == targetDocument {
                     _ = try installLoadedProject(
                         current,
                         id: command.projectID,
@@ -406,16 +438,16 @@ extension DefaultNovelCreation {
             }
             do {
                 installed = try await installImportedProject(
-                    prepared.document,
+                    targetDocument,
                     allowsRollback: false
                 ) {
                     if let workspaceRepository = self.repository as? NovelFileProjectRepository {
                         try await workspaceRepository.createProject(
-                            prepared.document,
+                            targetDocument,
                             workspaceNative: true
                         )
                     } else {
-                        try await self.repository.createProject(prepared.document)
+                        try await self.repository.createProject(targetDocument)
                     }
                 }
             } catch {
@@ -432,7 +464,7 @@ extension DefaultNovelCreation {
                 current.document,
                 operationID: command.context.operationID
             )
-            if let existing, current.document == prepared.document {
+            if let existing, current.document == targetDocument {
                 _ = try installLoadedProject(
                     current,
                     id: command.projectID,
@@ -470,16 +502,16 @@ extension DefaultNovelCreation {
                     return replay
                 }
             }
-            if current.document == prepared.document {
+            if current.document == targetDocument {
                 installed = current
             } else {
                 do {
                     installed = try await installImportedProject(
-                        prepared.document,
+                        targetDocument,
                         allowsRollback: true
                     ) {
                         try await self.repository.replaceProject(
-                            prepared.document,
+                            targetDocument,
                             expectedRevision: expectedRevision
                         )
                     }
@@ -496,7 +528,7 @@ extension DefaultNovelCreation {
         case .delete:
             throw NovelError.repositoryFailure("Import lifecycle record has a delete intent.")
         }
-        guard installed.document == prepared.document else {
+        guard installed.document == targetDocument else {
             throw NovelError.storageIndeterminate(command.projectID)
         }
         return try await persistCompletedLifecycleOperation(record)
@@ -802,8 +834,7 @@ private extension DefaultNovelCreation {
     ) async throws -> NovelLoadedProject {
         do {
             let loaded = try await operation()
-            guard loaded.document == document ||
-                  loaded.document == NovelWorkspaceProjectStore.persistableAtRest(document) else {
+            guard loaded.document == document else {
                 throw NovelError.storageIndeterminate(document.project.id)
             }
             return try installLoadedProject(

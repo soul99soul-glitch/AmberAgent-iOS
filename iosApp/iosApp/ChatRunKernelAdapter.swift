@@ -139,6 +139,8 @@ final class ChatRunKernelAdapter {
     /// Host 取消(CG C cancel 的适配层等价)。取消后:引擎回调一律忽略
     /// (取消填充是权威快照),迟到的引擎结果不回灌。
     private var isCancelledByHost = false
+    private var cancellationFailureReason = "User cancelled."
+    private var isExecutingTool = false
     private var isDetachedByHost = false
     private var isStoppedByHost: Bool { isCancelledByHost || isDetachedByHost }
     /// 终态只报一次(cancel 与正常终态互斥)。
@@ -183,6 +185,7 @@ final class ChatRunKernelAdapter {
         activeCitationTracker = request.citationTracker
         // CGC 首轮头消费:mailbox(:1928)先于 steer(:2141);后续轮边界由
         // 引擎钩子承担(引擎内同序 :1199-1216)。
+        working = request.initialMessages
         var initial = request.initialMessages
         if let mailboxDrain = request.mailboxDrain {
             initial.append(contentsOf: (await mailboxDrain()).values)
@@ -362,10 +365,12 @@ final class ChatRunKernelAdapter {
                         self.lastAppliedSnapshotSeq = self.snapshotSeq
                         self.firstVisibleDeltaRound &+= 1
                         self.didClaimFirstVisibleDelta = false
+                        self.isExecutingTool = false
                         self.callbacks.onAssistantTurnStarted()
                     },
                     onToolExecutionStarted: { [weak self] toolName, input in
                         guard let self, !self.isStoppedByHost else { return }
+                        self.isExecutingTool = true
                         self.callbacks.onToolExecutionStarted(toolName, input)
                     },
                     onAssistantStage: { [weak self] stage in
@@ -455,9 +460,20 @@ final class ChatRunKernelAdapter {
             driverTask = driver
             let result = await driver.value
             driverTask = nil
-            // 取消填充(cancel() 内)是权威快照:引擎迟到结果不回灌,
-            // 终态(cancelled)也已上报——直接返回。
-            if isStoppedByHost { return working }
+            // Keep completed tool outcomes frozen while accepting only the
+            // interrupted assistant snapshot returned by the cancelled driver.
+            if isCancelledByHost {
+                guard !didReportTerminal else { return working }
+                // Cancellation freezes existing tool outcomes. Only a new in-flight
+                // assistant turn from the engine may extend that snapshot.
+                let existingIds = Set(working.map { $0.id.toHexDashString() })
+                working.append(contentsOf: result.messages.filter {
+                    $0.role == MessageRole.assistant && !existingIds.contains($0.id.toHexDashString())
+                })
+                publishCancellation()
+                return working
+            }
+            if isDetachedByHost { return working }
             if let durabilityFailureMessage {
                 callbacks.onProviderFailure(durabilityFailureMessage)
                 didReportTerminal = true
@@ -575,14 +591,32 @@ final class ChatRunKernelAdapter {
     ///    引擎段被腰斩,其终态 flush 随迟到结果一起被丢弃,这里补上);
     /// 3) 取消引擎驱动子任务——执行中的工具经 CancellationError 走
     ///    dispatchSearchToolCall 的 catch,产出 cancelled JSON 的 .completed,
-    ///    账本 Finished 迟于终态落地(F10 诚实晚完成纪律);
-    /// 4) 终态 cancelled 只报一次。
+    ///    当前模型流等待驱动退出取回准确尾部；工具执行期已有完整 assistant，
+    ///    直接发布取消快照，不等待工具返回;
+    /// 4) 终态 cancelled 只报一次；无 driver 的审批等待即时收口。
     func cancel(failureReason: String = "User cancelled.") {
         guard !didReportTerminal, !isStoppedByHost else { return }
         isCancelledByHost = true
+        cancellationFailureReason = failureReason
+        if let driverTask {
+            // A streaming driver returns the exact terminal accumulator,
+            // including any tail absent from the throttled UI snapshot.
+            driverTask.cancel()
+            if isExecutingTool {
+                // The assistant turn is already authoritative before execution;
+                // a tool that ignores cancellation must not delay its UI terminal.
+                publishCancellation()
+            }
+            return
+        }
+        publishCancellation()
+    }
+
+    private func publishCancellation() {
+        guard !didReportTerminal else { return }
         var filled = runtime.messagesByFailingPendingToolCalls(
             in: working,
-            failureReason: failureReason,
+            failureReason: cancellationFailureReason,
             denied: true
         )
         if let tracker = activeCitationTracker {
@@ -594,8 +628,6 @@ final class ChatRunKernelAdapter {
         working = filled
         lastAppliedSnapshotSeq = .max
         callbacks.onMessagesUpdated(filled)
-        driverTask?.cancel()
-        driverTask = nil
         didReportTerminal = true
         callbacks.onRunTerminal(AgentRunStatus.cancelled.wireName)
     }

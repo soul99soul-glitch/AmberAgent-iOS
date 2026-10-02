@@ -462,15 +462,17 @@ struct MessageBubbleView: View {
                     .chatLiveEntrance(key: "\(message.id):text:\(partIndex)", isLive: isLiveTail)
                 }
             } else if let reasoning = part as? UIMessagePart.Reasoning {
-                ChatReasoningCard(
-                    bodyText: reasoning.reasoning,
-                    isThinking: reasoning.finishedAt == nil && isGenerating && isLastMessage,
-                    startedAt: Self.instantToDate(reasoning.createdAt),
-                    finishedSeconds: Self.reasoningDurationSeconds(reasoning),
-                    levelLabel: reasoningLevelLabel,
-                    autoCloseThinking: displaySetting?.autoCloseThinking ?? true
-                )
-                .chatLiveEntrance(key: reasoningEntranceKey(partIndex: partIndex), isLive: isLiveTail)
+                if Self.shouldRenderReasoningCard(reasoning) {
+                    ChatReasoningCard(
+                        bodyText: reasoning.reasoning,
+                        isThinking: reasoning.finishedAt == nil && isGenerating && isLastMessage,
+                        startedAt: Self.instantToDate(reasoning.createdAt),
+                        finishedSeconds: Self.reasoningDurationSeconds(reasoning),
+                        levelLabel: reasoningLevelLabel,
+                        autoCloseThinking: displaySetting?.autoCloseThinking ?? true
+                    )
+                    .chatLiveEntrance(key: reasoningEntranceKey(partIndex: partIndex), isLive: isLiveTail)
+                }
             } else if let image = part as? UIMessagePart.Image {
                 if isUser {
                     ChatUserImageTile(urlString: image.url)
@@ -622,14 +624,32 @@ struct MessageBubbleView: View {
     private var thinkingEntranceKey: String { "\(message.id):thinking" }
 
     private func reasoningEntranceKey(partIndex: Int) -> String {
-        let firstReasoningIndex = message.parts.firstIndex { $0 is UIMessagePart.Reasoning }
+        let firstReasoningIndex = Self.firstVisibleReasoningIndex(in: message.parts)
         return partIndex == firstReasoningIndex ? thinkingEntranceKey : "\(message.id):reasoning:\(partIndex)"
     }
 
     private var hasVisibleAssistantContent: Bool {
-        message.parts.contains { part in
+        Self.hasVisibleAssistantContent(in: message.parts)
+    }
+
+    static func shouldRenderReasoningCard(_ reasoning: UIMessagePart.Reasoning) -> Bool {
+        !ReasoningMetadataKt.isEmptyProtocolReasoning(reasoning: reasoning)
+    }
+
+    static func firstVisibleReasoningIndex(in parts: [UIMessagePart]) -> Int? {
+        parts.firstIndex { part in
+            guard let reasoning = part as? UIMessagePart.Reasoning else { return false }
+            return shouldRenderReasoningCard(reasoning)
+        }
+    }
+
+    static func hasVisibleAssistantContent(in parts: [UIMessagePart]) -> Bool {
+        parts.contains { part in
             if let text = part as? UIMessagePart.Text {
                 return text.text.contains { !$0.isWhitespace }
+            }
+            if let reasoning = part as? UIMessagePart.Reasoning {
+                return shouldRenderReasoningCard(reasoning)
             }
             return true
         }

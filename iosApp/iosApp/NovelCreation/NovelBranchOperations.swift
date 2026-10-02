@@ -736,6 +736,12 @@ extension NovelReducer {
                 next.sessions[sessionIndex].revision += 1
             }
         }
+        try NovelApprovalCommit.append(
+            command.context.approvalResponse,
+            branchID: branch.id,
+            to: &next,
+            now: now
+        )
         next.project.revision += 1
         next.project.updatedAt = now
         let outcome = NovelOutcome.branchHeadMoved(

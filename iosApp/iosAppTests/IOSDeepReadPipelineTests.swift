@@ -113,6 +113,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         private let finishReasons: [Int: String]
         private(set) var receivedParams: [TextGenerationParams] = []
         private(set) var callCount = 0
+        var onCall: ((Int) throws -> Void)?
         private(set) var userPrompts: [String] = []
         init(_ replies: [String], throwAtCalls: Set<Int> = [], finishReasons: [Int: String] = [:]) {
             self.replies = replies
@@ -126,6 +127,7 @@ final class IOSDeepReadPipelineTests: XCTestCase {
             params: TextGenerationParams
         ) async throws -> MessageChunk {
             callCount += 1
+            try onCall?(callCount)
             receivedParams.append(params)
             if throwAtCalls.contains(callCount) {
                 throw NSError(domain: "deepread-test", code: 1, userInfo: [NSLocalizedDescriptionKey: "transient failure"])
@@ -668,6 +670,216 @@ final class IOSDeepReadPipelineTests: XCTestCase {
     }
 
     // MARK: - Launcher
+
+    private nonisolated static func blockTasksFile(at base: URL) throws {
+        let file = base.appendingPathComponent("deep_read/tasks.json")
+        if FileManager.default.fileExists(atPath: file.path) {
+            try FileManager.default.removeItem(at: file)
+        }
+        try FileManager.default.createDirectory(at: file, withIntermediateDirectories: true)
+    }
+
+    func testCreateTaskPersistenceFailureDoesNotPublishTask() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        try Self.blockTasksFile(at: base)
+
+        XCTAssertThrowsError(try store.createTask(title: "W", sources: makeTask().sources, templateId: IOSDeepReadTemplate.analysis.id))
+        XCTAssertTrue(store.tasks.isEmpty)
+    }
+
+    func testFailedRetryPreparationPreservesCompletedArticle() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "W", sources: makeTask().sources, templateId: IOSDeepReadTemplate.analysis.id)
+        XCTAssertTrue(store.complete(id: task.id, markdown: "# Prior article", missingSections: ["深度分析"]))
+        let before = try XCTUnwrap(store.task(id: task.id))
+        try Self.blockTasksFile(at: base)
+
+        XCTAssertFalse(store.prepareRetry(id: task.id, preservingResult: true))
+        XCTAssertEqual(store.task(id: task.id), before)
+        XCTAssertNotNil(store.persistenceError(for: task.id))
+    }
+
+    func testRunningStatePersistenceFailureDoesNotCallProvider() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "W", sources: makeTask().sources, templateId: IOSDeepReadTemplate.analysis.id)
+        let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!)
+        let model = makeDeepReadModel()
+        let configured = settings.addProvider(makeProviderSetting(model: model))
+        defer { _ = settings.removeProvider(providerId: configured.id.description()) }
+        settings.setCurrentChatModelId(model.id.description())
+        let provider = StageProvider([planReply])
+        try Self.blockTasksFile(at: base)
+        var messages: [(String, Bool)] = []
+
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id, sharedSettings: settings, store: store, textProvider: provider,
+            onStatus: { messages.append(($0, $1)) }
+        )
+
+        XCTAssertFalse(didComplete)
+        XCTAssertEqual(provider.callCount, 0)
+        XCTAssertEqual(store.task(id: task.id)?.status, .failed)
+        XCTAssertEqual(messages.last?.0, store.persistenceError(for: task.id))
+        XCTAssertEqual(messages.last?.1, true)
+    }
+
+    func testFinalSaveFailureDoesNotPublishSuccessOrExportWorkspace() async throws {
+        try await checkFinalSaveFailure(preservingPriorArticle: false)
+    }
+
+    func testFinalSaveFailureDuringPartialRetryPreservesPriorArticle() async throws {
+        try await checkFinalSaveFailure(preservingPriorArticle: true)
+    }
+
+    private func checkFinalSaveFailure(preservingPriorArticle: Bool) async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "W", sources: makeTask().sources, templateId: IOSDeepReadTemplate.analysis.id)
+        if preservingPriorArticle {
+            XCTAssertTrue(store.complete(id: task.id, markdown: "# Prior article", structuredJSON: #"{"summary":"prior"}"#, missingSections: ["深度分析"]))
+            XCTAssertTrue(store.prepareRetry(id: task.id, preservingResult: true))
+        }
+        let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!)
+        let model = makeDeepReadModel()
+        let configured = settings.addProvider(makeProviderSetting(model: model))
+        defer { _ = settings.removeProvider(providerId: configured.id.description()) }
+        settings.setCurrentChatModelId(model.id.description())
+        let provider = StageProvider([planReply, goodSummaryReply, timelineReply, analysisReply, extendedReply])
+        provider.onCall = { count in
+            if count == 5 { try Self.blockTasksFile(at: base) }
+        }
+        var exported = false
+        var messages: [(String, Bool)] = []
+
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id, sharedSettings: settings, store: store, textProvider: provider,
+            workspaceArtifactSaver: { _, _, _, _, _ in exported = true },
+            onStatus: { messages.append(($0, $1)) }
+        )
+
+        XCTAssertEqual(provider.callCount, 5)
+        XCTAssertFalse(didComplete)
+        XCTAssertFalse(exported)
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertEqual(saved.status, .failed)
+        XCTAssertEqual(saved.resultMarkdown, preservingPriorArticle ? "# Prior article" : "")
+        if preservingPriorArticle {
+            XCTAssertEqual(saved.structuredJSON, #"{"summary":"prior"}"#)
+            XCTAssertEqual(saved.missingSections, ["深度分析"])
+        }
+        XCTAssertEqual(messages.last?.0, store.persistenceError(for: task.id))
+        XCTAssertEqual(messages.last?.1, true)
+    }
+
+    func testWorkspaceFailureStillOffersSaveRetryWhenWarningCannotPersist() async throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let task = try store.createTask(title: "W", sources: makeTask().sources, templateId: IOSDeepReadTemplate.analysis.id)
+        let settings = IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!)
+        let model = makeDeepReadModel()
+        let configured = settings.addProvider(makeProviderSetting(model: model))
+        defer { _ = settings.removeProvider(providerId: configured.id.description()) }
+        settings.setCurrentChatModelId(model.id.description())
+        let provider = StageProvider([planReply, goodSummaryReply, timelineReply, analysisReply, extendedReply])
+        var messages: [(String, Bool)] = []
+
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id, sharedSettings: settings, store: store, textProvider: provider,
+            workspaceArtifactSaver: { _, _, _, _, _ in
+                try Self.blockTasksFile(at: base)
+                throw NSError(domain: "workspace unavailable", code: 1)
+            },
+            onStatus: { messages.append(($0, $1)) }
+        )
+
+        XCTAssertTrue(didComplete, "the article was saved before the Workspace operation")
+        let saved = try XCTUnwrap(store.task(id: task.id))
+        XCTAssertEqual(saved.status, .succeeded)
+        XCTAssertFalse(saved.resultMarkdown.isEmpty)
+        XCTAssertNotNil(saved.workspaceSyncFailed, "the existing banner must offer Workspace-only retry")
+        XCTAssertNotNil(store.persistenceError(for: task.id))
+        XCTAssertEqual(messages.last?.1, true)
+    }
+
+
+    func testWorkspaceRetryDoesNotSaveAgainWhenOnlyDeepReadMetadataFails() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let workspace = IOSWorkspaceStore(baseDirectory: base)
+        let task = try store.createTask(title: "W", sources: makeTask().sources)
+        XCTAssertTrue(store.complete(id: task.id, markdown: "# Saved article"))
+        XCTAssertTrue(store.markWorkspaceSyncFailed(id: task.id, message: "First export failed"))
+        let tasksFile = base.appendingPathComponent("deep_read/tasks.json")
+        let oldSnapshot = try Data(contentsOf: tasksFile)
+        try Self.blockTasksFile(at: base)
+        var statuses: [(String, Bool)] = []
+        let saver: IOSDeepReadLauncher.WorkspaceArtifactSaver = { title, content, type, kind, id in
+            _ = try workspace.saveArtifact(title: title, content: content, type: type, sourceKind: kind, sourceId: id)
+        }
+
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: store, workspaceStore: workspace, workspaceArtifactSaver: saver,
+                                              onStatus: { statuses.append(($0, $1)) })
+        XCTAssertEqual(workspace.artifacts.count, 1)
+        XCTAssertNil(store.task(id: task.id)?.workspaceSyncFailed)
+        XCTAssertEqual(store.task(id: task.id)?.status, .succeeded)
+        XCTAssertTrue(statuses.last?.0.contains("已保存到 Workspace") == true)
+        XCTAssertEqual(statuses.last?.1, true, "Metadata failure remains visible, without inviting payload retry.")
+
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: store, workspaceStore: workspace, workspaceArtifactSaver: saver,
+                                              onStatus: { statuses.append(($0, $1)) })
+        XCTAssertEqual(workspace.artifacts.count, 1, "A repeated action must not duplicate the already saved artifact.")
+
+        // The warning can survive on disk when its clearing write was refused.
+        try FileManager.default.removeItem(at: tasksFile)
+        try oldSnapshot.write(to: tasksFile)
+        let reloadedStore = IOSDeepReadStore(baseDirectory: base)
+        let reloadedWorkspace = IOSWorkspaceStore(baseDirectory: base)
+        XCTAssertNotNil(reloadedStore.task(id: task.id)?.workspaceSyncFailed)
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: reloadedStore, workspaceStore: reloadedWorkspace,
+            onStatus: { _, _ in })
+        XCTAssertEqual(reloadedWorkspace.artifacts.count, 1, "A stale durable warning must reuse the exact existing artifact.")
+
+        XCTAssertTrue(reloadedStore.complete(id: task.id, markdown: "# Revised article"))
+        XCTAssertTrue(reloadedStore.markWorkspaceSyncFailed(id: task.id, message: "New article export failed"))
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: reloadedStore, workspaceStore: reloadedWorkspace,
+            onStatus: { _, _ in })
+        XCTAssertEqual(reloadedWorkspace.artifacts.count, 2, "A different article must create its own payload.")
+    }
+
+    func testWorkspaceRetryPreservesRetryAfterActualArtifactFailure() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let workspace = IOSWorkspaceStore(baseDirectory: base)
+        let task = try store.createTask(title: "W", sources: makeTask().sources)
+        XCTAssertTrue(store.complete(id: task.id, markdown: "# Saved article"))
+        XCTAssertTrue(store.markWorkspaceSyncFailed(id: task.id, message: "First export failed"))
+        try Self.blockTasksFile(at: base)
+
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: store, workspaceStore: workspace,
+            workspaceArtifactSaver: { _, _, _, _, _ in throw NSError(domain: "export unavailable", code: 1) },
+            onStatus: { _, _ in })
+        XCTAssertTrue(workspace.artifacts.isEmpty)
+        XCTAssertNotNil(store.task(id: task.id)?.workspaceSyncFailed)
+        XCTAssertEqual(store.task(id: task.id)?.status, .succeeded)
+
+        IOSDeepReadLauncher.retryWorkspaceSync(taskId: task.id, store: store, workspaceStore: workspace,
+            workspaceArtifactSaver: { title, content, type, kind, id in
+                _ = try workspace.saveArtifact(title: title, content: content, type: type, sourceKind: kind, sourceId: id)
+            }, onStatus: { _, _ in })
+        XCTAssertEqual(workspace.artifacts.count, 1)
+        XCTAssertNil(store.task(id: task.id)?.workspaceSyncFailed)
+        XCTAssertEqual(try workspace.artifactContent(id: workspace.artifacts[0].id), "# Saved article")
+    }
 
     func testFailedRetryRestoresPriorCompletionInsteadOfDestroyingArticle() async throws {
         // A single-section retry wipes the task up front (progress UI). If the

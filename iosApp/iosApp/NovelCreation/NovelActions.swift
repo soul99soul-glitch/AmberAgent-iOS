@@ -6,6 +6,7 @@ struct NovelMutationContext: Codable, Equatable, Sendable {
     let expectedProjectRevision: Int64?
     let expectedConfigRevision: Int64?
     let expectedBranchHeadRevision: Int64?
+    var approvalResponse: NovelAskUserResponse? = nil
 }
 
 struct NovelCreateProjectCommand: Equatable, Sendable {
@@ -855,9 +856,10 @@ enum NovelAction: Equatable, Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(payload)
-        return SHA256.hash(data: data)
+        let payloadHash = SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()
+        return try NovelApprovalCommit.payloadSHA256(payloadHash, response: context.approvalResponse)
     }
 }
 
@@ -1726,6 +1728,13 @@ protocol NovelCreation: Sendable {
         path: String,
         body: String
     ) async throws
+    func applyWorkspacePlot(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        path: String,
+        body: String,
+        approvalResponse: NovelAskUserResponse?
+    ) async throws
     func applyWorkspaceFastForwardPlot(
         projectID: NovelProjectID,
         branchID: NovelBranchID,
@@ -1841,6 +1850,19 @@ protocol NovelCreation: Sendable {
 }
 
 extension NovelCreation {
+    func applyWorkspacePlot(
+        projectID: NovelProjectID,
+        branchID: NovelBranchID,
+        path: String,
+        body: String,
+        approvalResponse: NovelAskUserResponse?
+    ) async throws {
+        guard approvalResponse == nil else {
+            throw NovelError.invalidInput("Workspace plot approval is unavailable.")
+        }
+        try await applyWorkspacePlot(projectID: projectID, branchID: branchID, path: path, body: body)
+    }
+
     func applyWorkspacePlot(
         projectID: NovelProjectID,
         branchID: NovelBranchID,

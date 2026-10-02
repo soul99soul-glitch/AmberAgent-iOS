@@ -27,6 +27,8 @@ import app.amber.ai.ui.MessageChunk
 import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessageChoice
 import app.amber.ai.ui.UIMessagePart
+import app.amber.ai.ui.CLAUDE_REDACTED_THINKING_METADATA_KEY
+import app.amber.ai.ui.CLAUDE_THINKING_BLOCK_INDEX_METADATA_KEY
 import app.amber.ai.util.parseErrorDetail
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.sse.SSE
@@ -297,7 +299,7 @@ class ClaudeKmpProvider internal constructor(
             if (deltaObj != null) {
                 add(deltaObj)
             }
-        })
+        }, streamBlockIndex = dataJson["index"]?.jsonPrimitive?.intOrNull)
         val tokenUsage = parseTokenUsage(dataJson)
         val finishReason = dataJson["delta"]?.jsonObject
             ?.get("stop_reason")?.jsonPrimitive?.contentOrNull
@@ -723,10 +725,18 @@ class ClaudeKmpProvider internal constructor(
             put("text", text)
         }
 
-        is UIMessagePart.Reasoning -> buildJsonObject {
-            put("type", "thinking")
-            put("thinking", reasoning)
-            metadata?.forEach { (key, value) -> put(key, value) }
+        is UIMessagePart.Reasoning -> {
+            val redacted = metadata?.get(CLAUDE_REDACTED_THINKING_METADATA_KEY) as? JsonObject
+            val signature = metadata?.get("signature") as? JsonPrimitive
+            when {
+                redacted != null -> redacted
+                signature?.isString == true && signature.content.isNotBlank() -> buildJsonObject {
+                    put("type", "thinking")
+                    put("thinking", reasoning)
+                    put("signature", signature)
+                }
+                else -> null
+            }
         }
 
         // Image input: the iOS composer encodes each attachment as a `data:`
@@ -832,10 +842,10 @@ class ClaudeKmpProvider internal constructor(
 
     // ---- response parsing ----
 
-    private fun parseMessage(content: JsonArray): UIMessage {
+    private fun parseMessage(content: JsonArray, streamBlockIndex: Int? = null): UIMessage {
         val parts = mutableListOf<UIMessagePart>()
 
-        content.forEach { contentBlock ->
+        content.forEachIndexed { index, contentBlock ->
             val block = contentBlock.jsonObject
             val type = block["type"]?.jsonPrimitive?.contentOrNull
 
@@ -850,22 +860,28 @@ class ClaudeKmpProvider internal constructor(
                 "thinking", "thinking_delta", "signature_delta" -> {
                     val thinking = block["thinking"]?.jsonPrimitive?.contentOrNull ?: ""
                     val signature = block["signature"]?.jsonPrimitive?.contentOrNull
-                    if (thinking.isNotEmpty() || signature != null) {
+                    if (thinking.isNotEmpty() || signature != null || type == "thinking") {
                         val reasoning = UIMessagePart.Reasoning(
                             reasoning = thinking,
                             createdAt = Clock.System.now(),
                             finishedAt = null,
+                            metadata = buildJsonObject {
+                                put(CLAUDE_THINKING_BLOCK_INDEX_METADATA_KEY, streamBlockIndex ?: index)
+                                if (signature != null) put("signature", signature)
+                            },
                         )
-                        if (signature != null) {
-                            reasoning.metadata = buildJsonObject {
-                                put("signature", signature)
-                            }
-                        }
                         parts.add(reasoning)
                     }
                 }
 
-                "redacted_thinking" -> Unit
+                "redacted_thinking" -> parts.add(UIMessagePart.Reasoning(
+                    reasoning = "",
+                    finishedAt = null,
+                    metadata = buildJsonObject {
+                        put(CLAUDE_REDACTED_THINKING_METADATA_KEY, block)
+                        put(CLAUDE_THINKING_BLOCK_INDEX_METADATA_KEY, streamBlockIndex ?: index)
+                    },
+                ))
 
                 "tool_use" -> {
                     val id = block["id"]?.jsonPrimitive?.contentOrNull ?: ""

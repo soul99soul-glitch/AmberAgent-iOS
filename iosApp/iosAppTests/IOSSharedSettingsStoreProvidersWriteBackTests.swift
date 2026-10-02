@@ -20,6 +20,103 @@ import Observation
 @MainActor
 final class IOSSharedSettingsStoreProvidersWriteBackTests: XCTestCase {
 
+    func testRemoveCustomModelClearsOrphanedLegacyMirror() {
+        let store = makeIsolatedStore()
+        let providerCount = store.snapshot.providers.count
+        store.savedCustomModels = [["providerId": UUID().uuidString.lowercased(), "modelId": "orphan-model"]]
+
+        store.removeCustomModel(at: 0)
+
+        XCTAssertTrue(store.savedCustomModels.isEmpty)
+        XCTAssertEqual(store.snapshot.providers.count, providerCount)
+    }
+
+    func testScalarProjectionKeepsRuntimeCredentialWhenPersistenceFails() throws {
+        let suite = "ScalarCredentialFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let credentials = FailingScalarCredential()
+        let settings = SettingsStore(userDefaults: defaults, apiKeyStore: credentials)
+        settings.apiKey = "old-scalar-key"
+        credentials.rejectWrites = true
+
+        settings.baseUrl = "https://new-provider.example/v1"
+        settings.apiKey = "new-scalar-key"
+
+        XCTAssertEqual(settings.apiKey, "new-scalar-key")
+        XCTAssertEqual(settings.baseUrl, "https://new-provider.example/v1")
+        XCTAssertEqual(credentials.loadApiKey(), "old-scalar-key")
+    }
+
+    func testFailedCredentialUpdateKeepsSnapshotAndPersistedSettings() throws {
+        let suite = "CredentialFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let credentials = FailingSettingsCredentials()
+        let store = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: credentials.load,
+            storeCredential: credentials.store, deleteCredential: credentials.delete
+        )
+        let provider = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Original", apiKey: "original-key", baseUrl: "https://example.com/v1",
+            modelName: "Model", modelId: "model"
+        )
+        store.addProvider(provider)
+        let originalJSON = defaults.string(forKey: "app.amber.ios.sharedSettingsJson")
+        let originalRevision = store.revision
+        credentials.rejectedValue = "replacement-key"
+
+        let result = store.updateProviderApiKey(providerId: provider.id.description(), apiKey: "replacement-key")
+
+        XCTAssertNil(result)
+        XCTAssertEqual((store.snapshot.providers.last as? ProviderSetting.OpenAI)?.apiKey, "original-key")
+        XCTAssertEqual(defaults.string(forKey: "app.amber.ios.sharedSettingsJson"), originalJSON)
+        XCTAssertEqual(store.revision, originalRevision)
+        XCTAssertNotNil(store.credentialPersistenceError)
+        let restarted = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: credentials.load,
+            storeCredential: credentials.store, deleteCredential: credentials.delete
+        )
+        XCTAssertEqual((restarted.snapshot.providers.last as? ProviderSetting.OpenAI)?.apiKey, "original-key")
+    }
+
+    func testLaterCredentialFailureRestoresEarlierCredentialWrites() throws {
+        let suite = "CredentialBatchFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let credentials = FailingSettingsCredentials()
+        let store = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: credentials.load,
+            storeCredential: credentials.store, deleteCredential: credentials.delete
+        )
+        let first = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "First", apiKey: "first-old", baseUrl: "https://first.example/v1",
+            modelName: "First", modelId: "first"
+        )
+        let second = IosSettingsMutations.shared.buildOpenAIProvider(
+            name: "Second", apiKey: "second-old", baseUrl: "https://second.example/v1",
+            modelName: "Second", modelId: "second"
+        )
+        store.addProvider(first)
+        store.addProvider(second)
+        let previousValues = credentials.values
+        let previousJSON = defaults.string(forKey: "app.amber.ios.sharedSettingsJson")
+        var proposed = IosSettingsMutations.shared.updateProviderApiKey(
+            settings: store.snapshot, providerId: first.id.description(), apiKey: "first-new"
+        )
+        proposed = IosSettingsMutations.shared.updateProviderApiKey(
+            settings: proposed, providerId: second.id.description(), apiKey: "second-new"
+        )
+        credentials.rejectWriteNumber = 2
+        credentials.writeCount = 0
+
+        store.restoreSnapshot(proposed)
+
+        XCTAssertEqual(credentials.values, previousValues)
+        XCTAssertEqual(defaults.string(forKey: "app.amber.ios.sharedSettingsJson"), previousJSON)
+        XCTAssertNotNil(store.credentialPersistenceError)
+    }
+
     // ---- Providers (custom model) ----
 
     func testAddCustomModelMergesProviderIntoSnapshot() {
@@ -566,5 +663,35 @@ final class IOSSharedSettingsStoreProvidersWriteBackTests: XCTestCase {
 
     private func makeIsolatedStore(suiteName: String = "Slice4-Providers-\(UUID().uuidString)") -> IOSSharedSettingsStore {
         IOSSharedSettingsStore(userDefaults: UserDefaults(suiteName: suiteName)!)
+    }
+}
+
+private final class FailingSettingsCredentials {
+    var values: [String: String] = [:]
+    var rejectedValue: String?
+    var rejectWriteNumber: Int?
+    var writeCount = 0
+
+    func load(_ key: String) -> String? { values[key] }
+    func store(_ key: String, _ value: String) -> Bool {
+        writeCount += 1
+        guard value != rejectedValue, writeCount != rejectWriteNumber else { return false }
+        values[key] = value
+        return true
+    }
+    func delete(_ key: String) -> Bool {
+        values.removeValue(forKey: key)
+        return true
+    }
+}
+
+private final class FailingScalarCredential: SettingsAPIKeyStore {
+    private var key: String?
+    var rejectWrites = false
+    func loadApiKey() -> String? { key }
+    func saveApiKey(_ value: String) -> Bool {
+        guard !rejectWrites else { return false }
+        key = value
+        return true
     }
 }

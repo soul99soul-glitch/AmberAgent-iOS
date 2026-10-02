@@ -40,10 +40,16 @@ private struct KeychainSettingsAPIKeyStore: SettingsAPIKeyStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
-        guard !key.isEmpty else { return true }
+        if key.isEmpty {
+            let status = SecItemDelete(query as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let data = Data(key.utf8)
+        let updateStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updateStatus == errSecSuccess { return true }
+        guard updateStatus == errSecItemNotFound else { return false }
         var attributes = query
-        attributes[kSecValueData as String] = Data(key.utf8)
+        attributes[kSecValueData as String] = data
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 }

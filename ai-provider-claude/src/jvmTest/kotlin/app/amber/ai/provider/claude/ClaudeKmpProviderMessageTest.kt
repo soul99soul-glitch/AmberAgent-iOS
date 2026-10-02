@@ -12,6 +12,8 @@ import app.amber.ai.provider.ProviderSetting
 import app.amber.ai.provider.TextGenerationParams
 import app.amber.ai.ui.UIMessage
 import app.amber.ai.ui.UIMessagePart
+import app.amber.ai.ui.MessageStreamAccumulator
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -22,6 +24,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -79,6 +82,245 @@ class ClaudeKmpProviderMessageTest {
         )
 
         assertEquals("max_tokens", chunk!!.choices.single().finishReason)
+    }
+
+    @Test
+    fun `redacted thinking survives stream accumulation and tool result replay`() {
+        val accumulator = MessageStreamAccumulator(listOf(UIMessage.user("look up the answer")))
+        val blocks = listOf(
+            """{"type":"thinking","thinking":"Check the source","signature":"sig-visible"}""",
+            """{"type":"redacted_thinking","data":"encrypted-redacted"}""",
+            """{"type":"tool_use","id":"tool-1","name":"lookup","input":{"query":"answer"}}""",
+        )
+        blocks.forEachIndexed { index, block ->
+            provider.parseStreamEvent(
+                id = "msg-1",
+                type = "content_block_start",
+                data = """{"index":$index,"content_block":$block}""",
+            )?.let(accumulator::append)
+        }
+        val snapshot = accumulator.snapshot()
+        val assistant = snapshot.last()
+        assertEquals(3, assistant.parts.size)
+        assertEquals("Check the source", (assistant.parts.first() as UIMessagePart.Reasoning).reasoning)
+        val replay = assistant.copy(parts = assistant.parts.map {
+            if (it is UIMessagePart.Tool) it.copy(output = listOf(UIMessagePart.Text("found"))) else it
+        })
+        val request = provider.callBuildMessageRequest(
+            claudeSetting, snapshot.dropLast(1) + replay, TextGenerationParams(model = reasoningModel()),
+        )
+        val messages = request["messages"]!!.jsonArray
+        val assistantBlocks = messages[1].jsonObject["content"]!!.jsonArray
+        assertEquals(blocks.map { Json.parseToJsonElement(it) }, assistantBlocks.toList())
+        val result = messages[2].jsonObject["content"]!!.jsonArray.single().jsonObject
+        assertEquals("tool-1", result["tool_use_id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `two redacted thinking blocks retain their order and encrypted data`() {
+        val accumulator = MessageStreamAccumulator(listOf(UIMessage.user("continue")))
+        val blocks = listOf(
+            """{"type":"redacted_thinking","data":"encrypted-first"}""",
+            """{"type":"redacted_thinking","data":"encrypted-second"}""",
+        )
+        blocks.forEachIndexed { index, block ->
+            provider.parseStreamEvent(
+                id = "msg-1", type = "content_block_start",
+                data = """{"index":$index,"content_block":$block}""",
+            )?.let(accumulator::append)
+        }
+        val messages = accumulator.snapshot()
+        assertEquals(2, messages.last().parts.size)
+        val request = provider.callBuildMessageRequest(
+            claudeSetting, messages, TextGenerationParams(model = reasoningModel()),
+        )
+        val replayed = request["messages"]!!.jsonArray[1].jsonObject["content"]!!.jsonArray
+        assertEquals(blocks.map { Json.parseToJsonElement(it) }, replayed.toList())
+    }
+
+    @Test
+    fun `empty thinking with signature survives snapshot and request replay`() {
+        val accumulator = MessageStreamAccumulator(listOf(UIMessage.user("continue")))
+        val chunk = provider.parseStreamEvent(
+            id = "msg-1", type = "content_block_delta",
+            data = """{"index":0,"delta":{"type":"signature_delta","signature":"sig-empty"}}""",
+        )
+        accumulator.append(assertNotNull(chunk))
+        val messages = accumulator.snapshot()
+        val reasoning = messages.last().parts.filterIsInstance<UIMessagePart.Reasoning>().single()
+        assertEquals("", reasoning.reasoning)
+        val request = provider.callBuildMessageRequest(
+            claudeSetting, messages, TextGenerationParams(model = reasoningModel()),
+        )
+        val replayed = request["messages"]!!.jsonArray[1].jsonObject["content"]!!.jsonArray.single()
+        assertEquals(
+            Json.parseToJsonElement("""{"type":"thinking","thinking":"","signature":"sig-empty"}"""),
+            replayed,
+        )
+    }
+
+    @Test
+    fun `thinking and signature deltas merge within their original block only`() {
+        val accumulator = MessageStreamAccumulator(listOf(UIMessage.user("continue")))
+        val events = listOf(
+            "content_block_start" to """{"index":0,"content_block":{"type":"thinking","thinking":""}}""",
+            "content_block_delta" to """{"index":0,"delta":{"type":"thinking_delta","thinking":"first"}}""",
+            "content_block_delta" to """{"index":0,"delta":{"type":"signature_delta","signature":"sig-first"}}""",
+            "content_block_start" to """{"index":1,"content_block":{"type":"thinking","thinking":""}}""",
+            "content_block_delta" to """{"index":1,"delta":{"type":"thinking_delta","thinking":"second"}}""",
+            "content_block_delta" to """{"index":1,"delta":{"type":"signature_delta","signature":"sig-second"}}""",
+        )
+        events.forEach { (type, data) ->
+            provider.parseStreamEvent(id = "msg-1", type = type, data = data)?.let(accumulator::append)
+        }
+        val messages = accumulator.snapshot()
+        val reasoning = messages.last().parts.filterIsInstance<UIMessagePart.Reasoning>()
+        assertEquals(listOf("first", "second"), reasoning.map { it.reasoning })
+        val request = provider.callBuildMessageRequest(
+            claudeSetting, messages, TextGenerationParams(model = reasoningModel()),
+        )
+        val replayed = request["messages"]!!.jsonArray[1].jsonObject["content"]!!.jsonArray
+        assertEquals(listOf(
+            Json.parseToJsonElement("""{"type":"thinking","thinking":"first","signature":"sig-first"}"""),
+            Json.parseToJsonElement("""{"type":"thinking","thinking":"second","signature":"sig-second"}"""),
+        ), replayed.toList())
+    }
+
+    @Test
+    fun `foreign empty encrypted reasoning is omitted without changing transcript tool replay`() {
+        val foreign = UIMessagePart.Reasoning(reasoning = "", metadata = buildJsonObject {
+            put("reasoning_id", "rs-foreign")
+            put("encrypted_content", "openai-encrypted")
+        })
+        val tool = executableTool(promptTool("lookup", "Look up the answer"))
+        val history = listOf(UIMessage.user("look up"), UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                foreign,
+                UIMessagePart.Text("before"),
+                UIMessagePart.Tool(
+                    toolCallId = "call-original", toolName = "lookup", input = "{}",
+                    output = listOf(UIMessagePart.Text("found")),
+                ),
+                UIMessagePart.Text("after"),
+            ),
+        ))
+        val originalParts = history.last().parts.toList()
+        val originalMetadata = foreign.metadata
+        val prepared = PromptTranscript.prepare(history, history, listOf(tool))
+        val resolved = PromptTranscript.resolve(prepared.messages, listOf(tool), nativeSystem = true)
+        assertTrue(resolved.hasTranscript)
+        val body = provider.callBuildMessageRequest(
+            claudeSetting, resolved.messages, TextGenerationParams(model = nativeModel(), tools = listOf(tool)),
+        )
+
+        assertEquals(Json.parseToJsonElement("""[
+            {"role":"user","content":[{"type":"text","text":"look up"}]},
+            {"role":"assistant","content":[{"type":"text","text":"before"},{"type":"tool_use","id":"call-original","name":"lookup","input":{}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"call-original","content":[{"type":"text","text":"found"}]}]},
+            {"role":"assistant","content":[{"type":"text","text":"after"}]}
+        ]"""), body["messages"])
+        assertEquals(originalParts, history.last().parts)
+        assertEquals(originalMetadata, foreign.metadata)
+        assertTrue(history.last().parts.first() === foreign)
+    }
+
+    @Test
+    fun `foreign encrypted only assistant does not create an empty Claude turn`() {
+        val foreign = UIMessagePart.Reasoning(reasoning = "", metadata = buildJsonObject {
+            put("reasoning_id", "rs-foreign")
+            put("encrypted_content", "openai-encrypted")
+        })
+        val history = listOf(UIMessage.user("continue"), UIMessage(
+            role = MessageRole.ASSISTANT, parts = listOf(foreign),
+        ))
+        val prepared = PromptTranscript.prepare(history, history, emptyList())
+        val resolved = PromptTranscript.resolve(prepared.messages, emptyList(), nativeSystem = true)
+        val body = provider.callBuildMessageRequest(
+            claudeSetting, resolved.messages, TextGenerationParams(model = nativeModel()),
+        )
+
+        assertEquals(1, body["messages"]!!.jsonArray.size)
+        assertEquals("user", body["messages"]!!.jsonArray.single().jsonObject["role"]!!.jsonPrimitive.content)
+        assertEquals(listOf(foreign), history.last().parts)
+        assertEquals("openai-encrypted", foreign.metadata!!["encrypted_content"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `transcript keeps native opaque blocks and signed nonempty reasoning replay`() {
+        val signed = UIMessagePart.Reasoning(reasoning = "", metadata = buildJsonObject {
+            put("signature", "claude-signature")
+        })
+        val redactedBlock = Json.parseToJsonElement(
+            """{"type":"redacted_thinking","data":"claude-redacted"}""",
+        ).jsonObject
+        val redacted = UIMessagePart.Reasoning(reasoning = "", metadata = buildJsonObject {
+            put("claude_redacted_thinking", redactedBlock)
+        })
+        val readable = UIMessagePart.Reasoning(reasoning = "existing readable thought", metadata = buildJsonObject {
+            put("signature", "claude-readable-signature")
+        })
+        val history = listOf(UIMessage.user("continue"), UIMessage(
+            role = MessageRole.ASSISTANT, parts = listOf(signed, redacted, readable),
+        ))
+        val prepared = PromptTranscript.prepare(history, history, emptyList())
+        val resolved = PromptTranscript.resolve(prepared.messages, emptyList(), nativeSystem = true)
+        val body = provider.callBuildMessageRequest(
+            claudeSetting, resolved.messages, TextGenerationParams(model = nativeModel()),
+        )
+
+        assertEquals(Json.parseToJsonElement("""[
+            {"type":"thinking","thinking":"","signature":"claude-signature"},
+            {"type":"redacted_thinking","data":"claude-redacted"},
+            {"type":"thinking","thinking":"existing readable thought","signature":"claude-readable-signature"}
+        ]"""), body["messages"]!!.jsonArray[1].jsonObject["content"])
+        assertEquals(listOf(signed, redacted, readable), history.last().parts)
+    }
+
+    @Test
+    fun `plain unsigned reasoning is omitted from Claude transcript without changing canonical history`() {
+        assertUnsignedReasoningOmitted(UIMessagePart.Reasoning(reasoning = "plain unsigned thought"))
+    }
+
+    @Test
+    fun `foreign nonempty encrypted reasoning is omitted from Claude transcript without changing canonical history`() {
+        assertUnsignedReasoningOmitted(UIMessagePart.Reasoning(
+            reasoning = "foreign visible reasoning", metadata = buildJsonObject {
+                put("reasoning_id", "rs-foreign")
+                put("encrypted_content", "openai-encrypted")
+            },
+        ))
+    }
+
+    private fun assertUnsignedReasoningOmitted(reasoning: UIMessagePart.Reasoning) {
+        val tool = executableTool(promptTool("lookup", "Look up the answer"))
+        val history = listOf(UIMessage.user("look up"), UIMessage(
+            role = MessageRole.ASSISTANT,
+            parts = listOf(
+                UIMessagePart.Text("before"), reasoning,
+                UIMessagePart.Tool(
+                    toolCallId = "call-original", toolName = "lookup", input = "{}",
+                    output = listOf(UIMessagePart.Text("found")),
+                ),
+                UIMessagePart.Text("after"),
+            ),
+        ))
+        val originalParts = history.last().parts.toList()
+        val originalMetadata = reasoning.metadata
+        val prepared = PromptTranscript.prepare(history, history, listOf(tool))
+        val resolved = PromptTranscript.resolve(prepared.messages, listOf(tool), nativeSystem = true)
+        val body = provider.callBuildMessageRequest(
+            claudeSetting, resolved.messages, TextGenerationParams(model = nativeModel(), tools = listOf(tool)),
+        )
+        assertEquals(Json.parseToJsonElement("""[
+            {"role":"user","content":[{"type":"text","text":"look up"}]},
+            {"role":"assistant","content":[{"type":"text","text":"before"},{"type":"tool_use","id":"call-original","name":"lookup","input":{}}]},
+            {"role":"user","content":[{"type":"tool_result","tool_use_id":"call-original","content":[{"type":"text","text":"found"}]}]},
+            {"role":"assistant","content":[{"type":"text","text":"after"}]}
+        ]"""), body["messages"])
+        assertEquals(originalParts, history.last().parts)
+        assertEquals(originalMetadata, reasoning.metadata)
+        assertTrue(history.last().parts[1] === reasoning)
     }
 
     @Test

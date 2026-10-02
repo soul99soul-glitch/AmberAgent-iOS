@@ -368,8 +368,10 @@ final class URLSessionMcpHTTPTransport: IOSMcpHTTPTransport {
         return headers
     }
 
-    static func firstServerSentEventJSON(from data: Data) -> [String: Any]? {
+    static func firstServerSentEventJSON(from data: Data, matchingRequestID: Any? = nil) -> [String: Any]? {
         let text = String(decoding: data, as: UTF8.self)
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
         let blocks = text.components(separatedBy: "\n\n")
         for block in blocks {
             let dataLines = block
@@ -384,6 +386,10 @@ final class URLSessionMcpHTTPTransport: IOSMcpHTTPTransport {
             guard let jsonData = jsonText.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
                 continue
+            }
+            if let matchingRequestID {
+                guard mcpJSONRPCIDsMatch(object["id"], matchingRequestID),
+                      object["result"] != nil || object["error"] != nil else { continue }
             }
             return object
         }
@@ -661,17 +667,24 @@ final class IOSMcpClient: IOSMcpClienting {
     }
 
     func listTools() async throws -> [IOSMcpTool] {
-        let result = try await send(method: "tools/list", params: [:])
-        guard let tools = result["tools"] as? [[String: Any]] else { return [] }
-        return tools.compactMap { item in
-            guard let name = item["name"] as? String, !name.isEmpty else { return nil }
-            return IOSMcpTool(
-                name: name,
-                description: item["description"] as? String,
-                inputSchema: Self.persistedSchemaText(item["inputSchema"]),
-                readOnlyHint: (item["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool
-            )
-        }
+        var discovered: [IOSMcpTool] = []
+        var cursor: String?
+        repeat {
+            let params: [String: Any] = cursor.map { ["cursor": $0] } ?? [:]
+            let result = try await send(method: "tools/list", params: params)
+            let tools = result["tools"] as? [[String: Any]] ?? []
+            discovered.append(contentsOf: tools.compactMap { item in
+                guard let name = item["name"] as? String, !name.isEmpty else { return nil }
+                return IOSMcpTool(
+                    name: name,
+                    description: item["description"] as? String,
+                    inputSchema: Self.persistedSchemaText(item["inputSchema"]),
+                    readOnlyHint: (item["annotations"] as? [String: Any])?["readOnlyHint"] as? Bool
+                )
+            })
+            cursor = result["nextCursor"] as? String
+        } while cursor != nil
+        return discovered
     }
 
     /// Serializes the raw `inputSchema` object into complete compact JSON text.
@@ -748,7 +761,7 @@ final class IOSMcpClient: IOSMcpClienting {
         let requestConfig = requestConfig(for: config)
         let response = try await sendJSONRPCWithTimeout(payload, to: requestConfig, method: method)
         try validate(response, for: requestConfig)
-        guard let object = Self.jsonObject(from: response.body) else {
+        guard let object = Self.jsonObject(from: response.body, matchingRequestID: id) else {
             throw IOSMcpClientError.invalidResponse
         }
         guard mcpJSONRPCIDsMatch(object["id"], id) else {
@@ -825,11 +838,11 @@ final class IOSMcpClient: IOSMcpClienting {
         return value
     }
 
-    private static func jsonObject(from data: Data) -> [String: Any]? {
+    private static func jsonObject(from data: Data, matchingRequestID: Any? = nil) -> [String: Any]? {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             return object
         }
-        return URLSessionMcpHTTPTransport.firstServerSentEventJSON(from: data)
+        return URLSessionMcpHTTPTransport.firstServerSentEventJSON(from: data, matchingRequestID: matchingRequestID)
     }
 
     private func withRequestSlot<T>(_ operation: () async throws -> T) async throws -> T {

@@ -244,42 +244,42 @@ enum IOSGeminiPayloadBuilder {
     }
 
     private static func appendModelMessage(_ message: UIMessage, to contents: inout [[String: Any]]) {
-        var buffer: [[String: Any]] = []
-        for part in message.parts {
-            if let tool = part as? UIMessagePart.Tool, tool.isExecuted {
-                // Executed tool in the assistant turn: flush text buffer as a
-                // model turn, then emit the call + response as model+user turns
-                // (Gemini requires the response in a user turn). Mirrors Android
-                // groupPartsByToolBoundary + addModelMessage.
-                if !buffer.isEmpty {
-                    contents.append(["role": "model", "parts": buffer])
-                    buffer = []
-                }
-                contents.append(["role": "model", "parts": [functionCallPart(tool)]])
-                contents.append([
-                    "role": "user",
-                    "parts": [functionResponsePart(tool)] + tool.output.compactMap(inlineImagePart),
-                ])
-                continue
+        var modelParts: [[String: Any]] = []
+        var responseParts: [[String: Any]] = []
+        func flushGroup() {
+            if !modelParts.isEmpty {
+                contents.append(["role": "model", "parts": modelParts])
+                modelParts = []
             }
-            if let tool = part as? UIMessagePart.Tool, !tool.isExecuted {
-                // Pending (unexecuted) tool call in history: dropped, same as
-                // Android's toGooglePart `else -> null` — the pipeline executes
-                // pending tools before the next upload.
+            if !responseParts.isEmpty {
+                contents.append(["role": "user", "parts": responseParts])
+                responseParts = []
+            }
+        }
+        for part in message.parts {
+            if let tool = part as? UIMessagePart.Tool {
+                // A contiguous call group belongs to one model turn. Preserve its
+                // order and signature positions before sending all tool results.
+                if tool.isExecuted {
+                    modelParts.append(functionCallPart(tool))
+                    responseParts.append(functionResponsePart(tool))
+                    responseParts.append(contentsOf: tool.output.compactMap(inlineImagePart))
+                }
                 continue
             }
             if let json = partToJSON(part) {
-                buffer.append(json)
+                if !responseParts.isEmpty { flushGroup() }
+                modelParts.append(json)
             }
         }
-        if !buffer.isEmpty {
-            contents.append(["role": "model", "parts": buffer])
-        }
+        flushGroup()
     }
 
     private static func functionCallPart(_ tool: UIMessagePart.Tool) -> [String: Any] {
         let args = parseJSON(tool.input)
-        var part: [String: Any] = ["functionCall": ["name": tool.toolName, "args": args]]
+        var call: [String: Any] = ["name": tool.toolName, "args": args]
+        if let id = tool.geminiWireCallId() { call["id"] = id }
+        var part: [String: Any] = ["functionCall": call]
         if let signature = tool.thoughtSignature() {
             part["thoughtSignature"] = signature
         }
@@ -290,7 +290,9 @@ enum IOSGeminiPayloadBuilder {
         let result = tool.output
             .compactMap { ($0 as? UIMessagePart.Text)?.text }
             .joined(separator: "\n")
-        return ["functionResponse": ["name": tool.toolName, "response": ["result": result]]]
+        var response: [String: Any] = ["name": tool.toolName, "response": ["result": result]]
+        if let id = tool.geminiWireCallId() { response["id"] = id }
+        return ["functionResponse": response]
     }
 
     private static func partToJSON(_ part: UIMessagePart) -> [String: Any]? {
@@ -423,6 +425,12 @@ enum IOSGeminiPayloadBuilder {
                 body["tools"] = [["functionDeclarations": declarations]]
             }
         }
+        for custom in params.customBody {
+            let data = Data(MessageKt.customBodyValueJson(body: custom).utf8)
+            if let value = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) {
+                body[custom.key] = value
+            }
+        }
         return body
     }
 
@@ -469,6 +477,9 @@ struct IOSGeminiStreamFrame: Equatable {
     enum Kind: Equatable {
         case text(String)
         case reasoning(String)
+        case provisionalFunctionCall(index: Int, id: String?, name: String, signature: String?)
+        case completeFunctionCall(index: Int, id: String?, name: String, args: String, signature: String?)
+        case functionCallID(index: Int, id: String, name: String?)
         case functionCallName(index: Int, name: String)
         case functionCallArgs(index: Int, delta: String)
         case functionCallSignature(index: Int, signature: String)
@@ -531,8 +542,27 @@ enum IOSGeminiStreamParser {
             }
             if let call = part["functionCall"] as? [String: Any] {
                 let name = (call["name"] as? String).nonBlank
-                // The API streams `args` as JSON text fragments; the final chunk
-                // may carry the completed object. Handle both.
+                let id = (call["id"] as? String).nonBlank
+                let signature = (part["thoughtSignature"] as? String).nonBlank
+                if let name, call["args"] == nil {
+                    frames.append(IOSGeminiStreamFrame(kind: .provisionalFunctionCall(
+                        index: index, id: id, name: name, signature: signature
+                    )))
+                    continue
+                }
+                // generateContent returns each complete call in one chunk.
+                // Some compatible endpoints also send partial JSON strings.
+                if let name, let args = call["args"] as? [String: Any],
+                   let data = try? JSONSerialization.data(withJSONObject: args),
+                   let json = String(data: data, encoding: .utf8) {
+                    frames.append(IOSGeminiStreamFrame(kind: .completeFunctionCall(
+                        index: index, id: id, name: name, args: json, signature: signature
+                    )))
+                    continue
+                }
+                if let id {
+                    frames.append(IOSGeminiStreamFrame(kind: .functionCallID(index: index, id: id, name: name)))
+                }
                 let argsJSON: String
                 if let dict = call["args"] as? [String: Any] {
                     argsJSON = dict.isEmpty
@@ -549,7 +579,7 @@ enum IOSGeminiStreamParser {
                 if !argsJSON.isEmpty {
                     frames.append(IOSGeminiStreamFrame(kind: .functionCallArgs(index: index, delta: argsJSON)))
                 }
-                if let signature = (part["thoughtSignature"] as? String).nonBlank {
+                if let signature {
                     frames.append(IOSGeminiStreamFrame(kind: .functionCallSignature(index: index, signature: signature)))
                 }
             }
@@ -604,6 +634,20 @@ final class IOSGeminiClient {
     let provider: ProviderSetting.Google
     private let session: URLSession
 
+    private struct PendingCall {
+        var wireID: String? = nil
+        var name: String = ""
+        var args: String = ""
+        var thoughtSignature: String? = nil
+    }
+
+    private static let failedFinishReasons: Set<String> = [
+        "SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST",
+        "PROHIBITED_CONTENT", "SPII", "MALFORMED_FUNCTION_CALL", "UNEXPECTED_TOOL_CALL", "TOO_MANY_TOOL_CALLS",
+        "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION", "IMAGE_OTHER", "NO_IMAGE",
+        "MISSING_THOUGHT_SIGNATURE", "MALFORMED_RESPONSE", "ESCALATION", "PUP_LIMITED_DISABLED",
+    ]
+
     init(provider: ProviderSetting.Google, session: URLSession = .shared) {
         self.provider = provider
         self.session = session
@@ -628,55 +672,117 @@ final class IOSGeminiClient {
             throw IOSGeminiError.httpStatus(status, detail)
         }
 
-        var pendingCalls: [Int: (name: String, args: String, thoughtSignature: String?)] = [:]
+        var pendingCalls: [PendingCall] = []
+        var callIDs: [String: Int] = [:]
+        var fragmentSlots: [Int: Int] = [:]
 
         for try await line in bytes.lines {
             if Task.isCancelled { throw CancellationError() }
+            var frameSlots: [Int: Int] = [:]
+            func slot(for index: Int) -> Int {
+                if let slot = frameSlots[index] { return slot }
+                if let slot = fragmentSlots[index] {
+                    frameSlots[index] = slot
+                    return slot
+                }
+                let slot = pendingCalls.count
+                pendingCalls.append(PendingCall())
+                fragmentSlots[index] = slot
+                frameSlots[index] = slot
+                return slot
+            }
             for frame in IOSGeminiStreamParser.parse(line) {
                 switch frame.kind {
                 case .text(let text):
-                    if !text.isEmpty {
-                        onChunk(Self.textDeltaChunk(token: text, model: params.model))
-                    }
+                    if !text.isEmpty { onChunk(Self.textDeltaChunk(token: text, model: params.model)) }
                 case .reasoning(let text):
-                    if !text.isEmpty {
-                        onChunk(Self.reasoningDeltaChunk(text: text, model: params.model))
+                    if !text.isEmpty { onChunk(Self.reasoningDeltaChunk(text: text, model: params.model)) }
+                case .provisionalFunctionCall(let index, let id, let name, let signature):
+                    let target: Int
+                    if let id, let existing = callIDs[id] {
+                        target = existing
+                    } else if let existing = fragmentSlots[index],
+                              (id == nil || pendingCalls[existing].wireID == nil),
+                              pendingCalls[existing].name == name,
+                              !pendingCalls[existing].args.isEmpty,
+                              !Self.isCompleteJSONObject(pendingCalls[existing].args) {
+                        // A name restatement during partial JSON belongs to that
+                        // call. An args-omitted call otherwise starts a new slot.
+                        target = existing
+                    } else {
+                        target = pendingCalls.count
+                        pendingCalls.append(PendingCall())
                     }
+                    pendingCalls[target].wireID = id ?? pendingCalls[target].wireID
+                    pendingCalls[target].name = name
+                    pendingCalls[target].thoughtSignature = signature ?? pendingCalls[target].thoughtSignature
+                    if let id { callIDs[id] = target }
+                    fragmentSlots[index] = target
+                    frameSlots[index] = target
+                case .completeFunctionCall(let index, let id, let name, let args, let signature):
+                    let target: Int
+                    if let id, let existing = callIDs[id] {
+                        target = existing
+                    } else if let existing = fragmentSlots[index],
+                              (id == nil || pendingCalls[existing].wireID == nil),
+                              (pendingCalls[existing].name.isEmpty || pendingCalls[existing].name == name),
+                              !Self.isCompleteJSONObject(pendingCalls[existing].args) {
+                        // A complete object can close an earlier JSON fragment.
+                        target = existing
+                    } else {
+                        target = pendingCalls.count
+                        pendingCalls.append(PendingCall())
+                    }
+                    pendingCalls[target] = PendingCall(
+                        wireID: id ?? pendingCalls[target].wireID, name: name, args: args,
+                        thoughtSignature: signature ?? pendingCalls[target].thoughtSignature
+                    )
+                    if let id { callIDs[id] = target }
+                    frameSlots[index] = target
+                    fragmentSlots.removeValue(forKey: index)
+                case .functionCallID(let index, let id, let name):
+                    let target: Int
+                    if let existing = callIDs[id] {
+                        target = existing
+                    } else if let existing = fragmentSlots[index],
+                              pendingCalls[existing].wireID == nil,
+                              (name == nil || pendingCalls[existing].name.isEmpty || pendingCalls[existing].name == name),
+                              !Self.isCompleteJSONObject(pendingCalls[existing].args) {
+                        target = existing
+                    } else {
+                        target = pendingCalls.count
+                        pendingCalls.append(PendingCall())
+                    }
+                    pendingCalls[target].wireID = id
+                    callIDs[id] = target
+                    fragmentSlots[index] = target
+                    frameSlots[index] = target
                 case .functionCallName(let index, let name):
-                    let existing = pendingCalls[index]
-                    pendingCalls[index] = (
-                        name: name,
-                        args: existing?.args ?? "",
-                        thoughtSignature: existing?.thoughtSignature
-                    )
-                case .functionCallArgs(let index, let delta):
-                    // Fragments arrive as partial JSON text; the final chunk may
-                    // carry the completed object. Replace when the delta itself
-                    // parses as a full JSON object, append otherwise.
-                    let existing = pendingCalls[index]
-                    let args = Self.isCompleteJSONObject(delta) ? delta : (existing?.args ?? "") + delta
-                    pendingCalls[index] = (
-                        name: existing?.name ?? "",
-                        args: args,
-                        thoughtSignature: existing?.thoughtSignature
-                    )
-                case .functionCallSignature(let index, let signature):
-                    let existing = pendingCalls[index]
-                    pendingCalls[index] = (
-                        name: existing?.name ?? "",
-                        args: existing?.args ?? "",
-                        thoughtSignature: signature
-                    )
-                case .finish(let reason):
-                    for (index, call) in pendingCalls.sorted(by: { $0.key < $1.key }) {
-                        onChunk(Self.toolDeltaChunk(
-                            callId: index,
-                            name: call.name,
-                            args: call.args,
-                            thoughtSignature: call.thoughtSignature
-                        ))
+                    var target = slot(for: index)
+                    if !pendingCalls[target].name.isEmpty, pendingCalls[target].name != name {
+                        target = pendingCalls.count
+                        pendingCalls.append(PendingCall())
+                        fragmentSlots[index] = target
+                        frameSlots[index] = target
                     }
-                    pendingCalls = [:]
+                    pendingCalls[target].name = name
+                case .functionCallArgs(let index, let delta):
+                    let target = slot(for: index)
+                    pendingCalls[target].args = Self.isCompleteJSONObject(delta)
+                        ? delta : pendingCalls[target].args + delta
+                case .functionCallSignature(let index, let signature):
+                    pendingCalls[slot(for: index)].thoughtSignature = signature
+                case .finish(let reason):
+                    if let reason, Self.failedFinishReasons.contains(reason.uppercased()) {
+                        throw IOSGeminiError.stream("Gemini 生成失败：\(reason)")
+                    }
+                    for (index, call) in pendingCalls.enumerated() {
+                        onChunk(Self.toolDeltaChunk(callId: index, call: call))
+                    }
+                    pendingCalls = []
+                    callIDs = [:]
+                    fragmentSlots = [:]
+                    frameSlots = [:]
                     if let chunk = Self.terminalFinishChunk(reason: reason, model: params.model) {
                         onChunk(chunk)
                     }
@@ -685,18 +791,9 @@ final class IOSGeminiClient {
                 }
             }
         }
-        // EOF without an explicit finishReason (e.g. server closed after the last
-        // chunk): still flush any accumulated functionCall so the pipeline can
-        // execute it instead of dropping the turn.
-        if !pendingCalls.isEmpty {
-            for (index, call) in pendingCalls.sorted(by: { $0.key < $1.key }) {
-                onChunk(Self.toolDeltaChunk(
-                    callId: index,
-                    name: call.name,
-                    args: call.args,
-                    thoughtSignature: call.thoughtSignature
-                ))
-            }
+        // Keep the existing EOF flush for endpoints that omit finishReason.
+        for (index, call) in pendingCalls.enumerated() {
+            onChunk(Self.toolDeltaChunk(callId: index, call: call))
         }
     }
 
@@ -1111,20 +1208,28 @@ final class IOSGeminiClient {
         )
     }
 
-    private static func toolDeltaChunk(
-        callId: Int,
-        name: String,
-        args: String,
-        thoughtSignature: String?
-    ) -> MessageChunk {
-        let tool = MessageKt.geminiToolPart(
-            toolCallId: "gemini-\(UUID().uuidString)",
-            toolName: name,
-            input: args,
-            output: [],
-            streamIndex: KotlinInt(value: Int32(callId)),
-            thoughtSignature: thoughtSignature
-        )
+    private static func toolDeltaChunk(callId: Int, call: PendingCall) -> MessageChunk {
+        let args = call.args.isEmpty ? "{}" : call.args
+        let tool: UIMessagePart.Tool
+        if let id = call.wireID {
+            tool = MessageKt.geminiWireToolPart(
+                wireCallId: id,
+                toolName: call.name,
+                input: args,
+                output: [],
+                streamIndex: KotlinInt(value: Int32(callId)),
+                thoughtSignature: call.thoughtSignature
+            )
+        } else {
+            tool = MessageKt.geminiToolPart(
+                toolCallId: "gemini-\(UUID().uuidString)",
+                toolName: call.name,
+                input: args,
+                output: [],
+                streamIndex: KotlinInt(value: Int32(callId)),
+                thoughtSignature: call.thoughtSignature
+            )
+        }
         let delta = UIMessage(
             id: KotlinUuid.companion.random(),
             role: MessageRole.assistant,

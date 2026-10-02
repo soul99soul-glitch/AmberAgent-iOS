@@ -4,6 +4,65 @@ import XCTest
 
 @MainActor
 final class ProviderCredentialAndHeaderTests: XCTestCase {
+    func testHeaderStoreLaterCredentialFailurePreservesOldRecordAndSecrets() throws {
+        let suite = "HeaderBatchFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var credentials: [String: String] = [:]
+        let original: [IOSProviderRequestHeaderStore.Item] = [
+            .init(name: "Authorization", value: "first-old"),
+            .init(name: "X-Api-Key", value: "second-old"),
+        ]
+        XCTAssertTrue(IOSProviderRequestHeaderStore.save(
+            providerId: "provider", userAgent: "old-agent", extra: original, defaults: defaults,
+            loadCredential: { credentials[$0] },
+            storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        ))
+        let oldValues = credentials
+        let oldRecord = defaults.data(forKey: "app.amber.ios.providerRequestHeaders.v1")
+
+        XCTAssertFalse(IOSProviderRequestHeaderStore.save(
+            providerId: "provider", userAgent: "new-agent",
+            extra: [.init(name: "Authorization", value: "first-new"), .init(name: "X-Api-Key", value: "second-new")],
+            defaults: defaults, loadCredential: { credentials[$0] },
+            storeCredential: { key, value in
+                guard value != "second-new" else { return false }
+                credentials[key] = value
+                return true
+            }, deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        ))
+        XCTAssertEqual(credentials, oldValues)
+        XCTAssertEqual(defaults.data(forKey: "app.amber.ios.providerRequestHeaders.v1"), oldRecord)
+    }
+
+    func testHeaderStoreLaterCredentialFailureRemovesNewlyWrittenRef() throws {
+        let suite = "HeaderNewRefFailure-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var credentials: [String: String] = [:]
+        XCTAssertTrue(IOSProviderRequestHeaderStore.save(
+            providerId: "provider", userAgent: "old-agent", extra: [.init(name: "X-Title", value: "old-title")],
+            defaults: defaults, loadCredential: { credentials[$0] },
+            storeCredential: { credentials[$0] = $1; return true },
+            deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        ))
+        let oldRecord = defaults.data(forKey: "app.amber.ios.providerRequestHeaders.v1")
+
+        XCTAssertFalse(IOSProviderRequestHeaderStore.save(
+            providerId: "provider", userAgent: "new-agent",
+            extra: [.init(name: "Authorization", value: "first-new"), .init(name: "X-Api-Key", value: "second-new")],
+            defaults: defaults, loadCredential: { credentials[$0] },
+            storeCredential: { key, value in
+                guard value != "second-new" else { return false }
+                credentials[key] = value
+                return true
+            }, deleteCredential: { credentials.removeValue(forKey: $0); return true }
+        ))
+        XCTAssertTrue(credentials.isEmpty)
+        XCTAssertEqual(defaults.data(forKey: "app.amber.ios.providerRequestHeaders.v1"), oldRecord)
+    }
+
     func testOpenCodeConversationHeaderHonorsExplicitValueAndIgnoresOtherHosts() {
         let provider = IosSettingsMutations.shared.buildOpenAIProvider(
             name: "Go", apiKey: "test", baseUrl: "https://opencode.ai/zen/go/v1",

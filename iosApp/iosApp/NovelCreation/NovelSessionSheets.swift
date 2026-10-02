@@ -967,14 +967,15 @@ private final class NovelWritingContextFieldState {
     @ObservationIgnored private var isReloadingArcFields = false
     @ObservationIgnored let fieldBank = NovelIMEFieldBank()
 
-    init(plan: NovelChapterPlanRecord?, arc: NovelUpcomingArcRecord?) {
-        planPlacement = plan?.outlinePlacement ?? ""
-        planGoal = plan?.goalAndConflict ?? ""
-        planMustHappen = plan?.mustHappen.joined(separator: "\n") ?? ""
-        planMustNotHappen = plan?.mustNotHappen.joined(separator: "\n") ?? ""
-        planEndingHook = plan?.endingHook ?? ""
-        planVisibleFacts = plan?.visibleFacts.joined(separator: "\n") ?? ""
+    init(plan: NovelChapterPlanRecord?, arc: NovelUpcomingArcRecord?, retainedDraft: NovelChapterPlanDraft? = nil) {
+        planPlacement = retainedDraft?.outlinePlacement ?? plan?.outlinePlacement ?? ""
+        planGoal = retainedDraft?.goalAndConflict ?? plan?.goalAndConflict ?? ""
+        planMustHappen = (retainedDraft?.mustHappen ?? plan?.mustHappen ?? []).joined(separator: "\n")
+        planMustNotHappen = (retainedDraft?.mustNotHappen ?? plan?.mustNotHappen ?? []).joined(separator: "\n")
+        planEndingHook = retainedDraft?.endingHook ?? plan?.endingHook ?? ""
+        planVisibleFacts = (retainedDraft?.visibleFacts ?? plan?.visibleFacts ?? []).joined(separator: "\n")
         upcomingArcBeats = arc?.beats.joined(separator: "\n") ?? ""
+        planFieldsDirty = retainedDraft != nil
     }
 
     func reloadPlan(_ plan: NovelChapterPlanRecord?) {
@@ -1147,6 +1148,7 @@ struct NovelWritingContextSheet: View {
     @State private var previewSignature: String?
     @State private var selectedMode: NovelCollaborationMode
     @State private var writingContextFields: NovelWritingContextFieldState
+    @State private var planDraftOwner: NovelSessionBinding?
     @State private var ghostwriteReadinessCache = NovelGhostwriteReadinessIssuesCache()
     @State private var modeSwitchMessage: String?
     @State private var planMessage: String?
@@ -1205,9 +1207,20 @@ struct NovelWritingContextSheet: View {
         let existingArc = workspace.selectedBranchID.flatMap {
             workspace.projectSnapshot?.upcomingArc(for: $0)
         }
+        let draftOwner = workspace.selectedProjectID.flatMap { projectID in
+            workspace.selectedBranchID.map { branchID in
+                NovelSessionBinding(projectID: projectID, branchID: branchID)
+            }
+        }
+        let retainedDraft = draftOwner.flatMap {
+            workspace.chapterPlanDraft(projectID: $0.projectID, branchID: $0.branchID)
+        }
         self._writingContextFields = State(
-            initialValue: NovelWritingContextFieldState(plan: existingPlan, arc: existingArc)
+            initialValue: NovelWritingContextFieldState(plan: existingPlan, arc: existingArc, retainedDraft: retainedDraft)
         )
+        self._planDraftOwner = State(initialValue: draftOwner)
+        self._planMessage = State(initialValue: retainedDraft != nil ? "已恢复未保存的本章计划草稿，请核对后保存。" : nil)
+        self._planMessageIsError = State(initialValue: retainedDraft != nil)
         self._modeSwitchMessage = State(initialValue: nil)
     }
 
@@ -1307,21 +1320,39 @@ struct NovelWritingContextSheet: View {
                     let draftVisibleFacts = planLines(from: writingContextFields.planVisibleFacts)
                     let inFlightPlanSave = chapterPlanSaveTask
                     let inFlightPlanRevision = savingChapterPlanRevision
-                    Task { @MainActor [workspace, inFlightPlanSave] in
+                    let draftOwner = planDraftOwner
+                    let draft = NovelChapterPlanDraft(
+                        outlinePlacement: draftOutlinePlacement, goalAndConflict: draftGoalAndConflict,
+                        mustHappen: draftMustHappen, mustNotHappen: draftMustNotHappen,
+                        endingHook: draftEndingHook, visibleFacts: draftVisibleFacts
+                    )
+                    if let draftOwner {
+                        workspace.retainChapterPlanDraft(draft, projectID: draftOwner.projectID, branchID: draftOwner.branchID)
+                    }
+                    Task { @MainActor [workspace, inFlightPlanSave, draftOwner] in
                         var shouldSaveDraft = true
                         if let inFlightPlanSave {
                             let priorSaveSucceeded = await inFlightPlanSave.value
                             shouldSaveDraft = !priorSaveSucceeded || inFlightPlanRevision != draftRevision
                         }
-                        guard shouldSaveDraft else { return }
-                        let saved = await workspace.upsertChapterPlan(
-                            status: .draft,
+                        guard let draftOwner else {
+                            workspace.errorMessage = "本章计划缺少原项目信息，草稿未能保存。"
+                            return
+                        }
+                        guard shouldSaveDraft else {
+                            workspace.clearChapterPlanDraft(ifMatching: draft, projectID: draftOwner.projectID, branchID: draftOwner.branchID)
+                            return
+                        }
+                        let saved = await workspace.saveChapterPlanDraft(
+                            projectID: draftOwner.projectID,
+                            branchID: draftOwner.branchID,
                             outlinePlacement: draftOutlinePlacement,
                             goalAndConflict: draftGoalAndConflict,
                             mustHappen: draftMustHappen,
                             mustNotHappen: draftMustNotHappen,
                             endingHook: draftEndingHook,
-                            visibleFacts: draftVisibleFacts
+                            visibleFacts: draftVisibleFacts,
+                            retainingDraft: false
                         )
                         if !saved {
                             if workspace.errorMessage == nil || workspace.errorMessage?.isEmpty == true {
@@ -1978,7 +2009,9 @@ struct NovelWritingContextSheet: View {
             // Local dirty edits win over snapshot echo. Also never clobber IME.
             if writingContextFields.planFieldsDirty || writingContextFields.fieldBank.hasAnyMarkedText
                 || NovelTextInputCommitter.hasMarkedText() {
-                if newToken == "none", !writingContextFields.fieldBank.hasAnyMarkedText {
+                if newToken == "none", !writingContextFields.fieldBank.hasAnyMarkedText,
+                   let owner = planDraftOwner,
+                   workspace.chapterPlanDraft(projectID: owner.projectID, branchID: owner.branchID) == nil {
                     // Plan cleared externally while we were not composing.
                     reloadPlanFieldsFromWorkspace()
                 }
@@ -2365,6 +2398,12 @@ struct NovelWritingContextSheet: View {
         let mustNotHappen = planLines(from: writingContextFields.planMustNotHappen)
         let endingHook = writingContextFields.planEndingHook
         let visibleFacts = planLines(from: writingContextFields.planVisibleFacts)
+        let draft = NovelChapterPlanDraft(
+            outlinePlacement: outlinePlacement, goalAndConflict: goalAndConflict,
+            mustHappen: mustHappen, mustNotHappen: mustNotHappen,
+            endingHook: endingHook, visibleFacts: visibleFacts
+        )
+        let draftOwner = planDraftOwner
         savingChapterPlanStatus = status
         savingChapterPlanRevision = submittedRevision
         chapterPlanSaveTask = Task { @MainActor in
@@ -2378,6 +2417,9 @@ struct NovelWritingContextSheet: View {
                 visibleFacts: visibleFacts
             )
             if saved {
+                if let draftOwner {
+                    workspace.clearChapterPlanDraft(ifMatching: draft, projectID: draftOwner.projectID, branchID: draftOwner.branchID)
+                }
                 writingContextFields.markPlanClean(ifUnchangedSince: submittedRevision)
                 planMessage = status == .confirmed ? "已确认，可以按这个写。" : "草稿已保存。"
                 planMessageIsError = false
@@ -2410,6 +2452,10 @@ struct NovelWritingContextSheet: View {
         let branch = workspace.projectSnapshot?.branches.first { $0.id == branchID }
         let ordinal = max(1, (branch?.workingChapterSelections.count ?? 0) + 1)
         let previousSummary = session.ghostwriteProgress?.lastCompletedPlanSummary
+        let draftOwner = planDraftOwner
+        let retainedDraft = draftOwner.flatMap {
+            workspace.chapterPlanDraft(projectID: $0.projectID, branchID: $0.branchID)
+        }
         do {
             let plan = try await workspace.proposeNextChapterPlanDraft(
                 projectID: projectID,
@@ -2417,6 +2463,9 @@ struct NovelWritingContextSheet: View {
                 nextChapterOrdinal: ordinal,
                 previousPlanSummary: previousSummary
             )
+            if let draftOwner, let retainedDraft {
+                workspace.clearChapterPlanDraft(ifMatching: retainedDraft, projectID: draftOwner.projectID, branchID: draftOwner.branchID)
+            }
             // 优先用返回值回填，避免 refresh 滞后时字段仍空。
             applyChapterPlanToFields(plan)
             planMessage = "已根据前文生成草稿，请核对后点「确认计划」。"
@@ -2435,8 +2484,12 @@ struct NovelWritingContextSheet: View {
         planMessage = nil
         planMessageIsError = false
         writingContextFields.fieldBank.commitAll()
+        let draftOwner = planDraftOwner
         let cleared = await workspace.clearChapterPlan()
         if cleared {
+            if let draftOwner {
+                workspace.clearChapterPlanDraft(projectID: draftOwner.projectID, branchID: draftOwner.branchID)
+            }
             writingContextFields.reloadPlan(nil)
             planMessage = "计划已清除。"
             planMessageIsError = false

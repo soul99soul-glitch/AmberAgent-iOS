@@ -74,4 +74,13 @@ internal actual fun ConversationFile.fileVersion(): ConversationFileVersion? {
     }
 }
 
+internal actual fun ConversationFile.moveTo(destination: ConversationFile) {
+    Files.move(
+        File(path).toPath(),
+        File(destination.path).toPath(),
+        StandardCopyOption.REPLACE_EXISTING,
+        StandardCopyOption.ATOMIC_MOVE,
+    )
+}
+
 actual fun separatorChar(): Char = File.separatorChar

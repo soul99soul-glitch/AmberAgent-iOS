@@ -355,6 +355,49 @@ final class IOSAgentToolEngineTests: XCTestCase {
         }
     }
 
+    final class InterruptedStreamingProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private let chunks: [MessageChunk]
+        private let fails: Bool
+        private var prelude: [MessageChunk]
+        private var catalogs: [[String]] = []
+        private var emitted = false
+        private var lateComplete: (@Sendable () -> Void)?
+        var didEmit: Bool { lock.withLock { emitted } }
+        var toolCatalogs: [[String]] { lock.withLock { catalogs } }
+
+        init(_ chunks: [MessageChunk], fails: Bool, prelude: [MessageChunk] = []) {
+            self.chunks = chunks
+            self.fails = fails
+            self.prelude = prelude
+        }
+
+        func generateText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams) async throws -> MessageChunk {
+            chunks[0]
+        }
+
+        func streamText(providerSetting: ProviderSetting, messages: [UIMessage], params: TextGenerationParams,
+                        onChunk: @escaping @Sendable (MessageChunk) -> Void,
+                        onComplete: @escaping @Sendable () -> Void,
+                        onError: @escaping @Sendable (KotlinThrowable) -> Void) -> Kotlinx_coroutines_coreJob? {
+            let initial = lock.withLock { () -> MessageChunk? in
+                catalogs.append(params.tools.map(\.name))
+                return prelude.isEmpty ? nil : prelude.removeFirst()
+            }
+            if let initial {
+                onChunk(initial)
+                onComplete()
+                return nil
+            }
+            chunks.forEach(onChunk)
+            lock.withLock { emitted = true; lateComplete = onComplete }
+            if fails { onError(KotlinThrowable(message: "connection lost")) }
+            return nil
+        }
+
+        func completeLate() { lock.withLock { lateComplete }?() }
+    }
+
     final class DelayedCompletingStreamingProvider: IOSAgentTextProvider, IOSAgentStreamingProvider, @unchecked Sendable {
         let delayNanos: UInt64
 
@@ -1478,6 +1521,103 @@ final class IOSAgentToolEngineTests: XCTestCase {
         await fulfillment(of: [finished], timeout: 0.15)
         let result = await task.value
         XCTAssertTrue(result.wasCancelled)
+    }
+
+    private func interruptedStreamChunks() -> [MessageChunk] {
+        let first = makeMessage(role: .assistant, parts: [
+            UIMessagePart.Text(text: "正文", metadata: nil),
+            assistantReasoning("思考").parts[0],
+        ])
+        let tail = makeMessage(role: .assistant, parts: [
+            UIMessagePart.Text(text: "尾段", metadata: nil),
+            assistantReasoning("尾推理").parts[0],
+            toolCallMessage(toolCallId: "partial-tool", toolName: "echo", input: "{").parts[0],
+        ])
+        return [first, tail].map {
+            MessageChunk(id: UUID().uuidString, model: "test-model",
+                         choices: [UIMessageChoice(index: 0, delta: $0, message: nil, finishReason: nil)], usage: nil)
+        }
+    }
+
+    func testStreamingErrorPreservesTextReasoningAndUnfinishedToolWithoutExecutingIt() async {
+        let provider = InterruptedStreamingProvider(interruptedStreamChunks(), fails: true)
+        let executor = RecordingExecutor(.filled("must not run"))
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["echo": executor])
+        let result = await engine.run(providerSetting: makeProviderSetting(), messages: [userMessage("ask")], params: makeParams(tools: []))
+        XCTAssertEqual(result.providerFailureMessage, "connection lost")
+        let partial = result.messages.first { message in
+            message.parts.contains { ($0 as? UIMessagePart.Text)?.text == "正文" }
+        }
+        XCTAssertEqual(partial?.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }, ["正文", "尾段"])
+        XCTAssertEqual(result.messages.flatMap(\.parts).compactMap { ($0 as? UIMessagePart.Reasoning)?.reasoning }.joined(), "思考尾推理")
+        XCTAssertTrue(executor.calls.isEmpty)
+        let tool = result.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first
+        XCTAssertFalse(tool?.output.isEmpty ?? true)
+    }
+
+    func testStreamingCancellationPreservesUnpublishedTailAndIgnoresLateCompletion() async {
+        let provider = InterruptedStreamingProvider(interruptedStreamChunks(), fails: false)
+        let executor = RecordingExecutor(.filled("must not run"))
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["echo": executor])
+        let setting = makeProviderSetting()
+        let params = makeParams(tools: [])
+        let messages = [userMessage("ask")]
+        let task = Task { await engine.run(providerSetting: setting, messages: messages, params: params) }
+        while !provider.didEmit { await Task.yield() }
+        task.cancel()
+        let result = await task.value
+        provider.completeLate()
+        XCTAssertTrue(result.wasCancelled)
+        let partial = result.messages.first { message in
+            message.parts.contains { ($0 as? UIMessagePart.Text)?.text == "正文" }
+        }
+        XCTAssertEqual(partial?.parts.compactMap { ($0 as? UIMessagePart.Text)?.text }, ["正文", "尾段"])
+        XCTAssertEqual(result.messages.flatMap(\.parts).compactMap { ($0 as? UIMessagePart.Reasoning)?.reasoning }.joined(), "思考尾推理")
+        XCTAssertTrue(executor.calls.isEmpty)
+        XCTAssertFalse(result.messages.flatMap(\.parts).compactMap { $0 as? UIMessagePart.Tool }.first?.output.isEmpty ?? true)
+    }
+
+    func testGuardFinalizationStreamErrorPreservesPromptTranscriptAndDisablesTools() async {
+        await assertGuardPartialHasPromptTranscript(fails: true)
+    }
+
+    func testGuardFinalizationStreamCancelPreservesPromptTranscriptAndDisablesTools() async {
+        await assertGuardPartialHasPromptTranscript(fails: false)
+    }
+
+    private func assertGuardPartialHasPromptTranscript(fails: Bool) async {
+        let prelude = (1...3).map { index in
+            chunk(with: toolCallMessage(toolCallId: "guard-\(index)", toolName: "echo", input: "{}"))
+        }
+        let provider = InterruptedStreamingProvider(interruptedStreamChunks(), fails: fails, prelude: prelude)
+        let executor = RecordingExecutor(.filled("same result"))
+        let engine = IOSAgentToolEngine(provider: provider, executors: ["echo": executor], configuration: .init(maxSteps: 8))
+        let setting = makePromptTranscriptProviderSetting()
+        let params = makePromptTranscriptParams().replacingTools(ToolKt.iosToolDeclarations(names: ["search_web"]))
+        let messages = [userMessage("ask")]
+        let task = Task {
+            await engine.run(providerSetting: setting, messages: messages, params: params,
+                             prepareRequestMessages: { messages in
+                [PromptTranscript.shared.sectionMessage(name: "system", text: "stable instructions")] + messages
+            })
+        }
+        while !provider.didEmit { await Task.yield() }
+        if !fails { task.cancel() }
+        let result = await task.value
+        guard let partial = result.messages.last(where: {
+            $0.parts.compactMap { ($0 as? UIMessagePart.Text)?.text } == ["正文", "尾段"]
+        }) else {
+            return XCTFail("guard finalization must retain its interrupted assistant")
+        }
+        XCTAssertNotNil(PromptTranscript.shared.event(message: partial))
+        XCTAssertFalse(partial.parts.contains { $0 is UIMessagePart.Tool })
+        XCTAssertEqual(partial.parts.compactMap { ($0 as? UIMessagePart.Reasoning)?.reasoning }.joined(), "思考尾推理")
+        XCTAssertTrue(result.guardStopped)
+        XCTAssertEqual(result.wasCancelled, !fails)
+        XCTAssertEqual(executor.calls.count, 2, "guard-stopped third call and partial finalization call must not execute")
+        XCTAssertEqual(provider.toolCatalogs.count, 4)
+        XCTAssertFalse(provider.toolCatalogs.first?.isEmpty ?? true)
+        XCTAssertEqual(provider.toolCatalogs.last, [])
     }
 
     func testStreamingRequestPreparationRunsBeforeDispatch() async {

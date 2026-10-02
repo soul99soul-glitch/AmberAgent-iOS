@@ -79,13 +79,8 @@ enum NovelWorkspaceBackup {
         }
 
         let activeBranches = document.branches.filter { $0.lifecycle == .active }
-        let mainBranch = activeBranches.first { $0.id == document.project.mainBranchID }
-        let mainSlug = reservedPath(
-            slug(mainBranch?.name ?? "main"),
-            used: &usedPaths,
-            fallback: document.project.mainBranchID.description
-        )
-        usedPaths.removeAll()
+        let branchSlugs = allocatedBranchSlugs(in: document)
+        let mainSlug = branchSlugs[document.project.mainBranchID] ?? "main"
 
         files.append(
             File(
@@ -138,17 +133,6 @@ enum NovelWorkspaceBackup {
                     )
                 )
             )
-        }
-
-        var branchSlugs: [NovelBranchID: String] = [:]
-        var usedBranchSlugs: Set<String> = []
-        for branch in activeBranches {
-            let slugValue = reservedPath(
-                slug(branch.name),
-                used: &usedBranchSlugs,
-                fallback: branch.id.description
-            )
-            branchSlugs[branch.id] = slugValue
         }
 
         for branch in activeBranches {
@@ -495,6 +479,7 @@ enum NovelWorkspaceBackup {
     ) throws {
         let existingLedger = NovelWorkspaceLedger.load(from: directory, fileManager: fileManager)
         let files = try export(document, exportedAt: exportedAt)
+        try validateFilePaths(files)
         let parent = directory.deletingLastPathComponent()
         let staging = parent.appendingPathComponent(
             "\(directory.lastPathComponent).next",
@@ -549,6 +534,7 @@ enum NovelWorkspaceBackup {
         to directory: URL,
         fileManager: FileManager = .default
     ) throws {
+        try validateFilePaths(files)
         let parent = directory.deletingLastPathComponent()
         let staging = parent.appendingPathComponent(
             "\(directory.lastPathComponent).next",
@@ -574,8 +560,37 @@ enum NovelWorkspaceBackup {
         }
     }
 
-    /// Branch-directory slug; shared with workspace authority keying so the
-    /// document side and the printed path side derive the SAME slug.
+    /// Every consumer of a branch directory must use the same allocation,
+    /// including the manifest and workspace reconciliation.
+    static func allocatedBranchSlugs(in document: NovelProjectDocumentV1) -> [NovelBranchID: String] {
+        var result: [NovelBranchID: String] = [:]
+        var used: Set<String> = []
+        for branch in document.branches where branch.lifecycle == .active {
+            let preferred = slug(branch.name)
+            result[branch.id] = reservedPath(
+                preferred == "." || preferred == ".." ? "" : preferred,
+                used: &used,
+                fallback: branch.id.description,
+                caseInsensitive: true
+            )
+        }
+        return result
+    }
+
+    static func isValidRelativePath(_ path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !components.isEmpty && !path.contains("\0") && components.allSatisfy {
+            !$0.isEmpty && $0 != "." && $0 != ".."
+        }
+    }
+
+    private static func validateFilePaths(_ files: [File]) throws {
+        guard files.allSatisfy({ isValidRelativePath($0.path) }) else {
+            throw NovelError.invalidPackage("Workspace file paths must stay inside the workspace.")
+        }
+    }
+
+    /// Sanitizes a display name before directory collision allocation.
     static func slug(_ raw: String) -> String {
         let forbidden = CharacterSet(charactersIn: "/\\:?%*|\"<>")
             .union(.newlines)
@@ -795,7 +810,12 @@ private extension NovelWorkspaceBackup {
         return "\"\(escaped)\""
     }
 
-    static func reservedPath(_ preferred: String, used: inout Set<String>, fallback: String) -> String {
+    static func reservedPath(
+        _ preferred: String,
+        used: inout Set<String>,
+        fallback: String,
+        caseInsensitive: Bool = false
+    ) -> String {
         let leafPreferred = preferred.split(separator: "/").last.map(String.init) ?? preferred
         let prefix = preferred.contains("/")
             ? preferred.split(separator: "/").dropLast().joined(separator: "/") + "/"
@@ -804,11 +824,11 @@ private extension NovelWorkspaceBackup {
         if base.isEmpty { base = "untitled" }
         var candidate = base
         var index = 2
-        while used.contains(prefix + candidate) {
+        while used.contains(caseInsensitive ? (prefix + candidate).lowercased() : prefix + candidate) {
             candidate = "\(base)-\(index)"
             index += 1
         }
-        used.insert(prefix + candidate)
+        used.insert(caseInsensitive ? (prefix + candidate).lowercased() : prefix + candidate)
         return prefix.isEmpty ? candidate : prefix + candidate
     }
 

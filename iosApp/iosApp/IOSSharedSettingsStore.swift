@@ -115,6 +115,11 @@ final class IOSSharedSettingsStore {
 
     @ObservationIgnored private(set) var snapshot: Settings
     private(set) var revision: Int = 0
+    private(set) var credentialPersistenceError: String?
+
+    @ObservationIgnored private let loadCredential: (String) -> String?
+    @ObservationIgnored private let storeCredential: (String, String) -> Bool
+    @ObservationIgnored private let deleteCredential: (String) -> Bool
 
     private let defaults: UserDefaults
     private let fullSettingsJsonKey = "app.amber.ios.sharedSettingsJson"
@@ -135,8 +140,16 @@ final class IOSSharedSettingsStore {
     /// Jev 快速判断设置（独立版本化；API Key 在 Keychain side-table，不在此持久化）。
     private(set) var jevSettings: IOSJevSettings
 
-    init(userDefaults: UserDefaults = .standard) {
+    init(
+        userDefaults: UserDefaults = .standard,
+        loadCredential: @escaping (String) -> String? = IOSCredentialSideTable.load,
+        storeCredential: @escaping (String, String) -> Bool = IOSCredentialSideTable.store,
+        deleteCredential: @escaping (String) -> Bool = IOSCredentialSideTable.delete
+    ) {
         self.defaults = userDefaults
+        self.loadCredential = loadCredential
+        self.storeCredential = storeCredential
+        self.deleteCredential = deleteCredential
         if let data = defaults.data(forKey: capabilityGatesKey),
            let decoded = try? JSONDecoder().decode(IOSCapabilityGateSettings.self, from: data) {
             self.capabilityGates = decoded
@@ -158,15 +171,14 @@ final class IOSSharedSettingsStore {
         // Scheme B rehydration: the persisted JSON is redacted (provider apiKeys
         // are the mask sentinel). Rehydrate the real apiKeys from the Keychain
         // side-table so the in-memory snapshot carries usable credentials. Also
-        // migrates any pre-redactor plaintext values still in the JSON: if a
-        // provider's apiKey is non-empty AND non-mask, store it to the side-table
-        // now (so the next persist redacts it), then keep it in memory.
-        let migratedProviderPlaintext = Self.rehydrateProviderApiKeys(into: &self.snapshot)
-        let migratedSearchPlaintext = Self.rehydrateSearchServiceApiKeys(into: &self.snapshot)
+        // Detect legacy plaintext here; restoreSnapshot moves all credentials
+        // together before replacing the persisted JSON with its masked form.
+        let migratedProviderPlaintext = Self.rehydrateProviderApiKeys(into: &self.snapshot, load: loadCredential)
+        let migratedSearchPlaintext = Self.rehydrateSearchServiceApiKeys(into: &self.snapshot, load: loadCredential)
         let hydratedJson = IOSCredentialRedactor.rehydrate(
             IosSettingsJsonBridge.shared.encode(settings: self.snapshot)
         ) { path in
-            IOSCredentialSideTable.load(key: IOSCredentialSideTable.settingsPath(path))
+            self.loadCredential(IOSCredentialSideTable.settingsPath(path))
         }
         if let hydrated = try? Self.decodeSettings(hydratedJson) {
             self.snapshot = hydrated
@@ -189,27 +201,21 @@ final class IOSSharedSettingsStore {
 
     /// Rehydrates provider apiKeys in a snapshot from the Keychain side-table
     /// (scheme B). Masked values are replaced with the real key; non-empty non-
-    /// mask values are migrated to the side-table (first-time migration from a
-    /// pre-redactor plaintext store).
-    private static func rehydrateProviderApiKeys(into snapshot: inout Settings) -> Bool {
+    /// mask values flag a pending plaintext migration for restoreSnapshot.
+    private static func rehydrateProviderApiKeys(into snapshot: inout Settings, load: (String) -> String?) -> Bool {
         var migratedPlaintext = false
         for provider in snapshot.providers {
             let providerId = provider.id.description() as String
             let current = apiKey(of: provider)
             if current == IOSCredentialRedactor.mask {
                 // Redacted on disk → rehydrate real key from Keychain.
-                if let real = IOSCredentialSideTable.load(key: IOSCredentialSideTable.providerApiKey(providerId: providerId)) {
+                if let real = load(IOSCredentialSideTable.providerApiKey(providerId: providerId)) {
                     snapshot = IosSettingsMutations.shared.updateProviderApiKey(settings: snapshot, providerId: providerId, apiKey: real)
                 }
             } else if !current.isEmpty {
                 // Pre-redactor plaintext still in the JSON → migrate to side-table
                 // and immediately rewrite persisted JSON through restoreSnapshot.
-                if IOSCredentialSideTable.store(
-                    key: IOSCredentialSideTable.providerApiKey(providerId: providerId),
-                    value: current
-                ) {
-                    migratedPlaintext = true
-                }
+                migratedPlaintext = true
             }
         }
         return migratedPlaintext
@@ -223,7 +229,7 @@ final class IOSSharedSettingsStore {
         return ""
     }
 
-    private static func rehydrateSearchServiceApiKeys(into snapshot: inout Settings) -> Bool {
+    private static func rehydrateSearchServiceApiKeys(into snapshot: inout Settings, load: (String) -> String?) -> Bool {
         var migratedPlaintext = false
         for service in snapshot.searchServices {
             let serviceId = service.id.description()
@@ -233,7 +239,7 @@ final class IOSSharedSettingsStore {
                 // as chat providers: UserDefaults may contain only the mask,
                 // while the real key is restored from the side-table before the
                 // snapshot is used or persisted again.
-                if let real = IOSCredentialSideTable.load(key: IOSCredentialSideTable.searchServiceApiKey(serviceId: serviceId)) {
+                if let real = load(IOSCredentialSideTable.searchServiceApiKey(serviceId: serviceId)) {
                     snapshot = IosSettingsMutations.shared.updateSearchServiceApiKey(
                         settings: snapshot,
                         id: serviceId,
@@ -241,12 +247,7 @@ final class IOSSharedSettingsStore {
                     )
                 }
             } else if !current.isEmpty {
-                if IOSCredentialSideTable.store(
-                    key: IOSCredentialSideTable.searchServiceApiKey(serviceId: serviceId),
-                    value: current
-                ) {
-                    migratedPlaintext = true
-                }
+                migratedPlaintext = true
             }
         }
         return migratedPlaintext
@@ -271,59 +272,71 @@ final class IOSSharedSettingsStore {
         return ""
     }
 
-    func restoreSnapshot(_ settings: Settings) {
+    @discardableResult
+    func restoreSnapshot(_ settings: Settings) -> Bool {
         var runtimeSettings = settings
-        _ = Self.rehydrateProviderApiKeys(into: &runtimeSettings)
-        _ = Self.rehydrateSearchServiceApiKeys(into: &runtimeSettings)
+        _ = Self.rehydrateProviderApiKeys(into: &runtimeSettings, load: loadCredential)
+        _ = Self.rehydrateSearchServiceApiKeys(into: &runtimeSettings, load: loadCredential)
         let runtimeJson = IOSCredentialRedactor.rehydrate(
             IosSettingsJsonBridge.shared.encode(settings: runtimeSettings)
         ) { path in
-            IOSCredentialSideTable.load(key: IOSCredentialSideTable.settingsPath(path))
+            self.loadCredential(IOSCredentialSideTable.settingsPath(path))
         }
         if let decoded = try? Self.decodeSettings(runtimeJson) {
             runtimeSettings = decoded
         }
+        let previous = Self.credentialValues(in: snapshot)
+        let proposed = Self.credentialValues(in: runtimeSettings)
+        var written: [(key: String, previous: String?)] = []
+        for key in proposed.values.keys.sorted() {
+            guard let value = proposed.values[key] else { continue }
+            let oldValue = loadCredential(key)
+            guard oldValue != value else { continue }
+            guard storeCredential(key, value) else {
+                var rollbackSucceeded = true
+                for entry in written.reversed() {
+                    if let oldValue = entry.previous {
+                        if !storeCredential(entry.key, oldValue) { rollbackSucceeded = false }
+                    } else {
+                        if !deleteCredential(entry.key) { rollbackSucceeded = false }
+                    }
+                }
+                credentialPersistenceError = rollbackSucceeded
+                    ? "凭据未能安全保存，设置没有提交。请重试。"
+                    : "凭据保存失败，设置没有提交，部分旧凭据未能恢复。请重新保存。"
+                return false
+            }
+            written.append((key, oldValue))
+        }
+        // Commit the masked configuration only after every required credential succeeded.
+        defaults.set(proposed.json, forKey: fullSettingsJsonKey)
         snapshot = runtimeSettings
-        // Scheme B: store real credentials in the Keychain side-table BEFORE
-        // redacting, so they survive restart (load rehydrates from here). Covers
-        // provider apiKey + model customHeaders (Authorization-like). iOS-only;
-        // the shared ProviderSetting is not modified.
-        for provider in runtimeSettings.providers {
-            let providerId = provider.id.description() as String
-            let apiKey = Self.apiKey(of: provider)
-            // Guard against the redaction mask (parity with the search loop below):
-            // if the in-memory key is the placeholder — e.g. rehydration didn't find
-            // a side-table entry — never write it back, or it would overwrite the
-            // real key in the Keychain and break the provider permanently.
-            if !apiKey.isEmpty, apiKey != IOSCredentialRedactor.mask {
-                IOSCredentialSideTable.store(key: IOSCredentialSideTable.providerApiKey(providerId: providerId), value: apiKey)
-            }
+        for key in Set(previous.values.keys).subtracting(proposed.values.keys) {
+            _ = deleteCredential(key)
         }
-        for service in runtimeSettings.searchServices {
-            let serviceId = service.id.description()
-            let apiKey = Self.searchApiKey(of: service)
-            if !apiKey.isEmpty, apiKey != IOSCredentialRedactor.mask {
-                // Persist the real search key before JSON redaction. Reloading a
-                // masked Settings blob must round-trip back to this value.
-                IOSCredentialSideTable.store(
-                    key: IOSCredentialSideTable.searchServiceApiKey(serviceId: serviceId),
-                    value: apiKey
-                )
-            }
-        }
-        // Redact credentials BEFORE persisting (in-memory snapshot keeps real
-        // values; the UserDefaults form is credential-free). (parity with
-        // Android BackupSettingsRedactor.) See IOSCredentialRedactor.
-        let redactedJson = IOSCredentialRedactor.redact(
-            IosSettingsJsonBridge.shared.encode(settings: runtimeSettings)
-        ) { path, value in
-            IOSCredentialSideTable.store(
-                key: IOSCredentialSideTable.settingsPath(path),
-                value: value
-            )
-        }
-        defaults.set(redactedJson, forKey: fullSettingsJsonKey)
+        credentialPersistenceError = nil
         revision &+= 1
+        return true
+    }
+
+    private static func credentialValues(in settings: Settings) -> (json: String, values: [String: String]) {
+        var values: [String: String] = [:]
+        let json = IOSCredentialRedactor.redact(IosSettingsJsonBridge.shared.encode(settings: settings)) { path, value in
+            values[IOSCredentialSideTable.settingsPath(path)] = value
+        }
+        for provider in settings.providers {
+            let value = apiKey(of: provider)
+            if !value.isEmpty, value != IOSCredentialRedactor.mask {
+                values[IOSCredentialSideTable.providerApiKey(providerId: provider.id.description())] = value
+            }
+        }
+        for service in settings.searchServices {
+            let value = searchApiKey(of: service)
+            if !value.isEmpty, value != IOSCredentialRedactor.mask {
+                values[IOSCredentialSideTable.searchServiceApiKey(serviceId: service.id.description())] = value
+            }
+        }
+        return (json, values)
     }
 
     func isCapabilityGateEnabled(_ gate: IOSCapabilityGate) -> Bool {
@@ -645,7 +658,9 @@ final class IOSSharedSettingsStore {
         var models = savedCustomModels
         guard index >= 0 && index < models.count else { return }
         let removed = models[index]
-        if let providerId = removed["providerId"], removeProvider(providerId: providerId) {
+        if let providerId = removed["providerId"],
+           snapshot.providers.contains(where: { $0.id.description() == providerId }) {
+            _ = removeProvider(providerId: providerId)
             return
         }
         models.remove(at: index)
@@ -662,24 +677,30 @@ final class IOSSharedSettingsStore {
     /// model's provider. Returns the provider that was updated, if found.
     @discardableResult
     func updateProviderApiKey(providerId: String, apiKey: String) -> ProviderSetting? {
-        let before = snapshot
-        let isClearing = apiKey.isEmpty
-        let genericCredentialRefs = isClearing ? genericCredentialRefs(stableId: providerId) : []
         let merged = IosSettingsMutations.shared.updateProviderApiKey(
-            settings: before, providerId: providerId, apiKey: apiKey
+            settings: snapshot, providerId: providerId, apiKey: apiKey
         )
-        if isClearing {
-            // `restoreSnapshot` rehydrates both credential schemes before it
-            // persists. Remove every old reference first, otherwise an empty
-            // edit is immediately repopulated from Keychain.
-            IOSCredentialSideTable.delete(key: IOSCredentialSideTable.providerApiKey(providerId: providerId))
-            genericCredentialRefs.forEach { IOSCredentialSideTable.delete(key: $0) }
-        }
-        restoreSnapshot(merged)
-        // Identify the updated provider by id description equality (KMP parses
-        // the string internally; we match the same provider here without needing
-        // a Swift-side Uuid parser).
-        return merged.providers.first { ($0.id.description() as String) == providerId }
+        guard restoreSnapshot(merged) else { return nil }
+        return snapshot.providers.first { $0.id.description() == providerId }
+    }
+
+    /// The provider form submits endpoint and credentials as one configuration.
+    @discardableResult
+    func updateProviderConfiguration(
+        providerId: String, name: String, enabled: Bool, apiKey: String,
+        baseUrl: String, chatCompletionsPath: String, useResponseApi: Bool, promptCaching: Bool
+    ) -> Bool {
+        var proposed = IosSettingsMutations.shared.updateProviderBasics(
+            settings: snapshot, providerId: providerId, name: name, enabled: enabled
+        )
+        proposed = IosSettingsMutations.shared.updateProviderApiKey(
+            settings: proposed, providerId: providerId, apiKey: apiKey
+        )
+        proposed = IosSettingsMutations.shared.updateProviderEndpoint(
+            settings: proposed, providerId: providerId, baseUrl: baseUrl,
+            chatCompletionsPath: chatCompletionsPath, useResponseApi: useResponseApi, promptCaching: promptCaching
+        )
+        return restoreSnapshot(proposed)
     }
 
     @discardableResult
@@ -980,7 +1001,8 @@ final class IOSSharedSettingsStore {
             return false
         }
 
-        IOSCredentialSideTable.delete(key: IOSCredentialSideTable.providerApiKey(providerId: providerId))
+        guard restoreSnapshot(merged) else { return false }
+        _ = deleteCredential(IOSCredentialSideTable.providerApiKey(providerId: providerId))
         // Provider-scoped OAuth and request-header credentials are separate from
         // the Settings JSON. Remove every store keyed by this provider id so a
         // deleted provider cannot leave usable credentials or header secrets
@@ -993,7 +1015,6 @@ final class IOSSharedSettingsStore {
         IOSProviderRequestHeaderStore.save(providerId: providerId, userAgent: nil, extra: [])
         genericCredentialRefs.forEach { IOSCredentialSideTable.delete(key: $0) }
         savedCustomModels.removeAll { $0["providerId"] == providerId }
-        restoreSnapshot(merged)
         return true
     }
 
@@ -1119,7 +1140,7 @@ final class IOSSharedSettingsStore {
             apiKey: apiKey
         )
         let merged = IosSettingsMutations.shared.addSearchServiceAndSelect(settings: snapshot, service: service)
-        restoreSnapshot(merged)
+        guard restoreSnapshot(merged) else { return }
         var providers = savedSearchProviders
         providers.append([
             "id": UUID().uuidString,
@@ -1144,12 +1165,11 @@ final class IOSSharedSettingsStore {
         var providers = savedSearchProviders
         guard index >= 0 && index < providers.count else { return }
         let removed = providers.remove(at: index)
-        savedSearchProviders = providers
         if let serviceId = removed["serviceId"] {
-            IOSCredentialSideTable.delete(key: IOSCredentialSideTable.searchServiceApiKey(serviceId: serviceId))
             let merged = IosSettingsMutations.shared.removeSearchService(settings: snapshot, id: serviceId)
-            restoreSnapshot(merged)
+            guard restoreSnapshot(merged) else { return }
         }
+        savedSearchProviders = providers
     }
 
     func setEnableWebSearch(_ enabled: Bool) {
@@ -1232,7 +1252,7 @@ final class IOSSharedSettingsStore {
                 model: model.isEmpty ? "gpt-4o-mini-tts" : model
             )
             let merged = IosSettingsMutations.shared.addTtsProvider(settings: snapshot, provider: provider)
-            restoreSnapshot(merged)
+            guard restoreSnapshot(merged) else { return }
             var engines = savedTtsEngines
             engines.append([
                 "id": UUID().uuidString,
@@ -1267,15 +1287,11 @@ final class IOSSharedSettingsStore {
         var engines = savedTtsEngines
         guard index >= 0 && index < engines.count else { return }
         let removed = engines.remove(at: index)
-        savedTtsEngines = engines
         if let ttsId = removed["ttsId"] {
-            let genericCredentialRefs = genericCredentialRefs(stableId: ttsId)
             let merged = IosSettingsMutations.shared.removeTtsProvider(settings: snapshot, id: ttsId)
-            if !merged.ttsProviders.contains(where: { $0.id.description() == ttsId }) {
-                genericCredentialRefs.forEach { IOSCredentialSideTable.delete(key: $0) }
-            }
-            restoreSnapshot(merged)
+            guard restoreSnapshot(merged) else { return }
         }
+        savedTtsEngines = engines
     }
 
     // MARK: - SubAgent role overrides write-back

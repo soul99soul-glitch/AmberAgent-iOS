@@ -779,6 +779,24 @@ final class NovelContinuityAuditTests: XCTestCase {
         XCTAssertTrue(applied.content.hasPrefix("林岸推开茶馆的门"))
     }
 
+    func testPatchApplierRejectsSelfOverlappingDuplicateSpans() {
+        for (content, oldText) in [("哈哈哈", "哈哈"), ("ABABA", "ABA")] {
+            let applied = NovelContinuityRepairPatchApplier.apply(
+                [NovelContinuityRepairPatchV1(
+                    issueId: "ambiguous",
+                    oldText: oldText,
+                    newText: "替换"
+                )],
+                to: content,
+                allowedIssueIDs: ["ambiguous"]
+            )
+
+            XCTAssertEqual(applied.content, content)
+            XCTAssertTrue(applied.appliedIssueIDs.isEmpty)
+            XCTAssertEqual(applied.droppedCount, 1)
+        }
+    }
+
     func testPatchApplierDropsDuplicateMissingOverlappingAndUnchangedSpans() {
         let content = "ABCDEF"
 

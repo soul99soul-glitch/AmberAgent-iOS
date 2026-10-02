@@ -58,7 +58,10 @@ enum IOSProviderRequestHeaderStore {
         providerId: String,
         userAgent: String?,
         extra: [Item],
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        loadCredential: (String) -> String? = IOSCredentialSideTable.load,
+        storeCredential: (String, String) -> Bool = IOSCredentialSideTable.store,
+        deleteCredential: (String) -> Bool = IOSCredentialSideTable.delete
     ) -> Bool {
         var all = loadAll(defaults: defaults) ?? [:]
         let oldRefs = Set((all[providerId]?.extra ?? []).enumerated().compactMap { index, item -> String? in
@@ -75,14 +78,28 @@ enum IOSProviderRequestHeaderStore {
             all.removeValue(forKey: providerId)
         } else {
             var activeRefs = Set<String>()
+            var written: [(key: String, previous: String?)] = []
             for index in cleanedExtra.indices {
                 let item = cleanedExtra[index]
                 guard IOSCredentialRedactor.isHeaderSensitive(item.name), !item.value.isEmpty else { continue }
                 let key = credentialKey(providerId: providerId, headerName: item.name, rowIndex: index)
-                if item.value != IOSCredentialRedactor.mask,
-                   !IOSCredentialSideTable.store(key: key, value: item.value) {
-                    return false
-                } else if item.value != IOSCredentialRedactor.mask {
+                if item.value != IOSCredentialRedactor.mask {
+                    let previous = loadCredential(key)
+                    if previous != item.value {
+                        guard storeCredential(key, item.value) else {
+                            // Continue restoring every prior write even if Keychain
+                            // remains unavailable. This save still reports failure.
+                            for entry in written.reversed() {
+                                if let oldValue = entry.previous {
+                                    _ = storeCredential(entry.key, oldValue)
+                                } else {
+                                    _ = deleteCredential(entry.key)
+                                }
+                            }
+                            return false
+                        }
+                        written.append((key, previous))
+                    }
                     cleanedExtra[index].value = IOSCredentialRedactor.mask
                 }
                 activeRefs.insert(key)
@@ -92,12 +109,12 @@ enum IOSProviderRequestHeaderStore {
                 extra: cleanedExtra
             )
             for key in oldRefs.subtracting(activeRefs) {
-                IOSCredentialSideTable.delete(key: key)
+                _ = deleteCredential(key)
             }
         }
         if all[providerId] == nil {
             for key in oldRefs {
-                IOSCredentialSideTable.delete(key: key)
+                _ = deleteCredential(key)
             }
         }
         persist(all, defaults: defaults)

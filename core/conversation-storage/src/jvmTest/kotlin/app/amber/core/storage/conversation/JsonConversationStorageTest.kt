@@ -146,6 +146,128 @@ class JsonConversationStorageTest {
     }
 
     @Test
+    fun bulkImportBlockedDestinationPreservesEarlierConversationAndIndex() = runTest {
+        val existingId = Uuid.parse("00000000-0000-0000-0000-000000000063")
+        val blockedId = Uuid.parse("00000000-0000-0000-0000-000000000064")
+        val unrelatedId = Uuid.parse("00000000-0000-0000-0000-000000000065")
+        storage.saveConversation(sampleConversation(id = existingId, title = "original"))
+        storage.saveConversation(sampleConversation(id = unrelatedId, title = "unrelated"))
+        storage.loadConversation(existingId)
+        storage.listSummaries()
+        val originalText = tempDir.child("${existingId}.json").readText()
+        val originalIndex = tempDir.child("index.json").readText()
+        val blocked = File(tempDir.child("${blockedId}.json").path)
+        assertTrue(blocked.mkdir())
+        File(blocked, "keep.txt").writeText("must survive")
+
+        val failure = runCatching {
+            storage.importConversations(listOf(
+                JsonInstant.encodeToString(sampleConversation(id = existingId, title = "replacement")),
+                JsonInstant.encodeToString(sampleConversation(id = blockedId, title = "blocked")),
+            ))
+        }.exceptionOrNull()
+
+        assertNotNull(failure)
+        assertEquals(originalText, tempDir.child("${existingId}.json").readText())
+        assertEquals(originalIndex, tempDir.child("index.json").readText())
+        assertEquals("original", storage.loadConversation(existingId)?.title)
+        assertEquals("unrelated", storage.loadConversation(unrelatedId)?.title)
+        assertEquals("must survive", File(blocked, "keep.txt").readText())
+        assertEquals(setOf(existingId, unrelatedId), storage.listSummaries().mapTo(mutableSetOf()) { it.id })
+        assertTrue(File(tempDir.path).listFiles().orEmpty().none {
+            it.extension == "import" || it.extension == "backup"
+        })
+    }
+
+    @Test
+    fun bulkImportCommitFailureRestoresReplacementsAndRemovesNewEntries() = runTest {
+        val existingId = Uuid.parse("00000000-0000-0000-0000-000000000066")
+        val newId = Uuid.parse("00000000-0000-0000-0000-000000000067")
+        val failingId = Uuid.parse("00000000-0000-0000-0000-000000000068")
+        val unrelatedId = Uuid.parse("00000000-0000-0000-0000-000000000069")
+        storage.saveConversation(sampleConversation(id = existingId, title = "original", userText = "old message"))
+        storage.saveConversation(sampleConversation(id = failingId, title = "not replaced"))
+        storage.saveConversation(sampleConversation(id = unrelatedId, title = "unrelated"))
+        storage.loadConversation(existingId)
+        storage.listSummaries()
+        val originalText = tempDir.child("${existingId}.json").readText()
+        val originalIndex = tempDir.child("index.json").readText()
+        storage.beforeImportCommitForTesting = { index ->
+            if (index == 2) throw java.io.IOException("injected commit failure")
+        }
+
+        val failure = runCatching {
+            storage.importConversations(listOf(
+                JsonInstant.encodeToString(sampleConversation(id = existingId, title = "replacement")),
+                JsonInstant.encodeToString(sampleConversation(id = newId, title = "new")),
+                JsonInstant.encodeToString(sampleConversation(id = failingId, title = "never committed")),
+            ))
+        }.exceptionOrNull()
+
+        assertTrue(failure is ConversationStorageException)
+        assertEquals(originalText, tempDir.child("${existingId}.json").readText())
+        assertEquals(originalIndex, tempDir.child("index.json").readText())
+        assertEquals("original", storage.loadConversation(existingId)?.title)
+        assertEquals("old message", storage.loadConversation(existingId)?.currentMessages?.single()?.toText())
+        assertFalse(tempDir.child("${newId}.json").exists())
+        assertNull(storage.loadConversation(newId))
+        assertEquals("not replaced", storage.loadConversation(failingId)?.title)
+        assertEquals("unrelated", storage.loadConversation(unrelatedId)?.title)
+        assertEquals(setOf(existingId, failingId, unrelatedId), storage.listSummaries().mapTo(mutableSetOf()) { it.id })
+        assertTrue(File(tempDir.path).listFiles().orEmpty().none {
+            it.extension == "import" || it.extension == "backup"
+        })
+    }
+
+    @Test
+    fun bulkImportIndexWriteFailureStillReportsSuccessfulCanonicalImport() = runTest {
+        val id = Uuid.parse("00000000-0000-0000-0000-000000000070")
+        tempDir.child("index.json").mkdirs()
+
+        storage.importConversations(listOf(
+            JsonInstant.encodeToString(sampleConversation(id = id, title = "imported"))
+        ))
+
+        assertEquals("imported", storage.loadConversation(id)?.title)
+        assertEquals("imported", storage.listSummaries().single().title)
+        assertTrue(tempDir.child("index.json").delete())
+        assertEquals("imported", storage.listSummaries().single().title)
+    }
+
+    @Test
+    fun missingIndexRebuildWriteFailureStillReturnsCanonicalSummaries() = runTest {
+        val id = Uuid.parse("00000000-0000-0000-0000-000000000072")
+        tempDir.child("${id}.json").writeText(
+            JsonInstant.encodeToString(sampleConversation(id = id, title = "canonical"))
+        )
+        tempDir.child("index.json").mkdirs()
+
+        assertEquals("canonical", storage.listSummaries().single().title)
+        assertEquals("canonical", storage.listSummaries().single().title)
+        assertEquals("canonical", storage.loadConversation(id)?.title)
+    }
+
+    @Test
+    fun bulkImportDuplicateIdsUseTheLastPayloadAndInvalidateCachedSnapshot() = runTest {
+        val id = Uuid.parse("00000000-0000-0000-0000-000000000071")
+        storage.saveConversation(sampleConversation(id = id, title = "original"))
+        storage.loadConversation(id)
+        storage.listSummaries()
+
+        storage.importConversations(listOf(
+            JsonInstant.encodeToString(sampleConversation(id = id, title = "first")),
+            JsonInstant.encodeToString(sampleConversation(id = id, title = "last", userText = "last message")),
+        ))
+
+        assertEquals("last", storage.loadConversation(id)?.title)
+        assertEquals("last message", storage.loadConversation(id)?.currentMessages?.single()?.toText())
+        assertEquals("last", storage.listSummaries().single().title)
+        assertTrue(File(tempDir.path).listFiles().orEmpty().none {
+            it.extension == "import" || it.extension == "backup"
+        })
+    }
+
+    @Test
     fun bulkImportOverwritesMatchingEntriesAndPreservesTheRestOfTheDataset() = runTest {
         val overwrittenId = Uuid.parse("00000000-0000-0000-0000-000000000005")
         val preservedId = Uuid.parse("00000000-0000-0000-0000-000000000006")

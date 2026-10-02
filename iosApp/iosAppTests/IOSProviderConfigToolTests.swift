@@ -412,6 +412,46 @@ final class IOSProviderConfigToolTests: XCTestCase {
 
     // MARK: - P2 slots
 
+    func testCreateReportsCredentialFailureWithoutLeavingProviderShell() async {
+        let defaults = isolatedDefaults()
+        let store = IOSSharedSettingsStore(
+            userDefaults: defaults, loadCredential: { _ in nil },
+            storeCredential: { _, _ in false }, deleteCredential: { _ in true }
+        )
+        let previousIDs = store.snapshot.providers.map { $0.id.description() }
+        let previousRevision = store.revision
+        let output = await makeService(store).execute(
+            toolName: "provider_config_create",
+            argumentsJSON: #"{"name":"Cannot save","base_url":"https://example.test/v1","api_key":"test-new-credential"}"#
+        )
+        XCTAssertEqual(parseJSON(output)["ok"] as? Bool, false)
+        XCTAssertEqual(store.snapshot.providers.map { $0.id.description() }, previousIDs)
+        XCTAssertEqual(store.revision, previousRevision)
+        XCTAssertFalse(output.contains("test-new-credential"))
+    }
+
+    func testApplyCredentialFailureDoesNotCommitOtherFields() async throws {
+        let store = IOSSharedSettingsStore(
+            userDefaults: isolatedDefaults(), loadCredential: { _ in nil },
+            storeCredential: { _, _ in false }, deleteCredential: { _ in true }
+        )
+        let id = seedProvider(store: store, name: "Original", apiKey: "")
+        let before = try XCTUnwrap(store.snapshot.providers.first { $0.id.description() == id } as? ProviderSetting.OpenAI)
+        let previousRevision = store.revision
+        let output = await makeService(store).execute(
+            toolName: "provider_config_apply",
+            argumentsJSON: #"{"provider_id":"\#(id)","name":"Changed","enabled":false,"base_url":"https://changed.example/v1","api_key":"test-new-credential"}"#
+        )
+        XCTAssertEqual(parseJSON(output)["ok"] as? Bool, false)
+        let after = try XCTUnwrap(store.snapshot.providers.first { $0.id.description() == id } as? ProviderSetting.OpenAI)
+        XCTAssertEqual(after.name, before.name)
+        XCTAssertEqual(after.enabled, before.enabled)
+        XCTAssertEqual(after.baseUrl, before.baseUrl)
+        XCTAssertEqual(after.apiKey, before.apiKey)
+        XCTAssertEqual(store.revision, previousRevision)
+        XCTAssertFalse(output.contains("test-new-credential"))
+    }
+
     func testSetModelSlotUniqueAndAmbiguous() async {
         let store = makeStore()
         store.addCustomModel(name: "A", modelId: "alpha-unique-model", providerName: "ProvA")

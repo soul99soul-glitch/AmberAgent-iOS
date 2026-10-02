@@ -1791,6 +1791,17 @@ struct CouncilHomeResumeContext: Equatable {
 @MainActor
 @Observable
 final class CouncilChatViewModel {
+    enum DurableRunAwaitPoint {
+        case start
+        case configurationFailure
+        case completion
+    }
+
+    /// Wraps the real durable call so ownership races can be paused in tests.
+    typealias DurableRunAwaiter = @MainActor (
+        DurableRunAwaitPoint, @MainActor () async -> Bool
+    ) async -> Bool
+
     var inputText = ""
     var selectedMode: CouncilDiscussionMode = .freeChat
     var messages: [CouncilChatMessage] {
@@ -1845,6 +1856,7 @@ final class CouncilChatViewModel {
     @ObservationIgnored private var activeDiscussionID: UUID?
     @ObservationIgnored private var activeDurableRunID: String?
     @ObservationIgnored private let durableRunStore: IOSDurableRunStore?
+    @ObservationIgnored private let durableRunAwaiter: DurableRunAwaiter
     private var currentObjective = ""
     private var currentFinalTopic = ""
     private var currentTaskId: String?
@@ -1872,7 +1884,8 @@ final class CouncilChatViewModel {
         transcriptDefaults: UserDefaults = .standard,
         archiveStore: CouncilRoomArchiveStore = .shared,
         visionRecognizer: CouncilVisionMaterialRecognizer = CouncilVisionMaterialRecognizer(),
-        durableRunStore: IOSDurableRunStore? = nil
+        durableRunStore: IOSDurableRunStore? = nil,
+        durableRunAwaiter: @escaping DurableRunAwaiter = { _, operation in await operation() }
     ) {
         let restoredRoom = CouncilTranscriptStore.load(defaults: transcriptDefaults)
         self.settingsStore = settingsStore
@@ -1884,6 +1897,7 @@ final class CouncilChatViewModel {
         self.archiveStore = archiveStore
         self.visionRecognizer = visionRecognizer
         self.durableRunStore = durableRunStore
+        self.durableRunAwaiter = durableRunAwaiter
         let initialMessages = restoredRoom?.messages.map { $0.restored() } ?? []
         self.messages = initialMessages
         self.discussionRound = Self.calculateDiscussionRound(in: initialMessages)
@@ -2590,9 +2604,9 @@ final class CouncilChatViewModel {
         isRunning = true
         invitedSpeakerIds.removeAll()
         activeSheet = nil
-        let didStartDurably: Bool
-        if let durableRunStore {
-            didStartDurably = (try? await durableRunStore.ensureRunning(
+        let didStartDurably = await durableRunAwaiter(.start) { [self] in
+            guard let durableRunStore else { return true }
+            return (try? await durableRunStore.ensureRunning(
                 runId: durableRunId,
                 descriptorId: IOSDurableRunStore.Descriptor.council,
                 startedAt: Int64(Date().timeIntervalSince1970 * 1_000),
@@ -2601,8 +2615,16 @@ final class CouncilChatViewModel {
                 ),
                 inputSnapshotRef: "council:\(taskId)"
             )) == true
-        } else {
-            didStartDurably = true
+        }
+        guard activeDiscussionID == discussionID, !Task.isCancelled else {
+            if didStartDurably {
+                _ = try? await durableRunStore?.transitionFromAnyActive(
+                    runId: durableRunId,
+                    to: .cancelled,
+                    detail: "owner_released_before_start"
+                )
+            }
+            return
         }
         guard didStartDurably else {
             appendMessage(
@@ -2622,14 +2644,6 @@ final class CouncilChatViewModel {
             roomStateOverride = "失败"
             persistTranscript()
             archiveCurrentRoom()
-            return
-        }
-        guard activeDiscussionID == discussionID, !Task.isCancelled else {
-            _ = try? await durableRunStore?.transitionFromAnyActive(
-                runId: durableRunId,
-                to: .cancelled,
-                detail: "owner_released_before_start"
-            )
             return
         }
         appendDivider(continuation.map { "追问 · 第 \($0.nextRound) 轮" } ?? selectedMode.openingDivider)
@@ -2652,11 +2666,15 @@ final class CouncilChatViewModel {
                 subtitle: "配置阻塞",
                 status: .failed
             )
-            _ = try? await durableRunStore?.transitionFromAnyActive(
-                runId: durableRunId,
-                to: .failed,
-                detail: ChatConfigurationIssue.missingProvider.message
-            )
+            _ = await durableRunAwaiter(.configurationFailure) { [self] in
+                guard let durableRunStore else { return true }
+                return (try? await durableRunStore.transitionFromAnyActive(
+                    runId: durableRunId,
+                    to: .failed,
+                    detail: ChatConfigurationIssue.missingProvider.message
+                )) == true
+            }
+            guard activeDiscussionID == discussionID, !Task.isCancelled else { return }
             endBackgroundKeepAlive(for: discussionID)
             isRunning = false
             activeDiscussionID = nil
@@ -2694,11 +2712,15 @@ final class CouncilChatViewModel {
         if let finalTopic = summary.finalTopic.trimmedNilIfBlank {
             currentFinalTopic = finalTopic
         }
-        _ = try? await durableRunStore?.transitionFromAnyActive(
-            runId: durableRunId,
-            to: Self.durableStatus(for: summary.status),
-            detail: summary.failureReason
-        )
+        _ = await durableRunAwaiter(.completion) { [self] in
+            guard let durableRunStore else { return true }
+            return (try? await durableRunStore.transitionFromAnyActive(
+                runId: durableRunId,
+                to: Self.durableStatus(for: summary.status),
+                detail: summary.failureReason
+            )) == true
+        }
+        guard activeDiscussionID == discussionID, !Task.isCancelled else { return }
         finishStreamingMessages(as: summary.status == .completed ? .completed : .failed)
         activeSpeakerId = nil
         invitedSpeakerIds.removeAll()

@@ -156,14 +156,18 @@ class MessageStreamAccumulator(
             if (deltaPart.reasoning.isEmpty() && deltaPart.metadata == null) return
 
             val lastPart = parts.lastOrNull()
-            if (lastPart is MutablePart.Reasoning) {
+            if (lastPart is MutablePart.Reasoning &&
+                reasoningBlocksCanMerge(lastPart.metadata, deltaPart.metadata)
+            ) {
                 lastPart.reasoning.append(deltaPart.reasoning)
                 if (deltaPart.reasoning.isNotEmpty()) {
                     lastPart.finishedAt = deltaPart.finishedAt
                 } else if (deltaPart.finishedAt != null) {
                     lastPart.finishedAt = deltaPart.finishedAt
                 }
-                lastPart.metadata = deltaPart.metadata ?: lastPart.metadata
+                deltaPart.metadata?.let { metadata ->
+                    lastPart.metadata = JsonObject(lastPart.metadata.orEmpty() + metadata)
+                }
             } else {
                 parts += MutablePart.Reasoning(
                     reasoning = StringBuilder(deltaPart.reasoning),
@@ -349,7 +353,11 @@ private fun List<UIMessagePart>.coalesceStreamParts(): List<UIMessagePart> {
             }
 
             is UIMessagePart.Reasoning -> {
-                if (part.reasoning.isBlank()) {
+                if (isEmptyProtocolReasoning(part)) {
+                    flushText()
+                    flushExplicitEmptyReasoning()
+                    result += part
+                } else if (part.reasoning.isBlank()) {
                     if (part.hasExplicitReasoningContentField()) {
                         pendingExplicitEmptyReasoning = pendingExplicitEmptyReasoning ?: part
                     }

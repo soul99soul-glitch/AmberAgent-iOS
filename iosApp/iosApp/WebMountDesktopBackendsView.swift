@@ -12,6 +12,7 @@ struct WebMountDesktopBackendsView: View {
     @State private var mcpManager: IOSMcpManager
     @State private var selectedBackend: IOSWebMountBackendKind = .local
     @State private var selectedServerName = ""
+    @State private var selectedSiteId = ""
     @State private var sessions: [IOSWebMountSessionRecord] = []
     @State private var closingSessionIDs = Set<String>()
     @State private var reconnectingSessionIDs = Set<String>()
@@ -22,16 +23,19 @@ struct WebMountDesktopBackendsView: View {
     init(
         controller: IOSWebMountController = .shared,
         configStore: IOSMcpConfigStore = .shared,
-        focusedSessionId: String? = nil
+        focusedSessionId: String? = nil,
+        initialBackend: IOSWebMountBackendKind = .local,
+        mcpManager: IOSMcpManager? = nil
     ) {
         self.controller = controller
         self.configStore = configStore
         self.focusedSessionId = focusedSessionId
         let focusedSession = focusedSessionId.flatMap { controller.sessionStore.record(sessionId: $0) }
-        self._selectedBackend = State(initialValue: focusedSession?.backend ?? .local)
+        self._selectedBackend = State(initialValue: focusedSession?.backend ?? initialBackend)
         self._selectedServerName = State(initialValue: focusedSession?.mcpServerName ?? "")
+        self._selectedSiteId = State(initialValue: focusedSession?.siteId ?? "")
         self._mcpManager = State(
-            initialValue: IOSMcpManager(serverProvider: { configStore.servers })
+            initialValue: mcpManager ?? IOSMcpManager(serverProvider: { configStore.servers })
         )
     }
 
@@ -45,6 +49,14 @@ struct WebMountDesktopBackendsView: View {
 
     private var selectedServer: IOSMcpServerConfig? {
         eligibleServers.first { $0.name == selectedServerName }
+    }
+
+    private var eligibleSites: [IOSWebMountSite] {
+        controller.registry.sites.filter { $0.enabled && $0.authKind == .anonymous }
+    }
+
+    private var selectedSite: IOSWebMountSite? {
+        eligibleSites.first { $0.id == selectedSiteId }
     }
 
     private var remoteSessions: [IOSWebMountSessionRecord] {
@@ -61,7 +73,7 @@ struct WebMountDesktopBackendsView: View {
     }
 
     private var canCreate: Bool {
-        !isCreating && (selectedBackend == .local || selectedServer != nil)
+        !isCreating && (selectedBackend == .local || (selectedServer != nil && selectedSite != nil))
     }
 
     var body: some View {
@@ -81,6 +93,7 @@ struct WebMountDesktopBackendsView: View {
 
                             if selectedBackend != .local {
                                 serverSection
+                                siteSection
                             }
 
                             createSection
@@ -103,8 +116,9 @@ struct WebMountDesktopBackendsView: View {
                 selectedBackend = focusedSession.backend
                 selectedServerName = focusedSession.mcpServerName ?? ""
             }
-            await refreshMCP()
             ensureServerSelection()
+            ensureSiteSelection()
+            await refreshMCP()
         }
         .onChange(of: configStore.servers) { _, _ in
             ensureServerSelection()
@@ -112,6 +126,9 @@ struct WebMountDesktopBackendsView: View {
         }
         .onChange(of: controller.sessionStore.recordsRevision) { _, _ in
             refreshSessions()
+        }
+        .onChange(of: controller.registry.sites) { _, _ in
+            ensureSiteSelection()
         }
         .onDisappear {
             mcpManager.disconnectAll()
@@ -178,6 +195,7 @@ struct WebMountDesktopBackendsView: View {
                         selectedBackend = backend
                         if backend != .local {
                             ensureServerSelection()
+                            ensureSiteSelection()
                         }
                         errorMessage = nil
                     } label: {
@@ -218,6 +236,32 @@ struct WebMountDesktopBackendsView: View {
                         Divider()
                             .padding(.leading, 54)
                     }
+                }
+            }
+        }
+    }
+
+    private var siteSection: some View {
+        VStack(spacing: 0) {
+            AmberSectionLabel(text: "浏览站点")
+            AmberFormGroup {
+                if eligibleSites.isEmpty {
+                    WebMountDesktopInfoRow(
+                        systemImage: "exclamationmark.triangle",
+                        tint: AmberTheme.accentAmber,
+                        title: "还没有可用的浏览站点",
+                        subtitle: "请先在站点列表启用一个无需登录的站点。"
+                    )
+                } else {
+                    Picker("浏览站点", selection: $selectedSiteId) {
+                        ForEach(eligibleSites) { site in
+                            Text(site.displayName).tag(site.id)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("webmount.desktop.site")
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 44)
                 }
             }
         }
@@ -298,9 +342,16 @@ struct WebMountDesktopBackendsView: View {
                 .amberProminentGlass(cornerRadius: 12, tint: AmberTheme.accent)
                 .disabled(!canCreate)
                 .opacity(canCreate ? 1 : 0.55)
+                .accessibilityIdentifier("webmount.desktop.create")
 
                 if selectedBackend != .local, selectedServer == nil {
                     Text("选择一个远程浏览服务后才能创建任务。")
+                        .font(.caption)
+                        .foregroundStyle(AmberTheme.accentAmber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if selectedBackend != .local, selectedSite == nil {
+                    Text("选择一个已启用的无需登录站点后才能创建任务。")
                         .font(.caption)
                         .foregroundStyle(AmberTheme.accentAmber)
                         .fixedSize(horizontal: false, vertical: true)
@@ -485,6 +536,27 @@ struct WebMountDesktopBackendsView: View {
         }
     }
 
+    private func ensureSiteSelection() {
+        if !eligibleSites.contains(where: { $0.id == selectedSiteId }) {
+            selectedSiteId = eligibleSites.first?.id ?? ""
+        }
+    }
+
+    static func creationArguments(
+        backend: IOSWebMountBackendKind,
+        serverName: String,
+        siteId: String?
+    ) -> [String: Any] {
+        var arguments: [String: Any] = [
+            "backend": backend.rawValue,
+            "mcp_server_name": serverName
+        ]
+        if backend != .local, let siteId {
+            arguments["site_id"] = siteId
+        }
+        return arguments
+    }
+
     private func refreshMCP() async {
         mcpManager.refreshServers()
         for server in eligibleServers {
@@ -511,13 +583,11 @@ struct WebMountDesktopBackendsView: View {
     private func createSession() {
         guard canCreate else { return }
 
-        var arguments: [String: Any] = [
-            "backend": selectedBackend.rawValue,
-            "mcp_server_name": selectedServerName
-        ]
-        if selectedBackend != .local, let selectedServer {
-            arguments["mcp_server_name"] = selectedServer.name
-        }
+        let arguments = Self.creationArguments(
+            backend: selectedBackend,
+            serverName: selectedServer?.name ?? selectedServerName,
+            siteId: selectedSite?.id
+        )
 
         isCreating = true
         errorMessage = nil

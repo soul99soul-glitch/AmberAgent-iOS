@@ -2,6 +2,89 @@ import XCTest
 @testable import iosApp
 
 final class NovelWorkspaceBackupTests: XCTestCase {
+    func testCollisionMainBranchManifestUsesAllocatedDirectory() throws {
+        let document = try NovelBranchTestFixtures.documentWithCollectedCandidate()
+        let main = document.branches[0]
+        let command = NovelBranchTestFixtures.forkCommand(
+            document: document,
+            sourceBranchID: main.id,
+            checkpointID: main.headCheckpointID,
+            name: main.name.uppercased()
+        )
+        let forked = try NovelReducer.apply(.forkBranch(command), to: document).document
+        let selected = try NovelReducer.apply(
+            .setMainBranch(NovelSetMainBranchCommand(
+                context: NovelMutationContext(
+                    operationID: NovelOperationID(),
+                    expectedProjectRevision: forked.project.revision,
+                    expectedConfigRevision: forked.project.configRevision,
+                    expectedBranchHeadRevision: nil
+                ),
+                projectID: forked.project.id,
+                branchID: command.branchID
+            )),
+            to: forked
+        ).document
+        let files = try NovelWorkspaceBackup.export(selected)
+        let manifest = try XCTUnwrap(files.first { $0.path == "manifest.yaml" })
+        XCTAssertTrue(manifest.contents.contains("mainBranch: main-2\n"))
+        XCTAssertEqual(try NovelWorkspaceImporter.makeDocument(from: files).branches[0].name, command.name)
+    }
+
+    func testDocumentRejectsOpaquePathsOutsideWorkspace() throws {
+        let original = try NovelTestFixtures.document()
+        for path in ["../outside.md", "a/../../outside.md", "/outside.md", "", "a/./outside.md"] {
+            var document = original
+            document.workspacePassthrough.opaqueFiles[path] = "outside"
+            XCTAssertThrowsError(try NovelDocumentValidator.validate(document), path)
+            XCTAssertThrowsError(try NovelProjectPackageCodec.encode(document), path)
+        }
+        var document = original
+        document.workspacePassthrough.opaqueFiles["unknown/notes.md"] = "preserved"
+        XCTAssertNoThrow(try NovelDocumentValidator.validate(document))
+        XCTAssertTrue(try NovelWorkspaceBackup.export(document).contains {
+            $0.path == "unknown/notes.md" && $0.contents == "preserved"
+        })
+    }
+
+    func testDotBranchNamesUseSafeAllocatedDirectories() throws {
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for (index, name) in [".", ".."].enumerated() {
+            var document = try NovelTestFixtures.document()
+            document.branches[0].name = name
+            let files = try NovelWorkspaceBackup.export(document)
+            let branchSlug = try XCTUnwrap(
+                NovelWorkspaceBackup.allocatedBranchSlugs(in: document)[document.project.mainBranchID]
+            )
+            XCTAssertFalse([".", "..", ""].contains(branchSlug))
+            let manifest = try XCTUnwrap(files.first { $0.path == "manifest.yaml" })
+            XCTAssertTrue(manifest.contents.contains("mainBranch: \(branchSlug)\n"))
+            XCTAssertEqual(try NovelWorkspaceImporter.makeDocument(from: files).branches[0].name, name)
+            XCTAssertNoThrow(try NovelWorkspaceBackup.writeWorkspaceTree(
+                files,
+                to: root.appendingPathComponent("workspace-\(index)")
+            ))
+        }
+    }
+
+    func testWorkspaceWriterRejectsAllPathsBeforeWriting() throws {
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let outside = root.appendingPathComponent("outside.md")
+        try Data("original".utf8).write(to: outside)
+        let destination = root.appendingPathComponent("checkout", isDirectory: true)
+        let staging = root.appendingPathComponent("checkout.next", isDirectory: true)
+        let files = [
+            NovelWorkspaceBackup.File(path: "project.md", contents: "valid"),
+            NovelWorkspaceBackup.File(path: "../outside.md", contents: "overwritten"),
+        ]
+        XCTAssertThrowsError(try NovelWorkspaceBackup.writeWorkspaceTree(files, to: destination))
+        XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "original")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     func testExportsWorkspaceTreeWithoutWrappingChapterHeadings() throws {
         let exportedAt = Date(timeIntervalSince1970: 1_787_011_200)
         let document = try makeNovelWorkspaceBackupFixture()

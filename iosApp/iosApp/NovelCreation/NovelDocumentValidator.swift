@@ -33,6 +33,10 @@ enum NovelDocumentValidator {
         NovelPolishDocumentValidator.validate(document, issues: &issues)
         NovelGenerationDocumentValidator.validate(document, issues: &issues)
         validateOperationLedger(document, issues: &issues)
+        for path in document.workspacePassthrough.opaqueFiles.keys
+        where !NovelWorkspaceBackup.isValidRelativePath(path) {
+            issues.append("Workspace file path must be relative and stay inside the workspace.")
+        }
 
         if !issues.isEmpty {
             throw NovelError.invalidDocument(Array(Set(issues)).sorted())

@@ -3,6 +3,299 @@ import XCTest
 @testable import iosApp
 
 final class NovelProjectPackageTests: NovelPolishTestCase {
+    func testFileRepositoryImportsCompletedPackageAndWorkspaceHistory() async throws {
+        let packageDocument = try completedHistoricalDocument()
+        let workspaceDocument = try NovelWorkspaceImporter.makeDocument(
+            from: NovelWorkspaceBackup.export(makeNovelWorkspaceBackupFixture())
+        )
+        for document in [packageDocument, workspaceDocument] {
+            let root = try NovelTestFixtures.temporaryDirectory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            XCTAssertFalse(document.activeRuns.isEmpty)
+            XCTAssertTrue(document.activeRuns.allSatisfy { $0.status == .completed })
+            let command = try completedHistoryImportCommand(document: document)
+            let prepared = try NovelProjectLifecycle.prepareImport(command)
+            let expectedDocument = NovelWorkspaceProjectStore.persistableAtRest(prepared.document)
+            XCTAssertNotEqual(expectedDocument, prepared.document)
+            let repository = NovelFileProjectRepository(rootDirectory: root)
+            let creation = DefaultNovelCreation(repository: repository)
+
+            let outcome = try await creation.perform(.importProject(command))
+            let installed = try await repository.loadProject(id: document.project.id)
+            XCTAssertEqual(installed.document, expectedDocument)
+            XCTAssertEqual(installed.access, .readWrite)
+            let record = try await repository.lifecycleOperation(
+                projectID: document.project.id,
+                operationID: command.context.operationID
+            )
+            XCTAssertEqual(record?.state, .completed)
+            XCTAssertEqual(
+                record?.targetProjectSHA256,
+                try NovelProjectPackageCodec.encode(expectedDocument).projectSHA256
+            )
+            let pending = try await repository.listPendingLifecycleOperations()
+            XCTAssertTrue(pending.isEmpty)
+            let replay = try await creation.perform(.importProject(command))
+            XCTAssertEqual(replay, outcome)
+
+            let restartedRepository = NovelFileProjectRepository(rootDirectory: root)
+            let restarted = DefaultNovelCreation(repository: restartedRepository)
+            let restartedReplay = try await restarted.perform(.importProject(command))
+            XCTAssertEqual(restartedReplay, outcome)
+            _ = try await restarted.perform(NovelTestFixtures.materialAction(
+                document: expectedDocument,
+                title: "After Import",
+                content: "The imported project remains writable."
+            ))
+        }
+    }
+
+    func testCompletedPackageReplaceUsesPersistedTargetAndMemoryRepositoryKeepsHistory() async throws {
+        let document = try completedHistoricalDocument()
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        let original = try NovelReducer.apply(
+            .renameProject(NovelRenameProjectCommand(
+                context: mutationContext(document: document),
+                projectID: document.project.id,
+                name: "Project Before Replacement"
+            )),
+            to: document,
+            now: now.addingTimeInterval(20)
+        ).document
+        _ = try await repository.createProject(original, workspaceNative: true)
+        let command = try completedHistoryImportCommand(
+            document: document,
+            policy: .replace(expectedRevision: original.project.revision),
+            expectedRevision: original.project.revision
+        )
+        let creation = DefaultNovelCreation(repository: repository)
+        let outcome = try await creation.perform(.importProject(command))
+        let installed = try await repository.loadProject(id: document.project.id)
+        XCTAssertEqual(installed.document, NovelWorkspaceProjectStore.persistableAtRest(document))
+        let replay = try await creation.perform(.importProject(command))
+        XCTAssertEqual(replay, outcome)
+        let pending = try await repository.listPendingLifecycleOperations()
+        XCTAssertTrue(pending.isEmpty)
+
+        let memory = InMemoryNovelProjectRepository()
+        let memoryCommand = try completedHistoryImportCommand(document: document)
+        _ = try await DefaultNovelCreation(repository: memory).perform(.importProject(memoryCommand))
+        let memoryInstalled = try await memory.loadProject(id: document.project.id)
+        XCTAssertEqual(memoryInstalled.document, document)
+    }
+
+    func testCompletedHistoryImportRetainsOriginalOperationIdentityChecks() async throws {
+        let document = try completedHistoricalDocument()
+        let start = try XCTUnwrap(document.appliedOperations.first { $0.kind == .startRun })
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        let command = NovelImportProjectCommand(
+            context: NovelTestFixtures.context(operationID: start.operationID),
+            projectID: document.project.id,
+            packageData: try NovelProjectPackageCodec.encode(document).data,
+            policy: .reject
+        )
+        await NovelXCTAssertThrowsErrorAsync(
+            try await DefaultNovelCreation(repository: repository).perform(.importProject(command))
+        ) { error in
+            XCTAssertEqual(error as? NovelError, .idempotencyConflict(start.operationID))
+        }
+        let pending = try await repository.listPendingLifecycleOperations()
+        XCTAssertTrue(pending.isEmpty)
+    }
+
+    func testPendingCompletedHistoryImportRecoversFromInstalledPersistedTarget() async throws {
+        let document = try completedHistoricalDocument()
+        let command = try completedHistoryImportCommand(document: document)
+        let prepared = try NovelProjectLifecycle.prepareImport(command)
+        let target = NovelWorkspaceProjectStore.persistableAtRest(prepared.document)
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        // Simulate process death after the project install and before the
+        // lifecycle completion write, using the actual file repository.
+        let record = NovelProjectLifecycleOperationRecord(
+            projectID: command.projectID,
+            operationID: command.context.operationID,
+            kind: .importProject,
+            payloadSHA256: try NovelAction.importProject(command).canonicalPayloadSHA256(),
+            intent: .importCreate,
+            sourceProjectSHA256: nil,
+            targetProjectSHA256: try NovelProjectPackageCodec.encode(target).projectSHA256,
+            outcome: .projectImported(
+                sourceProjectID: prepared.sourceProjectID,
+                projectID: prepared.destinationProjectID,
+                disposition: prepared.disposition,
+                interruptedRunCount: prepared.interruptedRunCount,
+                revision: target.project.revision
+            )
+        )
+        try await repository.writeLifecycleOperation(record)
+        _ = try await repository.createProject(prepared.document, workspaceNative: true)
+        let retry = try await DefaultNovelCreation(repository: repository)
+            .executeImportProject(command, prepared: prepared)
+        XCTAssertEqual(retry, record.outcome)
+
+        // A fresh pending record exercises cold-start recovery rather than
+        // the same-operation retry path above.
+        let recoveryCommand = try completedHistoryImportCommand(document: document)
+        let recoveryRecord = NovelProjectLifecycleOperationRecord(
+            projectID: record.projectID,
+            operationID: recoveryCommand.context.operationID,
+            kind: record.kind,
+            payloadSHA256: try NovelAction.importProject(recoveryCommand).canonicalPayloadSHA256(),
+            intent: record.intent,
+            sourceProjectSHA256: nil,
+            targetProjectSHA256: record.targetProjectSHA256,
+            outcome: record.outcome
+        )
+        try await repository.writeLifecycleOperation(recoveryRecord)
+        let restartedRepository = NovelFileProjectRepository(rootDirectory: root)
+        let restarted = DefaultNovelCreation(repository: restartedRepository)
+        _ = try await restarted.snapshot(.project(document.project.id))
+        let recovered = try await restartedRepository.lifecycleOperation(
+            projectID: document.project.id,
+            operationID: recoveryCommand.context.operationID
+        )
+        XCTAssertEqual(recovered?.state, .completed)
+        let pending = try await restartedRepository.listPendingLifecycleOperations()
+        XCTAssertTrue(pending.isEmpty)
+        _ = try await restarted.perform(NovelTestFixtures.materialAction(
+            document: target,
+            title: "After Recovery",
+            content: "Recovered imports remain writable."
+        ))
+    }
+
+    func testLegacyFullHashPendingImportRetriesOnlyExactInstalledProjection() async throws {
+        let document = try completedHistoricalDocument()
+        let source = try NovelReducer.apply(
+            NovelTestFixtures.renameAction(document: document, name: "Previous Project"),
+            to: document
+        ).document
+        for replacing in [false, true] {
+            for exactTarget in [false, true] {
+                let root = try NovelTestFixtures.temporaryDirectory()
+                defer { try? FileManager.default.removeItem(at: root) }
+                let command = try completedHistoryImportCommand(
+                    document: document,
+                    policy: replacing ? .replace(expectedRevision: source.project.revision) : .reject,
+                    expectedRevision: replacing ? source.project.revision : nil
+                )
+                let prepared = try NovelProjectLifecycle.prepareImport(command)
+                let target = NovelWorkspaceProjectStore.persistableAtRest(prepared.document)
+                let actual = exactTarget ? target : try NovelReducer.apply(
+                    NovelTestFixtures.renameAction(document: target, name: "Later Authoritative State"),
+                    to: target
+                ).document
+                let record = NovelProjectLifecycleOperationRecord(
+                    projectID: command.projectID,
+                    operationID: command.context.operationID,
+                    kind: .importProject,
+                    payloadSHA256: try NovelAction.importProject(command).canonicalPayloadSHA256(),
+                    intent: replacing ? .importReplace(expectedRevision: source.project.revision) : .importCreate,
+                    sourceProjectSHA256: replacing ? try NovelProjectPackageCodec.encode(source).projectSHA256 : nil,
+                    targetProjectSHA256: try NovelProjectPackageCodec.encode(prepared.document).projectSHA256,
+                    outcome: .projectImported(
+                        sourceProjectID: prepared.sourceProjectID,
+                        projectID: prepared.destinationProjectID,
+                        disposition: prepared.disposition,
+                        interruptedRunCount: prepared.interruptedRunCount,
+                        revision: prepared.document.project.revision
+                    )
+                )
+                let repository = NovelFileProjectRepository(rootDirectory: root)
+                try await repository.writeLifecycleOperation(record)
+                _ = try await repository.createProject(actual, workspaceNative: true)
+                let restartedRepository = NovelFileProjectRepository(rootDirectory: root)
+                let restarted = DefaultNovelCreation(repository: restartedRepository)
+
+                let changed = try NovelReducer.apply(
+                    NovelTestFixtures.renameAction(document: document, name: "Different Package"),
+                    to: document
+                ).document
+                let changedCommand = NovelImportProjectCommand(
+                    context: command.context,
+                    projectID: command.projectID,
+                    packageData: try NovelProjectPackageCodec.encode(changed).data,
+                    policy: command.policy
+                )
+                await NovelXCTAssertThrowsErrorAsync(
+                    try await restarted.perform(.importProject(changedCommand))
+                ) { error in
+                    XCTAssertEqual(error as? NovelError, .idempotencyConflict(command.context.operationID))
+                }
+
+                if exactTarget {
+                    let outcome = try await restarted.perform(.importProject(command))
+                    XCTAssertEqual(outcome, record.outcome)
+                    let replay = try await restarted.perform(.importProject(command))
+                    XCTAssertEqual(replay, outcome)
+                    let pending = try await restartedRepository.listPendingLifecycleOperations()
+                    XCTAssertTrue(pending.isEmpty)
+                    _ = try await restarted.perform(NovelTestFixtures.materialAction(
+                        document: target,
+                        title: "After Legacy Retry",
+                        content: "The exact imported project is writable."
+                    ))
+                } else {
+                    await NovelXCTAssertThrowsErrorAsync(
+                        try await restarted.perform(.importProject(command))
+                    ) { error in
+                        XCTAssertEqual(error as? NovelError, .storageIndeterminate(command.projectID))
+                    }
+                    let installed = try await restartedRepository.loadProject(id: command.projectID)
+                    XCTAssertEqual(installed.document, actual)
+                    let pending = try await restartedRepository.lifecycleOperation(
+                        projectID: command.projectID,
+                        operationID: command.context.operationID
+                    )
+                    XCTAssertEqual(pending?.state, .pending)
+                }
+            }
+        }
+    }
+
+    func testPendingImportWithUnrelatedTargetHashStillRejectsRetry() async throws {
+        let document = try completedHistoricalDocument()
+        let command = try completedHistoryImportCommand(document: document)
+        let prepared = try NovelProjectLifecycle.prepareImport(command)
+        let root = try NovelTestFixtures.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = NovelFileProjectRepository(rootDirectory: root)
+        let record = NovelProjectLifecycleOperationRecord(
+            projectID: command.projectID,
+            operationID: command.context.operationID,
+            kind: .importProject,
+            payloadSHA256: try NovelAction.importProject(command).canonicalPayloadSHA256(),
+            intent: .importCreate,
+            sourceProjectSHA256: nil,
+            targetProjectSHA256: String(repeating: "f", count: 64),
+            outcome: .projectImported(
+                sourceProjectID: prepared.sourceProjectID,
+                projectID: prepared.destinationProjectID,
+                disposition: prepared.disposition,
+                interruptedRunCount: prepared.interruptedRunCount,
+                revision: prepared.document.project.revision
+            )
+        )
+        try await repository.writeLifecycleOperation(record)
+        _ = try await repository.createProject(prepared.document, workspaceNative: true)
+        await NovelXCTAssertThrowsErrorAsync(
+            try await DefaultNovelCreation(repository: repository).perform(.importProject(command))
+        ) { error in
+            XCTAssertEqual(error as? NovelError, .idempotencyConflict(command.context.operationID))
+        }
+        let retained = try await repository.lifecycleOperation(
+            projectID: command.projectID,
+            operationID: command.context.operationID
+        )
+        XCTAssertEqual(retained, record)
+    }
+
     func testPackageRoundTripPreservesComplexDocumentAndRawPayloadEvidence() throws {
         let document = try complexRunningDocument()
 
@@ -53,6 +346,41 @@ final class NovelProjectPackageTests: NovelPolishTestCase {
         XCTAssertThrowsError(try NovelProjectPackageCodec.decode(changedPayload)) { error in
             XCTAssertEqual(error as? NovelError, .packageChecksumMismatch)
         }
+    }
+
+    func testImportRejectsExternalPackageWithEscapingOpaquePathBeforeRepositoryAccess() async throws {
+        let document = try NovelTestFixtures.document()
+        let artifact = try NovelProjectPackageCodec.encode(document)
+        // External packages do not pass through our encoder. Rebuild a valid
+        // envelope checksum around an unsafe project payload to exercise decode.
+        let hostile = try mutateEnvelope(artifact.data) { envelope in
+            let payload = try XCTUnwrap(projectPayload(from: envelope))
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+            var passthrough = object["workspacePassthrough"] as? [String: Any] ?? [:]
+            passthrough["opaqueFiles"] = ["../outside.md": "overwrite outside the workspace"]
+            object["workspacePassthrough"] = passthrough
+            let changed = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+            envelope["projectByteCount"] = changed.count
+            envelope["projectSHA256"] = NovelProjectPackageCodec.sha256(changed)
+            envelope["projectJSONBase64"] = changed.base64EncodedString()
+        }
+        assertInvalidPackage(hostile)
+        let repository = CountingNovelProjectRepository()
+        let command = NovelImportProjectCommand(
+            context: NovelTestFixtures.context(),
+            projectID: document.project.id,
+            packageData: hostile,
+            policy: .reject
+        )
+        await NovelXCTAssertThrowsErrorAsync(
+            try await DefaultNovelCreation(repository: repository).perform(.importProject(command))
+        ) { error in
+            guard case .invalidPackage = error as? NovelError else {
+                return XCTFail("Expected unsafe external package rejection, got \(error)")
+            }
+        }
+        let calls = await repository.callCount()
+        XCTAssertEqual(calls, 0)
     }
 
     func testPackageRejectsUnsupportedAndMismatchedSchemas() throws {
@@ -380,6 +708,30 @@ final class NovelProjectPackageTests: NovelPolishTestCase {
 }
 
 private extension NovelProjectPackageTests {
+    func completedHistoricalDocument() throws -> NovelProjectDocumentV1 {
+        let running = try complexRunningDocument()
+        let run = try XCTUnwrap(running.activeRuns.first)
+        return try NovelGenerationReducer.complete(
+            runID: run.id,
+            content: "The sealed gate remains closed.",
+            in: running,
+            now: now.addingTimeInterval(10)
+        ).document
+    }
+
+    func completedHistoryImportCommand(
+        document: NovelProjectDocumentV1,
+        policy: NovelProjectImportPolicy = .reject,
+        expectedRevision: Int64? = nil
+    ) throws -> NovelImportProjectCommand {
+        NovelImportProjectCommand(
+            context: NovelTestFixtures.context(projectRevision: expectedRevision),
+            projectID: document.project.id,
+            packageData: try NovelProjectPackageCodec.encode(document).data,
+            policy: policy
+        )
+    }
+
     func complexRunningDocument() throws -> NovelProjectDocumentV1 {
         var document = try documentWithChapterAndState().document
         document = try NovelReducer.apply(

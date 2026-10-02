@@ -3,6 +3,205 @@ import XCTest
 
 @MainActor
 final class NovelCreationViewModelTests: XCTestCase {
+    func testDismissedChapterPlanDraftSavesOriginAfterSelectionChanges() async throws {
+        let repository = InMemoryNovelProjectRepository()
+        let source = try NovelTestFixtures.document()
+        let other = try NovelTestFixtures.document()
+        _ = try await repository.createProject(source)
+        _ = try await repository.createProject(other)
+        let viewModel = NovelCreationViewModel(creation: DefaultNovelCreation(repository: repository))
+        let selected = await viewModel.selectProject(source.project.id)
+        XCTAssertTrue(selected)
+        let origin = NovelSessionBinding(projectID: source.project.id, branchID: source.branches[0].id)
+        let gate = NovelPlanSaveCompletionGate()
+        let priorSave = Task { @MainActor in
+            let saved = await viewModel.upsertChapterPlan(
+                status: .draft,
+                outlinePlacement: "第一章",
+                goalAndConflict: "先保存的计划",
+                mustHappen: ["抵达城门"],
+                mustNotHappen: [],
+                endingHook: "",
+                visibleFacts: []
+            )
+            // Commit has completed and released the selection lock, while the
+            // dismissing sheet still awaits this task's return.
+            await gate.suspend()
+            return saved
+        }
+        await gate.waitUntilSuspended()
+        XCTAssertFalse(viewModel.isPerforming)
+        let dismissedSave = Task { @MainActor in
+            _ = await priorSave.value
+            return await viewModel.saveChapterPlanDraft(
+                projectID: origin.projectID,
+                branchID: origin.branchID,
+                outlinePlacement: "第一章",
+                goalAndConflict: "关闭面板前继续输入的计划",
+                mustHappen: ["抵达城门", "找到线索"],
+                mustNotHappen: [],
+                endingHook: "旧门重新打开",
+                visibleFacts: []
+            )
+        }
+        let selectedOther = await viewModel.selectProject(other.project.id)
+        XCTAssertTrue(selectedOther)
+        let otherSnapshot = try XCTUnwrap(viewModel.projectSnapshot)
+        await gate.resume()
+        let saved = await dismissedSave.value
+        XCTAssertTrue(saved, viewModel.errorMessage ?? "Source draft did not save.")
+        let sourceInstalled = try await repository.loadProject(id: source.project.id).document
+        let otherInstalled = try await repository.loadProject(id: other.project.id).document
+        XCTAssertEqual(sourceInstalled.chapterPlan(for: origin.branchID)?.goalAndConflict, "关闭面板前继续输入的计划")
+        XCTAssertEqual(otherInstalled, other)
+        XCTAssertEqual(viewModel.selectedProjectID, other.project.id)
+        XCTAssertEqual(viewModel.selectedBranchID, other.branches[0].id)
+        XCTAssertEqual(viewModel.projectSnapshot, otherSnapshot)
+    }
+
+    func testChapterPlanDraftSavesOriginBranchAndRefreshesCurrentProjectVersion() async throws {
+        let original = try NovelTestFixtures.documentWithForkableCheckpoint()
+        let originBranchID = original.branches[0].id
+        let fork = NovelBranchTestFixtures.forkCommand(
+            document: original,
+            sourceBranchID: originBranchID,
+            checkpointID: original.branches[0].headCheckpointID,
+            name: "另一分支"
+        )
+        let document = try NovelReducer.apply(.forkBranch(fork), to: original).document
+        let repository = InMemoryNovelProjectRepository()
+        _ = try await repository.createProject(document)
+        let viewModel = NovelCreationViewModel(creation: DefaultNovelCreation(repository: repository))
+        let selected = await viewModel.selectProject(document.project.id)
+        XCTAssertTrue(selected)
+        _ = await viewModel.selectBranch(fork.branchID)
+        let saved = await viewModel.saveChapterPlanDraft(
+            projectID: document.project.id,
+            branchID: originBranchID,
+            outlinePlacement: "下一章",
+            goalAndConflict: "原分支的草稿",
+            mustHappen: ["找到线索"],
+            mustNotHappen: [],
+            endingHook: "",
+            visibleFacts: []
+        )
+        XCTAssertTrue(saved, viewModel.errorMessage ?? "Source branch draft did not save.")
+        let installed = try await repository.loadProject(id: document.project.id).document
+        XCTAssertEqual(installed.chapterPlan(for: originBranchID)?.goalAndConflict, "原分支的草稿")
+        XCTAssertNil(installed.chapterPlan(for: fork.branchID))
+        XCTAssertEqual(viewModel.selectedBranchID, fork.branchID)
+        XCTAssertEqual(viewModel.projectSnapshot?.project.configRevision, installed.project.configRevision)
+        XCTAssertEqual(viewModel.branchSnapshot?.configRevision, installed.project.configRevision)
+    }
+
+    func testChapterPlanDraftSaveFailureReportsErrorWithoutChangingSelection() async throws {
+        let document = try NovelTestFixtures.document()
+        let repository = InMemoryNovelProjectRepository()
+        _ = try await repository.createProject(document)
+        let viewModel = NovelCreationViewModel(creation: DefaultNovelCreation(repository: repository))
+        _ = await viewModel.selectProject(document.project.id)
+        let saved = await viewModel.saveChapterPlanDraft(
+            projectID: NovelProjectID(),
+            branchID: NovelBranchID(),
+            outlinePlacement: "",
+            goalAndConflict: "不能静默丢掉的草稿",
+            mustHappen: ["找到线索"],
+            mustNotHappen: [],
+            endingHook: "",
+            visibleFacts: []
+        )
+        XCTAssertFalse(saved)
+        XCTAssertNotNil(viewModel.errorMessage)
+        XCTAssertFalse(viewModel.isPerforming)
+        XCTAssertEqual(viewModel.selectedProjectID, document.project.id)
+        let installed = try await repository.loadProject(id: document.project.id).document
+        XCTAssertEqual(installed, document)
+    }
+
+    func testFailedChapterPlanDraftRemainsAvailableForReopenAndManualRetry() async throws {
+        let document = try NovelTestFixtures.document()
+        let repository = InMemoryNovelProjectRepository()
+        _ = try await repository.createProject(document)
+        let viewModel = NovelCreationViewModel(creation: DefaultNovelCreation(repository: repository))
+        _ = await viewModel.selectProject(document.project.id)
+        let draft = NovelChapterPlanDraft(
+            outlinePlacement: "第三章",
+            goalAndConflict: "仍需保存的目标与冲突",
+            mustHappen: ["找到线索", "打开旧门"],
+            mustNotHappen: ["揭露凶手"],
+            endingHook: "旧门后传来脚步",
+            visibleFacts: ["城门已经关闭"]
+        )
+        let busyOwner = UUID()
+        XCTAssertTrue(viewModel.acquireSessionOperation(ownerID: busyOwner))
+        let failed = await viewModel.saveChapterPlanDraft(
+            projectID: document.project.id, branchID: document.branches[0].id,
+            outlinePlacement: draft.outlinePlacement, goalAndConflict: draft.goalAndConflict,
+            mustHappen: draft.mustHappen, mustNotHappen: draft.mustNotHappen,
+            endingHook: draft.endingHook, visibleFacts: draft.visibleFacts
+        )
+        XCTAssertFalse(failed)
+        XCTAssertNotNil(viewModel.errorMessage)
+        viewModel.releaseSessionOperation(ownerID: busyOwner)
+        let recovered = try XCTUnwrap(viewModel.chapterPlanDraft(
+            projectID: document.project.id, branchID: document.branches[0].id
+        ))
+        XCTAssertEqual(recovered, draft, "Reopening the original owner must recover all six fields.")
+        XCTAssertNil(viewModel.chapterPlanDraft(projectID: NovelProjectID(), branchID: document.branches[0].id))
+        XCTAssertNil(viewModel.chapterPlanDraft(projectID: document.project.id, branchID: NovelBranchID()))
+        let storedBeforeRetry = try await repository.loadProject(id: document.project.id).document
+        XCTAssertEqual(storedBeforeRetry, document)
+        let retried = await viewModel.saveChapterPlanDraft(
+            projectID: document.project.id, branchID: document.branches[0].id,
+            outlinePlacement: recovered.outlinePlacement, goalAndConflict: recovered.goalAndConflict,
+            mustHappen: recovered.mustHappen, mustNotHappen: recovered.mustNotHappen,
+            endingHook: recovered.endingHook, visibleFacts: recovered.visibleFacts
+        )
+        XCTAssertTrue(retried, viewModel.errorMessage ?? "Manual retry failed.")
+        XCTAssertNil(viewModel.chapterPlanDraft(projectID: document.project.id, branchID: document.branches[0].id))
+        let installed = try await repository.loadProject(id: document.project.id).document
+        XCTAssertEqual(installed.chapterPlan(for: document.branches[0].id)?.goalAndConflict, draft.goalAndConflict)
+    }
+
+    func testOlderChapterPlanSaveDoesNotReplaceOrClearNewerRetainedDraft() async throws {
+        let document = try NovelTestFixtures.document()
+        let repository = InMemoryNovelProjectRepository()
+        _ = try await repository.createProject(document)
+        let blocking = BranchSnapshotBlockingNovelCreation(
+            base: DefaultNovelCreation(repository: repository), blockedBranchID: NovelBranchID()
+        )
+        let viewModel = NovelCreationViewModel(creation: blocking)
+        _ = await viewModel.selectProject(document.project.id)
+        let older = NovelChapterPlanDraft(
+            outlinePlacement: "第三章", goalAndConflict: "先关闭的草稿", mustHappen: ["找到线索"],
+            mustNotHappen: [], endingHook: "", visibleFacts: []
+        )
+        let newer = NovelChapterPlanDraft(
+            outlinePlacement: "第三章", goalAndConflict: "重开面板后继续改的草稿", mustHappen: ["找到线索", "打开旧门"],
+            mustNotHappen: [], endingHook: "脚步声", visibleFacts: []
+        )
+        viewModel.retainChapterPlanDraft(older, projectID: document.project.id, branchID: document.branches[0].id)
+        let gate = NovelPlanSaveCompletionGate()
+        await blocking.blockNextProjectSnapshot(using: gate)
+        let save = Task { @MainActor in
+            await viewModel.saveChapterPlanDraft(
+                projectID: document.project.id, branchID: document.branches[0].id,
+                outlinePlacement: older.outlinePlacement, goalAndConflict: older.goalAndConflict,
+                mustHappen: older.mustHappen, mustNotHappen: older.mustNotHappen,
+                endingHook: older.endingHook, visibleFacts: older.visibleFacts,
+                retainingDraft: false
+            )
+        }
+        await gate.waitUntilSuspended()
+        viewModel.retainChapterPlanDraft(newer, projectID: document.project.id, branchID: document.branches[0].id)
+        await gate.resume()
+        let saved = await save.value
+        XCTAssertTrue(saved)
+        XCTAssertEqual(viewModel.chapterPlanDraft(projectID: document.project.id, branchID: document.branches[0].id), newer)
+        let installed = try await repository.loadProject(id: document.project.id).document
+        XCTAssertEqual(installed.chapterPlan(for: document.branches[0].id)?.goalAndConflict, older.goalAndConflict)
+    }
+
     func testSessionOperationRequiresTheMatchingOwnerToReleaseBusyState() {
         let viewModel = NovelCreationViewModel(
             creation: DefaultNovelCreation(repository: InMemoryNovelProjectRepository())
@@ -771,8 +970,14 @@ final class NovelCreationViewModelTests: XCTestCase {
         let repository = NovelFileProjectRepository(rootDirectory: root)
         let document = try NovelTestFixtures.document()
         _ = try await repository.createProject(document)
-        let primaryURL = root.appendingPathComponent("projects", isDirectory: true)
-            .appendingPathComponent("\(document.project.id.description).json")
+        // createProject writes a sharded package; corrupt its actual primary
+        // layout rather than an unused legacy monofile beside it.
+        let primaryURL = NovelProjectShardedStorage.layoutURL(in:
+            NovelProjectShardedStorage.packageDirectory(
+                projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
+                projectID: document.project.id
+            )
+        )
         try Data("corrupt".utf8).write(to: primaryURL, options: [.atomic])
         let viewModel = NovelCreationViewModel(
             creation: DefaultNovelCreation(repository: repository)
@@ -797,8 +1002,12 @@ final class NovelCreationViewModelTests: XCTestCase {
         let document = try NovelTestFixtures.document()
         _ = try await repository.createProject(document)
         let package = try NovelProjectPackageCodec.encode(document)
-        let primaryURL = root.appendingPathComponent("projects", isDirectory: true)
-            .appendingPathComponent("\(document.project.id.description).json")
+        let primaryURL = NovelProjectShardedStorage.layoutURL(in:
+            NovelProjectShardedStorage.packageDirectory(
+                projectDirectory: root.appendingPathComponent("projects", isDirectory: true),
+                projectID: document.project.id
+            )
+        )
         try Data("corrupt".utf8).write(to: primaryURL, options: [.atomic])
         let viewModel = NovelCreationViewModel(
             creation: DefaultNovelCreation(repository: repository)
@@ -1879,7 +2088,7 @@ final class NovelCreationViewModelTests: XCTestCase {
         XCTAssertNil(viewModel.errorMessage)
     }
 
-    func testIncompatibleHistoricalVersionBecomesManualRewriteAndRequiresSync() async throws {
+    func testIncompatibleHistoricalVersionBecomesManualRewriteWithAtomicPlotCommit() async throws {
         var fixture = try documentWithChapter()
         let currentVersion = try XCTUnwrap(fixture.document.chapterVersions.first(where: {
             $0.id == fixture.versionID
@@ -1916,24 +2125,29 @@ final class NovelCreationViewModelTests: XCTestCase {
         XCTAssertEqual(selected.title, historical.title)
         XCTAssertEqual(selected.content, historical.content)
         XCTAssertNotEqual(selected.factCompatibilityID, historical.factCompatibilityID)
-        XCTAssertEqual(branch.syncStatus, .needsSync)
-        XCTAssertEqual(branch.headCheckpointID, fixture.document.branches[0].headCheckpointID)
-        XCTAssertEqual(branch.headRevision, fixture.document.branches[0].headRevision)
-        XCTAssertEqual(edited.stateSnapshots, fixture.document.stateSnapshots)
-
-        let failurePersisted = await eventually {
-            viewModel.projectSnapshot?.pendingOperations.first?.status == .retryable
-        }
-        XCTAssertTrue(failurePersisted)
-        XCTAssertNotNil(viewModel.automaticStateSyncFailureMessage(
+        // Contract D-B: the manual rewrite and deterministic plot module are
+        // one commit; this latest-chapter edit does not need a model sync run.
+        XCTAssertEqual(branch.syncStatus, .synchronized)
+        XCTAssertNotEqual(branch.headCheckpointID, fixture.document.branches[0].headCheckpointID)
+        XCTAssertEqual(branch.headRevision, fixture.document.branches[0].headRevision + 1)
+        XCTAssertEqual(edited.stateSnapshots.count, fixture.document.stateSnapshots.count + 1)
+        XCTAssertEqual(Array(edited.stateSnapshots.dropLast()), fixture.document.stateSnapshots)
+        let checkpoint = try XCTUnwrap(edited.checkpoints.first { $0.id == branch.headCheckpointID })
+        XCTAssertEqual(checkpoint.kind, .manualSync)
+        XCTAssertEqual(checkpoint.chapterSelections, branch.workingChapterSelections)
+        let plot = try XCTUnwrap(edited.stateSnapshots.first { $0.id == branch.currentStateSnapshotID })
+        let module = try XCTUnwrap(plot.chapterPlots.first { $0.chapterID == selected.chapterID })
+        XCTAssertTrue(module.text.contains(historical.content))
+        XCTAssertFalse(module.stale)
+        XCTAssertTrue(edited.pendingOperations.isEmpty)
+        XCTAssertEqual(edited.factAttempts, fixture.document.factAttempts)
+        XCTAssertEqual(edited.generationReceipts, fixture.document.generationReceipts)
+        XCTAssertNil(viewModel.automaticStateSyncFailureMessage(
             projectID: edited.project.id,
             branchID: branch.id
         ))
-        // Banner-only recovery; modal alert would interrupt retry UX.
         XCTAssertNil(viewModel.errorMessage)
-        XCTAssertEqual(viewModel.projectSnapshot?.pendingOperations.count, 1)
-        XCTAssertEqual(viewModel.projectSnapshot?.pendingOperations.first?.kind, .manualSync)
-        XCTAssertEqual(viewModel.projectSnapshot?.pendingOperations.first?.status, .retryable)
+        XCTAssertTrue(viewModel.projectSnapshot?.pendingOperations.isEmpty == true)
     }
 
     private func documentWithChapter() throws -> (
@@ -2060,12 +2274,36 @@ final class NovelCreationViewModelTests: XCTestCase {
     }
 }
 
+private actor NovelPlanSaveCompletionGate {
+    private var isSuspended = false
+    private var suspensionWaiter: CheckedContinuation<Void, Never>?
+    private var resumeWaiter: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        isSuspended = true
+        suspensionWaiter?.resume()
+        suspensionWaiter = nil
+        await withCheckedContinuation { resumeWaiter = $0 }
+    }
+
+    func waitUntilSuspended() async {
+        if isSuspended { return }
+        await withCheckedContinuation { suspensionWaiter = $0 }
+    }
+
+    func resume() {
+        resumeWaiter?.resume()
+        resumeWaiter = nil
+    }
+}
+
 private actor BranchSnapshotBlockingNovelCreation: NovelCreation {
     private let base: any NovelCreation
     private let blockedBranchID: NovelBranchID
     private var didRequestBranchSnapshot = false
     private var requestWaiter: CheckedContinuation<Void, Never>?
     private var branchWaiter: CheckedContinuation<Void, Never>?
+    private var nextProjectSnapshotGate: NovelPlanSaveCompletionGate?
 
     init(base: any NovelCreation, blockedBranchID: NovelBranchID) {
         self.base = base
@@ -2073,6 +2311,10 @@ private actor BranchSnapshotBlockingNovelCreation: NovelCreation {
     }
 
     func snapshot(_ scope: NovelSnapshotScope) async throws -> NovelSnapshot {
+        if case .project = scope, let gate = nextProjectSnapshotGate {
+            nextProjectSnapshotGate = nil
+            await gate.suspend()
+        }
         if case .branch(_, let branchID) = scope, branchID == blockedBranchID {
             didRequestBranchSnapshot = true
             requestWaiter?.resume()
@@ -2082,6 +2324,10 @@ private actor BranchSnapshotBlockingNovelCreation: NovelCreation {
             }
         }
         return try await base.snapshot(scope)
+    }
+
+    func blockNextProjectSnapshot(using gate: NovelPlanSaveCompletionGate) {
+        nextProjectSnapshotGate = gate
     }
 
     func waitUntilBranchSnapshotRequested() async {

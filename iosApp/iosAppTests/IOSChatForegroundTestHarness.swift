@@ -379,7 +379,8 @@ final class IOSChatForegroundHarness {
         seedMessages: [UIMessage]? = nil,
         searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport(),
         chatMaxToolResumeCount: Int? = nil,
-        localToolExecutor: IOSLocalToolExecutor? = nil
+        localToolExecutor: IOSLocalToolExecutor? = nil,
+        persistMessages: @escaping @MainActor (KotlinUuid?) async -> Bool = { _ in true }
     ) {
         let suite = "app.amber.ios.tests.foreground.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -460,7 +461,7 @@ final class IOSChatForegroundHarness {
             setPendingCouncilApproval: { _ in },
             setPendingAskUser: { _ in },
             setContextCompactState: { _ in },
-            persistMessages: { _ in true },
+            persistMessages: persistMessages,
             capturePersistMessagesBaseline: { _ in nil },
             persistMessagesSnapshot: { [weak self] snapshot, _, _ in
                 self?.persistedSnapshots.append(snapshot)

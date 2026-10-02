@@ -15,6 +15,16 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
 
     private typealias F = IOSChatForegroundFixtures
 
+    private final class AutoApproveSearchTransport: IOSSearchHTTPTransport {
+        private(set) var requestCount = 0
+
+        func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+            requestCount += 1
+            let body = #"{"web":{"results":[{"title":"Amber Result","url":"https://example.test/amber","description":"Fixture search result"}]}}"#
+            return (IOSForegroundNoopSearchTransport.okResponse(for: request), Data(body.utf8))
+        }
+    }
+
     private func makeRuntime(
         searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport(),
         enableWebSearch: Bool = true
@@ -90,7 +100,10 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
     func testSearchExecutorExecutesWhenGlobalAutoApproveOn() async {
         UserDefaults.standard.set(true, forKey: "app.amber.ios.globalAutoApprove")
         defer { UserDefaults.standard.set(false, forKey: "app.amber.ios.globalAutoApprove") }
-        let (runtime, _, _) = makeRuntime()
+        let transport = AutoApproveSearchTransport()
+        let (runtime, _, sharedSettings) = makeRuntime(searchTransport: transport)
+        sharedSettings.addSearchProvider(name: "Fixture Brave", apiKey: "brave-fixture-key", serviceType: "brave")
+        XCTAssertEqual(IOSSearchExecutor.searchProviderSelection(settings: sharedSettings.snapshot).route, .braveAPI)
         let bridge = IosToolExposureBridge(
             tools: ToolKt.iosToolDeclarations(names: ["search_web"])
         )
@@ -119,6 +132,7 @@ final class IOSForegroundToolExecutorsTests: XCTestCase {
         }
         let text = parts.compactMap { ($0 as? UIMessagePart.Text)?.text }.joined()
         XCTAssertTrue(text.contains("Amber Result"), "noop 传输的最小结果页应进入 output,实际:\(text)")
+        XCTAssertEqual(transport.requestCount, 1, "搜索结果必须来自注入的 fixture 传输")
         XCTAssertNil(box.take("tc-9"), "已执行的调用不得残留审批卡")
     }
 

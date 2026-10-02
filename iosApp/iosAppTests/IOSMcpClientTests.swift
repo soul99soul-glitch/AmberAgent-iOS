@@ -561,6 +561,148 @@ final class IOSMcpClientTests: XCTestCase {
         XCTAssertNotNil(decoded?["properties"], "mcp_describe_tool must receive a complete JSON schema")
     }
 
+    func testListToolsFollowsAllCursorsAndPreservesLastPageMetadata() async throws {
+        let transport = FakeMcpHTTPTransport(responses: paginatedToolResponses())
+        let client = IOSMcpClient(transport: transport)
+        _ = try await client.connect(config: .streamableHTTP(name: "docs", url: "https://example.com/mcp"))
+
+        let tools = try await client.listTools()
+
+        XCTAssertEqual(tools.map(\.name), ["first", "second", "last"])
+        XCTAssertEqual(transport.sentMethods, [
+            "initialize", "notifications/initialized", "tools/list", "tools/list", "tools/list",
+        ])
+        XCTAssertEqual(
+            transport.sentRequestParams.filter { $0["cursor"] != nil }.compactMap { $0["cursor"] as? String },
+            ["page-2", "page-3"]
+        )
+        XCTAssertTrue(transport.sentRequestParams[2].isEmpty, "the first tools/list has no cursor")
+        let last = try XCTUnwrap(tools.last(where: { $0.name == "last" }))
+        XCTAssertEqual(last.description, "Read the last page")
+        XCTAssertEqual(last.readOnlyHint, true)
+        XCTAssertEqual(last.inputSchema, #"{"properties":{"q":{"type":"string"}},"required":["q"],"type":"object"}"#)
+    }
+
+    func testMcpManagerDiscoversAndCallsToolFromLastPage() async throws {
+        let transport = FakeMcpHTTPTransport(responses: paginatedToolResponses() + [
+            ["jsonrpc": "2.0", "id": 5, "result": ["content": [["type": "text", "text": "last-page-result"]]]],
+        ])
+        let config = IOSMcpServerConfig.streamableHTTP(name: "docs", url: "https://example.com/mcp")
+        let manager = IOSMcpManager(
+            serverProvider: { [config] },
+            clientFactory: { _ in IOSMcpClient(transport: transport) }
+        )
+        await manager.syncAll()
+
+        XCTAssertEqual(manager.tools.map(\.tool.name), ["first", "second", "last"])
+        let output = try await manager.callTool(serverName: "docs", toolName: "last", arguments: ["q": "amber"])
+
+        XCTAssertEqual(output, "last-page-result")
+        XCTAssertEqual(transport.sentMethods.last, "tools/call")
+        XCTAssertEqual(transport.sentRequestParams.last?["name"] as? String, "last")
+        let arguments = transport.sentRequestParams.last?["arguments"] as? [String: Any]
+        XCTAssertEqual(arguments?["q"] as? String, "amber")
+    }
+
+    private func paginatedToolResponses() -> [[String: Any]] {
+        [
+            ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+            ["jsonrpc": "2.0", "id": 2, "result": [
+                "tools": [["name": "first", "description": "First page"]], "nextCursor": "page-2",
+            ]],
+            ["jsonrpc": "2.0", "id": 3, "result": [
+                "tools": [["name": "second", "description": "Second page"]], "nextCursor": "page-3",
+            ]],
+            ["jsonrpc": "2.0", "id": 4, "result": ["tools": [[
+                "name": "last",
+                "description": "Read the last page",
+                "inputSchema": [
+                    "type": "object", "properties": ["q": ["type": "string"]], "required": ["q"],
+                ],
+                "annotations": ["readOnlyHint": true],
+            ]]]],
+        ]
+    }
+
+    func testStreamableHTTPSSELFIgnoresNotificationsAndWrongIDsBeforeMatchingResult() async throws {
+        try await assertSSEMatchingResult(lineEnding: "\n")
+    }
+
+    func testStreamableHTTPSSECRLFIgnoresNotificationsAndWrongIDsBeforeMatchingResult() async throws {
+        try await assertSSEMatchingResult(lineEnding: "\r\n")
+    }
+
+    func testStreamableHTTPSSELFReturnsMatchingRPCErrorAfterUnrelatedEvents() async throws {
+        try await assertSSEMatchingError(lineEnding: "\n")
+    }
+
+    func testStreamableHTTPSSECRLFReturnsMatchingRPCErrorAfterUnrelatedEvents() async throws {
+        try await assertSSEMatchingError(lineEnding: "\r\n")
+    }
+
+    func testStreamableHTTPSSEWithoutMatchingResponseFailsWithInvalidResponse() async throws {
+        for lineEnding in ["\n", "\r\n"] {
+            let client = try await connectedSSEHTTPClient(events: [
+                [#"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}"#],
+                [#"{"jsonrpc":"2.0","id":99,"error":{"message":"unrelated error"}}"#],
+                [#"{"jsonrpc":"2.0","id":"2","result":{"content":[{"type":"text","text":"wrong id type"}]}}"#],
+            ], lineEnding: lineEnding)
+
+            do {
+                _ = try await client.callTool(name: "echo", arguments: [:])
+                XCTFail("An SSE body without this numeric request id must fail")
+            } catch let error as IOSMcpClientError {
+                XCTAssertEqual(error, .invalidResponse)
+            }
+        }
+    }
+
+    private func assertSSEMatchingResult(lineEnding: String) async throws {
+        let client = try await connectedSSEHTTPClient(events: [
+            [#"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}"#],
+            [#"{"jsonrpc":"2.0","id":99,"error":{"message":"unrelated error"}}"#],
+            [#"{"jsonrpc":"2.0","id":"2","result":{"content":[{"type":"text","text":"wrong id type"}]}}"#],
+            [#"{"jsonrpc":"2.0","id":2,"result":{"content":["#,
+             #"{"type":"text","text":"matched result"}]}}"#],
+        ], lineEnding: lineEnding)
+
+        let output = try await client.callTool(name: "echo", arguments: [:])
+
+        XCTAssertEqual(output, "matched result")
+    }
+
+    private func assertSSEMatchingError(lineEnding: String) async throws {
+        let client = try await connectedSSEHTTPClient(events: [
+            [#"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progress":1}}"#],
+            [#"{"jsonrpc":"2.0","id":99,"result":{"content":[{"type":"text","text":"unrelated result"}]}}"#],
+            [#"{"jsonrpc":"2.0","id":2,"error":{"code":-32000,"message":"matching error"}}"#],
+        ], lineEnding: lineEnding)
+
+        do {
+            _ = try await client.callTool(name: "echo", arguments: [:])
+            XCTFail("The matching JSON-RPC error must be propagated")
+        } catch let error as IOSMcpClientError {
+            XCTAssertEqual(error, .rpcError("matching error"))
+        }
+    }
+
+    private func connectedSSEHTTPClient(events: [[String]], lineEnding: String) async throws -> IOSMcpClient {
+        let body = events.map { lines in
+            (["event: message"] + lines.map { "data: \($0)" }).joined(separator: lineEnding)
+        }.joined(separator: lineEnding + lineEnding) + lineEnding + lineEnding
+        let transport = FakeMcpHTTPTransport(
+            responses: [
+                ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:]]],
+                [:],
+            ],
+            responseHeaders: [[:], ["Content-Type": "text/event-stream"]],
+            rawResponseBodies: [1: Data(body.utf8)]
+        )
+        let client = IOSMcpClient(transport: transport)
+        _ = try await client.connect(config: .streamableHTTP(name: "docs", url: "https://example.com/mcp"))
+        return client
+    }
+
     func testCallToolReturnsTextContent() async throws {
         let transport = FakeMcpHTTPTransport(responses: [
             ["jsonrpc": "2.0", "id": 1, "result": ["protocolVersion": "2024-11-05", "capabilities": [:], "serverInfo": ["name": "fake", "version": "1"]]],
@@ -743,6 +885,7 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
     private let delayedMethods: [String: UInt64]
     private(set) var sentMethods: [String] = []
     private(set) var sentRequestHeaders: [[String: String]] = []
+    private(set) var sentRequestParams: [[String: Any]] = []
     private(set) var disconnectedServers: [String] = []
     private(set) var cancelledMethods: Set<String> = []
     var onCancellation: ((String) -> Void)?
@@ -753,11 +896,12 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
         responses: [[String: Any]],
         responseStatuses: [Int] = [],
         responseHeaders: [[String: String]] = [],
+        rawResponseBodies: [Int: Data] = [:],
         hangingMethods: Set<String> = [],
         delayedMethods: [String: UInt64] = [:]
     ) {
         self.responses = responses.enumerated().map { index, object in
-            let body = try! JSONSerialization.data(withJSONObject: object)
+            let body = rawResponseBodies[index] ?? (try! JSONSerialization.data(withJSONObject: object))
             let status = responseStatuses.indices.contains(index) ? responseStatuses[index] : 200
             let headers = responseHeaders.indices.contains(index) ? responseHeaders[index] : [:]
             return IOSMcpHTTPResponse(status: status, body: body, headers: headers)
@@ -770,6 +914,7 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
         if let method = payload["method"] as? String {
             sentMethods.append(method)
             sentRequestHeaders.append(config.headers)
+            sentRequestParams.append(payload["params"] as? [String: Any] ?? [:])
             activeRequests += 1
             maximumConcurrentRequests = max(maximumConcurrentRequests, activeRequests)
             defer { activeRequests -= 1 }
@@ -801,6 +946,7 @@ private final class FakeMcpHTTPTransport: IOSMcpHTTPTransport {
         if let method = payload["method"] as? String {
             sentMethods.append(method)
             sentRequestHeaders.append(config.headers)
+            sentRequestParams.append(payload["params"] as? [String: Any] ?? [:])
         }
         return IOSMcpHTTPResponse(status: 200)
     }

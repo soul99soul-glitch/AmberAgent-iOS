@@ -1570,6 +1570,16 @@ final class NovelSessionViewModel {
         answer: String
     ) async -> Bool {
         guard answeringAskUserMessageID != promptMessageID else { return false }
+        guard locallyResolvedAskUser[promptMessageID] == nil,
+              !durableMessages.contains(where: {
+                  if case .some(.askUserAnswer(let response)) = $0.interaction {
+                      return response.promptMessageID == promptMessageID
+                  }
+                  return false
+              }) else {
+            operationErrorMessage = "这个问题已经回答过了。"
+            return false
+        }
         guard let promptMessage = durableMessages.first(where: {
             $0.id == promptMessageID && $0.role == .assistant
         }), case .some(.askUser(let prompt)) = promptMessage.interaction else {
@@ -1623,18 +1633,22 @@ final class NovelSessionViewModel {
         promptMessageID: NovelMessageID,
         answer: String
     ) async -> Bool {
+        let approvalResponse = NovelAskUserResponse(
+            promptMessageID: promptMessageID,
+            answer: answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         if let proposal = prompt.ghostwritePlan {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if let chapterCount = NovelGhostwritePlanApproval.approvedChapterCount(from: trimmed) {
                 guard await applyGhostwritePlanApproval(
                     proposal,
-                    targetChapterCount: chapterCount
+                    targetChapterCount: chapterCount,
+                    approvalResponse: approvalResponse
                 ) else { return false }
                 locallyResolvedAskUser[promptMessageID] = NovelAskUserResponse(
                     promptMessageID: promptMessageID,
                     answer: trimmed
                 )
-                operationErrorMessage = nil
                 return true
             } else if trimmed != NovelGhostwritePlanApproval.rejectOption {
                 operationErrorMessage = "请选择代笔章数后开始，或暂不开始。"
@@ -1644,7 +1658,7 @@ final class NovelSessionViewModel {
         if let revision = prompt.chapterRevision {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed == NovelChapterRevisionApproval.approveOption {
-                guard await applyChapterRevision(revision) else { return false }
+                guard await applyChapterRevision(revision, approvalResponse: approvalResponse) else { return false }
                 locallyResolvedAskUser[promptMessageID] = NovelAskUserResponse(
                     promptMessageID: promptMessageID,
                     answer: trimmed
@@ -1659,7 +1673,9 @@ final class NovelSessionViewModel {
         if let plot = prompt.workspacePlot {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed == NovelWorkspacePlotApproval.approveOption {
-                if let failure = await workspace.applyWorkspacePlot(path: plot.path, body: plot.body) {
+                if let failure = await workspace.applyWorkspacePlot(
+                    path: plot.path, body: plot.body, approvalResponse: approvalResponse
+                ) {
                     operationErrorMessage = failure
                     return false
                 }
@@ -1678,7 +1694,7 @@ final class NovelSessionViewModel {
         if let revert = prompt.manuscriptRevert {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed == NovelManuscriptRevertApproval.approveOption {
-                guard await applyManuscriptRevert(revert) else { return false }
+                guard await applyManuscriptRevert(revert, approvalResponse: approvalResponse) else { return false }
                 locallyResolvedAskUser[promptMessageID] = NovelAskUserResponse(
                     promptMessageID: promptMessageID,
                     answer: trimmed
@@ -1693,7 +1709,7 @@ final class NovelSessionViewModel {
         if let deletion = prompt.manuscriptDelete {
             let trimmed = answer.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed == NovelManuscriptDeleteApproval.approveOption {
-                guard await applyManuscriptDelete(deletion) else { return false }
+                guard await applyManuscriptDelete(deletion, approvalResponse: approvalResponse) else { return false }
                 locallyResolvedAskUser[promptMessageID] = NovelAskUserResponse(
                     promptMessageID: promptMessageID,
                     answer: trimmed
@@ -1713,14 +1729,14 @@ final class NovelSessionViewModel {
            workspace.projectSnapshot?.activeRuns.first(where: {
                $0.id == promptRunID
            })?.kind == .quickStart {
-            guard let runID = await workspace.startQuickStartSuggestions(
+            guard await workspace.startQuickStartSuggestions(
                 exactUserText: answer,
                 askUserResponse: response
-            ) else { return false }
+            ) != nil else { return false }
             operationErrorMessage = nil
             refreshErrorMessage = nil
             await bindToCurrentSelection()
-            return activeRunID == runID
+            return true
         }
         let draft = NovelSessionRunDraft(
             kind: .discussion,
@@ -1737,7 +1753,8 @@ final class NovelSessionViewModel {
 
     private func applyGhostwritePlanApproval(
         _ proposal: NovelGhostwritePlanProposal,
-        targetChapterCount: Int
+        targetChapterCount: Int,
+        approvalResponse: NovelAskUserResponse
     ) async -> Bool {
         guard let binding,
               binding.projectID == proposal.projectID,
@@ -1751,6 +1768,11 @@ final class NovelSessionViewModel {
         }
         guard !isGhostwriting, !isRunning else {
             operationErrorMessage = "当前已有生成在进行，请结束后再确认代笔计划。"
+            return false
+        }
+        if let blocker = ghostwriteBlocker, blocker != .chapterPlanRequired,
+           !(blocker == .ghostwriteRequirementsMissing && ghostwriteReadinessIssue == .missingChapterPlan) {
+            operationErrorMessage = blocker.displayName
             return false
         }
         guard branch.headRevision == proposal.expectedHeadRevision,
@@ -1778,6 +1800,8 @@ final class NovelSessionViewModel {
             return false
         }
 
+        let needsModeChange = project.project.collaborationMode != .ghostwrite
+        let hasUpcomingArc = !proposal.upcomingArc.isEmpty
         let planSaved = await workspace.upsertChapterPlan(
             planID: proposal.planID,
             status: .confirmed,
@@ -1786,21 +1810,25 @@ final class NovelSessionViewModel {
             mustHappen: proposal.mustHappen,
             mustNotHappen: proposal.mustNotHappen,
             endingHook: proposal.endingHook,
-            visibleFacts: proposal.visibleFacts
+            visibleFacts: proposal.visibleFacts,
+            approvalResponse: !needsModeChange && !hasUpcomingArc ? approvalResponse : nil
         )
         guard planSaved else {
             operationErrorMessage = workspace.errorMessage ?? "本章计划保存失败，请重试。"
             return false
         }
-        if !proposal.upcomingArc.isEmpty {
-            let arcSaved = await workspace.upsertUpcomingArc(beats: proposal.upcomingArc)
+        if hasUpcomingArc {
+            let arcSaved = await workspace.upsertUpcomingArc(
+                beats: proposal.upcomingArc,
+                approvalResponse: needsModeChange ? nil : approvalResponse
+            )
             guard arcSaved else {
                 operationErrorMessage = workspace.errorMessage ?? "后续剧情参考保存失败，请重试。"
                 return false
             }
         }
-        if workspace.projectSnapshot?.project.collaborationMode != .ghostwrite {
-            let modeSaved = await workspace.setCollaborationMode(.ghostwrite)
+        if needsModeChange {
+            let modeSaved = await workspace.setCollaborationMode(.ghostwrite, approvalResponse: approvalResponse)
             guard modeSaved else {
                 operationErrorMessage = workspace.errorMessage ?? "未能切入代笔模式，请重试。"
                 return false
@@ -1808,10 +1836,16 @@ final class NovelSessionViewModel {
         }
         reconcileComposerIntent()
         ghostwriteTargetChapterCount = NovelGhostwriteBatch.clamp(targetChapterCount)
-        return startGhostwriteChapter(targetChapterCount: ghostwriteTargetChapterCount)
+        // The configuration approval is durable. A later pipeline start failure
+        // remains actionable through the existing ghostwrite start/continue UI.
+        _ = startGhostwriteChapter(targetChapterCount: ghostwriteTargetChapterCount)
+        return true
     }
 
-    private func applyChapterRevision(_ proposal: NovelChapterRevisionProposal) async -> Bool {
+    private func applyChapterRevision(
+        _ proposal: NovelChapterRevisionProposal,
+        approvalResponse: NovelAskUserResponse
+    ) async -> Bool {
         if isGhostwriting {
             operationErrorMessage = "代笔正在推进本章，暂时不能改正文。"
             return false
@@ -1847,7 +1881,8 @@ final class NovelSessionViewModel {
         let saved = await workspace.saveManualRewrite(
             chapterID: proposal.chapterID,
             title: version.title,
-            content: replaced.newContent
+            content: replaced.newContent,
+            approvalResponse: approvalResponse
         )
         if !saved {
             operationErrorMessage = workspace.errorMessage ?? "改正文保存失败，请重试。"
@@ -1856,12 +1891,15 @@ final class NovelSessionViewModel {
         return true
     }
 
-    private func applyManuscriptRevert(_ proposal: NovelManuscriptRevertProposal) async -> Bool {
+    private func applyManuscriptRevert(
+        _ proposal: NovelManuscriptRevertProposal,
+        approvalResponse: NovelAskUserResponse
+    ) async -> Bool {
         if isGhostwriting {
             operationErrorMessage = "代笔正在推进本章，暂时不能回退章节。"
             return false
         }
-        let reverted = await workspace.revertRecentChapters(proposal)
+        let reverted = await workspace.revertRecentChapters(proposal, approvalResponse: approvalResponse)
         if !reverted {
             operationErrorMessage = workspace.errorMessage ?? "回退章节失败，请重试。"
             return false
@@ -1869,7 +1907,10 @@ final class NovelSessionViewModel {
         return true
     }
 
-    private func applyManuscriptDelete(_ proposal: NovelManuscriptDeleteProposal) async -> Bool {
+    private func applyManuscriptDelete(
+        _ proposal: NovelManuscriptDeleteProposal,
+        approvalResponse: NovelAskUserResponse
+    ) async -> Bool {
         if isGhostwriting {
             operationErrorMessage = "代笔正在推进本章，暂时不能从正文目录删除章节。"
             return false
@@ -1885,8 +1926,11 @@ final class NovelSessionViewModel {
             operationErrorMessage = "当前分支已经变化，请重新发起删除。"
             return false
         }
-        for chapterID in proposal.chapterIDs {
-            let deleted = await workspace.deleteChapterFromManuscript(chapterID: chapterID)
+        for (index, chapterID) in proposal.chapterIDs.enumerated() {
+            let deleted = await workspace.deleteChapterFromManuscript(
+                chapterID: chapterID,
+                approvalResponse: index == proposal.chapterIDs.count - 1 ? approvalResponse : nil
+            )
             if !deleted {
                 operationErrorMessage = workspace.errorMessage ?? "从正文目录删除失败，请重试。"
                 return false
@@ -2104,7 +2148,7 @@ final class NovelSessionViewModel {
             lastRetryDraft = nil
             lastRetryRunID = nil
             await bindToCurrentSelection()
-            return activeRunID == retryRunID
+            return true
         }
         guard let draft = draft(for: run) else {
             if operationErrorMessage == nil {

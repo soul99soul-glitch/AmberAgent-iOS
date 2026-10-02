@@ -1468,9 +1468,15 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         _ = await researchTask.value
 
         XCTAssertEqual(
+            Set(transport.queries),
+            ["取消时停止后续搜索"],
+            "Cancellation must stop the serial query loop; parallel engines for the first query are expected."
+        )
+        XCTAssertGreaterThanOrEqual(transport.requestCount, 2)
+        XCTAssertEqual(
+            transport.cancelledRequestCount,
             transport.requestCount,
-            2,
-            "Cancellation must stop the serial search loop after the in-flight request."
+            "Every in-flight engine request must receive cancellation."
         )
     }
 
@@ -2092,6 +2098,96 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         XCTAssertEqual(summary.status, .completed)
         XCTAssertEqual(runner.taskStatus(taskId: summary.taskId), .completed)
         XCTAssertNil(runner.taskStatus(taskId: "missing-task"))
+    }
+
+    func testLateDurableStartFailureCannotReleaseReplacementDiscussion() async throws {
+        let oldStart = CouncilDurableAwaitGate(started: expectation(description: "old durable start paused"))
+        let replacementStart = CouncilDurableAwaitGate(started: expectation(description: "replacement durable start paused"))
+        var starts = 0
+        let harness = try makeViewModelHarness(
+            streamer: ScriptedCouncilStreamer([
+                .success("新议题"), .success("新工程发言"), .success("新风险发言"), .success("新主持总结")
+            ]),
+            durableRunAwaiter: { point, operation in
+                let result = await operation()
+                guard case .start = point else { return result }
+                starts += 1
+                if starts == 1 {
+                    await oldStart.wait()
+                    return false
+                }
+                await replacementStart.wait()
+                return result
+            }
+        )
+        defer { oldStart.resume(); replacementStart.resume() }
+        harness.viewModel.inputText = "旧议题"
+        harness.viewModel.send()
+        await fulfillment(of: [oldStart.started], timeout: 1)
+        harness.viewModel.cancelDiscussion()
+        harness.viewModel.inputText = "新议题"
+        harness.viewModel.send()
+        await fulfillment(of: [replacementStart.started], timeout: 1)
+
+        oldStart.resume()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(harness.viewModel.isRunning, "The late failed start must not release the replacement owner.")
+        XCTAssertFalse(harness.viewModel.messages.contains { $0.body == "无法保存运行状态，本轮议会未启动。" })
+
+        replacementStart.resume()
+        for _ in 0..<200 where harness.viewModel.isRunning {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertFalse(harness.viewModel.isRunning)
+        XCTAssertEqual(harness.viewModel.messages.last(where: { $0.kind == .host })?.body, "新主持总结")
+    }
+
+    func testLateDurableCompletionCannotReleaseReplacementDiscussion() async throws {
+        let oldCompletion = CouncilDurableAwaitGate(started: expectation(description: "old durable completion paused"))
+        let replacementStart = CouncilDurableAwaitGate(started: expectation(description: "replacement durable start paused"))
+        var starts = 0
+        var completions = 0
+        let harness = try makeViewModelHarness(
+            streamer: ScriptedCouncilStreamer([
+                .success("旧议题"), .success("旧工程发言"), .success("旧风险发言"), .success("旧主持总结"),
+                .success("新议题"), .success("新工程发言"), .success("新风险发言"), .success("新主持总结")
+            ]),
+            durableRunAwaiter: { point, operation in
+                let result = await operation()
+                switch point {
+                case .start:
+                    starts += 1
+                    if starts == 2 { await replacementStart.wait() }
+                case .completion:
+                    completions += 1
+                    if completions == 1 { await oldCompletion.wait() }
+                case .configurationFailure:
+                    break
+                }
+                return result
+            }
+        )
+        defer { oldCompletion.resume(); replacementStart.resume() }
+        harness.viewModel.inputText = "旧议题"
+        harness.viewModel.send()
+        await fulfillment(of: [oldCompletion.started], timeout: 1)
+        harness.viewModel.cancelDiscussion()
+        harness.viewModel.startFreshRoom()
+        harness.viewModel.inputText = "新议题"
+        harness.viewModel.send()
+        await fulfillment(of: [replacementStart.started], timeout: 1)
+
+        oldCompletion.resume()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(harness.viewModel.isRunning, "The late terminal write must not clear the replacement owner.")
+        XCTAssertFalse(harness.viewModel.messages.contains { $0.body == "旧主持总结" })
+
+        replacementStart.resume()
+        for _ in 0..<200 where harness.viewModel.isRunning {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertFalse(harness.viewModel.isRunning)
+        XCTAssertEqual(harness.viewModel.messages.last(where: { $0.kind == .host })?.body, "新主持总结")
     }
 
     func testViewModelCancelClosesStreamingTailAndRejectsOldRunEventsAfterRestart() async throws {
@@ -3092,7 +3188,8 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
 
     private func makeViewModelHarness(
         streamer: any IOSCouncilTextStreaming,
-        researcher: any IOSCouncilResearching = StaticCouncilResearcher()
+        researcher: any IOSCouncilResearching = StaticCouncilResearcher(),
+        durableRunAwaiter: @escaping CouncilChatViewModel.DurableRunAwaiter = { _, operation in await operation() }
     ) throws -> (
         viewModel: CouncilChatViewModel,
         archiveStore: CouncilRoomArchiveStore,
@@ -3151,7 +3248,8 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
             roomSettingsStore: roomSettings,
             runner: runner,
             transcriptDefaults: defaults,
-            archiveStore: archiveStore
+            archiveStore: archiveStore,
+            durableRunAwaiter: durableRunAwaiter
         )
         return (
             viewModel,
@@ -3180,6 +3278,27 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+}
+
+@MainActor
+private final class CouncilDurableAwaitGate {
+    let started: XCTestExpectation
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(started: XCTestExpectation) { self.started = started }
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            started.fulfill()
+        }
+    }
+
+    func resume() {
+        let pending = continuation
+        continuation = nil
+        pending?.resume()
     }
 }
 
@@ -3334,6 +3453,8 @@ private final class CouncilTestAPIKeyStore: SettingsAPIKeyStore {
 private final class CancellingCouncilSearchTransport: IOSSearchHTTPTransport {
     private let secondRequestStarted: XCTestExpectation
     private(set) var requestCount = 0
+    private(set) var queries: [String] = []
+    private(set) var cancelledRequestCount = 0
 
     init(secondRequestStarted: XCTestExpectation) {
         self.secondRequestStarted = secondRequestStarted
@@ -3341,9 +3462,17 @@ private final class CancellingCouncilSearchTransport: IOSSearchHTTPTransport {
 
     func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
         requestCount += 1
-        if requestCount == 2 {
-            secondRequestStarted.fulfill()
+        let urlItems = request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems ?? []
+        var form = URLComponents()
+        form.percentEncodedQuery = request.httpBody.flatMap { String(data: $0, encoding: .utf8) }
+        let items = urlItems + (form.queryItems ?? [])
+        queries.append(items.first { $0.name == "q" || $0.name == "gsrsearch" }?.value ?? "")
+        if requestCount == 2 { secondRequestStarted.fulfill() }
+        do {
             try await Task.sleep(nanoseconds: 60_000_000_000)
+        } catch is CancellationError {
+            cancelledRequestCount += 1
+            throw CancellationError()
         }
         let response = HTTPURLResponse(
             url: request.url ?? URL(string: "https://example.com")!,

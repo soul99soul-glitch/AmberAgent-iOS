@@ -16,6 +16,9 @@ import Foundation
 /// coverage to search/TTS/MCP/assistant-header classes.
 enum IOSCredentialRedactor {
     static let mask = "__MASKED_BY_AMBERAGENT_IOS__"
+    // A separate sentinel keeps JSON-valued credentials distinguishable from
+    // legacy raw strings, including strings that happen to contain valid JSON.
+    private static let jsonMask = "__MASKED_BY_AMBERAGENT_IOS_JSON__"
 
     /// Returns a redacted copy of a Settings JSON string. Credentials are
     /// replaced with `mask`; all other content is preserved.
@@ -83,11 +86,12 @@ enum IOSCredentialRedactor {
                         storeCredential: storeCredential
                     )
                 } else if lowerKey == "headers" || lowerKey == "customheaders" || lowerKey == "custombodies" {
-                    // Header/body collections hold name/value (or key/value) pairs
-                    // where the name can be a credential header (Authorization…).
+                    // Bodies use exact credential keys: max_tokens is a request
+                    // option, whereas prefixed credential headers remain supported.
                     out[key] = redactHeaderCollection(
                         val,
                         path: childPath,
+                        isBody: lowerKey == "custombodies",
                         storeCredential: storeCredential
                     )
                 } else {
@@ -115,6 +119,7 @@ enum IOSCredentialRedactor {
     private static func redactHeaderCollection(
         _ value: Any,
         path: String,
+        isBody: Bool,
         storeCredential: ((String, String) -> Void)?
     ) -> Any {
         if let array = value as? [Any] {
@@ -122,6 +127,7 @@ enum IOSCredentialRedactor {
                 redactHeaderEntry(
                     item,
                     path: arrayItemPath(base: path, index: index, item: item),
+                    isBody: isBody,
                     storeCredential: storeCredential
                 )
             }
@@ -132,17 +138,18 @@ enum IOSCredentialRedactor {
     private static func redactHeaderEntry(
         _ value: Any,
         path: String,
+        isBody: Bool,
         storeCredential: ((String, String) -> Void)?
     ) -> Any {
         if let dict = value as? [String: Any] {
             let name = (dict["first"] as? String)
                 ?? (dict["name"] as? String)
                 ?? (dict["key"] as? String)
-            if isSensitiveHeaderName(name) {
+            if isBody ? isSensitiveBodyName(name) : isSensitiveHeaderName(name) {
                 var out = dict
                 for key in ["second", "value"] where out[key] != nil {
                     out[key] = redactSensitiveValue(
-                        out[key] as Any,
+                        out[key]!,
                         path: "\(path).\(key)",
                         storeCredential: storeCredential
                     )
@@ -158,11 +165,29 @@ enum IOSCredentialRedactor {
         path: String,
         storeCredential: ((String, String) -> Void)?
     ) -> Any {
-        guard let string = value as? String else { return mask }
+        guard let string = value as? String else {
+            guard let data = try? JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed]),
+                  let json = String(data: data, encoding: .utf8) else { return mask }
+            storeCredential?(path, json)
+            return jsonMask
+        }
         guard !string.isEmpty else { return string }
-        guard string != mask else { return mask }
+        guard string != mask, string != jsonMask else { return string }
         storeCredential?(path, string)
         return mask
+    }
+
+    private static func rehydrateSensitiveValue(
+        _ value: Any,
+        path: String,
+        loadCredential: (String) -> String?
+    ) -> Any {
+        guard let string = value as? String, string == mask || string == jsonMask else { return value }
+        guard let stored = loadCredential(path) else { return "" }
+        guard string == jsonMask else { return stored }
+        guard let data = stored.data(using: .utf8),
+              let decoded = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else { return "" }
+        return decoded
     }
 
     private static func rehydrateValue(
@@ -176,9 +201,11 @@ enum IOSCredentialRedactor {
                 let lowerKey = key.lowercased()
                 let childPath = "\(path).\(key)"
                 if isSensitiveKey(key) {
-                    out[key] = val as? String == mask ? (loadCredential(childPath) ?? "") : val
+                    out[key] = rehydrateSensitiveValue(val, path: childPath, loadCredential: loadCredential)
                 } else if lowerKey == "headers" || lowerKey == "customheaders" || lowerKey == "custombodies" {
-                    out[key] = rehydrateHeaderCollection(val, path: childPath, loadCredential: loadCredential)
+                    out[key] = rehydrateHeaderCollection(
+                        val, path: childPath, isBody: lowerKey == "custombodies", loadCredential: loadCredential
+                    )
                 } else {
                     out[key] = rehydrateValue(val, path: childPath, loadCredential: loadCredential)
                 }
@@ -200,6 +227,7 @@ enum IOSCredentialRedactor {
     private static func rehydrateHeaderCollection(
         _ value: Any,
         path: String,
+        isBody: Bool,
         loadCredential: (String) -> String?
     ) -> Any {
         guard let array = value as? [Any] else {
@@ -213,12 +241,20 @@ enum IOSCredentialRedactor {
             let name = (dict["first"] as? String)
                 ?? (dict["name"] as? String)
                 ?? (dict["key"] as? String)
-            guard isSensitiveHeaderName(name) else {
+            let sensitive = isBody ? isSensitiveBodyName(name) : isSensitiveHeaderName(name)
+            guard sensitive || isBody else {
                 return rehydrateValue(dict, path: itemPath, loadCredential: loadCredential)
             }
             var out = dict
-            for key in ["second", "value"] where out[key] as? String == mask {
-                out[key] = loadCredential("\(itemPath).\(key)") ?? ""
+            if !sensitive {
+                for (key, value) in dict {
+                    out[key] = rehydrateValue(value, path: "\(itemPath).\(key)", loadCredential: loadCredential)
+                }
+            }
+            // Older releases also masked ordinary body options such as max_tokens.
+            // Restore their existing refs without classifying new values as secrets.
+            for key in ["second", "value"] where out[key] != nil {
+                out[key] = rehydrateSensitiveValue(out[key]!, path: "\(itemPath).\(key)", loadCredential: loadCredential)
             }
             return out
         }
@@ -244,7 +280,7 @@ enum IOSCredentialRedactor {
                 let lowerKey = key.lowercased()
                 let childPath = "\(path).\(key)"
                 if isSensitiveKey(key) {
-                    if let string = item as? String, !string.isEmpty {
+                    if (item as? String) != "" {
                         paths.insert(childPath)
                     }
                 } else if lowerKey == "headers" || lowerKey == "customheaders" || lowerKey == "custombodies",
@@ -258,14 +294,21 @@ enum IOSCredentialRedactor {
                         let name = (fields["first"] as? String)
                             ?? (fields["name"] as? String)
                             ?? (fields["key"] as? String)
-                        if isSensitiveHeaderName(name) {
+                        if lowerKey == "custombodies" ? isSensitiveBodyName(name) : isSensitiveHeaderName(name) {
                             for valueKey in ["second", "value"] {
-                                if let string = fields[valueKey] as? String, !string.isEmpty {
+                                if let value = fields[valueKey], (value as? String) != "" {
                                     paths.insert("\(entryPath).\(valueKey)")
                                 }
                             }
                         } else {
                             collectCredentialPaths(fields, path: entryPath, into: &paths)
+                            if lowerKey == "custombodies" {
+                                for valueKey in ["second", "value"] {
+                                    if let string = fields[valueKey] as? String, string == mask || string == jsonMask {
+                                        paths.insert("\(entryPath).\(valueKey)")
+                                    }
+                                }
+                            }
                         }
                     }
                 } else {
@@ -317,14 +360,24 @@ enum IOSCredentialRedactor {
             .replacingOccurrences(of: "_", with: "")
         guard !normalized.isEmpty else { return false }
         // Substring match over the same sensitive term set as isSensitiveKey, so
-        // prefixed header/body names are covered too (X-Access-Token, Api-Token,
-        // X-Secret), not just bare exact forms. Over-masking is harmless: a masked
-        // value is stored in the Keychain side-table and rehydrated on load, so it
-        // still round-trips — it is only kept out of plaintext persistence/backups.
+        // prefixed header names are covered too (X-Access-Token, Api-Token,
+        // X-Secret), not just bare exact forms. Body options use exact keys.
         return Self.sensitiveHeaderMarkers.contains { normalized.contains($0) }
     }
 
-    /// Substring markers for credential-bearing header/body names. Covers the old
+    private static func isSensitiveBodyName(_ rawName: String?) -> Bool {
+        let name = rawName ?? ""
+        if isSensitiveKey(name) { return true }
+        let normalized = name.lowercased()
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "_", with: "")
+        return [
+            "cookie", "setcookie", "credential", "xapikey", "xauthkey",
+            "xauthtoken", "xaccesstoken", "apitoken", "proxyauthorization",
+        ].contains(normalized)
+    }
+
+    /// Substring markers for credential-bearing header names. Covers the old
     /// exact list (authorization/proxy-authorization, x-api-key/api-key, x-auth-key,
     /// x-auth-token via "token", cookie/set-cookie) plus the isSensitiveKey terms
     /// that were previously missing (token/secret/password/privatekey/credential).

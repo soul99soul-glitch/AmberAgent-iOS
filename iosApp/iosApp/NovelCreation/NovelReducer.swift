@@ -577,6 +577,12 @@ enum NovelReducer {
             in: &next,
             now: now
         )
+        try NovelApprovalCommit.append(
+            command.context.approvalResponse,
+            branchID: command.branchID,
+            to: &next,
+            now: now
+        )
         try NovelDocumentValidator.validate(next)
         return (next, outcome)
     }
@@ -703,6 +709,12 @@ enum NovelReducer {
             in: &next,
             now: now
         )
+        try NovelApprovalCommit.append(
+            command.context.approvalResponse,
+            branchID: command.branchID,
+            to: &next,
+            now: now
+        )
         try NovelDocumentValidator.validate(next)
         return (next, outcome)
     }
@@ -787,6 +799,12 @@ enum NovelReducer {
             payloadSHA256: try NovelAction.upsertUpcomingArc(command).canonicalPayloadSHA256(),
             outcome: outcome,
             in: &next,
+            now: now
+        )
+        try NovelApprovalCommit.append(
+            command.context.approvalResponse,
+            branchID: command.branchID,
+            to: &next,
             now: now
         )
         try NovelDocumentValidator.validate(next)
@@ -1052,6 +1070,12 @@ enum NovelChapterDiscardReducer {
             payloadSHA256: payloadSHA256,
             outcome: outcome,
             in: &next,
+            now: now
+        )
+        try NovelApprovalCommit.append(
+            context.approvalResponse,
+            branchID: branchID,
+            to: &next,
             now: now
         )
         try NovelDocumentValidator.validate(next)

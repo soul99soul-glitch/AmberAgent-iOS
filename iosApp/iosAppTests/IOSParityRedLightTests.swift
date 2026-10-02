@@ -881,6 +881,87 @@ final class IOSParityRedLightTests: XCTestCase {
 
     // MARK: - secure_store (redactor classification + path collision — discovery round 6)
 
+    func test_customBodyTokenLimits_remainNumericWithoutCredentialRefs() throws {
+        let json = #"{"customBodies":[{"key":"max_tokens","value":2048},{"key":"max_output_tokens","value":4096},{"key":"token_budget","value":512}]}"#
+        var sideTable: [String: String] = [:]
+        let redacted = IOSCredentialRedactor.redact(json) { sideTable[$0] = $1 }
+        let hydrated = IOSCredentialRedactor.rehydrate(redacted) { sideTable[$0] }
+        let original = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! NSDictionary
+        let restored = try JSONSerialization.jsonObject(with: Data(hydrated.utf8)) as! NSDictionary
+        XCTAssertEqual(restored, original)
+        XCTAssertTrue(sideTable.isEmpty)
+        XCTAssertTrue(IOSCredentialRedactor.activeCredentialPaths(in: json).isEmpty)
+    }
+
+    func test_customBodyJSONCredentials_preserveTypesAndCleanupRefs() throws {
+        let json = #"{"customBodies":[{"key":"token","value":{"access":"object-secret","ttl":12}},{"key":"api_key","value":["array-secret",7,false,null]},{"key":"secret","value":true},{"key":"password","value":null},{"key":"authorization","value":12345}]}"#
+        var sideTable: [String: String] = [:]
+        let redacted = IOSCredentialRedactor.redact(json) { sideTable[$0] = $1 }
+        XCTAssertFalse(redacted.contains("object-secret"))
+        XCTAssertFalse(redacted.contains("array-secret"))
+        XCTAssertEqual(sideTable.count, 5)
+        XCTAssertEqual(IOSCredentialRedactor.activeCredentialPaths(in: json), Set(sideTable.keys))
+        XCTAssertEqual(IOSCredentialRedactor.activeCredentialPaths(in: redacted), Set(sideTable.keys))
+
+        let hydrated = IOSCredentialRedactor.rehydrate(redacted) { sideTable[$0] }
+        let original = try JSONSerialization.jsonObject(with: Data(json.utf8)) as! NSDictionary
+        let restored = try JSONSerialization.jsonObject(with: Data(hydrated.utf8)) as! NSDictionary
+        XCTAssertEqual(restored, original)
+        var rewrites: [String: String] = [:]
+        let remasked = IOSCredentialRedactor.redact(redacted) { rewrites[$0] = $1 }
+        XCTAssertTrue(rewrites.isEmpty, "A persisted placeholder must not replace the real Keychain value.")
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(remasked.utf8)) as! NSDictionary,
+                       try JSONSerialization.jsonObject(with: Data(redacted.utf8)) as! NSDictionary)
+    }
+
+    func test_customBodyAndHeaderStringCredentials_preserveLegacyRawValues() throws {
+        // JSON-looking strings must remain strings, including old raw Keychain entries.
+        let json = #"{"apiKey":"provider-key","customBodies":[{"key":"token","value":"true"},{"key":"secret","value":"{\"access\":1}"}],"customHeaders":[{"first":"X-Access-Token","second":"123"}]}"#
+        var sideTable: [String: String] = [:]
+        let redacted = IOSCredentialRedactor.redact(json) { sideTable[$0] = $1 }
+        XCTAssertEqual(sideTable["root.customBodies[token#0].value"], "true")
+        XCTAssertEqual(sideTable["root.customHeaders[X-Access-Token#0].second"], "123")
+        let hydrated = IOSCredentialRedactor.rehydrate(redacted) { sideTable[$0] }
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(hydrated.utf8)) as! NSDictionary,
+                       try JSONSerialization.jsonObject(with: Data(json.utf8)) as! NSDictionary)
+    }
+
+    func test_customBodyCanonicalAuthAliases_remainMaskedAndRoundTrip() throws {
+        let aliases = ["cookie", "set-cookie", "credential", "X-Api-Key", "X-Auth-Key",
+                       "X-Auth-Token", "X-Access-Token", "Api-Token", "Proxy-Authorization"]
+        let original: NSDictionary = ["customBodies": aliases.enumerated().map {
+            ["key": $0.element, "value": "auth-secret-\($0.offset)"]
+        }]
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: original), as: UTF8.self)
+        var sideTable: [String: String] = [:]
+        let redacted = IOSCredentialRedactor.redact(json) { sideTable[$0] = $1 }
+        XCTAssertFalse(redacted.contains("auth-secret-"))
+        XCTAssertEqual(sideTable.count, aliases.count)
+        XCTAssertEqual(IOSCredentialRedactor.activeCredentialPaths(in: json), Set(sideTable.keys))
+        let restored = IOSCredentialRedactor.rehydrate(redacted) { sideTable[$0] }
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(restored.utf8)) as! NSDictionary, original)
+    }
+
+    func test_customBodyPreviouslyOverMaskedOptions_restoreLegacyStringsAndRetainRefs() throws {
+        let json = """
+        {"customBodies":[{"key":"max_tokens","value":"\(IOSCredentialRedactor.mask)"},
+                         {"key":"token_budget","value":"\(IOSCredentialRedactor.mask)"}]}
+        """
+        let sideTable = ["root.customBodies[max_tokens#0].value": "2048",
+                         "root.customBodies[token_budget#1].value": "512"]
+        XCTAssertEqual(IOSCredentialRedactor.activeCredentialPaths(in: json), Set(sideTable.keys))
+        let restored = IOSCredentialRedactor.rehydrate(json) { sideTable[$0] }
+        let expected = #"{"customBodies":[{"key":"max_tokens","value":"2048"},{"key":"token_budget","value":"512"}]}"#
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(restored.utf8)) as! NSDictionary,
+                       try JSONSerialization.jsonObject(with: Data(expected.utf8)) as! NSDictionary)
+        XCTAssertTrue(IOSCredentialRedactor.activeCredentialPaths(in: restored).isEmpty)
+        var writes: [String: String] = [:]
+        let persisted = IOSCredentialRedactor.redact(restored) { writes[$0] = $1 }
+        XCTAssertTrue(writes.isEmpty, "Ordinary body options must not be newly routed to Keychain.")
+        XCTAssertFalse(persisted.contains(IOSCredentialRedactor.mask))
+        XCTAssertFalse(IOSCredentialRedactor.rehydrate(json) { _ in nil }.contains(IOSCredentialRedactor.mask))
+    }
+
     /// RED for P0 (discovery round 6). GREEN target: P2.
     /// Cell: *.secure_store (header classification gap).
     ///
@@ -1867,11 +1948,20 @@ final class IOSParityRedLightTests: XCTestCase {
             return XCTFail("Expected a dedicated background truncated terminal")
         }
         let truncatedBody = source[truncatedStart.lowerBound..<truncatedEnd.lowerBound]
-        XCTAssertTrue(truncatedBody.contains("status: didSave ? .failed : .recoveryPending"))
+        XCTAssertTrue(truncatedBody.contains("let recordedStatus: AgentRunStatus = didSave ? .failed : .recoveryPending"))
+        XCTAssertTrue(truncatedBody.contains("status: recordedStatus"))
         XCTAssertTrue(
-            truncatedBody.contains("presentation: .failed()"),
+            truncatedBody.contains("await backgroundFailurePresentation(")
+                && truncatedBody.contains("presentation: failurePresentation"),
             "Watch and Live Activity must not present truncated output as an unqualified success"
         )
+        guard let presentationStart = source.range(of: "private func backgroundFailurePresentation("),
+              let presentationEnd = source.range(of: "static func backgroundFailureIsRetryable(", range: presentationStart.upperBound..<source.endIndex) else {
+            return XCTFail("Expected the failed terminal presentation policy")
+        }
+        let presentationBody = source[presentationStart.lowerBound..<presentationEnd.lowerBound]
+        XCTAssertTrue(presentationBody.contains("return .failed(retryable:"))
+        XCTAssertFalse(presentationBody.contains("return .completed("))
     }
 
     func testForegroundStreamEventSinkRetainsQueuedChunksUntilClaimed() {

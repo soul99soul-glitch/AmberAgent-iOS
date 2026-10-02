@@ -109,6 +109,38 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         }
     }
 
+    private final class NonCooperativeSearchTransport: IOSSearchHTTPTransport, @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuations: [CheckedContinuation<Void, Never>] = []
+        private var released = false
+        private var entered = false
+        var isExecuting: Bool { lock.withLock { entered } }
+
+        func send(_ request: URLRequest) async throws -> (HTTPURLResponse, Data) {
+            // Deliberately ignores Task cancellation until the external result arrives.
+            await withCheckedContinuation { continuation in
+                let shouldResume = lock.withLock {
+                    entered = true
+                    if released { return true }
+                    continuations.append(continuation)
+                    return false
+                }
+                if shouldResume { continuation.resume() }
+            }
+            return (IOSForegroundNoopSearchTransport.okResponse(for: request),
+                    Data(IOSForegroundNoopSearchTransport.resultHTML.utf8))
+        }
+
+        func release() {
+            let pending = lock.withLock {
+                released = true
+                defer { continuations.removeAll() }
+                return continuations
+            }
+            pending.forEach { $0.resume() }
+        }
+    }
+
     @MainActor
     private final class ImageExecutionGate {
         var started = false
@@ -122,7 +154,8 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         searchTransport: any IOSSearchHTTPTransport = IOSForegroundNoopSearchTransport(),
         chatMaxToolResumeCount: Int? = nil,
         seedMessages: [UIMessage]? = nil,
-        localToolExecutor: IOSLocalToolExecutor? = nil
+        localToolExecutor: IOSLocalToolExecutor? = nil,
+        persistMessages: @escaping @MainActor (KotlinUuid?) async -> Bool = { _ in true }
     ) -> IOSChatForegroundHarness {
         // Host 不驱动 CGC;harness 的 rounds 剧本留空(dispatch 不启动)。
         IOSChatForegroundHarness(
@@ -130,7 +163,8 @@ final class IOSChatKernelRunHostTests: XCTestCase {
             seedMessages: seedMessages,
             searchTransport: searchTransport,
             chatMaxToolResumeCount: chatMaxToolResumeCount,
-            localToolExecutor: localToolExecutor
+            localToolExecutor: localToolExecutor,
+            persistMessages: persistMessages
         )
     }
 
@@ -1007,6 +1041,117 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         XCTAssertTrue(F.toolOutputText(toolCallId: "tc-limited", in: result).contains("上限"))
     }
 
+    func testAdapterCancelDuringNonCooperativeToolPublishesTerminalBeforeResult() async {
+        let transport = NonCooperativeSearchTransport()
+        let harness = makeHarness(searchTransport: transport)
+        let runtime = makeHost(harness: harness, provider: HostScriptedProvider(rounds: [])).toolRuntimeForTesting
+        let provider = HostScriptedProvider(rounds: [
+            toolRound("uncancellable-search", "search_web", #"{"query":"amber"}"#),
+            textRound("must not overwrite cancellation"),
+        ])
+        var terminals: [String] = []
+        var published = harness.messages
+        var callbacks = ChatRunKernelAdapter.Callbacks()
+        callbacks.onRunTerminal = { terminals.append($0) }
+        callbacks.onMessagesUpdated = { published = $0 }
+        let adapter = ChatRunKernelAdapter(runtime: runtime, ledger: harness.ledger, callbacks: callbacks)
+        let task = Task { @MainActor in
+            await adapter.run(.init(
+                provider: provider, providerSetting: harness.providerSetting, params: harness.params,
+                runId: "noncooperative-tool", startedAt: 1, inputDigest: "test", conversationId: harness.conversationId,
+                initialMessages: harness.messages, toolExposureBridge: harness.toolExposureBridge,
+                executionPolicy: IOSExecutionPolicySnapshot(
+                    capabilityPolicies: [:], globalAutoApproveEnabled: true,
+                    highRiskAutoApproveEnabled: false, execJavaScriptEnabled: false, webSearchEnabled: true
+                ),
+                maxToolResumeCount: 4, drainSteer: nil, mailboxDrain: nil, citationTracker: nil,
+                prepareUploadMessages: nil, nestedToolRunner: nil, approvalDecider: { _ in .approve }
+            ))
+        }
+        let executing = await waitForCondition { transport.isExecuting }
+        XCTAssertTrue(executing)
+        XCTAssertNotNil(F.toolPart(toolCallId: "uncancellable-search", in: published))
+        adapter.cancel()
+        // Assert before releasing the operation: a cancelled callback must not
+        // wait for an executor that cannot cooperatively stop.
+        XCTAssertEqual(terminals, [AgentRunStatus.cancelled.wireName])
+        let cancelled = F.toolOutputText(toolCallId: "uncancellable-search", in: published)
+        XCTAssertTrue(cancelled.contains("User cancelled."))
+        transport.release()
+        _ = await task.value
+        XCTAssertEqual(terminals, [AgentRunStatus.cancelled.wireName])
+        XCTAssertEqual(F.toolOutputText(toolCallId: "uncancellable-search", in: published), cancelled)
+        XCTAssertEqual(provider.callCount, 1)
+    }
+
+    func testHostCancelPreservesExactStreamTailInTerminalSnapshot() async {
+        let harness = makeHarness()
+        let provider = IOSAgentToolEngineTests.InterruptedStreamingProvider([
+            F.streamChunk(delta: F.assistantText("已显示"), finishReason: ""),
+            F.streamChunk(delta: F.assistantText("未节流尾段"), finishReason: ""),
+        ], fails: false)
+        let host = makeHost(harness: harness, provider: provider)
+        start(host, harness: harness)
+        let emitted = await waitForCondition { provider.didEmit }
+        XCTAssertTrue(emitted)
+        host.cancel()
+        let idle = await waitForHostIdle(host)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(harness.messages.last?.toText(), "已显示未节流尾段")
+        XCTAssertEqual(harness.log.terminalStatus(), AgentRunStatus.cancelled.wireName)
+        provider.completeLate()
+        await Task.yield()
+        XCTAssertEqual(harness.messages.last?.toText(), "已显示未节流尾段")
+    }
+
+    func testHandoffRejectsCompletedRunWhileTerminalPersistenceIsInFlight() async throws {
+        try await assertHandoffRejectedDuringTerminalPersistence(
+            provider: HostScriptedProvider(rounds: [textRound("完成")]),
+            finalText: "完成", terminalStatus: .completed
+        )
+    }
+
+    func testHandoffRejectsFailedRunWhileTerminalPersistenceIsInFlight() async throws {
+        try await assertHandoffRejectedDuringTerminalPersistence(
+            provider: IOSAgentToolEngineTests.ThrowingProvider(),
+            finalText: "upstream unavailable", terminalStatus: .failed
+        )
+    }
+
+    private func assertHandoffRejectedDuringTerminalPersistence(
+        provider: any IOSAgentTextProvider,
+        finalText: String,
+        terminalStatus: AgentRunStatus
+    ) async throws {
+        var entered = false
+        var release: CheckedContinuation<Void, Never>?
+        weak var observedHarness: IOSChatForegroundHarness?
+        let harness = makeHarness(persistMessages: { _ in
+            // Gate only the published final answer; context preparation and
+            // earlier transcript snapshots must not satisfy this regression.
+            guard observedHarness?.messages.last?.toText() == finalText else { return true }
+            entered = true
+            await withCheckedContinuation { release = $0 }
+            return true
+        })
+        observedHarness = harness
+        let host = makeHost(harness: harness, provider: provider)
+        var starts = 0
+        host.backgroundStartOverrideForTesting = { _, _ in starts += 1; return true }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = IOSConversationStore(baseDirectory: directory)
+        start(host, harness: harness)
+        let persisting = await waitForCondition { entered }
+        XCTAssertTrue(persisting)
+        XCTAssertFalse(host.handoffCurrentGenerationToBackground(conversationStore: store))
+        XCTAssertEqual(starts, 0)
+        release?.resume()
+        let idle = await waitForHostIdle(host)
+        XCTAssertTrue(idle)
+        XCTAssertEqual(harness.log.terminalStatus(), terminalStatus.wireName)
+    }
+
     func testHostHandsPreparedRunToBackgroundOwner() async throws {
         let harness = makeHarness()
         let provider = HostBlockingProvider()
@@ -1057,7 +1202,8 @@ final class IOSChatKernelRunHostTests: XCTestCase {
         let approval = await harness.waitForPendingSearchApproval()
         XCTAssertNotNil(approval)
         host.approvePendingSearchTool()
-        let searchStarted = await waitForCondition { transport.callCount == 1 }
+        // Free aggregate search starts several HTTP requests for one tool call.
+        let searchStarted = await waitForCondition { transport.callCount > 0 }
         XCTAssertTrue(searchStarted)
 
         XCTAssertTrue(host.handoffCurrentGenerationToBackground(conversationStore: store))

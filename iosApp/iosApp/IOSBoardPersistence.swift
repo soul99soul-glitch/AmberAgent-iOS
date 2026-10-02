@@ -2877,12 +2877,24 @@ struct IOSDeepReadTask: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+enum IOSDeepReadStoreError: LocalizedError {
+    case persistenceFailed
+
+    var errorDescription: String? {
+        IOSAppLocalization.string(
+            "深度阅读保存失败，请检查设备存储后重试。",
+            defaultValue: "深度阅读保存失败，请检查设备存储后重试。"
+        )
+    }
+}
+
 @MainActor
 @Observable
 final class IOSDeepReadStore {
     static let shared = IOSDeepReadStore()
 
     private(set) var tasks: [IOSDeepReadTask]
+    private(set) var persistenceErrorsByTaskId: [String: String] = [:]
     /// Ephemeral in-memory stage labels for the detail skeleton (not persisted).
     private(set) var progressLabelsByTaskId: [String: String] = [:]
 
@@ -2958,28 +2970,38 @@ final class IOSDeepReadStore {
             completedAt: nil,
             retryCount: 0
         )
-        upsert(task)
+        var proposed = tasks
+        proposed.append(task)
+        do {
+            try persist(proposed)
+        } catch {
+            throw IOSDeepReadStoreError.persistenceFailed
+        }
+        if tasks != proposed { tasks = proposed }
         return task
     }
 
-    func markRunning(id: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
-        update(id: id) { task in
+    @discardableResult
+    func markRunning(id: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
+        return update(id: id) { task in
             task.status = .running
             task.failureMessage = nil
             task.updatedAt = now
         }
     }
 
-    func replaceSources(id: String, sources: [IOSDeepReadSource], now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
-        update(id: id) { task in
+    @discardableResult
+    func replaceSources(id: String, sources: [IOSDeepReadSource], now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
+        return update(id: id) { task in
             task.sources = sources
             task.updatedAt = now
         }
     }
 
-    func complete(id: String, markdown: String, structuredJSON: String? = nil, missingSections: [String]? = nil, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
+    @discardableResult
+    func complete(id: String, markdown: String, structuredJSON: String? = nil, missingSections: [String]? = nil, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
         clearProgressLabel(id: id)
-        update(id: id) { task in
+        return update(id: id) { task in
             task.status = .succeeded
             task.resultMarkdown = markdown
             task.structuredJSON = structuredJSON
@@ -2991,36 +3013,62 @@ final class IOSDeepReadStore {
         }
     }
 
-    func markWorkspaceSyncFailed(id: String, message: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
-        update(id: id) { task in
+    @discardableResult
+    func markWorkspaceSyncFailed(id: String, message: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
+        let saved = update(id: id) { task in
             task.workspaceSyncFailed = message.prefixString(500)
             task.updatedAt = now
         }
+        if !saved, let index = tasks.firstIndex(where: { $0.id == id }) {
+            // Keep the Workspace-only retry available even if its warning cannot
+            // be persisted. The completed article remains intact.
+            var proposed = tasks
+            proposed[index].workspaceSyncFailed = message.prefixString(500)
+            if tasks != proposed { tasks = proposed }
+        }
+        return saved
     }
 
-    func clearWorkspaceSyncFailure(id: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
-        update(id: id) { task in
+    @discardableResult
+    func clearWorkspaceSyncFailure(id: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
+        let saved = update(id: id) { task in
             task.workspaceSyncFailed = nil
             task.updatedAt = now
         }
+        if !saved, let index = tasks.firstIndex(where: { $0.id == id }) {
+            // The artifact is already saved. A failed metadata write must not
+            // invite the user to send the same payload again.
+            var proposed = tasks
+            proposed[index].workspaceSyncFailed = nil
+            if tasks != proposed { tasks = proposed }
+            persistenceErrorsByTaskId[id] = IOSAppLocalization.string(
+                "已保存到 Workspace，但深度阅读状态保存失败。",
+                defaultValue: "已保存到 Workspace，但深度阅读状态保存失败。"
+            )
+        }
+        return saved
     }
 
-    func fail(id: String, message: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
+    @discardableResult
+    func fail(id: String, message: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
         clearProgressLabel(id: id)
-        update(id: id) { task in
+        return update(id: id) { task in
             task.status = .failed
             task.failureMessage = message.prefixString(500)
             task.updatedAt = now
         }
     }
 
-    func prepareRetry(id: String, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) {
+    @discardableResult
+    func prepareRetry(id: String, preservingResult: Bool = false, now: Int64 = IOSBoardSignalRepository.currentEpochMs()) -> Bool {
         clearProgressLabel(id: id)
-        update(id: id) { task in
+        return update(id: id) { task in
             task.status = .queued
-            task.resultMarkdown = ""
-            task.structuredJSON = nil
-            task.missingSections = nil
+            if !preservingResult {
+                task.resultMarkdown = ""
+                task.structuredJSON = nil
+                task.missingSections = nil
+            }
             task.failureMessage = nil
             task.workspaceSyncFailed = nil
             task.completedAt = nil
@@ -3029,49 +3077,73 @@ final class IOSDeepReadStore {
         }
     }
 
+    @discardableResult
     func recoverInterruptedRuns(
         excluding activeTaskIds: Set<String> = [],
         staleAfterMs: Int64 = 30 * 60 * 1000,
         now: Int64 = IOSBoardSignalRepository.currentEpochMs()
-    ) {
-        var changed = false
-        for index in tasks.indices {
-            guard tasks[index].status == .running || tasks[index].status == .queued else { continue }
-            if activeTaskIds.contains(tasks[index].id),
-               now - tasks[index].updatedAt < staleAfterMs {
+    ) -> Bool {
+        var proposed = tasks
+        var changedIds: [String] = []
+        for index in proposed.indices {
+            guard proposed[index].status == .running || proposed[index].status == .queued else { continue }
+            if activeTaskIds.contains(proposed[index].id),
+               now - proposed[index].updatedAt < staleAfterMs {
                 continue
             }
-            tasks[index].status = .failed
-            tasks[index].failureMessage = "上次深度阅读生成被中断，可重试。"
-            tasks[index].updatedAt = now
-            changed = true
+            proposed[index].status = .failed
+            proposed[index].failureMessage = "上次深度阅读生成被中断，可重试。"
+            proposed[index].updatedAt = now
+            changedIds.append(proposed[index].id)
         }
-        if changed { persist() }
-    }
-
-    private func update(id: String, mutate: (inout IOSDeepReadTask) -> Void) {
-        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
-        mutate(&tasks[index])
-        persist()
-    }
-
-    private func upsert(_ task: IOSDeepReadTask) {
-        if let index = tasks.firstIndex(where: { $0.id == task.id }) {
-            tasks[index] = task
-        } else {
-            tasks.append(task)
-        }
-        persist()
-    }
-
-    private func persist() {
+        guard !changedIds.isEmpty else { return true }
         do {
-            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-            let data = try encoder.encode(tasks.sorted { $0.createdAt < $1.createdAt })
-            try data.write(to: fileURL, options: [.atomic])
+            try persist(proposed)
+            if tasks != proposed { tasks = proposed }
+            for id in changedIds { persistenceErrorsByTaskId.removeValue(forKey: id) }
+            return true
         } catch {
-            print("[IOSDeepReadStore] persist failed: \(error.localizedDescription)")
+            for id in changedIds { recordPersistenceFailure(id: id) }
+            return false
         }
+    }
+
+    func persistenceError(for id: String) -> String? {
+        persistenceErrorsByTaskId[id]
+    }
+
+    private func update(id: String, mutate: (inout IOSDeepReadTask) -> Void) -> Bool {
+        guard let index = tasks.firstIndex(where: { $0.id == id }) else { return false }
+        var proposed = tasks
+        mutate(&proposed[index])
+        do {
+            try persist(proposed)
+            if tasks != proposed { tasks = proposed }
+            persistenceErrorsByTaskId.removeValue(forKey: id)
+            return true
+        } catch {
+            recordPersistenceFailure(id: id)
+            return false
+        }
+    }
+
+    /// The failure is visible in this process even when the disk cannot accept
+    /// a terminal state. Preserve the last article and stop the running UI.
+    private func recordPersistenceFailure(id: String) {
+        let message = IOSDeepReadStoreError.persistenceFailed.localizedDescription
+        persistenceErrorsByTaskId[id] = message
+        guard let index = tasks.firstIndex(where: { $0.id == id }),
+              tasks[index].status == .queued || tasks[index].status == .running else { return }
+        var proposed = tasks
+        proposed[index].status = .failed
+        proposed[index].failureMessage = message
+        if tasks != proposed { tasks = proposed }
+    }
+
+    private func persist(_ proposed: [IOSDeepReadTask]) throws {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = try encoder.encode(proposed.sorted { $0.createdAt < $1.createdAt })
+        try data.write(to: fileURL, options: [.atomic])
     }
 
     private static func loadTasks(from fileURL: URL, decoder: JSONDecoder) -> [IOSDeepReadTask] {

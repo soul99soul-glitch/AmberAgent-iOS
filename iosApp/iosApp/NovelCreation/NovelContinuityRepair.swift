@@ -136,7 +136,8 @@ enum NovelContinuityRepairPatchApplier {
 
     static func uniqueRange(of needle: String, in haystack: String) -> Range<String.Index>? {
         guard !needle.isEmpty, let first = haystack.range(of: needle) else { return nil }
-        if haystack.range(of: needle, range: first.upperBound..<haystack.endIndex) != nil {
+        let nextStart = haystack.index(after: first.lowerBound)
+        if haystack.range(of: needle, range: nextStart..<haystack.endIndex) != nil {
             return nil
         }
         return first

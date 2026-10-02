@@ -8,6 +8,35 @@ import Shared
 
 @MainActor
 final class ChatMessageProjectionTests: XCTestCase {
+    func testOpaqueReasoningHistoryDoesNotShowEmptyCardsOrHideThinkingPlaceholder() throws {
+        let raw = #"""
+        [
+          {"type":"reasoning","reasoning":"","metadata":{"signature":"sig-empty"}},
+          {"type":"reasoning","reasoning":"","metadata":{"encrypted_content":"encrypted"}},
+          {"type":"reasoning","reasoning":"","metadata":{"claude_redacted_thinking":{"type":"redacted_thinking","data":"redacted"}}},
+          {"type":"reasoning","reasoning":"","metadata":{"reasoning_content_present":true}},
+          {"type":"reasoning","reasoning":"visible thought","metadata":{"signature":"sig-visible"}},
+          {"type":"reasoning","reasoning":"","metadata":{"signature":"","encrypted_content":""}}
+        ]
+        """#
+        let parts = try IosToolOutputJsonBridge.shared.decode(json: raw)
+        XCTAssertEqual(parts.count, 6)
+        for part in parts.prefix(3) {
+            let reasoning = try XCTUnwrap(part as? UIMessagePart.Reasoning)
+            XCTAssertFalse(MessageBubbleView.shouldRenderReasoningCard(reasoning))
+        }
+        XCTAssertFalse(MessageBubbleView.hasVisibleAssistantContent(in: Array(parts.prefix(3))),
+                       "隐藏的协议块不能抑制正在生成的思考占位卡")
+        XCTAssertNil(MessageBubbleView.firstVisibleReasoningIndex(in: Array(parts.prefix(3))))
+        for part in parts.suffix(3) {
+            let reasoning = try XCTUnwrap(part as? UIMessagePart.Reasoning)
+            XCTAssertTrue(MessageBubbleView.shouldRenderReasoningCard(reasoning),
+                          "普通空 reasoning 和可读 thinking 保持原卡片语义")
+        }
+        XCTAssertTrue(MessageBubbleView.hasVisibleAssistantContent(in: parts))
+        XCTAssertEqual(MessageBubbleView.firstVisibleReasoningIndex(in: parts), 3)
+    }
+
     func testToolProjectionReusesHistoryAndRefreshesNonTailBackfills() throws {
         let cache = NativeTimelineProjectionCache()
         let hashes = ChatRowContentHashCache()

@@ -820,6 +820,7 @@ class OpenAIKmpProvider internal constructor(
             throw Exception("OpenAI Responses request failed: ${response.status.value} ${response.bodyAsText()}")
         }
         val bodyJson = json.parseToJsonElement(response.bodyAsText()).jsonObject
+        throwIfResponsesTerminalFailure(bodyJson, bodyJson.str("status"), "request")
         return parseResponseOutput(bodyJson)
     }
 
@@ -860,14 +861,18 @@ class OpenAIKmpProvider internal constructor(
             val obj = runCatching { json.parseToJsonElement(payload) as? JsonObject }
                 .getOrNull() ?: return@mapNotNull null
             obj["error"]?.let { throw it.parseErrorDetail() }
-            obj.throwIfResponsesTerminalFailure()
+            val status = when (obj.str("type")) {
+                "response.incomplete" -> "incomplete"
+                "response.failed" -> "failed"
+                else -> null
+            }
+            throwIfResponsesTerminalFailure(obj["response"]?.obj(), status, "stream")
             parseResponseDelta(obj)
         }
 
-    private fun JsonObject.throwIfResponsesTerminalFailure() {
-        val response = this["response"]?.obj()
-        when (str("type")) {
-            "response.incomplete" -> {
+    private fun throwIfResponsesTerminalFailure(response: JsonObject?, status: String?, source: String) {
+        when (status) {
+            "incomplete" -> {
                 val reason = response?.get("incomplete_details")?.obj()?.str("reason")
                 // 写满 max_output_tokens 是协议正常终态,不是错误:已生成的内容
                 // 完整可用,只是被调用方设定的上限截断。把它当异常抛,会让一段
@@ -877,16 +882,16 @@ class OpenAIKmpProvider internal constructor(
                 // 上限提示(reachedOutputLimit / outputLimitFailure)。
                 if (reason == RESPONSES_OUTPUT_CAP_REASON) return
                 throw IllegalStateException(
-                    "OpenAI Responses stream incomplete: " +
+                    "OpenAI Responses $source incomplete: " +
                         (reason ?: response?.str("status") ?: "unknown reason")
                 )
             }
 
-            "response.failed" -> {
+            "failed" -> {
                 val detail = response?.get("error")?.parseErrorDetail()?.message
                     ?: response?.str("status")
                     ?: "unknown error"
-                throw IllegalStateException("OpenAI Responses stream failed: $detail")
+                throw IllegalStateException("OpenAI Responses $source failed: $detail")
             }
         }
     }
@@ -1140,15 +1145,16 @@ class OpenAIKmpProvider internal constructor(
                     group.parts.forEach { part ->
                         when (part) {
                             is UIMessagePart.Reasoning -> {
+                                // Responses reasoning items require their original provider ID.
+                                val reasoningId = part.metadata?.get("reasoning_id")?.responseContentOrNull()
+                                    ?.takeIf { it.isNotBlank() } ?: return@forEach
                                 if (contentBuffer.isNotEmpty()) {
                                     addResponsesContentItem(MessageRole.ASSISTANT, contentBuffer)
                                     contentBuffer.clear()
                                 }
                                 add(buildJsonObject {
                                     put("type", "reasoning")
-                                    part.metadata?.get("reasoning_id")?.responseContentOrNull()?.let {
-                                        put("id", it)
-                                    }
+                                    put("id", reasoningId)
                                     put("summary", buildJsonArray {
                                         add(buildJsonObject {
                                             put("type", "summary_text")
