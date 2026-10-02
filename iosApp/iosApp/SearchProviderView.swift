@@ -15,6 +15,10 @@ struct SearchProviderView: View {
     @State private var searXNGPassword = ""
 
     var body: some View {
+        // 读一次被观察的 revision 建立依赖（同 SearchServicesView）:snapshot 是 @ObservationIgnored,
+        // savedSearchProviders 直读 UserDefaults,不读 revision 则删除/开关后列表停在旧状态。
+        let _ = sharedSettings.revision
+
         ZStack {
             AmberTheme.background.ignoresSafeArea()
 

@@ -2387,48 +2387,49 @@ private extension DefaultNovelCreation {
     /// (用户可在「写作上下文预算」里配置),因此取消输出上限不会让输入无限膨胀。
     /// 已知边界:若用户把输入预算调到接近模型窗口上限,留给输出的空间会变小,模型可能
     /// 仍由 provider 侧自然截断——该情形沿用既有 `reachedOutputLimit` 提示,不在此层兜底。
+    ///
+    /// 不固定 temperature / topP：GPT-5 系列、Kimi 等只接受默认采样参数，固定值会被 400 拒绝。
     func modelParameters(for request: NovelRunRequest) -> NovelModelParameters {
         switch request.kind {
         case .quickStart:
             NovelModelParameters(
-                temperature: 0.7,
-                topP: 0.95,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )
         case .characterProposal:
             NovelModelParameters(
-                temperature: 0.65,
-                topP: 0.95,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )
         case .discussion:
             NovelModelParameters(
-                temperature: 0.7,
-                topP: 0.95,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )
         case .prose:
             NovelModelParameters(
-                temperature: 0.85,
-                topP: 0.95,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )
         case .polish:
             NovelModelParameters(
-                temperature: 0.35,
-                topP: 0.9,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )
         case .regenerate:
-            // 重写允许改剧情,创作自由度按正文生成给,而不是润色的 0.35。
             NovelModelParameters(
-                temperature: 0.7,
-                topP: 0.95,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )

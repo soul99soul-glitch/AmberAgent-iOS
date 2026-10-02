@@ -1450,7 +1450,6 @@ final class IOSCouncilRoomRunner {
                             defaultSeats: defaultSeatsForTopic
                         ),
                         request: request,
-                        temperature: 0.35,
                         onUpdate: { text, allowance in
                             if !text.isEmpty { recordOutput() }
                             onEvent(.updateMessage(
@@ -1503,7 +1502,6 @@ final class IOSCouncilRoomRunner {
                             sourceMaterials: request.sourceMaterials
                         ),
                         request: request,
-                        temperature: 0.3,
                         onUpdate: { text, _ in
                             if !text.isEmpty { recordOutput() }
                         }
@@ -1528,7 +1526,6 @@ final class IOSCouncilRoomRunner {
                                 sourceMaterials: request.sourceMaterials
                             ),
                             request: request,
-                            temperature: 0.3,
                             onUpdate: { text, _ in
                                 if !text.isEmpty { recordOutput() }
                             }
@@ -1597,7 +1594,7 @@ final class IOSCouncilRoomRunner {
                 ?? Array(1...finalRound)
             for round in roundNumbers {
                 try checkCancelled(runGeneration: currentRunGeneration)
-                onEvent(.append(dividerMessage("第 \(round) 轮")))
+                onEvent(.append(dividerMessage(Self.roundDividerTitle(round))))
                 for seat in activeSeats where !failedSeatIds.contains(seat.id) {
                     try checkCancelled(runGeneration: currentRunGeneration)
                     onEvent(.state("\(seat.name) 发言中"))
@@ -1655,7 +1652,6 @@ final class IOSCouncilRoomRunner {
                                     seatResearch: seatResearch
                                 ),
                                 request: request,
-                                temperature: request.mode == .debate ? 0.55 : 0.75,
                                 onUpdate: { text, allowance in
                                     if !text.isEmpty { recordOutput() }
                                     let shown = text.isEmpty
@@ -1730,7 +1726,6 @@ final class IOSCouncilRoomRunner {
                                     roundTranscript: roundTranscript
                                 ),
                                 request: request,
-                                temperature: 0.45,
                                 onUpdate: { text, allowance in
                                     if !text.isEmpty { recordOutput() }
                                     let body = text.isEmpty ? "点评中..." : text
@@ -1766,7 +1761,7 @@ final class IOSCouncilRoomRunner {
 
             try checkCancelled(runGeneration: currentRunGeneration)
             onEvent(.state("主持总结中"))
-            onEvent(.append(dividerMessage("主持总结")))
+            onEvent(.append(dividerMessage(Self.hostSummaryDividerTitle)))
             let summaryId = UUID()
             onEvent(.append(IOSCouncilRoomMessageEvent(
                 id: summaryId,
@@ -1799,7 +1794,6 @@ final class IOSCouncilRoomRunner {
                         failedSeats: failedSeatsForSynthesis
                     ),
                     request: request,
-                    temperature: 0.35,
                     onUpdate: { text, allowance in
                         if !text.isEmpty { recordOutput() }
                         onEvent(.updateMessage(id: summaryId, body: text.isEmpty ? "总结中..." : text, status: .speaking, lagAllowance: allowance))
@@ -2174,7 +2168,7 @@ final class IOSCouncilRoomRunner {
         }
         let params = TextGenerationParams(
             model: route.model,
-            temperature: KotlinFloat(value: 0),
+            temperature: nil,
             topP: nil,
             maxTokens: KotlinInt(value: 16),
             tools: [],
@@ -2198,7 +2192,6 @@ final class IOSCouncilRoomRunner {
         systemPrompt: String,
         userPrompt: String,
         request: IOSCouncilRoomRunRequest,
-        temperature: Float,
         onUpdate: @escaping @MainActor (String, CGFloat) -> Void
     ) async throws -> String {
         try checkCancelled(runGeneration: runGeneration)
@@ -2210,7 +2203,6 @@ final class IOSCouncilRoomRunner {
         let params = makeTextGenerationParams(
             route: route,
             reasoning: speaker.reasoning,
-            temperature: temperature,
             outputBudgetCharacters: request.settings.limits.outputBudgetCharacters,
             request: request
         )
@@ -2270,7 +2262,6 @@ final class IOSCouncilRoomRunner {
     private func makeTextGenerationParams(
         route: IOSCouncilModelRoute,
         reasoning: IOSCouncilReasoningPreset,
-        temperature: Float,
         outputBudgetCharacters: Int,
         request: IOSCouncilRoomRunRequest
     ) -> TextGenerationParams {
@@ -2284,7 +2275,8 @@ final class IOSCouncilRoomRunner {
         let maxTokens = Int32(min(max(outputBudgetCharacters / 4, 512), 8_192))
         return TextGenerationParams(
             model: model,
-            temperature: KotlinFloat(value: temperature),
+            // 不固定温度：GPT-5 系列、Kimi 等只接受默认温度，固定值会被 400 拒绝。
+            temperature: nil,
             topP: matchingBaseParams?.topP,
             maxTokens: KotlinInt(value: maxTokens),
             tools: [],
@@ -2692,6 +2684,15 @@ final class IOSCouncilRoomRunner {
         }
     }
 
+    /// Divider titles the tool detail sheet splits its round tabs on.
+    static let hostSummaryDividerTitle = "主持总结"
+
+    static func roundDividerTitle(_ round: Int) -> String { "第 \(round) 轮" }
+
+    static func isRoundDivider(_ body: String) -> Bool {
+        body.hasPrefix("第 ") && body.hasSuffix(" 轮") && Int(body.dropFirst(2).dropLast(2)) != nil
+    }
+
     private func dividerMessage(_ body: String) -> IOSCouncilRoomMessageEvent {
         IOSCouncilRoomMessageEvent(
             id: UUID(),
@@ -2756,6 +2757,11 @@ private extension String {
 /// Live transcript of a `model_council_run` tool call, observed by
 /// `ChatToolDetailSheet`. The tool path feeds it the same room events the
 /// Council room view consumes, so the chat capsule is no longer a black box.
+///
+/// `messages` only changes on append; each message observes its own body and
+/// status, so a streaming beat re-renders just the speaking row. Streaming
+/// beats are coalesced into one commit per `streamingFlushInterval` (the room
+/// view keeps its own per-beat typing cadence); terminal updates apply at once.
 @MainActor
 @Observable
 final class CouncilLiveModel {
@@ -2764,8 +2770,16 @@ final class CouncilLiveModel {
     private(set) var speakers: [IOSCouncilRoomSpeaker] = []
     private(set) var activeSpeakerId: String?
     private(set) var failedSpeakerIds: Set<String> = []
-    private(set) var messages: [IOSCouncilRoomMessageEvent] = []
+    private(set) var messages: [CouncilLiveMessage] = []
     private(set) var isRunning = true
+
+    @ObservationIgnored private let streamingFlushInterval: Duration
+    @ObservationIgnored private var pendingBodies: [UUID: String] = [:]
+    @ObservationIgnored private var flushTask: Task<Void, Never>?
+
+    init(streamingFlushInterval: Duration = .milliseconds(100)) {
+        self.streamingFlushInterval = streamingFlushInterval
+    }
 
     func ingest(_ event: IOSCouncilRoomEvent) {
         switch event {
@@ -2778,10 +2792,16 @@ final class CouncilLiveModel {
             activeSpeakerId = activeId
             failedSpeakerIds = failedIds
         case .append(let message):
-            messages.append(message)
+            messages.append(CouncilLiveMessage(message))
         case .updateMessage(let id, let body, let status, _):
-            guard let index = messages.lastIndex(where: { $0.id == id }) else { return }
-            messages[index] = messages[index].with(body: body, status: status)
+            guard let message = messages.last(where: { $0.id == id }) else { return }
+            if status == .speaking {
+                pendingBodies[id] = body
+                scheduleFlush()
+            } else {
+                pendingBodies[id] = nil
+                message.update(body: body, status: status)
+            }
         }
     }
 
@@ -2789,25 +2809,57 @@ final class CouncilLiveModel {
     /// failure without closing the in-flight message; close it here, the same
     /// way the Council room's `finishStreamingMessages` does.
     func finish(completed: Bool) {
+        flushPendingBodies()
         isRunning = false
         activeSpeakerId = nil
-        for index in messages.indices where messages[index].status == .speaking {
-            messages[index] = messages[index].with(status: completed ? .completed : .failed)
+        for message in messages where message.status == .speaking {
+            message.update(status: completed ? .completed : .failed)
+        }
+    }
+
+    private func scheduleFlush() {
+        guard flushTask == nil else { return }
+        flushTask = Task { [weak self, streamingFlushInterval] in
+            try? await Task.sleep(for: streamingFlushInterval)
+            self?.flushPendingBodies()
+        }
+    }
+
+    private func flushPendingBodies() {
+        flushTask?.cancel()
+        flushTask = nil
+        guard !pendingBodies.isEmpty else { return }
+        let pending = pendingBodies
+        pendingBodies = [:]
+        for message in messages {
+            if let body = pending[message.id] { message.update(body: body) }
         }
     }
 }
 
-private extension IOSCouncilRoomMessageEvent {
-    func with(body: String? = nil, status: IOSCouncilRoomMessageStatus) -> IOSCouncilRoomMessageEvent {
-        IOSCouncilRoomMessageEvent(
-            id: id,
-            kind: kind,
-            speakerId: speakerId,
-            author: author,
-            body: body ?? self.body,
-            subtitle: subtitle,
-            status: status
-        )
+/// One live council message; observed per row by `ChatToolDetailSheet`.
+@MainActor
+@Observable
+final class CouncilLiveMessage: Identifiable {
+    let id: UUID
+    let kind: IOSCouncilRoomMessageKind
+    let author: String
+    let subtitle: String?
+    private(set) var body: String
+    private(set) var status: IOSCouncilRoomMessageStatus
+
+    init(_ event: IOSCouncilRoomMessageEvent) {
+        id = event.id
+        kind = event.kind
+        author = event.author
+        subtitle = event.subtitle
+        body = event.body
+        status = event.status
+    }
+
+    fileprivate func update(body: String? = nil, status: IOSCouncilRoomMessageStatus? = nil) {
+        if let body, body != self.body { self.body = body }
+        if let status, status != self.status { self.status = status }
     }
 }
 

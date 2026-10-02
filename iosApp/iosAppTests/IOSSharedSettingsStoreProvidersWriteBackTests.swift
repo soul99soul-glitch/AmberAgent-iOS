@@ -1,4 +1,6 @@
 import XCTest
+import SwiftUI
+import Observation
 @preconcurrency import Shared
 @testable import iosApp
 
@@ -541,6 +543,23 @@ final class IOSSharedSettingsStoreProvidersWriteBackTests: XCTestCase {
         let json = #"{"items":[{"i":5,"zh":"越界"},{"i":1,"zh":"  "},{"i":1,"zh":"唯一"}]}"#
         let result = IOSHotListTitleTranslator.parse(json, pending: pending)
         XCTAssertEqual(result, ["Only one": "唯一"])
+    }
+
+    /// 「搜索服务配置」页必须随设置变更刷新：snapshot 是 @ObservationIgnored，
+    /// 页面若不读 revision，删除/开关已写入存储但列表和开关停在旧状态。
+    func testSearchProviderConfigViewInvalidatesWhenSavedServiceChanges() {
+        let store = makeIsolatedStore()
+        store.addSearchProvider(name: "Brave", apiKey: "brave-key", serviceType: "brave")
+        let invalidated = expectation(description: "search provider config view observed settings change")
+        withObservationTracking {
+            _ = SearchProviderView(sharedSettings: store).body
+        } onChange: {
+            invalidated.fulfill()
+        }
+
+        store.removeSearchProvider(at: store.savedSearchProviders.count - 1)
+
+        wait(for: [invalidated], timeout: 1)
     }
 
     // ---- helpers ----

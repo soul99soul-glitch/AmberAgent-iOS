@@ -137,6 +137,7 @@ class GenerativeUiPlannerTest {
         assertTrue(prompt.contains("show-widget"))
         assertTrue(prompt.contains("polished, self-contained SVG widget"))
         assertTrue(prompt.contains(GenerativeUiProtocol.LOCAL_MOTION_URL))
+        assertTrue(prompt.contains(GenerativeUiProtocol.LOCAL_THREE_URL))
     }
 
     @Test

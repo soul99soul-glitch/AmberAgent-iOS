@@ -1116,7 +1116,18 @@ struct IOSDeepReadTaskDetailView: View {
         }
         .padding(.horizontal, 22)
         .padding(.top, 18)
-        .padding(.bottom, 18)
+        // 编辑器正文自带首段上间距(28)；分隔线直接落在正文起点，纯色正文与纹理页面的交界即这条线。
+        .padding(.bottom, dividerMeetsEditorialBody(task) ? 0 : 18)
+    }
+
+    /// 完成态、未用自定义模板、且报头与正文之间没有横幅 → 编辑器正文紧接分隔线。
+    /// 横幅自身无上边距，出现时仍由报头底部 18 撑开。
+    private func dividerMeetsEditorialBody(_ task: IOSDeepReadTask) -> Bool {
+        state(for: task) == .done
+            && task.workspaceSyncFailed == nil
+            && (task.missingSections ?? []).isEmpty
+            && !(task.templateId.hasPrefix(IOSDeepReadTemplate.customPrefix)
+                && templateStore.template(id: task.templateId) != nil)
     }
 
     @ViewBuilder
@@ -1159,8 +1170,18 @@ struct IOSDeepReadTaskDetailView: View {
                 IOSDeepReadEditorialWebView(html: editorialHTML(task), contentHeight: $editorialHeight)
                     .frame(height: editorialHeight)
                     .frame(maxWidth: .infinity)
-                    .padding(.bottom, 12)
                     .id(task.id)
+                if AmberThemeRuntime.shared.showsCanvasTexture(on: .app) {
+                    // 纹理/渐变画布上正文是纯色块：底边渐隐回页面背景，避免硬边。
+                    LinearGradient(
+                        colors: [AmberTheme.background, AmberTheme.background.opacity(0)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 24)
+                } else {
+                    Color.clear.frame(height: 12)
+                }
             }
         }
     }
@@ -1278,6 +1299,7 @@ struct IOSDeepReadTaskDetailView: View {
                 .font(.footnote)
                 .foregroundStyle(AmberTheme.foreground2)
                 .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)   // 可复制服务商原话
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -1504,7 +1526,7 @@ struct IOSDeepReadTaskDetailView: View {
         // Resolve the app theme's canvas palette for the current appearance, so the reader
         // follows the chosen background (paper or immersive) — same colors as the native
         // masthead/sources around it. Immersive canvases share one palette across light/dark.
-        // 详情页与原生 AmberTheme 同源（含设计主题的颜色覆盖）；正文保持纯色底，不透出纹理以保可读。
+        // 详情页与原生 AmberTheme 同源（含设计主题的颜色覆盖）。
         // PDF 仍用纸张调色板：沉浸色画布没有真正的浅色版（深底浅字），回退到纸张浅色，保证打印可读。
         let runtime = AmberThemeRuntime.shared
         let paper = runtime.paper
@@ -1532,7 +1554,9 @@ struct IOSDeepReadTaskDetailView: View {
                 fgHex: hex(palette.foreground),
                 surfaceHex: hex(palette.surface),
                 mutedHex: hex(palette.muted),
-                borderHex: hex(palette.border)
+                borderHex: hex(palette.border),
+                // 无纹理画布：页面背景就是同一纯色，正文透明即无缝；有纹理时保持纯色以保可读。
+                transparentCanvas: !forPrint && !runtime.showsCanvasTexture(on: .app)
             )
         )
     }
@@ -1649,6 +1673,22 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
     let html: String
     @Binding var contentHeight: CGFloat
 
+    /// Document height the frame must give the article (internal scroll is off). Measures to
+    /// the article's bottom edge, not its height: the first section's top margin collapses
+    /// outside the article, so `height` alone under-measures and clips the last line.
+    static let measureHeightScript = """
+    (function() {
+      var article = document.querySelector('article');
+      if (article) {
+        var r = article.getBoundingClientRect();
+        return Math.ceil(r.bottom + window.scrollY);
+      }
+      var body = document.body;
+      if (!body) return 0;
+      return Math.ceil(Math.max(body.scrollHeight, body.offsetHeight, 1));
+    })();
+    """
+
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         // Needed so we can measure `article` height after load (static HTML only).
@@ -1738,19 +1778,7 @@ struct IOSDeepReadEditorialWebView: UIViewRepresentable {
         }
 
         private func publishMeasuredHeight(from webView: WKWebView) {
-            let js = """
-            (function() {
-              var article = document.querySelector('article');
-              if (article) {
-                var r = article.getBoundingClientRect();
-                return Math.ceil(r.height + 2);
-              }
-              var body = document.body;
-              if (!body) return 0;
-              return Math.ceil(Math.max(body.scrollHeight, body.offsetHeight, 1));
-            })();
-            """
-            webView.evaluateJavaScript(js) { [weak self] result, _ in
+            webView.evaluateJavaScript(IOSDeepReadEditorialWebView.measureHeightScript) { [weak self] result, _ in
                 let measured: CGFloat
                 if let number = result as? NSNumber {
                     measured = CGFloat(truncating: number)

@@ -480,7 +480,7 @@ final class IOSCouncilModelConnectivityTester {
     private func probe(model: Model, providerSetting: ProviderSetting) async throws -> String {
         let params = TextGenerationParams(
             model: model,
-            temperature: KotlinFloat(value: 0),
+            temperature: nil,
             topP: nil,
             maxTokens: KotlinInt(value: 16),
             tools: [],

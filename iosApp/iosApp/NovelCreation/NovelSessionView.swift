@@ -1,5 +1,8 @@
 import SwiftUI
 import UIKit
+import os // TEMP-DIAG
+
+private let novelLoopLog = os.Logger(subsystem: "app.amber.ios", category: "novel-loop") // TEMP-DIAG
 
 private struct NovelGhostwriteRevisionRequest: Identifiable {
     let id = UUID()
@@ -108,6 +111,19 @@ enum NovelSessionStreamingTailFreezePolicy {
     }
 }
 
+/// 流式尾部可见性的单一所有者：`streamingTailVisibility` 只有一个槽位，只接受
+/// 当前所有者（有活跃尾部时是它，否则是仍在跟踪的那一行）的上报。
+enum NovelSessionStreamingTailVisibilityOwnership {
+    static func accepts(
+        reportingMessageID: String,
+        activeTailMessageID: String?,
+        trackedMessageID: String?
+    ) -> Bool {
+        guard let owner = activeTailMessageID ?? trackedMessageID else { return false }
+        return reportingMessageID == owner
+    }
+}
+
 enum NovelSessionScrollGeometryPolicy {
     /// - isFollowingBottom: 仍处跟随底意图（未拖离）。讨论结束后人物问答卡等晚到的
     ///   底部插入若走 static，会先推离底部再被 viewportChanged 硬拽，造成跳变。
@@ -181,8 +197,6 @@ struct NovelSessionView: View {
     @State private var pendingRecoveryAbandonTransactionIDs: [NovelPendingOperationID] = []
     @State private var recoveryAbandonTask: Task<Void, Never>?
     @State private var pendingUndo: NovelPendingCommittedUndo?
-    @State private var isAcceptingStalePlot = false
-    @State private var stalePlotAcceptanceError: String?
     /// Start with cold-open window; staged open expands to steady after first layout.
     @State private var historyWindowLimit = NovelSessionHistoryWindowPolicy.coldOpenLimit
     @State private var expandedArchiveIDs: Set<NovelMessageID> = []
@@ -194,6 +208,7 @@ struct NovelSessionView: View {
     /// renders markdown — this only chooses live vs cold markdown path.
     @State private var streamedMessageIDs: Set<String> = []
     var body: some View {
+        let _ = Self._logChanges() // TEMP-DIAG
         NovelSessionTranscriptScope(
             workspace: workspace,
             viewModel: viewModel,
@@ -597,7 +612,11 @@ struct NovelSessionView: View {
             .modifier(NovelSessionStreamingTailVisibilityModifier(
                 active: tracksStreamingTail,
                 onVisibilityChanged: { isVisible in
-                    updateStreamingTailVisibility(row: row, isVisible: isVisible)
+                    updateStreamingTailVisibility(
+                        row: row,
+                        isVisible: isVisible,
+                        activeTailID: activeTailID
+                    )
                 }
             ))
     }
@@ -680,10 +699,6 @@ struct NovelSessionView: View {
             )
         } else if !viewModel.retryableBranchPendingOperations.isEmpty && !viewModel.isBusy {
             synchronizationBanner
-        } else if workspace.hasStalePlot && !viewModel.needsSync &&
-                    (!viewModel.isBusy || isAcceptingStalePlot || workspace.isAcceptingStalePlot) &&
-                    !viewModel.isRunning {
-            stalePlotBanner
         }
 
         if let recovery = quickStartRecovery() {
@@ -700,53 +715,6 @@ struct NovelSessionView: View {
             ghostwriteStatusBar(ghostwrite)
         }
 
-    }
-
-    private var stalePlotBanner: some View {
-        let isInFlight = isAcceptingStalePlot || workspace.isAcceptingStalePlot
-        return VStack(alignment: .leading, spacing: 8) {
-            Label("改过前面的章节后，后面的剧情指针可能过期。后文以正文为准。", systemImage: "clock.arrow.circlepath")
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(AmberTheme.foreground2)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                guard !isAcceptingStalePlot, !workspace.isAcceptingStalePlot else { return }
-                isAcceptingStalePlot = true
-                stalePlotAcceptanceError = nil
-                Task { @MainActor in
-                    workspace.clearError()
-                    await workspace.acceptStalePlot()
-                    stalePlotAcceptanceError = workspace.errorMessage
-                    isAcceptingStalePlot = false
-                }
-            } label: {
-                ZStack {
-                    Text("按正文接受")
-                        .opacity(isInFlight ? 0 : 1)
-                    if isInFlight {
-                        ProgressView()
-                            .controlSize(.small)
-                    }
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            // Align with the Label's text (after the symbol inset).
-            .padding(.leading, 22)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-            .disabled(
-                isInFlight || viewModel.isBusy || !workspace.canMutate
-            )
-            .accessibilityLabel(isInFlight ? "正在按正文接受剧情" : "按正文接受")
-            if let stalePlotAcceptanceError {
-                Text(NovelPresentation.localizedCachedErrorMessage(stalePlotAcceptanceError))
-                    .font(.caption)
-                    .foregroundStyle(AmberTheme.accentRed)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 22)
-            }
-        }
     }
 
     private var synchronizationBanner: some View {
@@ -968,8 +936,8 @@ struct NovelSessionView: View {
         NovelStateSyncProgressBanner(
             title: workspace.stateSyncStatusTitle(projectID: projectID, branchID: branchID)
                 ?? IOSAppLocalization.string(
-                    "正在按正文对齐剧情指针",
-                    defaultValue: "正在按正文对齐剧情指针"
+                    "正在按正文更新剧情记录",
+                    defaultValue: "正在按正文更新剧情记录"
                 ),
             activity: nil,
             secondaryHint: workspace.isStateSyncStopping(
@@ -1594,6 +1562,7 @@ struct NovelSessionView: View {
         from oldValue: NovelSessionListSignal,
         to newValue: NovelSessionListSignal
     ) {
+        novelLoopLog.info("TEMP-DIAG signal tail=\(oldValue.activeTailID?.description.prefix(8) ?? "-", privacy: .public)->\(newValue.activeTailID?.description.prefix(8) ?? "-", privacy: .public) rows=\(oldValue.rowCount)->\(newValue.rowCount)") // TEMP-DIAG
         guard oldValue.sessionID == newValue.sessionID else {
             releaseSuspendedStreamingTail(resetIdentity: true)
             historyWindowLimit = NovelSessionHistoryWindowPolicy.coldOpenLimit
@@ -1706,6 +1675,7 @@ struct NovelSessionView: View {
     }
 
     private func dispatchFollowEvent(_ event: NovelSessionBottomFollowEvent) {
+        novelLoopLog.info("TEMP-DIAG follow event=\(String(describing: event), privacy: .public) mode=\(String(describing: followState.mode), privacy: .public)") // TEMP-DIAG
         switch event {
         case .reset, .userDragBegan:
             cancelExplicitBottomAnimation()
@@ -1905,9 +1875,18 @@ struct NovelSessionView: View {
 
     private func updateStreamingTailVisibility(
         row: NovelSessionRowModel,
-        isVisible: Bool
+        isVisible: Bool,
+        activeTailID: NovelMessageID?
     ) {
         let messageID = row.id.description
+        // 单槽只认当前所有者：分支翻转引起的 onDisappear 误报与旧行上报不得抢占，
+        // 否则两行交替写入会把整页拖进自激重算循环。
+        guard NovelSessionStreamingTailVisibilityOwnership.accepts(
+            reportingMessageID: messageID,
+            activeTailMessageID: activeTailID?.description,
+            trackedMessageID: streamingTailVisibility.messageID
+        ) else { return }
+        novelLoopLog.info("TEMP-DIAG vis row=\(messageID.prefix(8), privacy: .public) visible=\(isVisible) follow=\(String(describing: followState.mode), privacy: .public) suspended=\(suspendedStreamingTailRow != nil) prevID=\(streamingTailVisibility.messageID?.prefix(8) ?? "-", privacy: .public) prevVis=\(String(describing: streamingTailVisibility.isVisible), privacy: .public)") // TEMP-DIAG
         // Tall bubbles / onDisappear during identity churn report off-screen while
         // the user is still watching the bottom. Do not freeze in those cases.
         let treatAsVisible = isVisible || isFollowingBottom
@@ -1932,6 +1911,7 @@ struct NovelSessionView: View {
     }
 
     private func releaseSuspendedStreamingTail(resetIdentity: Bool = false) {
+        novelLoopLog.info("TEMP-DIAG release reset=\(resetIdentity)") // TEMP-DIAG
         suspendedStreamingTailRow = nil
         if resetIdentity {
             streamingTailVisibility = ChatSwiftUIStreamingTailVisibilityState()
@@ -2044,6 +2024,7 @@ private struct NovelSessionTranscriptScope<Content: View>: View {
     let content: (NovelSessionListModel?, NovelSessionListSignal) -> Content
 
     var body: some View {
+        let _ = Self._logChanges() // TEMP-DIAG
         let listModel = viewModel.loadStage >= .coreTranscript ? projectedListModel() : nil
         let listSignal = Self.makeListSignal(from: listModel)
 
@@ -2151,6 +2132,7 @@ private struct NovelSessionRowView: View, Equatable {
     }
 
     var body: some View {
+        let _ = Self._logChanges() // TEMP-DIAG
         if let archive = row.archive {
             NovelDiscussionArchiveCard(archive: archive) {
                 onToggleArchive(archive)

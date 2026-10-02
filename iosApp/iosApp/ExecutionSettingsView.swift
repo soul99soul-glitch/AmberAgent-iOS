@@ -275,8 +275,8 @@ struct ExecutionSettingsView: View {
                 ExecutionToggleRow(
                     systemImage: "capsule",
                     title: IOSAppLocalization.string(
-                        "聊天灵动岛实时活动",
-                        defaultValue: "聊天灵动岛实时活动"
+                        "灵动岛实时活动",
+                        defaultValue: "灵动岛实时活动"
                     ),
                     isOn: liveActivity
                 ) {

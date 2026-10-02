@@ -83,7 +83,7 @@ final class AgentLiveActivityControllerPendingStartTests: XCTestCase {
                 await gate.waitForRelease()
                 return AgentLiveActivityController.ActivitySystemSnapshot(enabled: true, activities: [])
             },
-            requestSystemCard: { runId, _, _, presentation in
+            requestSystemCard: { runId, _, _, _, presentation in
                 recorder.recordRequest(presentation)
                 return AgentLiveActivityController.SystemCardHandle(
                     id: "fake-\(runId)",

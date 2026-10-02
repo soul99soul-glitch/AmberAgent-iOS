@@ -75,6 +75,31 @@ final class AgentActivityDeepLinkTests: XCTestCase {
         XCTAssertNil(attributes.destinationURL(for: .openTask))
     }
 
+    func testDeepReadAttributesOpenTheDeepReadTask() throws {
+        let attributes = AgentActivityAttributes(
+            runId: "TASK-1:GEN-1",
+            conversationId: nil,
+            startedAt: .now,
+            conversationTitle: "某个热点",
+            deepReadTaskId: "6F1C2A4B-0D2E-4F3A-9B8C-1234567890AB"
+        )
+
+        let url = try XCTUnwrap(attributes.destinationURL(for: .openTask))
+        XCTAssertNil(AgentActivityDeepLink.parse(url))
+        XCTAssertEqual(
+            IOSAppDeepLink.parse(url),
+            .deepReadTask(id: "6F1C2A4B-0D2E-4F3A-9B8C-1234567890AB")
+        )
+        XCTAssertEqual(IOSAppDeepLink.url(for: .deepReadTask(id: "6F1C2A4B-0D2E-4F3A-9B8C-1234567890AB")), url)
+        XCTAssertNil(IOSAppDeepLink.parse(URL(string: "\(AgentActivityDeepLink.scheme)://deep-read/a/b")!))
+    }
+
+    func testWebDetailUsesHostWithoutWWW() {
+        XCTAssertEqual(AgentActivityStepDetailPolicy.webDetail(url: "https://www.nytimes.com/2026/10/02/x.html"), "nytimes.com")
+        XCTAssertNil(AgentActivityStepDetailPolicy.webDetail(url: nil))
+        XCTAssertNil(AgentActivityStepDetailPolicy.webDetail(url: "  "))
+    }
+
     func testOpenTaskAttributesRoundTripToOwnedConversation() throws {
         let attributes = AgentActivityAttributes(
             runId: "run-123",

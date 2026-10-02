@@ -348,7 +348,9 @@ struct IOSMiniAppOutputParser {
       "permissions": ["storage","toast","theme","network","externalImages","search","clipboard.copy","host.updateBoardSummary","host.context","host.sendToConversation","host.createArtifact","ai.generate","sharedStore","eventBus","launch","sensor","location","clipboard.read","haptics","device","screen","speech","share","openURL"],
       "html": "<!DOCTYPE html>..."
     }
-    约束：只生成单文件 HTML；不要使用 script src、iframe、form、eval、new Function、import()、XMLHttpRequest、WebSocket、localStorage、sessionStorage、geolocation。
+    约束：只生成单文件 HTML；除下方 three.js 外不要使用 script src、iframe、form、eval、new Function、import()、XMLHttpRequest、WebSocket、localStorage、sessionStorage、geolocation。
+    3D 可用内置 three.js（r186）：在 <head> 中原样写 <script src="amber-miniapp-lib://three.min.js"></script>，之后使用全局 THREE，触摸旋转/缩放用 new THREE.OrbitControls(camera, renderer.domElement)；不要 import three 或其 addons，不要用 CDN。除 OrbitControls 外没有任何 addon/loader（无 GLTFLoader、EffectComposer、TextGeometry 等），也不能加载外部模型或纹理，只用内置几何体和 canvas/data: 生成的纹理。
+    3D 页面需含 <meta name="viewport" content="width=device-width,initial-scale=1">，body 设 margin:0，canvas 设 display:block；按容器 clientWidth/clientHeight 设置尺寸（为 0 时兜底），在 resize 时同步更新 renderer.setSize 与 camera.aspect，renderer.setPixelRatio(Math.min(devicePixelRatio, 2))。
     图片允许 data:image/... 或 https:// 图片 URL；不要使用 http://、相对路径、file/content/blob URL。外链图片必须声明 externalImages 权限。
     网络通过 await Amber.fetch({ url, method, headers, body, responseType }) 或 fetch("https://...")，必须声明 network 权限；fetch 会被安全桥接到 Amber.fetch。
     搜索只能通过 await Amber.search({ query, limit })，必须声明 search 权限；返回值为 {items:[{title,url,snippet,source,publishedAt?}]}。

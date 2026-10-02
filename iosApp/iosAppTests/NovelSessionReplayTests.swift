@@ -2794,3 +2794,43 @@ private extension NovelSessionReplayTests {
         )
     }
 }
+
+// 真机复现（2026-10-01）：终态收尾时刚退役的尾部行与冻结快照行交替上报可见性，
+// 争抢单槽 streamingTailVisibility，每次写入触发整页重算 → 自激循环卡死。
+extension NovelSessionReplayTests {
+    /// 按真机日志回放：没有活跃尾部，跟踪的是 tail 行；stale 行因结构翻转反复误报。
+    func testStaleRowReportsCannotStealTailVisibilityOwnership() {
+        var tracked: String? = "tail"
+        let reports: [(row: String, visible: Bool)] = [
+            ("tail", true), ("stale", false), ("stale", false), ("tail", false),
+            ("tail", true), ("stale", false), ("tail", true), ("stale", false),
+        ]
+        var writes = 0
+        for report in reports where NovelSessionStreamingTailVisibilityOwnership.accepts(
+            reportingMessageID: report.row,
+            activeTailMessageID: nil,
+            trackedMessageID: tracked
+        ) {
+            tracked = report.row
+            writes += 1
+        }
+        XCTAssertEqual(tracked, "tail", "非所有者的上报不得抢走跟踪身份")
+        XCTAssertEqual(writes, 4, "只有所有者 tail 的 4 次上报可以写入")
+    }
+
+    func testActiveTailOwnsVisibilityOverStickyTrackedRow() {
+        XCTAssertTrue(NovelSessionStreamingTailVisibilityOwnership.accepts(
+            reportingMessageID: "new", activeTailMessageID: "new", trackedMessageID: "old"
+        ))
+        XCTAssertFalse(NovelSessionStreamingTailVisibilityOwnership.accepts(
+            reportingMessageID: "old", activeTailMessageID: "new", trackedMessageID: "old"
+        ))
+    }
+
+    /// 跟踪身份被重置后，分支翻转产生的 onDisappear 误报不得把身份复活。
+    func testReportWithoutOwnerIsIgnored() {
+        XCTAssertFalse(NovelSessionStreamingTailVisibilityOwnership.accepts(
+            reportingMessageID: "row", activeTailMessageID: nil, trackedMessageID: nil
+        ))
+    }
+}

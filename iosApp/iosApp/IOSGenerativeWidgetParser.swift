@@ -1130,6 +1130,7 @@ enum IOSGuizangHtmlDeckValidator {
     static let maxHTMLBytes = 1_500_000
     static let localMotionURL = "amber-full-html://runtime/motion.min.js"
     static let localLucideURL = "amber-full-html://runtime/lucide.min.js"
+    static let localThreeURL = "amber-full-html://runtime/three.min.js"
     static let remoteResourceScheme = "amber-full-html-resource"
     static let motionAssetPath = "generative-libs/guizang/motion.min.js"
     static let lucideAssetPath = "generative-libs/guizang/lucide.min.js"
@@ -1149,11 +1150,13 @@ enum IOSGuizangHtmlDeckValidator {
     enum RuntimeAsset {
         case motion
         case lucide
+        case three
 
         var resourceName: String {
             switch self {
             case .motion: "motion.min"
             case .lucide: "lucide.min"
+            case .three: "three.min"
             }
         }
     }
@@ -1234,6 +1237,7 @@ enum IOSGuizangHtmlDeckValidator {
         html
             .replacing(pattern: #"https://amberagent\.local/(?:full-html|guizang)/motion\.min\.js"#, with: localMotionURL)
             .replacing(pattern: #"https://amberagent\.local/(?:full-html|guizang)/lucide\.min\.js"#, with: localLucideURL)
+            .replacing(pattern: #"https://amberagent\.local/(?:full-html|guizang)/three\.min\.js"#, with: localThreeURL)
             .replacing(pattern: #"https://unpkg\.com/lucide(?:@[^/"'`\s<>]+)?(?:/dist/umd/lucide(?:\.min)?\.js)?"#, with: localLucideURL)
             .replacing(pattern: #"https://cdn\.jsdelivr\.net/npm/lucide(?:@[^/"'`\s<>]+)?(?:/dist/umd/lucide(?:\.min)?\.js)?"#, with: localLucideURL)
             .replacing(pattern: #"https://cdn\.jsdelivr\.net/npm/motion(?:@[^/"'`\s<>]+)?/\+esm"#, with: localMotionURL)
@@ -1266,6 +1270,7 @@ enum IOSGuizangHtmlDeckValidator {
         let normalized = rewriteRuntimeUrls(url.trimmingCharacters(in: .whitespacesAndNewlines)).lowercased()
         if normalized == localMotionURL.lowercased() { return .motion }
         if normalized == localLucideURL.lowercased() { return .lucide }
+        if normalized == localThreeURL.lowercased() { return .three }
         return nil
     }
 

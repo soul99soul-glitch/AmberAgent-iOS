@@ -236,6 +236,8 @@ final class IOSDeepReadPipelineTests: XCTestCase {
             XCTAssertEqual(params.customHeaders, model.customHeaders)
             XCTAssertEqual(params.customBody, model.customBodies)
             XCTAssertNil(params.maxTokens, "Use the provider/model output budget instead of a hard-coded 3500-token cap")
+            // GPT-5 / Kimi 等只接受默认温度，固定 0.3 会被 400 拒绝；与聊天一致交给服务商默认。
+            XCTAssertNil(params.temperature, "Deep read must not pin a sampling temperature")
         }
 
         // The merged structured output carries every stage's fields.
@@ -527,6 +529,42 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         XCTAssertFalse(result.markdown.contains("## 深度分析"))
     }
 
+    // 全部调用失败且报错是未归类的英文时，失败原因要带上服务商原话，不能只剩「操作失败」。
+    func testAllStagesThrowingSurfacesRawProviderError() async {
+        final class RejectingProvider: IOSAgentTextProvider, @unchecked Sendable {
+            func generateText(
+                providerSetting: ProviderSetting,
+                messages: [UIMessage],
+                params: TextGenerationParams
+            ) async throws -> MessageChunk {
+                throw NSError(domain: "deepread-test", code: 400, userInfo: [
+                    NSLocalizedDescriptionKey: "Unsupported value: 'temperature' does not support 0.3 with this model."
+                ])
+            }
+        }
+        let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
+            task: makeTask(),
+            providerSetting: makeProviderSetting(),
+            model: makeDeepReadModel("test-model"),
+            provider: RejectingProvider()
+        )
+        XCTAssertTrue(result.didFail)
+        XCTAssertTrue(
+            result.failureReason.contains("does not support 0.3"),
+            "raw provider error must survive: \(result.failureReason)"
+        )
+        // 与启动方一致再过一次清洗，原话仍须保留。
+        XCTAssertTrue(IOSDeepReadUserFacingText.sanitize(result.failureReason).contains("does not support 0.3"))
+    }
+
+    func testProviderFailureReasonMarksTruncationWithoutRepeatingFailure() {
+        let long = String(repeating: "x", count: 300)
+        let reason = IOSDeepReadDraftGenerator.providerFailureReason(long)
+        XCTAssertTrue(reason.hasSuffix("…"), reason)
+        XCTAssertFalse(reason.contains("失败"), "banner already says 深度阅读生成失败: \(reason)")
+        XCTAssertFalse(IOSDeepReadDraftGenerator.providerFailureReason("short raw").hasSuffix("…"))
+    }
+
     func testStageTimeoutFallsToRetry() async {
         // The overview call (call 2) sleeps past the injected 0.2s budget; the
         // retry answers instantly and the run completes.
@@ -736,6 +774,55 @@ final class IOSDeepReadPipelineTests: XCTestCase {
         XCTAssertEqual(reloaded.sources.first?.content, source.content)
         XCTAssertEqual(reloaded.sources.first?.metadata["scrape_status"], "ok")
         XCTAssertEqual(reloaded.workspaceSyncFailed, IOSAppLocalization.string("Workspace 保存失败，请稍后重试。", defaultValue: "Workspace 保存失败，请稍后重试。"))
+    }
+
+    // 灵动岛按管线阶段推进：搜索 → 读网页（带当前来源域名）→ 生成 → 保存。
+    func testRunExistingTaskReportsLiveActivityStagesInOrder() async throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DeepReadActivityStages-")
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let store = IOSDeepReadStore(baseDirectory: base)
+        let source = IOSDeepReadSource(
+            kind: .hotTopic,
+            title: "Cached article",
+            content: "Previously fetched article text remains available for generation.",
+            url: "https://www.example.invalid/article",
+            metadata: ["scrape_status": "ok"],
+            createdAt: 100
+        )
+        let task = try store.createTask(
+            title: "W",
+            sources: [source],
+            templateId: IOSDeepReadTemplate.analysis.id,
+            now: 1_000
+        )
+
+        let defaults = UserDefaults(suiteName: "deepread-\(UUID().uuidString)")!
+        let settings = IOSSharedSettingsStore(userDefaults: defaults)
+        let model = makeDeepReadModel()
+        let configuredProvider = settings.addProvider(makeProviderSetting(model: model))
+        defer { _ = settings.removeProvider(providerId: configuredProvider.id.description()) }
+        settings.setCurrentChatModelId(model.id.description())
+        let provider = StageProvider([planReply, goodSummaryReply, timelineReply, analysisReply, extendedReply])
+
+        var stages: [String] = []
+        store.markRunning(id: task.id)
+        let didComplete = await IOSDeepReadLauncher.runExistingTask(
+            taskId: task.id,
+            sharedSettings: settings,
+            store: store,
+            textProvider: provider,
+            workspaceArtifactSaver: { _, _, _, _, _ in },
+            onActivityStage: { stage, detail in
+                stages.append(detail.map { "\(stage.rawValue):\($0)" } ?? stage.rawValue)
+            }
+        )
+
+        XCTAssertTrue(didComplete)
+        XCTAssertEqual(stages, ["searching", "readingWeb:example.invalid", "generating", "organizing"])
     }
 
     func testMissingModelDoesNotCompleteWithOfflineTemplate() async throws {

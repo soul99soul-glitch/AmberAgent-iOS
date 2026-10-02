@@ -15,6 +15,8 @@ struct AgentActivityAttributes: ActivityAttributes {
     /// 会话标题，展开态主标题用。锁屏/灵动岛是系统共享表面，只放用户自己
     /// 创建的标题，不放模型名或提示词。
     let conversationTitle: String?
+    /// 深度阅读任务没有对话，点按卡片打开这篇深度阅读。可选以兼容已有 ActivityKit 状态。
+    var deepReadTaskId: String? = nil
 }
 
 struct AgentActivityPresentation: Codable, Hashable, Sendable {
@@ -96,16 +98,28 @@ enum AgentActivityStepDetailPolicy {
         case .searching:
             raw = firstString(["query"])
         case .readingWeb:
-            raw = firstString(["url", "link", "uri"]).map { value in
-                guard let host = URL(string: value)?.host() else { return value }
-                return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
-            }
+            raw = firstString(["url", "link", "uri"]).map(displayHost)
         case .readingDocument:
             raw = firstString(["path", "file_path", "filename"]).map { ($0 as NSString).lastPathComponent }
         default:
             raw = nil
         }
         guard let raw else { return nil }
+        return clipped(raw)
+    }
+
+    /// 不经工具参数、直接拿网址的调用方（深度阅读抓取来源）用这个取对象。
+    static func webDetail(url: String?) -> String? {
+        guard let url = url?.trimmingCharacters(in: .whitespacesAndNewlines), !url.isEmpty else { return nil }
+        return clipped(displayHost(url))
+    }
+
+    private static func displayHost(_ value: String) -> String {
+        guard let host = URL(string: value)?.host() else { return value }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    private static func clipped(_ raw: String) -> String? {
         let collapsed = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !collapsed.isEmpty else { return nil }
         return collapsed.count > maxLength ? String(collapsed.prefix(maxLength - 1)) + "…" : collapsed
@@ -133,6 +147,7 @@ enum AgentActivityKind: String, Codable, Hashable, Sendable {
     case memory
     case command
     case workflow
+    case deepRead
 }
 
 enum AgentActivityPhase: String, Codable, Hashable, Sendable {
@@ -291,6 +306,18 @@ enum AgentActivityDeepLink {
         return components.url
     }
 
+    /// 深度阅读卡片的落点，由 `IOSAppDeepLink` 解析为 `.deepReadTask`。
+    static func makeDeepReadURL(taskId: String) -> URL? {
+        guard isValid(taskId, maxLength: 64) else { return nil }
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = deepReadHost
+        components.path = "/\(taskId)"
+        return components.url
+    }
+
+    static let deepReadHost = "deep-read"
+
     static func parse(_ url: URL) -> Target? {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.scheme == scheme,
@@ -335,6 +362,12 @@ extension AgentActivityPresentation {
 
     static func generatingResponse(modelName _: String) -> AgentActivityPresentation {
         response(stage: .generating)
+    }
+
+    static func deepRead(stage: AgentActivityStage, detail: String? = nil) -> AgentActivityPresentation {
+        var presentation = AgentActivityPresentation(kind: .deepRead, phase: .running, stage: stage)
+        presentation.stepDetail = detail
+        return presentation
     }
 
     static func response(stage: AgentActivityStage) -> AgentActivityPresentation {
@@ -723,6 +756,8 @@ extension AgentActivityKind {
             "terminal"
         case .workflow:
             "sparkles"
+        case .deepRead:
+            "book.pages"
         }
     }
 }
@@ -885,6 +920,9 @@ extension AgentActivityPresentation {
 
 extension AgentActivityAttributes {
     func destinationURL(for action: AgentActivityAction?) -> URL? {
+        if let deepReadTaskId {
+            return AgentActivityDeepLink.makeDeepReadURL(taskId: deepReadTaskId)
+        }
         guard let conversationId else { return nil }
         return AgentActivityDeepLink.makeURL(
             runId: runId,

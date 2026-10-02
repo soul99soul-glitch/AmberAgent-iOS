@@ -404,6 +404,28 @@ final class IOSGenerativeWidgetParserTests: XCTestCase {
         XCTAssertFalse(prepared.contains("https://amberagent.local/full-html/"))
     }
 
+    func testFullHtmlRuntimeServesBundledThreeAndRejectsCdnThree() {
+        let html = """
+        <!DOCTYPE html><html><body>
+        <canvas id="c"></canvas>
+        <script src="https://amberagent.local/full-html/three.min.js"></script>
+        <script>new THREE.OrbitControls(new THREE.PerspectiveCamera(), document.body)</script>
+        </body></html>
+        """
+
+        let prepared = IOSGuizangHtmlDeckValidator.prepareRuntimeHtml(html)
+
+        XCTAssertTrue(IOSGuizangHtmlDeckValidator.validateHtml(html).valid)
+        XCTAssertTrue(prepared.contains(IOSGuizangHtmlDeckValidator.localThreeURL))
+        XCTAssertEqual(IOSGuizangHtmlDeckValidator.runtimeAssetForURL(IOSGuizangHtmlDeckValidator.localThreeURL)?.resourceName, "three.min")
+
+        let cdn = html.replacingOccurrences(
+            of: "https://amberagent.local/full-html/three.min.js",
+            with: "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"
+        )
+        XCTAssertFalse(IOSGuizangHtmlDeckValidator.validateHtml(cdn).valid)
+    }
+
     func testSanitizerRemovesDangerousContent() {
         let result = IOSGenerativeWidgetSanitizer.sanitize(
             """

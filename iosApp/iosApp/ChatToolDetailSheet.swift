@@ -270,16 +270,11 @@ struct ChatToolDetailSheet: View {
                 }
             }
             section("讨论过程") {
-                let messages = councilTranscript(live.messages, finalAnswer: finalAnswer)
-                if messages.isEmpty {
+                let tabs = Self.councilTranscriptTabs(councilTranscript(live.messages, finalAnswer: finalAnswer))
+                if tabs.isEmpty {
                     statusLine(isRunning ? "等待发言…" : "(无发言记录)")
                 } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(messages) { message in
-                            CouncilTranscriptRow(message: message)
-                                .equatable()
-                        }
-                    }
+                    CouncilTranscriptTabs(tabs: tabs, isRunning: isRunning)
                 }
             }
         } else if let log = councilStoredLog(taskId: result?["task_id"] as? String) {
@@ -299,9 +294,9 @@ struct ChatToolDetailSheet: View {
     /// The host synthesis is already shown under 结论; drop its duplicate tail
     /// together with the "主持总结" divider that introduces it.
     private func councilTranscript(
-        _ messages: [IOSCouncilRoomMessageEvent],
+        _ messages: [CouncilLiveMessage],
         finalAnswer: String?
-    ) -> [IOSCouncilRoomMessageEvent] {
+    ) -> [CouncilLiveMessage] {
         guard let finalAnswer,
               let lastIndex = messages.lastIndex(where: { $0.kind != .divider }),
               messages[lastIndex].kind == .host,
@@ -315,9 +310,44 @@ struct ChatToolDetailSheet: View {
 
     /// The runner's interrupted/cancelled and empty-objective exits return without
     /// appending a system failure message, so the transcript alone may not say why.
-    static func councilShowsFailureReason(liveMessages: [IOSCouncilRoomMessageEvent]?) -> Bool {
+    static func councilShowsFailureReason(liveMessages: [CouncilLiveMessage]?) -> Bool {
         guard let liveMessages else { return true }
         return !liveMessages.contains { $0.kind == .system && $0.status == .failed }
+    }
+
+    struct CouncilTranscriptTab: Identifiable {
+        let id: String
+        let title: String
+        let messages: [CouncilLiveMessage]
+    }
+
+    /// Splits the transcript into 准备 / 第 N 轮 / 总结 tabs so the sheet renders
+    /// one round at a time. Reads only divider bodies (never updated), so a
+    /// streaming seat does not re-evaluate the grouping.
+    static func councilTranscriptTabs(_ messages: [CouncilLiveMessage]) -> [CouncilTranscriptTab] {
+        var tabs: [CouncilTranscriptTab] = []
+        var id = "prepare"
+        var title = IOSAppLocalization.string("准备", defaultValue: "准备")
+        var current: [CouncilLiveMessage] = []
+        func close() {
+            // 轮次刚开始、还没有发言时也保留它的 Tab，运行中才能跟随到新一轮。
+            if !current.isEmpty || id != "prepare" {
+                tabs.append(CouncilTranscriptTab(id: id, title: title, messages: current))
+            }
+        }
+        for message in messages {
+            if message.kind == .divider, IOSCouncilRoomRunner.isRoundDivider(message.body) {
+                close()
+                (id, title, current) = (message.id.uuidString, message.body, [])
+            } else if message.kind == .divider, message.body == IOSCouncilRoomRunner.hostSummaryDividerTitle {
+                close()
+                (id, title, current) = ("summary", IOSAppLocalization.string("总结", defaultValue: "总结"), [])
+            } else {
+                current.append(message)
+            }
+        }
+        close()
+        return tabs
     }
 
     private func councilStoredLog(taskId: String?) -> String? {
@@ -620,11 +650,103 @@ private extension String {
     }
 }
 
-/// One council transcript entry. Equatable so streaming updates re-render only
-/// the message that changed. Speaking and finished bodies share `.callout` so
-/// completion does not jump; finished bodies render Markdown.
-private struct CouncilTranscriptRow: View, Equatable {
-    let message: IOSCouncilRoomMessageEvent
+/// Round tabs over the council transcript: only the selected round's rows
+/// exist. Follows the latest round until the user picks an earlier one;
+/// picking the latest again resumes following.
+private struct CouncilTranscriptTabs: View {
+    let tabs: [ChatToolDetailSheet.CouncilTranscriptTab]
+    let isRunning: Bool
+
+    /// nil = 跟随最新一轮。
+    @State private var pinnedTabId: String?
+
+    private var selectedId: String? {
+        if let pinnedTabId, tabs.contains(where: { $0.id == pinnedTabId }) { return pinnedTabId }
+        return tabs.last?.id
+    }
+
+    var body: some View {
+        let selected = tabs.first { $0.id == selectedId }
+        VStack(alignment: .leading, spacing: 10) {
+            if tabs.count > 1 {
+                strip
+            }
+            if let selected {
+                if selected.messages.isEmpty {
+                    Text(IOSAppLocalization.string("等待发言…", defaultValue: "等待发言…"))
+                        .font(.footnote)
+                        .foregroundStyle(AmberTheme.muted)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(selected.messages) { message in
+                            CouncilTranscriptRow(message: message)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var strip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(tabs) { tab in
+                        Button {
+                            pinnedTabId = tab.id == tabs.last?.id ? nil : tab.id
+                        } label: {
+                            chip(tab)
+                        }
+                        .buttonStyle(.plain)
+                        .id(tab.id)
+                    }
+                }
+            }
+            .scrollClipDisabled()
+            .onChange(of: selectedId) { _, id in
+                guard let id else { return }
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+    }
+
+    private func chip(_ tab: ChatToolDetailSheet.CouncilTranscriptTab) -> some View {
+        let isSelected = tab.id == selectedId
+        let failed = tab.messages.contains { $0.status == .failed }
+        let live = isRunning && tab.id == tabs.last?.id
+        let tint = failed ? AmberTheme.accentRed : (isSelected ? AmberTheme.accent : AmberTheme.muted)
+        return HStack(spacing: 4) {
+            if failed {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+            } else if live {
+                Image(systemName: "waveform")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            Text(tab.title)
+                .font(.footnote.weight(isSelected ? .semibold : .regular))
+                .lineLimit(1)
+        }
+        .foregroundStyle(failed || isSelected ? tint : AmberTheme.foreground)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(tint.opacity(isSelected ? 0.14 : 0.08), in: Capsule())
+        .contentShape(Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityValue(
+            failed
+                ? IOSAppLocalization.string("失败", defaultValue: "失败")
+                : (live ? IOSAppLocalization.string("发言中", defaultValue: "发言中") : "")
+        )
+    }
+}
+
+/// One council transcript entry. Observes only its own message, so a streaming
+/// beat re-renders just this row. Speaking and finished bodies share `.callout`
+/// so completion does not jump; finished bodies render Markdown.
+private struct CouncilTranscriptRow: View {
+    let message: CouncilLiveMessage
 
     var body: some View {
         if message.kind == .divider {

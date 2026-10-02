@@ -3262,9 +3262,10 @@ final class NovelSessionViewModelTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
-    /// Contract v1.1 D-D at the view-model layer: forward runs carry the
-    /// gate reason, ghostwrite cannot start, discussion stays open.
-    func testUnresolvedPlotGateBlocksForwardRunsInViewModel() async throws {
+    /// 改过非末章留下的过期标记由工作区自动「按正文接受」（作者已确认过改动，
+    /// 不再要求手动点按钮）：标记清除、提示编号递增，后续写作不再被拦。
+    /// 领域层门禁本身仍在，作为自动同步失败时的兜底，见 NovelFactTransactionLifecycleTests。
+    func testStalePlotIsAutoAcceptedAndUnblocksForwardRuns() async throws {
         var fixture = try documentWithChapter()
         let branch = fixture.document.branches[0]
         let chapterID = branch.workingChapterSelections[0].chapterID
@@ -3296,25 +3297,20 @@ final class NovelSessionViewModelTests: XCTestCase {
             scripts: []
         )
 
-        // Forward prose is refused with the actionable gate reason.
-        harness.session.mode = .writeProse
-        let didStart = await harness.session.send(text: "写下一章")
-        XCTAssertFalse(didStart)
-        XCTAssertEqual(
-            harness.session.operationErrorMessage,
-            NovelWorkspaceLedger.unresolvedPlotGateMessage
-        )
-        XCTAssertFalse(harness.session.canStartGhostwriteChapter)
-        let readiness = NovelGhostwriteReadiness.issues(
-            in: try await harness.repository.loadProject(id: harness.projectID).document,
+        let synced = await eventually {
+            !harness.workspace.hasStalePlot && harness.workspace.stalePlotAutoSyncNoticeID == 1
+        }
+        XCTAssertTrue(synced, "过期标记应被自动接受，并发出一次轻提示")
+        let persisted = try await harness.repository.loadProject(id: harness.projectID).document
+        let state = try XCTUnwrap(persisted.stateSnapshots.first {
+            $0.id == persisted.branches.first(where: { $0.id == branch.id })?.currentStateSnapshotID
+        })
+        XCTAssertFalse(state.hasStaleChapterPlots, "自动接受必须落盘，而不只是界面状态")
+        XCTAssertFalse(NovelGhostwriteReadiness.issues(
+            in: persisted,
             branchID: branch.id,
             requireChapterPlan: false
-        )
-        XCTAssertTrue(readiness.contains(.unresolvedPlot))
-        XCTAssertEqual(
-            NovelGhostwriteReadinessIssue.unresolvedPlot.displayName,
-            NovelWorkspaceLedger.unresolvedPlotGateMessage
-        )
+        ).contains(.unresolvedPlot))
     }
 
     func testPersistedNeedsSyncWaitsForWorkspaceAppearanceBeforeAutomaticStateSync() async throws {

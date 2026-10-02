@@ -9,7 +9,7 @@ enum NovelWorkspaceLedger {
     /// plot modules stale; until that is resolved (accept-as-canonical,
     /// fork, or rewriting the affected chapters) forward progress is gated.
     static let unresolvedPlotGateMessage =
-        "改过前面的章节后，后面的剧情指针还没解开。请先在项目工作区确认无碍、Fork，或重写后续章节，再继续写后续内容。"
+        "前面的章节刚改过，后面几章的剧情记录还在更新，请稍等片刻再继续写。"
 
     /// True when the branch's current plot snapshot still carries stale
     /// chapter modules — the D-D unresolved state.
@@ -119,7 +119,7 @@ enum NovelWorkspaceLedger {
         switch kind {
         case .initial: "初始"
         case .collection: "收录"
-        case .manualSync: "剧情指针"
+        case .manualSync: "剧情记录"
         case .discussionArchive: "讨论归档"
         case .identityClarification: "人物说明"
         case .polish: "润色"
@@ -735,7 +735,7 @@ enum NovelWorkspacePlotCommit {
             throw NovelError.invalidInput("The branch has no current plot snapshot.")
         }
         guard !document.pendingOperations.contains(where: { $0.branchID == branchID }) else {
-            throw NovelError.invalidInput("当前有未完成的剧情同步事务，不能执行指针重链。")
+            throw NovelError.invalidInput("还有没做完的剧情同步，暂时不能重新整理剧情记录。")
         }
         guard NovelWorkspaceLedger.canRelinkWithoutModel(
             branch: branch,

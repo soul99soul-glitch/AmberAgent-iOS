@@ -648,6 +648,8 @@ struct AppShell: View {
         case .gatewayPair(let payload):
             MacGatewayStore.shared.receivePairingLink(payload)
             rootRouter.path = [.settings, .macGateway]
+        case .deepReadTask(let id):
+            rootRouter.path = [.board, .deepReadTask(id: id)]
         case .agentActivity(let target):
             pendingAgentActivityTarget = target
             pendingAgentActivityURL = nil

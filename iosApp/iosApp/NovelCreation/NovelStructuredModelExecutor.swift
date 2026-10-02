@@ -897,12 +897,13 @@ extension NovelStructuredModelTaskKind {
 
     /// - Parameter stateSyncReasoningEnabled: 仅影响 `.stateDelta` / `.stateRebuild`。
     ///   关闭时对 DeepSeek 等会发 `thinking: disabled`，同步更快。
+    ///   不固定 temperature / topP：GPT-5 系列、Kimi 等只接受默认采样参数，固定值会被 400 拒绝。
     func parameters(stateSyncReasoningEnabled: Bool) -> NovelModelParameters {
         switch self {
         case .stateDelta, .stateRebuild:
             .init(
-                temperature: 0.1,
-                topP: 0.8,
+                temperature: nil,
+                topP: nil,
                 // 不给模型设硬上限(用户明确裁决):写多少由模型决定,不人为截断。
                 // 输入侧的留位由 `outputReservationTokens` 独立承担。
                 maxOutputTokens: nil,
@@ -910,22 +911,22 @@ extension NovelStructuredModelTaskKind {
             )
         case .discussionArchive:
             .init(
-                temperature: 0.1,
-                topP: 0.8,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )
         case .workspacePlot, .chapterPlanProposal:
             .init(
-                temperature: 0.1,
-                topP: 0.8,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .off
             )
         case .polishDrift, .continuityAudit, .continuityRepair, .chapterPlanAcceptance, .chapterAdjudication:
             .init(
-                temperature: 0,
-                topP: 1,
+                temperature: nil,
+                topP: nil,
                 maxOutputTokens: nil,
                 reasoningLevel: .automatic
             )

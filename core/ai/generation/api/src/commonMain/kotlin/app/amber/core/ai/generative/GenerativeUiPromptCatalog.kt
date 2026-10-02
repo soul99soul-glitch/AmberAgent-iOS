@@ -9,6 +9,7 @@ object GenerativeUiProtocol {
     const val LOCAL_RUNTIME_BASE = "https://amberagent.local/full-html/"
     const val LOCAL_MOTION_URL = "${LOCAL_RUNTIME_BASE}motion.min.js"
     const val LOCAL_LUCIDE_URL = "${LOCAL_RUNTIME_BASE}lucide.min.js"
+    const val LOCAL_THREE_URL = "${LOCAL_RUNTIME_BASE}three.min.js"
 }
 
 /** The model-facing show-widget contract shared by Android and iOS. */
@@ -54,7 +55,7 @@ object GenerativeUiPromptCatalog {
                 appendLine("- For slide presentations / decks / PPT / 幻灯片 / 演示文稿, use the single full-featured HTML deck path: renderer \"${GenerativeUiProtocol.FULL_HTML_RENDERER}\".")
                 appendLine("- final full_html output shape: {\"title\":\"Deck Title\",\"renderer\":\"${GenerativeUiProtocol.FULL_HTML_RENDERER}\",\"widget_code\":\"<svg ...static cover only.../>\",\"spec\":{\"html\":\"<!DOCTYPE html>...<div id=\\\"deck\\\"><section class=\\\"slide ...\\\">...</section></div>...</html>\",\"source\":\"ppt-skill\",\"allowRemoteImages\":true,\"allowRemoteFonts\":true}}.")
                 appendLine("- full_html REQUIRED STRUCTURE: spec.html should contain one live deck wrapper `<div id=\"deck\">...</div>` and every page should be `<section class=\"slide ...\" data-animate=\"...\">...</section>`. Reveal-style `<div class=\"slides\"><section>...</section></div>` is also acceptable.")
-                appendLine("- full_html RUNTIME: inline CSS/JS, canvas, WebGL, SVG, Motion animations, touch/swipe handlers, and Lucide icons are allowed inside spec.html. For Lucide use `<script src=\"${GenerativeUiProtocol.LOCAL_LUCIDE_URL}\"></script>`; for Motion One use `await import('${GenerativeUiProtocol.LOCAL_MOTION_URL}')`. Do NOT use unpkg/jsdelivr/skypack/CDN script URLs.")
+                appendLine("- full_html RUNTIME: inline CSS/JS, canvas, WebGL, SVG, Motion animations, touch/swipe handlers, and Lucide icons are allowed inside spec.html. For Lucide use `<script src=\"${GenerativeUiProtocol.LOCAL_LUCIDE_URL}\"></script>`; for Motion One use `await import('${GenerativeUiProtocol.LOCAL_MOTION_URL}')`; for three.js 3D use `<script src=\"${GenerativeUiProtocol.LOCAL_THREE_URL}\"></script>`, which defines global `THREE` (r186, including `THREE.OrbitControls` for touch rotate/zoom) — do not `import` three or its addons. OrbitControls is the only addon (no GLTFLoader, EffectComposer, TextGeometry, etc.) and external models/textures cannot load; use built-in geometries and canvas/data: textures. For 3D pages include `<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">`, set body margin:0 and canvas display:block, size the renderer from its container's clientWidth/clientHeight (fall back when 0), update renderer size and camera.aspect on resize, and cap setPixelRatio at 2. Do NOT use unpkg/jsdelivr/skypack/CDN script URLs.")
                 appendLine("- widget_code ROLE for PPT: it is JUST a tiny static cover thumbnail SVG shown inline before the user expands. Keep it under ~600 chars: deck title + 1 short subtitle + page count badge.")
                 appendLine("- For long-running PPT/deck work, keep the visible stream to short progress text and/or the tiny widget_code cover/status. Emit the full_html show-widget only after the HTML is complete; never emit a partial or truncated spec.html.")
                 appendLine("- MANDATORY: never render a multi-page deck as an SVG/HTML grid in widget_code. The full live PPT/deck must be in spec.html so AmberAgent shows a fullscreen touch presentation preview. Do NOT generate or save an AmberAgent MiniApp for PPT requests.")
@@ -78,7 +79,7 @@ object GenerativeUiPromptCatalog {
                 Reply in visible content immediately with exactly one fenced `show-widget` JSON block, but do not begin the block until the full JSON can be completed in this response. Do not output a MiniApp, standalone webpage, generic HTML app, Markdown-only answer, or hidden-only reasoning.
                 `renderer` must be `${GenerativeUiProtocol.FULL_HTML_RENDERER}`; `widget_code` is only a static SVG cover; `spec.html` is the full live deck HTML.
                 `spec.html` must contain `<div id="deck">` and one or more `<section class="slide ...">` pages.
-                Scripts may only use ${GenerativeUiProtocol.LOCAL_MOTION_URL} and ${GenerativeUiProtocol.LOCAL_LUCIDE_URL}. Do not use CDN script URLs.
+                Scripts may only use ${GenerativeUiProtocol.LOCAL_MOTION_URL}, ${GenerativeUiProtocol.LOCAL_LUCIDE_URL}, and ${GenerativeUiProtocol.LOCAL_THREE_URL}. Do not use CDN script URLs.
                 Preserve the requested content and style; keep the JSON valid, complete, and compact enough to fit. Never emit partial spec.html.
             """.trimIndent()
         }

@@ -25,13 +25,15 @@ struct NovelProjectWorkspaceView: View {
     @State private var hasCompletedInitialNavigation = false
     @State private var routedProjectLoadFailure: String?
     @State private var modelPolicyFailure: String?
-    @State private var stalePlotAcceptanceError: String?
     @State private var pendingModelSelectionID: String?
     @State private var isFallbackModelPolicySubmitting = false
     @State private var sheetTransitionTask: Task<Void, Never>?
     @State private var sheetTransitionToken: UUID?
     @State private var collectionSheetInputs: CollectionSheetInputs?
-    @State private var isAcceptingStalePlot = false
+    /// 自动按正文更新剧情记录后的轻提示，几秒后自动收起。
+    @State private var isStalePlotAutoSyncNoticeVisible = false
+    /// 首次出现只记下当前编号，之后编号变化才弹，避免回到页面时重弹旧提示。
+    @State private var seenStalePlotAutoSyncNoticeID: Int?
 
     private struct CollectionSheetInputs {
         let candidateID: NovelCandidateID
@@ -181,13 +183,19 @@ struct NovelProjectWorkspaceView: View {
         } message: {
             Text("当前损坏的主文件会被保留用于排查，上一个有效版本将成为新的可写版本。")
         }
-        .alert("接受剧情状态失败", isPresented: Binding(
-            get: { stalePlotAcceptanceError != nil },
-            set: { if !$0 { stalePlotAcceptanceError = nil } }
-        )) {
-            Button("知道了", role: .cancel) { stalePlotAcceptanceError = nil }
-        } message: {
-            Text(stalePlotAcceptanceError ?? "请重试。")
+        .task(id: viewModel.stalePlotAutoSyncNoticeID) {
+            let noticeID = viewModel.stalePlotAutoSyncNoticeID
+            guard let seen = seenStalePlotAutoSyncNoticeID else {
+                seenStalePlotAutoSyncNoticeID = noticeID
+                return
+            }
+            guard noticeID != seen else { return }
+            seenStalePlotAutoSyncNoticeID = noticeID
+            withAnimation(.easeOut(duration: 0.2)) { isStalePlotAutoSyncNoticeVisible = true }
+            try? await Task.sleep(for: .seconds(3))
+            // 离开页面被取消也要收起，避免提示挂住；已被新提示接替则交给新任务。
+            guard seenStalePlotAutoSyncNoticeID == noticeID else { return }
+            withAnimation(.easeIn(duration: 0.3)) { isStalePlotAutoSyncNoticeVisible = false }
         }
         .task(id: hasCompletedInitialNavigation) {
             guard hasCompletedInitialNavigation else { return }
@@ -415,51 +423,17 @@ struct NovelProjectWorkspaceView: View {
                 .foregroundStyle(AmberTheme.accentRed)
                 .fixedSize(horizontal: false, vertical: true)
             }
-        } else if viewModel.hasStalePlot {
+        } else if isStalePlotAutoSyncNoticeVisible {
             workspaceStatusStrip {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label(
-                        "改过前面的章节后，后续剧情指针未解开：写后续章节、收录和代笔暂时被拦。确认无碍、Fork，或重写后续章节即可继续。",
-                        systemImage: "clock.arrow.circlepath"
-                    )
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(AmberTheme.foreground2)
-                    .fixedSize(horizontal: false, vertical: true)
-                    Button {
-                        guard !isAcceptingStalePlot else { return }
-                        stalePlotAcceptanceError = nil
-                        isAcceptingStalePlot = true
-                        Task { @MainActor in
-                            defer { isAcceptingStalePlot = false }
-                            await viewModel.acceptStalePlot()
-                            stalePlotAcceptanceError = viewModel.errorMessage
-                        }
-                    } label: {
-                        Text("确认无碍，按正文接受")
-                            .opacity(isStalePlotAcceptInFlight ? 0 : 1)
-                            .overlay {
-                                if isStalePlotAcceptInFlight {
-                                    HStack(spacing: 5) {
-                                        ProgressView().controlSize(.small)
-                                        Text("正在接受…")
-                                    }
-                                    .lineLimit(1)
-                                }
-                            }
-                    }
-                    .font(.footnote.weight(.semibold))
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    // Align the button with the Label's TEXT, which starts
-                    // after the symbol inset.
-                    .padding(.leading, 22)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                    .disabled(
-                        isStalePlotAcceptInFlight || !viewModel.canMutate
-                    )
-                }
+                Label(
+                    "前面的章节改过了，已按新正文更新后面几章的剧情记录。",
+                    systemImage: "checkmark.circle"
+                )
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(AmberTheme.foreground2)
+                .fixedSize(horizontal: false, vertical: true)
             }
+            .transition(.opacity)
         }
     }
 
@@ -852,7 +826,7 @@ struct NovelProjectWorkspaceView: View {
             return title
         }
         return currentStateSyncActivity?.phase == .preparing
-            ? "正在按正文对齐剧情指针"
+            ? "正在按正文更新剧情记录"
             : "正在同步剧情状态"
     }
 
@@ -1033,10 +1007,6 @@ struct NovelProjectWorkspaceView: View {
 
     private var isModelPolicySubmitting: Bool {
         pendingModelSelectionID != nil || isFallbackModelPolicySubmitting
-    }
-
-    private var isStalePlotAcceptInFlight: Bool {
-        isAcceptingStalePlot || viewModel.isAcceptingStalePlot
     }
 
     private func transition(to sheet: NovelWorkspaceSheet) {

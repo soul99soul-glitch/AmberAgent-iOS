@@ -31,6 +31,24 @@ final class MiniAppHtmlValidatorTests: XCTestCase {
         }
     }
 
+    func testAllowsBundledThreeLibraryScriptOnly() {
+        let allowed = ##"<!DOCTYPE html><html><head><script src="amber-miniapp-lib://three.min.js"></script></head><body><script>new THREE.Scene();</script></body></html>"##
+        XCTAssertNoThrow(try MiniAppHtmlValidator.validate(allowed))
+        XCTAssertNoThrow(try MiniAppHtmlValidator.validate(#"<!DOCTYPE html><html><SCRIPT  src = 'amber-miniapp-lib://three.min.js' ></SCRIPT></html>"#))
+
+        let rejected = [
+            ("cdn three", ##"<!DOCTYPE html><html><script src="https://cdn.jsdelivr.net/npm/three/build/three.min.js"></script></html>"##),
+            ("unknown bundled lib", ##"<!DOCTYPE html><html><script src="amber-miniapp-lib://other.js"></script></html>"##),
+            ("extra src attribute", ##"<!DOCTYPE html><html><script src="https://example.com/a.js" src="amber-miniapp-lib://three.min.js"></script></html>"##),
+            ("allowed src then evil src", ##"<!DOCTYPE html><html><script src="amber-miniapp-lib://three.min.js" src="https://example.com/a.js"></script></html>"##),
+            ("extra attribute", ##"<!DOCTYPE html><html><script src="amber-miniapp-lib://three.min.js" type="module"></script></html>"##),
+            ("three plus external script", ##"<!DOCTYPE html><html><script src="amber-miniapp-lib://three.min.js"></script><script src="https://example.com/a.js"></script></html>"##),
+        ]
+        for (name, html) in rejected {
+            XCTAssertThrowsError(try MiniAppHtmlValidator.validate(html), name)
+        }
+    }
+
     func testRejectsMissingHtmlTag() {
         XCTAssertThrowsError(try MiniAppHtmlValidator.validate("just text, no html"))
     }

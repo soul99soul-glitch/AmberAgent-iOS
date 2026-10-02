@@ -1,3 +1,4 @@
+import WebKit
 import XCTest
 @testable import iosApp
 
@@ -121,6 +122,44 @@ final class IOSMiniAppBridgeRuntimeTests: XCTestCase {
         XCTAssertTrue(sandboxed.contains("connect-src 'none'"))
         XCTAssertTrue(sandboxed.contains("script-src 'unsafe-inline'"))
         XCTAssertTrue(sandboxed.contains("Content-Security-Policy"))
+    }
+
+    func testRunnerCSPAllowsOnlyBundledLibraryScripts() throws {
+        let sandboxed = IOSMiniAppHTMLSandbox.enforceBridgeOnlyNetwork("<!doctype html><html><head></head><body></body></html>")
+
+        XCTAssertTrue(sandboxed.contains("script-src 'unsafe-inline' \(IOSMiniAppLibrarySchemeHandler.scheme):;"))
+        XCTAssertNotNil(IOSMiniAppLibrarySchemeHandler.resourceName(for: URL(string: "amber-miniapp-lib://three.min.js")!))
+        XCTAssertNil(IOSMiniAppLibrarySchemeHandler.resourceName(for: URL(string: "amber-miniapp-lib://../secrets.js")!))
+        XCTAssertNil(IOSMiniAppLibrarySchemeHandler.resourceName(for: URL(string: "amber-miniapp-lib://other.js")!))
+    }
+
+    @MainActor
+    func testRunnerLoadsBundledThreeUnderMiniAppCSP() async throws {
+        let html = """
+        <!DOCTYPE html><html><head><script src="amber-miniapp-lib://three.min.js"></script></head><body>
+        <script>
+        try {
+          var renderer = new THREE.WebGLRenderer();
+          var camera = new THREE.PerspectiveCamera(60, 1, 0.1, 10);
+          new THREE.OrbitControls(camera, renderer.domElement);
+          window.__threeResult = 'ok:' + THREE.REVISION;
+        } catch (e) { window.__threeResult = 'error:' + e.message; }
+        </script></body></html>
+        """
+        XCTAssertNoThrow(try MiniAppHtmlValidator.validate(html))
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
+        config.setURLSchemeHandler(IOSMiniAppLibrarySchemeHandler(), forURLScheme: IOSMiniAppLibrarySchemeHandler.scheme)
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 200, height: 200), configuration: config)
+        webView.loadHTMLString(IOSMiniAppHTMLSandbox.enforceBridgeOnlyNetwork(html), baseURL: nil)
+
+        var result: String?
+        for _ in 0..<100 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            result = try? await webView.evaluateJavaScript("window.__threeResult || null") as? String
+            if result != nil { break }
+        }
+        XCTAssertEqual(result, "ok:186")
     }
 
     func testRunnerCSPOnlyAllowsProxiedImagesWhenExternalImagesIsEnabled() {

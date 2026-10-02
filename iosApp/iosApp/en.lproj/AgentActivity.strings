@@ -6,6 +6,7 @@
 "agent.activity.kind.memory" = "Memory update";
 "agent.activity.kind.command" = "Command task";
 "agent.activity.kind.workflow" = "Agent task";
+"agent.activity.kind.deepRead" = "Deep reading";
 
 "agent.activity.stage.preparing" = "Preparing";
 "agent.activity.stage.thinking" = "Thinking";

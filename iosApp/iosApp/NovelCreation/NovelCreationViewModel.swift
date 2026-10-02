@@ -256,7 +256,9 @@ final class NovelCreationViewModel {
     var selectedProjectID: NovelProjectID?
     var selectedBranchID: NovelBranchID?
     var projectSnapshot: NovelProjectSnapshot?
-    var branchSnapshot: NovelBranchSnapshot?
+    var branchSnapshot: NovelBranchSnapshot? {
+        didSet { scheduleStalePlotAutoSyncIfNeeded() }
+    }
     private(set) var checkoutSidecarFailure: String?
     var injectionPreview: NovelInjectionPreviewSnapshot?
     /// 剧情矛盾检查的结果。**只活在内存里**:它是一份诊断报告,不是故事状态的一部分,
@@ -291,6 +293,9 @@ final class NovelCreationViewModel {
     private(set) var pendingMaterialDeletionIDs: Set<NovelMaterialID> = []
     private(set) var isRejectingAllSettingProposals = false
     private(set) var isAcceptingStalePlot = false
+    /// 每次自动「按正文接受」成功后递增；界面据此弹一次几秒后消失的轻提示。
+    private(set) var stalePlotAutoSyncNoticeID = 0
+    @ObservationIgnored private var stalePlotAutoSyncTask: Task<Void, Never>?
     private(set) var stateSyncActivity: NovelStateSyncActivity?
     private(set) var projectListLoadError: String?
     var errorMessage: String?
@@ -536,6 +541,8 @@ final class NovelCreationViewModel {
         guard operationOwnerID == ownerID else { return }
         operationOwnerID = nil
         isPerforming = false
+        // 过期标记可能在别的操作进行中写入；操作结束时补一次自动同步。
+        scheduleStalePlotAutoSyncIfNeeded()
     }
 
     var canMutate: Bool {
@@ -596,7 +603,7 @@ final class NovelCreationViewModel {
            activity.branchID == branchID {
             return activity.statusTitle
         }
-        return "正在按正文对齐剧情指针"
+        return "正在按正文更新剧情记录"
     }
 
     func cancelAutomaticStateSync(
@@ -3387,6 +3394,23 @@ final class NovelCreationViewModel {
         return await creation.worktreeManifestExists(projectID: projectID)
     }
 
+    /// 改过非末章后，后续章节的剧情记录会被标为可能过期并拦住后续写作。
+    /// 所有改正文的入口都由作者确认过，因此不再要作者手动「按正文接受」：
+    /// 一旦空闲就自动接受，成功后由界面弹一次轻提示。忙时跳过，
+    /// 等快照更新或操作锁释放时再试。
+    private func scheduleStalePlotAutoSyncIfNeeded() {
+        guard hasStalePlot, stalePlotAutoSyncTask == nil else { return }
+        stalePlotAutoSyncTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.stalePlotAutoSyncTask = nil }
+            guard self.hasStalePlot, self.canMutate, !self.isAcceptingStalePlot else { return }
+            await self.acceptStalePlot()
+            if !self.hasStalePlot {
+                self.stalePlotAutoSyncNoticeID &+= 1
+            }
+        }
+    }
+
     func acceptStalePlot() async {
         guard canMutate,
               let projectID = selectedProjectID,
@@ -4012,7 +4036,7 @@ final class NovelCreationViewModel {
                     publishAutomaticStateSyncFailure(
                         target: target,
                         message: NovelPresentation.stateSyncFailureMessage(
-                            "剧情指针未能按章回填。\(error.localizedDescription)"
+                            "每章的剧情记录没能补齐。\(error.localizedDescription)"
                         )
                     )
                     return

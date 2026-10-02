@@ -1759,7 +1759,7 @@ enum IOSHotListTitleTranslator {
         ]
         let params = TextGenerationParams(
             model: Model(modelId: modelId, displayName: modelId, id: KotlinUuid.companion.random(), type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [], abilities: [], tools: Set<BuiltInTools>(), contextWindowTokens: nil, providerOverwrite: nil),
-            temperature: KotlinFloat(value: 0.2),
+            temperature: nil,
             topP: nil,
             maxTokens: KotlinInt(value: 4_000),
             tools: [],
@@ -3364,7 +3364,7 @@ enum IOSDeepReadTemplateDraftGenerator {
         ]
         let params = TextGenerationParams(
             model: Model(modelId: safeModel, displayName: safeModel, id: KotlinUuid.companion.random(), type: ModelType.chat, customHeaders: [], customBodies: [], inputModalities: [], outputModalities: [], abilities: [], tools: Set<BuiltInTools>(), contextWindowTokens: nil, providerOverwrite: nil),
-            temperature: KotlinFloat(value: 0.35),
+            temperature: nil,
             topP: nil,
             maxTokens: KotlinInt(value: 2_800),
             tools: [],
@@ -3806,7 +3806,7 @@ enum IOSDeepReadDraftGenerator {
         let didFail = !merged.hasStructuredBody
         let reason: String
         if didFail && threwCount == stagesToRun.count * 2 {
-            reason = lastProviderError.map(IOSDeepReadUserFacingText.sanitize)
+            reason = lastProviderError.map(providerFailureReason)
                 ?? "模型调用全部失败，请检查网络、API Key 或模型配置后重试。"
         } else if didFail {
             reason = "未能生成可用的深度阅读内容，请换个来源或模型后重试。"
@@ -3825,6 +3825,19 @@ enum IOSDeepReadDraftGenerator {
             structuredJSON: structuredJSON,
             missingSections: missingSections
         )
+    }
+
+    /// 已归类的报错（鉴权、超时、限流等）用友好文案；未归类的保留服务商原话片段，
+    /// 否则只剩「操作失败」，用户无从判断是参数被拒还是模型不可用。
+    static func providerFailureReason(_ raw: String) -> String {
+        let friendly = IOSDeepReadUserFacingText.sanitize(raw)
+        let generic = IOSAppLocalization.string("操作失败，请稍后重试。", defaultValue: "操作失败，请稍后重试。")
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard friendly == generic, !trimmed.isEmpty else { return friendly }
+        // 外层横幅已是「深度阅读生成失败：」，这里只标来源；保留中文前缀，二次清洗靠它判定可原样展示。
+        let limit = 200
+        let snippet = trimmed.count > limit ? String(trimmed.prefix(limit)) + "…" : trimmed
+        return "服务商返回：" + snippet
     }
 
     // MARK: - Stage JSON helpers
@@ -3870,9 +3883,10 @@ enum IOSDeepReadDraftGenerator {
             UIMessage.companion.system(prompt: system),
             UIMessage.companion.user(prompt: prompt)
         ]
+        // 不固定温度：GPT-5 系列、Kimi 等只接受默认温度，传 0.3 会被 400 拒绝；与聊天一致交给服务商默认。
         let params = TextGenerationParams(
             model: model,
-            temperature: KotlinFloat(value: 0.3),
+            temperature: nil,
             topP: nil,
             maxTokens: nil,
             tools: [],

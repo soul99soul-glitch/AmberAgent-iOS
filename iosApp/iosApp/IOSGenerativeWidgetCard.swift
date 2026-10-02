@@ -21,6 +21,22 @@ struct IOSGenerativeWidgetCard: View {
     @State private var isExportingSVG = false
     @State private var svgExportError: IOSGenerativeWidgetSVGExportError?
 
+    private func expandedPresentation(fullScreen: Bool) -> Binding<IOSGenerativeWidgetSheetTarget?> {
+        let isFullHTML = widget.renderer == IOSGuizangHtmlDeckValidator.renderer
+        return Binding(
+            get: { isFullHTML == fullScreen ? sheet : nil },
+            set: { sheet = $0 }
+        )
+    }
+
+    @ViewBuilder
+    private func expandedView(_ target: IOSGenerativeWidgetSheetTarget) -> some View {
+        switch target {
+        case .widget(let widget, let html, let settings):
+            IOSGenerativeWidgetExpandedSheet(widget: widget, html: html, settings: settings)
+        }
+    }
+
     private var settings: IOSGenerativeWidgetSettings {
         IOSGenerativeWidgetSettings(generativeUiSetting)
     }
@@ -57,11 +73,13 @@ struct IOSGenerativeWidgetCard: View {
                 .stroke(AmberTheme.borderSoft, lineWidth: 1)
         }
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .sheet(item: $sheet) { target in
-            switch target {
-            case .widget(let widget, let html, let settings):
-                IOSGenerativeWidgetExpandedSheet(widget: widget, html: html, settings: settings)
-            }
+        .sheet(item: expandedPresentation(fullScreen: false)) { target in
+            expandedView(target)
+        }
+        // Live full_html pages (3D drag, swipe decks, canvas) own their touches; a
+        // sheet would still rubber-band on downward drags, so present full screen.
+        .fullScreenCover(item: expandedPresentation(fullScreen: true)) { target in
+            expandedView(target)
         }
         .fileExporter(
             isPresented: $isExportingSVG,

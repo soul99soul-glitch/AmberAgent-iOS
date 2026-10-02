@@ -29,6 +29,9 @@ enum MiniAppHtmlValidator {
     }
 
     private static let requiredHtmlPattern = #"<\s*(html\b|!doctype\s+html)"#
+    /// App-bundled libraries (served by `IOSMiniAppLibrarySchemeHandler`) are the
+    /// only allowed `<script src>`; the exact tag form keeps extra attributes out.
+    private static let bundledLibraryScriptPattern = #"<script\s+src\s*=\s*(["'])amber-miniapp-lib://three\.min\.js\1\s*>"#
     private static let blockedRules: [BlockedRule] = [
         .init(pattern: ##"<\s*script\b[^>]*\bsrc\s*="##, reason: "External scripts are not allowed"),
         .init(pattern: #"<\s*(iframe|object|embed|form)\b"#, reason: "Embedded/submit-capable elements are not allowed"),
@@ -71,8 +74,11 @@ enum MiniAppHtmlValidator {
         if try regex(requiredHtmlPattern, opts).firstMatch(in: html, range: fullRange) == nil {
             throw ValidationError(message: "HTML must include <html> or <!DOCTYPE html>")
         }
+        let checked = try regex(bundledLibraryScriptPattern, opts)
+            .stringByReplacingMatches(in: html, range: fullRange, withTemplate: "")
+        let checkedRange = NSRange(checked.startIndex..., in: checked)
         for rule in blockedRules {
-            if try regex(rule.pattern, opts).firstMatch(in: html, range: fullRange) != nil {
+            if try regex(rule.pattern, opts).firstMatch(in: checked, range: checkedRange) != nil {
                 throw ValidationError(message: rule.reason)
             }
         }

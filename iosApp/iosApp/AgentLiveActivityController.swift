@@ -137,6 +137,7 @@ final class AgentLiveActivityController {
     private struct PendingStart {
         let conversationId: String?
         let conversationTitle: String?
+        let deepReadTaskId: String?
         var presentation: AgentActivityPresentation
         var revocation: PendingRevocation?
     }
@@ -158,6 +159,7 @@ final class AgentLiveActivityController {
         _ runId: String,
         _ conversationId: String?,
         _ conversationTitle: String?,
+        _ deepReadTaskId: String?,
         _ presentation: AgentActivityPresentation
     ) async -> SystemCardHandle?
 
@@ -198,6 +200,7 @@ final class AgentLiveActivityController {
         runId: String,
         conversationId: String?,
         conversationTitle: String? = nil,
+        deepReadTaskId: String? = nil,
         presentation: AgentActivityPresentation
     ) {
         // 新任务开始时，上一张还在展示「完成 / 中断」的卡立即收起，不与新卡并存。
@@ -221,6 +224,7 @@ final class AgentLiveActivityController {
         pendingStarts[runId] = PendingStart(
             conversationId: conversationId,
             conversationTitle: conversationTitle,
+            deepReadTaskId: deepReadTaskId,
             presentation: presentation,
             revocation: nil
         )
@@ -228,7 +232,8 @@ final class AgentLiveActivityController {
             await self?.resolvePendingStart(
                 runId: runId,
                 conversationId: conversationId,
-                conversationTitle: conversationTitle
+                conversationTitle: conversationTitle,
+                deepReadTaskId: deepReadTaskId
             )
         }
     }
@@ -242,13 +247,14 @@ final class AgentLiveActivityController {
         }.value
     }
 
-    static let defaultRequestSystemCard: SystemCardRequester = { runId, conversationId, conversationTitle, presentation in
+    static let defaultRequestSystemCard: SystemCardRequester = { runId, conversationId, conversationTitle, deepReadTaskId, presentation in
         let now = Date()
         let attributes = AgentActivityAttributes(
             runId: runId,
             conversationId: conversationId,
             startedAt: now,
-            conversationTitle: WatchTaskText.singleLine(conversationTitle, maxLength: 120)
+            conversationTitle: WatchTaskText.singleLine(conversationTitle, maxLength: 120),
+            deepReadTaskId: deepReadTaskId
         )
         let content = AgentLiveActivityController.content(presentation: presentation, now: now)
 
@@ -272,7 +278,8 @@ final class AgentLiveActivityController {
     private func resolvePendingStart(
         runId: String,
         conversationId: String?,
-        conversationTitle: String?
+        conversationTitle: String?,
+        deepReadTaskId: String?
     ) async {
         guard let presentationForRequest = pendingStarts[runId]?.presentation else { return }
 
@@ -294,6 +301,7 @@ final class AgentLiveActivityController {
                 runId,
                 conversationId,
                 conversationTitle,
+                deepReadTaskId,
                 presentationForRequest
             ) else {
                 pendingStarts.removeValue(forKey: runId)

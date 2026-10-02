@@ -6,6 +6,7 @@
 "agent.activity.kind.memory" = "Обновление памяти";
 "agent.activity.kind.command" = "Командная задача";
 "agent.activity.kind.workflow" = "Задача агента";
+"agent.activity.kind.deepRead" = "Глубокое чтение";
 
 "agent.activity.stage.preparing" = "Подготовка";
 "agent.activity.stage.thinking" = "Размышление";

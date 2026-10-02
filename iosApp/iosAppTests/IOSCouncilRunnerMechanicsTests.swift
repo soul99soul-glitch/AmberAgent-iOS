@@ -867,8 +867,8 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
     }
 
     func testCouncilSheetShowsFailureReasonUnlessTranscriptAlreadyHasOne() {
-        func msg(_ kind: IOSCouncilRoomMessageKind, _ status: IOSCouncilRoomMessageStatus) -> IOSCouncilRoomMessageEvent {
-            IOSCouncilRoomMessageEvent(id: UUID(), kind: kind, speakerId: nil, author: "a", body: "b", subtitle: nil, status: status)
+        func msg(_ kind: IOSCouncilRoomMessageKind, _ status: IOSCouncilRoomMessageStatus) -> CouncilLiveMessage {
+            CouncilLiveMessage(IOSCouncilRoomMessageEvent(id: UUID(), kind: kind, speakerId: nil, author: "a", body: "b", subtitle: nil, status: status))
         }
         XCTAssertTrue(ChatToolDetailSheet.councilShowsFailureReason(liveMessages: nil))
         XCTAssertTrue(
@@ -876,6 +876,41 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
             "interrupted/cancelled exits append no system message; the reason must still be shown"
         )
         XCTAssertFalse(ChatToolDetailSheet.councilShowsFailureReason(liveMessages: [msg(.seat, .completed), msg(.system, .failed)]))
+    }
+
+    func testCouncilTranscriptSplitsIntoPrepareRoundAndSummaryTabs() {
+        func msg(_ kind: IOSCouncilRoomMessageKind, _ body: String) -> CouncilLiveMessage {
+            CouncilLiveMessage(IOSCouncilRoomMessageEvent(id: UUID(), kind: kind, speakerId: nil, author: "a", body: body, subtitle: nil, status: .completed))
+        }
+        let messages = [
+            msg(.divider, "已组建 2 位议员：甲、乙"),
+            msg(.divider, "辩论开始"),
+            msg(.divider, IOSCouncilRoomRunner.roundDividerTitle(1)),
+            msg(.seat, "甲 1"),
+            msg(.seat, "乙 1"),
+            msg(.divider, "主持人轮末点评"),
+            msg(.host, "点评 1"),
+            msg(.divider, IOSCouncilRoomRunner.roundDividerTitle(2)),
+            msg(.seat, "甲 2"),
+            msg(.divider, IOSCouncilRoomRunner.hostSummaryDividerTitle),
+            msg(.host, "总结正文"),
+        ]
+
+        let tabs = ChatToolDetailSheet.councilTranscriptTabs(messages)
+
+        XCTAssertEqual(tabs.map(\.title), ["准备", "第 1 轮", "第 2 轮", "总结"])
+        XCTAssertEqual(tabs.map { $0.messages.map(\.body) }, [
+            ["已组建 2 位议员：甲、乙", "辩论开始"],
+            ["甲 1", "乙 1", "主持人轮末点评", "点评 1"],
+            ["甲 2"],
+            ["总结正文"],
+        ])
+        XCTAssertEqual(tabs[1].id, messages[2].id.uuidString, "轮次 Tab 的 id 要稳定，新消息到来时选中状态不能丢")
+
+        let justStarted = ChatToolDetailSheet.councilTranscriptTabs(Array(messages[..<3]))
+        XCTAssertEqual(justStarted.map(\.title), ["准备", "第 1 轮"], "新一轮还没有发言时也要出现，运行中才能跟随过去")
+        XCTAssertTrue(justStarted[1].messages.isEmpty)
+        XCTAssertFalse(IOSCouncilRoomRunner.isRoundDivider("第 N 轮"))
     }
 
     func testCouncilLiveRegistryRejectsModelFromAnotherTask() {
@@ -905,6 +940,61 @@ final class IOSCouncilRunnerMechanicsTests: XCTestCase {
 
         // A sheet opened before approval must pick up the live model once it registers.
         wait(for: [changed], timeout: 0.1)
+    }
+
+    func testCouncilLiveStreamingUpdatesDoNotInvalidateTranscriptList() async throws {
+        let live = CouncilLiveModel()
+        let message = IOSCouncilRoomMessageEvent(
+            id: UUID(), kind: .seat, speakerId: "s1", author: "席位", body: "", subtitle: nil, status: .speaking
+        )
+        live.ingest(.append(message))
+        let listChanged = expectation(description: "transcript list invalidated")
+        listChanged.isInverted = true
+        withObservationTracking {
+            _ = live.messages
+        } onChange: {
+            listChanged.fulfill()
+        }
+
+        for i in 1...5 {
+            live.ingest(.updateMessage(id: message.id, body: String(repeating: "字", count: i), status: .speaking, lagAllowance: 1))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+
+        // 逐字流式只应重绘正在发言的那一行；列表失效会让整页和全部行重新求值。
+        await fulfillment(of: [listChanged], timeout: 0.05)
+        XCTAssertEqual(live.messages.last?.body, "字字字字字")
+    }
+
+    func testCouncilLiveCoalescesStreamingBodyButAppliesTerminalStateImmediately() async throws {
+        let live = CouncilLiveModel()
+        let message = IOSCouncilRoomMessageEvent(
+            id: UUID(), kind: .seat, speakerId: "s1", author: "席位", body: "", subtitle: nil, status: .speaking
+        )
+        live.ingest(.append(message))
+
+        for i in 1...20 {
+            live.ingest(.updateMessage(id: message.id, body: "第\(i)拍", status: .speaking, lagAllowance: 1))
+        }
+        XCTAssertEqual(live.messages.last?.body, "", "流式拍应合并到下一个刷新窗口，而不是每拍都提交")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(live.messages.last?.body, "第20拍")
+
+        live.ingest(.updateMessage(id: message.id, body: "第21拍", status: .speaking, lagAllowance: 1))
+        live.ingest(.updateMessage(id: message.id, body: "终稿", status: .completed, lagAllowance: 0))
+        XCTAssertEqual(live.messages.last?.body, "终稿")
+        XCTAssertEqual(live.messages.last?.status, .completed)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(live.messages.last?.body, "终稿", "已丢弃的流式拍不能在终态之后回写")
+
+        let second = IOSCouncilRoomMessageEvent(
+            id: UUID(), kind: .seat, speakerId: "s2", author: "席位2", body: "", subtitle: nil, status: .speaking
+        )
+        live.ingest(.append(second))
+        live.ingest(.updateMessage(id: second.id, body: "被打断前的内容", status: .speaking, lagAllowance: 1))
+        live.finish(completed: false)
+        XCTAssertEqual(live.messages.last?.body, "被打断前的内容", "结束时必须先落下尚未刷新的流式内容")
+        XCTAssertEqual(live.messages.last?.status, .failed)
     }
 
     private func runChatCouncilTool(

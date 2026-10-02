@@ -5220,7 +5220,7 @@ extension NovelSessionViewModel {
                 if needsStateSync {
                     mutateGhostwriteProgress(binding: expectedBinding) {
                         $0.phase = .syncing
-                        $0.detailMessage = "正在对齐剧情指针…"
+                        $0.detailMessage = "正在更新剧情记录…"
                     }
                     let synced = await awaitGhostwriteStateSync(expectedBinding: expectedBinding)
                     try Task.checkCancellation()
@@ -5228,7 +5228,7 @@ extension NovelSessionViewModel {
                         pauseGhostwritePipeline(
                             binding: expectedBinding,
                             reason: .syncFailed,
-                            detail: "剧情指针未能对齐，无法继续代笔。",
+                            detail: "剧情记录没能更新，暂时无法继续代笔。",
                             candidateID: ghostwriteProgressStorage?.candidateID
                         )
                         return

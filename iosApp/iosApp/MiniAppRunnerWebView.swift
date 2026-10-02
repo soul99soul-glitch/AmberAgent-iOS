@@ -50,7 +50,7 @@ enum IOSMiniAppNavigationTrustPolicy {
 enum IOSMiniAppHTMLSandbox {
     static func enforceBridgeOnlyNetwork(_ html: String, allowExternalImages: Bool = false) -> String {
         let imageSources = allowExternalImages ? "data: blob: amber-miniapp-image:" : "data: blob:"
-        let policy = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src \(imageSources); font-src data:; connect-src 'none'; media-src data: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
+        let policy = "default-src 'none'; script-src 'unsafe-inline' \(IOSMiniAppLibrarySchemeHandler.scheme):; style-src 'unsafe-inline'; img-src \(imageSources); font-src data:; connect-src 'none'; media-src data: blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"
         let meta = #"<meta http-equiv="Content-Security-Policy" content="\#(policy)">"#
         let options: NSString.CompareOptions = [.caseInsensitive, .regularExpression]
         let fullRange = NSRange(location: 0, length: (html as NSString).length)
@@ -135,6 +135,10 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
         let externalImagesAllowed = allowsExternalImages
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
+        config.setURLSchemeHandler(
+            IOSMiniAppLibrarySchemeHandler(),
+            forURLScheme: IOSMiniAppLibrarySchemeHandler.scheme
+        )
         if externalImagesAllowed {
             config.setURLSchemeHandler(
                 IOSMiniAppImageSchemeHandler(),
@@ -620,6 +624,33 @@ struct MiniAppRunnerWebView: UIViewRepresentable {
             }
         }
     }
+}
+
+/// Serves app-bundled JS libraries (currently three.js) to MiniApps. Local
+/// bundle reads only; nothing here touches the network.
+@MainActor
+final class IOSMiniAppLibrarySchemeHandler: NSObject, WKURLSchemeHandler {
+    nonisolated static let scheme = "amber-miniapp-lib"
+
+    nonisolated static func resourceName(for url: URL) -> String? {
+        url.absoluteString.lowercased() == "\(scheme)://three.min.js" ? "three.min" : nil
+    }
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        let requestURL = urlSchemeTask.request.url ?? URL(string: "\(Self.scheme)://missing")!
+        guard let name = Self.resourceName(for: requestURL),
+              let fileURL = Bundle.main.url(forResource: name, withExtension: "js", subdirectory: "generative-libs/guizang")
+                ?? Bundle.main.url(forResource: name, withExtension: "js"),
+              let data = try? Data(contentsOf: fileURL) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        urlSchemeTask.didReceive(URLResponse(url: requestURL, mimeType: "application/javascript", expectedContentLength: data.count, textEncodingName: "utf-8"))
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }
 
 @MainActor

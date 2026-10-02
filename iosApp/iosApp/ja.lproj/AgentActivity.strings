@@ -6,6 +6,7 @@
 "agent.activity.kind.memory" = "メモリ更新";
 "agent.activity.kind.command" = "コマンドタスク";
 "agent.activity.kind.workflow" = "エージェントタスク";
+"agent.activity.kind.deepRead" = "精読";
 
 "agent.activity.stage.preparing" = "準備中";
 "agent.activity.stage.thinking" = "思考中";

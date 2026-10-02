@@ -6,6 +6,7 @@
 "agent.activity.kind.memory" = "记忆更新";
 "agent.activity.kind.command" = "命令任务";
 "agent.activity.kind.workflow" = "智能任务";
+"agent.activity.kind.deepRead" = "深度阅读";
 
 "agent.activity.stage.preparing" = "正在准备";
 "agent.activity.stage.thinking" = "正在思考";

@@ -100,7 +100,8 @@ enum IOSDeepReadLauncher {
         isCurrentRun: @escaping @MainActor () -> Bool = { !Task.isCancelled },
         targetStages: Set<String>? = nil,
         initialOutput: IOSDeepReadOutput? = nil,
-        priorCompletion: IOSDeepReadPriorCompletion? = nil
+        priorCompletion: IOSDeepReadPriorCompletion? = nil,
+        onActivityStage: (@MainActor (_ stage: AgentActivityStage, _ detail: String?) -> Void)? = nil
     ) async -> Bool {
         defer {
             if isCurrentRun() {
@@ -139,6 +140,11 @@ enum IOSDeepReadLauncher {
             )
         }
 
+        func reportStage(_ stage: AgentActivityStage, _ detail: String? = nil) {
+            guard isCurrentRun() else { return }
+            onActivityStage?(stage, detail)
+        }
+
         store.markRunning(id: taskId)
         updateProgress(
             0,
@@ -149,6 +155,7 @@ enum IOSDeepReadLauncher {
             1,
             IOSAppLocalization.string("正在搜索补充来源", defaultValue: "正在搜索补充来源")
         )
+        reportStage(.searching)
         let searched = await searchSourcesForDeepRead(title: running.title, settings: sharedSettings.snapshot)
         guard isCurrentRun() else { return false }
 
@@ -161,6 +168,8 @@ enum IOSDeepReadLauncher {
             IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文"),
             total: progressTotal
         )
+        // 灵动岛显示正在抓取的那个来源；回调在每个来源抓完后触发，所以取下一个。
+        reportStage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: mergedSources.first?.url))
         let enriched = await enrichSourcesWithScrape(
             mergedSources,
             settings: sharedSettings.snapshot,
@@ -169,6 +178,9 @@ enum IOSDeepReadLauncher {
                     scrapeBase + Int64(index),
                     "\(IOSAppLocalization.string("正在抓取网页正文", defaultValue: "正在抓取网页正文")) \(index)/\(total)"
                 )
+                if index < mergedSources.count {
+                    reportStage(.readingWeb, AgentActivityStepDetailPolicy.webDetail(url: mergedSources[index].url))
+                }
             }
         )
         guard isCurrentRun() else { return false }
@@ -195,6 +207,7 @@ enum IOSDeepReadLauncher {
             generationBase,
             IOSAppLocalization.string("正在生成深度阅读", defaultValue: "正在生成深度阅读")
         )
+        reportStage(.generating)
         let result = await IOSDeepReadDraftGenerator.generateViaLLMResult(
             task: running,
             providerSetting: providerSetting,
@@ -239,6 +252,7 @@ enum IOSDeepReadLauncher {
             progressTotal,
             IOSAppLocalization.string("正在保存结果", defaultValue: "正在保存结果")
         )
+        reportStage(.organizing)
         store.complete(
             id: taskId,
             markdown: output,
@@ -600,6 +614,7 @@ final class IOSDeepReadBackgroundCoordinator {
                     }
                     onStatus(interruptMessage, true)
                 }
+                await AgentLiveActivityController.shared.end(runId: durableRunId, presentation: .failed())
                 _ = try? await self.durableRunStore.transitionFromAnyActive(
                     runId: durableRunId,
                     to: .interrupted,
@@ -624,12 +639,28 @@ final class IOSDeepReadBackgroundCoordinator {
             total: 7,
             subtitle: IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
         )
+        startLiveActivity(runId: durableRunId, taskId: taskId, title: title)
+        // 生成阶段一次可跑好几分钟、期间没有新状态；进程还在执行就按间隔续期，
+        // 否则 180 秒后卡片会被系统标成「后台暂停」。App 被挂起时这里不跑，照常过期。
+        let liveActivityHeartbeat = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(AgentActivityLifecyclePolicy.progressRefreshInterval))
+                AgentLiveActivityController.shared.noteProgress(runId: durableRunId)
+            }
+        }
 
         let operationTask = Task { @MainActor [weak self] in
+            var didSucceed = false
+            defer { liveActivityHeartbeat.cancel() }
             guard let self else { return }
             defer {
                 if self.runRegistry.finish(taskId: taskId, generationID: generationID) {
                     BackgroundGenerationKeepAlive.shared.end(taskId)
+                }
+                // 系统中断已在 failIfInterrupted 里收起卡片，这里再调一次是空操作。
+                let terminal: AgentActivityPresentation = didSucceed ? .completed() : .failed()
+                Task { @MainActor in
+                    await AgentLiveActivityController.shared.end(runId: durableRunId, presentation: terminal)
                 }
             }
             let didStartDurably = (try? await self.durableRunStore.ensureRunning(
@@ -662,7 +693,7 @@ final class IOSDeepReadBackgroundCoordinator {
                 )
                 return
             }
-            _ = await IOSDeepReadLauncher.runExistingTask(
+            didSucceed = await IOSDeepReadLauncher.runExistingTask(
                 taskId: taskId,
                 sharedSettings: sharedSettings,
                 onStatus: onStatus,
@@ -672,7 +703,15 @@ final class IOSDeepReadBackgroundCoordinator {
                 },
                 targetStages: targetStages,
                 initialOutput: initialOutput,
-                priorCompletion: priorCompletion
+                priorCompletion: priorCompletion,
+                onActivityStage: { stage, detail in
+                    Task { @MainActor in
+                        await AgentLiveActivityController.shared.update(
+                            runId: durableRunId,
+                            presentation: .deepRead(stage: stage, detail: detail)
+                        )
+                    }
+                }
             )
             // Expiration removes the registry owner and owns the interrupted
             // settlement above; do not race it with a generic failed mapping.
@@ -685,6 +724,22 @@ final class IOSDeepReadBackgroundCoordinator {
             )
         }
         runRegistry.attach(operationTask, taskId: taskId, generationID: generationID)
+    }
+
+    /// 灵动岛卡片与聊天共用「灵动岛实时活动」开关和控制器；没有对话，点按打开这篇深度阅读。
+    private func startLiveActivity(runId: String, taskId: String, title: String) {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: IOSExecutionPreferenceKeys.liveActivity) != nil,
+           !defaults.bool(forKey: IOSExecutionPreferenceKeys.liveActivity) {
+            return
+        }
+        AgentLiveActivityController.shared.start(
+            runId: runId,
+            conversationId: nil,
+            conversationTitle: title,
+            deepReadTaskId: taskId,
+            presentation: .deepRead(stage: .preparing)
+        )
     }
 
     func reconcileDurableRuns() async {

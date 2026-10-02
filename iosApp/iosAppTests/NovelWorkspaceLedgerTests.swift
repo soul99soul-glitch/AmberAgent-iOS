@@ -305,7 +305,7 @@ final class NovelWorkspaceLedgerTests: XCTestCase {
         XCTAssertEqual(changed.commits.count, 2)
         XCTAssertEqual(changed.head, next.branches[0].headCheckpointID.description)
         XCTAssertEqual(changed.headCommit?.parentID, firstStore.head)
-        XCTAssertEqual(changed.headCommit?.message, "剧情指针")
+        XCTAssertEqual(changed.headCommit?.message, "剧情记录")
     }
 
     func testLastChapterIsFastForwardAndMiddleChapterIsNot() throws {

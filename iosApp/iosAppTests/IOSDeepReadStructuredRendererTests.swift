@@ -1,3 +1,4 @@
+import WebKit
 import XCTest
 @testable import iosApp
 
@@ -172,5 +173,67 @@ final class IOSDeepReadStructuredRendererTests: XCTestCase {
 
         let plain = AmberTheme.resolvedCanvasPalette(paper: .paper, design: nil, dark: false)
         XCTAssertEqual(plain.background, AmberTheme.paperLight.background)
+    }
+
+    // 无纹理画布时正文透明（与原生页面背景无缝）；导出 PDF 等默认仍自刷底色。长串必须可折行。
+    func testTransparentCanvasAndLongTokenWrapping() {
+        let onScreen = IOSDeepReadEditorialRenderer.renderHTML(
+            IOSDeepReadEditorialRenderer.Input(title: "标题", markdown: "正文", transparentCanvas: true)
+        )
+        XCTAssertTrue(onScreen.contains("html,body{background:transparent;}"))
+        XCTAssertTrue(onScreen.contains("overflow-wrap:anywhere"))
+
+        let print = IOSDeepReadEditorialRenderer.renderHTML(
+            IOSDeepReadEditorialRenderer.Input(title: "标题", markdown: "正文")
+        )
+        XCTAssertFalse(print.contains("html,body{background:transparent;}"))
+    }
+
+    // 正文 WebView 关闭内部滚动、按测得高度定框：测得高度必须覆盖整篇文档，
+    // 否则首个 section 的上外边距折叠到 article 外，底部会被裁掉。
+    @MainActor
+    func testMeasuredHeightCoversWholeDocument() async throws {
+        let output = try JSONDecoder().decode(IOSDeepReadOutput.self, from: Data("""
+        {"topic_type":"event","summary":"摘要正文。","timeline":[{"date":"2024","event":"事件"}],
+         "analysis":{"core_dispute":"","perspectives":[],"implications":"影响分析的最后一段。"}}
+        """.utf8))
+        let html = IOSDeepReadEditorialRenderer.renderHTML(
+            IOSDeepReadEditorialRenderer.Input(title: "标题", markdown: "", structured: output, showHeadline: false)
+        )
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 1))
+        let loader = DeepReadLoadWaiter()
+        webView.navigationDelegate = loader
+        webView.loadHTMLString(html, baseURL: nil)
+        try await loader.wait()
+
+        let measuredResult = try await webView.evaluateJavaScript(IOSDeepReadEditorialWebView.measureHeightScript)
+        let documentResult = try await webView.evaluateJavaScript(
+            "Math.ceil(document.documentElement.getBoundingClientRect().height)"
+        )
+        let measured = try XCTUnwrap(measuredResult as? NSNumber).doubleValue
+        let documentHeight = try XCTUnwrap(documentResult as? NSNumber).doubleValue
+        XCTAssertGreaterThanOrEqual(measured, documentHeight, "frame would clip the article bottom")
+    }
+}
+
+private final class DeepReadLoadWaiter: NSObject, WKNavigationDelegate {
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var finished = false
+
+    @MainActor
+    func wait() async throws {
+        if finished { return }
+        try await withCheckedThrowingContinuation { continuation = $0 }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finished = true
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        continuation?.resume(throwing: error)
+        continuation = nil
     }
 }

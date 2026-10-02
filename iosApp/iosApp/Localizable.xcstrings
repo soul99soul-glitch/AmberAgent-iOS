@@ -2719,6 +2719,47 @@
         }
       }
     },
+    "灵动岛实时活动": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dynamic Island Live Activity"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dynamic Island ライブアクティビティ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dynamic Island 실시간 활동"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live Activity в Dynamic Island"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "灵动岛实时活动"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "靈動島即時活動"
+          }
+        }
+      }
+    },
     "音频保活": {
       "extractionState": "manual",
       "localizations": {
@@ -24199,6 +24240,47 @@
           "stringUnit": {
             "state": "translated",
             "value": "決定內容"
+          }
+        }
+      }
+    },
+    "准备": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preparation"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "準備"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "준비"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подготовка"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "准备"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "準備"
           }
         }
       }
@@ -48762,47 +48844,6 @@
         }
       }
     },
-    "按正文接受": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Accept based on manuscript"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "本文どおりに受け入れる"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "본문 기준으로 수락"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Принять по основному тексту"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "按正文接受"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "依正文接受"
-          }
-        }
-      }
-    },
     "按目录顺序逐章润色,并自动采用通过剧情漂移校验的结果。不会改变剧情事实;随时可停止;每一章都能在版本历史里撤销。": {
       "extractionState": "manual",
       "localizations": {
@@ -51796,125 +51837,84 @@
         }
       }
     },
-    "改过前面的章节后，后续剧情指针未解开：写后续章节、收录和代笔暂时被拦。确认无碍、Fork，或重写后续章节即可继续。": {
+    "前面的章节刚改过，后面几章的剧情记录还在更新，请稍等片刻再继续写。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "After earlier chapters were edited, the later story pointer is unresolved: writing later chapters, adding to the manuscript, and ghostwriting are temporarily blocked. Confirm it, Fork, or rewrite the later chapters to continue."
+            "value": "An earlier chapter was just edited, and the story notes for later chapters are still updating. Please wait a moment before writing on."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "前の章を変更したため、後続ストーリーのポインターが解除されていません。続きの執筆・収録・代筆は一時的にブロックされています。問題がないことを確認するか、Forkするか、後続の章を書き直すと続行できます。"
+            "value": "前の章を変更したばかりで、後続の章のあらすじ記録を更新中です。少し待ってから続きを書いてください。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "앞 장을 수정한 뒤 이후 스토리 포인터가 아직 해제되지 않았습니다. 후속 장 작성, 수록 및 대필이 일시 차단됩니다. 문제없음을 확인하거나 Fork 또는 후속 장을 다시 작성하면 계속할 수 있습니다."
+            "value": "앞 장을 방금 수정해서 뒤 장들의 줄거리 기록을 업데이트하는 중입니다. 잠시 후 이어서 써 주세요."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "После изменения предыдущих глав указатель продолжения сюжета не разблокирован: написание следующих глав, добавление в текст и дописывание временно заблокированы. Подтвердите отсутствие проблем, сделайте Fork или перепишите следующие главы, чтобы продолжить."
+            "value": "Предыдущая глава только что изменена, записи сюжета следующих глав ещё обновляются. Подождите немного, прежде чем продолжить."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "改过前面的章节后，后续剧情指针未解开：写后续章节、收录和代笔暂时被拦。确认无碍、Fork，或重写后续章节即可继续。"
+            "value": "前面的章节刚改过，后面几章的剧情记录还在更新，请稍等片刻再继续写。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "修改前面的章節後，後續劇情指標尚未解鎖：撰寫後續章節、收錄和代筆暫時會被阻擋。確認無礙、Fork，或重寫後續章節即可繼續。"
+            "value": "前面的章節剛改過，後面幾章的劇情記錄還在更新，請稍候片刻再繼續寫。"
           }
         }
       }
     },
-    "改过前面的章节后，后面的剧情指针可能过期。后文以正文为准。": {
+    "前面的章节改过了，已按新正文更新后面几章的剧情记录。": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "After earlier chapters were edited, later story pointers may be stale. The manuscript takes precedence."
+            "value": "An earlier chapter changed, so the story notes for later chapters were updated to match."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "前の章を変更したため、後のストーリーポインターは期限切れの可能性があります。以降は本文を優先します。"
+            "value": "前の章が変更されたため、後続の章のあらすじ記録を新しい本文に合わせて更新しました。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "앞 장을 수정한 후 이후 스토리 포인터가 만료되었을 수 있습니다. 이후 내용은 본문을 기준으로 합니다."
+            "value": "앞 장이 수정되어 뒤 장들의 줄거리 기록을 새 본문에 맞게 업데이트했습니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "После изменения предыдущих глав указатели дальнейшего сюжета могут устареть. Основной текст имеет приоритет."
+            "value": "Предыдущая глава изменена — записи сюжета следующих глав обновлены по новому тексту."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "改过前面的章节后，后面的剧情指针可能过期。后文以正文为准。"
+            "value": "前面的章节改过了，已按新正文更新后面几章的剧情记录。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "修改前面的章節後，後面的劇情指標可能過期。後文以正文為準。"
-          }
-        }
-      }
-    },
-    "改过前面的章节后，后面的剧情指针还没解开。请先在项目工作区确认无碍、Fork，或重写后续章节，再继续写后续内容。": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "After earlier chapters were edited, later story pointers remain locked. First verify the project workspace is clear, Fork, or rewrite the subsequent chapters before continuing."
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "前の章を変更したため、後続のプロットポインターはまだ解放されていません。プロジェクト Workspace で問題がないことを確認し、Fork するか、後続の章を書き直してから続けてください。"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "앞 장을 수정한 후 후속 스토리 포인터가 아직 해제되지 않았습니다. 프로젝트 Workspace에서 문제가 없는지 확인하거나 Fork하거나 후속 장을 다시 작성한 후 계속하세요."
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "После изменения предыдущих глав указатели последующего сюжета ещё не разблокированы. Сначала убедитесь в рабочей области проекта, что всё в порядке, создайте Fork или перепишите последующие главы — затем продолжайте работу."
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "改过前面的章节后，后面的剧情指针还没解开。请先在项目工作区确认无碍、Fork，或重写后续章节，再继续写后续内容。"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "修改前面的章節後，後面的劇情指標尚未解鎖。請先在專案工作區確認無礙、Fork，或重寫後續章節，再繼續撰寫後續內容。"
+            "value": "前面的章節改過了，已按新正文更新後面幾章的劇情記錄。"
           }
         }
       }
@@ -64178,43 +64178,43 @@
         }
       }
     },
-    "正在按正文对齐剧情指针": {
+    "正在按正文更新剧情记录": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Aligning plot pointer with the text"
+            "value": "Updating story notes to match the text"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "本文に合わせてストーリー位置を調整中"
+            "value": "本文に合わせてあらすじ記録を更新中"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "본문에 맞춰 스토리 포인터 정렬 중"
+            "value": "본문에 맞춰 줄거리 기록 업데이트 중"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Выравнивание указателя сюжета по тексту"
+            "value": "Обновление записей сюжета по тексту"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在按正文对齐剧情指针"
+            "value": "正在按正文更新剧情记录"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在依據正文對齊劇情指針"
+            "value": "正在依據正文更新劇情記錄"
           }
         }
       }
@@ -72210,47 +72210,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "確認操作結果"
-          }
-        }
-      }
-    },
-    "确认无碍，按正文接受": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Confirm no issue; accept as written"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "問題なしとして本文を採用"
-          }
-        },
-        "ko": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "문제없음을 확인하고 본문 기준으로 수락"
-          }
-        },
-        "ru": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Подтвердить отсутствие проблем и принять текст"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "确认无碍，按正文接受"
-          }
-        },
-        "zh-Hant": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "確認無誤，依正文接受"
           }
         }
       }
@@ -106265,38 +106224,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在创建"
-          }
-        }
-      }
-    },
-    "正在接受…": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Accepting…"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在接受…"
-          }
-        }
-      }
-    },
-    "接受剧情状态失败": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Could not accept plot state"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "接受剧情状态失败"
           }
         }
       }

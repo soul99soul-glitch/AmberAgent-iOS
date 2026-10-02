@@ -53,6 +53,10 @@ enum IOSDeepReadEditorialRenderer {
         var surfaceHex: String = "#f2eade"
         var mutedHex: String = "#6e6254"
         var borderHex: String = "#dbcebc"
+        /// When true the page paints no background, so the native page canvas shows through
+        /// the transparent WKWebView. Only for a flat canvas (no texture/gradient) — over a
+        /// texture the body keeps its solid color for legibility. PDF export leaves this off.
+        var transparentCanvas: Bool = false
     }
 
     // MARK: - Entry point
@@ -81,6 +85,9 @@ enum IOSDeepReadEditorialRenderer {
             + "--deep-read-muted:" + input.mutedHex + ";"
             + "--deep-read-border:" + input.borderHex + ";"
             + "}\n"
+        if input.transparentCanvas {
+            b += "html,body{background:transparent;}\n"
+        }
         if input.fontMode == "system" {
             b += #":root{--deep-read-serif:"PingFang SC","Source Han Sans SC","Noto Sans SC",system-ui,sans-serif;}"# + "\n"
         }
@@ -394,7 +401,7 @@ enum IOSDeepReadEditorialRenderer {
     """
 
     private static let baseCSS = """
-    html,body{margin:0;padding:0;background:var(--deep-read-bg);color:var(--deep-read-fg);font-family:var(--deep-read-serif);-webkit-user-select:text;}
+    html,body{margin:0;padding:0;background:var(--deep-read-bg);color:var(--deep-read-fg);font-family:var(--deep-read-serif);-webkit-user-select:text;overflow-wrap:anywhere;}
     /* Tight bottom pad — height is measured from article; avoid phantom whitespace. */
     article{padding-bottom:12px;display:block;}
     .hero{margin:0 0 8px 0;position:relative;background:var(--deep-read-surface);overflow:hidden;}

@@ -13,6 +13,8 @@ enum IOSAppDeepLink {
         case weather
         case appleIntegrations
         case agentActivity(AgentActivityDeepLink.Target)
+        /// 深度阅读实时活动卡片的落点。
+        case deepReadTask(id: String)
         /// `amber://gateway/pair?p=<base64url>` from the `amber-gateway pair` QR code.
         case gatewayPair(payload: String)
     }
@@ -53,6 +55,9 @@ enum IOSAppDeepLink {
             return .weather
         case ("settings", ["apple-integrations"]) where queryItems.isEmpty:
             return .appleIntegrations
+        case (AgentActivityDeepLink.deepReadHost, let parts) where parts.count == 1 && queryItems.isEmpty:
+            guard isSafeIdentifier(parts[0], maxLength: 64) else { return nil }
+            return .deepReadTask(id: parts[0])
         case ("gateway", ["pair"]):
             guard queryItems.count == 1, queryItems[0].name == "p",
                   let payload = queryItems[0].value,
@@ -101,6 +106,8 @@ enum IOSAppDeepLink {
             components.host = "gateway"
             components.path = "/pair"
             components.queryItems = [URLQueryItem(name: "p", value: payload)]
+        case .deepReadTask(let id):
+            return AgentActivityDeepLink.makeDeepReadURL(taskId: id)
         case .agentActivity(let target):
             return AgentActivityDeepLink.makeURL(
                 runId: target.runId,

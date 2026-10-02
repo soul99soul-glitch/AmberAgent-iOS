@@ -6,6 +6,7 @@
 "agent.activity.kind.memory" = "메모리 업데이트";
 "agent.activity.kind.command" = "명령 작업";
 "agent.activity.kind.workflow" = "에이전트 작업";
+"agent.activity.kind.deepRead" = "심층 읽기";
 
 "agent.activity.stage.preparing" = "준비 중";
 "agent.activity.stage.thinking" = "생각 중";
