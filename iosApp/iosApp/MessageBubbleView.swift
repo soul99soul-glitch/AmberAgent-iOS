@@ -3668,6 +3668,7 @@ private struct ChatGeneratedImageEditSheet: View {
 private struct ChatUserImageTile: View {
     let urlString: String
     @State private var dataImageState: ChatDataImageLoadState = .loading
+    @State private var previewTarget: ChatGeneratedImagePreviewTarget?
 
     private var isDataURL: Bool { urlString.hasPrefix("data:") }
     private var url: URL? { IOSImageGenerationRepository.resolvedImageURL(from: urlString) }
@@ -3677,12 +3678,25 @@ private struct ChatUserImageTile: View {
 
     var body: some View {
         imageView
+            .contentShape(Rectangle())
+            .onTapGesture {
+                let image: UIImage?
+                if case .success(let loadedImage) = dataImageState {
+                    image = loadedImage
+                } else {
+                    image = nil
+                }
+                previewTarget = ChatGeneratedImagePreviewTarget(urlString: urlString, image: image)
+            }
             .task(id: urlString) {
                 guard isDataURL else { return }
                 dataImageState = .loading
                 let resolved = await ChatDataImageLoadState.resolve(urlString: urlString)
                 guard !Task.isCancelled else { return }
                 dataImageState = resolved
+            }
+            .fullScreenCover(item: $previewTarget) { target in
+                ChatGeneratedImagePreview(urlString: target.urlString, image: target.image)
             }
     }
 
