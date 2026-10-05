@@ -196,6 +196,7 @@ targets:
       - path: ../iosAppTests/NovelCharacterIdentityCandidateTests.swift
       - path: ../iosAppTests/NovelCollaborationModeTests.swift
       - path: ../iosAppTests/NovelCollectionTests.swift
+      - path: ../iosAppTests/NovelInkSealStampTests.swift
       - path: ../iosAppTests/NovelCompatibilityLineageTests.swift
       - path: ../iosAppTests/NovelContinuityAuditTests.swift
       - path: ../iosAppTests/NovelCreationModuleTests.swift

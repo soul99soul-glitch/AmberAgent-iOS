@@ -107,6 +107,10 @@ struct NovelRunRuntime: Sendable {
     var isDetachedForBackground: Bool
     var didAutoReconnectAfterDisconnect: Bool
     var terminalClaim: NovelRunTerminalClaim?
+    /// Text and reasoning characters received, reported as background-task progress.
+    var streamedCharacters: Int64 = 0
+    var reportedStreamedCharacters: Int64 = 0
+    var lastStreamProgressAt: Date = .distantPast
 }
 
 extension DefaultNovelCreation {
@@ -1133,9 +1137,39 @@ private extension DefaultNovelCreation {
             BackgroundGenerationKeepAlive.shared.updateProgress(
                 leaseID,
                 completed: completed,
-                total: 4,
                 subtitle: subtitle
             )
+        }
+    }
+
+    /// The system expires a continued-processing task whose progress has not
+    /// moved for ~30s once the app is backgrounded, so a long stream reports
+    /// its received characters (at most once a second). Ghostwrite chapters
+    /// run under the batch lease instead of their own.
+    private func reportStreamedCharacters(_ count: Int, runID: NovelRunID) {
+        guard count > 0, var runtime = generationRuntimes[runID] else { return }
+        runtime.streamedCharacters += Int64(count)
+        let now = Date()
+        let units = runtime.streamedCharacters - runtime.reportedStreamedCharacters
+        guard now.timeIntervalSince(runtime.lastStreamProgressAt) >= 1 else {
+            generationRuntimes[runID] = runtime
+            return
+        }
+        runtime.reportedStreamedCharacters = runtime.streamedCharacters
+        runtime.lastStreamProgressAt = now
+        generationRuntimes[runID] = runtime
+        let runLeaseID = novelRunBackgroundLeaseID(for: runID)
+        let ghostwriteLeaseID = novelGhostwriteBackgroundLeaseID(
+            projectID: runtime.projectID,
+            branchID: runtime.branchID
+        )
+        Task { @MainActor in
+            let keepAlive = BackgroundGenerationKeepAlive.shared
+            if keepAlive.holdsLease(runLeaseID) {
+                keepAlive.advanceProgress(runLeaseID, by: units)
+            } else if keepAlive.holdsLease(ghostwriteLeaseID) {
+                keepAlive.advanceProgress(ghostwriteLeaseID, by: units)
+            }
         }
     }
 
@@ -1382,7 +1416,7 @@ private extension DefaultNovelCreation {
             BackgroundGenerationKeepAlive.shared.updateProgress(
                 leaseID,
                 completed: hasCursor ? 2 : 1,
-                total: 4,
+                total: -1,
                 subtitle: hasCursor
                     ? IOSAppLocalization.string(
                         "恢复生成正文",
@@ -1553,6 +1587,7 @@ private extension DefaultNovelCreation {
             // touching manuscript partialContent / sidecar body.
             guard !text.isEmpty else { return }
             broadcast(.reasoningDelta(text), runID: runID)
+            reportStreamedCharacters(text.count, runID: runID)
             if generationRuntimes[runID]?.partialContent.isEmpty == true {
                 updateBackgroundLease(
                     runID: runID,
@@ -1567,6 +1602,7 @@ private extension DefaultNovelCreation {
             guard !text.isEmpty else { return }
             let isFirstVisibleContent = generationRuntimes[runID]?.partialContent.isEmpty == true
             generationRuntimes[runID]?.partialContent.append(contentsOf: text)
+            reportStreamedCharacters(text.count, runID: runID)
             if isFirstVisibleContent {
                 updateBackgroundLease(
                     runID: runID,
@@ -1582,8 +1618,10 @@ private extension DefaultNovelCreation {
         case .textReplacement(let text):
             guard var runtime = generationRuntimes[runID] else { return }
             let isFirstVisibleContent = runtime.partialContent.isEmpty && !text.isEmpty
+            let grownCharacters = text.count - runtime.partialContent.count
             runtime.partialContent = text
             generationRuntimes[runID] = runtime
+            reportStreamedCharacters(grownCharacters, runID: runID)
             if isFirstVisibleContent {
                 updateBackgroundLease(
                     runID: runID,
@@ -1618,6 +1656,7 @@ private extension DefaultNovelCreation {
             var presentationEvents: [NovelRunEvent] = []
             var shouldUpdateVisibleLease = false
             var hasReasoningOnlyActivity = false
+            var frameCharacters = 0
             for frameEvent in frame.events {
                 switch frameEvent {
                 case .activity:
@@ -1626,15 +1665,18 @@ private extension DefaultNovelCreation {
                     guard !text.isEmpty else { continue }
                     // Never fold reasoning into runtime.partialContent.
                     presentationEvents.append(.reasoningDelta(text))
+                    frameCharacters += text.count
                     hasReasoningOnlyActivity = hasReasoningOnlyActivity || runtime.partialContent.isEmpty
                 case .textDelta(let text):
                     guard !text.isEmpty else { continue }
                     shouldUpdateVisibleLease = shouldUpdateVisibleLease || runtime.partialContent.isEmpty
                     runtime.partialContent.append(contentsOf: text)
+                    frameCharacters += text.count
                     presentationEvents.append(.delta(text))
                 case .textReplacement(let text):
                     shouldUpdateVisibleLease = shouldUpdateVisibleLease ||
                         (runtime.partialContent.isEmpty && !text.isEmpty)
+                    frameCharacters += max(0, text.count - runtime.partialContent.count)
                     runtime.partialContent = text
                     presentationEvents.append(.replaced(text))
                 case .usage(let usage):
@@ -1647,6 +1689,7 @@ private extension DefaultNovelCreation {
             runtime.responseCursor = frame.cursor
             runtime.isDetachedForBackground = false
             generationRuntimes[runID] = runtime
+            reportStreamedCharacters(frameCharacters, runID: runID)
             presentationEvents.forEach { broadcast($0, runID: runID) }
             if shouldUpdateVisibleLease {
                 updateBackgroundLease(

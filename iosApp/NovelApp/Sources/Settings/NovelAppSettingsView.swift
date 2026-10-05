@@ -3,6 +3,7 @@ import SwiftUI
 struct NovelAppSettingsView: View {
     let settings: NovelAppSettingsStore
     let onOpenWritingSettings: () -> Void
+    let onOpenAppearance: () -> Void
 
     @State private var editingService: NovelModelService?
     @State private var searchKeyDraft = ""
@@ -51,23 +52,18 @@ struct NovelAppSettingsView: View {
             }
 
             Section {
-                Button(action: onOpenWritingSettings) {
-                    HStack {
-                        Label("写作模型与偏好", systemImage: "text.book.closed")
-                            .foregroundStyle(AmberTheme.foreground)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(AmberTheme.muted2)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                navigationRow("写作模型与偏好", systemImage: "text.book.closed", action: onOpenWritingSettings)
             } footer: {
                 Text("分别为创作、剧情同步和审稿指定模型，并管理项目。")
             }
 
+            Section {
+                navigationRow("外观与主题", systemImage: "paintpalette", action: onOpenAppearance)
+            }
+
             searchSection
+
+            NovelBackgroundKeepAliveSection()
 
             NovelAboutSection()
         }
@@ -102,6 +98,21 @@ struct NovelAppSettingsView: View {
         .onAppear { searchKeyDraft = selectedSearch?.apiKey ?? "" }
         // A typed key is kept when leaving the page without tapping save.
         .onDisappear { if searchKeyIsDirty { commitSearchKey() } }
+    }
+
+    private func navigationRow(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Label(title, systemImage: systemImage)
+                    .foregroundStyle(AmberTheme.foreground)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(AmberTheme.muted2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var searchSection: some View {
@@ -356,6 +367,72 @@ struct NovelModelServiceEditor: View {
             Button("好") { errorMessage = nil }
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+}
+
+/// The same audio / location legs the main app's experimental build uses to
+/// keep long generations alive after the system reclaims its own task.
+private struct NovelBackgroundKeepAliveSection: View {
+    @AppStorage(IOSExecutionPreferenceKeys.audioKeepAlive) private var audioKeepAlive = true
+    @AppStorage(IOSExecutionPreferenceKeys.backgroundLocationKeepAlive) private var locationKeepAlive = false
+    @State private var locationStatusRevision = 0
+
+    var body: some View {
+        let location = BackgroundLocationKeepAlive.shared
+        Section {
+            Toggle(isOn: Binding(
+                get: { audioKeepAlive },
+                set: {
+                    audioKeepAlive = $0
+                    BackgroundGenerationKeepAlive.shared.refreshAudioKeepAlive()
+                }
+            )) {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("音频保活")
+                        Text("静音播放；任务结束后后台最多保留 60 秒衔接；系统播报期间让出音频。")
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                } icon: {
+                    Image(systemName: "waveform")
+                }
+            }
+            Toggle(isOn: Binding(
+                get: { locationKeepAlive },
+                set: {
+                    locationKeepAlive = $0
+                    if $0 { location.requestEnable() } else { location.refreshPreference() }
+                }
+            )) {
+                Label {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("定位保活")
+                        Text(location.statusText)
+                            .font(.caption)
+                            .foregroundStyle(AmberTheme.muted)
+                    }
+                } icon: {
+                    Image(systemName: "location.fill")
+                }
+            }
+            .id(locationStatusRevision)
+            if locationKeepAlive, location.authorizationStatus == .denied {
+                Button("打开系统设置") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                }
+            }
+        } header: {
+            Text("后台续跑")
+        } footer: {
+            Text("代笔等长任务切到后台后，系统给的运行时间很短，靠这两项维持。定位保活需主动授权；不记录或上传位置。任务期间会显示系统定位标志，并可能增加耗电。")
+        }
+        .tint(AmberTheme.accentAmber)
+        .onReceive(NotificationCenter.default.publisher(for: .amberBackgroundLocationKeepAliveChanged)) { _ in
+            locationStatusRevision &+= 1
         }
     }
 }

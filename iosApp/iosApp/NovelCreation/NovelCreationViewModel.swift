@@ -2614,7 +2614,7 @@ final class NovelCreationViewModel {
         BackgroundGenerationKeepAlive.shared.updateProgress(
             leaseID,
             completed: 0,
-            total: 4,
+            total: -1,
             subtitle: IOSAppLocalization.string("准备生成", defaultValue: "准备生成")
         )
     }

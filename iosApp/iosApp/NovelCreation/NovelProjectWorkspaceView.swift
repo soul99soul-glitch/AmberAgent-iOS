@@ -29,13 +29,15 @@ struct NovelProjectWorkspaceView: View {
     @State private var isFallbackModelPolicySubmitting = false
     @State private var sheetTransitionTask: Task<Void, Never>?
     @State private var sheetTransitionToken: UUID?
-    @State private var collectionSheetInputs: CollectionSheetInputs?
     /// 自动按正文更新剧情记录后的轻提示，几秒后自动收起。
     @State private var isStalePlotAutoSyncNoticeVisible = false
     /// 首次出现只记下当前编号，之后编号变化才弹，避免回到页面时重弹旧提示。
     @State private var seenStalePlotAutoSyncNoticeID: Int?
 
-    private struct CollectionSheetInputs {
+    /// Travels inside `NovelWorkspaceSheet.collectCandidate`: a separate @State read
+    /// from the sheet's content closure could still be nil when the sheet first
+    /// presented, leaving a blank sheet until something else redrew the workspace.
+    fileprivate struct CollectionSheetInputs {
         let candidateID: NovelCandidateID
         let snapshotKey: CollectionSheetSnapshotKey
         let paragraphs: [NovelParagraphRecord]
@@ -45,7 +47,7 @@ struct NovelProjectWorkspaceView: View {
         let suggestedGranularity: NovelGenerationGranularity
     }
 
-    private struct CollectionSheetSnapshotKey: Equatable {
+    fileprivate struct CollectionSheetSnapshotKey: Equatable {
         let projectRevision: Int64
         let branchID: NovelBranchID?
         let branchWorkingRevision: Int64?
@@ -93,10 +95,12 @@ struct NovelProjectWorkspaceView: View {
             }
         }
         .onChange(of: collectionSheetSnapshotKey) { _, snapshotKey in
-            guard case .collectCandidate(let candidateID) = activeSheet else { return }
-            guard collectionSheetInputs?.candidateID != candidateID
-                    || collectionSheetInputs?.snapshotKey != snapshotKey else { return }
-            prepareCollectionSheetInputs(for: candidateID, snapshotKey: snapshotKey)
+            guard case .collectCandidate(let inputs) = activeSheet,
+                  inputs.snapshotKey != snapshotKey else { return }
+            activeSheet = .collectCandidate(collectionSheetInputs(
+                for: inputs.candidateID,
+                snapshotKey: snapshotKey
+            ))
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
@@ -159,9 +163,7 @@ struct NovelProjectWorkspaceView: View {
         .toolbarBackground(AmberTheme.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar { workspaceToolbar }
-        .sheet(item: $activeSheet, onDismiss: {
-            collectionSheetInputs = nil
-        }, content: sheetContent)
+        .sheet(item: $activeSheet, content: sheetContent)
         .navigationDestination(item: $chapterReaderRoute) { route in
             NovelChapterReaderView(
                 viewModel: viewModel,
@@ -479,11 +481,10 @@ struct NovelProjectWorkspaceView: View {
                 composerInputController: sessionComposerInputController,
                 onOpenModel: { activeSheet = .modelPicker(.creation) },
                 onOpenCollection: { candidateID in
-                    prepareCollectionSheetInputs(
+                    activeSheet = .collectCandidate(collectionSheetInputs(
                         for: candidateID,
                         snapshotKey: collectionSheetSnapshotKey
-                    )
-                    activeSheet = .collectCandidate(candidateID)
+                    ))
                 },
                 onOpenManualRewrite: { activeSheet = .manualRewrite($0) },
                 onFork: { activeSheet = .forkCheckpoint($0) },
@@ -595,41 +596,39 @@ struct NovelProjectWorkspaceView: View {
                 sessionViewModel: sessionViewModel
             )
 
-        case .collectCandidate(let candidateID):
-            if let inputs = collectionSheetInputs,
-               inputs.candidateID == candidateID {
-                NovelCollectCandidateSheet(
-                    paragraphs: inputs.paragraphs,
-                    chapters: inputs.chapters,
-                    nextChapterOrdinal: inputs.nextChapterOrdinal,
-                    regenerationTarget: inputs.regenerationTarget,
-                    suggestedGranularity: inputs.suggestedGranularity,
-                    onCompleted: { target in
-                        // 「归档讨论」的语义是「这一章写完了」。替换已有章节是修订,
-                        // 不是新写一章,而且该章首次写成时多半已经归档过一次,
-                        // 再弹一次会在同一章下产生第二条归档记录。
-                        if case .replaceChapter = target { return }
-                        guard sessionViewModel.collectionGranularity(for: candidateID) == .wholeChapter else {
-                            return
-                        }
-                        transition(to: .discussionArchiveOffer(chapterID(for: target)))
+        case .collectCandidate(let inputs):
+            let candidateID = inputs.candidateID
+            NovelCollectCandidateSheet(
+                paragraphs: inputs.paragraphs,
+                chapters: inputs.chapters,
+                nextChapterOrdinal: inputs.nextChapterOrdinal,
+                regenerationTarget: inputs.regenerationTarget,
+                suggestedGranularity: inputs.suggestedGranularity,
+                onCompleted: { target in
+                    // 「归档讨论」的语义是「这一章写完了」。替换已有章节是修订,
+                    // 不是新写一章,而且该章首次写成时多半已经归档过一次,
+                    // 再弹一次会在同一章下产生第二条归档记录。
+                    if case .replaceChapter = target { return }
+                    guard sessionViewModel.collectionGranularity(for: candidateID) == .wholeChapter else {
+                        return
                     }
-                ) { selection, target in
-                    let succeeded = await sessionViewModel.collectCandidate(
-                        candidateID,
-                        selection: selection,
-                        target: target
-                    )
-                    if succeeded { return .completed }
-                    if sessionViewModel.branchPendingOperations.contains(where: {
-                        $0.candidateID == candidateID
-                    }) {
-                        return .pending(message: "旧版收录仍有剧情状态同步任务，请返回后重试。")
-                    }
-                    return .failed(
-                        message: sessionViewModel.errorMessage ?? "收录没有完成，请检查项目状态后重试。"
-                    )
+                    transition(to: .discussionArchiveOffer(chapterID(for: target)))
                 }
+            ) { selection, target in
+                let succeeded = await sessionViewModel.collectCandidate(
+                    candidateID,
+                    selection: selection,
+                    target: target
+                )
+                if succeeded { return .completed }
+                if sessionViewModel.branchPendingOperations.contains(where: {
+                    $0.candidateID == candidateID
+                }) {
+                    return .pending(message: "旧版收录仍有剧情状态同步任务，请返回后重试。")
+                }
+                return .failed(
+                    message: sessionViewModel.errorMessage ?? "收录没有完成，请检查项目状态后重试。"
+                )
             }
 
         case .manualRewrite(let candidateID):
@@ -892,10 +891,10 @@ struct NovelProjectWorkspaceView: View {
         )
     }
 
-    private func prepareCollectionSheetInputs(
+    private func collectionSheetInputs(
         for candidateID: NovelCandidateID,
         snapshotKey: CollectionSheetSnapshotKey
-    ) {
+    ) -> CollectionSheetInputs {
         let currentVersions = sessionViewModel.currentChapterVersions
         let chapters = chapterOptions(for: currentVersions)
         let regenerationTarget: NovelSessionChapterOption? = sessionViewModel
@@ -908,7 +907,7 @@ struct NovelProjectWorkspaceView: View {
                       })?.chapterID else { return nil }
                 return chapters.first { $0.selection.chapterID == chapterID }
         }
-        collectionSheetInputs = CollectionSheetInputs(
+        return CollectionSheetInputs(
             candidateID: candidateID,
             snapshotKey: snapshotKey,
             paragraphs: sessionViewModel.paragraphs(candidateID: candidateID),
@@ -1122,7 +1121,7 @@ private enum NovelWorkspaceSheet: Identifiable {
     case materialEditor(NovelMaterialRecord?, NovelMaterialKind)
     case polishPreference
     case batchPolish
-    case collectCandidate(NovelCandidateID)
+    case collectCandidate(NovelProjectWorkspaceView.CollectionSheetInputs)
     case manualRewrite(NovelCandidateID)
     case forkCheckpoint(NovelCheckpointID)
     case proposal(NovelSettingProposalRecord)
@@ -1137,7 +1136,7 @@ private enum NovelWorkspaceSheet: Identifiable {
             "material-\(material?.id.description ?? suggestedKind.displayName)"
         case .polishPreference: "polish-preference"
         case .batchPolish: "batch-polish"
-        case .collectCandidate(let candidateID): "collect-\(candidateID)"
+        case .collectCandidate(let inputs): "collect-\(inputs.candidateID)"
         case .manualRewrite(let candidateID): "manual-rewrite-\(candidateID)"
         case .forkCheckpoint(let checkpointID): "fork-checkpoint-\(checkpointID)"
         case .proposal(let proposal): "proposal-\(proposal.id)"

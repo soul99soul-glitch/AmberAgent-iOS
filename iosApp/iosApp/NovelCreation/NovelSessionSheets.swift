@@ -44,8 +44,11 @@ struct NovelDiscussionArchiveOfferSheet: View {
     let onRetrySync: () -> Void
     let onContinue: () -> Void
 
+    @State private var contentHeight: CGFloat?
+
     var body: some View {
         // 短内容贴内容高度；避免导航容器把 sheet 撑成大白页。
+        // `.fitted` 只作用于 iPad 表单，iPhone 上按量得的高度给 detent。
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.circle.fill")
@@ -118,6 +121,9 @@ struct NovelDiscussionArchiveOfferSheet: View {
         .padding(.horizontal, 16)
         .padding(.top, 16)
         .padding(.bottom, 16)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        .presentationDetents(contentHeight.map { [.height($0)] } ?? [.medium])
         .presentationSizing(.fitted)
         .presentationDragIndicator(.visible)
     }
@@ -405,6 +411,7 @@ struct NovelCollectCandidateSheet: View {
     @State private var submissionResult: NovelSessionSheetSubmissionResult?
     @State private var isConfirmingDiscard = false
     @State private var imeBank = NovelIMEFieldBank()
+    @State private var stamp: NovelInkSealStamp?
 
     init(
         paragraphs: [NovelParagraphRecord],
@@ -459,6 +466,10 @@ struct NovelCollectCandidateSheet: View {
                     .disabled(isSubmitting || hasDurablePending)
             }
             .disabled(isSubmitting)
+            // The workspace refreshes the inputs once the collection lands; fade the
+            // form so that reflow stays behind the seal.
+            .opacity(stamp == nil ? 1 : 0.3)
+            .animation(.easeOut(duration: 0.2), value: stamp)
             .scrollContentBackground(.hidden)
             .background(AmberTheme.background)
             .navigationTitle("收录正文")
@@ -488,7 +499,9 @@ struct NovelCollectCandidateSheet: View {
                 }
             }
             .overlay {
-                if isSubmitting {
+                if let stamp {
+                    NovelInkSealView(stamp: stamp)
+                } else if isSubmitting {
                     ProgressView("正在更新正文与剧情状态")
                 }
             }
@@ -798,15 +811,42 @@ struct NovelCollectCandidateSheet: View {
         }
         isSubmitting = true
         submissionResult = nil
+        let previousTotal = manuscriptCharacterCount
+        let newTotal = manuscriptCharacterCount(after: target)
         Task { @MainActor in
             let result = await onCollect(selection, target)
-            isSubmitting = false
             submissionResult = result
-            if result == .completed {
-                onCompleted(target)
-                dismiss()
+            guard result == .completed else {
+                isSubmitting = false
+                return
             }
+            if let stamp = NovelInkSealStamp.after(
+                collecting: target,
+                previousTotal: previousTotal,
+                newTotal: newTotal,
+                nextChapterOrdinal: nextChapterOrdinal
+            ) {
+                // Stays submitting so the form remains locked while the seal lands.
+                self.stamp = stamp
+                // Long enough for VoiceOver to finish the announcement.
+                try? await Task.sleep(for: .seconds(UIAccessibility.isVoiceOverRunning ? 3 : 1.3))
+            }
+            isSubmitting = false
+            onCompleted(target)
+            dismiss()
         }
+    }
+
+    private var manuscriptCharacterCount: Int {
+        chapters.reduce(0) { $0 + $1.version.content.count }
+    }
+
+    private func manuscriptCharacterCount(after target: NovelCollectionTarget) -> Int {
+        guard case .replaceChapter(let chapterID) = target else {
+            return manuscriptCharacterCount + editedText.count
+        }
+        let replaced = chapters.first { $0.selection.chapterID == chapterID }?.version.content.count ?? 0
+        return manuscriptCharacterCount - replaced + editedText.count
     }
 
     private func requestDismiss() {

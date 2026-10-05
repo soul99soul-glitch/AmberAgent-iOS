@@ -61,6 +61,8 @@ private struct NovelCreationErrorAlertModifier: ViewModifier {
 }
 
 struct NovelProjectListView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let viewModel: NovelCreationViewModel
     var loadsOnAppear = true
     let onOpen: (NovelProjectID) -> Void
@@ -394,6 +396,7 @@ struct NovelProjectListView: View {
             } else {
                 ContentUnavailableView {
                     Label("开始一本新小说", systemImage: "text.book.closed")
+                        .symbolEffect(.breathe, isActive: !reduceMotion)
                 } description: {
                     Text("项目会独立保存设定、正文、分支和创作记录。")
                 } actions: {

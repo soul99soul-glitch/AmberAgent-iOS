@@ -15,6 +15,7 @@ enum NovelAppRoute: Hashable {
     case project(NovelProjectID)
     case settings
     case writingSettings
+    case appearance
 }
 
 /// App-level owners. Mirrors AmberAgent's `AppShell` wiring for the Novel
@@ -39,7 +40,12 @@ final class NovelAppModel {
         )
         // Shared chat bubbles label replies "Amber" unless this display
         // preference is off; the standalone app has no Amber persona.
-        UserDefaults.standard.register(defaults: [IOSDisplayPreferenceKeys.agentName: false])
+        // Ghostwriting runs for tens of minutes; the system continued-processing
+        // task is reclaimed soon after backgrounding, so the audio leg is on by default.
+        UserDefaults.standard.register(defaults: [
+            IOSDisplayPreferenceKeys.agentName: false,
+            IOSExecutionPreferenceKeys.audioKeepAlive: true
+        ])
         let settings = NovelAppSettingsStore()
         let toolHost = NovelAppToolHost(settings: settings)
         self.settings = settings
@@ -100,6 +106,7 @@ struct NovelRootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @State private var curtainMood: NovelLaunchMood? = NovelLaunchMood.current(at: Date())
+    @AppStorage(IOSAppearancePreferenceKeys.mode) private var appearanceMode = IOSAppearanceMode.system.rawValue
 
     var body: some View {
         NavigationStack(path: $model.path) {
@@ -107,6 +114,7 @@ struct NovelRootView: View {
                 .navigationDestination(for: NovelAppRoute.self, destination: destination)
         }
         .tint(AmberTheme.accent)
+        .preferredColorScheme(NovelTheme.pinnedColorScheme ?? (IOSAppearanceMode(rawValue: appearanceMode) ?? .system).colorScheme)
         .overlay {
             if let curtainMood, !reduceMotion, !voiceOverEnabled {
                 NovelLaunchCurtain(mood: curtainMood) { self.curtainMood = nil }
@@ -167,8 +175,11 @@ struct NovelRootView: View {
         case .settings:
             NovelAppSettingsView(
                 settings: model.settings,
-                onOpenWritingSettings: { model.navigate(to: .writingSettings) }
+                onOpenWritingSettings: { model.navigate(to: .writingSettings) },
+                onOpenAppearance: { model.navigate(to: .appearance) }
             )
+        case .appearance:
+            NovelAppearanceView()
         case .writingSettings:
             if let viewModel = model.creationViewModel {
                 NovelCreationSettingsView(sharedSettings: model.settings, viewModel: viewModel)

@@ -18,14 +18,15 @@ xcodebuild -project iosApp/NovelApp/AmberNovel.xcodeproj -scheme Novel \
 
 `project.yml` 是工程定义，`.xcodeproj` 为本地生成物。构建前置脚本用本仓 Gradle 生成 `Shared.framework`，Markdown 解析链接本仓 `AmberNative.xcframework`。设备构建需在 Xcode 中设置开发团队。
 
-模块名刻意设为 `iosApp`：`iosApp/iosAppTests/` 下的 45 个小说测试文件（含测试支持文件）以 `@testable import iosApp` 原样被本应用的 `NovelTests` 共享，不另维护副本。新增或删除小说测试文件时同步 `project.yml` 的 `NovelTests` 源列表。只依赖 Amber 自身设置存储的测试放在 `NovelAmberSettingsPresentationTests.swift`，不进入本应用；两边各有一份 `NovelTestSettingsFactory.swift` 提供测试用设置来源。
+模块名刻意设为 `iosApp`：`iosApp/iosAppTests/` 下的 46 个小说测试文件（含测试支持文件）以 `@testable import iosApp` 原样被本应用的 `NovelTests` 共享，不另维护副本。新增或删除小说测试文件时同步 `project.yml` 的 `NovelTests` 源列表。只依赖 Amber 自身设置存储的测试放在 `NovelAmberSettingsPresentationTests.swift`，不进入本应用；两边各有一份 `NovelTestSettingsFactory.swift` 提供测试用设置来源。
 
 ## 代码边界
 
 - `Sources/App`：应用入口与 App 级持有者（创作视图模型、会话视图模型、后台生命周期协调器），对应 AmberAgent `AppShell` 中小说的那部分接线；`NovelAppToolHost` 为讨论 Agent 提供 Ask User、小说项目写工具和联网搜索，与 Amber `ChatToolRuntime.novelDiscussionToolExecutors` 同一工具集。
-- `Sources/Settings`：模型服务（OpenAI 兼容含 Responses API、Claude、Gemini 的 API Key）、默认模型、联网搜索服务与结果数；保存后生成 KMP `Settings` 快照，通过 `IOSSettingsSnapshotSource` 供小说运行时与搜索执行器消费。
-- `Sources/Design`：冷启动「开卷」动画（书页翻开、笔尖落墨、标语逐字出现；深夜、十一月写作月、元旦各有一句；点击跳过；开启减弱动态效果或旁白时不显示），以及设置页底部的关于区（1.2 秒内连点标记 5 次，墨点飞溅并逐字写出一句写作箴言）。
+- `Sources/Settings`：模型服务（OpenAI 兼容含 Responses API、Claude、Gemini 的 API Key）、默认模型、联网搜索服务与结果数；保存后生成 KMP `Settings` 快照，通过 `IOSSettingsSnapshotSource` 供小说运行时与搜索执行器消费。「外观与主题」页提供浅色 / 深色 / 跟随系统，以及 8 套小说主题（素笺、宣纸、稿纸、竹青、胭脂、藕荷、墨白、绛夜）；主题就是 Amber 的纸色 × 强调色组合，经 `AmberThemeRuntime` 作用于整个应用，自带画布色的主题（藕荷、绛夜）会固定明暗。
+- `Sources/Design`：冷启动「落印」动画（与应用图标同款的朱印「文」盖在纸上并晕开墨色、标语逐字出现；深夜、十一月写作月、元旦各有一句；点击跳过；开启减弱动态效果或旁白时不显示），以及设置页底部的关于区（铜色笔尖与朱红墨滴；1.2 秒内连点 5 次，笔尖逐次下压、墨滴胀大，随后墨点飞溅并逐字写出一句写作箴言）。
 - `Sources/Support`：`IOSToolEffectClassMapping` 占位。本应用不给工具引擎挂运行账本，Amber 的完整分类表不需要编入。
+- 共享的 `NovelCreation` 里另有两处动效，Amber 中同样生效：整章收录后，收录面板上盖一枚朱印（「成章」）；全书字数越过 1 万、5 万、10 万等里程碑时换成对应印文，5 万字处点出写作月的终点线。空项目页的书本图标有呼吸动效。开启减弱动态效果时，朱印只淡入，图标不动。
 - 共享源码清单见 `project.yml`。为让本应用不编译聊天、终端、MCP、小程序等子系统，原应用中小说依赖的小类型已原样搬到独立文件，原应用行为不变，例如 `AmberDesignSystem.swift`、`ChatAssistantMarkdownView.swift`、`ComposerDockComponents.swift`、`IOSSearchToolDispatch.swift`。依赖关系为：`NovelCreation` 只依赖 `IOSSettingsSnapshotSource` 与 `NovelDiscussionToolHost` 两个窄接口，Amber 与本应用各自提供实现（Amber 侧胶水在 `iosApp/iosApp/NovelCreationAmberBridge.swift`）。
 
 ## 数据与迁移

@@ -37,16 +37,14 @@ enum NovelLaunchMood: Equatable {
     }
 }
 
-/// Cold-launch overlay: the book mark opens, the nib drops an ink dot, the
-/// tagline types in, then the curtain lifts. Tap anywhere to skip. Skipped
-/// entirely under Reduce Motion.
+/// Cold-launch overlay: the app icon's seal stamps onto the page with a ring of
+/// ink, the tagline types in, then the curtain lifts. Tap anywhere to skip.
+/// Skipped entirely under Reduce Motion or VoiceOver.
 struct NovelLaunchCurtain: View {
     let mood: NovelLaunchMood
     let onFinish: () -> Void
 
-    @State private var pagesOpen = false
-    @State private var nibDown = false
-    @State private var inkDot = false
+    @State private var stamped = false
     @State private var typedCount = 0
     @State private var lifting = false
     @State private var finished = false
@@ -54,23 +52,47 @@ struct NovelLaunchCurtain: View {
     var body: some View {
         ZStack {
             AmberTheme.background.ignoresSafeArea()
-            VStack(spacing: 28) {
+            VStack(spacing: 32) {
                 ZStack {
-                    NovelBookMark(open: pagesOpen)
-                        .frame(width: 132, height: 96)
-                        .offset(y: 26)
-                    NovelNibMark()
-                        .frame(width: 22, height: 54)
-                        .offset(y: nibDown ? -46 : -100)
-                        .opacity(nibDown ? 1 : 0)
                     Circle()
-                        .fill(AmberTheme.accent)
-                        .frame(width: 9, height: 9)
-                        .offset(y: -12)
-                        .scaleEffect(inkDot ? 1 : 0.01)
-                        .opacity(inkDot ? 1 : 0)
+                        .fill(AmberTheme.accentRed.opacity(0.18))
+                        .frame(width: 190, height: 190)
+                        .blur(radius: 14)
+                        .keyframeAnimator(initialValue: BleedFrame(), trigger: stamped) { content, frame in
+                            content.scaleEffect(frame.scale).opacity(frame.opacity)
+                        } keyframes: { _ in
+                            KeyframeTrack(\.scale) {
+                                LinearKeyframe(0.5, duration: 0.24)
+                                SpringKeyframe(1.3, duration: 0.6, spring: .smooth)
+                            }
+                            KeyframeTrack(\.opacity) {
+                                LinearKeyframe(0, duration: 0.24)
+                                LinearKeyframe(1, duration: 0.08)
+                                LinearKeyframe(0, duration: 0.7)
+                            }
+                        }
+
+                    NovelSealMark(size: 120)
+                        .keyframeAnimator(initialValue: SlamFrame(), trigger: stamped) { content, frame in
+                            content
+                                .scaleEffect(frame.scale)
+                                .rotationEffect(.degrees(frame.rotation))
+                                .opacity(frame.opacity)
+                        } keyframes: { _ in
+                            KeyframeTrack(\.scale) {
+                                CubicKeyframe(0.92, duration: 0.24)
+                                SpringKeyframe(1, duration: 0.45, spring: .bouncy)
+                            }
+                            KeyframeTrack(\.rotation) {
+                                CubicKeyframe(-7, duration: 0.24)
+                                SpringKeyframe(-6, duration: 0.45)
+                            }
+                            KeyframeTrack(\.opacity) {
+                                LinearKeyframe(1, duration: 0.14)
+                            }
+                        }
                 }
-                .frame(height: 150)
+                .frame(height: 190)
 
                 HStack(spacing: 8) {
                     if let symbol = mood.symbol {
@@ -101,11 +123,11 @@ struct NovelLaunchCurtain: View {
     }
 
     private func play() async {
-        withAnimation(.spring(response: 0.55, dampingFraction: 0.72)) { pagesOpen = true }
-        try? await Task.sleep(for: .milliseconds(260))
-        withAnimation(.spring(response: 0.42, dampingFraction: 0.6)) { nibDown = true }
-        try? await Task.sleep(for: .milliseconds(320))
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) { inkDot = true }
+        stamped = true
+        try? await Task.sleep(for: .milliseconds(240))
+        guard !finished else { return }
+        AmberHaptics.trigger(.rigidImpact)
+        try? await Task.sleep(for: .milliseconds(380))
         for count in 1...mood.tagline.count {
             guard !finished else { return }
             typedCount = count
@@ -125,75 +147,41 @@ struct NovelLaunchCurtain: View {
             onFinish()
         }
     }
+
+    private struct SlamFrame {
+        var scale: CGFloat = 1.8
+        var rotation: Double = -16
+        var opacity: Double = 0
+    }
+
+    private struct BleedFrame {
+        var scale: CGFloat = 0.5
+        var opacity: Double = 0
+    }
 }
 
-/// The app mark's open book: two tilted pages that swing open from the gutter.
-struct NovelBookMark: View {
-    var open: Bool
+/// The app icon's seal: a vermilion block with 「文」 and an inner border cut
+/// through to the page beneath.
+struct NovelSealMark: View {
+    let size: CGFloat
 
     var body: some View {
-        HStack(spacing: 6) {
-            page.rotation3DEffect(.degrees(open ? 0 : 82), axis: (0, 1, 0), anchor: .trailing, perspective: 0.6)
-            page.scaleEffect(x: -1).rotation3DEffect(.degrees(open ? 0 : -82), axis: (0, 1, 0), anchor: .leading, perspective: 0.6)
+        ZStack {
+            // Shadow on the block only, so it never shows through the cut-outs.
+            RoundedRectangle(cornerRadius: size * 0.085, style: .continuous)
+                .fill(AmberTheme.accentRed)
+                .shadow(color: AmberTheme.accentRed.opacity(0.3), radius: 10, y: 4)
+            RoundedRectangle(cornerRadius: size * 0.045, style: .continuous)
+                .strokeBorder(lineWidth: size * 0.028)
+                .padding(size * 0.075)
+                .blendMode(.destinationOut)
+            // Songti Black 「文」 rendered from the icon artwork; iOS ships no Song face.
+            Image("SealGlyph")
+                .resizable()
+                .blendMode(.destinationOut)
         }
-    }
-
-    private var page: some View {
-        NovelPageShape()
-            .fill(AmberTheme.foreground)
-            .overlay {
-                VStack(alignment: .leading, spacing: 7) {
-                    ForEach(0..<3, id: \.self) { _ in
-                        Capsule()
-                            .fill(AmberTheme.background)
-                            .frame(height: 3.5)
-                            .rotationEffect(.degrees(10))
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 6)
-                .padding(.bottom, 26)
-            }
-    }
-}
-
-private struct NovelPageShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path { path in
-            path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + rect.height * 0.15))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - rect.height * 0.15))
-            path.closeSubpath()
-        }
-    }
-}
-
-/// The copper pen nib from the app mark.
-struct NovelNibMark: View {
-    var body: some View {
-        NibShape()
-            .fill(AmberTheme.accent)
-            .overlay {
-                VStack(spacing: 0) {
-                    Rectangle().fill(AmberTheme.background).frame(width: 1.5)
-                    Circle().fill(AmberTheme.background).frame(width: 5, height: 5)
-                    Rectangle().fill(AmberTheme.background).frame(width: 1.5).frame(maxHeight: 10)
-                }
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-            }
-    }
-
-    private struct NibShape: Shape {
-        func path(in rect: CGRect) -> Path {
-            Path { path in
-                path.move(to: CGPoint(x: rect.midX, y: rect.minY))
-                path.addLine(to: CGPoint(x: rect.maxX, y: rect.height * 0.7))
-                path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-                path.addLine(to: CGPoint(x: rect.minX, y: rect.height * 0.7))
-                path.closeSubpath()
-            }
-        }
+        .compositingGroup()
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
     }
 }

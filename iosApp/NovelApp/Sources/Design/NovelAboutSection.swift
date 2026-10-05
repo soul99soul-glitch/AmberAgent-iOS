@@ -34,19 +34,20 @@ struct NovelAboutSection: View {
         Section {
             VStack(spacing: 12) {
                 ZStack {
+                    // Bursts from the ink drop: the 76pt mark is centered, the drop sits 33pt below center.
                     NovelInkSplash(trigger: splash)
                         .frame(width: 160, height: 120)
-                    // Drawn at the launch-curtain design size, then scaled, so the
-                    // page lines keep their proportions.
-                    VStack(spacing: -12) {
+                        .offset(y: 33)
+                    // Each tap presses the nib down and swells the ink drop.
+                    VStack(spacing: 6) {
                         NovelNibMark()
-                            .frame(width: 22, height: 54)
-                            .rotationEffect(.degrees(taps == 0 ? 0 : Double(taps) * 7 - 14))
-                        NovelBookMark(open: true)
-                            .frame(width: 132, height: 96)
+                            .frame(width: 38, height: 60)
+                            .offset(y: Double(taps) * 1.5)
+                        Circle()
+                            .fill(AmberTheme.accentRed)
+                            .frame(width: 10, height: 10)
+                            .scaleEffect(0.6 + Double(taps) * 0.16)
                     }
-                    .scaleEffect(0.5 + Double(taps) * 0.02)
-                    .frame(width: 70, height: 76)
                     .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.45), value: taps)
                 }
                 .frame(height: 96)
@@ -125,7 +126,7 @@ struct NovelAboutSection: View {
     }
 }
 
-/// Copper ink drops that burst outward from the mark and fade.
+/// Vermilion ink drops that burst outward from the drop and fade.
 private struct NovelInkSplash: View {
     let trigger: Int
 
@@ -150,7 +151,7 @@ private struct NovelInkSplash: View {
         ZStack {
             ForEach(Self.drops) { drop in
                 Circle()
-                    .fill(AmberTheme.accent)
+                    .fill(AmberTheme.accentRed)
                     .frame(width: drop.size, height: drop.size)
                     .keyframeAnimator(initialValue: SplashFrame(), trigger: trigger) { content, frame in
                         content
@@ -191,5 +192,58 @@ private struct NovelInkSplash: View {
         var scale: CGFloat = 0.2
         var fall: CGFloat = 0
         var opacity: Double = 0
+    }
+}
+
+/// A copper fountain-pen nib: inward-curving shoulders, a slit and a breather hole.
+struct NovelNibMark: View {
+    private static let ink = Color(red: 0.12, green: 0.1, blue: 0.09)
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            NibShape()
+                .fill(LinearGradient(
+                    colors: [
+                        Color(red: 0.63, green: 0.38, blue: 0.21),
+                        Color(red: 0.93, green: 0.73, blue: 0.48),
+                        Color(red: 0.6, green: 0.36, blue: 0.2)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ))
+                .overlay(alignment: .top) {
+                    VStack(spacing: 0) {
+                        Circle()
+                            .fill(Self.ink)
+                            .frame(width: size.width * 0.18, height: size.width * 0.18)
+                        Rectangle()
+                            .fill(Self.ink)
+                            .frame(width: max(1, size.width * 0.05))
+                    }
+                    .padding(.top, size.height * 0.34)
+                }
+                // The slit runs out through the tip, so keep it inside the outline.
+                .clipShape(NibShape())
+                .shadow(color: Color(red: 0.4, green: 0.22, blue: 0.1).opacity(0.3), radius: 4, y: 2)
+        }
+    }
+
+    /// Tip at the bottom; the sides swell to the shoulders, then taper inward.
+    private struct NibShape: Shape {
+        func path(in rect: CGRect) -> Path {
+            func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+                CGPoint(x: rect.minX + rect.width * x, y: rect.minY + rect.height * y)
+            }
+            var path = Path()
+            path.move(to: point(0.2, 0.03))
+            path.addQuadCurve(to: point(0.8, 0.03), control: point(0.5, -0.03))
+            path.addCurve(to: point(1, 0.48), control1: point(0.92, 0.07), control2: point(1, 0.26))
+            path.addCurve(to: point(0.5, 1), control1: point(1, 0.66), control2: point(0.62, 0.84))
+            path.addCurve(to: point(0, 0.48), control1: point(0.38, 0.84), control2: point(0, 0.66))
+            path.addCurve(to: point(0.2, 0.03), control1: point(0, 0.26), control2: point(0.08, 0.07))
+            path.closeSubpath()
+            return path
+        }
     }
 }
